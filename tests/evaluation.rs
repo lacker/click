@@ -38,14 +38,19 @@ fn evaluation_cases() {
     // Add new evaluation checks here. Each row is just expression text plus
     // the rendered value, or an expected error substring.
     let cases = [
-        ok!("atoms self evaluate", "hello", "hello"),
+        err!(
+            "bare atoms do not self evaluate",
+            "hello",
+            "unbound atom 'hello'"
+        ),
         ok!("quote builds a list", "(quote (a b c))", "(a b c)"),
         ok!("quote shorthand", "'(a b c)", "(a b c)"),
+        ok!("quote returns literal atoms", "'hello", "hello"),
         ok!("atom is false for lists", "(atom (quote (a b)))", "false"),
-        ok!("atom is true for atoms", "(atom hello)", "true"),
+        ok!("atom is true for quoted atoms", "(atom 'hello)", "true"),
         ok!(
             "atom_eq matches equal atoms",
-            "(atom_eq hello hello)",
+            "(atom_eq 'hello 'hello)",
             "true"
         ),
         ok!(
@@ -55,28 +60,41 @@ fn evaluation_cases() {
         ),
         ok!("car returns the head", "(car '(a b c))", "a"),
         ok!("cdr returns the tail", "(cdr '(a b c))", "(b c)"),
-        ok!("cons builds proper lists", "(cons a '(b c))", "(a b c)"),
-        ok!("cons builds dotted pairs", "(cons a b)", "(a . b)"),
-        ok!("if takes the true branch", "(if true yes no)", "yes"),
-        ok!("if treats nil as falsey", "(if nil yes no)", "no"),
-        ok!("if treats false as falsey", "(if false yes no)", "no"),
-        ok!("if treats atoms as truthy", "(if maybe yes no)", "yes"),
-        ok!("car nil is nil", "(car nil)", "nil"),
-        ok!("cdr nil is nil", "(cdr nil)", "nil"),
+        ok!("cons builds proper lists", "(cons 'a '(b c))", "(a b c)"),
+        ok!("cons builds dotted pairs", "(cons 'a 'b)", "(a . b)"),
+        ok!("if takes the true branch", "(if true 'yes 'no)", "yes"),
+        ok!("if treats nil as falsey", "(if nil 'yes 'no)", "no"),
+        ok!("if treats false as falsey", "(if false 'yes 'no)", "no"),
+        ok!("if treats atoms as truthy", "(if 'maybe 'yes 'no)", "yes"),
+        err!(
+            "car nil is undefined",
+            "(car nil)",
+            "car expects a non-empty list"
+        ),
+        err!(
+            "cdr nil is undefined",
+            "(cdr nil)",
+            "cdr expects a non-empty list"
+        ),
         ok!(
             "shebang line is ignored",
-            "#!/usr/bin/env click\n(cons a '(b c))\n",
+            "#!/usr/bin/env click\n(cons 'a '(b c))\n",
             "(a b c)"
         ),
         ok!(
             "multiple top level forms return the last value",
-            "hello\n(cons a nil)\n",
+            "true\n(cons 'a nil)\n",
             "(a)"
         ),
         err!(
             "atom_eq rejects list arguments",
             "(atom_eq '(a) '(a))",
             "atom_eq expects atom arguments"
+        ),
+        err!(
+            "cons rejects unquoted atoms",
+            "(cons a '(b c))",
+            "unbound atom 'a'"
         ),
     ];
 

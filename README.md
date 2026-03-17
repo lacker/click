@@ -19,12 +19,12 @@ There is no `lambda`, no function definition, and no user environment yet.
 
 ## Semantics
 
-- Symbols are self-evaluating atoms.
+- Ordinary symbols do not self-evaluate. Use `quote` to write literal atoms and lists.
 - `quote` is mainly for list literals: `(quote (a b c))`
 - `atom` returns `true` for atoms, booleans, and `nil`.
 - `atom_eq` only accepts atoms.
 - `if` treats `false` and `nil` as falsey. Everything else is truthy.
-- `car nil` and `cdr nil` both return `nil`.
+- `car` and `cdr` are partial: applying them to `nil` is an error.
 - `cons` builds pairs. Proper lists print as `(a b c)`. Improper lists print as `(a . b)`.
 
 ## Usage
@@ -32,7 +32,7 @@ There is no `lambda`, no function definition, and no user environment yet.
 Run an expression directly:
 
 ```bash
-cargo run -- -e "(cons a (quote (b c)))"
+cargo run -- -e "(cons 'a (quote (b c)))"
 ```
 
 Run a file:

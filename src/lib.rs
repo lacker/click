@@ -198,7 +198,7 @@ fn eval_symbol(symbol: &str) -> ClickResult<Value> {
         "nil" => Ok(Value::Nil),
         "true" => Ok(Value::Bool(true)),
         "false" => Ok(Value::Bool(false)),
-        _ => Ok(Value::Atom(symbol.to_string())),
+        _ => Err(format!("unbound atom '{symbol}'")),
     }
 }
 
@@ -242,16 +242,14 @@ fn eval_list(items: &[Expr]) -> ClickResult<Value> {
             expect_arity(operator, tail, 1)?;
             match eval(&tail[0])? {
                 Value::Cons(head, _) => Ok(*head),
-                Value::Nil => Ok(Value::Nil),
-                _ => Err("car expects a list".to_string()),
+                _ => Err("car expects a non-empty list".to_string()),
             }
         }
         "cdr" => {
             expect_arity(operator, tail, 1)?;
             match eval(&tail[0])? {
                 Value::Cons(_, tail) => Ok(*tail),
-                Value::Nil => Ok(Value::Nil),
-                _ => Err("cdr expects a list".to_string()),
+                _ => Err("cdr expects a non-empty list".to_string()),
             }
         }
         "cons" => {
@@ -277,7 +275,7 @@ fn expect_arity(operator: &str, args: &[Expr], expected: usize) -> ClickResult<(
 
 fn quote_expr(expr: &Expr) -> ClickResult<Value> {
     match expr {
-        Expr::Symbol(symbol) => eval_symbol(symbol),
+        Expr::Symbol(symbol) => Ok(quote_symbol(symbol)),
         Expr::List(items) => {
             let mut result = Value::Nil;
             for item in items.iter().rev() {
@@ -285,5 +283,14 @@ fn quote_expr(expr: &Expr) -> ClickResult<Value> {
             }
             Ok(result)
         }
+    }
+}
+
+fn quote_symbol(symbol: &str) -> Value {
+    match symbol {
+        "nil" => Value::Nil,
+        "true" => Value::Bool(true),
+        "false" => Value::Bool(false),
+        _ => Value::Atom(symbol.to_string()),
     }
 }

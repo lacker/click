@@ -1,2 +1,2 @@
 #!/usr/bin/env click
-(cons a '(b c))
+(cons 'a '(b c))
