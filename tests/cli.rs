@@ -21,12 +21,12 @@ fn temp_file(name: &str, contents: &str) -> PathBuf {
 #[test]
 fn evaluates_expression_argument() {
     let output = Command::new(bin())
-        .args(["-e", "(cons 'a '(b c))"])
+        .args(["-e", "((lambda (car stack)) 'a)"])
         .output()
         .expect("command should run");
 
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "(a b c)\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "a\n");
 }
 
 #[test]
@@ -56,10 +56,10 @@ fn evaluates_stdin() {
         use std::io::Write;
 
         let stdin = child.stdin.as_mut().expect("stdin should be available");
-        write!(stdin, "(if false 'yes 'no)\n").expect("stdin write should succeed");
+        write!(stdin, "((lambda stack) 'a)\n").expect("stdin write should succeed");
     }
 
     let output = child.wait_with_output().expect("command should complete");
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "no\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "(a)\n");
 }

@@ -43,9 +43,11 @@ fn evaluation_cases() {
             "hello",
             "unbound atom 'hello'"
         ),
+        ok!("stack is empty at top level", "stack", "nil"),
         ok!("quote builds a list", "(quote (a b c))", "(a b c)"),
         ok!("quote shorthand", "'(a b c)", "(a b c)"),
         ok!("quote returns literal atoms", "'hello", "hello"),
+        ok!("quote leaves stack as data", "'stack", "stack"),
         ok!("atom is false for lists", "(atom (quote (a b)))", "false"),
         ok!("atom is true for quoted atoms", "(atom 'hello)", "true"),
         ok!(
@@ -66,6 +68,27 @@ fn evaluation_cases() {
         ok!("if treats nil as falsey", "(if nil 'yes 'no)", "no"),
         ok!("if treats false as falsey", "(if false 'yes 'no)", "no"),
         ok!("if treats atoms as truthy", "(if 'maybe 'yes 'no)", "yes"),
+        ok!("lambda returns closures", "(lambda stack)", "#<closure>"),
+        ok!(
+            "calling lambda pushes onto stack",
+            "((lambda stack) 'a)",
+            "(a)"
+        ),
+        ok!(
+            "car stack reads the nearest bound value",
+            "((lambda (car stack)) 'a)",
+            "a"
+        ),
+        ok!(
+            "cdr stack reaches outer bindings",
+            "(((lambda (lambda (car (cdr stack)))) 'a) 'b)",
+            "a"
+        ),
+        ok!(
+            "lambda captures lexical environment",
+            "(((lambda (lambda (car (cdr stack)))) 'outer) 'inner)",
+            "outer"
+        ),
         err!(
             "car nil is undefined",
             "(car nil)",
@@ -95,6 +118,16 @@ fn evaluation_cases() {
             "cons rejects unquoted atoms",
             "(cons a '(b c))",
             "unbound atom 'a'"
+        ),
+        err!(
+            "top-level stack is empty",
+            "(car stack)",
+            "car expects a non-empty list"
+        ),
+        err!(
+            "calling a non-function is an error",
+            "('a 'b)",
+            "attempted to call a non-function"
         ),
     ];
 

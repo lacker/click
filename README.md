@@ -10,29 +10,35 @@ The first version supports:
 - `cdr`
 - `cons`
 - `if`
+- `lambda`
 - `quote`
+- `stack`
 - `nil`
 - `true`
 - `false`
 
-There is no `lambda`, no function definition, and no user environment yet.
+This is an experimental programming core. `lambda` is unary, application is left-associative, and bound values are accessed through `stack`.
 
 ## Semantics
 
 - Ordinary symbols do not self-evaluate. Use `quote` to write literal atoms and lists.
 - `quote` is mainly for list literals: `(quote (a b c))`
+- `lambda` captures the current lexical environment.
+- Evaluating `stack` returns the current environment as a list, with the nearest binding first.
+- `((lambda (car stack)) 'a)` returns `a`.
 - `atom` returns `true` for atoms, booleans, and `nil`.
 - `atom_eq` only accepts atoms.
 - `if` treats `false` and `nil` as falsey. Everything else is truthy.
 - `car` and `cdr` are partial: applying them to `nil` is an error.
 - `cons` builds pairs. Proper lists print as `(a b c)`. Improper lists print as `(a . b)`.
+- A function value prints as `#<closure>`.
 
 ## Usage
 
 Run an expression directly:
 
 ```bash
-cargo run -- -e "(cons 'a (quote (b c)))"
+cargo run -- -e "((lambda (car stack)) 'a)"
 ```
 
 Run a file:

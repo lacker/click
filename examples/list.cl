@@ -1,2 +1,2 @@
 #!/usr/bin/env click
-(cons 'a '(b c))
+((lambda (car stack)) 'a)
