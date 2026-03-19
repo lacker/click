@@ -2,14 +2,12 @@ use std::fmt;
 
 pub type ClickResult<T> = Result<T, String>;
 
-#[allow(private_interfaces)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
     Atom(String),
     Bool(bool),
     Nil,
     Cons(Box<Value>, Box<Value>),
-    Closure { body: Box<Expr>, env: Vec<Value> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,7 +42,6 @@ impl fmt::Display for Value {
             Value::Bool(false) => write!(f, "false"),
             Value::Nil => write!(f, "nil"),
             Value::Cons(_, _) => format_cons(self, f),
-            Value::Closure { .. } => write!(f, "#<closure>"),
         }
     }
 }
@@ -228,10 +225,7 @@ fn eval_list(items: &[Expr], env: &[Value]) -> ClickResult<Value> {
             }
             "lambda" => {
                 expect_arity(operator, tail, 1)?;
-                return Ok(Value::Closure {
-                    body: Box::new(tail[0].clone()),
-                    env: env.to_vec(),
-                });
+                return Ok(make_closure(&tail[0], env)?);
             }
             "atom" => {
                 expect_arity(operator, tail, 1)?;
@@ -320,14 +314,88 @@ fn env_to_value(env: &[Value]) -> Value {
     result
 }
 
+fn make_closure(body: &Expr, env: &[Value]) -> ClickResult<Value> {
+    Ok(make_list(vec![
+        Value::Atom("closure".to_string()),
+        quote_expr(body)?,
+        env_to_value(env),
+    ]))
+}
+
+fn make_list(items: Vec<Value>) -> Value {
+    let mut result = Value::Nil;
+    for item in items.into_iter().rev() {
+        result = Value::Cons(Box::new(item), Box::new(result));
+    }
+    result
+}
+
 fn apply(function: Value, arg: Value) -> ClickResult<Value> {
-    match function {
-        Value::Closure { body, env } => {
+    match unpack_closure(function)? {
+        Some((body, env)) => {
             let mut next_env = Vec::with_capacity(env.len() + 1);
             next_env.push(arg);
             next_env.extend(env);
             eval(&body, &next_env)
         }
-        _ => Err("attempted to call a non-function".to_string()),
+        None => Err("attempted to call a non-function".to_string()),
+    }
+}
+
+fn unpack_closure(value: Value) -> ClickResult<Option<(Expr, Vec<Value>)>> {
+    let Value::Cons(head, tail) = value else {
+        return Ok(None);
+    };
+
+    let Value::Atom(tag) = *head else {
+        return Ok(None);
+    };
+
+    if tag != "closure" {
+        return Ok(None);
+    }
+
+    let parts = proper_list_to_vec(*tail)?;
+    if parts.len() != 2 {
+        return Err("closure expects a body and an environment".to_string());
+    }
+
+    let mut parts = parts.into_iter();
+    let body = value_to_expr(parts.next().expect("closure body should exist"))?;
+    let env = proper_list_to_vec(parts.next().expect("closure env should exist"))
+        .map_err(|_| "closure environment must be a proper list".to_string())?;
+
+    Ok(Some((body, env)))
+}
+
+fn proper_list_to_vec(value: Value) -> ClickResult<Vec<Value>> {
+    let mut current = value;
+    let mut items = Vec::new();
+
+    loop {
+        match current {
+            Value::Nil => return Ok(items),
+            Value::Cons(head, tail) => {
+                items.push(*head);
+                current = *tail;
+            }
+            _ => return Err("expected a proper list".to_string()),
+        }
+    }
+}
+
+fn value_to_expr(value: Value) -> ClickResult<Expr> {
+    match value {
+        Value::Atom(symbol) => Ok(Expr::Symbol(symbol)),
+        Value::Bool(true) => Ok(Expr::Symbol("true".to_string())),
+        Value::Bool(false) => Ok(Expr::Symbol("false".to_string())),
+        Value::Nil => Ok(Expr::Symbol("nil".to_string())),
+        Value::Cons(_, _) => {
+            let items = proper_list_to_vec(value)?
+                .into_iter()
+                .map(value_to_expr)
+                .collect::<ClickResult<Vec<_>>>()?;
+            Ok(Expr::List(items))
+        }
     }
 }

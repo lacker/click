@@ -194,30 +194,22 @@ The main open design question is how explicit closures should be inside `P`.
 
 ### Current prototype
 
-The current Rust prototype uses runtime-only opaque closures.
-
-That means:
-
-- functions print as `#<closure>`
-- they are callable
-- but they are not yet ordinary `click` list data
-
-This is an implementation shortcut, not necessarily the final design.
-
-### Desired direction
-
-If we want `P` to be fully Lisp-like, closures should eventually become
-ordinary explicit data, not hidden Rust values.
-
-A likely representation would look like:
+The current prototype now represents closures as explicit list data:
 
 ```lisp
 (closure body env)
 ```
 
-That would make the programming core more uniform, though it introduces new
-questions about malformed fabricated closures and what counts as a well-formed
-runtime value.
+This makes the programming core more uniform, but it introduces a new issue:
+
+- programs can fabricate malformed closures as ordinary data
+
+The current rule is simple:
+
+- application recognizes the `closure` shape
+- malformed closures are runtime errors / stuck terms
+
+This keeps the evaluator small while preserving list-uniformity.
 
 ## The `stack` Experiment
 

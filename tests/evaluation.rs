@@ -68,7 +68,16 @@ fn evaluation_cases() {
         ok!("if treats nil as falsey", "(if nil 'yes 'no)", "no"),
         ok!("if treats false as falsey", "(if false 'yes 'no)", "no"),
         ok!("if treats atoms as truthy", "(if 'maybe 'yes 'no)", "yes"),
-        ok!("lambda returns closures", "(lambda stack)", "#<closure>"),
+        ok!(
+            "lambda returns explicit closures",
+            "(lambda stack)",
+            "(closure stack nil)"
+        ),
+        ok!(
+            "closures are inspectable data",
+            "(car (lambda stack))",
+            "closure"
+        ),
         ok!(
             "calling lambda pushes onto stack",
             "((lambda stack) 'a)",
@@ -128,6 +137,11 @@ fn evaluation_cases() {
             "calling a non-function is an error",
             "('a 'b)",
             "attempted to call a non-function"
+        ),
+        err!(
+            "malformed closure values are rejected",
+            "((quote (closure stack)) 'a)",
+            "closure expects a body and an environment"
         ),
     ];
 

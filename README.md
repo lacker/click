@@ -26,12 +26,12 @@ This is an experimental programming core. `lambda` is unary, application is left
 - `lambda` captures the current lexical environment.
 - Evaluating `stack` returns the current environment as a list, with the nearest binding first.
 - `((lambda (car stack)) 'a)` returns `a`.
+- Function values are explicit data of the form `(closure body env)`.
 - `atom` returns `true` for atoms, booleans, and `nil`.
 - `atom_eq` only accepts atoms.
 - `if` treats `false` and `nil` as falsey. Everything else is truthy.
 - `car` and `cdr` are partial: applying them to `nil` is an error.
 - `cons` builds pairs. Proper lists print as `(a b c)`. Improper lists print as `(a . b)`.
-- A function value prints as `#<closure>`.
 
 ## Usage
 
