@@ -62,3 +62,18 @@ chmod +x examples/list.cl
 ```
 
 `click` ignores a leading `#!...` line in source files.
+
+## First Self-Hosted Checker
+
+There is now a very small checker written in `click` itself:
+
+- [examples/closure_shape_check.cl](/Users/lacker/click/examples/closure_shape_check.cl)
+
+It checks whether a value has the shape of a closure, and it can run on an
+actual runtime closure produced by `lambda`.
+
+```bash
+cargo run -- examples/closure_shape_check.cl
+```
+
+That example currently prints `true`.
