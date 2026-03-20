@@ -362,6 +362,11 @@ Examples of plausible first targets:
 The first implemented experiment in this direction is a tiny closure-shape
 checker written in `click` itself.
 
+The next implemented step is a recursive well-formedness checker for a tiny
+quoted lambda/list fragment. That is a better test of the direction, because
+it forces `click` to express a real recursive judgment over its own syntax
+instead of only a shallow shape predicate.
+
 ## Container and abstraction goals
 
 After list proofs, an important near-term theme is proving that different

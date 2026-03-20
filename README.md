@@ -63,17 +63,27 @@ chmod +x examples/list.cl
 
 `click` ignores a leading `#!...` line in source files.
 
-## First Self-Hosted Checker
+## Self-Hosted Checkers
 
-There is now a very small checker written in `click` itself:
+There are now two small checker experiments written in `click` itself:
 
 - [examples/closure_shape_check.cl](/Users/lacker/click/examples/closure_shape_check.cl)
+- [examples/tiny_core_wf.cl](/Users/lacker/click/examples/tiny_core_wf.cl)
 
-It checks whether a value has the shape of a closure, and it can run on an
-actual runtime closure produced by `lambda`.
+The closure-shape checker runs on runtime values and recognizes explicit
+closures of the form `(closure body env)`.
+
+The tiny-core well-formedness checker is recursive. It runs on quoted syntax
+and recognizes a very small fragment made of:
+
+- `nil`, `true`, `false`, `stack`
+- `(quote x)`
+- `(lambda body)`
+- binary application `(f x)`
 
 ```bash
 cargo run -- examples/closure_shape_check.cl
+cargo run -- examples/tiny_core_wf.cl
 ```
 
-That example currently prints `true`.
+Both examples currently print `true`.
