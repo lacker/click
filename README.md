@@ -69,6 +69,7 @@ There are now two small checker experiments written in `click` itself:
 
 - [examples/closure_shape_check.cl](/Users/lacker/click/examples/closure_shape_check.cl)
 - [examples/tiny_core_wf.cl](/Users/lacker/click/examples/tiny_core_wf.cl)
+- a token-core well-formedness checker assembled in [tests/self_hosted.rs](/Users/lacker/click/tests/self_hosted.rs)
 
 The closure-shape checker runs on runtime values and recognizes explicit
 closures of the form `(closure body env)`.
@@ -80,6 +81,17 @@ and recognizes a very small fragment made of:
 - `(quote x)`
 - `(lambda body)`
 - binary application `(f x)`
+
+The token-core checker is the next step toward a kernel with explicit binders.
+It runs on quoted terms like:
+
+- `type`
+- `(var x)`
+- `(app f x)`
+- `(lam x domain body)`
+- `(pi x domain codomain)`
+
+and checks those terms against an explicit context of in-scope binder tokens.
 
 ```bash
 cargo run -- examples/closure_shape_check.cl
