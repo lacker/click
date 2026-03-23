@@ -281,7 +281,7 @@ fn token_core_worker() -> String {
                 format!("(atom_eq {head} 'app)"),
                 &app_case,
                 if_expr(
-                    format!("(atom_eq {head} 'lam)"),
+                    format!("(atom_eq {head} 'lambda)"),
                     &lam_case,
                     if_expr(format!("(atom_eq {head} 'pi)"), &pi_case, "false"),
                 ),
@@ -417,12 +417,12 @@ fn tiny_core_well_formedness_checker_rejects_outside_the_fragment() {
 fn token_core_checker_accepts_closed_terms() {
     assert_eq!(run_token_core_checker("(quote type)"), "true");
     assert_eq!(
-        run_token_core_checker("(quote (lam x type (var x)))"),
+        run_token_core_checker("(quote (lambda x type (var x)))"),
         "true"
     );
     assert_eq!(run_token_core_checker("(quote (pi x type type))"), "true");
     assert_eq!(
-        run_token_core_checker("(quote (app (lam x type (var x)) type))"),
+        run_token_core_checker("(quote (app (lambda x type (var x)) type))"),
         "true"
     );
 }
@@ -431,16 +431,16 @@ fn token_core_checker_accepts_closed_terms() {
 fn token_core_checker_rejects_bad_scoping_and_bad_shapes() {
     assert_eq!(run_token_core_checker("(quote (var x))"), "false");
     assert_eq!(
-        run_token_core_checker("(quote (lam x type (var y)))"),
+        run_token_core_checker("(quote (lambda x type (var y)))"),
         "false"
     );
     assert_eq!(
-        run_token_core_checker("(quote (lam x type (lam x type (var x))))"),
+        run_token_core_checker("(quote (lambda x type (lambda x type (var x))))"),
         "false"
     );
-    assert_eq!(run_token_core_checker("(quote (lam x type))"), "false");
+    assert_eq!(run_token_core_checker("(quote (lambda x type))"), "false");
     assert_eq!(
-        run_token_core_checker("(quote (app (lam x type (var x))))"),
+        run_token_core_checker("(quote (app (lambda x type (var x))))"),
         "false"
     );
 }

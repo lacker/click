@@ -177,7 +177,7 @@ The basic term forms are:
 - `type`
 - `(var t)`
 - `(app f x)`
-- `(lam t domain body)`
+- `(lambda t domain body)`
 - `(pi t domain codomain)`
 
 Here `t` is a binder token represented as an ordinary atom.
@@ -205,13 +205,13 @@ The repository now has three small checker experiments written in `click`.
   `nil`, `true`, `false`, `stack`, `(quote x)`, `(lambda body)`, and binary application
 
 3. Token-core well-formedness
-- checks quoted terms built from `type`, `var`, `app`, `lam`, and `pi`
+- checks quoted terms built from `type`, `var`, `app`, `lambda`, and `pi`
 - uses an explicit context of in-scope binder tokens
 
 The token-core checker currently establishes:
 
 - `var` tokens must already be in context
-- `lam` and `pi` bind atom tokens and extend the context
+- `lambda` and `pi` bind atom tokens and extend the context
 - rebinding an already in-scope token is rejected
 
 It does not yet enforce global uniqueness of binder tokens across separate
@@ -228,7 +228,7 @@ The main open questions are:
 
 - Should `K1` require global uniqueness of binder tokens, or only scoped correctness?
 - Do we want a canonicalization pass for alpha-insensitive comparison later?
-- How close should `P` and `K1` remain once `K1` has explicit `var` / `lam` / `pi` terms?
+- How close should `P` and `K1` remain once `K1` has explicit `var` / `lambda` / `pi` terms?
 - What is the smallest useful typed fragment to self-host next?
 
 ## Next Steps

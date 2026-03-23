@@ -88,7 +88,7 @@ It runs on quoted terms like:
 - `type`
 - `(var x)`
 - `(app f x)`
-- `(lam x domain body)`
+- `(lambda x domain body)`
 - `(pi x domain codomain)`
 
 and checks those terms against an explicit context of in-scope binder tokens.
