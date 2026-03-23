@@ -2,8 +2,8 @@
 
 This document records the current design direction for `click`.
 
-It is not a frozen spec. It should stay short, accurate, and biased toward the
-current actual plan rather than old exploration branches.
+It is not a frozen spec. It should stay concise, accurate, and focused on the
+current actual plan.
 
 ## Goal
 
@@ -11,22 +11,59 @@ current actual plan rather than old exploration branches.
 
 - a reasonable language to program in
 - a language where programs are easy to inspect and transform as data
-- a language where programs can be checked and proved correct in the language itself
-- a language where proof automation is also written in the language itself
+- a language where transformations can carry machine-checkable correctness arguments
+- a language where meaningful parts of checking and proving infrastructure can be written in the language itself
 
-The main near-term milestone is not "the smallest possible kernel". It is:
+The long-term vision is not "a theorem prover next to a programming language".
+It is one language family that can express:
 
-- write a meaningful checker in `click`
-- give that checker a small trusted meaning in `K1`
+- programs
+- ASTs
+- transformations between ASTs
+- proofs and checkers about those transformations
 
-That is the balance the repository should optimize for:
+## Central Task
 
-- enough simplicity that checking is easy to specify and trust
-- enough power that the checker can be written in the language itself
+The central task of `click` is not "prove arbitrary theorems". It is closer to:
+
+- represent programs as data
+- transform those programs
+- prove that the transformation preserves the intended meaning
+
+In other words, the language should be good at proving program equivalence and
+refinement in the cases that matter.
+
+This should not be overstated:
+
+- arbitrary program equivalence is undecidable
+- there will never be a fast complete method for proving equivalence of all programs
+
+The actual target is:
+
+- make many important equivalence proofs easy to express
+- make many important correctness claims easy to check
+- make proof-producing transformations natural to write
+
+## What Matters In The Core
+
+The most important thing is not that the trusted core be tiny in a line-count
+sense. Smallness by itself is not the point.
+
+What matters is that the properties built into the core are simple:
+
+- simple enough to specify clearly
+- simple enough to implement correctly
+- simple enough to reason about
+- simple enough to re-check independently
+
+So the design target is:
+
+- not the smallest possible core
+- but a core with simple, explicit judgments
 
 ## Layers
 
-There are three important layers.
+The current vocabulary is:
 
 - `P`: the programming core
 - `K1`: the small trusted kernel
@@ -36,63 +73,89 @@ There are three important layers.
 
 `K1` does not need to be fast. It does need to be:
 
-- small
 - explicit
+- predictable
 - easy to reimplement
-- easy to reason about
+- built from simple judgments
 
-The trust story is:
+`K2` can be larger, faster, and more ergonomic, as long as it reduces back to
+claims that `K1` can check.
 
-- trust `K1`
-- implement richer tools in ordinary `click`
-- prove those tools sound against `K1`
+There may eventually also be a meaningful distinction between:
 
-This is LCF-shaped, but the goal is still one language family rather than a
-hard social split between "programming language" and "theorem language".
+- the programming language layer
+- the proving/checking layer
 
-## Principles
+But the working assumption is that they should remain one language family with:
 
-### Code as data
+- one data model
+- one quoting story
+- one implementation language
+
+They do not have to be literally identical strata, but they should stay close.
+
+## Preferred First Demo Shape
+
+The first serious demo should not be "build a C compiler".
+
+It should be a small transformation story.
+
+The right shape is:
+
+- a small core language `P1`
+- a richer surface or extension language `P2`
+- a lowering function `L : P2 -> P1`
+- maybe a raising or embedding function `R : P1 -> P2`
+- proofs that the transformation behaves correctly
+
+Typical theorems in this shape are:
+
+- lowering preserves meaning
+- lowering preserves typing
+- `L(R(f)) = f` for `f` in `P1`
+
+That last theorem is especially useful when `R` is an embedding of the core
+into a richer surface language.
+
+This is the compiler pattern in miniature:
+
+- represent ASTs
+- write transformations on ASTs
+- prove the transformations valid
+
+That is the early path toward larger goals like verified compilers, annotated
+languages, and proof-producing IR pipelines.
+
+## What The First Proofs Should Look Like
+
+The first useful proof targets are:
+
+- well-formedness of an AST
+- typechecking of an AST
+- evaluation or normalization of an AST
+- a small transformation on that AST
+- a checker or proof that the transformation preserves meaning
+
+So the first real milestone should be something like:
+
+1. define a small quoted language
+2. define `well_formed`
+3. define `typecheck`
+4. define `eval`
+5. define a transformation
+6. prove or check that the transformation preserves behavior
+
+That is a much better first demo than trying to jump directly to full
+self-hosting of all of `click`.
+
+## Code As Data
 
 Programs must be representable and inspectable as ordinary tree data.
 
-The exact surface syntax can evolve. The underlying representation should stay
-simple, explicit, and easy to deconstruct.
+This is the central Lisp-like constraint. The exact surface syntax can evolve,
+but the underlying representation should remain simple and easy to deconstruct.
 
-### Small trusted core
-
-The thing we trust should be very small. That does not mean the whole language
-must stay tiny forever. It means:
-
-- the trusted checker should be small
-- larger tactics and verifiers should produce certificates or proof objects
-- those should be checkable by `K1`
-
-### Regularity over cleverness
-
-The language should optimize for:
-
-- few special cases
-- explicit semantics
-- canonical or at least checkable representations
-- easy transformation
-- easy machine generation
-
-This matters both for proofs and for AI-written code.
-
-### Strong normalization is not a design goal
-
-The programming core is intended to be a real programming language. `click` is
-not being designed around strong normalization.
-
-### Surface names are optional; semantic names are not fundamental
-
-Human-readable names may exist in surface syntax. They should not carry the
-full semantic burden inside `K1`.
-
-We do not want "pick a fresh variable" to be a fundamental kernel operation.
-
-## Equality and meaning
+## Equality And Meaning
 
 The preferred terms are:
 
@@ -100,8 +163,7 @@ The preferred terms are:
 - `observational equality`: same behavior under the observations that matter
 - `refinement`: one implementation correctly realizes a simpler or more abstract specification
 
-These are clearer for `click` than more academic vocabulary when the meaning is
-the same.
+These are the notions that matter for transformation correctness.
 
 ## Current Programming-Core Experiment
 
@@ -170,7 +232,8 @@ Current expectation:
 
 ## Kernel Direction
 
-The leading `K1` sketch is a quoted token-based core with explicit binders.
+The current leading `K1` sketch is a quoted token-based core with explicit
+binders.
 
 The basic term forms are:
 
@@ -195,7 +258,8 @@ This avoids two things we do not want in `K1`:
 
 ## Current Self-Hosted Checker Experiments
 
-The repository now has three small checker experiments written in `click`.
+The repository currently has three small checker experiments written in
+`click`.
 
 1. Closure-shape checking
 - recognizes runtime values of the form `(closure body env)`
@@ -214,19 +278,15 @@ The token-core checker currently establishes:
 - `lambda` and `pi` bind atom tokens and extend the context
 - rebinding an already in-scope token is rejected
 
-It does not yet enforce global uniqueness of binder tokens across separate
-subtrees. For example, if two disjoint subterms reuse the same binder token,
-the current checker may still accept them as long as the token is not already
-active in the local context being checked.
-
-That means the current checker enforces in-scope uniqueness, not full
-whole-term uniqueness.
+It does not yet enforce whole-term uniqueness of binder tokens across disjoint
+subtrees. It only enforces in-scope uniqueness.
 
 ## Open Questions
 
 The main open questions are:
 
-- Should `K1` require global uniqueness of binder tokens, or only scoped correctness?
+- What is the first small quoted language that should carry a real `eval` / `typecheck` / transformation story?
+- Should `K1` require whole-term uniqueness of binder tokens, or only scoped correctness?
 - Do we want a canonicalization pass for alpha-insensitive comparison later?
 - How close should `P` and `K1` remain once `K1` has explicit `var` / `lambda` / `pi` terms?
 - What is the smallest useful typed fragment to self-host next?
@@ -235,23 +295,24 @@ The main open questions are:
 
 The next repository steps should be:
 
-1. Define evaluation / normalization for the quoted token core.
-2. Define the first typechecking judgment for that same core.
-3. Decide what invariants belong in `K1` itself:
-   scoped correctness only, or full binder-token uniqueness.
-4. Keep `stack` as a programming-core experiment unless it proves useful beyond that.
-5. Continue toward small proof objects and basic list/container theorems once the typed core is stable enough.
+1. Choose the first small transformation demo.
+2. Define the quoted AST for that demo.
+3. Define `well_formed`, `typecheck`, and `eval` for it.
+4. Define one transformation on that AST.
+5. Check or prove that the transformation preserves meaning.
+6. Keep `stack` as a programming-core experiment unless it proves useful beyond that.
 
 ## Medium-Term Direction
 
-The medium-term goal is not just "more theorems". It is to make `click` a good
-language for building proof-producing program tools.
+The medium-term goal is to make `click` good at building proof-producing
+program tools.
 
 Examples:
 
 - proof-producing analyzers
 - proof-producing optimizers
 - proof-producing validators for low-level code
+- eventually, proof-friendly compiler pipelines
 
 Those tools should themselves be ordinary `click` programs, with soundness tied
 back to `K1`.
