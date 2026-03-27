@@ -284,6 +284,116 @@ This avoids two things we do not want in the kernel:
 - full name-management bureaucracy
 - de Bruijn arithmetic and shifting machinery
 
+## Kernel v0
+
+There are three different questions that should stay separate.
+
+### 1. Kernel language and judgments
+
+This is the question:
+
+- what terms exist in the kernel-facing language?
+- what judgments can the kernel check?
+
+The current `kernel v0` sketch is:
+
+- `type`
+- `(var t)`
+- `(app f x)`
+- `(lambda t domain body)`
+- `(pi t domain codomain)`
+- some equality form
+- some small data story
+
+The likely kernel judgments are:
+
+- context well-formedness
+- term has type
+- definitional equality / conversion
+
+If proofs are represented as terms, then proof checking is largely a special
+case of type checking rather than a separate top-level mechanism.
+
+The exact data story is still open. It could be:
+
+- a very small fixed collection of data types at first
+- or a more general inductive-data mechanism
+
+Either way, the kernel needs some way to express ASTs, contexts, proof objects,
+and recursive structure over data.
+
+### 2. Trusted Rust implementation
+
+This is the question:
+
+- what Rust code is trusted because it lives outside the language itself?
+
+The trusted Rust part should stay small even if the kernel language itself is
+not tiny.
+
+The likely trusted Rust pieces are:
+
+- kernel AST representation
+- context checker
+- type checker
+- normalization / conversion checker
+- checking for whatever primitive data/eliminator mechanism the kernel has
+
+The following should ideally stay outside the trusted kernel:
+
+- parser
+- surface elaboration
+- lowering from richer syntax
+- typeclass search
+- proof search
+- optimization heuristics
+- compiler passes
+
+Those can all be ordinary `click` tools that produce terms, certificates, or
+proof objects for the kernel to check.
+
+### 3. Primitive rules
+
+This is the question:
+
+- what are the primitive formation, introduction, elimination, and computation rules?
+
+"Axioms" is not quite the right word for most of this. The kernel mostly needs
+primitive rules and computation laws.
+
+For `kernel v0`, the likely primitive rules include:
+
+- formation rules for `type`, `pi`, equality, and whatever data mechanism exists
+- introduction rules for `lambda` and proof terms
+- elimination rules for application and data eliminators
+- computation rules such as beta-reduction
+- conversion rules for definitional equality
+
+One of the main unresolved questions is how much computation should live inside
+definitional equality.
+
+The current bias is:
+
+- structural / obvious computation in the kernel
+- bigger recursive programs expressed in the core
+- larger proof search and automation outside the kernel
+
+### What probably does not belong in the kernel
+
+At least initially, these are better treated as core, surface, or tool-layer
+features rather than kernel primitives:
+
+- typeclasses
+- implicit arguments
+- fancy syntax
+- elaboration
+- proof search
+- transformation heuristics
+
+Typeclasses are the clearest example here. They may become a very important
+part of the core language experience while still elaborating down to simpler
+kernel concepts.
+
 ## Current Self-Hosted Checker Experiments
 
 The repository currently has three small checker experiments written in
