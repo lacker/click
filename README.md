@@ -72,11 +72,14 @@ the usual list operations. For a tiny example:
 
 - [`examples/code_shape.cl`](examples/code_shape.cl) extracts the binder from a quoted lambda.
 
-The larger self-hosted experiments live in:
+The larger self-hosted experiments now live in:
 
-- [`tests/self_hosted.rs`](tests/self_hosted.rs)
+- [`bootstrap/README.md`](bootstrap/README.md)
+- [`bootstrap/base/fix.cl`](bootstrap/base/fix.cl)
+- [`bootstrap/named_core/wf.cl`](bootstrap/named_core/wf.cl)
+- [`bootstrap/token_core/wf.cl`](bootstrap/token_core/wf.cl)
 
-That test file now includes:
+[`tests/bootstrap.rs`](tests/bootstrap.rs) loads those files and checks:
 
 - a recursive well-formedness checker for the current named core
 - a recursive token-core checker for quoted terms like `(lambda x type (var x))`
