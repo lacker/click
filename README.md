@@ -1,34 +1,36 @@
 # click
 
-`click` is a very small Lisp implemented in Rust.
+`click` is a very small Lisp-y kernel implemented in Rust.
 
-The first version supports:
+The current prototype supports:
 
+- `quote`
+- `if`
 - `atom`
 - `atom_eq`
 - `car`
 - `cdr`
 - `cons`
-- `if`
+- `var`
+- `app`
 - `lambda`
-- `quote`
-- `stack`
 - `nil`
 - `true`
 - `false`
 
-This is an experimental programming core. `lambda` is unary, application is left-associative, and bound values are accessed through `stack`.
+This version uses explicit named variables. Executable list forms are tagged by
+their first atom, variable references are written as `(var name)`, and function
+application is written as `(app f a)`.
 
 ## Semantics
 
-- Ordinary symbols do not self-evaluate. Use `quote` to write literal atoms and lists.
-- `quote` is mainly for list literals: `(quote (a b c))`
-- `lambda` captures the current lexical environment.
-- Evaluating `stack` returns the current environment as a list, with the nearest binding first.
-- `((lambda (car stack)) 'a)` returns `a`.
-- Function values are explicit data of the form `(closure body env)`.
+- Ordinary atoms do not self-evaluate. Only `nil`, `true`, and `false` do.
+- `quote` turns code into ordinary list data: `(quote (lambda x (var x)))`.
+- `lambda` has the form `(lambda x body)` and captures the current lexical environment.
+- Rebinding a name that is already in scope is an error.
+- Closures are an internal evaluator detail. Evaluating a lambda prints `#<closure>`.
 - `atom` returns `true` for atoms, booleans, and `nil`.
-- `atom_eq` only accepts atoms.
+- `atom_eq` only accepts atom arguments.
 - `if` treats `false` and `nil` as falsey. Everything else is truthy.
 - `car` and `cdr` are partial: applying them to `nil` is an error.
 - `cons` builds pairs. Proper lists print as `(a b c)`. Improper lists print as `(a . b)`.
@@ -38,7 +40,7 @@ This is an experimental programming core. `lambda` is unary, application is left
 Run an expression directly:
 
 ```bash
-cargo run -- -e "((lambda (car stack)) 'a)"
+cargo run -- -e "(app (lambda x (var x)) 'a)"
 ```
 
 Run a file:
@@ -63,39 +65,18 @@ chmod +x examples/list.cl
 
 `click` ignores a leading `#!...` line in source files.
 
-## Self-Hosted Checkers
+## Code As Data
 
-There are now two small checker experiments written in `click` itself:
+Quoted code is ordinary data, so Click programs can inspect Click programs with
+the usual list operations. For a tiny example:
 
-- [examples/closure_shape_check.cl](/Users/lacker/click/examples/closure_shape_check.cl)
-- [examples/tiny_core_wf.cl](/Users/lacker/click/examples/tiny_core_wf.cl)
-- a token-core well-formedness checker assembled in [tests/self_hosted.rs](/Users/lacker/click/tests/self_hosted.rs)
+- [`examples/code_shape.cl`](examples/code_shape.cl) extracts the binder from a quoted lambda.
 
-The closure-shape checker runs on runtime values and recognizes explicit
-closures of the form `(closure body env)`.
+The larger self-hosted experiments live in:
 
-The tiny-core well-formedness checker is recursive. It runs on quoted syntax
-and recognizes a very small fragment made of:
+- [`tests/self_hosted.rs`](tests/self_hosted.rs)
 
-- `nil`, `true`, `false`, `stack`
-- `(quote x)`
-- `(lambda body)`
-- binary application `(f x)`
+That test file now includes:
 
-The token-core checker is the next step toward a kernel with explicit binders.
-It runs on quoted terms like:
-
-- `type`
-- `(var x)`
-- `(app f x)`
-- `(lambda x domain body)`
-- `(pi x domain codomain)`
-
-and checks those terms against an explicit context of in-scope binder tokens.
-
-```bash
-cargo run -- examples/closure_shape_check.cl
-cargo run -- examples/tiny_core_wf.cl
-```
-
-Both examples currently print `true`.
+- a recursive well-formedness checker for the current named core
+- a recursive token-core checker for quoted terms like `(lambda x type (var x))`

@@ -2,12 +2,22 @@ use std::fmt;
 
 pub type ClickResult<T> = Result<T, String>;
 
+type Env = Vec<(String, Value)>;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
     Atom(String),
     Bool(bool),
     Nil,
     Cons(Box<Value>, Box<Value>),
+    Closure(Closure),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Closure {
+    binder: String,
+    body: Expr,
+    env: Env,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +52,7 @@ impl fmt::Display for Value {
             Value::Bool(false) => write!(f, "false"),
             Value::Nil => write!(f, "nil"),
             Value::Cons(_, _) => format_cons(self, f),
+            Value::Closure(_) => write!(f, "#<closure>"),
         }
     }
 }
@@ -82,7 +93,7 @@ pub fn run_source(source: &str) -> ClickResult<Option<Value>> {
     let source = strip_shebang(source);
     let tokens = tokenize(source)?;
     let exprs = Parser::new(tokens).parse_program()?;
-    let env = Vec::new();
+    let env = Env::new();
 
     let mut last = None;
     for expr in exprs {
@@ -113,7 +124,7 @@ fn tokenize(source: &str) -> ClickResult<Vec<Token>> {
             ')' => tokens.push(Token::RParen),
             '\'' => tokens.push(Token::Quote),
             ';' => {
-                while let Some(next) = chars.next() {
+                for next in chars.by_ref() {
                     if next == '\n' {
                         break;
                     }
@@ -187,90 +198,105 @@ impl Parser {
     }
 }
 
-fn eval(expr: &Expr, env: &[Value]) -> ClickResult<Value> {
+fn eval(expr: &Expr, env: &Env) -> ClickResult<Value> {
     match expr {
-        Expr::Symbol(symbol) => eval_symbol(symbol, env),
+        Expr::Symbol(symbol) => eval_symbol(symbol),
         Expr::List(items) => eval_list(items, env),
     }
 }
 
-fn eval_symbol(symbol: &str, env: &[Value]) -> ClickResult<Value> {
+fn eval_symbol(symbol: &str) -> ClickResult<Value> {
     match symbol {
         "nil" => Ok(Value::Nil),
         "true" => Ok(Value::Bool(true)),
         "false" => Ok(Value::Bool(false)),
-        "stack" => Ok(env_to_value(env)),
         _ => Err(format!("unbound atom '{symbol}'")),
     }
 }
 
-fn eval_list(items: &[Expr], env: &[Value]) -> ClickResult<Value> {
+fn eval_list(items: &[Expr], env: &Env) -> ClickResult<Value> {
     let Some((head, tail)) = items.split_first() else {
         return Err("cannot evaluate an empty list; use nil or quote".to_string());
     };
 
-    if let Expr::Symbol(operator) = head {
-        match operator.as_str() {
-            "quote" => {
-                expect_arity(operator, tail, 1)?;
-                return quote_expr(&tail[0]);
-            }
-            "if" => {
-                expect_arity(operator, tail, 3)?;
-                let condition = eval(&tail[0], env)?;
-                if condition.is_truthy() {
-                    return eval(&tail[1], env);
-                }
-                return eval(&tail[2], env);
-            }
-            "lambda" => {
-                expect_arity(operator, tail, 1)?;
-                return Ok(make_closure(&tail[0], env)?);
-            }
-            "atom" => {
-                expect_arity(operator, tail, 1)?;
-                return Ok(Value::Bool(eval(&tail[0], env)?.is_atom()));
-            }
-            "atom_eq" => {
-                expect_arity(operator, tail, 2)?;
-                let left = eval(&tail[0], env)?;
-                let right = eval(&tail[1], env)?;
-                if !left.is_atom() || !right.is_atom() {
-                    return Err("atom_eq expects atom arguments".to_string());
-                }
-                return Ok(Value::Bool(left == right));
-            }
-            "car" => {
-                expect_arity(operator, tail, 1)?;
-                return match eval(&tail[0], env)? {
-                    Value::Cons(head, _) => Ok(*head),
-                    _ => Err("car expects a non-empty list".to_string()),
-                };
-            }
-            "cdr" => {
-                expect_arity(operator, tail, 1)?;
-                return match eval(&tail[0], env)? {
-                    Value::Cons(_, tail) => Ok(*tail),
-                    _ => Err("cdr expects a non-empty list".to_string()),
-                };
-            }
-            "cons" => {
-                expect_arity(operator, tail, 2)?;
-                let head = eval(&tail[0], env)?;
-                let rest = eval(&tail[1], env)?;
-                return Ok(Value::Cons(Box::new(head), Box::new(rest)));
-            }
-            _ => {}
+    let Expr::Symbol(operator) = head else {
+        return Err("form heads must be keyword atoms".to_string());
+    };
+
+    match operator.as_str() {
+        "quote" => {
+            expect_arity(operator, tail, 1)?;
+            quote_expr(&tail[0])
         }
+        "if" => {
+            expect_arity(operator, tail, 3)?;
+            let condition = eval(&tail[0], env)?;
+            if condition.is_truthy() {
+                eval(&tail[1], env)
+            } else {
+                eval(&tail[2], env)
+            }
+        }
+        "lambda" => {
+            expect_arity(operator, tail, 2)?;
+            let binder = expect_symbol(&tail[0], "lambda binder")?;
+            if env.iter().any(|(name, _)| name == &binder) {
+                return Err(format!("lambda binder '{binder}' is already bound"));
+            }
+            Ok(Value::Closure(Closure {
+                binder,
+                body: tail[1].clone(),
+                env: env.clone(),
+            }))
+        }
+        "var" => {
+            expect_arity(operator, tail, 1)?;
+            let name = expect_symbol(&tail[0], "var name")?;
+            lookup_var(env, &name)
+                .cloned()
+                .ok_or_else(|| format!("unbound variable '{name}'"))
+        }
+        "app" => {
+            expect_arity(operator, tail, 2)?;
+            let function = eval(&tail[0], env)?;
+            let arg = eval(&tail[1], env)?;
+            apply(function, arg)
+        }
+        "atom" => {
+            expect_arity(operator, tail, 1)?;
+            Ok(Value::Bool(eval(&tail[0], env)?.is_atom()))
+        }
+        "atom_eq" => {
+            expect_arity(operator, tail, 2)?;
+            let left = eval(&tail[0], env)?;
+            let right = eval(&tail[1], env)?;
+            if !left.is_atom() || !right.is_atom() {
+                return Err("atom_eq expects atom arguments".to_string());
+            }
+            Ok(Value::Bool(left == right))
+        }
+        "car" => {
+            expect_arity(operator, tail, 1)?;
+            match eval(&tail[0], env)? {
+                Value::Cons(head, _) => Ok(*head),
+                _ => Err("car expects a non-empty list".to_string()),
+            }
+        }
+        "cdr" => {
+            expect_arity(operator, tail, 1)?;
+            match eval(&tail[0], env)? {
+                Value::Cons(_, tail) => Ok(*tail),
+                _ => Err("cdr expects a non-empty list".to_string()),
+            }
+        }
+        "cons" => {
+            expect_arity(operator, tail, 2)?;
+            let head = eval(&tail[0], env)?;
+            let rest = eval(&tail[1], env)?;
+            Ok(Value::Cons(Box::new(head), Box::new(rest)))
+        }
+        _ => Err(format!("unknown form '{operator}'")),
     }
-
-    let mut function = eval(head, env)?;
-    for arg in tail {
-        let value = eval(arg, env)?;
-        function = apply(function, value)?;
-    }
-
-    Ok(function)
 }
 
 fn expect_arity(operator: &str, args: &[Expr], expected: usize) -> ClickResult<()> {
@@ -281,6 +307,13 @@ fn expect_arity(operator: &str, args: &[Expr], expected: usize) -> ClickResult<(
             "{operator} expects {expected} argument(s), got {}",
             args.len()
         ))
+    }
+}
+
+fn expect_symbol(expr: &Expr, role: &str) -> ClickResult<String> {
+    match expr {
+        Expr::Symbol(symbol) => Ok(symbol.clone()),
+        _ => Err(format!("{role} must be an atom")),
     }
 }
 
@@ -306,96 +339,20 @@ fn quote_symbol(symbol: &str) -> Value {
     }
 }
 
-fn env_to_value(env: &[Value]) -> Value {
-    let mut result = Value::Nil;
-    for value in env.iter().rev() {
-        result = Value::Cons(Box::new(value.clone()), Box::new(result));
-    }
-    result
-}
-
-fn make_closure(body: &Expr, env: &[Value]) -> ClickResult<Value> {
-    Ok(make_list(vec![
-        Value::Atom("closure".to_string()),
-        quote_expr(body)?,
-        env_to_value(env),
-    ]))
-}
-
-fn make_list(items: Vec<Value>) -> Value {
-    let mut result = Value::Nil;
-    for item in items.into_iter().rev() {
-        result = Value::Cons(Box::new(item), Box::new(result));
-    }
-    result
+fn lookup_var<'a>(env: &'a Env, name: &str) -> Option<&'a Value> {
+    env.iter()
+        .rev()
+        .find(|(binding, _)| binding == name)
+        .map(|(_, value)| value)
 }
 
 fn apply(function: Value, arg: Value) -> ClickResult<Value> {
-    match unpack_closure(function)? {
-        Some((body, env)) => {
-            let mut next_env = Vec::with_capacity(env.len() + 1);
-            next_env.push(arg);
-            next_env.extend(env);
-            eval(&body, &next_env)
+    match function {
+        Value::Closure(closure) => {
+            let mut next_env = closure.env;
+            next_env.push((closure.binder, arg));
+            eval(&closure.body, &next_env)
         }
-        None => Err("attempted to call a non-function".to_string()),
-    }
-}
-
-fn unpack_closure(value: Value) -> ClickResult<Option<(Expr, Vec<Value>)>> {
-    let Value::Cons(head, tail) = value else {
-        return Ok(None);
-    };
-
-    let Value::Atom(tag) = *head else {
-        return Ok(None);
-    };
-
-    if tag != "closure" {
-        return Ok(None);
-    }
-
-    let parts = proper_list_to_vec(*tail)?;
-    if parts.len() != 2 {
-        return Err("closure expects a body and an environment".to_string());
-    }
-
-    let mut parts = parts.into_iter();
-    let body = value_to_expr(parts.next().expect("closure body should exist"))?;
-    let env = proper_list_to_vec(parts.next().expect("closure env should exist"))
-        .map_err(|_| "closure environment must be a proper list".to_string())?;
-
-    Ok(Some((body, env)))
-}
-
-fn proper_list_to_vec(value: Value) -> ClickResult<Vec<Value>> {
-    let mut current = value;
-    let mut items = Vec::new();
-
-    loop {
-        match current {
-            Value::Nil => return Ok(items),
-            Value::Cons(head, tail) => {
-                items.push(*head);
-                current = *tail;
-            }
-            _ => return Err("expected a proper list".to_string()),
-        }
-    }
-}
-
-fn value_to_expr(value: Value) -> ClickResult<Expr> {
-    match value {
-        Value::Atom(symbol) => Ok(Expr::Symbol(symbol)),
-        Value::Bool(true) => Ok(Expr::Symbol("true".to_string())),
-        Value::Bool(false) => Ok(Expr::Symbol("false".to_string())),
-        Value::Nil => Ok(Expr::Symbol("nil".to_string())),
-        Value::Cons(_, _) => {
-            let items = proper_list_to_vec(value)?
-                .into_iter()
-                .map(value_to_expr)
-                .collect::<ClickResult<Vec<_>>>()?;
-            Ok(Expr::List(items))
-        }
+        _ => Err("attempted to call a non-function".to_string()),
     }
 }

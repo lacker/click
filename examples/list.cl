@@ -1,2 +1,2 @@
 #!/usr/bin/env click
-((lambda (car stack)) 'a)
+(app (lambda x (cons (var x) (cons 'b nil))) 'a)

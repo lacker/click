@@ -37,6 +37,7 @@ It's not that we will use these, exactly. But it's a demonstration that the kern
 * Implement some basic types, typeclasses, type-ish things.
 Bool
 Nat
+Code - a type that represents Click code itself
 List<T>
 "Total function"
 Dependent types, like perhaps Vec<T, n>
@@ -49,7 +50,7 @@ Addition is commutative and associative
 
 ## Current Kernel
 
-I'm not happy with the current kernel. We need to rethink and rework.
+This is still a prototype kernel.
 
 The current kernel has:
 
@@ -60,52 +61,27 @@ The current kernel has:
 - `car`
 - `cdr`
 - `cons`
+- `var`
+- `app`
 - `lambda`
-- `stack`
 - `nil`
 - `true`
 - `false`
 
 Ordinary symbols do not self-evaluate.
 
-### Closures
-
-The current prototype uses proper lexical closures.
-
-Conceptually:
+Non-atomic code forms are tagged lists. For example:
 
 ```lisp
-(lambda body)  ==>  (closure body env)
+(var x)
+(app f a)
+(lambda x body)
 ```
 
-and application means:
+Variables are represented explicitly by name.
 
-```lisp
-(apply (closure body env) arg)
-  = evaluate body (cons arg env)
-```
+`lambda` binds a name. Using a name that is already bound in the current lexical
+context is malformed.
 
-In the prototype, closures are explicit list data:
-
-```lisp
-(closure body env)
-```
-
-Malformed closures are allowed as ordinary data, but applying them is an
-error.
-
-I feel like closures are a bad design, but I'm not entirely sure why.
-
-### `stack`
-
-The current prototype also exposes the lexical environment through `stack`.
-
-Examples:
-
-```lisp
-((lambda stack) 'a)                  ; => (a)
-((lambda (car stack)) 'a)            ; => a
-(((lambda (lambda (car (cdr stack)))) 'a) 'b)  ; => a
-```
-
-I feel like this is a bad design too. Just super ugly. Better to just bite the bullet and having some sort of names and bindings.
+The evaluator still uses lexical closures internally, but closures are not part
+of Click data.

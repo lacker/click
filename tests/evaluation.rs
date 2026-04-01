@@ -35,19 +35,16 @@ macro_rules! err {
 
 #[test]
 fn evaluation_cases() {
-    // Add new evaluation checks here. Each row is just expression text plus
-    // the rendered value, or an expected error substring.
     let cases = [
         err!(
             "bare atoms do not self evaluate",
             "hello",
             "unbound atom 'hello'"
         ),
-        ok!("stack is empty at top level", "stack", "nil"),
         ok!("quote builds a list", "(quote (a b c))", "(a b c)"),
         ok!("quote shorthand", "'(a b c)", "(a b c)"),
         ok!("quote returns literal atoms", "'hello", "hello"),
-        ok!("quote leaves stack as data", "'stack", "stack"),
+        ok!("quote leaves code shapes as data", "'(var x)", "(var x)"),
         ok!("atom is false for lists", "(atom (quote (a b)))", "false"),
         ok!("atom is true for quoted atoms", "(atom 'hello)", "true"),
         ok!(
@@ -69,34 +66,64 @@ fn evaluation_cases() {
         ok!("if treats false as falsey", "(if false 'yes 'no)", "no"),
         ok!("if treats atoms as truthy", "(if 'maybe 'yes 'no)", "yes"),
         ok!(
-            "lambda returns explicit closures",
-            "(lambda stack)",
-            "(closure stack nil)"
+            "lambda produces an internal closure value",
+            "(lambda x (var x))",
+            "#<closure>"
         ),
         ok!(
-            "closures are inspectable data",
-            "(car (lambda stack))",
-            "closure"
-        ),
-        ok!(
-            "calling lambda pushes onto stack",
-            "((lambda stack) 'a)",
-            "(a)"
-        ),
-        ok!(
-            "car stack reads the nearest bound value",
-            "((lambda (car stack)) 'a)",
+            "app applies a named variable binder",
+            "(app (lambda x (var x)) 'a)",
             "a"
         ),
         ok!(
-            "cdr stack reaches outer bindings",
-            "(((lambda (lambda (car (cdr stack)))) 'a) 'b)",
-            "a"
-        ),
-        ok!(
-            "lambda captures lexical environment",
-            "(((lambda (lambda (car (cdr stack)))) 'outer) 'inner)",
+            "app nests explicitly",
+            "(app (app (lambda x (lambda y (var x))) 'outer) 'inner)",
             "outer"
+        ),
+        ok!(
+            "closures capture lexical environment",
+            "(app (app (lambda x (lambda y (cons (var x) (cons (var y) nil)))) 'outer) 'inner)",
+            "(outer inner)"
+        ),
+        ok!(
+            "keywords can be used as variable names",
+            "(app (lambda if (var if)) 'a)",
+            "a"
+        ),
+        err!(
+            "top level var must be bound",
+            "(var x)",
+            "unbound variable 'x'"
+        ),
+        err!(
+            "app rejects non-functions",
+            "(app 'a 'b)",
+            "attempted to call a non-function"
+        ),
+        err!(
+            "old implicit application syntax is rejected",
+            "((lambda x (var x)) 'a)",
+            "form heads must be keyword atoms"
+        ),
+        err!(
+            "lambda binder must be an atom",
+            "(lambda '(x) (var x))",
+            "lambda binder must be an atom"
+        ),
+        err!(
+            "var name must be an atom",
+            "(var '(x))",
+            "var name must be an atom"
+        ),
+        err!(
+            "lambda rejects duplicate binders in scope",
+            "(app (lambda x (lambda x (var x))) 'a)",
+            "lambda binder 'x' is already bound"
+        ),
+        err!(
+            "unknown form tags are rejected",
+            "(hello 'a)",
+            "unknown form 'hello'"
         ),
         err!(
             "car nil is undefined",
@@ -127,21 +154,6 @@ fn evaluation_cases() {
             "cons rejects unquoted atoms",
             "(cons a '(b c))",
             "unbound atom 'a'"
-        ),
-        err!(
-            "top-level stack is empty",
-            "(car stack)",
-            "car expects a non-empty list"
-        ),
-        err!(
-            "calling a non-function is an error",
-            "('a 'b)",
-            "attempted to call a non-function"
-        ),
-        err!(
-            "malformed closure values are rejected",
-            "((quote (closure stack)) 'a)",
-            "closure expects a body and an environment"
         ),
     ];
 
