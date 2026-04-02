@@ -123,18 +123,37 @@ fn run_token_core_eval(term: &str) -> String {
     eval(&apply_all(evaluator, &[quoted_term, "nil".to_string()]))
 }
 
-fn run_token_core_typecheck(term: &str) -> String {
+fn run_token_core_infer(term: &str) -> String {
     let assoc_lookup = load_assoc_lookup();
     let alpha_eq = load_alpha_eq();
     let subst = load_subst();
     let whnf = load_whnf();
     let worker = apply_all(
-        load("bootstrap/token_core/typecheck.cl"),
+        load("bootstrap/token_core/infer.cl"),
         &[assoc_lookup, alpha_eq, subst, whnf],
     );
-    let typechecker = close_recursive(worker);
+    let infer = close_recursive(worker);
     let quoted_term = format!("(quote {term})");
-    eval(&apply_all(typechecker, &[quoted_term, "nil".to_string()]))
+    eval(&apply_all(infer, &[quoted_term, "nil".to_string()]))
+}
+
+fn run_token_core_typecheck(term: &str, expected_type: &str) -> String {
+    let assoc_lookup = load_assoc_lookup();
+    let alpha_eq = load_alpha_eq();
+    let subst = load_subst();
+    let whnf = load_whnf();
+    let infer_worker = apply_all(
+        load("bootstrap/token_core/infer.cl"),
+        &[assoc_lookup.clone(), alpha_eq.clone(), subst, whnf.clone()],
+    );
+    let infer = close_recursive(infer_worker);
+    let typechecker = apply_all(load("bootstrap/token_core/typecheck.cl"), &[infer, alpha_eq, whnf]);
+    let quoted_term = format!("(quote {term})");
+    let quoted_expected = format!("(quote {expected_type})");
+    eval(&apply_all(
+        typechecker,
+        &[quoted_term, quoted_expected, "nil".to_string()],
+    ))
 }
 
 fn load_bool_type() -> String {
@@ -309,17 +328,17 @@ fn subst_replaces_free_variables_and_respects_binders() {
 
 #[test]
 fn bool_layer_terms_typecheck() {
-    assert_eq!(run_token_core_typecheck(&load_bool_type()), "(ok type)");
+    assert_eq!(run_token_core_infer(&load_bool_type()), "(ok type)");
     assert_eq!(
-        run_token_core_typecheck(&load_bool_true()),
+        run_token_core_infer(&load_bool_true()),
         "(ok (pi A type (pi t (var A) (pi f (var A) (var A)))))"
     );
     assert_eq!(
-        run_token_core_typecheck(&load_bool_false()),
+        run_token_core_infer(&load_bool_false()),
         "(ok (pi A type (pi t (var A) (pi f (var A) (var A)))))"
     );
     assert_eq!(
-        run_token_core_typecheck(&load_bool_if()),
+        run_token_core_infer(&load_bool_if()),
         "(ok (pi b (pi A type (pi t (var A) (pi f (var A) (var A)))) (pi A type (pi t (var A) (pi f (var A) (var A))))))"
     );
 }
@@ -327,15 +346,15 @@ fn bool_layer_terms_typecheck() {
 #[test]
 fn proof_terms_typecheck() {
     assert_eq!(
-        run_token_core_typecheck(&load_eq_type()),
+        run_token_core_infer(&load_eq_type()),
         "(ok (pi A type (pi x (var A) (pi y (var A) type))))"
     );
     assert_eq!(
-        run_token_core_typecheck(&load_refl()),
+        run_token_core_infer(&load_refl()),
         "(ok (pi A type (pi x (var A) (pi P (pi z (var A) type) (pi px (app (var P) (var x)) (app (var P) (var x)))))))"
     );
     assert_eq!(
-        run_token_core_typecheck(&apply_all(
+        run_token_core_infer(&apply_all(
             load_refl(),
             &["type".to_string(), "(pi z type type)".to_string()],
         )),
@@ -513,25 +532,25 @@ fn token_core_eval_reports_errors() {
 }
 
 #[test]
-fn token_core_typecheck_accepts_small_terms() {
-    assert_eq!(run_token_core_typecheck("type"), "(ok type)");
-    assert_eq!(run_token_core_typecheck("(pi x type type)"), "(ok type)");
+fn token_core_infer_accepts_small_terms() {
+    assert_eq!(run_token_core_infer("type"), "(ok type)");
+    assert_eq!(run_token_core_infer("(pi x type type)"), "(ok type)");
     assert_eq!(
-        run_token_core_typecheck("(lambda x type (var x))"),
+        run_token_core_infer("(lambda x type (var x))"),
         "(ok (pi x type type))"
     );
     assert_eq!(
-        run_token_core_typecheck("(app (lambda x type (var x)) type)"),
+        run_token_core_infer("(app (lambda x type (var x)) type)"),
         "(ok type)"
     );
     assert_eq!(
-        run_token_core_typecheck(
+        run_token_core_infer(
             "(app (lambda f (pi x type type) (app (var f) type)) (lambda y type (var y)))"
         ),
         "(ok type)"
     );
     assert_eq!(
-        run_token_core_typecheck(
+        run_token_core_infer(
             "(app (lambda f (app (lambda T type (pi x (var T) (var T))) type) (app (var f) type)) (lambda y type (var y)))"
         ),
         "(ok type)"
@@ -539,25 +558,53 @@ fn token_core_typecheck_accepts_small_terms() {
 }
 
 #[test]
-fn token_core_typecheck_reports_errors() {
+fn token_core_infer_reports_errors() {
     assert_eq!(
-        run_token_core_typecheck("(var x)"),
+        run_token_core_infer("(var x)"),
         "(err unbound-variable)"
     );
     assert_eq!(
-        run_token_core_typecheck("(lambda x type (lambda x type (var x)))"),
+        run_token_core_infer("(lambda x type (lambda x type (var x)))"),
         "(err duplicate-binder)"
     );
     assert_eq!(
-        run_token_core_typecheck("(pi x (lambda y type (var y)) type)"),
+        run_token_core_infer("(pi x (lambda y type (var y)) type)"),
         "(err bad-domain-type)"
     );
     assert_eq!(
-        run_token_core_typecheck("(app (lambda x type (var x)) (lambda y type (var y)))"),
+        run_token_core_infer("(app (lambda x type (var x)) (lambda y type (var y)))"),
         "(err argument-type-mismatch)"
     );
     assert_eq!(
-        run_token_core_typecheck("(lambda x type)"),
+        run_token_core_infer("(lambda x type)"),
         "(err bad-lambda)"
+    );
+}
+
+#[test]
+fn token_core_typecheck_accepts_expected_types() {
+    assert_eq!(run_token_core_typecheck("type", "type"), "(ok type)");
+    assert_eq!(
+        run_token_core_typecheck("(lambda x type (var x))", "(pi y type type)"),
+        "(ok (pi y type type))"
+    );
+    assert_eq!(
+        run_token_core_typecheck(
+            &load_refl(),
+            "(pi A type (pi x (var A) (pi P (pi z (var A) type) (pi px (app (var P) (var x)) (app (var P) (var x))))))"
+        ),
+        "(ok (pi A type (pi x (var A) (pi P (pi z (var A) type) (pi px (app (var P) (var x)) (app (var P) (var x)))))))"
+    );
+}
+
+#[test]
+fn token_core_typecheck_reports_mismatches() {
+    assert_eq!(
+        run_token_core_typecheck("(lambda x type (var x))", "(pi y type (pi z type type))"),
+        "(err type-mismatch)"
+    );
+    assert_eq!(
+        run_token_core_typecheck("(app type type)", "type"),
+        "(err not-a-pi)"
     );
 }

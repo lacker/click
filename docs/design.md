@@ -97,11 +97,21 @@ probe showed that this is the cleaner operational path: it avoids the
 alpha-renaming problems that appear quickly in substitution-based evaluation of
 named syntax.
 
-The bootstrap token-core typechecker now computes types to weak-head normal
-form and compares them up to alpha-equivalence. It does not yet have a full
-normalization-based notion of definitional equality.
+The bootstrap token-core typing story is now split in two: `infer` computes a
+term's type, and `typecheck` checks a term against an expected type. The
+current conversion rule inside that checker is still modest: it computes types
+to weak-head normal form and compares them up to alpha-equivalence, not full
+normalization-based definitional equality.
 
 The first proof terms now exist on top of that token core: a Leibniz-style
 `Eq` proposition and a `refl` proof term. So the current state is no longer
 just "typed programs"; it already includes basic propositions-as-types and
 proof terms.
+
+The next proof step is already informative too. A trivial computation lemma
+like `if_true` is not yet comfortable in the current system. `Eq` and `refl`
+work, but proving that `(if true t f)` equals `t` under an arbitrary predicate
+pushes past the current weak-head comparison story. That suggests at least one
+more piece is needed before serious proof engineering: either stronger
+definitional equality, or a richer checking story than the current
+infer-then-compare wrapper.

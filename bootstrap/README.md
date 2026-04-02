@@ -35,12 +35,15 @@ Current files:
 - `token_core/eval_env.cl`
   A self-hosted evaluator for closed quoted token-core terms, using explicit
   closure/environment values.
+- `token_core/infer.cl`
+  A self-hosted type inferencer for the typed token-core experiment.
 - `token_core/subst.cl`
   A capture-avoiding substitution helper for the token-core syntax.
 - `token_core/typecheck.cl`
-  A self-hosted typechecker for the typed token-core experiment. It currently
-  computes types to weak-head normal form and compares them up to
-  alpha-equivalence, not full normalization.
+  A goal-directed typechecker for the typed token-core experiment. It checks a
+  quoted term against an expected type by calling `infer.cl`, then comparing
+  the inferred and expected types up to weak-head computation and
+  alpha-equivalence.
 - `data/bool_type.cl`
   A Church-encoded `Bool` type.
 - `data/bool_true.cl`

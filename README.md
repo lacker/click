@@ -89,6 +89,7 @@ The larger self-hosted experiments now live in:
 - [`bootstrap/named_core/eval.cl`](bootstrap/named_core/eval.cl)
 - [`bootstrap/named_core/wf.cl`](bootstrap/named_core/wf.cl)
 - [`bootstrap/token_core/eval_env.cl`](bootstrap/token_core/eval_env.cl)
+- [`bootstrap/token_core/infer.cl`](bootstrap/token_core/infer.cl)
 - [`bootstrap/token_core/subst.cl`](bootstrap/token_core/subst.cl)
 - [`bootstrap/token_core/typecheck.cl`](bootstrap/token_core/typecheck.cl)
 - [`bootstrap/token_core/wf.cl`](bootstrap/token_core/wf.cl)
@@ -106,9 +107,11 @@ The larger self-hosted experiments now live in:
 - a recursive token-core checker for quoted terms like `(lambda x type (var x))`
 - a token-core evaluator for closed quoted terms built around explicit
   closure/environment values
-- a self-hosted token-core typechecker for quoted terms like `(lambda x type (var x))`
-  that currently computes types to weak-head normal form and compares them up to
-  alpha-equivalence
+- a self-hosted token-core inferencer for quoted terms like
+  `(lambda x type (var x))`
+- a goal-directed token-core `typecheck` that checks a quoted term against an
+  expected type, using weak-head computation plus alpha-equivalence for
+  conversion
 
 The first typed `Bool` probe already found the important design lesson:
 evaluation works more cleanly with explicit closure/environment values than
