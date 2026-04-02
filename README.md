@@ -78,9 +78,14 @@ The larger self-hosted experiments now live in:
 - [`bootstrap/base/fix.cl`](bootstrap/base/fix.cl)
 - [`bootstrap/base/assoc.cl`](bootstrap/base/assoc.cl)
 - [`bootstrap/base/equal.cl`](bootstrap/base/equal.cl)
+- [`bootstrap/data/bool_type.cl`](bootstrap/data/bool_type.cl)
+- [`bootstrap/data/bool_true.cl`](bootstrap/data/bool_true.cl)
+- [`bootstrap/data/bool_false.cl`](bootstrap/data/bool_false.cl)
+- [`bootstrap/data/bool_if.cl`](bootstrap/data/bool_if.cl)
 - [`bootstrap/named_core/eval.cl`](bootstrap/named_core/eval.cl)
 - [`bootstrap/named_core/wf.cl`](bootstrap/named_core/wf.cl)
 - [`bootstrap/token_core/eval.cl`](bootstrap/token_core/eval.cl)
+- [`bootstrap/token_core/eval_env.cl`](bootstrap/token_core/eval_env.cl)
 - [`bootstrap/token_core/subst.cl`](bootstrap/token_core/subst.cl)
 - [`bootstrap/token_core/typecheck.cl`](bootstrap/token_core/typecheck.cl)
 - [`bootstrap/token_core/wf.cl`](bootstrap/token_core/wf.cl)
@@ -89,8 +94,15 @@ The larger self-hosted experiments now live in:
 
 - a recursive assoc-list lookup helper
 - a recursive structural equality helper over quoted data
+- a first typed `Bool` layer built on the token core
 - a self-hosted evaluator for the current named core
 - a recursive well-formedness checker for the current named core
 - a recursive token-core checker for quoted terms like `(lambda x type (var x))`
-- a self-hosted token-core evaluator for closed quoted terms
+- a substitution-based token-core evaluator for closed quoted terms
+- a closure/environment-based token-core evaluator for closed quoted terms
 - a self-hosted token-core typechecker for quoted terms like `(lambda x type (var x))`
+
+The first typed `Bool` probe already found the practical split: the
+substitution evaluator needs alpha-renaming to handle binder collisions, while
+the closure/environment evaluator avoids that by carrying environments instead
+of rewriting code during evaluation.

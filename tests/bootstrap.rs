@@ -99,6 +99,14 @@ fn run_token_core_eval(term: &str) -> String {
     eval(&app_expr(evaluator, quoted_term))
 }
 
+fn run_token_core_env_eval(term: &str) -> String {
+    let assoc_lookup = load_assoc_lookup();
+    let worker = apply_all(load("bootstrap/token_core/eval_env.cl"), &[assoc_lookup]);
+    let evaluator = close_recursive(worker);
+    let quoted_term = format!("(quote {term})");
+    eval(&apply_all(evaluator, &[quoted_term, "nil".to_string()]))
+}
+
 fn run_token_core_typecheck(term: &str) -> String {
     let assoc_lookup = load_assoc_lookup();
     let equal = load_equal();
@@ -110,6 +118,22 @@ fn run_token_core_typecheck(term: &str) -> String {
     let typechecker = close_recursive(worker);
     let quoted_term = format!("(quote {term})");
     eval(&apply_all(typechecker, &[quoted_term, "nil".to_string()]))
+}
+
+fn load_bool_type() -> String {
+    load("bootstrap/data/bool_type.cl")
+}
+
+fn load_bool_true() -> String {
+    load("bootstrap/data/bool_true.cl")
+}
+
+fn load_bool_false() -> String {
+    load("bootstrap/data/bool_false.cl")
+}
+
+fn load_bool_if() -> String {
+    load("bootstrap/data/bool_if.cl")
 }
 
 #[test]
@@ -199,6 +223,120 @@ fn subst_replaces_free_variables_and_respects_binders() {
             ],
         )),
         "(lambda y type type)"
+    );
+}
+
+#[test]
+fn bool_layer_terms_typecheck() {
+    assert_eq!(run_token_core_typecheck(&load_bool_type()), "(ok type)");
+    assert_eq!(
+        run_token_core_typecheck(&load_bool_true()),
+        "(ok (pi A type (pi t (var A) (pi f (var A) (var A)))))"
+    );
+    assert_eq!(
+        run_token_core_typecheck(&load_bool_false()),
+        "(ok (pi A type (pi t (var A) (pi f (var A) (var A)))))"
+    );
+    assert_eq!(
+        run_token_core_typecheck(&load_bool_if()),
+        "(ok (pi b (pi A type (pi t (var A) (pi f (var A) (var A)))) (pi A type (pi t (var A) (pi f (var A) (var A))))))"
+    );
+}
+
+#[test]
+fn bool_layer_terms_evaluate() {
+    let then_branch = "type".to_string();
+    let else_branch = "(pi z type type)".to_string();
+
+    assert_eq!(
+        run_token_core_eval(&apply_all(
+            load_bool_true(),
+            &["type".to_string(), then_branch.clone(), else_branch.clone()],
+        )),
+        "(ok type)"
+    );
+    assert_eq!(
+        run_token_core_eval(&apply_all(
+            load_bool_false(),
+            &["type".to_string(), then_branch.clone(), else_branch.clone()],
+        )),
+        "(ok (pi z type type))"
+    );
+}
+
+#[test]
+fn bool_layer_exposes_substitution_freshness_problem() {
+    let then_branch = "type".to_string();
+    let else_branch = "(pi z type type)".to_string();
+
+    assert_eq!(
+        run_token_core_eval(&apply_all(
+            load_bool_if(),
+            &[
+                load_bool_true(),
+                "type".to_string(),
+                then_branch.clone(),
+                else_branch.clone(),
+            ],
+        )),
+        "(err malformed)"
+    );
+    assert_eq!(
+        run_token_core_eval(&apply_all(
+            load_bool_if(),
+            &[
+                load_bool_false(),
+                "type".to_string(),
+                then_branch,
+                else_branch,
+            ],
+        )),
+        "(err malformed)"
+    );
+}
+
+#[test]
+fn bool_layer_works_under_environment_eval() {
+    let then_branch = "type".to_string();
+    let else_branch = "(pi z type type)".to_string();
+
+    assert_eq!(
+        run_token_core_env_eval(&apply_all(
+            load_bool_true(),
+            &["type".to_string(), then_branch.clone(), else_branch.clone()],
+        )),
+        "(ok (type-value))"
+    );
+    assert_eq!(
+        run_token_core_env_eval(&apply_all(
+            load_bool_false(),
+            &["type".to_string(), then_branch.clone(), else_branch.clone()],
+        )),
+        "(ok (pi-value z type type nil))"
+    );
+    assert_eq!(
+        run_token_core_env_eval(&apply_all(
+            load_bool_if(),
+            &[
+                load_bool_true(),
+                "type".to_string(),
+                then_branch.clone(),
+                else_branch.clone(),
+            ],
+        )),
+        "(ok (type-value))"
+    );
+    assert_eq!(
+        run_token_core_env_eval(&apply_all(
+            load_bool_if(),
+            &[
+                load_bool_false(),
+                "type".to_string(),
+                then_branch,
+                else_branch,
+            ],
+        )),
+        "(ok (pi-value z type type nil))"
     );
 }
 
@@ -317,6 +455,23 @@ fn token_core_eval_handles_small_terms() {
 }
 
 #[test]
+fn token_core_env_eval_handles_small_terms() {
+    assert_eq!(run_token_core_env_eval("type"), "(ok (type-value))");
+    assert_eq!(
+        run_token_core_env_eval("(lambda x type (var x))"),
+        "(ok (closure x (var x) nil))"
+    );
+    assert_eq!(
+        run_token_core_env_eval("(pi x type type)"),
+        "(ok (pi-value x type type nil))"
+    );
+    assert_eq!(
+        run_token_core_env_eval("(app (lambda x type (var x)) type)"),
+        "(ok (type-value))"
+    );
+}
+
+#[test]
 fn token_core_eval_reports_errors() {
     assert_eq!(run_token_core_eval("(var x)"), "(err malformed)");
     assert_eq!(
@@ -328,6 +483,23 @@ fn token_core_eval_reports_errors() {
         "(err not-a-function)"
     );
     assert_eq!(run_token_core_eval("(lambda x type)"), "(err malformed)");
+}
+
+#[test]
+fn token_core_env_eval_reports_errors() {
+    assert_eq!(run_token_core_env_eval("(var x)"), "(err unbound-variable)");
+    assert_eq!(
+        run_token_core_env_eval("(app type type)"),
+        "(err not-a-function)"
+    );
+    assert_eq!(
+        run_token_core_env_eval("(lambda x type)"),
+        "(err bad-lambda)"
+    );
+    assert_eq!(
+        run_token_core_env_eval("(app (lambda x type (lambda x type (var x))) type)"),
+        "(err duplicate-binder)"
+    );
 }
 
 #[test]
