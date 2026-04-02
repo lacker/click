@@ -84,7 +84,6 @@ The larger self-hosted experiments now live in:
 - [`bootstrap/data/bool_if.cl`](bootstrap/data/bool_if.cl)
 - [`bootstrap/named_core/eval.cl`](bootstrap/named_core/eval.cl)
 - [`bootstrap/named_core/wf.cl`](bootstrap/named_core/wf.cl)
-- [`bootstrap/token_core/eval.cl`](bootstrap/token_core/eval.cl)
 - [`bootstrap/token_core/eval_env.cl`](bootstrap/token_core/eval_env.cl)
 - [`bootstrap/token_core/subst.cl`](bootstrap/token_core/subst.cl)
 - [`bootstrap/token_core/typecheck.cl`](bootstrap/token_core/typecheck.cl)
@@ -98,11 +97,11 @@ The larger self-hosted experiments now live in:
 - a self-hosted evaluator for the current named core
 - a recursive well-formedness checker for the current named core
 - a recursive token-core checker for quoted terms like `(lambda x type (var x))`
-- a substitution-based token-core evaluator for closed quoted terms
-- a closure/environment-based token-core evaluator for closed quoted terms
+- a token-core evaluator for closed quoted terms built around explicit
+  closure/environment values
 - a self-hosted token-core typechecker for quoted terms like `(lambda x type (var x))`
 
-The first typed `Bool` probe already found the practical split: the
-substitution evaluator needs alpha-renaming to handle binder collisions, while
-the closure/environment evaluator avoids that by carrying environments instead
-of rewriting code during evaluation.
+The first typed `Bool` probe already found the important design lesson:
+evaluation works more cleanly with explicit closure/environment values than
+with syntax rewriting, because it avoids alpha-renaming problems during
+beta-reduction.

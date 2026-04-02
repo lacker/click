@@ -91,8 +91,8 @@ substitution over uniquely named binders needs an alpha-renaming or freshening
 step. Without that, independently closed terms can beta-reduce into malformed
 code when binder names collide.
 
-The bootstrap tree now contains both a substitution-based token-core evaluator
-and a closure/environment-based one. They are useful for different reasons:
-the substitution evaluator is closer to a direct syntax-level definition,
-while the closure/environment evaluator avoids rewriting code during
-beta-reduction and handles the current `Bool` probe more cleanly.
+The bootstrap evaluator for the token core now uses explicit
+closure/environment values rather than syntax rewriting. The first `Bool`
+probe showed that this is the cleaner operational path: it avoids the
+alpha-renaming problems that appear quickly in substitution-based evaluation of
+named syntax.

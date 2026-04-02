@@ -26,10 +26,9 @@ Current files:
   A self-hosted evaluator for the current named core.
 - `token_core/wf.cl`
   A well-formedness checker for quoted token-core terms.
-- `token_core/eval.cl`
-  A substitution-based self-hosted evaluator for closed quoted token-core terms.
 - `token_core/eval_env.cl`
-  A closure/environment-based self-hosted evaluator for closed quoted token-core terms.
+  A self-hosted evaluator for closed quoted token-core terms, using explicit
+  closure/environment values.
 - `token_core/subst.cl`
   A capture-avoiding substitution helper for the token-core syntax.
 - `token_core/typecheck.cl`
@@ -43,13 +42,9 @@ Current files:
 - `data/bool_if.cl`
   A small eliminator for the encoded `Bool`.
 
-The current `Bool` probe already exposed a useful split:
-
-- the substitution evaluator is simple and syntax-directed, but the generic
-  eliminator hits the lack of alpha-renaming during substitution when
-  independently closed terms reuse binder names
-- the closure/environment evaluator avoids that problem because it does not
-  rewrite code during beta-reduction
+The current `Bool` probe already exposed one important lesson: evaluation works
+more cleanly with explicit closure/environment values than with syntax
+rewriting, because it avoids alpha-renaming problems during beta-reduction.
 
 `tests/bootstrap.rs` loads these files directly and supplies the concrete test
 inputs from Rust.
