@@ -1,1 +1,425 @@
-(lambda assoc_lookup (lambda equal (lambda subst (lambda recur (lambda term (lambda ctx (app (lambda ok_fn (app (lambda err_fn (if (atom (var term)) (if (atom_eq (var term) 'type) (app (var ok_fn) 'type) (app (var err_fn) 'unknown-atom)) (if (atom (car (var term))) (if (atom_eq (car (var term)) 'var) (if (atom (cdr (var term))) (app (var err_fn) 'bad-var) (if (atom (cdr (cdr (var term)))) (if (atom_eq (cdr (cdr (var term))) nil) (if (atom (car (cdr (var term)))) (app (lambda lookup_result (if (atom (var lookup_result)) (app (var err_fn) 'unbound-variable) (if (atom_eq (car (var lookup_result)) 'found) (app (var ok_fn) (car (cdr (var lookup_result)))) (app (var err_fn) 'bad-lookup-result)))) (app (app (var assoc_lookup) (car (cdr (var term)))) (var ctx))) (app (var err_fn) 'bad-var-name)) (app (var err_fn) 'bad-var)) (app (var err_fn) 'bad-var))) (if (atom_eq (car (var term)) 'app) (if (atom (cdr (var term))) (app (var err_fn) 'bad-app) (if (atom (cdr (cdr (var term)))) (app (var err_fn) 'bad-app) (if (atom (cdr (cdr (cdr (var term))))) (if (atom_eq (cdr (cdr (cdr (var term)))) nil) (app (lambda fun_result (if (atom_eq (car (var fun_result)) 'ok) (app (lambda arg_result (if (atom_eq (car (var arg_result)) 'ok) (app (lambda fun_type (if (atom (var fun_type)) (app (var err_fn) 'not-a-pi) (if (atom (car (var fun_type))) (if (atom_eq (car (var fun_type)) 'pi) (if (atom (cdr (var fun_type))) (app (var err_fn) 'bad-pi) (if (atom (cdr (cdr (var fun_type)))) (app (var err_fn) 'bad-pi) (if (atom (cdr (cdr (cdr (var fun_type))))) (app (var err_fn) 'bad-pi) (if (atom (cdr (cdr (cdr (cdr (var fun_type)))))) (if (atom_eq (cdr (cdr (cdr (cdr (var fun_type))))) nil) (if (atom (car (cdr (var fun_type)))) (if (app (app (var equal) (car (cdr (var arg_result)))) (car (cdr (cdr (var fun_type))))) (app (var ok_fn) (app (app (app (var subst) (car (cdr (cdr (cdr (var fun_type)))))) (car (cdr (var fun_type)))) (car (cdr (cdr (var term)))))) (app (var err_fn) 'argument-type-mismatch)) (app (var err_fn) 'bad-pi)) (app (var err_fn) 'bad-pi)) (app (var err_fn) 'bad-pi))))) (app (var err_fn) 'not-a-pi)) (app (var err_fn) 'not-a-pi)))) (car (cdr (var fun_result)))) (var arg_result))) (app (app (var recur) (car (cdr (cdr (var term))))) (var ctx))) (var fun_result))) (app (app (var recur) (car (cdr (var term)))) (var ctx))) (app (var err_fn) 'bad-app)) (app (var err_fn) 'bad-app)))) (if (atom_eq (car (var term)) 'lambda) (if (atom (cdr (var term))) (app (var err_fn) 'bad-lambda) (if (atom (cdr (cdr (var term)))) (app (var err_fn) 'bad-lambda) (if (atom (cdr (cdr (cdr (var term))))) (app (var err_fn) 'bad-lambda) (if (atom (cdr (cdr (cdr (cdr (var term)))))) (if (atom_eq (cdr (cdr (cdr (cdr (var term))))) nil) (if (atom (car (cdr (var term)))) (app (lambda lookup_result (if (atom (var lookup_result)) (app (lambda domain_result (if (atom_eq (car (var domain_result)) 'ok) (if (app (app (var equal) (car (cdr (var domain_result)))) 'type) (app (lambda body_result (if (atom_eq (car (var body_result)) 'ok) (app (var ok_fn) (cons 'pi (cons (car (cdr (var term))) (cons (car (cdr (cdr (var term)))) (cons (car (cdr (var body_result))) nil))))) (var body_result))) (app (app (var recur) (car (cdr (cdr (cdr (var term)))))) (cons (cons (car (cdr (var term))) (cons (car (cdr (cdr (var term)))) nil)) (var ctx)))) (app (var err_fn) 'bad-domain-type)) (var domain_result))) (app (app (var recur) (car (cdr (cdr (var term))))) (var ctx))) (app (var err_fn) 'duplicate-binder))) (app (app (var assoc_lookup) (car (cdr (var term)))) (var ctx))) (app (var err_fn) 'bad-binder)) (app (var err_fn) 'bad-lambda)) (app (var err_fn) 'bad-lambda))))) (if (atom_eq (car (var term)) 'pi) (if (atom (cdr (var term))) (app (var err_fn) 'bad-pi) (if (atom (cdr (cdr (var term)))) (app (var err_fn) 'bad-pi) (if (atom (cdr (cdr (cdr (var term))))) (app (var err_fn) 'bad-pi) (if (atom (cdr (cdr (cdr (cdr (var term)))))) (if (atom_eq (cdr (cdr (cdr (cdr (var term))))) nil) (if (atom (car (cdr (var term)))) (app (lambda lookup_result (if (atom (var lookup_result)) (app (lambda domain_result (if (atom_eq (car (var domain_result)) 'ok) (if (app (app (var equal) (car (cdr (var domain_result)))) 'type) (app (lambda body_result (if (atom_eq (car (var body_result)) 'ok) (if (app (app (var equal) (car (cdr (var body_result)))) 'type) (app (var ok_fn) 'type) (app (var err_fn) 'bad-codomain-type)) (var body_result))) (app (app (var recur) (car (cdr (cdr (cdr (var term)))))) (cons (cons (car (cdr (var term))) (cons (car (cdr (cdr (var term)))) nil)) (var ctx)))) (app (var err_fn) 'bad-domain-type)) (var domain_result))) (app (app (var recur) (car (cdr (cdr (var term))))) (var ctx))) (app (var err_fn) 'duplicate-binder))) (app (app (var assoc_lookup) (car (cdr (var term)))) (var ctx))) (app (var err_fn) 'bad-binder)) (app (var err_fn) 'bad-pi)) (app (var err_fn) 'bad-pi))))) (app (var err_fn) 'unknown-form))))) (app (var err_fn) 'non-atomic-head)))) (lambda err_value (cons 'err (cons (var err_value) nil))))) (lambda ok_value (cons 'ok (cons (var ok_value) nil))))))))))
+(lambda
+  assoc_lookup
+  (lambda
+    alpha_eq
+    (lambda
+      subst
+      (lambda
+        whnf
+        (lambda
+          recur
+          (lambda
+            term
+            (lambda
+              ctx
+              (app
+                (lambda
+                  ok_fn
+                  (app
+                    (lambda
+                      err_fn
+                      (if
+                        (atom (var term))
+                        (if
+                          (atom_eq (var term)
+                            'type)
+                          (app
+                            (var ok_fn)
+                            'type)
+                          (app
+                            (var err_fn)
+                            'unknown-atom))
+                        (if
+                          (atom (car (var term)))
+                          (if
+                            (atom_eq (car (var term))
+                              'var)
+                            (if
+                              (atom (cdr (var term)))
+                              (app
+                                (var err_fn)
+                                'bad-var)
+                              (if
+                                (atom (cdr (cdr (var term))))
+                                (if
+                                  (atom_eq (cdr (cdr (var term)))
+                                    nil)
+                                  (if
+                                    (atom (car (cdr (var term))))
+                                    (app
+                                      (lambda
+                                        lookup_result
+                                        (if
+                                          (atom (var lookup_result))
+                                          (app
+                                            (var err_fn)
+                                            'unbound-variable)
+                                          (if
+                                            (atom_eq (car (var lookup_result))
+                                              'found)
+                                            (app
+                                              (var ok_fn)
+                                              (car (cdr (var lookup_result))))
+                                            (app
+                                              (var err_fn)
+                                              'bad-lookup-result))))
+                                      (app
+                                        (app
+                                          (var assoc_lookup)
+                                          (car (cdr (var term))))
+                                        (var ctx)))
+                                    (app
+                                      (var err_fn)
+                                      'bad-var-name))
+                                  (app
+                                    (var err_fn)
+                                    'bad-var))
+                                (app
+                                  (var err_fn)
+                                  'bad-var)))
+                            (if
+                              (atom_eq (car (var term))
+                                'app)
+                              (if
+                                (atom (cdr (var term)))
+                                (app
+                                  (var err_fn)
+                                  'bad-app)
+                                (if
+                                  (atom (cdr (cdr (var term))))
+                                  (app
+                                    (var err_fn)
+                                    'bad-app)
+                                  (if
+                                    (atom (cdr (cdr (cdr (var term)))))
+                                    (if
+                                      (atom_eq (cdr (cdr (cdr (var term))))
+                                        nil)
+                                      (app
+                                        (lambda
+                                          fun_result
+                                          (if
+                                            (atom_eq (car (var fun_result))
+                                              'ok)
+                                            (app
+                                              (lambda
+                                                arg_result
+                                                (if
+                                                  (atom_eq (car (var arg_result))
+                                                    'ok)
+                                                  (app
+                                                    (lambda
+                                                      fun_type_whnf
+                                                      (if
+                                                        (atom (var fun_type_whnf))
+                                                        (app
+                                                          (var err_fn)
+                                                          'not-a-pi)
+                                                        (if
+                                                          (atom (car (var fun_type_whnf)))
+                                                          (if
+                                                            (atom_eq (car (var fun_type_whnf))
+                                                              'pi)
+                                                            (if
+                                                              (atom (cdr (var fun_type_whnf)))
+                                                              (app
+                                                                (var err_fn)
+                                                                'bad-pi)
+                                                              (if
+                                                                (atom (cdr (cdr (var fun_type_whnf))))
+                                                                (app
+                                                                  (var err_fn)
+                                                                  'bad-pi)
+                                                                (if
+                                                                  (atom (cdr (cdr (cdr (var fun_type_whnf)))))
+                                                                  (app
+                                                                    (var err_fn)
+                                                                    'bad-pi)
+                                                                  (if
+                                                                    (atom (cdr (cdr (cdr (cdr (var fun_type_whnf))))))
+                                                                    (if
+                                                                      (atom_eq (cdr (cdr (cdr (cdr (var fun_type_whnf)))))
+                                                                        nil)
+                                                                      (if
+                                                                        (atom (car (cdr (var fun_type_whnf))))
+                                                                        (if
+                                                                          (app
+                                                                            (app
+                                                                              (var alpha_eq)
+                                                                              (app
+                                                                                (var whnf)
+                                                                                (car (cdr (var arg_result)))))
+                                                                            (app
+                                                                              (var whnf)
+                                                                              (car (cdr (cdr (var fun_type_whnf))))))
+                                                                          (app
+                                                                            (var ok_fn)
+                                                                            (app
+                                                                              (var whnf)
+                                                                              (app
+                                                                                (app
+                                                                                  (app
+                                                                                    (var subst)
+                                                                                    (car (cdr (cdr (cdr (var fun_type_whnf))))))
+                                                                                  (car (cdr (var fun_type_whnf))))
+                                                                                (car (cdr (cdr (var term)))))))
+                                                                          (app
+                                                                            (var err_fn)
+                                                                            'argument-type-mismatch))
+                                                                        (app
+                                                                          (var err_fn)
+                                                                          'bad-pi))
+                                                                      (app
+                                                                        (var err_fn)
+                                                                        'bad-pi))
+                                                                    (app
+                                                                      (var err_fn)
+                                                                      'bad-pi)))))
+                                                            (app
+                                                              (var err_fn)
+                                                              'not-a-pi))
+                                                          (app
+                                                            (var err_fn)
+                                                            'not-a-pi))))
+                                                    (app
+                                                      (var whnf)
+                                                      (car (cdr (var fun_result)))))
+                                                  (var arg_result)))
+                                              (app
+                                                (app
+                                                  (var recur)
+                                                  (car (cdr (cdr (var term)))))
+                                                (var ctx)))
+                                            (var fun_result)))
+                                        (app
+                                          (app
+                                            (var recur)
+                                            (car (cdr (var term))))
+                                          (var ctx)))
+                                      (app
+                                        (var err_fn)
+                                        'bad-app))
+                                    (app
+                                      (var err_fn)
+                                      'bad-app))))
+                              (if
+                                (atom_eq (car (var term))
+                                  'lambda)
+                                (if
+                                  (atom (cdr (var term)))
+                                  (app
+                                    (var err_fn)
+                                    'bad-lambda)
+                                  (if
+                                    (atom (cdr (cdr (var term))))
+                                    (app
+                                      (var err_fn)
+                                      'bad-lambda)
+                                    (if
+                                      (atom (cdr (cdr (cdr (var term)))))
+                                      (app
+                                        (var err_fn)
+                                        'bad-lambda)
+                                      (if
+                                        (atom (cdr (cdr (cdr (cdr (var term))))))
+                                        (if
+                                          (atom_eq (cdr (cdr (cdr (cdr (var term)))))
+                                            nil)
+                                          (if
+                                            (atom (car (cdr (var term))))
+                                            (app
+                                              (lambda
+                                                lookup_result
+                                                (if
+                                                  (atom (var lookup_result))
+                                                  (app
+                                                    (lambda
+                                                      domain_result
+                                                      (if
+                                                        (atom_eq (car (var domain_result))
+                                                          'ok)
+                                                        (if
+                                                          (app
+                                                            (app
+                                                              (var alpha_eq)
+                                                              (app
+                                                                (var whnf)
+                                                                (car (cdr (var domain_result)))))
+                                                            'type)
+                                                          (app
+                                                            (lambda
+                                                              body_result
+                                                              (if
+                                                                (atom_eq (car (var body_result))
+                                                                  'ok)
+                                                                (app
+                                                                  (var ok_fn)
+                                                                  (cons
+                                                                    'pi
+                                                                    (cons
+                                                                      (car (cdr (var term)))
+                                                                      (cons
+                                                                        (car (cdr (cdr (var term))))
+                                                                        (cons
+                                                                          (car (cdr (var body_result)))
+                                                                          nil)))))
+                                                                (var body_result)))
+                                                            (app
+                                                              (app
+                                                                (var recur)
+                                                                (car (cdr (cdr (cdr (var term))))))
+                                                              (cons
+                                                                (cons
+                                                                  (car (cdr (var term)))
+                                                                  (cons
+                                                                    (car (cdr (cdr (var term))))
+                                                                    nil))
+                                                                (var ctx))))
+                                                          (app
+                                                            (var err_fn)
+                                                            'bad-domain-type))
+                                                        (var domain_result)))
+                                                    (app
+                                                      (app
+                                                        (var recur)
+                                                        (car (cdr (cdr (var term)))))
+                                                      (var ctx)))
+                                                  (app
+                                                    (var err_fn)
+                                                    'duplicate-binder)))
+                                              (app
+                                                (app
+                                                  (var assoc_lookup)
+                                                  (car (cdr (var term))))
+                                                (var ctx)))
+                                            (app
+                                              (var err_fn)
+                                              'bad-binder))
+                                          (app
+                                            (var err_fn)
+                                            'bad-lambda))
+                                        (app
+                                          (var err_fn)
+                                          'bad-lambda)))))
+                                (if
+                                  (atom_eq (car (var term))
+                                    'pi)
+                                  (if
+                                    (atom (cdr (var term)))
+                                    (app
+                                      (var err_fn)
+                                      'bad-pi)
+                                    (if
+                                      (atom (cdr (cdr (var term))))
+                                      (app
+                                        (var err_fn)
+                                        'bad-pi)
+                                      (if
+                                        (atom (cdr (cdr (cdr (var term)))))
+                                        (app
+                                          (var err_fn)
+                                          'bad-pi)
+                                        (if
+                                          (atom (cdr (cdr (cdr (cdr (var term))))))
+                                          (if
+                                            (atom_eq (cdr (cdr (cdr (cdr (var term)))))
+                                              nil)
+                                            (if
+                                              (atom (car (cdr (var term))))
+                                              (app
+                                                (lambda
+                                                  lookup_result
+                                                  (if
+                                                    (atom (var lookup_result))
+                                                    (app
+                                                      (lambda
+                                                        domain_result
+                                                        (if
+                                                          (atom_eq (car (var domain_result))
+                                                            'ok)
+                                                          (if
+                                                            (app
+                                                              (app
+                                                                (var alpha_eq)
+                                                                (app
+                                                                  (var whnf)
+                                                                  (car (cdr (var domain_result)))))
+                                                              'type)
+                                                            (app
+                                                              (lambda
+                                                                body_result
+                                                                (if
+                                                                  (atom_eq (car (var body_result))
+                                                                    'ok)
+                                                                  (if
+                                                                    (app
+                                                                      (app
+                                                                        (var alpha_eq)
+                                                                        (app
+                                                                          (var whnf)
+                                                                          (car (cdr (var body_result)))))
+                                                                      'type)
+                                                                    (app
+                                                                      (var ok_fn)
+                                                                      'type)
+                                                                    (app
+                                                                      (var err_fn)
+                                                                      'bad-codomain-type))
+                                                                  (var body_result)))
+                                                              (app
+                                                                (app
+                                                                  (var recur)
+                                                                  (car (cdr (cdr (cdr (var term))))))
+                                                                (cons
+                                                                  (cons
+                                                                    (car (cdr (var term)))
+                                                                    (cons
+                                                                      (car (cdr (cdr (var term))))
+                                                                      nil))
+                                                                  (var ctx))))
+                                                            (app
+                                                              (var err_fn)
+                                                              'bad-domain-type))
+                                                          (var domain_result)))
+                                                      (app
+                                                        (app
+                                                          (var recur)
+                                                          (car (cdr (cdr (var term)))))
+                                                        (var ctx)))
+                                                    (app
+                                                      (var err_fn)
+                                                      'duplicate-binder)))
+                                                (app
+                                                  (app
+                                                    (var assoc_lookup)
+                                                    (car (cdr (var term))))
+                                                  (var ctx)))
+                                              (app
+                                                (var err_fn)
+                                                'bad-binder))
+                                            (app
+                                              (var err_fn)
+                                              'bad-pi))
+                                          (app
+                                            (var err_fn)
+                                            'bad-pi)))))
+                                  (app
+                                    (var err_fn)
+                                    'unknown-form)))))
+                          (app
+                            (var err_fn)
+                            'non-atomic-head))))
+                    (lambda
+                      err_value
+                      (cons
+                        'err
+                        (cons
+                          (var err_value)
+                          nil)))))
+                (lambda
+                  ok_value
+                  (cons
+                    'ok
+                    (cons
+                      (var ok_value)
+                      nil)))))))))))

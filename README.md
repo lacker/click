@@ -78,10 +78,14 @@ The larger self-hosted experiments now live in:
 - [`bootstrap/base/fix.cl`](bootstrap/base/fix.cl)
 - [`bootstrap/base/assoc.cl`](bootstrap/base/assoc.cl)
 - [`bootstrap/base/equal.cl`](bootstrap/base/equal.cl)
+- [`bootstrap/token_core/alpha_eq.cl`](bootstrap/token_core/alpha_eq.cl)
+- [`bootstrap/token_core/whnf.cl`](bootstrap/token_core/whnf.cl)
 - [`bootstrap/data/bool_type.cl`](bootstrap/data/bool_type.cl)
 - [`bootstrap/data/bool_true.cl`](bootstrap/data/bool_true.cl)
 - [`bootstrap/data/bool_false.cl`](bootstrap/data/bool_false.cl)
 - [`bootstrap/data/bool_if.cl`](bootstrap/data/bool_if.cl)
+- [`bootstrap/proofs/eq.cl`](bootstrap/proofs/eq.cl)
+- [`bootstrap/proofs/refl.cl`](bootstrap/proofs/refl.cl)
 - [`bootstrap/named_core/eval.cl`](bootstrap/named_core/eval.cl)
 - [`bootstrap/named_core/wf.cl`](bootstrap/named_core/wf.cl)
 - [`bootstrap/token_core/eval_env.cl`](bootstrap/token_core/eval_env.cl)
@@ -93,15 +97,23 @@ The larger self-hosted experiments now live in:
 
 - a recursive assoc-list lookup helper
 - a recursive structural equality helper over quoted data
+- an alpha-equivalence helper for quoted token-core terms
+- a weak-head reducer for quoted token-core terms
 - a first typed `Bool` layer built on the token core
+- first proof terms: an encoded equality proposition and `refl`
 - a self-hosted evaluator for the current named core
 - a recursive well-formedness checker for the current named core
 - a recursive token-core checker for quoted terms like `(lambda x type (var x))`
 - a token-core evaluator for closed quoted terms built around explicit
   closure/environment values
 - a self-hosted token-core typechecker for quoted terms like `(lambda x type (var x))`
+  that currently computes types to weak-head normal form and compares them up to
+  alpha-equivalence
 
 The first typed `Bool` probe already found the important design lesson:
 evaluation works more cleanly with explicit closure/environment values than
 with syntax rewriting, because it avoids alpha-renaming problems during
 beta-reduction.
+
+The first proof probe is now in place too: the token core can already host a
+Leibniz-style equality type and a `refl` proof term.

@@ -7,6 +7,8 @@ kernel.
   Shared bootstrap terms.
 - `data/`
   First typed library terms defined on top of the token core.
+- `proofs/`
+  First proposition and proof terms on top of the token core.
 - `named_core/`
   Programs for the current named-variable core.
 - `token_core/`
@@ -20,6 +22,10 @@ Current files:
   A recursive lookup function for simple association lists.
 - `base/equal.cl`
   A recursive structural equality function over quoted Click data.
+- `token_core/alpha_eq.cl`
+  A recursive alpha-equivalence checker for quoted token-core terms.
+- `token_core/whnf.cl`
+  A small weak-head reducer for quoted token-core terms.
 - `named_core/wf.cl`
   A well-formedness checker for quoted terms in the current named core.
 - `named_core/eval.cl`
@@ -32,7 +38,9 @@ Current files:
 - `token_core/subst.cl`
   A capture-avoiding substitution helper for the token-core syntax.
 - `token_core/typecheck.cl`
-  A self-hosted typechecker for the typed token-core experiment.
+  A self-hosted typechecker for the typed token-core experiment. It currently
+  computes types to weak-head normal form and compares them up to
+  alpha-equivalence, not full normalization.
 - `data/bool_type.cl`
   A Church-encoded `Bool` type.
 - `data/bool_true.cl`
@@ -41,10 +49,17 @@ Current files:
   The `false` inhabitant of the encoded `Bool`.
 - `data/bool_if.cl`
   A small eliminator for the encoded `Bool`.
+- `proofs/eq.cl`
+  A Leibniz-style equality proposition.
+- `proofs/refl.cl`
+  Reflexivity for the encoded equality proposition.
 
 The current `Bool` probe already exposed one important lesson: evaluation works
 more cleanly with explicit closure/environment values than with syntax
 rewriting, because it avoids alpha-renaming problems during beta-reduction.
+
+The first proof probe is now in place too: the token core can already host an
+encoded equality proposition and a `refl` proof term for it.
 
 `tests/bootstrap.rs` loads these files directly and supplies the concrete test
 inputs from Rust.

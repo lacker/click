@@ -60,8 +60,37 @@ fn load_equal() -> String {
     close_recursive(load("bootstrap/base/equal.cl"))
 }
 
+fn load_alpha_eq() -> String {
+    let assoc_lookup = load_assoc_lookup();
+    let equal = load_equal();
+    let worker = apply_all(
+        load("bootstrap/token_core/alpha_eq.cl"),
+        &[assoc_lookup, equal],
+    );
+    let alpha_eq = close_recursive(worker);
+    format!(
+        "(lambda lhs (lambda rhs {}))",
+        apply_all(
+            &alpha_eq,
+            &[
+                "(var lhs)".to_string(),
+                "(var rhs)".to_string(),
+                "nil".to_string(),
+                "nil".to_string(),
+                "'mark".to_string(),
+            ]
+        )
+    )
+}
+
 fn load_subst() -> String {
     close_recursive(load("bootstrap/token_core/subst.cl"))
+}
+
+fn load_whnf() -> String {
+    let subst = load_subst();
+    let worker = apply_all(load("bootstrap/token_core/whnf.cl"), &[subst]);
+    close_recursive(worker)
 }
 
 fn run_recursive_checker(worker_path: &str, term: &str) -> String {
@@ -96,11 +125,12 @@ fn run_token_core_eval(term: &str) -> String {
 
 fn run_token_core_typecheck(term: &str) -> String {
     let assoc_lookup = load_assoc_lookup();
-    let equal = load_equal();
+    let alpha_eq = load_alpha_eq();
     let subst = load_subst();
+    let whnf = load_whnf();
     let worker = apply_all(
         load("bootstrap/token_core/typecheck.cl"),
-        &[assoc_lookup, equal, subst],
+        &[assoc_lookup, alpha_eq, subst, whnf],
     );
     let typechecker = close_recursive(worker);
     let quoted_term = format!("(quote {term})");
@@ -121,6 +151,14 @@ fn load_bool_false() -> String {
 
 fn load_bool_if() -> String {
     load("bootstrap/data/bool_if.cl")
+}
+
+fn load_eq_type() -> String {
+    load("bootstrap/proofs/eq.cl")
+}
+
+fn load_refl() -> String {
+    load("bootstrap/proofs/refl.cl")
 }
 
 #[test]
@@ -171,6 +209,62 @@ fn equal_matches_nested_lists() {
     assert_eq!(
         eval(&apply_all(&equal, &["'a".to_string(), "'(a)".to_string()],)),
         "false"
+    );
+}
+
+#[test]
+fn alpha_eq_matches_alpha_equivalent_token_core_terms() {
+    let alpha_eq = load_alpha_eq();
+
+    assert_eq!(
+        eval(&apply_all(
+            &alpha_eq,
+            &[
+                "'(pi x type (var x))".to_string(),
+                "'(pi y type (var y))".to_string(),
+            ],
+        )),
+        "true"
+    );
+    assert_eq!(
+        eval(&apply_all(
+            &alpha_eq,
+            &[
+                "'(lambda x type (var x))".to_string(),
+                "'(lambda y type (var y))".to_string(),
+            ],
+        )),
+        "true"
+    );
+    assert_eq!(
+        eval(&apply_all(
+            &alpha_eq,
+            &[
+                "'(lambda x type (var x))".to_string(),
+                "'(lambda y type type)".to_string(),
+            ],
+        )),
+        "false"
+    );
+}
+
+#[test]
+fn whnf_reduces_head_beta_redexes() {
+    let whnf = load_whnf();
+
+    assert_eq!(
+        eval(&apply_all(
+            &whnf,
+            &["'(app (lambda X type (var X)) type)".to_string()],
+        )),
+        "type"
+    );
+    assert_eq!(
+        eval(&apply_all(
+            &whnf,
+            &["'(app (lambda T type (pi x (var T) (var T))) type)".to_string()],
+        )),
+        "(pi x type type)"
     );
 }
 
@@ -227,6 +321,25 @@ fn bool_layer_terms_typecheck() {
     assert_eq!(
         run_token_core_typecheck(&load_bool_if()),
         "(ok (pi b (pi A type (pi t (var A) (pi f (var A) (var A)))) (pi A type (pi t (var A) (pi f (var A) (var A))))))"
+    );
+}
+
+#[test]
+fn proof_terms_typecheck() {
+    assert_eq!(
+        run_token_core_typecheck(&load_eq_type()),
+        "(ok (pi A type (pi x (var A) (pi y (var A) type))))"
+    );
+    assert_eq!(
+        run_token_core_typecheck(&load_refl()),
+        "(ok (pi A type (pi x (var A) (pi P (pi z (var A) type) (pi px (app (var P) (var x)) (app (var P) (var x)))))))"
+    );
+    assert_eq!(
+        run_token_core_typecheck(&apply_all(
+            load_refl(),
+            &["type".to_string(), "(pi z type type)".to_string()],
+        )),
+        "(ok (pi P (pi z type type) (pi px (app (var P) (pi z type type)) (app (var P) (pi z type type)))))"
     );
 }
 
@@ -409,6 +522,18 @@ fn token_core_typecheck_accepts_small_terms() {
     );
     assert_eq!(
         run_token_core_typecheck("(app (lambda x type (var x)) type)"),
+        "(ok type)"
+    );
+    assert_eq!(
+        run_token_core_typecheck(
+            "(app (lambda f (pi x type type) (app (var f) type)) (lambda y type (var y)))"
+        ),
+        "(ok type)"
+    );
+    assert_eq!(
+        run_token_core_typecheck(
+            "(app (lambda f (app (lambda T type (pi x (var T) (var T))) type) (app (var f) type)) (lambda y type (var y)))"
+        ),
         "(ok type)"
     );
 }

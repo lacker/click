@@ -96,3 +96,12 @@ closure/environment values rather than syntax rewriting. The first `Bool`
 probe showed that this is the cleaner operational path: it avoids the
 alpha-renaming problems that appear quickly in substitution-based evaluation of
 named syntax.
+
+The bootstrap token-core typechecker now computes types to weak-head normal
+form and compares them up to alpha-equivalence. It does not yet have a full
+normalization-based notion of definitional equality.
+
+The first proof terms now exist on top of that token core: a Leibniz-style
+`Eq` proposition and a `refl` proof term. So the current state is no longer
+just "typed programs"; it already includes basic propositions-as-types and
+proof terms.
