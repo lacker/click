@@ -76,10 +76,21 @@ The larger self-hosted experiments now live in:
 
 - [`bootstrap/README.md`](bootstrap/README.md)
 - [`bootstrap/base/fix.cl`](bootstrap/base/fix.cl)
+- [`bootstrap/base/assoc.cl`](bootstrap/base/assoc.cl)
+- [`bootstrap/base/equal.cl`](bootstrap/base/equal.cl)
+- [`bootstrap/named_core/eval.cl`](bootstrap/named_core/eval.cl)
 - [`bootstrap/named_core/wf.cl`](bootstrap/named_core/wf.cl)
+- [`bootstrap/token_core/eval.cl`](bootstrap/token_core/eval.cl)
+- [`bootstrap/token_core/subst.cl`](bootstrap/token_core/subst.cl)
+- [`bootstrap/token_core/typecheck.cl`](bootstrap/token_core/typecheck.cl)
 - [`bootstrap/token_core/wf.cl`](bootstrap/token_core/wf.cl)
 
 [`tests/bootstrap.rs`](tests/bootstrap.rs) loads those files and checks:
 
+- a recursive assoc-list lookup helper
+- a recursive structural equality helper over quoted data
+- a self-hosted evaluator for the current named core
 - a recursive well-formedness checker for the current named core
 - a recursive token-core checker for quoted terms like `(lambda x type (var x))`
+- a self-hosted token-core evaluator for closed quoted terms
+- a self-hosted token-core typechecker for quoted terms like `(lambda x type (var x))`

@@ -26,6 +26,14 @@ fn app_expr(function: impl AsRef<str>, arg: impl AsRef<str>) -> String {
     format!("(app {} {})", function.as_ref(), arg.as_ref())
 }
 
+fn apply_all(function: impl AsRef<str>, args: &[String]) -> String {
+    let mut result = function.as_ref().to_string();
+    for arg in args {
+        result = app_expr(&result, arg);
+    }
+    result
+}
+
 fn cons_expr(head: impl AsRef<str>, tail: impl AsRef<str>) -> String {
     format!("(cons {} {})", head.as_ref(), tail.as_ref())
 }
@@ -40,10 +48,28 @@ fn request(tag: &str, first: impl AsRef<str>, second: impl AsRef<str>) -> String
 // Both well-formedness checkers use the same protocol:
 // `(tag term ctx)`, encoded as a simple list request. The worker itself lives in
 // Click; Rust just supplies the fixed-point combinator and the top-level request.
+fn close_recursive(worker: impl AsRef<str>) -> String {
+    app_expr(load("bootstrap/base/fix.cl"), worker)
+}
+
+fn load_assoc_lookup() -> String {
+    close_recursive(load("bootstrap/base/assoc.cl"))
+}
+
+fn load_equal() -> String {
+    close_recursive(load("bootstrap/base/equal.cl"))
+}
+
+fn load_token_core_wf() -> String {
+    close_recursive(load("bootstrap/token_core/wf.cl"))
+}
+
+fn load_subst() -> String {
+    close_recursive(load("bootstrap/token_core/subst.cl"))
+}
+
 fn run_recursive_checker(worker_path: &str, term: &str) -> String {
-    let fix = load("bootstrap/base/fix.cl");
-    let worker = load(worker_path);
-    let checker = app_expr(&fix, &worker);
+    let checker = close_recursive(load(worker_path));
     let request = request("wf", term, "nil");
     eval(&app_expr(checker, request))
 }
@@ -52,8 +78,160 @@ fn run_named_core_checker(term: &str) -> String {
     run_recursive_checker("bootstrap/named_core/wf.cl", term)
 }
 
+fn run_named_core_eval(term: &str) -> String {
+    let assoc_lookup = load_assoc_lookup();
+    let worker = apply_all(load("bootstrap/named_core/eval.cl"), &[assoc_lookup]);
+    let evaluator = close_recursive(worker);
+    let quoted_term = format!("(quote {term})");
+    eval(&apply_all(evaluator, &[quoted_term, "nil".to_string()]))
+}
+
 fn run_token_core_checker(term: &str) -> String {
     run_recursive_checker("bootstrap/token_core/wf.cl", term)
+}
+
+fn run_token_core_eval(term: &str) -> String {
+    let wf = load_token_core_wf();
+    let subst = load_subst();
+    let worker = apply_all(load("bootstrap/token_core/eval.cl"), &[wf, subst]);
+    let evaluator = close_recursive(worker);
+    let quoted_term = format!("(quote {term})");
+    eval(&app_expr(evaluator, quoted_term))
+}
+
+fn run_token_core_typecheck(term: &str) -> String {
+    let assoc_lookup = load_assoc_lookup();
+    let equal = load_equal();
+    let subst = load_subst();
+    let worker = apply_all(
+        load("bootstrap/token_core/typecheck.cl"),
+        &[assoc_lookup, equal, subst],
+    );
+    let typechecker = close_recursive(worker);
+    let quoted_term = format!("(quote {term})");
+    eval(&apply_all(typechecker, &[quoted_term, "nil".to_string()]))
+}
+
+#[test]
+fn assoc_lookup_preserves_false_and_nil_values() {
+    let assoc_lookup = load_assoc_lookup();
+
+    assert_eq!(
+        eval(&apply_all(
+            &assoc_lookup,
+            &["'x".to_string(), "'((x false) (y nil))".to_string()],
+        )),
+        "(found false)"
+    );
+    assert_eq!(
+        eval(&apply_all(
+            &assoc_lookup,
+            &["'y".to_string(), "'((x false) (y nil))".to_string()],
+        )),
+        "(found nil)"
+    );
+    assert_eq!(
+        eval(&apply_all(
+            &assoc_lookup,
+            &["'z".to_string(), "'((x false) (y nil))".to_string()],
+        )),
+        "missing"
+    );
+}
+
+#[test]
+fn equal_matches_nested_lists() {
+    let equal = load_equal();
+
+    assert_eq!(
+        eval(&apply_all(
+            &equal,
+            &["'(a (b c))".to_string(), "'(a (b c))".to_string()],
+        )),
+        "true"
+    );
+    assert_eq!(
+        eval(&apply_all(
+            &equal,
+            &["'(a (b c))".to_string(), "'(a (b d))".to_string()],
+        )),
+        "false"
+    );
+    assert_eq!(
+        eval(&apply_all(&equal, &["'a".to_string(), "'(a)".to_string()],)),
+        "false"
+    );
+}
+
+#[test]
+fn subst_replaces_free_variables_and_respects_binders() {
+    let subst = load_subst();
+
+    assert_eq!(
+        eval(&apply_all(
+            &subst,
+            &[
+                "'(var x)".to_string(),
+                "'x".to_string(),
+                "'type".to_string()
+            ],
+        )),
+        "type"
+    );
+    assert_eq!(
+        eval(&apply_all(
+            &subst,
+            &[
+                "'(lambda x type (var x))".to_string(),
+                "'x".to_string(),
+                "'type".to_string(),
+            ],
+        )),
+        "(lambda x type (var x))"
+    );
+    assert_eq!(
+        eval(&apply_all(
+            &subst,
+            &[
+                "'(lambda y type (var x))".to_string(),
+                "'x".to_string(),
+                "'type".to_string(),
+            ],
+        )),
+        "(lambda y type type)"
+    );
+}
+
+#[test]
+fn named_core_eval_handles_small_terms() {
+    assert_eq!(run_named_core_eval("nil"), "(ok nil)");
+    assert_eq!(run_named_core_eval("true"), "(ok true)");
+    assert_eq!(run_named_core_eval("(quote hello)"), "(ok hello)");
+    assert_eq!(run_named_core_eval("(quote (a b))"), "(ok (a b))");
+    assert_eq!(
+        run_named_core_eval("(app (lambda x (var x)) (quote a))"),
+        "(ok a)"
+    );
+    assert_eq!(
+        run_named_core_eval(
+            "(app (app (lambda x (lambda y (var x))) (quote outer)) (quote inner))"
+        ),
+        "(ok outer)"
+    );
+}
+
+#[test]
+fn named_core_eval_reports_errors() {
+    assert_eq!(run_named_core_eval("(var x)"), "(err unbound-variable)");
+    assert_eq!(
+        run_named_core_eval("(app (quote a) (quote b))"),
+        "(err not-a-function)"
+    );
+    assert_eq!(run_named_core_eval("(lambda x)"), "(err bad-lambda)");
+    assert_eq!(
+        run_named_core_eval("(app (lambda x (lambda x (var x))) (quote a))"),
+        "(err duplicate-binder)"
+    );
 }
 
 #[test]
@@ -114,5 +292,78 @@ fn token_core_checker_rejects_bad_scoping_and_bad_shapes() {
     assert_eq!(
         run_token_core_checker("(quote (app (lambda x type (var x))))"),
         "false"
+    );
+}
+
+#[test]
+fn token_core_eval_handles_small_terms() {
+    assert_eq!(run_token_core_eval("type"), "(ok type)");
+    assert_eq!(
+        run_token_core_eval("(lambda x type (var x))"),
+        "(ok (lambda x type (var x)))"
+    );
+    assert_eq!(
+        run_token_core_eval("(pi x type type)"),
+        "(ok (pi x type type))"
+    );
+    assert_eq!(
+        run_token_core_eval("(app (lambda x type (var x)) type)"),
+        "(ok type)"
+    );
+    assert_eq!(
+        run_token_core_eval("(app (app (lambda x type (lambda y type (var x))) type) type)"),
+        "(ok type)"
+    );
+}
+
+#[test]
+fn token_core_eval_reports_errors() {
+    assert_eq!(run_token_core_eval("(var x)"), "(err malformed)");
+    assert_eq!(
+        run_token_core_eval("(lambda x type (lambda x type (var x)))"),
+        "(err malformed)"
+    );
+    assert_eq!(
+        run_token_core_eval("(app type type)"),
+        "(err not-a-function)"
+    );
+    assert_eq!(run_token_core_eval("(lambda x type)"), "(err malformed)");
+}
+
+#[test]
+fn token_core_typecheck_accepts_small_terms() {
+    assert_eq!(run_token_core_typecheck("type"), "(ok type)");
+    assert_eq!(run_token_core_typecheck("(pi x type type)"), "(ok type)");
+    assert_eq!(
+        run_token_core_typecheck("(lambda x type (var x))"),
+        "(ok (pi x type type))"
+    );
+    assert_eq!(
+        run_token_core_typecheck("(app (lambda x type (var x)) type)"),
+        "(ok type)"
+    );
+}
+
+#[test]
+fn token_core_typecheck_reports_errors() {
+    assert_eq!(
+        run_token_core_typecheck("(var x)"),
+        "(err unbound-variable)"
+    );
+    assert_eq!(
+        run_token_core_typecheck("(lambda x type (lambda x type (var x)))"),
+        "(err duplicate-binder)"
+    );
+    assert_eq!(
+        run_token_core_typecheck("(pi x (lambda y type (var y)) type)"),
+        "(err bad-domain-type)"
+    );
+    assert_eq!(
+        run_token_core_typecheck("(app (lambda x type (var x)) (lambda y type (var y)))"),
+        "(err argument-type-mismatch)"
+    );
+    assert_eq!(
+        run_token_core_typecheck("(lambda x type)"),
+        "(err bad-lambda)"
     );
 }
