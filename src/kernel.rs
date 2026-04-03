@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::reader::{Expr, parse_program};
+use crate::reader::read;
 
 pub type ClickResult<T> = Result<T, String>;
 
@@ -20,6 +20,12 @@ pub struct Closure {
     binder: String,
     body: Expr,
     env: Env,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Expr {
+    Symbol(String),
+    List(Vec<Expr>),
 }
 
 impl Value {
@@ -83,7 +89,7 @@ fn format_cons(value: &Value, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 
 /// Parse and evaluate a source string, returning the final top-level value.
 pub fn run_source(source: &str) -> ClickResult<Option<Value>> {
-    let exprs = parse_program(source)?;
+    let exprs = read(source)?;
     let env = Env::new();
 
     let mut last = None;

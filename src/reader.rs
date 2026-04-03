@@ -1,10 +1,4 @@
-use crate::kernel::ClickResult;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Expr {
-    Symbol(String),
-    List(Vec<Expr>),
-}
+use crate::kernel::{ClickResult, Expr};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Token {
@@ -14,7 +8,7 @@ enum Token {
     Symbol(String),
 }
 
-pub(crate) fn parse_program(source: &str) -> ClickResult<Vec<Expr>> {
+pub(crate) fn read(source: &str) -> ClickResult<Vec<Expr>> {
     let source = strip_shebang(source);
     let tokens = tokenize(source)?;
     Parser::new(tokens).parse_program()
