@@ -6,10 +6,11 @@ This document records the current design direction for `click`.
 
 `click` is meant to become:
 
-- a reasonable language to program in
-- a language where programs are easy to inspect and transform as data
-- a language where transformations can carry machine-checkable correctness arguments
-- a language where the checking and proving infrastructure can be written in the language itself
+Click code can prove things about Click code.
+
+You can inspect Click programs, transform them, and prove those transformations correct, all inside Click.
+
+Click aims for complete kernel introspection: the core semantics of the language should themselves be representable, inspectable, and reasoned about inside Click.
 
 ## The Kernel
 
