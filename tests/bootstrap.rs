@@ -93,6 +93,16 @@ fn load_whnf() -> String {
     close_recursive(worker)
 }
 
+fn load_normalize() -> String {
+    let whnf = load_whnf();
+    let structural_equal = load_structural_equal();
+    let worker = apply_all(
+        load("bootstrap/token_core/normalize.cl"),
+        &[whnf, structural_equal],
+    );
+    close_recursive(worker)
+}
+
 fn run_recursive_checker(worker_path: &str, term: &str) -> String {
     let checker = close_recursive(load(worker_path));
     let request = request("wf", term, "nil");
@@ -178,6 +188,10 @@ fn load_sym() -> String {
 
 fn load_trans() -> String {
     load("bootstrap/proofs/trans.cl")
+}
+
+fn load_if_true() -> String {
+    load("bootstrap/proofs/if_true.cl")
 }
 
 fn leibniz_eq_type(a: &str, x: &str, y: &str) -> String {
@@ -297,6 +311,19 @@ fn whnf_reduces_head_beta_redexes() {
 }
 
 #[test]
+fn normalize_reduces_nested_beta_redexes() {
+    let normalize = load_normalize();
+
+    assert_eq!(
+        eval(&apply_all(
+            &normalize,
+            &["'(app (app (app (lambda A type (lambda t (var A) (lambda f (var A) (var t)))) type) type) (pi z type type))".to_string()],
+        )),
+        "type"
+    );
+}
+
+#[test]
 fn subst_replaces_free_variables_and_respects_binders() {
     let subst = load_subst();
 
@@ -385,7 +412,6 @@ fn proof_terms_typecheck() {
         leibniz_eq_type("(var A)", "(var y)", "(var z)"),
         leibniz_eq_type("(var A)", "(var x)", "(var z)")
     );
-
     assert_eq!(
         run_token_core_infer(&load_eq_type()),
         "(ok (pi A type (pi x (var A) (pi y (var A) type))))"
@@ -412,6 +438,10 @@ fn proof_terms_typecheck() {
     assert_eq!(
         run_token_core_typecheck(&load_trans(), &trans_type),
         format!("(ok {trans_type})")
+    );
+    assert_eq!(
+        run_token_core_infer(&load_if_true()),
+        "(ok (pi A type (pi t (var A) (pi f (var A) (pi P (pi z (var A) type) (pi px (app (var P) (var t)) (app (var P) (var t))))))))"
     );
 }
 
