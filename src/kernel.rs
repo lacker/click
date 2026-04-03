@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::reader::{Expr, parse_program};
+
 pub type ClickResult<T> = Result<T, String>;
 
 type Env = Vec<(String, Value)>;
@@ -20,31 +22,20 @@ pub struct Closure {
     env: Env,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Expr {
-    Symbol(String),
-    List(Vec<Expr>),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Token {
-    LParen,
-    RParen,
-    Quote,
-    Symbol(String),
-}
-
 impl Value {
+    // Recognize the values that count as atoms for the `atom` primitive.
     fn is_atom(&self) -> bool {
         matches!(self, Value::Atom(_) | Value::Bool(_) | Value::Nil)
     }
 
+    // Apply Click's truthiness rule: only `nil` and `false` are falsey.
     fn is_truthy(&self) -> bool {
         !matches!(self, Value::Nil | Value::Bool(false))
     }
 }
 
 impl fmt::Display for Value {
+    // Render kernel values back into the small Click surface notation.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::Atom(name) => write!(f, "{name}"),
@@ -57,6 +48,7 @@ impl fmt::Display for Value {
     }
 }
 
+// Print a cons cell as either a proper list or a dotted pair.
 fn format_cons(value: &Value, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "(")?;
 
@@ -89,10 +81,9 @@ fn format_cons(value: &Value, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     }
 }
 
+/// Parse and evaluate a source string, returning the final top-level value.
 pub fn run_source(source: &str) -> ClickResult<Option<Value>> {
-    let source = strip_shebang(source);
-    let tokens = tokenize(source)?;
-    let exprs = Parser::new(tokens).parse_program()?;
+    let exprs = parse_program(source)?;
     let env = Env::new();
 
     let mut last = None;
@@ -103,101 +94,7 @@ pub fn run_source(source: &str) -> ClickResult<Option<Value>> {
     Ok(last)
 }
 
-fn strip_shebang(source: &str) -> &str {
-    if !source.starts_with("#!") {
-        return source;
-    }
-
-    match source.find('\n') {
-        Some(index) => &source[index + 1..],
-        None => "",
-    }
-}
-
-fn tokenize(source: &str) -> ClickResult<Vec<Token>> {
-    let mut tokens = Vec::new();
-    let mut chars = source.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        match ch {
-            '(' => tokens.push(Token::LParen),
-            ')' => tokens.push(Token::RParen),
-            '\'' => tokens.push(Token::Quote),
-            ';' => {
-                for next in chars.by_ref() {
-                    if next == '\n' {
-                        break;
-                    }
-                }
-            }
-            c if c.is_whitespace() => {}
-            _ => {
-                let mut symbol = String::from(ch);
-                while let Some(next) = chars.peek() {
-                    if next.is_whitespace() || matches!(next, '(' | ')' | '\'' | ';') {
-                        break;
-                    }
-                    symbol.push(*next);
-                    chars.next();
-                }
-                tokens.push(Token::Symbol(symbol));
-            }
-        }
-    }
-
-    Ok(tokens)
-}
-
-struct Parser {
-    tokens: Vec<Token>,
-    index: usize,
-}
-
-impl Parser {
-    fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, index: 0 }
-    }
-
-    fn parse_program(mut self) -> ClickResult<Vec<Expr>> {
-        let mut exprs = Vec::new();
-        while self.index < self.tokens.len() {
-            exprs.push(self.parse_expr()?);
-        }
-        Ok(exprs)
-    }
-
-    fn parse_expr(&mut self) -> ClickResult<Expr> {
-        let token = self
-            .tokens
-            .get(self.index)
-            .ok_or_else(|| "unexpected end of input".to_string())?
-            .clone();
-        self.index += 1;
-
-        match token {
-            Token::LParen => {
-                let mut items = Vec::new();
-                loop {
-                    match self.tokens.get(self.index) {
-                        Some(Token::RParen) => {
-                            self.index += 1;
-                            return Ok(Expr::List(items));
-                        }
-                        Some(_) => items.push(self.parse_expr()?),
-                        None => return Err("unterminated list".to_string()),
-                    }
-                }
-            }
-            Token::RParen => Err("unexpected ')'".to_string()),
-            Token::Quote => {
-                let quoted = self.parse_expr()?;
-                Ok(Expr::List(vec![Expr::Symbol("quote".to_string()), quoted]))
-            }
-            Token::Symbol(symbol) => Ok(Expr::Symbol(symbol)),
-        }
-    }
-}
-
+// Evaluate one parsed expression in the given lexical environment.
 fn eval(expr: &Expr, env: &Env) -> ClickResult<Value> {
     match expr {
         Expr::Symbol(symbol) => eval_symbol(symbol),
@@ -205,6 +102,7 @@ fn eval(expr: &Expr, env: &Env) -> ClickResult<Value> {
     }
 }
 
+// Evaluate a bare symbol, which only succeeds for the built-in atomic values.
 fn eval_symbol(symbol: &str) -> ClickResult<Value> {
     match symbol {
         "nil" => Ok(Value::Nil),
@@ -214,6 +112,7 @@ fn eval_symbol(symbol: &str) -> ClickResult<Value> {
     }
 }
 
+// Evaluate one tagged list form such as `quote`, `if`, `lambda`, or `app`.
 fn eval_list(items: &[Expr], env: &Env) -> ClickResult<Value> {
     let Some((head, tail)) = items.split_first() else {
         return Err("cannot evaluate an empty list; use nil or quote".to_string());
@@ -299,6 +198,7 @@ fn eval_list(items: &[Expr], env: &Env) -> ClickResult<Value> {
     }
 }
 
+// Reject forms whose argument count does not match the primitive's contract.
 fn expect_arity(operator: &str, args: &[Expr], expected: usize) -> ClickResult<()> {
     if args.len() == expected {
         Ok(())
@@ -310,6 +210,7 @@ fn expect_arity(operator: &str, args: &[Expr], expected: usize) -> ClickResult<(
     }
 }
 
+// Extract an atom name from syntax where a binder or variable name is expected.
 fn expect_symbol(expr: &Expr, role: &str) -> ClickResult<String> {
     match expr {
         Expr::Symbol(symbol) => Ok(symbol.clone()),
@@ -317,6 +218,7 @@ fn expect_symbol(expr: &Expr, role: &str) -> ClickResult<String> {
     }
 }
 
+// Turn parsed syntax into the corresponding quoted Click data value.
 fn quote_expr(expr: &Expr) -> ClickResult<Value> {
     match expr {
         Expr::Symbol(symbol) => Ok(quote_symbol(symbol)),
@@ -330,6 +232,7 @@ fn quote_expr(expr: &Expr) -> ClickResult<Value> {
     }
 }
 
+// Quote one symbol, preserving the kernel's built-in atoms.
 fn quote_symbol(symbol: &str) -> Value {
     match symbol {
         "nil" => Value::Nil,
@@ -339,6 +242,7 @@ fn quote_symbol(symbol: &str) -> Value {
     }
 }
 
+// Resolve a variable name by looking through the lexical environment from the inside out.
 fn lookup_var<'a>(env: &'a Env, name: &str) -> Option<&'a Value> {
     env.iter()
         .rev()
@@ -346,6 +250,7 @@ fn lookup_var<'a>(env: &'a Env, name: &str) -> Option<&'a Value> {
         .map(|(_, value)| value)
 }
 
+// Apply a function value to an argument by extending its captured environment.
 fn apply(function: Value, arg: Value) -> ClickResult<Value> {
     match function {
         Value::Closure(closure) => {
