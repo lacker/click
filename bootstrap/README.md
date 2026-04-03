@@ -50,13 +50,20 @@ Current files:
   A Leibniz-style equality proposition.
 - `proofs/refl.cl`
   Reflexivity for the encoded equality proposition.
+- `proofs/transport.cl`
+  Proof transport for the encoded equality proposition.
+- `proofs/sym.cl`
+  Symmetry for the encoded equality proposition.
+- `proofs/trans.cl`
+  Transitivity for the encoded equality proposition.
 
 The current `Bool` probe already exposed one important lesson: evaluation works
 more cleanly with explicit closure/environment values than with syntax
 rewriting, because it avoids alpha-renaming problems during beta-reduction.
 
-The first proof probe is now in place too: the token core can already host an
-encoded equality proposition and a `refl` proof term for it.
+The first proof toolkit is now in place too: the token core can already host
+an encoded equality proposition, `refl`, and basic equality reasoning
+combinators like transport, symmetry, and transitivity.
 
 `tests/bootstrap.rs` loads these files directly and supplies the concrete test
 inputs from Rust.

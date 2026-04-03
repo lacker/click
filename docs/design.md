@@ -103,10 +103,10 @@ current conversion rule inside that checker is still modest: it computes types
 to weak-head normal form and compares them up to alpha-equivalence, not full
 normalization-based definitional equality.
 
-The first proof terms now exist on top of that token core: a Leibniz-style
-`Eq` proposition and a `refl` proof term. So the current state is no longer
-just "typed programs"; it already includes basic propositions-as-types and
-proof terms.
+The first proof toolkit now exists on top of that token core: a Leibniz-style
+`Eq` proposition, `refl`, and basic equality reasoning terms for transport,
+symmetry, and transitivity. So the current state is no longer just "typed
+programs"; it already includes basic propositions-as-types and proof terms.
 
 The next proof step is already informative too. A trivial computation lemma
 like `if_true` is not yet comfortable in the current system. `Eq` and `refl`

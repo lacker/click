@@ -86,6 +86,9 @@ The larger self-hosted experiments now live in:
 - [`bootstrap/data/bool_if.cl`](bootstrap/data/bool_if.cl)
 - [`bootstrap/proofs/eq.cl`](bootstrap/proofs/eq.cl)
 - [`bootstrap/proofs/refl.cl`](bootstrap/proofs/refl.cl)
+- [`bootstrap/proofs/transport.cl`](bootstrap/proofs/transport.cl)
+- [`bootstrap/proofs/sym.cl`](bootstrap/proofs/sym.cl)
+- [`bootstrap/proofs/trans.cl`](bootstrap/proofs/trans.cl)
 - [`bootstrap/token_core/eval_env.cl`](bootstrap/token_core/eval_env.cl)
 - [`bootstrap/token_core/infer.cl`](bootstrap/token_core/infer.cl)
 - [`bootstrap/token_core/subst.cl`](bootstrap/token_core/subst.cl)
@@ -99,7 +102,8 @@ The larger self-hosted experiments now live in:
 - an alpha-equivalence helper for quoted token-core terms
 - a weak-head reducer for quoted token-core terms
 - a first typed `Bool` layer built on the token core
-- first proof terms: an encoded equality proposition and `refl`
+- first proof toolkit terms: an encoded equality proposition, `refl`,
+  transport, symmetry, and transitivity
 - a recursive token-core checker for quoted terms like `(lambda x type (var x))`
 - a token-core evaluator for closed quoted terms built around explicit
   closure/environment values
@@ -114,5 +118,5 @@ evaluation works more cleanly with explicit closure/environment values than
 with syntax rewriting, because it avoids alpha-renaming problems during
 beta-reduction.
 
-The first proof probe is now in place too: the token core can already host a
-Leibniz-style equality type and a `refl` proof term.
+The first proof toolkit is now in place too: the token core can already host a
+Leibniz-style equality type, `refl`, and basic equality reasoning combinators.

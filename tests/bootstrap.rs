@@ -168,6 +168,24 @@ fn load_refl() -> String {
     load("bootstrap/proofs/refl.cl")
 }
 
+fn load_transport() -> String {
+    load("bootstrap/proofs/transport.cl")
+}
+
+fn load_sym() -> String {
+    load("bootstrap/proofs/sym.cl")
+}
+
+fn load_trans() -> String {
+    load("bootstrap/proofs/trans.cl")
+}
+
+fn leibniz_eq_type(a: &str, x: &str, y: &str) -> String {
+    format!(
+        "(pi P (pi z {a} type) (pi px (app (var P) {x}) (app (var P) {y})))"
+    )
+}
+
 #[test]
 fn assoc_lookup_preserves_false_and_nil_values() {
     let assoc_lookup = load_assoc_lookup();
@@ -336,6 +354,38 @@ fn bool_layer_terms_typecheck() {
 
 #[test]
 fn proof_terms_typecheck() {
+    let transport_type = format!(
+        "(pi A type \
+          (pi x (var A) \
+            (pi y (var A) \
+              (pi eq_xy {} \
+                (pi P (pi z (var A) type) \
+                  (pi px (app (var P) (var x)) \
+                    (app (var P) (var y))))))))",
+        leibniz_eq_type("(var A)", "(var x)", "(var y)")
+    );
+    let sym_type = format!(
+        "(pi A type \
+          (pi x (var A) \
+            (pi y (var A) \
+              (pi eq_xy {} \
+                {}))))",
+        leibniz_eq_type("(var A)", "(var x)", "(var y)"),
+        leibniz_eq_type("(var A)", "(var y)", "(var x)")
+    );
+    let trans_type = format!(
+        "(pi A type \
+          (pi x (var A) \
+            (pi y (var A) \
+              (pi z (var A) \
+                (pi eq_xy {} \
+                  (pi eq_yz {} \
+                    {}))))))",
+        leibniz_eq_type("(var A)", "(var x)", "(var y)"),
+        leibniz_eq_type("(var A)", "(var y)", "(var z)"),
+        leibniz_eq_type("(var A)", "(var x)", "(var z)")
+    );
+
     assert_eq!(
         run_token_core_infer(&load_eq_type()),
         "(ok (pi A type (pi x (var A) (pi y (var A) type))))"
@@ -350,6 +400,18 @@ fn proof_terms_typecheck() {
             &["type".to_string(), "(pi z type type)".to_string()],
         )),
         "(ok (pi P (pi z type type) (pi px (app (var P) (pi z type type)) (app (var P) (pi z type type)))))"
+    );
+    assert_eq!(
+        run_token_core_typecheck(&load_transport(), &transport_type),
+        format!("(ok {transport_type})")
+    );
+    assert_eq!(
+        run_token_core_typecheck(&load_sym(), &sym_type),
+        format!("(ok {sym_type})")
+    );
+    assert_eq!(
+        run_token_core_typecheck(&load_trans(), &trans_type),
+        format!("(ok {trans_type})")
     );
 }
 
