@@ -1,4 +1,6 @@
-mod reader;
 pub mod kernel;
+mod reader;
 
-pub use kernel::{ClickResult, Closure, Object, Value, run_source};
+pub use kernel::{
+    ClickResult, Closure, Context, Declaration, Expr, Object, Value, declare, run_source,
+};

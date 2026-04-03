@@ -1,13 +1,23 @@
-use std::fmt;
 use std::collections::BTreeMap;
+use std::fmt;
 
 use crate::reader::read;
 
 pub type ClickResult<T> = Result<T, String>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Context {
+    values: Object,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Object {
     entries: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Declaration {
+    Def { name: String, value: Expr },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,7 +38,7 @@ pub struct Closure {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Expr {
+pub enum Expr {
     Symbol(String),
     List(Vec<Expr>),
 }
@@ -68,6 +78,32 @@ impl Object {
         let mut entries = self.entries.clone();
         entries.insert(name, value);
         Self { entries }
+    }
+}
+
+impl Context {
+    // Construct an empty top-level context with no named definitions.
+    pub fn new() -> Self {
+        Self {
+            values: Object::new(),
+        }
+    }
+
+    // Look up the value currently bound to a top-level name.
+    pub fn get(&self, name: &str) -> Option<&Value> {
+        self.values.get(name)
+    }
+
+    // Return the value environment visible to evaluation.
+    fn values(&self) -> &Object {
+        &self.values
+    }
+
+    // Return a new context extended with one evaluated top-level definition.
+    fn with_value(&self, name: String, value: Value) -> Self {
+        Self {
+            values: self.values.with(name, value),
+        }
     }
 }
 
@@ -128,17 +164,34 @@ fn format_object(object: &Object, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, ")")
 }
 
-/// Parse and evaluate a source string, returning the final top-level value.
+/// Parse a source string, declare any top-level definitions, and evaluate the
+/// final top-level expression.
 pub fn run_source(source: &str) -> ClickResult<Option<Value>> {
     let exprs = read(source)?;
-    let env = Object::new();
+    let mut context = Context::new();
 
     let mut last = None;
     for expr in exprs {
-        last = Some(eval(&expr, &env)?);
+        match declaration_from_expr(&expr)? {
+            Some(declaration) => context = declare(&context, declaration)?,
+            None => last = Some(eval(&expr, context.values())?),
+        }
     }
 
     Ok(last)
+}
+
+/// Check and apply one top-level declaration, producing an extended context.
+pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Context> {
+    match declaration {
+        Declaration::Def { name, value } => {
+            if context.values.has(&name) {
+                return Err(format!("definition '{name}' is already declared"));
+            }
+            let evaluated = eval(&value, context.values())?;
+            Ok(context.with_value(name, evaluated))
+        }
+    }
 }
 
 // Evaluate one parsed expression in the given lexical environment.
@@ -174,6 +227,7 @@ fn eval_list(items: &[Expr], env: &Object) -> ClickResult<Value> {
             expect_arity(operator, tail, 1)?;
             quote_expr(&tail[0])
         }
+        "def" => Err("def is only valid as a top-level declaration".to_string()),
         "object" => {
             expect_arity(operator, tail, 0)?;
             Ok(Value::Object(Object::new()))
@@ -268,6 +322,33 @@ fn eval_list(items: &[Expr], env: &Object) -> ClickResult<Value> {
             Ok(Value::Cons(Box::new(head), Box::new(rest)))
         }
         _ => Err(format!("unknown form '{operator}'")),
+    }
+}
+
+// Recognize top-level declaration forms and convert them into kernel declarations.
+fn declaration_from_expr(expr: &Expr) -> ClickResult<Option<Declaration>> {
+    let Expr::List(items) = expr else {
+        return Ok(None);
+    };
+
+    let Some((head, tail)) = items.split_first() else {
+        return Ok(None);
+    };
+
+    let Expr::Symbol(operator) = head else {
+        return Ok(None);
+    };
+
+    match operator.as_str() {
+        "def" => {
+            expect_arity(operator, tail, 2)?;
+            let name = expect_symbol(&tail[0], "def name")?;
+            Ok(Some(Declaration::Def {
+                name,
+                value: tail[1].clone(),
+            }))
+        }
+        _ => Ok(None),
     }
 }
 

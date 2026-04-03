@@ -4,6 +4,7 @@
 
 The current prototype supports:
 
+- top-level `def` declarations
 - `quote`
 - `object`
 - `get`
@@ -29,6 +30,7 @@ application is written as `(app f a)`.
 ## Semantics
 
 - Ordinary atoms do not self-evaluate. Only `nil`, `true`, and `false` do.
+- Top-level `(def name expr)` declarations extend the context for later forms.
 - `quote` turns code into ordinary list data: `(quote (lambda x (var x)))`.
 - `object` is an immutable named map. `with` returns an updated object, `get`
   reads a key, and `has` checks for a key.
@@ -70,6 +72,13 @@ chmod +x examples/list.cl
 ```
 
 `click` ignores a leading `#!...` line in source files.
+
+Top-level definitions work across later forms in the same source:
+
+```lisp
+(def id (lambda x (var x)))
+(app (var id) 'a)
+```
 
 ## Code As Data
 

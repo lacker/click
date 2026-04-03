@@ -45,7 +45,26 @@ fn evaluation_cases() {
         ok!("quote shorthand", "'(a b c)", "(a b c)"),
         ok!("quote returns literal atoms", "'hello", "hello"),
         ok!("quote leaves code shapes as data", "'(var x)", "(var x)"),
-        ok!("object builds an empty named object", "(object)", "(object)"),
+        ok!(
+            "top level def extends the context for later forms",
+            "(def answer 'yes)\n(var answer)",
+            "yes"
+        ),
+        ok!(
+            "defs can be used by later definitions",
+            "(def outer 'a)\n(def pair (cons (var outer) nil))\n(var pair)",
+            "(a)"
+        ),
+        ok!(
+            "defs can hold functions",
+            "(def id (lambda x (var x)))\n(app (var id) 'a)",
+            "a"
+        ),
+        ok!(
+            "object builds an empty named object",
+            "(object)",
+            "(object)"
+        ),
         ok!(
             "with inserts named values into an object",
             "(with (object) 'foo 'bar)",
@@ -146,6 +165,16 @@ fn evaluation_cases() {
             "unknown form tags are rejected",
             "(hello 'a)",
             "unknown form 'hello'"
+        ),
+        err!(
+            "nested def is rejected as a term form",
+            "(app (lambda x (def y 'a)) 'b)",
+            "def is only valid as a top-level declaration"
+        ),
+        err!(
+            "duplicate top level defs are rejected",
+            "(def x 'a)\n(def x 'b)",
+            "definition 'x' is already declared"
         ),
         err!(
             "get rejects missing object keys",

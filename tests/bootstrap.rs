@@ -155,7 +155,10 @@ fn run_token_core_typecheck(term: &str, expected_type: &str) -> String {
         &[assoc_lookup.clone(), alpha_eq.clone(), subst, whnf.clone()],
     );
     let infer = close_recursive(infer_worker);
-    let typechecker = apply_all(load("bootstrap/token_core/typecheck.cl"), &[infer, alpha_eq, whnf]);
+    let typechecker = apply_all(
+        load("bootstrap/token_core/typecheck.cl"),
+        &[infer, alpha_eq, whnf],
+    );
     let quoted_term = format!("(quote {term})");
     let quoted_expected = format!("(quote {expected_type})");
     eval(&apply_all(
@@ -205,9 +208,7 @@ fn load_if_true() -> String {
 }
 
 fn leibniz_eq_type(a: &str, x: &str, y: &str) -> String {
-    format!(
-        "(pi P (pi z {a} type) (pi px (app (var P) {x}) (app (var P) {y})))"
-    )
+    format!("(pi P (pi z {a} type) (pi px (app (var P) {x}) (app (var P) {y})))")
 }
 
 #[test]
@@ -593,10 +594,7 @@ fn token_core_infer_accepts_small_terms() {
 
 #[test]
 fn token_core_infer_reports_errors() {
-    assert_eq!(
-        run_token_core_infer("(var x)"),
-        "(err unbound-variable)"
-    );
+    assert_eq!(run_token_core_infer("(var x)"), "(err unbound-variable)");
     assert_eq!(
         run_token_core_infer("(lambda x type (lambda x type (var x)))"),
         "(err duplicate-binder)"
@@ -609,10 +607,7 @@ fn token_core_infer_reports_errors() {
         run_token_core_infer("(app (lambda x type (var x)) (lambda y type (var y)))"),
         "(err argument-type-mismatch)"
     );
-    assert_eq!(
-        run_token_core_infer("(lambda x type)"),
-        "(err bad-lambda)"
-    );
+    assert_eq!(run_token_core_infer("(lambda x type)"), "(err bad-lambda)");
 }
 
 #[test]
