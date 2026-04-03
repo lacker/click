@@ -56,16 +56,16 @@ fn load_assoc_lookup() -> String {
     close_recursive(load("bootstrap/base/assoc.cl"))
 }
 
-fn load_equal() -> String {
-    close_recursive(load("bootstrap/base/equal.cl"))
+fn load_structural_equal() -> String {
+    close_recursive(load("bootstrap/base/structural_equal.cl"))
 }
 
 fn load_alpha_eq() -> String {
     let assoc_lookup = load_assoc_lookup();
-    let equal = load_equal();
+    let structural_equal = load_structural_equal();
     let worker = apply_all(
         load("bootstrap/token_core/alpha_eq.cl"),
-        &[assoc_lookup, equal],
+        &[assoc_lookup, structural_equal],
     );
     let alpha_eq = close_recursive(worker);
     format!(
@@ -97,18 +97,6 @@ fn run_recursive_checker(worker_path: &str, term: &str) -> String {
     let checker = close_recursive(load(worker_path));
     let request = request("wf", term, "nil");
     eval(&app_expr(checker, request))
-}
-
-fn run_named_core_checker(term: &str) -> String {
-    run_recursive_checker("bootstrap/named_core/wf.cl", term)
-}
-
-fn run_named_core_eval(term: &str) -> String {
-    let assoc_lookup = load_assoc_lookup();
-    let worker = apply_all(load("bootstrap/named_core/eval.cl"), &[assoc_lookup]);
-    let evaluator = close_recursive(worker);
-    let quoted_term = format!("(quote {term})");
-    eval(&apply_all(evaluator, &[quoted_term, "nil".to_string()]))
 }
 
 fn run_token_core_checker(term: &str) -> String {
@@ -208,25 +196,28 @@ fn assoc_lookup_preserves_false_and_nil_values() {
 }
 
 #[test]
-fn equal_matches_nested_lists() {
-    let equal = load_equal();
+fn structural_equal_matches_nested_lists() {
+    let structural_equal = load_structural_equal();
 
     assert_eq!(
         eval(&apply_all(
-            &equal,
+            &structural_equal,
             &["'(a (b c))".to_string(), "'(a (b c))".to_string()],
         )),
         "true"
     );
     assert_eq!(
         eval(&apply_all(
-            &equal,
+            &structural_equal,
             &["'(a (b c))".to_string(), "'(a (b d))".to_string()],
         )),
         "false"
     );
     assert_eq!(
-        eval(&apply_all(&equal, &["'a".to_string(), "'(a)".to_string()],)),
+        eval(&apply_all(
+            &structural_equal,
+            &["'a".to_string(), "'(a)".to_string()],
+        )),
         "false"
     );
 }
@@ -404,67 +395,6 @@ fn bool_layer_terms_evaluate() {
             ],
         )),
         "(ok (pi-value z type type nil))"
-    );
-}
-
-#[test]
-fn named_core_eval_handles_small_terms() {
-    assert_eq!(run_named_core_eval("nil"), "(ok nil)");
-    assert_eq!(run_named_core_eval("true"), "(ok true)");
-    assert_eq!(run_named_core_eval("(quote hello)"), "(ok hello)");
-    assert_eq!(run_named_core_eval("(quote (a b))"), "(ok (a b))");
-    assert_eq!(
-        run_named_core_eval("(app (lambda x (var x)) (quote a))"),
-        "(ok a)"
-    );
-    assert_eq!(
-        run_named_core_eval(
-            "(app (app (lambda x (lambda y (var x))) (quote outer)) (quote inner))"
-        ),
-        "(ok outer)"
-    );
-}
-
-#[test]
-fn named_core_eval_reports_errors() {
-    assert_eq!(run_named_core_eval("(var x)"), "(err unbound-variable)");
-    assert_eq!(
-        run_named_core_eval("(app (quote a) (quote b))"),
-        "(err not-a-function)"
-    );
-    assert_eq!(run_named_core_eval("(lambda x)"), "(err bad-lambda)");
-    assert_eq!(
-        run_named_core_eval("(app (lambda x (lambda x (var x))) (quote a))"),
-        "(err duplicate-binder)"
-    );
-}
-
-#[test]
-fn named_core_checker_accepts_small_terms() {
-    assert_eq!(run_named_core_checker("nil"), "true");
-    assert_eq!(run_named_core_checker("true"), "true");
-    assert_eq!(run_named_core_checker("(quote (quote hello))"), "true");
-    assert_eq!(run_named_core_checker("(quote (quote (a b)))"), "true");
-    assert_eq!(run_named_core_checker("(quote (lambda x (var x)))"), "true");
-    assert_eq!(
-        run_named_core_checker("(quote (app (lambda x (var x)) (quote a)))"),
-        "true"
-    );
-}
-
-#[test]
-fn named_core_checker_rejects_bad_scoping_and_shapes() {
-    assert_eq!(run_named_core_checker("(quote hello)"), "false");
-    assert_eq!(run_named_core_checker("(quote (quote))"), "false");
-    assert_eq!(run_named_core_checker("(quote (var x))"), "false");
-    assert_eq!(
-        run_named_core_checker("(quote (lambda x (lambda x (var x))))"),
-        "false"
-    );
-    assert_eq!(run_named_core_checker("(quote (lambda x))"), "false");
-    assert_eq!(
-        run_named_core_checker("(quote (app (lambda x (var x))))"),
-        "false"
     );
 }
 

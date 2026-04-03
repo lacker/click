@@ -9,8 +9,6 @@ kernel.
   First typed library terms defined on top of the token core.
 - `proofs/`
   First proposition and proof terms on top of the token core.
-- `named_core/`
-  Programs for the current named-variable core.
 - `token_core/`
   Programs for the more explicit typed token-core experiments.
 
@@ -20,16 +18,12 @@ Current files:
   A fixed-point combinator used by the recursive checkers.
 - `base/assoc.cl`
   A recursive lookup function for simple association lists.
-- `base/equal.cl`
+- `base/structural_equal.cl`
   A recursive structural equality function over quoted Click data.
 - `token_core/alpha_eq.cl`
   A recursive alpha-equivalence checker for quoted token-core terms.
 - `token_core/whnf.cl`
   A small weak-head reducer for quoted token-core terms.
-- `named_core/wf.cl`
-  A well-formedness checker for quoted terms in the current named core.
-- `named_core/eval.cl`
-  A self-hosted evaluator for the current named core.
 - `token_core/wf.cl`
   A well-formedness checker for quoted token-core terms.
 - `token_core/eval_env.cl`

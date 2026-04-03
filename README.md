@@ -77,7 +77,7 @@ The larger self-hosted experiments now live in:
 - [`bootstrap/README.md`](bootstrap/README.md)
 - [`bootstrap/base/fix.cl`](bootstrap/base/fix.cl)
 - [`bootstrap/base/assoc.cl`](bootstrap/base/assoc.cl)
-- [`bootstrap/base/equal.cl`](bootstrap/base/equal.cl)
+- [`bootstrap/base/structural_equal.cl`](bootstrap/base/structural_equal.cl)
 - [`bootstrap/token_core/alpha_eq.cl`](bootstrap/token_core/alpha_eq.cl)
 - [`bootstrap/token_core/whnf.cl`](bootstrap/token_core/whnf.cl)
 - [`bootstrap/data/bool_type.cl`](bootstrap/data/bool_type.cl)
@@ -86,8 +86,6 @@ The larger self-hosted experiments now live in:
 - [`bootstrap/data/bool_if.cl`](bootstrap/data/bool_if.cl)
 - [`bootstrap/proofs/eq.cl`](bootstrap/proofs/eq.cl)
 - [`bootstrap/proofs/refl.cl`](bootstrap/proofs/refl.cl)
-- [`bootstrap/named_core/eval.cl`](bootstrap/named_core/eval.cl)
-- [`bootstrap/named_core/wf.cl`](bootstrap/named_core/wf.cl)
 - [`bootstrap/token_core/eval_env.cl`](bootstrap/token_core/eval_env.cl)
 - [`bootstrap/token_core/infer.cl`](bootstrap/token_core/infer.cl)
 - [`bootstrap/token_core/subst.cl`](bootstrap/token_core/subst.cl)
@@ -102,8 +100,6 @@ The larger self-hosted experiments now live in:
 - a weak-head reducer for quoted token-core terms
 - a first typed `Bool` layer built on the token core
 - first proof terms: an encoded equality proposition and `refl`
-- a self-hosted evaluator for the current named core
-- a recursive well-formedness checker for the current named core
 - a recursive token-core checker for quoted terms like `(lambda x type (var x))`
 - a token-core evaluator for closed quoted terms built around explicit
   closure/environment values
