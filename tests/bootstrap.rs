@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::thread;
 
 use click::run_source;
 
@@ -20,6 +21,15 @@ fn eval(source: &str) -> String {
         .expect("program should succeed")
         .expect("program should produce a value")
         .to_string()
+}
+
+fn run_with_large_stack(test: impl FnOnce() + Send + 'static) {
+    thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(test)
+        .expect("test thread should start")
+        .join()
+        .expect("test thread should complete");
 }
 
 fn app_expr(function: impl AsRef<str>, arg: impl AsRef<str>) -> String {
@@ -381,68 +391,70 @@ fn bool_layer_terms_typecheck() {
 
 #[test]
 fn proof_terms_typecheck() {
-    let transport_type = format!(
-        "(pi A type \
-          (pi x (var A) \
-            (pi y (var A) \
-              (pi eq_xy {} \
-                (pi P (pi z (var A) type) \
-                  (pi px (app (var P) (var x)) \
-                    (app (var P) (var y))))))))",
-        leibniz_eq_type("(var A)", "(var x)", "(var y)")
-    );
-    let sym_type = format!(
-        "(pi A type \
-          (pi x (var A) \
-            (pi y (var A) \
-              (pi eq_xy {} \
-                {}))))",
-        leibniz_eq_type("(var A)", "(var x)", "(var y)"),
-        leibniz_eq_type("(var A)", "(var y)", "(var x)")
-    );
-    let trans_type = format!(
-        "(pi A type \
-          (pi x (var A) \
-            (pi y (var A) \
-              (pi z (var A) \
-                (pi eq_xy {} \
-                  (pi eq_yz {} \
-                    {}))))))",
-        leibniz_eq_type("(var A)", "(var x)", "(var y)"),
-        leibniz_eq_type("(var A)", "(var y)", "(var z)"),
-        leibniz_eq_type("(var A)", "(var x)", "(var z)")
-    );
-    assert_eq!(
-        run_token_core_infer(&load_eq_type()),
-        "(ok (pi A type (pi x (var A) (pi y (var A) type))))"
-    );
-    assert_eq!(
-        run_token_core_infer(&load_refl()),
-        "(ok (pi A type (pi x (var A) (pi P (pi z (var A) type) (pi px (app (var P) (var x)) (app (var P) (var x)))))))"
-    );
-    assert_eq!(
-        run_token_core_infer(&apply_all(
-            load_refl(),
-            &["type".to_string(), "(pi z type type)".to_string()],
-        )),
-        "(ok (pi P (pi z type type) (pi px (app (var P) (pi z type type)) (app (var P) (pi z type type)))))"
-    );
-    assert_eq!(
-        run_token_core_typecheck(&load_transport(), &transport_type),
-        format!("(ok {transport_type})")
-    );
-    assert_eq!(
-        run_token_core_typecheck(&load_sym(), &sym_type),
-        format!("(ok {sym_type})")
-    );
-    assert_eq!(
-        run_token_core_typecheck(&load_trans(), &trans_type),
-        format!("(ok {trans_type})")
-    );
-    assert_eq!(
-        run_token_core_infer(&load_if_true()),
-        "(ok (pi A type (pi t (var A) (pi f (var A) (pi P (pi z (var A) type) (pi px (app (var P) (var t)) (app (var P) (var t))))))))"
-    );
+    run_with_large_stack(|| {
+        let transport_type = format!(
+            "(pi A type \
+              (pi x (var A) \
+                (pi y (var A) \
+                  (pi eq_xy {} \
+                    (pi P (pi z (var A) type) \
+                      (pi px (app (var P) (var x)) \
+                        (app (var P) (var y))))))))",
+            leibniz_eq_type("(var A)", "(var x)", "(var y)")
+        );
+        let sym_type = format!(
+            "(pi A type \
+              (pi x (var A) \
+                (pi y (var A) \
+                  (pi eq_xy {} \
+                    {}))))",
+            leibniz_eq_type("(var A)", "(var x)", "(var y)"),
+            leibniz_eq_type("(var A)", "(var y)", "(var x)")
+        );
+        let trans_type = format!(
+            "(pi A type \
+              (pi x (var A) \
+                (pi y (var A) \
+                  (pi z (var A) \
+                    (pi eq_xy {} \
+                      (pi eq_yz {} \
+                        {}))))))",
+            leibniz_eq_type("(var A)", "(var x)", "(var y)"),
+            leibniz_eq_type("(var A)", "(var y)", "(var z)"),
+            leibniz_eq_type("(var A)", "(var x)", "(var z)")
+        );
+        assert_eq!(
+            run_token_core_infer(&load_eq_type()),
+            "(ok (pi A type (pi x (var A) (pi y (var A) type))))"
+        );
+        assert_eq!(
+            run_token_core_infer(&load_refl()),
+            "(ok (pi A type (pi x (var A) (pi P (pi z (var A) type) (pi px (app (var P) (var x)) (app (var P) (var x)))))))"
+        );
+        assert_eq!(
+            run_token_core_infer(&apply_all(
+                load_refl(),
+                &["type".to_string(), "(pi z type type)".to_string()],
+            )),
+            "(ok (pi P (pi z type type) (pi px (app (var P) (pi z type type)) (app (var P) (pi z type type)))))"
+        );
+        assert_eq!(
+            run_token_core_typecheck(&load_transport(), &transport_type),
+            format!("(ok {transport_type})")
+        );
+        assert_eq!(
+            run_token_core_typecheck(&load_sym(), &sym_type),
+            format!("(ok {sym_type})")
+        );
+        assert_eq!(
+            run_token_core_typecheck(&load_trans(), &trans_type),
+            format!("(ok {trans_type})")
+        );
+        assert_eq!(
+            run_token_core_infer(&load_if_true()),
+            "(ok (pi A type (pi t (var A) (pi f (var A) (pi P (pi z (var A) type) (pi px (app (var P) (var t)) (app (var P) (var t))))))))"
+        );
+    });
 }
 
 #[test]

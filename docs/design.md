@@ -16,7 +16,9 @@ Click aims for complete kernel introspection: the core semantics of the language
 
 The heart of the Click kernel is a few trusted Rust things.
 
-* A "list" representation. This represents code, data, and types. Lispy.
+* A small set of primitive data representations. Right now the important ones
+  are lists and named objects. Code and most data stay lispy, but named kernel
+  structure like environments fits more naturally as objects.
 
 * An "eval" function. This evaluates code.
 
@@ -56,6 +58,10 @@ This is still a prototype kernel.
 The current kernel has:
 
 - `quote`
+- `object`
+- `get`
+- `with`
+- `has`
 - `if`
 - `atom`
 - `atom_eq`
@@ -79,13 +85,24 @@ Non-atomic code forms are tagged lists. For example:
 (lambda x body)
 ```
 
+Objects are primitive immutable maps from symbol names to values. The kernel
+uses them internally for lexical environments, and Click code can also build
+and inspect them directly with:
+
+```lisp
+(object)
+(with (object) 'foo 'bar)
+(get obj 'foo)
+(has obj 'foo)
+```
+
 Variables are represented explicitly by name.
 
 `lambda` binds a name. Using a name that is already bound in the current lexical
 context is malformed.
 
-The evaluator still uses lexical closures internally, but closures are not part
-of Click data.
+The evaluator still uses lexical closures internally. A closure captures an
+object environment, but closures themselves are not part of Click data.
 
 The bootstrap token-core experiments have already exposed one missing piece:
 substitution over uniquely named binders needs an alpha-renaming or freshening

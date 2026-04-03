@@ -5,6 +5,10 @@
 The current prototype supports:
 
 - `quote`
+- `object`
+- `get`
+- `with`
+- `has`
 - `if`
 - `atom`
 - `atom_eq`
@@ -26,7 +30,9 @@ application is written as `(app f a)`.
 
 - Ordinary atoms do not self-evaluate. Only `nil`, `true`, and `false` do.
 - `quote` turns code into ordinary list data: `(quote (lambda x (var x)))`.
-- `lambda` has the form `(lambda x body)` and captures the current lexical environment.
+- `object` is an immutable named map. `with` returns an updated object, `get`
+  reads a key, and `has` checks for a key.
+- `lambda` has the form `(lambda x body)` and captures the current lexical object environment.
 - Rebinding a name that is already in scope is an error.
 - Closures are an internal evaluator detail. Evaluating a lambda prints `#<closure>`.
 - `atom` returns `true` for atoms, booleans, and `nil`.
@@ -71,6 +77,13 @@ Quoted code is ordinary data, so Click programs can inspect Click programs with
 the usual list operations. For a tiny example:
 
 - [`examples/code_shape.cl`](examples/code_shape.cl) extracts the binder from a quoted lambda.
+
+The kernel also has primitive named objects for environment-like structure:
+
+```lisp
+(with (object) 'foo 'bar)
+(get (with (object) 'foo 'bar) 'foo)
+```
 
 The larger self-hosted experiments now live in:
 

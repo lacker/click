@@ -45,7 +45,29 @@ fn evaluation_cases() {
         ok!("quote shorthand", "'(a b c)", "(a b c)"),
         ok!("quote returns literal atoms", "'hello", "hello"),
         ok!("quote leaves code shapes as data", "'(var x)", "(var x)"),
+        ok!("object builds an empty named object", "(object)", "(object)"),
+        ok!(
+            "with inserts named values into an object",
+            "(with (object) 'foo 'bar)",
+            "(object (foo bar))"
+        ),
+        ok!(
+            "with overwrites an existing object key",
+            "(with (with (object) 'foo 'old) 'foo 'new)",
+            "(object (foo new))"
+        ),
+        ok!(
+            "get reads an inserted object key",
+            "(get (with (object) 'foo 'bar) 'foo)",
+            "bar"
+        ),
+        ok!(
+            "has reports whether an object key exists",
+            "(has (with (object) 'foo 'bar) 'foo)",
+            "true"
+        ),
         ok!("atom is false for lists", "(atom (quote (a b)))", "false"),
+        ok!("atom is false for objects", "(atom (object))", "false"),
         ok!("atom is true for quoted atoms", "(atom 'hello)", "true"),
         ok!(
             "atom_eq matches equal atoms",
@@ -124,6 +146,21 @@ fn evaluation_cases() {
             "unknown form tags are rejected",
             "(hello 'a)",
             "unknown form 'hello'"
+        ),
+        err!(
+            "get rejects missing object keys",
+            "(get (object) 'foo)",
+            "missing object key 'foo'"
+        ),
+        err!(
+            "get rejects non-object inputs",
+            "(get 'foo 'bar)",
+            "get object must be an object"
+        ),
+        err!(
+            "with requires symbol keys",
+            "(with (object) true 'bar)",
+            "with key must be a symbol"
         ),
         err!(
             "car nil is undefined",

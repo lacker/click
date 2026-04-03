@@ -1,16 +1,21 @@
 use std::fmt;
+use std::collections::BTreeMap;
 
 use crate::reader::read;
 
 pub type ClickResult<T> = Result<T, String>;
 
-type Env = Vec<(String, Value)>;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Object {
+    entries: BTreeMap<String, Value>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
     Atom(String),
     Bool(bool),
     Nil,
+    Object(Object),
     Cons(Box<Value>, Box<Value>),
     Closure(Closure),
 }
@@ -19,7 +24,7 @@ pub enum Value {
 pub struct Closure {
     binder: String,
     body: Expr,
-    env: Env,
+    env: Object,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +45,32 @@ impl Value {
     }
 }
 
+impl Object {
+    // Construct an empty object with no named entries.
+    pub fn new() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+        }
+    }
+
+    // Check whether an object currently has a value for the given key.
+    pub fn has(&self, name: &str) -> bool {
+        self.entries.contains_key(name)
+    }
+
+    // Look up the value currently stored at the given key.
+    pub fn get(&self, name: &str) -> Option<&Value> {
+        self.entries.get(name)
+    }
+
+    // Return a new object with one key updated or inserted.
+    pub fn with(&self, name: String, value: Value) -> Self {
+        let mut entries = self.entries.clone();
+        entries.insert(name, value);
+        Self { entries }
+    }
+}
+
 impl fmt::Display for Value {
     // Render kernel values back into the small Click surface notation.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -48,6 +79,7 @@ impl fmt::Display for Value {
             Value::Bool(true) => write!(f, "true"),
             Value::Bool(false) => write!(f, "false"),
             Value::Nil => write!(f, "nil"),
+            Value::Object(object) => format_object(object, f),
             Value::Cons(_, _) => format_cons(self, f),
             Value::Closure(_) => write!(f, "#<closure>"),
         }
@@ -87,10 +119,19 @@ fn format_cons(value: &Value, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     }
 }
 
+// Print an object as a tagged sequence of key/value entries.
+fn format_object(object: &Object, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "(object")?;
+    for (key, value) in &object.entries {
+        write!(f, " ({key} {value})")?;
+    }
+    write!(f, ")")
+}
+
 /// Parse and evaluate a source string, returning the final top-level value.
 pub fn run_source(source: &str) -> ClickResult<Option<Value>> {
     let exprs = read(source)?;
-    let env = Env::new();
+    let env = Object::new();
 
     let mut last = None;
     for expr in exprs {
@@ -101,7 +142,7 @@ pub fn run_source(source: &str) -> ClickResult<Option<Value>> {
 }
 
 // Evaluate one parsed expression in the given lexical environment.
-fn eval(expr: &Expr, env: &Env) -> ClickResult<Value> {
+fn eval(expr: &Expr, env: &Object) -> ClickResult<Value> {
     match expr {
         Expr::Symbol(symbol) => eval_symbol(symbol),
         Expr::List(items) => eval_list(items, env),
@@ -118,8 +159,8 @@ fn eval_symbol(symbol: &str) -> ClickResult<Value> {
     }
 }
 
-// Evaluate one tagged list form such as `quote`, `if`, `lambda`, or `app`.
-fn eval_list(items: &[Expr], env: &Env) -> ClickResult<Value> {
+// Evaluate one tagged list form such as `quote`, `object`, `lambda`, or `app`.
+fn eval_list(items: &[Expr], env: &Object) -> ClickResult<Value> {
     let Some((head, tail)) = items.split_first() else {
         return Err("cannot evaluate an empty list; use nil or quote".to_string());
     };
@@ -133,6 +174,10 @@ fn eval_list(items: &[Expr], env: &Env) -> ClickResult<Value> {
             expect_arity(operator, tail, 1)?;
             quote_expr(&tail[0])
         }
+        "object" => {
+            expect_arity(operator, tail, 0)?;
+            Ok(Value::Object(Object::new()))
+        }
         "if" => {
             expect_arity(operator, tail, 3)?;
             let condition = eval(&tail[0], env)?;
@@ -145,7 +190,7 @@ fn eval_list(items: &[Expr], env: &Env) -> ClickResult<Value> {
         "lambda" => {
             expect_arity(operator, tail, 2)?;
             let binder = expect_symbol(&tail[0], "lambda binder")?;
-            if env.iter().any(|(name, _)| name == &binder) {
+            if env.has(&binder) {
                 return Err(format!("lambda binder '{binder}' is already bound"));
             }
             Ok(Value::Closure(Closure {
@@ -157,7 +202,7 @@ fn eval_list(items: &[Expr], env: &Env) -> ClickResult<Value> {
         "var" => {
             expect_arity(operator, tail, 1)?;
             let name = expect_symbol(&tail[0], "var name")?;
-            lookup_var(env, &name)
+            env.get(&name)
                 .cloned()
                 .ok_or_else(|| format!("unbound variable '{name}'"))
         }
@@ -166,6 +211,28 @@ fn eval_list(items: &[Expr], env: &Env) -> ClickResult<Value> {
             let function = eval(&tail[0], env)?;
             let arg = eval(&tail[1], env)?;
             apply(function, arg)
+        }
+        "get" => {
+            expect_arity(operator, tail, 2)?;
+            let object = expect_object(eval(&tail[0], env)?, "get object")?;
+            let key = expect_object_key(eval(&tail[1], env)?, "get key")?;
+            object
+                .get(&key)
+                .cloned()
+                .ok_or_else(|| format!("missing object key '{key}'"))
+        }
+        "with" => {
+            expect_arity(operator, tail, 3)?;
+            let object = expect_object(eval(&tail[0], env)?, "with object")?;
+            let key = expect_object_key(eval(&tail[1], env)?, "with key")?;
+            let value = eval(&tail[2], env)?;
+            Ok(Value::Object(object.with(key, value)))
+        }
+        "has" => {
+            expect_arity(operator, tail, 2)?;
+            let object = expect_object(eval(&tail[0], env)?, "has object")?;
+            let key = expect_object_key(eval(&tail[1], env)?, "has key")?;
+            Ok(Value::Bool(object.has(&key)))
         }
         "atom" => {
             expect_arity(operator, tail, 1)?;
@@ -224,6 +291,22 @@ fn expect_symbol(expr: &Expr, role: &str) -> ClickResult<String> {
     }
 }
 
+// Extract an object value from runtime data where one is required.
+fn expect_object(value: Value, role: &str) -> ClickResult<Object> {
+    match value {
+        Value::Object(object) => Ok(object),
+        _ => Err(format!("{role} must be an object")),
+    }
+}
+
+// Extract a symbol name from a runtime value where an object key is required.
+fn expect_object_key(value: Value, role: &str) -> ClickResult<String> {
+    match value {
+        Value::Atom(atom) => Ok(atom),
+        _ => Err(format!("{role} must be a symbol")),
+    }
+}
+
 // Turn parsed syntax into the corresponding quoted Click data value.
 fn quote_expr(expr: &Expr) -> ClickResult<Value> {
     match expr {
@@ -248,20 +331,11 @@ fn quote_symbol(symbol: &str) -> Value {
     }
 }
 
-// Resolve a variable name by looking through the lexical environment from the inside out.
-fn lookup_var<'a>(env: &'a Env, name: &str) -> Option<&'a Value> {
-    env.iter()
-        .rev()
-        .find(|(binding, _)| binding == name)
-        .map(|(_, value)| value)
-}
-
 // Apply a function value to an argument by extending its captured environment.
 fn apply(function: Value, arg: Value) -> ClickResult<Value> {
     match function {
         Value::Closure(closure) => {
-            let mut next_env = closure.env;
-            next_env.push((closure.binder, arg));
+            let next_env = closure.env.with(closure.binder, arg);
             eval(&closure.body, &next_env)
         }
         _ => Err("attempted to call a non-function".to_string()),
