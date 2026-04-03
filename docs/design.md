@@ -24,8 +24,8 @@ The heart of the Click kernel is a few trusted Rust things.
 
 * A "typecheck" function. This verifies that a particular thing adheres to a particular type.
 
-* A "declare" function. This processes declarations like `def` and extends a
-  context/environment in a pure way.
+* A "declare" function. This processes declarations like `def`, `check`, and
+  `theorem`, and extends a context/environment in a pure way.
 
 * A powerful enough typesystem that we can implement proofs via typechecking.
 
@@ -60,7 +60,7 @@ This is still a prototype kernel.
 
 The current kernel has:
 
-- top-level `def` declarations, processed by `declare`
+- top-level `def`, `check`, and `theorem` declarations, processed by `declare`
 - `quote`
 - `object`
 - `get`
@@ -89,17 +89,21 @@ Non-atomic code forms are tagged lists. For example:
 (lambda x body)
 ```
 
-Top-level definitions are declarations rather than term forms. The current
-prototype supports:
+Top-level definitions and assertions are declarations rather than term forms.
+The current prototype supports:
 
 ```lisp
 (def answer 'yes)
 (def id (lambda x (var x)))
+(check (app (var id) 'a) 'a)
+(theorem yes_value 'yes 'yes)
 ```
 
 `declare` threads a context forward explicitly. It is a pure operation: a
-definition checks and evaluates its value in the current context, then returns a
-new extended context.
+definition evaluates its value in the current context, then returns a new
+extended context. In the current untyped prototype, `check` and `theorem`
+compare evaluated kernel values for exact equality. `theorem` also binds the
+checked value to a name.
 
 Objects are primitive immutable maps from symbol names to values. The kernel
 uses them internally for lexical environments, and Click code can also build

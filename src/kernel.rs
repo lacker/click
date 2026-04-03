@@ -17,7 +17,19 @@ pub struct Object {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Declaration {
-    Def { name: String, value: Expr },
+    Def {
+        name: String,
+        value: Expr,
+    },
+    Check {
+        actual: Expr,
+        expected: Expr,
+    },
+    Theorem {
+        name: String,
+        actual: Expr,
+        expected: Expr,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -191,6 +203,25 @@ pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Conte
             let evaluated = eval(&value, context.values())?;
             Ok(context.with_value(name, evaluated))
         }
+        Declaration::Check { actual, expected } => {
+            let actual = eval(&actual, context.values())?;
+            let expected = eval(&expected, context.values())?;
+            expect_equal(&actual, &expected, "check")?;
+            Ok(context.clone())
+        }
+        Declaration::Theorem {
+            name,
+            actual,
+            expected,
+        } => {
+            if context.values.has(&name) {
+                return Err(format!("definition '{name}' is already declared"));
+            }
+            let actual = eval(&actual, context.values())?;
+            let expected = eval(&expected, context.values())?;
+            expect_equal(&actual, &expected, "theorem")?;
+            Ok(context.with_value(name, actual))
+        }
     }
 }
 
@@ -228,6 +259,8 @@ fn eval_list(items: &[Expr], env: &Object) -> ClickResult<Value> {
             quote_expr(&tail[0])
         }
         "def" => Err("def is only valid as a top-level declaration".to_string()),
+        "check" => Err("check is only valid as a top-level declaration".to_string()),
+        "theorem" => Err("theorem is only valid as a top-level declaration".to_string()),
         "object" => {
             expect_arity(operator, tail, 0)?;
             Ok(Value::Object(Object::new()))
@@ -325,6 +358,15 @@ fn eval_list(items: &[Expr], env: &Object) -> ClickResult<Value> {
     }
 }
 
+// Reject top-level assertions whose evaluated values do not match.
+fn expect_equal(actual: &Value, expected: &Value, role: &str) -> ClickResult<()> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!("{role} failed: expected {expected}, got {actual}"))
+    }
+}
+
 // Recognize top-level declaration forms and convert them into kernel declarations.
 fn declaration_from_expr(expr: &Expr) -> ClickResult<Option<Declaration>> {
     let Expr::List(items) = expr else {
@@ -346,6 +388,22 @@ fn declaration_from_expr(expr: &Expr) -> ClickResult<Option<Declaration>> {
             Ok(Some(Declaration::Def {
                 name,
                 value: tail[1].clone(),
+            }))
+        }
+        "check" => {
+            expect_arity(operator, tail, 2)?;
+            Ok(Some(Declaration::Check {
+                actual: tail[0].clone(),
+                expected: tail[1].clone(),
+            }))
+        }
+        "theorem" => {
+            expect_arity(operator, tail, 3)?;
+            let name = expect_symbol(&tail[0], "theorem name")?;
+            Ok(Some(Declaration::Theorem {
+                name,
+                actual: tail[1].clone(),
+                expected: tail[2].clone(),
             }))
         }
         _ => Ok(None),

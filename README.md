@@ -4,7 +4,7 @@
 
 The current prototype supports:
 
-- top-level `def` declarations
+- top-level `def`, `check`, and `theorem` declarations
 - `quote`
 - `object`
 - `get`
@@ -31,6 +31,10 @@ application is written as `(app f a)`.
 
 - Ordinary atoms do not self-evaluate. Only `nil`, `true`, and `false` do.
 - Top-level `(def name expr)` declarations extend the context for later forms.
+- Top-level `(check actual expected)` declarations require the two evaluated
+  values to match.
+- Top-level `(theorem name actual expected)` declarations do the same check and
+  bind the checked value to `name`.
 - `quote` turns code into ordinary list data: `(quote (lambda x (var x)))`.
 - `object` is an immutable named map. `with` returns an updated object, `get`
   reads a key, and `has` checks for a key.
@@ -77,6 +81,8 @@ Top-level definitions work across later forms in the same source:
 
 ```lisp
 (def id (lambda x (var x)))
+(check (app (var id) 'a) 'a)
+(theorem yes_value 'yes 'yes)
 (app (var id) 'a)
 ```
 

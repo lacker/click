@@ -61,6 +61,16 @@ fn evaluation_cases() {
             "a"
         ),
         ok!(
+            "check validates an expected value and keeps processing",
+            "(check (app (lambda x (var x)) 'a) 'a)\ntrue",
+            "true"
+        ),
+        ok!(
+            "theorem validates an expected value and binds it",
+            "(theorem yes_value 'yes 'yes)\n(var yes_value)",
+            "yes"
+        ),
+        ok!(
             "object builds an empty named object",
             "(object)",
             "(object)"
@@ -172,9 +182,29 @@ fn evaluation_cases() {
             "def is only valid as a top-level declaration"
         ),
         err!(
+            "nested check is rejected as a term form",
+            "(app (lambda x (check 'a 'a)) 'b)",
+            "check is only valid as a top-level declaration"
+        ),
+        err!(
+            "nested theorem is rejected as a term form",
+            "(app (lambda x (theorem y 'a 'a)) 'b)",
+            "theorem is only valid as a top-level declaration"
+        ),
+        err!(
             "duplicate top level defs are rejected",
             "(def x 'a)\n(def x 'b)",
             "definition 'x' is already declared"
+        ),
+        err!(
+            "check fails when values differ",
+            "(check 'a 'b)",
+            "check failed: expected b, got a"
+        ),
+        err!(
+            "theorem fails when values differ",
+            "(theorem x 'a 'b)",
+            "theorem failed: expected b, got a"
         ),
         err!(
             "get rejects missing object keys",
