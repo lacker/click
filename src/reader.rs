@@ -1,4 +1,4 @@
-use crate::kernel::{ClickResult, Expr};
+use crate::kernel::{ClickResult, SExpr};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Token {
@@ -8,7 +8,7 @@ enum Token {
     Symbol(String),
 }
 
-pub(crate) fn read(source: &str) -> ClickResult<Vec<Expr>> {
+pub(crate) fn read(source: &str) -> ClickResult<Vec<SExpr>> {
     let source = strip_shebang(source);
     let tokens = tokenize(source)?;
     Parser::new(tokens).parse_program()
@@ -69,15 +69,15 @@ impl Parser {
         Self { tokens, index: 0 }
     }
 
-    fn parse_program(mut self) -> ClickResult<Vec<Expr>> {
-        let mut exprs = Vec::new();
+    fn parse_program(mut self) -> ClickResult<Vec<SExpr>> {
+        let mut sexprs = Vec::new();
         while self.index < self.tokens.len() {
-            exprs.push(self.parse_expr()?);
+            sexprs.push(self.parse_expr()?);
         }
-        Ok(exprs)
+        Ok(sexprs)
     }
 
-    fn parse_expr(&mut self) -> ClickResult<Expr> {
+    fn parse_expr(&mut self) -> ClickResult<SExpr> {
         let token = self
             .tokens
             .get(self.index)
@@ -92,7 +92,7 @@ impl Parser {
                     match self.tokens.get(self.index) {
                         Some(Token::RParen) => {
                             self.index += 1;
-                            return Ok(Expr::List(items));
+                            return Ok(SExpr::List(items));
                         }
                         Some(_) => items.push(self.parse_expr()?),
                         None => return Err("unterminated list".to_string()),
@@ -102,9 +102,12 @@ impl Parser {
             Token::RParen => Err("unexpected ')'".to_string()),
             Token::Quote => {
                 let quoted = self.parse_expr()?;
-                Ok(Expr::List(vec![Expr::Symbol("quote".to_string()), quoted]))
+                Ok(SExpr::List(vec![
+                    SExpr::Symbol("quote".to_string()),
+                    quoted,
+                ]))
             }
-            Token::Symbol(symbol) => Ok(Expr::Symbol(symbol)),
+            Token::Symbol(symbol) => Ok(SExpr::Symbol(symbol)),
         }
     }
 }

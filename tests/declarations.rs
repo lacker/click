@@ -1,4 +1,4 @@
-use click::{Context, Declaration, Expr, Value, declare};
+use click::{Context, Declaration, SExpr, Value, declare};
 
 #[test]
 fn declare_extends_the_context_purely() {
@@ -7,7 +7,7 @@ fn declare_extends_the_context_purely() {
         &context,
         Declaration::Def {
             name: "answer".to_string(),
-            value: Expr::Symbol("true".to_string()),
+            value: SExpr::Symbol("true".to_string()),
         },
     )
     .expect("declaration should succeed");
@@ -22,7 +22,7 @@ fn check_leaves_the_context_unchanged() {
         &Context::new(),
         Declaration::Def {
             name: "answer".to_string(),
-            value: Expr::Symbol("true".to_string()),
+            value: SExpr::Symbol("true".to_string()),
         },
     )
     .expect("definition should succeed");
@@ -30,11 +30,11 @@ fn check_leaves_the_context_unchanged() {
     let checked = declare(
         &context,
         Declaration::Check {
-            actual: Expr::List(vec![
-                Expr::Symbol("var".to_string()),
-                Expr::Symbol("answer".to_string()),
+            actual: SExpr::List(vec![
+                SExpr::Symbol("var".to_string()),
+                SExpr::Symbol("answer".to_string()),
             ]),
-            expected: Expr::Symbol("true".to_string()),
+            expected: SExpr::Symbol("true".to_string()),
         },
     )
     .expect("check should succeed");
@@ -48,13 +48,13 @@ fn theorem_checks_and_binds_a_name() {
         &Context::new(),
         Declaration::Theorem {
             name: "yes_value".to_string(),
-            actual: Expr::List(vec![
-                Expr::Symbol("quote".to_string()),
-                Expr::Symbol("yes".to_string()),
+            actual: SExpr::List(vec![
+                SExpr::Symbol("quote".to_string()),
+                SExpr::Symbol("yes".to_string()),
             ]),
-            expected: Expr::List(vec![
-                Expr::Symbol("quote".to_string()),
-                Expr::Symbol("yes".to_string()),
+            expected: SExpr::List(vec![
+                SExpr::Symbol("quote".to_string()),
+                SExpr::Symbol("yes".to_string()),
             ]),
         },
     )

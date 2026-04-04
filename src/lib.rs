@@ -2,5 +2,5 @@ pub mod kernel;
 mod reader;
 
 pub use kernel::{
-    ClickResult, Closure, Context, Declaration, Expr, Object, Value, declare, run_source,
+    ClickResult, Closure, Context, Declaration, Object, SExpr, Value, declare, run_source,
 };

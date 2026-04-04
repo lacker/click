@@ -19,16 +19,16 @@ pub struct Object {
 pub enum Declaration {
     Def {
         name: String,
-        value: Expr,
+        value: SExpr,
     },
     Check {
-        actual: Expr,
-        expected: Expr,
+        actual: SExpr,
+        expected: SExpr,
     },
     Theorem {
         name: String,
-        actual: Expr,
-        expected: Expr,
+        actual: SExpr,
+        expected: SExpr,
     },
 }
 
@@ -45,14 +45,14 @@ pub enum Value {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Closure {
     binder: String,
-    body: Expr,
+    body: SExpr,
     env: Object,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Expr {
+pub enum SExpr {
     Symbol(String),
-    List(Vec<Expr>),
+    List(Vec<SExpr>),
 }
 
 impl Value {
@@ -226,10 +226,10 @@ pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Conte
 }
 
 // Evaluate one parsed expression in the given lexical environment.
-fn eval(expr: &Expr, env: &Object) -> ClickResult<Value> {
+fn eval(expr: &SExpr, env: &Object) -> ClickResult<Value> {
     match expr {
-        Expr::Symbol(symbol) => eval_symbol(symbol),
-        Expr::List(items) => eval_list(items, env),
+        SExpr::Symbol(symbol) => eval_symbol(symbol),
+        SExpr::List(items) => eval_list(items, env),
     }
 }
 
@@ -244,12 +244,12 @@ fn eval_symbol(symbol: &str) -> ClickResult<Value> {
 }
 
 // Evaluate one tagged list form such as `quote`, `object`, `lambda`, or `app`.
-fn eval_list(items: &[Expr], env: &Object) -> ClickResult<Value> {
+fn eval_list(items: &[SExpr], env: &Object) -> ClickResult<Value> {
     let Some((head, tail)) = items.split_first() else {
         return Err("cannot evaluate an empty list; use nil or quote".to_string());
     };
 
-    let Expr::Symbol(operator) = head else {
+    let SExpr::Symbol(operator) = head else {
         return Err("form heads must be keyword atoms".to_string());
     };
 
@@ -368,8 +368,8 @@ fn expect_equal(actual: &Value, expected: &Value, role: &str) -> ClickResult<()>
 }
 
 // Recognize top-level declaration forms and convert them into kernel declarations.
-fn declaration_from_expr(expr: &Expr) -> ClickResult<Option<Declaration>> {
-    let Expr::List(items) = expr else {
+fn declaration_from_expr(expr: &SExpr) -> ClickResult<Option<Declaration>> {
+    let SExpr::List(items) = expr else {
         return Ok(None);
     };
 
@@ -377,7 +377,7 @@ fn declaration_from_expr(expr: &Expr) -> ClickResult<Option<Declaration>> {
         return Ok(None);
     };
 
-    let Expr::Symbol(operator) = head else {
+    let SExpr::Symbol(operator) = head else {
         return Ok(None);
     };
 
@@ -411,7 +411,7 @@ fn declaration_from_expr(expr: &Expr) -> ClickResult<Option<Declaration>> {
 }
 
 // Reject forms whose argument count does not match the primitive's contract.
-fn expect_arity(operator: &str, args: &[Expr], expected: usize) -> ClickResult<()> {
+fn expect_arity(operator: &str, args: &[SExpr], expected: usize) -> ClickResult<()> {
     if args.len() == expected {
         Ok(())
     } else {
@@ -423,9 +423,9 @@ fn expect_arity(operator: &str, args: &[Expr], expected: usize) -> ClickResult<(
 }
 
 // Extract an atom name from syntax where a binder or variable name is expected.
-fn expect_symbol(expr: &Expr, role: &str) -> ClickResult<String> {
+fn expect_symbol(expr: &SExpr, role: &str) -> ClickResult<String> {
     match expr {
-        Expr::Symbol(symbol) => Ok(symbol.clone()),
+        SExpr::Symbol(symbol) => Ok(symbol.clone()),
         _ => Err(format!("{role} must be an atom")),
     }
 }
@@ -447,10 +447,10 @@ fn expect_object_key(value: Value, role: &str) -> ClickResult<String> {
 }
 
 // Turn parsed syntax into the corresponding quoted Click data value.
-fn quote_expr(expr: &Expr) -> ClickResult<Value> {
+fn quote_expr(expr: &SExpr) -> ClickResult<Value> {
     match expr {
-        Expr::Symbol(symbol) => Ok(quote_symbol(symbol)),
-        Expr::List(items) => {
+        SExpr::Symbol(symbol) => Ok(quote_symbol(symbol)),
+        SExpr::List(items) => {
             let mut result = Value::Nil;
             for item in items.iter().rev() {
                 result = Value::Cons(Box::new(quote_expr(item)?), Box::new(result));
