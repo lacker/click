@@ -55,18 +55,6 @@ pub enum SExpr {
     List(Vec<SExpr>),
 }
 
-impl Value {
-    // Recognize the values that count as atoms for the `atom` primitive.
-    fn is_atom(&self) -> bool {
-        matches!(self, Value::Atom(_) | Value::Bool(_) | Value::Nil)
-    }
-
-    // Apply Click's truthiness rule: only `nil` and `false` are falsey.
-    fn is_truthy(&self) -> bool {
-        !matches!(self, Value::Nil | Value::Bool(false))
-    }
-}
-
 impl Object {
     // Construct an empty object with no named entries.
     pub fn new() -> Self {
@@ -84,13 +72,6 @@ impl Object {
     pub fn get(&self, name: &str) -> Option<&Value> {
         self.entries.get(name)
     }
-
-    // Return a new object with one key updated or inserted.
-    pub fn with(&self, name: String, value: Value) -> Self {
-        let mut entries = self.entries.clone();
-        entries.insert(name, value);
-        Self { entries }
-    }
 }
 
 impl Context {
@@ -105,7 +86,81 @@ impl Context {
     pub fn get(&self, name: &str) -> Option<&Value> {
         self.values.get(name)
     }
+}
 
+/// Parse a source string, declare any top-level definitions, and evaluate the
+/// final top-level expression.
+pub fn run_source(source: &str) -> ClickResult<Option<Value>> {
+    let exprs = read(source)?;
+    let mut context = Context::new();
+
+    let mut last = None;
+    for expr in exprs {
+        match declaration_from_expr(&expr)? {
+            Some(declaration) => context = declare(&context, declaration)?,
+            None => last = Some(eval(&expr, context.values())?),
+        }
+    }
+
+    Ok(last)
+}
+
+/// Check and apply one top-level declaration, producing an extended context.
+pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Context> {
+    match declaration {
+        Declaration::Def { name, value } => {
+            if context.values.has(&name) {
+                return Err(format!("definition '{name}' is already declared"));
+            }
+            let evaluated = eval(&value, context.values())?;
+            Ok(context.with_value(name, evaluated))
+        }
+        Declaration::Check { actual, expected } => {
+            let actual = eval(&actual, context.values())?;
+            let expected = eval(&expected, context.values())?;
+            expect_equal(&actual, &expected, "check")?;
+            Ok(context.clone())
+        }
+        Declaration::Theorem {
+            name,
+            actual,
+            expected,
+        } => {
+            if context.values.has(&name) {
+                return Err(format!("definition '{name}' is already declared"));
+            }
+            let actual = eval(&actual, context.values())?;
+            let expected = eval(&expected, context.values())?;
+            expect_equal(&actual, &expected, "theorem")?;
+            Ok(context.with_value(name, actual))
+        }
+    }
+}
+
+// Private implementation stuff goes below here, to keep this file organized.
+
+impl Value {
+    // Recognize the values that count as atoms for the `atom` primitive.
+    fn is_atom(&self) -> bool {
+        matches!(self, Value::Atom(_) | Value::Bool(_) | Value::Nil)
+    }
+
+    // Apply Click's truthiness rule: only `nil` and `false` are falsey.
+    fn is_truthy(&self) -> bool {
+        !matches!(self, Value::Nil | Value::Bool(false))
+    }
+}
+
+impl Object {
+    // Return a new object with one key updated or inserted.
+    fn with(&self, name: String, value: Value) -> Self {
+        let mut entries = self.entries.clone();
+        entries.insert(name, value);
+        Self { entries }
+    }
+}
+
+impl Context {
     // Return the value environment visible to evaluation.
     fn values(&self) -> &Object {
         &self.values
@@ -174,55 +229,6 @@ fn format_object(object: &Object, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, " ({key} {value})")?;
     }
     write!(f, ")")
-}
-
-/// Parse a source string, declare any top-level definitions, and evaluate the
-/// final top-level expression.
-pub fn run_source(source: &str) -> ClickResult<Option<Value>> {
-    let exprs = read(source)?;
-    let mut context = Context::new();
-
-    let mut last = None;
-    for expr in exprs {
-        match declaration_from_expr(&expr)? {
-            Some(declaration) => context = declare(&context, declaration)?,
-            None => last = Some(eval(&expr, context.values())?),
-        }
-    }
-
-    Ok(last)
-}
-
-/// Check and apply one top-level declaration, producing an extended context.
-pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Context> {
-    match declaration {
-        Declaration::Def { name, value } => {
-            if context.values.has(&name) {
-                return Err(format!("definition '{name}' is already declared"));
-            }
-            let evaluated = eval(&value, context.values())?;
-            Ok(context.with_value(name, evaluated))
-        }
-        Declaration::Check { actual, expected } => {
-            let actual = eval(&actual, context.values())?;
-            let expected = eval(&expected, context.values())?;
-            expect_equal(&actual, &expected, "check")?;
-            Ok(context.clone())
-        }
-        Declaration::Theorem {
-            name,
-            actual,
-            expected,
-        } => {
-            if context.values.has(&name) {
-                return Err(format!("definition '{name}' is already declared"));
-            }
-            let actual = eval(&actual, context.values())?;
-            let expected = eval(&expected, context.values())?;
-            expect_equal(&actual, &expected, "theorem")?;
-            Ok(context.with_value(name, actual))
-        }
-    }
 }
 
 // Evaluate one parsed expression in the given lexical environment.
