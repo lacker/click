@@ -117,9 +117,9 @@ fn evaluation_cases() {
         ok!("if treats false as falsey", "(if false 'yes 'no)", "no"),
         ok!("if treats atoms as truthy", "(if 'maybe 'yes 'no)", "yes"),
         ok!(
-            "lambda produces an internal closure value",
+            "lambda produces an internal function value",
             "(lambda x (var x))",
-            "#<closure>"
+            "#<function>"
         ),
         ok!(
             "app applies a named variable binder",
@@ -132,7 +132,7 @@ fn evaluation_cases() {
             "outer"
         ),
         ok!(
-            "closures capture lexical environment",
+            "substitution preserves outer binders under nested lambdas",
             "(app (app (lambda x (lambda y (cons (var x) (cons (var y) nil)))) 'outer) 'inner)",
             "(outer inner)"
         ),
@@ -166,10 +166,15 @@ fn evaluation_cases() {
             "(var '(x))",
             "var name must be an atom"
         ),
+        ok!(
+            "lambda allows shadowing and resolves the innermost binder",
+            "(app (app (lambda x (lambda x (var x))) 'outer) 'inner)",
+            "inner"
+        ),
         err!(
-            "lambda rejects duplicate binders in scope",
-            "(app (lambda x (lambda x (var x))) 'a)",
-            "lambda binder 'x' is already bound"
+            "lambda bodies are scope checked eagerly",
+            "(lambda x (var y))",
+            "unbound variable 'y'"
         ),
         err!(
             "unknown form tags are rejected",

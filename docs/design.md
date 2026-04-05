@@ -81,7 +81,12 @@ The current kernel has:
 
 Ordinary symbols do not self-evaluate.
 
-Non-atomic code forms are tagged lists. For example:
+The reader still produces raw S-expressions. The kernel immediately lowers
+those into an internal `Term` language before evaluation. In that internal
+term language, bound locals are de Bruijn indices and top-level references stay
+as named globals.
+
+Non-atomic surface code forms are tagged lists. For example:
 
 ```lisp
 (var x)
@@ -106,8 +111,8 @@ compare evaluated kernel values for exact equality. `theorem` also binds the
 checked value to a name.
 
 Objects are primitive immutable maps from symbol names to values. The kernel
-uses them internally for lexical environments, and Click code can also build
-and inspect them directly with:
+uses them internally for top-level contexts, and Click code can also build and
+inspect them directly with:
 
 ```lisp
 (object)
@@ -116,24 +121,30 @@ and inspect them directly with:
 (has obj 'foo)
 ```
 
-Variables are represented explicitly by name.
+Variables are represented explicitly by name in the surface syntax.
 
-`lambda` binds a name. Using a name that is already bound in the current lexical
-context is malformed.
+`lambda` binds a scope. Shadowing is allowed. During lowering, the innermost
+binder with a given name becomes local index `0`, the next one out becomes
+local index `1`, and so on.
 
-The evaluator still uses lexical closures internally. A closure captures an
-object environment, but closures themselves are not part of Click data.
+Because lowering checks `var` uses against the current local scope and top-level
+context, ill-scoped variables are rejected eagerly, including inside lambda
+bodies.
 
-The bootstrap token-core experiments have already exposed one missing piece:
-substitution over uniquely named binders needs an alpha-renaming or freshening
-step. Without that, independently closed terms can beta-reduce into malformed
-code when binder names collide.
+The kernel evaluator no longer uses closure values. A function value is a
+lowered lambda term. Application evaluates the argument, reifies that runtime
+value back into a closed term, substitutes it for local index `0`, and then
+evaluates the resulting term.
 
-The bootstrap evaluator for the token core now uses explicit
-closure/environment values rather than syntax rewriting. The first `Bool`
-probe showed that this is the cleaner operational path: it avoids the
-alpha-renaming problems that appear quickly in substitution-based evaluation of
-named syntax.
+The earlier named-syntax experiments exposed the usual substitution problem:
+named binders need alpha-renaming or freshening to avoid accidental capture.
+The kernel avoids that by lowering locals to de Bruijn indices before
+evaluation.
+
+The bootstrap evaluator for the token core still uses explicit
+closure/environment values rather than syntax rewriting. That remains a useful
+contrast point: the trusted kernel now uses de Bruijn substitution, while the
+self-hosted token-core experiments are still operating on quoted named syntax.
 
 The bootstrap token-core typing story is now split in two: `infer` computes a
 term's type, and `typecheck` checks a term against an expected type. The

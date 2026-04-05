@@ -1,4 +1,4 @@
-use click::{Context, Declaration, SExpr, Value, declare};
+use click::{Context, Declaration, SExpr, Term, Value, declare};
 
 #[test]
 fn declare_extends_the_context_purely() {
@@ -7,7 +7,7 @@ fn declare_extends_the_context_purely() {
         &context,
         Declaration::Def {
             name: "answer".to_string(),
-            value: SExpr::Symbol("true".to_string()),
+            value: Term::Bool(true),
         },
     )
     .expect("declaration should succeed");
@@ -22,7 +22,7 @@ fn check_leaves_the_context_unchanged() {
         &Context::new(),
         Declaration::Def {
             name: "answer".to_string(),
-            value: SExpr::Symbol("true".to_string()),
+            value: Term::Bool(true),
         },
     )
     .expect("definition should succeed");
@@ -30,11 +30,8 @@ fn check_leaves_the_context_unchanged() {
     let checked = declare(
         &context,
         Declaration::Check {
-            actual: SExpr::List(vec![
-                SExpr::Symbol("var".to_string()),
-                SExpr::Symbol("answer".to_string()),
-            ]),
-            expected: SExpr::Symbol("true".to_string()),
+            actual: Term::Global("answer".to_string()),
+            expected: Term::Bool(true),
         },
     )
     .expect("check should succeed");
@@ -48,14 +45,8 @@ fn theorem_checks_and_binds_a_name() {
         &Context::new(),
         Declaration::Theorem {
             name: "yes_value".to_string(),
-            actual: SExpr::List(vec![
-                SExpr::Symbol("quote".to_string()),
-                SExpr::Symbol("yes".to_string()),
-            ]),
-            expected: SExpr::List(vec![
-                SExpr::Symbol("quote".to_string()),
-                SExpr::Symbol("yes".to_string()),
-            ]),
+            actual: Term::Quote(SExpr::Symbol("yes".to_string())),
+            expected: Term::Quote(SExpr::Symbol("yes".to_string())),
         },
     )
     .expect("theorem should succeed");
