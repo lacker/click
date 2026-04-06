@@ -1,4 +1,4 @@
-use click::{Context, Declaration, SExpr, Term, Value, declare};
+use click::{Context, Declaration, Term, Value, declare};
 
 #[test]
 fn declare_extends_the_context_purely() {
@@ -44,15 +44,12 @@ fn theorem_checks_and_binds_a_name() {
     let context = declare(
         &Context::new(),
         Declaration::Theorem {
-            name: "yes_value".to_string(),
-            actual: Term::Quote(SExpr::Symbol("yes".to_string())),
-            expected: Term::Quote(SExpr::Symbol("yes".to_string())),
+            name: "answer_value".to_string(),
+            actual: Term::Bool(true),
+            expected: Term::Bool(true),
         },
     )
     .expect("theorem should succeed");
 
-    assert_eq!(
-        context.get("yes_value"),
-        Some(&Value::Atom("yes".to_string()))
-    );
+    assert_eq!(context.get("answer_value"), Some(&Value::Bool(true)));
 }

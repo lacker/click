@@ -100,13 +100,7 @@ impl Parser {
                 }
             }
             Token::RParen => Err("unexpected ')'".to_string()),
-            Token::Quote => {
-                let quoted = self.parse_expr()?;
-                Ok(SExpr::List(vec![
-                    SExpr::Symbol("quote".to_string()),
-                    quoted,
-                ]))
-            }
+            Token::Quote => Err("quote syntax is no longer supported".to_string()),
             Token::Symbol(symbol) => Ok(SExpr::Symbol(symbol)),
         }
     }

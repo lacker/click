@@ -8,51 +8,50 @@ This document records the current design direction for `click`.
 
 Click code can prove things about Click code.
 
-You can inspect Click programs, transform them, and prove those transformations correct, all inside Click.
+You can inspect Click programs, transform them, and prove those transformations
+correct, all inside Click.
 
-Click aims for complete kernel introspection: the core semantics of the language should themselves be representable, inspectable, and reasoned about inside Click.
+Click aims for complete kernel introspection: the core semantics of the
+language should themselves be representable, inspectable, and reasoned about
+inside Click.
 
 ## The Kernel
 
 The heart of the Click kernel is a few trusted Rust things.
 
-* A small set of primitive data representations. Right now the important ones
-  are lists and named objects. Code and most data stay lispy, but named kernel
-  structure like environments fits more naturally as objects.
+* A small internal term language.
 
-* An "eval" function. This evaluates code.
+* An `eval` function.
 
-* A "typecheck" function. This verifies that a particular thing adheres to a particular type.
+* A `typecheck` function.
 
-* A "declare" function. This processes declarations like `def`, `check`, and
-  `theorem`, and extends a context/environment in a pure way.
+* A `declare` function that processes top-level `def`, `check`, and `theorem`
+  declarations and extends a context in a pure way.
 
-* A powerful enough typesystem that we can implement proofs via typechecking.
+* A strong enough type system that proofs can eventually be implemented by
+  typechecking.
 
-There are perhaps some other details. But this is the idea.
-
-Everything else, we should be able to write on top of the kernel.
+Everything else should be built on top of that kernel.
 
 ## Baby Steps
 
-Once we have the kernel written, we need to do some basic stuff on top of the kernel.
+Once the kernel is written, the next job is to build enough language on top of
+it to test whether the kernel shape is actually right.
 
-* Implement "eval" and "typecheck" in Click itself.
-It's not that we will use these, exactly. But it's a demonstration that the kernel has sufficient power.
+* Implement `eval` and `typecheck` in Click itself.
+  This is more of a sufficiency test than a production plan.
 
-* Implement some basic types, typeclasses, type-ish things.
-Bool
-Nat
-Code - a type that represents Click code itself
-List<T>
-"Total function"
-Dependent types, like perhaps Vec<T, n>
-Container
-Iterator
+* Implement some basic types and type-like structures.
+  `Bool`
+  `Nat`
+  `Code`
+  `List<T>`
+  total functions
+  dependent types like `Vec<T, n>`
 
-* Implement some basic proofs
-Reversing a list twice gives the same thing
-Addition is commutative and associative
+* Implement some basic proofs.
+  reversing a list twice gives the same thing
+  addition is commutative and associative
 
 ## Current Kernel
 
@@ -61,17 +60,11 @@ This is still a prototype kernel.
 The current kernel has:
 
 - top-level `def`, `check`, and `theorem` declarations, processed by `declare`
-- `quote`
 - `object`
 - `get`
 - `with`
 - `has`
 - `if`
-- `atom`
-- `atom_eq`
-- `car`
-- `cdr`
-- `cons`
 - `var`
 - `app`
 - `lambda`
@@ -98,10 +91,10 @@ Top-level definitions and assertions are declarations rather than term forms.
 The current prototype supports:
 
 ```lisp
-(def answer 'yes)
+(def answer true)
 (def id (lambda x (var x)))
-(check (app (var id) 'a) 'a)
-(theorem yes_value 'yes 'yes)
+(check (app (var id) true) true)
+(theorem truth true true)
 ```
 
 `declare` threads a context forward explicitly. It is a pure operation: a
@@ -116,10 +109,12 @@ inspect them directly with:
 
 ```lisp
 (object)
-(with (object) 'foo 'bar)
-(get obj 'foo)
-(has obj 'foo)
+(with (object) foo true)
+(get obj foo)
+(has obj foo)
 ```
+
+In those object forms, keys are syntax-level symbols, not runtime values.
 
 Variables are represented explicitly by name in the surface syntax.
 
@@ -131,9 +126,9 @@ Because lowering checks `var` uses against the current local scope and top-level
 context, ill-scoped variables are rejected eagerly, including inside lambda
 bodies.
 
-The kernel evaluator no longer uses closure values. A function value is a
-lowered lambda term. Application evaluates the argument, reifies that runtime
-value back into a closed term, substitutes it for local index `0`, and then
+The kernel evaluator does not use closure values. A function value is a lowered
+lambda term. Application evaluates the argument, reifies that runtime value
+back into a closed term, substitutes it for local index `0`, and then
 evaluates the resulting term.
 
 The earlier named-syntax experiments exposed the usual substitution problem:
@@ -141,26 +136,27 @@ named binders need alpha-renaming or freshening to avoid accidental capture.
 The kernel avoids that by lowering locals to de Bruijn indices before
 evaluation.
 
-The bootstrap evaluator for the token core still uses explicit
-closure/environment values rather than syntax rewriting. That remains a useful
-contrast point: the trusted kernel now uses de Bruijn substitution, while the
-self-hosted token-core experiments are still operating on quoted named syntax.
+## Deliberate Omissions
 
-The bootstrap token-core typing story is now split in two: `infer` computes a
-term's type, and `typecheck` checks a term against an expected type. The
-current conversion rule inside that checker is still modest: it computes types
-to weak-head normal form and compares them up to alpha-equivalence, not full
-normalization-based definitional equality.
+The kernel no longer has `quote`, `car`, `cdr`, `cons`, `atom`, or `atom_eq`.
 
-The first proof toolkit now exists on top of that token core: a Leibniz-style
-`Eq` proposition, `refl`, and basic equality reasoning terms for transport,
-symmetry, and transitivity. So the current state is no longer just "typed
-programs"; it already includes basic propositions-as-types and proof terms.
+That is deliberate. The old quote/list path treated code as ordinary list data.
+That was convenient for bootstrapping, but it tied code introspection to the
+wrong interface. Once binders are represented internally with de Bruijn
+indices, exposing code as raw list structure would either leak those indices or
+force the kernel to pretend that binders are ordinary tree fields.
 
-The next proof step is already informative too. A trivial computation lemma
-like `if_true` is not yet comfortable in the current system. `Eq` and `refl`
-work, but proving that `(if true t f)` equals `t` under an arbitrary predicate
-pushes past the current weak-head comparison story. That suggests at least one
-more piece is needed before serious proof engineering: either stronger
-definitional equality, or a richer checking story than the current
-infer-then-compare wrapper.
+So the current kernel does not yet expose first-class code inspection. That is
+not because introspection is unimportant. It is because the right interface has
+to be binder-aware.
+
+The intended future direction is:
+
+- `Term` is the real kernel syntax.
+- raw de Bruijn indices remain an implementation detail.
+- Click-level introspection over terms should use dedicated, binder-safe term
+  operations rather than generic list destructors.
+
+The older quote/list bootstrap experiments are therefore no longer the current
+path. They remain useful as historical experiments, but they are not the
+present kernel design.

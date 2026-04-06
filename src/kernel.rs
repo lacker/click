@@ -33,16 +33,9 @@ pub enum Declaration {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SExpr {
-    Symbol(String),
-    List(Vec<SExpr>),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Term {
     Nil,
     Bool(bool),
-    Quote(SExpr),
     Object,
     Local(usize),
     Global(String),
@@ -60,44 +53,31 @@ pub enum Term {
     },
     Get {
         object: Box<Term>,
-        key: Box<Term>,
+        key: String,
     },
     With {
         object: Box<Term>,
-        key: Box<Term>,
+        key: String,
         value: Box<Term>,
     },
     Has {
         object: Box<Term>,
-        key: Box<Term>,
-    },
-    Atom {
-        value: Box<Term>,
-    },
-    AtomEq {
-        left: Box<Term>,
-        right: Box<Term>,
-    },
-    Car {
-        value: Box<Term>,
-    },
-    Cdr {
-        value: Box<Term>,
-    },
-    Cons {
-        head: Box<Term>,
-        tail: Box<Term>,
+        key: String,
     },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
-    Atom(String),
     Bool(bool),
     Nil,
     Object(Object),
-    Cons(Box<Value>, Box<Value>),
     Function(Term),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SExpr {
+    Symbol(String),
+    List(Vec<SExpr>),
 }
 
 impl Object {
@@ -188,11 +168,6 @@ pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Conte
 // Private implementation stuff goes below here, to keep this file organized.
 
 impl Value {
-    // Recognize the values that count as atoms for the `atom` primitive.
-    fn is_atom(&self) -> bool {
-        matches!(self, Value::Atom(_) | Value::Bool(_) | Value::Nil)
-    }
-
     // Apply Click's truthiness rule: only `nil` and `false` are falsey.
     fn is_truthy(&self) -> bool {
         !matches!(self, Value::Nil | Value::Bool(false))
@@ -226,46 +201,11 @@ impl fmt::Display for Value {
     // Render kernel values back into the small Click surface notation.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::Atom(name) => write!(f, "{name}"),
             Value::Bool(true) => write!(f, "true"),
             Value::Bool(false) => write!(f, "false"),
             Value::Nil => write!(f, "nil"),
             Value::Object(object) => format_object(object, f),
-            Value::Cons(_, _) => format_cons(self, f),
             Value::Function(_) => write!(f, "#<function>"),
-        }
-    }
-}
-
-// Print a cons cell as either a proper list or a dotted pair.
-fn format_cons(value: &Value, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "(")?;
-
-    let mut current = value;
-    let mut first = true;
-
-    loop {
-        match current {
-            Value::Cons(head, tail) => {
-                if !first {
-                    write!(f, " ")?;
-                }
-                write!(f, "{head}")?;
-                first = false;
-
-                match tail.as_ref() {
-                    Value::Nil => {
-                        write!(f, ")")?;
-                        return Ok(());
-                    }
-                    Value::Cons(_, _) => current = tail.as_ref(),
-                    other => {
-                        write!(f, " . {other})")?;
-                        return Ok(());
-                    }
-                }
-            }
-            _ => unreachable!("format_cons is only called for cons cells"),
         }
     }
 }
@@ -335,10 +275,10 @@ fn term_from_expr(expr: &SExpr, scope: &[String], globals: &Object) -> ClickResu
     }
 }
 
-// Lower one tagged list form such as `quote`, `lambda`, or `app`.
+// Lower one tagged list form such as `object`, `lambda`, or `app`.
 fn term_from_list(items: &[SExpr], scope: &[String], globals: &Object) -> ClickResult<Term> {
     let Some((head, tail)) = items.split_first() else {
-        return Err("cannot evaluate an empty list; use nil or quote".to_string());
+        return Err("cannot evaluate an empty list; use nil".to_string());
     };
 
     let SExpr::Symbol(operator) = head else {
@@ -346,10 +286,7 @@ fn term_from_list(items: &[SExpr], scope: &[String], globals: &Object) -> ClickR
     };
 
     match operator.as_str() {
-        "quote" => {
-            expect_arity(operator, tail, 1)?;
-            Ok(Term::Quote(tail[0].clone()))
-        }
+        "quote" => Err("quote is no longer supported in the kernel".to_string()),
         "def" => Err("def is only valid as a top-level declaration".to_string()),
         "check" => Err("check is only valid as a top-level declaration".to_string()),
         "theorem" => Err("theorem is only valid as a top-level declaration".to_string()),
@@ -378,14 +315,14 @@ fn term_from_list(items: &[SExpr], scope: &[String], globals: &Object) -> ClickR
             expect_arity(operator, tail, 2)?;
             Ok(Term::Get {
                 object: Box::new(term_from_expr(&tail[0], scope, globals)?),
-                key: Box::new(term_from_expr(&tail[1], scope, globals)?),
+                key: expect_symbol(&tail[1], "get key")?,
             })
         }
         "with" => {
             expect_arity(operator, tail, 3)?;
             Ok(Term::With {
                 object: Box::new(term_from_expr(&tail[0], scope, globals)?),
-                key: Box::new(term_from_expr(&tail[1], scope, globals)?),
+                key: expect_symbol(&tail[1], "with key")?,
                 value: Box::new(term_from_expr(&tail[2], scope, globals)?),
             })
         }
@@ -393,40 +330,11 @@ fn term_from_list(items: &[SExpr], scope: &[String], globals: &Object) -> ClickR
             expect_arity(operator, tail, 2)?;
             Ok(Term::Has {
                 object: Box::new(term_from_expr(&tail[0], scope, globals)?),
-                key: Box::new(term_from_expr(&tail[1], scope, globals)?),
+                key: expect_symbol(&tail[1], "has key")?,
             })
         }
-        "atom" => {
-            expect_arity(operator, tail, 1)?;
-            Ok(Term::Atom {
-                value: Box::new(term_from_expr(&tail[0], scope, globals)?),
-            })
-        }
-        "atom_eq" => {
-            expect_arity(operator, tail, 2)?;
-            Ok(Term::AtomEq {
-                left: Box::new(term_from_expr(&tail[0], scope, globals)?),
-                right: Box::new(term_from_expr(&tail[1], scope, globals)?),
-            })
-        }
-        "car" => {
-            expect_arity(operator, tail, 1)?;
-            Ok(Term::Car {
-                value: Box::new(term_from_expr(&tail[0], scope, globals)?),
-            })
-        }
-        "cdr" => {
-            expect_arity(operator, tail, 1)?;
-            Ok(Term::Cdr {
-                value: Box::new(term_from_expr(&tail[0], scope, globals)?),
-            })
-        }
-        "cons" => {
-            expect_arity(operator, tail, 2)?;
-            Ok(Term::Cons {
-                head: Box::new(term_from_expr(&tail[0], scope, globals)?),
-                tail: Box::new(term_from_expr(&tail[1], scope, globals)?),
-            })
+        "atom" | "atom_eq" | "car" | "cdr" | "cons" => {
+            Err(format!("{operator} is no longer supported in the kernel"))
         }
         _ => Err(format!("unknown form '{operator}'")),
     }
@@ -483,7 +391,7 @@ fn expect_arity(operator: &str, args: &[SExpr], expected: usize) -> ClickResult<
     }
 }
 
-// Extract an atom name from syntax where a binder or variable name is expected.
+// Extract an atom name from syntax where a binder or object key is expected.
 fn expect_symbol(expr: &SExpr, role: &str) -> ClickResult<String> {
     match expr {
         SExpr::Symbol(symbol) => Ok(symbol.clone()),
@@ -496,7 +404,6 @@ fn eval(term: &Term, globals: &Object) -> ClickResult<Value> {
     match term {
         Term::Nil => Ok(Value::Nil),
         Term::Bool(value) => Ok(Value::Bool(*value)),
-        Term::Quote(expr) => quote_expr(expr),
         Term::Object => Ok(Value::Object(Object::new())),
         Term::Local(index) => Err(format!("encountered unbound local index {index}")),
         Term::Global(name) => globals
@@ -523,44 +430,19 @@ fn eval(term: &Term, globals: &Object) -> ClickResult<Value> {
         }
         Term::Get { object, key } => {
             let object = expect_object(eval(object, globals)?, "get object")?;
-            let key = expect_object_key(eval(key, globals)?, "get key")?;
             object
-                .get(&key)
+                .get(key)
                 .cloned()
                 .ok_or_else(|| format!("missing object key '{key}'"))
         }
         Term::With { object, key, value } => {
             let object = expect_object(eval(object, globals)?, "with object")?;
-            let key = expect_object_key(eval(key, globals)?, "with key")?;
             let value = eval(value, globals)?;
-            Ok(Value::Object(object.with(key, value)))
+            Ok(Value::Object(object.with(key.clone(), value)))
         }
         Term::Has { object, key } => {
             let object = expect_object(eval(object, globals)?, "has object")?;
-            let key = expect_object_key(eval(key, globals)?, "has key")?;
-            Ok(Value::Bool(object.has(&key)))
-        }
-        Term::Atom { value } => Ok(Value::Bool(eval(value, globals)?.is_atom())),
-        Term::AtomEq { left, right } => {
-            let left = eval(left, globals)?;
-            let right = eval(right, globals)?;
-            if !left.is_atom() || !right.is_atom() {
-                return Err("atom_eq expects atom arguments".to_string());
-            }
-            Ok(Value::Bool(left == right))
-        }
-        Term::Car { value } => match eval(value, globals)? {
-            Value::Cons(head, _) => Ok(*head),
-            _ => Err("car expects a non-empty list".to_string()),
-        },
-        Term::Cdr { value } => match eval(value, globals)? {
-            Value::Cons(_, tail) => Ok(*tail),
-            _ => Err("cdr expects a non-empty list".to_string()),
-        },
-        Term::Cons { head, tail } => {
-            let head = eval(head, globals)?;
-            let tail = eval(tail, globals)?;
-            Ok(Value::Cons(Box::new(head), Box::new(tail)))
+            Ok(Value::Bool(object.has(key)))
         }
     }
 }
@@ -573,44 +455,11 @@ fn expect_object(value: Value, role: &str) -> ClickResult<Object> {
     }
 }
 
-// Extract a symbol name from a runtime value where an object key is required.
-fn expect_object_key(value: Value, role: &str) -> ClickResult<String> {
-    match value {
-        Value::Atom(atom) => Ok(atom),
-        _ => Err(format!("{role} must be a symbol")),
-    }
-}
-
-// Turn parsed syntax into the corresponding quoted Click data value.
-fn quote_expr(expr: &SExpr) -> ClickResult<Value> {
-    match expr {
-        SExpr::Symbol(symbol) => Ok(quote_symbol(symbol)),
-        SExpr::List(items) => {
-            let mut result = Value::Nil;
-            for item in items.iter().rev() {
-                result = Value::Cons(Box::new(quote_expr(item)?), Box::new(result));
-            }
-            Ok(result)
-        }
-    }
-}
-
-// Quote one symbol, preserving the kernel's built-in atoms.
-fn quote_symbol(symbol: &str) -> Value {
-    match symbol {
-        "nil" => Value::Nil,
-        "true" => Value::Bool(true),
-        "false" => Value::Bool(false),
-        _ => Value::Atom(symbol.to_string()),
-    }
-}
-
 // Apply a function value by substituting the argument into its body.
 fn apply(function: Value, arg: Value, globals: &Object) -> ClickResult<Value> {
     match function {
         Value::Function(body) => {
-            let arg = reify_value(&arg);
-            let body = instantiate(&body, &arg);
+            let body = instantiate(&body, &reify_value(&arg));
             eval(&body, globals)
         }
         _ => Err("attempted to call a non-function".to_string()),
@@ -620,7 +469,6 @@ fn apply(function: Value, arg: Value, globals: &Object) -> ClickResult<Value> {
 // Reify one runtime value back into a closed kernel term.
 fn reify_value(value: &Value) -> Term {
     match value {
-        Value::Atom(atom) => Term::Quote(SExpr::Symbol(atom.clone())),
         Value::Bool(value) => Term::Bool(*value),
         Value::Nil => Term::Nil,
         Value::Object(object) => {
@@ -628,16 +476,12 @@ fn reify_value(value: &Value) -> Term {
             for (key, value) in &object.entries {
                 result = Term::With {
                     object: Box::new(result),
-                    key: Box::new(Term::Quote(SExpr::Symbol(key.clone()))),
+                    key: key.clone(),
                     value: Box::new(reify_value(value)),
                 };
             }
             result
         }
-        Value::Cons(head, tail) => Term::Cons {
-            head: Box::new(reify_value(head)),
-            tail: Box::new(reify_value(tail)),
-        },
         Value::Function(body) => Term::Lambda {
             body: Box::new(body.clone()),
         },
@@ -656,7 +500,6 @@ fn shift(term: &Term, amount: isize, cutoff: usize) -> Term {
     match term {
         Term::Nil => Term::Nil,
         Term::Bool(value) => Term::Bool(*value),
-        Term::Quote(expr) => Term::Quote(expr.clone()),
         Term::Object => Term::Object,
         Term::Local(index) => {
             if *index < cutoff {
@@ -687,33 +530,16 @@ fn shift(term: &Term, amount: isize, cutoff: usize) -> Term {
         },
         Term::Get { object, key } => Term::Get {
             object: Box::new(shift(object, amount, cutoff)),
-            key: Box::new(shift(key, amount, cutoff)),
+            key: key.clone(),
         },
         Term::With { object, key, value } => Term::With {
             object: Box::new(shift(object, amount, cutoff)),
-            key: Box::new(shift(key, amount, cutoff)),
+            key: key.clone(),
             value: Box::new(shift(value, amount, cutoff)),
         },
         Term::Has { object, key } => Term::Has {
             object: Box::new(shift(object, amount, cutoff)),
-            key: Box::new(shift(key, amount, cutoff)),
-        },
-        Term::Atom { value } => Term::Atom {
-            value: Box::new(shift(value, amount, cutoff)),
-        },
-        Term::AtomEq { left, right } => Term::AtomEq {
-            left: Box::new(shift(left, amount, cutoff)),
-            right: Box::new(shift(right, amount, cutoff)),
-        },
-        Term::Car { value } => Term::Car {
-            value: Box::new(shift(value, amount, cutoff)),
-        },
-        Term::Cdr { value } => Term::Cdr {
-            value: Box::new(shift(value, amount, cutoff)),
-        },
-        Term::Cons { head, tail } => Term::Cons {
-            head: Box::new(shift(head, amount, cutoff)),
-            tail: Box::new(shift(tail, amount, cutoff)),
+            key: key.clone(),
         },
     }
 }
@@ -723,7 +549,6 @@ fn substitute(term: &Term, depth: usize, replacement: &Term) -> Term {
     match term {
         Term::Nil => Term::Nil,
         Term::Bool(value) => Term::Bool(*value),
-        Term::Quote(expr) => Term::Quote(expr.clone()),
         Term::Object => Term::Object,
         Term::Local(index) => {
             if *index == depth {
@@ -751,33 +576,16 @@ fn substitute(term: &Term, depth: usize, replacement: &Term) -> Term {
         },
         Term::Get { object, key } => Term::Get {
             object: Box::new(substitute(object, depth, replacement)),
-            key: Box::new(substitute(key, depth, replacement)),
+            key: key.clone(),
         },
         Term::With { object, key, value } => Term::With {
             object: Box::new(substitute(object, depth, replacement)),
-            key: Box::new(substitute(key, depth, replacement)),
+            key: key.clone(),
             value: Box::new(substitute(value, depth, replacement)),
         },
         Term::Has { object, key } => Term::Has {
             object: Box::new(substitute(object, depth, replacement)),
-            key: Box::new(substitute(key, depth, replacement)),
-        },
-        Term::Atom { value } => Term::Atom {
-            value: Box::new(substitute(value, depth, replacement)),
-        },
-        Term::AtomEq { left, right } => Term::AtomEq {
-            left: Box::new(substitute(left, depth, replacement)),
-            right: Box::new(substitute(right, depth, replacement)),
-        },
-        Term::Car { value } => Term::Car {
-            value: Box::new(substitute(value, depth, replacement)),
-        },
-        Term::Cdr { value } => Term::Cdr {
-            value: Box::new(substitute(value, depth, replacement)),
-        },
-        Term::Cons { head, tail } => Term::Cons {
-            head: Box::new(substitute(head, depth, replacement)),
-            tail: Box::new(substitute(tail, depth, replacement)),
+            key: key.clone(),
         },
     }
 }
