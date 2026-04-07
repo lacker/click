@@ -12,7 +12,7 @@ pub struct Context {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Object {
-    entries: BTreeMap<String, Value>,
+    entries: BTreeMap<String, Term>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,7 +36,7 @@ pub enum Declaration {
 pub enum Term {
     Nil,
     Bool(bool),
-    Object,
+    Object(Object),
     Local(usize),
     Global(String),
     If {
@@ -67,14 +67,6 @@ pub enum Term {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Value {
-    Bool(bool),
-    Nil,
-    Object(Object),
-    Function(Term),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SExpr {
     Symbol(String),
     List(Vec<SExpr>),
@@ -94,7 +86,7 @@ impl Object {
     }
 
     // Look up the value currently stored at the given key.
-    pub fn get(&self, name: &str) -> Option<&Value> {
+    pub fn get(&self, name: &str) -> Option<&Term> {
         self.entries.get(name)
     }
 }
@@ -108,14 +100,14 @@ impl Context {
     }
 
     // Look up the value currently bound to a top-level name.
-    pub fn get(&self, name: &str) -> Option<&Value> {
+    pub fn get(&self, name: &str) -> Option<&Term> {
         self.values.get(name)
     }
 }
 
 /// Parse a source string, declare any top-level definitions, and evaluate the
 /// final top-level expression.
-pub fn run_source(source: &str) -> ClickResult<Option<Value>> {
+pub fn run_source(source: &str) -> ClickResult<Option<Term>> {
     let exprs = read(source)?;
     let mut context = Context::new();
 
@@ -167,16 +159,16 @@ pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Conte
 
 // Private implementation stuff goes below here, to keep this file organized.
 
-impl Value {
+impl Term {
     // Apply Click's truthiness rule: only `nil` and `false` are falsey.
     fn is_truthy(&self) -> bool {
-        !matches!(self, Value::Nil | Value::Bool(false))
+        !matches!(self, Term::Nil | Term::Bool(false))
     }
 }
 
 impl Object {
     // Return a new object with one key updated or inserted.
-    fn with(&self, name: String, value: Value) -> Self {
+    fn with(&self, name: String, value: Term) -> Self {
         let mut entries = self.entries.clone();
         entries.insert(name, value);
         Self { entries }
@@ -190,22 +182,33 @@ impl Context {
     }
 
     // Return a new context extended with one evaluated top-level definition.
-    fn with_value(&self, name: String, value: Value) -> Self {
+    fn with_value(&self, name: String, value: Term) -> Self {
         Self {
             values: self.values.with(name, value),
         }
     }
 }
 
-impl fmt::Display for Value {
+impl fmt::Display for Term {
     // Render kernel values back into the small Click surface notation.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::Bool(true) => write!(f, "true"),
-            Value::Bool(false) => write!(f, "false"),
-            Value::Nil => write!(f, "nil"),
-            Value::Object(object) => format_object(object, f),
-            Value::Function(_) => write!(f, "#<function>"),
+            Term::Nil => write!(f, "nil"),
+            Term::Bool(true) => write!(f, "true"),
+            Term::Bool(false) => write!(f, "false"),
+            Term::Object(object) => format_object(object, f),
+            Term::Lambda { .. } => write!(f, "#<function>"),
+            Term::Local(index) => write!(f, "#<local {index}>"),
+            Term::Global(name) => write!(f, "(var {name})"),
+            Term::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => write!(f, "(if {condition} {then_branch} {else_branch})"),
+            Term::App { function, arg } => write!(f, "(app {function} {arg})"),
+            Term::Get { object, key } => write!(f, "(get {object} {key})"),
+            Term::With { object, key, value } => write!(f, "(with {object} {key} {value})"),
+            Term::Has { object, key } => write!(f, "(has {object} {key})"),
         }
     }
 }
@@ -292,7 +295,7 @@ fn term_from_list(items: &[SExpr], scope: &[String], globals: &Object) -> ClickR
         "theorem" => Err("theorem is only valid as a top-level declaration".to_string()),
         "object" => {
             expect_arity(operator, tail, 0)?;
-            Ok(Term::Object)
+            Ok(Term::Object(Object::new()))
         }
         "if" => {
             expect_arity(operator, tail, 3)?;
@@ -371,7 +374,7 @@ fn local_index(scope: &[String], name: &str) -> Option<usize> {
 }
 
 // Reject top-level assertions whose evaluated values do not match.
-fn expect_equal(actual: &Value, expected: &Value, role: &str) -> ClickResult<()> {
+fn expect_equal(actual: &Term, expected: &Term, role: &str) -> ClickResult<()> {
     if actual == expected {
         Ok(())
     } else {
@@ -400,11 +403,11 @@ fn expect_symbol(expr: &SExpr, role: &str) -> ClickResult<String> {
 }
 
 // Evaluate one well-scoped kernel term in the current top-level context.
-fn eval(term: &Term, globals: &Object) -> ClickResult<Value> {
+fn eval(term: &Term, globals: &Object) -> ClickResult<Term> {
     match term {
-        Term::Nil => Ok(Value::Nil),
-        Term::Bool(value) => Ok(Value::Bool(*value)),
-        Term::Object => Ok(Value::Object(Object::new())),
+        Term::Nil => Ok(Term::Nil),
+        Term::Bool(value) => Ok(Term::Bool(*value)),
+        Term::Object(object) => Ok(Term::Object(object.clone())),
         Term::Local(index) => Err(format!("encountered unbound local index {index}")),
         Term::Global(name) => globals
             .get(name)
@@ -422,7 +425,9 @@ fn eval(term: &Term, globals: &Object) -> ClickResult<Value> {
                 eval(else_branch, globals)
             }
         }
-        Term::Lambda { body } => Ok(Value::Function((**body).clone())),
+        Term::Lambda { body } => Ok(Term::Lambda {
+            body: Box::new((**body).clone()),
+        }),
         Term::App { function, arg } => {
             let function = eval(function, globals)?;
             let arg = eval(arg, globals)?;
@@ -438,53 +443,31 @@ fn eval(term: &Term, globals: &Object) -> ClickResult<Value> {
         Term::With { object, key, value } => {
             let object = expect_object(eval(object, globals)?, "with object")?;
             let value = eval(value, globals)?;
-            Ok(Value::Object(object.with(key.clone(), value)))
+            Ok(Term::Object(object.with(key.clone(), value)))
         }
         Term::Has { object, key } => {
             let object = expect_object(eval(object, globals)?, "has object")?;
-            Ok(Value::Bool(object.has(key)))
+            Ok(Term::Bool(object.has(key)))
         }
     }
 }
 
 // Extract an object value from runtime data where one is required.
-fn expect_object(value: Value, role: &str) -> ClickResult<Object> {
-    match value {
-        Value::Object(object) => Ok(object),
+fn expect_object(term: Term, role: &str) -> ClickResult<Object> {
+    match term {
+        Term::Object(object) => Ok(object),
         _ => Err(format!("{role} must be an object")),
     }
 }
 
 // Apply a function value by substituting the argument into its body.
-fn apply(function: Value, arg: Value, globals: &Object) -> ClickResult<Value> {
+fn apply(function: Term, arg: Term, globals: &Object) -> ClickResult<Term> {
     match function {
-        Value::Function(body) => {
-            let body = instantiate(&body, &reify_value(&arg));
+        Term::Lambda { body } => {
+            let body = instantiate(&body, &arg);
             eval(&body, globals)
         }
         _ => Err("attempted to call a non-function".to_string()),
-    }
-}
-
-// Reify one runtime value back into a closed kernel term.
-fn reify_value(value: &Value) -> Term {
-    match value {
-        Value::Bool(value) => Term::Bool(*value),
-        Value::Nil => Term::Nil,
-        Value::Object(object) => {
-            let mut result = Term::Object;
-            for (key, value) in &object.entries {
-                result = Term::With {
-                    object: Box::new(result),
-                    key: key.clone(),
-                    value: Box::new(reify_value(value)),
-                };
-            }
-            result
-        }
-        Value::Function(body) => Term::Lambda {
-            body: Box::new(body.clone()),
-        },
     }
 }
 
@@ -500,7 +483,7 @@ fn shift(term: &Term, amount: isize, cutoff: usize) -> Term {
     match term {
         Term::Nil => Term::Nil,
         Term::Bool(value) => Term::Bool(*value),
-        Term::Object => Term::Object,
+        Term::Object(object) => Term::Object(object.clone()),
         Term::Local(index) => {
             if *index < cutoff {
                 Term::Local(*index)
@@ -549,7 +532,7 @@ fn substitute(term: &Term, depth: usize, replacement: &Term) -> Term {
     match term {
         Term::Nil => Term::Nil,
         Term::Bool(value) => Term::Bool(*value),
-        Term::Object => Term::Object,
+        Term::Object(object) => Term::Object(object.clone()),
         Term::Local(index) => {
             if *index == depth {
                 shift(replacement, depth as isize, 0)

@@ -1,4 +1,4 @@
-use click::{Context, Declaration, Term, Value, declare};
+use click::{Context, Declaration, Term, declare};
 
 #[test]
 fn declare_extends_the_context_purely() {
@@ -12,7 +12,7 @@ fn declare_extends_the_context_purely() {
     )
     .expect("declaration should succeed");
 
-    assert_eq!(context.get("answer"), Some(&Value::Bool(true)));
+    assert_eq!(context.get("answer"), Some(&Term::Bool(true)));
     assert_eq!(Context::new().get("answer"), None);
 }
 
@@ -51,5 +51,5 @@ fn theorem_checks_and_binds_a_name() {
     )
     .expect("theorem should succeed");
 
-    assert_eq!(context.get("answer_value"), Some(&Value::Bool(true)));
+    assert_eq!(context.get("answer_value"), Some(&Term::Bool(true)));
 }

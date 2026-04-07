@@ -103,7 +103,7 @@ extended context. In the current untyped prototype, `check` and `theorem`
 compare evaluated kernel values for exact equality. `theorem` also binds the
 checked value to a name.
 
-Objects are primitive immutable maps from symbol names to values. The kernel
+Objects are primitive immutable maps from symbol names to canonical terms. The kernel
 uses them internally for top-level contexts, and Click code can also build and
 inspect them directly with:
 
@@ -126,10 +126,10 @@ Because lowering checks `var` uses against the current local scope and top-level
 context, ill-scoped variables are rejected eagerly, including inside lambda
 bodies.
 
-The kernel evaluator does not use closure values. A function value is a lowered
-lambda term. Application evaluates the argument, reifies that runtime value
-back into a closed term, substitutes it for local index `0`, and then
-evaluates the resulting term.
+The kernel does not have a separate runtime `Value` datatype. Evaluation
+produces canonical `Term`s directly. A function value is just a lowered lambda
+term in value form. Application evaluates the argument to a canonical term,
+substitutes it for local index `0`, and then evaluates the resulting term.
 
 The earlier named-syntax experiments exposed the usual substitution problem:
 named binders need alpha-renaming or freshening to avoid accidental capture.
