@@ -1,51 +1,53 @@
 # Bootstrap Layout
 
-The `bootstrap/` tree holds self-hosted Click programs that exercise the
-kernel.
+The `bootstrap/` tree is archival.
+
+These programs were written against older Click experiments, especially the
+quote/list-based kernel. They are still useful as records of language-design
+work, but they do not describe the current kernel surface.
+
+Current structure:
 
 - `base/`
-  Shared bootstrap terms.
+  Shared historical helpers.
 - `data/`
-  First typed library terms defined on top of the token core.
+  Early typed library experiments on top of the old token core.
 - `proofs/`
-  First proposition and proof terms on top of the token core.
+  Early proposition and proof experiments on top of the old token core.
 - `token_core/`
-  Programs for the more explicit typed token-core experiments.
+  Historical typed kernel experiments written in Click itself.
 
-Current files:
+File guide:
 
 - `base/fix.cl`
-  A fixed-point combinator used by the recursive checkers.
+  A fixed-point combinator used by the recursive experiments.
 - `base/assoc.cl`
-  A recursive lookup function for simple association lists.
+  A lookup helper for simple association lists.
 - `base/structural_equal.cl`
-  A recursive structural equality function over quoted Click data.
+  Structural equality over quoted Click data.
 - `token_core/alpha_eq.cl`
-  A recursive alpha-equivalence checker for quoted token-core terms.
+  Alpha-equivalence for quoted token-core terms.
 - `token_core/whnf.cl`
-  A small weak-head reducer for quoted token-core terms.
+  Weak-head reduction for quoted token-core terms.
 - `token_core/wf.cl`
-  A well-formedness checker for quoted token-core terms.
+  Well-formedness checking for quoted token-core terms.
 - `token_core/eval_env.cl`
   A self-hosted evaluator for closed quoted token-core terms, using explicit
-  closure/environment values.
+  function/environment values.
 - `token_core/infer.cl`
   A self-hosted type inferencer for the typed token-core experiment.
 - `token_core/subst.cl`
   A capture-avoiding substitution helper for the token-core syntax.
 - `token_core/typecheck.cl`
-  A goal-directed typechecker for the typed token-core experiment. It checks a
-  quoted term against an expected type by calling `infer.cl`, then comparing
-  the inferred and expected types up to weak-head computation and
-  alpha-equivalence.
+  A goal-directed typechecker for the typed token-core experiment.
 - `data/bool_type.cl`
   A Church-encoded `Bool` type.
 - `data/bool_true.cl`
-  The `true` inhabitant of the encoded `Bool`.
+  The `true` inhabitant of that encoded `Bool`.
 - `data/bool_false.cl`
-  The `false` inhabitant of the encoded `Bool`.
+  The `false` inhabitant of that encoded `Bool`.
 - `data/bool_if.cl`
-  A small eliminator for the encoded `Bool`.
+  An eliminator for the encoded `Bool`.
 - `proofs/eq.cl`
   A Leibniz-style equality proposition.
 - `proofs/refl.cl`
@@ -57,13 +59,8 @@ Current files:
 - `proofs/trans.cl`
   Transitivity for the encoded equality proposition.
 
-The current `Bool` probe already exposed one important lesson: evaluation works
-more cleanly with explicit closure/environment values than with syntax
-rewriting, because it avoids alpha-renaming problems during beta-reduction.
-
-The first proof toolkit is now in place too: the token core can already host
-an encoded equality proposition, `refl`, and basic equality reasoning
-combinators like transport, symmetry, and transitivity.
-
-`tests/bootstrap.rs` loads these files directly and supplies the concrete test
-inputs from Rust.
+The main historical lesson from this tree is still useful: once binders enter
+the language, the representation of code matters. The older named-syntax
+experiments found explicit environments simpler than naive named substitution.
+The current kernel addresses that differently by lowering surface syntax into
+de Bruijn-based `Term`s before evaluation.

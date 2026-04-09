@@ -1,21 +1,15 @@
 # click
 
-`click` is a very small Lisp-y kernel implemented in Rust.
+`click` is a small experimental kernel for the Click language.
 
-The current prototype supports:
+The current prototype is intentionally narrow. It has:
 
 - top-level `def`, `check`, and `theorem` declarations
-- `quote`
 - `object`
 - `get`
 - `with`
 - `has`
 - `if`
-- `atom`
-- `atom_eq`
-- `car`
-- `cdr`
-- `cons`
 - `var`
 - `app`
 - `lambda`
@@ -23,128 +17,90 @@ The current prototype supports:
 - `true`
 - `false`
 
-This version uses explicit named variables. Executable list forms are tagged by
-their first atom, variable references are written as `(var name)`, and function
-application is written as `(app f a)`.
+The reader parses surface S-expressions, then the kernel immediately lowers
+them into an internal `Term` language. Bound locals are represented internally
+with de Bruijn indices. Top-level names stay as atomic `Symbol`s.
 
-## Semantics
+## Current Semantics
 
-- Ordinary atoms do not self-evaluate. Only `nil`, `true`, and `false` do.
-- Top-level `(def name expr)` declarations extend the context for later forms.
-- Top-level `(check actual expected)` declarations require the two evaluated
-  values to match.
-- Top-level `(theorem name actual expected)` declarations do the same check and
-  bind the checked value to `name`.
-- `quote` turns code into ordinary list data: `(quote (lambda x (var x)))`.
-- `object` is an immutable named map. `with` returns an updated object, `get`
-  reads a key, and `has` checks for a key.
-- `lambda` has the form `(lambda x body)` and captures the current lexical object environment.
-- Rebinding a name that is already in scope is an error.
-- Closures are an internal evaluator detail. Evaluating a lambda prints `#<closure>`.
-- `atom` returns `true` for atoms, booleans, and `nil`.
-- `atom_eq` only accepts atom arguments.
-- `if` treats `false` and `nil` as falsey. Everything else is truthy.
-- `car` and `cdr` are partial: applying them to `nil` is an error.
-- `cons` builds pairs. Proper lists print as `(a b c)`. Improper lists print as `(a . b)`.
+- Ordinary symbols do not self-evaluate. Only `nil`, `true`, and `false` do.
+- Top-level `(def name expr)` extends the context for later forms.
+- Top-level `(check actual expected)` evaluates both terms and requires exact
+  equality.
+- Top-level `(theorem name actual expected)` performs the same check, then
+  binds the checked term to `name`.
+- `object` builds an immutable object from symbol keys to canonical terms.
+- `with` returns an updated object.
+- `get` projects an object field.
+- `has` checks whether an object field exists.
+- `if` treats only `nil` and `false` as falsey.
+- `lambda` binds a scope. Shadowing is allowed.
+- Evaluation produces canonical `Term`s directly. There is no separate runtime
+  `Value` or `Closure` datatype in the current kernel.
+
+Object keys and variable names are symbols, not strings. They are atomic in the
+kernel: Click code cannot inspect their character structure.
+
+## Deliberate Omissions
+
+The current kernel does not have `quote`, `car`, `cdr`, `cons`, `atom`, or
+`atom_eq`.
+
+That is deliberate. The older quote/list experiments were useful for learning,
+but they tied code inspection to ordinary list structure. The current design
+keeps `Term` as the real kernel syntax and postpones metaprogramming until
+Click has a binder-safe way to inspect terms without exposing raw de Bruijn
+indices.
+
+See [docs/design.md](/Users/lacker/click/docs/design.md) for the current design
+notes.
 
 ## Usage
 
 Run an expression directly:
 
 ```bash
-cargo run -- -e "(app (lambda x (var x)) 'a)"
+cargo run -- -e "(app (lambda x (var x)) true)"
 ```
 
 Run a file:
 
 ```bash
-cargo run -- examples/list.cl
+cargo run -- path/to/file.cl
 ```
 
 Pipe a program on stdin:
 
 ```bash
-printf "(car (quote (a b c)))\n" | cargo run --
+printf "(with (object) answer true)\n" | cargo run --
 ```
 
-Install the binary and use it as a shebang interpreter:
+Install the binary:
 
 ```bash
 cargo install --path .
-chmod +x examples/list.cl
-./examples/list.cl
 ```
 
 `click` ignores a leading `#!...` line in source files.
 
-Top-level definitions work across later forms in the same source:
+## Example
 
 ```lisp
 (def id (lambda x (var x)))
-(check (app (var id) 'a) 'a)
-(theorem yes_value 'yes 'yes)
-(app (var id) 'a)
+(check (app (var id) true) true)
+(theorem truth true true)
+(with (object) answer (var truth))
 ```
 
-## Code As Data
-
-Quoted code is ordinary data, so Click programs can inspect Click programs with
-the usual list operations. For a tiny example:
-
-- [`examples/code_shape.cl`](examples/code_shape.cl) extracts the binder from a quoted lambda.
-
-The kernel also has primitive named objects for environment-like structure:
+This evaluates to:
 
 ```lisp
-(with (object) 'foo 'bar)
-(get (with (object) 'foo 'bar) 'foo)
+(object (answer true))
 ```
 
-The larger self-hosted experiments now live in:
+## Historical Bootstrap
 
-- [`bootstrap/README.md`](bootstrap/README.md)
-- [`bootstrap/base/fix.cl`](bootstrap/base/fix.cl)
-- [`bootstrap/base/assoc.cl`](bootstrap/base/assoc.cl)
-- [`bootstrap/base/structural_equal.cl`](bootstrap/base/structural_equal.cl)
-- [`bootstrap/token_core/alpha_eq.cl`](bootstrap/token_core/alpha_eq.cl)
-- [`bootstrap/token_core/whnf.cl`](bootstrap/token_core/whnf.cl)
-- [`bootstrap/data/bool_type.cl`](bootstrap/data/bool_type.cl)
-- [`bootstrap/data/bool_true.cl`](bootstrap/data/bool_true.cl)
-- [`bootstrap/data/bool_false.cl`](bootstrap/data/bool_false.cl)
-- [`bootstrap/data/bool_if.cl`](bootstrap/data/bool_if.cl)
-- [`bootstrap/proofs/eq.cl`](bootstrap/proofs/eq.cl)
-- [`bootstrap/proofs/refl.cl`](bootstrap/proofs/refl.cl)
-- [`bootstrap/proofs/transport.cl`](bootstrap/proofs/transport.cl)
-- [`bootstrap/proofs/sym.cl`](bootstrap/proofs/sym.cl)
-- [`bootstrap/proofs/trans.cl`](bootstrap/proofs/trans.cl)
-- [`bootstrap/token_core/eval_env.cl`](bootstrap/token_core/eval_env.cl)
-- [`bootstrap/token_core/infer.cl`](bootstrap/token_core/infer.cl)
-- [`bootstrap/token_core/subst.cl`](bootstrap/token_core/subst.cl)
-- [`bootstrap/token_core/typecheck.cl`](bootstrap/token_core/typecheck.cl)
-- [`bootstrap/token_core/wf.cl`](bootstrap/token_core/wf.cl)
-
-[`tests/bootstrap.rs`](tests/bootstrap.rs) loads those files and checks:
-
-- a recursive assoc-list lookup helper
-- a recursive structural equality helper over quoted data
-- an alpha-equivalence helper for quoted token-core terms
-- a weak-head reducer for quoted token-core terms
-- a first typed `Bool` layer built on the token core
-- first proof toolkit terms: an encoded equality proposition, `refl`,
-  transport, symmetry, and transitivity
-- a recursive token-core checker for quoted terms like `(lambda x type (var x))`
-- a token-core evaluator for closed quoted terms built around explicit
-  closure/environment values
-- a self-hosted token-core inferencer for quoted terms like
-  `(lambda x type (var x))`
-- a goal-directed token-core `typecheck` that checks a quoted term against an
-  expected type, using weak-head computation plus alpha-equivalence for
-  conversion
-
-The first typed `Bool` probe already found the important design lesson:
-evaluation works more cleanly with explicit closure/environment values than
-with syntax rewriting, because it avoids alpha-renaming problems during
-beta-reduction.
-
-The first proof toolkit is now in place too: the token core can already host a
-Leibniz-style equality type, `refl`, and basic equality reasoning combinators.
+The [bootstrap/](/Users/lacker/click/bootstrap) tree is historical. Those files
+record earlier quote/list-based experiments and typed probes. They are kept for
+language-design lessons, not because they describe the current kernel
+interface.
