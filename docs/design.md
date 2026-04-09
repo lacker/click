@@ -21,7 +21,8 @@ The heart of the Click kernel is a few trusted Rust things.
 
 * A small internal term language.
 
-* A single-step evaluator, plus a wrapper that iterates steps to a value.
+* A public single-step evaluator, plus an internal wrapper that iterates steps
+  to a value.
 
 * A `typecheck` function.
 
@@ -85,6 +86,8 @@ The structural kernel API should be expressed in kernel objects rather than
 host-language helpers. Smart constructors may lower or scope-check internally,
 but their arguments should still be things like `Term`, `Symbol`, `Object`,
 `Context`, and `Declaration`, not Rust strings, numeric indices, or closures.
+The public `step(&Context, &Term)` API follows that rule and returns a
+`StepResult` over kernel `Term`s.
 
 Non-atomic surface code forms are tagged lists. For example:
 
@@ -144,6 +147,8 @@ evaluation just iterates that step relation until it reaches a canonical term.
 A function value is just a lowered lambda term in value form. Application
 first reduces its function and argument one step at a time; once both are
 values, one beta step substitutes the argument for local index `0`.
+Externally, one call to `step` either reports that a term is already a value or
+returns exactly one reduct.
 
 The earlier named-syntax experiments exposed the usual substitution problem:
 named binders need alpha-renaming or freshening to avoid accidental capture.

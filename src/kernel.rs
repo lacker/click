@@ -80,9 +80,9 @@ pub(crate) enum SExpr {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum EvalStep {
+pub enum StepResult {
     Value(Term),
-    Step(Term),
+    Reduced(Term),
 }
 
 impl Symbol {
@@ -281,6 +281,11 @@ pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Conte
             Ok(context.with_value(name, actual))
         }
     }
+}
+
+/// Reduce one well-scoped kernel term by a single operational step.
+pub fn step(context: &Context, term: &Term) -> ClickResult<StepResult> {
+    step_in_context(term, context.values())
 }
 
 // Private implementation stuff goes below here, to keep this file organized.
@@ -544,24 +549,24 @@ fn expect_symbol(expr: &SExpr, role: &str) -> ClickResult<Symbol> {
 fn eval(term: &Term, globals: &Object) -> ClickResult<Term> {
     let mut current = term.clone();
     loop {
-        match step(&current, globals)? {
-            EvalStep::Value(value) => return Ok(value),
-            EvalStep::Step(next) => current = next,
+        match step_in_context(&current, globals)? {
+            StepResult::Value(value) => return Ok(value),
+            StepResult::Reduced(next) => current = next,
         }
     }
 }
 
-// Reduce one well-scoped kernel term by a single operational step.
-fn step(term: &Term, globals: &Object) -> ClickResult<EvalStep> {
+// Internal one-step reduction under the current top-level value environment.
+fn step_in_context(term: &Term, globals: &Object) -> ClickResult<StepResult> {
     match term.kind() {
-        TermKind::Nil => Ok(EvalStep::Value(Term::nil())),
-        TermKind::Bool(value) => Ok(EvalStep::Value(Term::bool(*value))),
-        TermKind::Object(object) => Ok(EvalStep::Value(Term::object(object.clone()))),
+        TermKind::Nil => Ok(StepResult::Value(Term::nil())),
+        TermKind::Bool(value) => Ok(StepResult::Value(Term::bool(*value))),
+        TermKind::Object(object) => Ok(StepResult::Value(Term::object(object.clone()))),
         TermKind::Local(index) => Err(format!("encountered unbound local index {index}")),
         TermKind::Global(name) => globals
             .get(name.as_str())
             .cloned()
-            .map(EvalStep::Step)
+            .map(StepResult::Reduced)
             .ok_or_else(|| format!("unbound variable '{name}'")),
         TermKind::If {
             condition,
@@ -570,42 +575,42 @@ fn step(term: &Term, globals: &Object) -> ClickResult<EvalStep> {
         } => {
             if condition.is_value() {
                 if condition.is_truthy() {
-                    Ok(EvalStep::Step((**then_branch).clone()))
+                    Ok(StepResult::Reduced((**then_branch).clone()))
                 } else {
-                    Ok(EvalStep::Step((**else_branch).clone()))
+                    Ok(StepResult::Reduced((**else_branch).clone()))
                 }
             } else {
-                Ok(EvalStep::Step(Term::r#if(
-                    step_term(condition, globals)?,
+                Ok(StepResult::Reduced(Term::r#if(
+                    step_reduct(condition, globals)?,
                     (**then_branch).clone(),
                     (**else_branch).clone(),
                 )))
             }
         }
-        TermKind::Lambda { body } => Ok(EvalStep::Value(Term::lowered_lambda((**body).clone()))),
+        TermKind::Lambda { body } => Ok(StepResult::Value(Term::lowered_lambda((**body).clone()))),
         TermKind::App { function, arg } => {
             if !function.is_value() {
-                Ok(EvalStep::Step(Term::app(
-                    step_term(function, globals)?,
+                Ok(StepResult::Reduced(Term::app(
+                    step_reduct(function, globals)?,
                     (**arg).clone(),
                 )))
             } else if !arg.is_value() {
-                Ok(EvalStep::Step(Term::app(
+                Ok(StepResult::Reduced(Term::app(
                     (**function).clone(),
-                    step_term(arg, globals)?,
+                    step_reduct(arg, globals)?,
                 )))
             } else {
                 let rendered = function.to_string();
                 match function.kind() {
-                    TermKind::Lambda { body } => Ok(EvalStep::Step(instantiate(body, arg))),
+                    TermKind::Lambda { body } => Ok(StepResult::Reduced(instantiate(body, arg))),
                     _ => Err(format!("attempted to call a non-function: {rendered}")),
                 }
             }
         }
         TermKind::Get { object, key } => {
             if !object.is_value() {
-                Ok(EvalStep::Step(Term::get(
-                    step_term(object, globals)?,
+                Ok(StepResult::Reduced(Term::get(
+                    step_reduct(object, globals)?,
                     key.clone(),
                 )))
             } else {
@@ -613,49 +618,49 @@ fn step(term: &Term, globals: &Object) -> ClickResult<EvalStep> {
                 object
                     .get(key.as_str())
                     .cloned()
-                    .map(EvalStep::Step)
+                    .map(StepResult::Reduced)
                     .ok_or_else(|| format!("missing object key '{key}'"))
             }
         }
         TermKind::With { object, key, value } => {
             if !object.is_value() {
-                Ok(EvalStep::Step(Term::with(
-                    step_term(object, globals)?,
+                Ok(StepResult::Reduced(Term::with(
+                    step_reduct(object, globals)?,
                     key.clone(),
                     (**value).clone(),
                 )))
             } else if !value.is_value() {
-                Ok(EvalStep::Step(Term::with(
+                Ok(StepResult::Reduced(Term::with(
                     (**object).clone(),
                     key.clone(),
-                    step_term(value, globals)?,
+                    step_reduct(value, globals)?,
                 )))
             } else {
                 let object = expect_object((**object).clone(), "with object")?;
-                Ok(EvalStep::Step(Term::object(
+                Ok(StepResult::Reduced(Term::object(
                     object.with(key.clone(), (**value).clone()),
                 )))
             }
         }
         TermKind::Has { object, key } => {
             if !object.is_value() {
-                Ok(EvalStep::Step(Term::has(
-                    step_term(object, globals)?,
+                Ok(StepResult::Reduced(Term::has(
+                    step_reduct(object, globals)?,
                     key.clone(),
                 )))
             } else {
                 let object = expect_object((**object).clone(), "has object")?;
-                Ok(EvalStep::Step(Term::bool(object.has(key.as_str()))))
+                Ok(StepResult::Reduced(Term::bool(object.has(key.as_str()))))
             }
         }
     }
 }
 
 // Take one step and extract the reduct, rejecting terms that are already values.
-fn step_term(term: &Term, globals: &Object) -> ClickResult<Term> {
-    match step(term, globals)? {
-        EvalStep::Step(next) => Ok(next),
-        EvalStep::Value(value) => Err(format!("expected a reducible term, got {value}")),
+fn step_reduct(term: &Term, globals: &Object) -> ClickResult<Term> {
+    match step_in_context(term, globals)? {
+        StepResult::Reduced(next) => Ok(next),
+        StepResult::Value(value) => Err(format!("expected a reducible term, got {value}")),
     }
 }
 
@@ -825,9 +830,9 @@ mod tests {
             &Object::new(),
         );
 
-        match step(&term, &Object::new()).expect("step should succeed") {
-            EvalStep::Step(next) => assert_eq!(next.to_string(), "(app #<function> true)"),
-            EvalStep::Value(value) => panic!("expected a reduction step, got value {value}"),
+        match step_in_context(&term, &Object::new()).expect("step should succeed") {
+            StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> true)"),
+            StepResult::Value(value) => panic!("expected a reduction step, got value {value}"),
         }
     }
 
@@ -838,9 +843,9 @@ mod tests {
             &Object::new(),
         );
 
-        match step(&term, &Object::new()).expect("step should succeed") {
-            EvalStep::Step(next) => assert_eq!(next.to_string(), "(app #<function> false)"),
-            EvalStep::Value(value) => panic!("expected a reduction step, got value {value}"),
+        match step_in_context(&term, &Object::new()).expect("step should succeed") {
+            StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> false)"),
+            StepResult::Value(value) => panic!("expected a reduction step, got value {value}"),
         }
     }
 
@@ -851,14 +856,14 @@ mod tests {
             &Object::new(),
         );
 
-        match step(&term, &Object::new()).expect("step should succeed") {
-            EvalStep::Step(next) => {
+        match step_in_context(&term, &Object::new()).expect("step should succeed") {
+            StepResult::Reduced(next) => {
                 assert_eq!(
                     next.to_string(),
                     "(app #<function> (app #<function> false))"
                 )
             }
-            EvalStep::Value(value) => panic!("expected a reduction step, got value {value}"),
+            StepResult::Value(value) => panic!("expected a reduction step, got value {value}"),
         }
     }
 }

@@ -43,6 +43,8 @@ Bruijn data.
 - `if` treats only `nil` and `false` as falsey.
 - `lambda` binds a scope. Shadowing is allowed.
 - The primitive operational semantics is a single reduction step on `Term`s.
+- The Rust API exposes that reduction relation as `step(&Context, &Term) ->
+  ClickResult<StepResult>`.
 - Full evaluation iterates those steps until it reaches a canonical `Term`.
 - There is no separate runtime `Value` or `Closure` datatype in the current
   kernel.
