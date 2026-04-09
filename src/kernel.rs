@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -12,13 +13,13 @@ pub struct Context {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Object {
-    entries: BTreeMap<String, Term>,
+    entries: BTreeMap<Symbol, Term>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Declaration {
     Def {
-        name: String,
+        name: Symbol,
         value: Term,
     },
     Check {
@@ -26,11 +27,14 @@ pub enum Declaration {
         expected: Term,
     },
     Theorem {
-        name: String,
+        name: Symbol,
         actual: Term,
         expected: Term,
     },
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Symbol(String);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Term {
@@ -38,7 +42,7 @@ pub enum Term {
     Bool(bool),
     Object(Object),
     Local(usize),
-    Global(String),
+    Global(Symbol),
     If {
         condition: Box<Term>,
         then_branch: Box<Term>,
@@ -53,23 +57,53 @@ pub enum Term {
     },
     Get {
         object: Box<Term>,
-        key: String,
+        key: Symbol,
     },
     With {
         object: Box<Term>,
-        key: String,
+        key: Symbol,
         value: Box<Term>,
     },
     Has {
         object: Box<Term>,
-        key: String,
+        key: Symbol,
     },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SExpr {
-    Symbol(String),
+    Symbol(Symbol),
     List(Vec<SExpr>),
+}
+
+impl Symbol {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Borrow<str> for Symbol {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl From<String> for Symbol {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for Symbol {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl fmt::Display for Symbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
 }
 
 impl Object {
@@ -129,7 +163,7 @@ pub fn run_source(source: &str) -> ClickResult<Option<Term>> {
 pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Context> {
     match declaration {
         Declaration::Def { name, value } => {
-            if context.values.has(&name) {
+            if context.values.has(name.as_str()) {
                 return Err(format!("definition '{name}' is already declared"));
             }
             let evaluated = eval(&value, context.values())?;
@@ -146,7 +180,7 @@ pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Conte
             actual,
             expected,
         } => {
-            if context.values.has(&name) {
+            if context.values.has(name.as_str()) {
                 return Err(format!("definition '{name}' is already declared"));
             }
             let actual = eval(&actual, context.values())?;
@@ -168,7 +202,7 @@ impl Term {
 
 impl Object {
     // Return a new object with one key updated or inserted.
-    fn with(&self, name: String, value: Term) -> Self {
+    fn with(&self, name: Symbol, value: Term) -> Self {
         let mut entries = self.entries.clone();
         entries.insert(name, value);
         Self { entries }
@@ -182,7 +216,7 @@ impl Context {
     }
 
     // Return a new context extended with one evaluated top-level definition.
-    fn with_value(&self, name: String, value: Term) -> Self {
+    fn with_value(&self, name: Symbol, value: Term) -> Self {
         Self {
             values: self.values.with(name, value),
         }
@@ -238,7 +272,7 @@ fn declaration_from_expr(expr: &SExpr, globals: &Object) -> ClickResult<Option<D
 
     match operator.as_str() {
         "def" => {
-            expect_arity(operator, tail, 2)?;
+            expect_arity(operator.as_str(), tail, 2)?;
             let name = expect_symbol(&tail[0], "def name")?;
             Ok(Some(Declaration::Def {
                 name,
@@ -246,14 +280,14 @@ fn declaration_from_expr(expr: &SExpr, globals: &Object) -> ClickResult<Option<D
             }))
         }
         "check" => {
-            expect_arity(operator, tail, 2)?;
+            expect_arity(operator.as_str(), tail, 2)?;
             Ok(Some(Declaration::Check {
                 actual: term_from_expr(&tail[0], &[], globals)?,
                 expected: term_from_expr(&tail[1], &[], globals)?,
             }))
         }
         "theorem" => {
-            expect_arity(operator, tail, 3)?;
+            expect_arity(operator.as_str(), tail, 3)?;
             let name = expect_symbol(&tail[0], "theorem name")?;
             Ok(Some(Declaration::Theorem {
                 name,
@@ -266,7 +300,7 @@ fn declaration_from_expr(expr: &SExpr, globals: &Object) -> ClickResult<Option<D
 }
 
 // Lower one surface expression into a well-scoped kernel term.
-fn term_from_expr(expr: &SExpr, scope: &[String], globals: &Object) -> ClickResult<Term> {
+fn term_from_expr(expr: &SExpr, scope: &[Symbol], globals: &Object) -> ClickResult<Term> {
     match expr {
         SExpr::Symbol(symbol) => match symbol.as_str() {
             "nil" => Ok(Term::Nil),
@@ -279,7 +313,7 @@ fn term_from_expr(expr: &SExpr, scope: &[String], globals: &Object) -> ClickResu
 }
 
 // Lower one tagged list form such as `object`, `lambda`, or `app`.
-fn term_from_list(items: &[SExpr], scope: &[String], globals: &Object) -> ClickResult<Term> {
+fn term_from_list(items: &[SExpr], scope: &[Symbol], globals: &Object) -> ClickResult<Term> {
     let Some((head, tail)) = items.split_first() else {
         return Err("cannot evaluate an empty list; use nil".to_string());
     };
@@ -294,11 +328,11 @@ fn term_from_list(items: &[SExpr], scope: &[String], globals: &Object) -> ClickR
         "check" => Err("check is only valid as a top-level declaration".to_string()),
         "theorem" => Err("theorem is only valid as a top-level declaration".to_string()),
         "object" => {
-            expect_arity(operator, tail, 0)?;
+            expect_arity(operator.as_str(), tail, 0)?;
             Ok(Term::Object(Object::new()))
         }
         "if" => {
-            expect_arity(operator, tail, 3)?;
+            expect_arity(operator.as_str(), tail, 3)?;
             Ok(Term::If {
                 condition: Box::new(term_from_expr(&tail[0], scope, globals)?),
                 then_branch: Box::new(term_from_expr(&tail[1], scope, globals)?),
@@ -308,21 +342,21 @@ fn term_from_list(items: &[SExpr], scope: &[String], globals: &Object) -> ClickR
         "lambda" => term_from_lambda(tail, scope, globals),
         "var" => term_from_var(tail, scope, globals),
         "app" => {
-            expect_arity(operator, tail, 2)?;
+            expect_arity(operator.as_str(), tail, 2)?;
             Ok(Term::App {
                 function: Box::new(term_from_expr(&tail[0], scope, globals)?),
                 arg: Box::new(term_from_expr(&tail[1], scope, globals)?),
             })
         }
         "get" => {
-            expect_arity(operator, tail, 2)?;
+            expect_arity(operator.as_str(), tail, 2)?;
             Ok(Term::Get {
                 object: Box::new(term_from_expr(&tail[0], scope, globals)?),
                 key: expect_symbol(&tail[1], "get key")?,
             })
         }
         "with" => {
-            expect_arity(operator, tail, 3)?;
+            expect_arity(operator.as_str(), tail, 3)?;
             Ok(Term::With {
                 object: Box::new(term_from_expr(&tail[0], scope, globals)?),
                 key: expect_symbol(&tail[1], "with key")?,
@@ -330,7 +364,7 @@ fn term_from_list(items: &[SExpr], scope: &[String], globals: &Object) -> ClickR
             })
         }
         "has" => {
-            expect_arity(operator, tail, 2)?;
+            expect_arity(operator.as_str(), tail, 2)?;
             Ok(Term::Has {
                 object: Box::new(term_from_expr(&tail[0], scope, globals)?),
                 key: expect_symbol(&tail[1], "has key")?,
@@ -344,7 +378,7 @@ fn term_from_list(items: &[SExpr], scope: &[String], globals: &Object) -> ClickR
 }
 
 // Lower a `lambda` body under one more local binder.
-fn term_from_lambda(args: &[SExpr], scope: &[String], globals: &Object) -> ClickResult<Term> {
+fn term_from_lambda(args: &[SExpr], scope: &[Symbol], globals: &Object) -> ClickResult<Term> {
     expect_arity("lambda", args, 2)?;
     let binder = expect_symbol(&args[0], "lambda binder")?;
     let mut inner_scope = scope.to_vec();
@@ -355,13 +389,13 @@ fn term_from_lambda(args: &[SExpr], scope: &[String], globals: &Object) -> Click
 }
 
 // Resolve a surface `var` into either a local index or a known global name.
-fn term_from_var(args: &[SExpr], scope: &[String], globals: &Object) -> ClickResult<Term> {
+fn term_from_var(args: &[SExpr], scope: &[Symbol], globals: &Object) -> ClickResult<Term> {
     expect_arity("var", args, 1)?;
     let name = expect_symbol(&args[0], "var name")?;
 
     if let Some(index) = local_index(scope, &name) {
         Ok(Term::Local(index))
-    } else if globals.has(&name) {
+    } else if globals.has(name.as_str()) {
         Ok(Term::Global(name))
     } else {
         Err(format!("unbound variable '{name}'"))
@@ -369,7 +403,7 @@ fn term_from_var(args: &[SExpr], scope: &[String], globals: &Object) -> ClickRes
 }
 
 // Find the de Bruijn index for the innermost binder with the given name.
-fn local_index(scope: &[String], name: &str) -> Option<usize> {
+fn local_index(scope: &[Symbol], name: &Symbol) -> Option<usize> {
     scope.iter().rev().position(|binder| binder == name)
 }
 
@@ -395,7 +429,7 @@ fn expect_arity(operator: &str, args: &[SExpr], expected: usize) -> ClickResult<
 }
 
 // Extract an atom name from syntax where a binder or object key is expected.
-fn expect_symbol(expr: &SExpr, role: &str) -> ClickResult<String> {
+fn expect_symbol(expr: &SExpr, role: &str) -> ClickResult<Symbol> {
     match expr {
         SExpr::Symbol(symbol) => Ok(symbol.clone()),
         _ => Err(format!("{role} must be an atom")),
@@ -410,7 +444,7 @@ fn eval(term: &Term, globals: &Object) -> ClickResult<Term> {
         Term::Object(object) => Ok(Term::Object(object.clone())),
         Term::Local(index) => Err(format!("encountered unbound local index {index}")),
         Term::Global(name) => globals
-            .get(name)
+            .get(name.as_str())
             .cloned()
             .ok_or_else(|| format!("unbound variable '{name}'")),
         Term::If {
@@ -436,7 +470,7 @@ fn eval(term: &Term, globals: &Object) -> ClickResult<Term> {
         Term::Get { object, key } => {
             let object = expect_object(eval(object, globals)?, "get object")?;
             object
-                .get(key)
+                .get(key.as_str())
                 .cloned()
                 .ok_or_else(|| format!("missing object key '{key}'"))
         }
@@ -447,7 +481,7 @@ fn eval(term: &Term, globals: &Object) -> ClickResult<Term> {
         }
         Term::Has { object, key } => {
             let object = expect_object(eval(object, globals)?, "has object")?;
-            Ok(Term::Bool(object.has(key)))
+            Ok(Term::Bool(object.has(key.as_str())))
         }
     }
 }

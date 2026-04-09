@@ -115,8 +115,10 @@ inspect them directly with:
 ```
 
 In those object forms, keys are syntax-level symbols, not runtime values.
+Those symbols are atomic kernel names, not inspectable strings.
 
-Variables are represented explicitly by name in the surface syntax.
+Variables are represented explicitly by name in the surface syntax. Internally,
+those names are carried by an atomic `Symbol` type rather than plain strings.
 
 `lambda` binds a scope. Shadowing is allowed. During lowering, the innermost
 binder with a given name becomes local index `0`, the next one out becomes

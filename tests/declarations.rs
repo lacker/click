@@ -1,4 +1,4 @@
-use click::{Context, Declaration, Term, declare};
+use click::{Context, Declaration, Symbol, Term, declare};
 
 #[test]
 fn declare_extends_the_context_purely() {
@@ -6,7 +6,7 @@ fn declare_extends_the_context_purely() {
     let context = declare(
         &context,
         Declaration::Def {
-            name: "answer".to_string(),
+            name: Symbol::from("answer"),
             value: Term::Bool(true),
         },
     )
@@ -21,7 +21,7 @@ fn check_leaves_the_context_unchanged() {
     let context = declare(
         &Context::new(),
         Declaration::Def {
-            name: "answer".to_string(),
+            name: Symbol::from("answer"),
             value: Term::Bool(true),
         },
     )
@@ -30,7 +30,7 @@ fn check_leaves_the_context_unchanged() {
     let checked = declare(
         &context,
         Declaration::Check {
-            actual: Term::Global("answer".to_string()),
+            actual: Term::Global(Symbol::from("answer")),
             expected: Term::Bool(true),
         },
     )
@@ -44,7 +44,7 @@ fn theorem_checks_and_binds_a_name() {
     let context = declare(
         &Context::new(),
         Declaration::Theorem {
-            name: "answer_value".to_string(),
+            name: Symbol::from("answer_value"),
             actual: Term::Bool(true),
             expected: Term::Bool(true),
         },

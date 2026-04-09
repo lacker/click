@@ -1,11 +1,11 @@
-use crate::kernel::{ClickResult, SExpr};
+use crate::kernel::{ClickResult, SExpr, Symbol};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Token {
     LParen,
     RParen,
     Quote,
-    Symbol(String),
+    Symbol(Symbol),
 }
 
 pub(crate) fn read(source: &str) -> ClickResult<Vec<SExpr>> {
@@ -51,7 +51,7 @@ fn tokenize(source: &str) -> ClickResult<Vec<Token>> {
                     symbol.push(*next);
                     chars.next();
                 }
-                tokens.push(Token::Symbol(symbol));
+                tokens.push(Token::Symbol(symbol.into()));
             }
         }
     }
