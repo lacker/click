@@ -42,8 +42,10 @@ Bruijn data.
 - `has` checks whether an object field exists.
 - `if` treats only `nil` and `false` as falsey.
 - `lambda` binds a scope. Shadowing is allowed.
-- Evaluation produces canonical `Term`s directly. There is no separate runtime
-  `Value` or `Closure` datatype in the current kernel.
+- The primitive operational semantics is a single reduction step on `Term`s.
+- Full evaluation iterates those steps until it reaches a canonical `Term`.
+- There is no separate runtime `Value` or `Closure` datatype in the current
+  kernel.
 
 Object keys and variable names are symbols, not strings. They are atomic in the
 kernel: Click code cannot inspect their character structure.

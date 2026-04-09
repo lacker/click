@@ -79,6 +79,12 @@ pub(crate) enum SExpr {
     List(Vec<SExpr>),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum EvalStep {
+    Value(Term),
+    Step(Term),
+}
+
 impl Symbol {
     fn as_str(&self) -> &str {
         &self.0
@@ -283,6 +289,14 @@ impl Term {
     // Apply Click's truthiness rule: only `nil` and `false` are falsey.
     fn is_truthy(&self) -> bool {
         !matches!(self.kind(), TermKind::Nil | TermKind::Bool(false))
+    }
+
+    // Recognize canonical terms that need no further evaluation.
+    fn is_value(&self) -> bool {
+        matches!(
+            self.kind(),
+            TermKind::Nil | TermKind::Bool(_) | TermKind::Object(_) | TermKind::Lambda { .. }
+        )
     }
 }
 
@@ -526,51 +540,122 @@ fn expect_symbol(expr: &SExpr, role: &str) -> ClickResult<Symbol> {
     }
 }
 
-// Evaluate one well-scoped kernel term in the current top-level context.
+// Evaluate one well-scoped kernel term by iterating single reduction steps.
 fn eval(term: &Term, globals: &Object) -> ClickResult<Term> {
+    let mut current = term.clone();
+    loop {
+        match step(&current, globals)? {
+            EvalStep::Value(value) => return Ok(value),
+            EvalStep::Step(next) => current = next,
+        }
+    }
+}
+
+// Reduce one well-scoped kernel term by a single operational step.
+fn step(term: &Term, globals: &Object) -> ClickResult<EvalStep> {
     match term.kind() {
-        TermKind::Nil => Ok(Term::nil()),
-        TermKind::Bool(value) => Ok(Term::bool(*value)),
-        TermKind::Object(object) => Ok(Term::object(object.clone())),
+        TermKind::Nil => Ok(EvalStep::Value(Term::nil())),
+        TermKind::Bool(value) => Ok(EvalStep::Value(Term::bool(*value))),
+        TermKind::Object(object) => Ok(EvalStep::Value(Term::object(object.clone()))),
         TermKind::Local(index) => Err(format!("encountered unbound local index {index}")),
         TermKind::Global(name) => globals
             .get(name.as_str())
             .cloned()
+            .map(EvalStep::Step)
             .ok_or_else(|| format!("unbound variable '{name}'")),
         TermKind::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            let condition = eval(condition, globals)?;
-            if condition.is_truthy() {
-                eval(then_branch, globals)
+            if condition.is_value() {
+                if condition.is_truthy() {
+                    Ok(EvalStep::Step((**then_branch).clone()))
+                } else {
+                    Ok(EvalStep::Step((**else_branch).clone()))
+                }
             } else {
-                eval(else_branch, globals)
+                Ok(EvalStep::Step(Term::r#if(
+                    step_term(condition, globals)?,
+                    (**then_branch).clone(),
+                    (**else_branch).clone(),
+                )))
             }
         }
-        TermKind::Lambda { body } => Ok(Term::lowered_lambda((**body).clone())),
+        TermKind::Lambda { body } => Ok(EvalStep::Value(Term::lowered_lambda((**body).clone()))),
         TermKind::App { function, arg } => {
-            let function = eval(function, globals)?;
-            let arg = eval(arg, globals)?;
-            apply(function, arg, globals)
+            if !function.is_value() {
+                Ok(EvalStep::Step(Term::app(
+                    step_term(function, globals)?,
+                    (**arg).clone(),
+                )))
+            } else if !arg.is_value() {
+                Ok(EvalStep::Step(Term::app(
+                    (**function).clone(),
+                    step_term(arg, globals)?,
+                )))
+            } else {
+                let rendered = function.to_string();
+                match function.kind() {
+                    TermKind::Lambda { body } => Ok(EvalStep::Step(instantiate(body, arg))),
+                    _ => Err(format!("attempted to call a non-function: {rendered}")),
+                }
+            }
         }
         TermKind::Get { object, key } => {
-            let object = expect_object(eval(object, globals)?, "get object")?;
-            object
-                .get(key.as_str())
-                .cloned()
-                .ok_or_else(|| format!("missing object key '{key}'"))
+            if !object.is_value() {
+                Ok(EvalStep::Step(Term::get(
+                    step_term(object, globals)?,
+                    key.clone(),
+                )))
+            } else {
+                let object = expect_object((**object).clone(), "get object")?;
+                object
+                    .get(key.as_str())
+                    .cloned()
+                    .map(EvalStep::Step)
+                    .ok_or_else(|| format!("missing object key '{key}'"))
+            }
         }
         TermKind::With { object, key, value } => {
-            let object = expect_object(eval(object, globals)?, "with object")?;
-            let value = eval(value, globals)?;
-            Ok(Term::object(object.with(key.clone(), value)))
+            if !object.is_value() {
+                Ok(EvalStep::Step(Term::with(
+                    step_term(object, globals)?,
+                    key.clone(),
+                    (**value).clone(),
+                )))
+            } else if !value.is_value() {
+                Ok(EvalStep::Step(Term::with(
+                    (**object).clone(),
+                    key.clone(),
+                    step_term(value, globals)?,
+                )))
+            } else {
+                let object = expect_object((**object).clone(), "with object")?;
+                Ok(EvalStep::Step(Term::object(
+                    object.with(key.clone(), (**value).clone()),
+                )))
+            }
         }
         TermKind::Has { object, key } => {
-            let object = expect_object(eval(object, globals)?, "has object")?;
-            Ok(Term::bool(object.has(key.as_str())))
+            if !object.is_value() {
+                Ok(EvalStep::Step(Term::has(
+                    step_term(object, globals)?,
+                    key.clone(),
+                )))
+            } else {
+                let object = expect_object((**object).clone(), "has object")?;
+                Ok(EvalStep::Step(Term::bool(object.has(key.as_str()))))
+            }
         }
+    }
+}
+
+// Take one step and extract the reduct, rejecting terms that are already values.
+fn step_term(term: &Term, globals: &Object) -> ClickResult<Term> {
+    match step(term, globals)? {
+        EvalStep::Step(next) => Ok(next),
+        EvalStep::Value(value) => Err(format!("expected a reducible term, got {value}")),
     }
 }
 
@@ -580,18 +665,6 @@ fn expect_object(term: Term, role: &str) -> ClickResult<Object> {
     match term.into_kind() {
         TermKind::Object(object) => Ok(object),
         _ => Err(format!("{role} must be an object, got {rendered}")),
-    }
-}
-
-// Apply a function value by substituting the argument into its body.
-fn apply(function: Term, arg: Term, globals: &Object) -> ClickResult<Term> {
-    let rendered = function.to_string();
-    match function.into_kind() {
-        TermKind::Lambda { body } => {
-            let body = instantiate(&body, &arg);
-            eval(&body, globals)
-        }
-        _ => Err(format!("attempted to call a non-function: {rendered}")),
     }
 }
 
@@ -731,6 +804,61 @@ fn substitute(term: &Term, depth: usize, replacement: &Term) -> Term {
         ),
         TermKind::Has { object, key } => {
             Term::has(substitute(object, depth, replacement), key.clone())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_term(source: &str, globals: &Object) -> Term {
+        let exprs = read(source).expect("source should parse");
+        assert_eq!(exprs.len(), 1, "test helper expects exactly one expression");
+        term_from_expr(&exprs[0], &[], globals).expect("expression should lower")
+    }
+
+    #[test]
+    fn step_stops_after_one_beta_reduction() {
+        let term = parse_term(
+            "(app (lambda x (app (lambda y (var y)) (var x))) true)",
+            &Object::new(),
+        );
+
+        match step(&term, &Object::new()).expect("step should succeed") {
+            EvalStep::Step(next) => assert_eq!(next.to_string(), "(app #<function> true)"),
+            EvalStep::Value(value) => panic!("expected a reduction step, got value {value}"),
+        }
+    }
+
+    #[test]
+    fn step_chooses_an_if_branch_without_evaluating_it_further() {
+        let term = parse_term(
+            "(if true (app (lambda x (var x)) false) nil)",
+            &Object::new(),
+        );
+
+        match step(&term, &Object::new()).expect("step should succeed") {
+            EvalStep::Step(next) => assert_eq!(next.to_string(), "(app #<function> false)"),
+            EvalStep::Value(value) => panic!("expected a reduction step, got value {value}"),
+        }
+    }
+
+    #[test]
+    fn step_reduces_the_function_side_of_an_application_first() {
+        let term = parse_term(
+            "(app (if true (lambda x (var x)) nil) (app (lambda y (var y)) false))",
+            &Object::new(),
+        );
+
+        match step(&term, &Object::new()).expect("step should succeed") {
+            EvalStep::Step(next) => {
+                assert_eq!(
+                    next.to_string(),
+                    "(app #<function> (app #<function> false))"
+                )
+            }
+            EvalStep::Value(value) => panic!("expected a reduction step, got value {value}"),
         }
     }
 }

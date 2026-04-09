@@ -21,7 +21,7 @@ The heart of the Click kernel is a few trusted Rust things.
 
 * A small internal term language.
 
-* An `eval` function.
+* A single-step evaluator, plus a wrapper that iterates steps to a value.
 
 * A `typecheck` function.
 
@@ -138,10 +138,12 @@ Because lowering checks `var` uses against the current local scope and top-level
 context, ill-scoped variables are rejected eagerly, including inside lambda
 bodies.
 
-The kernel does not have a separate runtime `Value` datatype. Evaluation
-produces canonical `Term`s directly. A function value is just a lowered lambda
-term in value form. Application evaluates the argument to a canonical term,
-substitutes it for local index `0`, and then evaluates the resulting term.
+The kernel does not have a separate runtime `Value` datatype. The primitive
+operational semantics is a single reduction step on `Term`s, and full
+evaluation just iterates that step relation until it reaches a canonical term.
+A function value is just a lowered lambda term in value form. Application
+first reduces its function and argument one step at a time; once both are
+values, one beta step substitutes the argument for local index `0`.
 
 The earlier named-syntax experiments exposed the usual substitution problem:
 named binders need alpha-renaming or freshening to avoid accidental capture.
