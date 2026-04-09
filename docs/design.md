@@ -77,7 +77,9 @@ Ordinary symbols do not self-evaluate.
 The reader still produces raw S-expressions. The kernel immediately lowers
 those into an internal `Term` language before evaluation. In that internal
 term language, bound locals are de Bruijn indices and top-level references stay
-as named globals.
+as named globals. In the Rust API, `Term` is therefore an opaque type rather
+than a public enum, so those lowered local indices do not leak across the
+kernel boundary.
 
 Non-atomic surface code forms are tagged lists. For example:
 
@@ -156,6 +158,8 @@ The intended future direction is:
 
 - `Term` is the real kernel syntax.
 - raw de Bruijn indices remain an implementation detail.
+- host-side construction and inspection of terms should stay binder-safe rather
+  than re-exposing lowered locals as ordinary enum variants.
 - Click-level introspection over terms should use dedicated, binder-safe term
   operations rather than generic list destructors.
 

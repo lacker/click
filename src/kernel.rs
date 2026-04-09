@@ -37,7 +37,10 @@ pub enum Declaration {
 pub struct Symbol(String);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Term {
+pub struct Term(TermKind);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TermKind {
     Nil,
     Bool(bool),
     Object(Object),
@@ -125,6 +128,81 @@ impl Object {
     }
 }
 
+impl Term {
+    // Public constructors only cover binder-free surface terms. Lowered locals
+    // remain internal until there is a binder-safe host-side term API.
+    pub fn nil() -> Self {
+        Self(TermKind::Nil)
+    }
+
+    pub fn bool(value: bool) -> Self {
+        Self(TermKind::Bool(value))
+    }
+
+    pub fn object(object: Object) -> Self {
+        Self(TermKind::Object(object))
+    }
+
+    pub fn global(name: Symbol) -> Self {
+        Self(TermKind::Global(name))
+    }
+
+    pub fn r#if(condition: Term, then_branch: Term, else_branch: Term) -> Self {
+        Self(TermKind::If {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch),
+            else_branch: Box::new(else_branch),
+        })
+    }
+
+    pub fn app(function: Term, arg: Term) -> Self {
+        Self(TermKind::App {
+            function: Box::new(function),
+            arg: Box::new(arg),
+        })
+    }
+
+    pub fn get(object: Term, key: Symbol) -> Self {
+        Self(TermKind::Get {
+            object: Box::new(object),
+            key,
+        })
+    }
+
+    pub fn with(object: Term, key: Symbol, value: Term) -> Self {
+        Self(TermKind::With {
+            object: Box::new(object),
+            key,
+            value: Box::new(value),
+        })
+    }
+
+    pub fn has(object: Term, key: Symbol) -> Self {
+        Self(TermKind::Has {
+            object: Box::new(object),
+            key,
+        })
+    }
+
+    fn local(index: usize) -> Self {
+        Self(TermKind::Local(index))
+    }
+
+    fn lambda(body: Term) -> Self {
+        Self(TermKind::Lambda {
+            body: Box::new(body),
+        })
+    }
+
+    fn kind(&self) -> &TermKind {
+        &self.0
+    }
+
+    fn into_kind(self) -> TermKind {
+        self.0
+    }
+}
+
 impl Context {
     // Construct an empty top-level context with no named definitions.
     pub fn new() -> Self {
@@ -196,7 +274,7 @@ pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Conte
 impl Term {
     // Apply Click's truthiness rule: only `nil` and `false` are falsey.
     fn is_truthy(&self) -> bool {
-        !matches!(self, Term::Nil | Term::Bool(false))
+        !matches!(self.kind(), TermKind::Nil | TermKind::Bool(false))
     }
 }
 
@@ -226,23 +304,25 @@ impl Context {
 impl fmt::Display for Term {
     // Render kernel values back into the small Click surface notation.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Term::Nil => write!(f, "nil"),
-            Term::Bool(true) => write!(f, "true"),
-            Term::Bool(false) => write!(f, "false"),
-            Term::Object(object) => format_object(object, f),
-            Term::Lambda { .. } => write!(f, "#<function>"),
-            Term::Local(index) => write!(f, "#<local {index}>"),
-            Term::Global(name) => write!(f, "(var {name})"),
-            Term::If {
+        match self.kind() {
+            TermKind::Nil => write!(f, "nil"),
+            TermKind::Bool(true) => write!(f, "true"),
+            TermKind::Bool(false) => write!(f, "false"),
+            TermKind::Object(object) => format_object(object, f),
+            TermKind::Lambda { .. } => write!(f, "#<function>"),
+            TermKind::Local(index) => write!(f, "#<local {index}>"),
+            TermKind::Global(name) => write!(f, "(var {name})"),
+            TermKind::If {
                 condition,
                 then_branch,
                 else_branch,
             } => write!(f, "(if {condition} {then_branch} {else_branch})"),
-            Term::App { function, arg } => write!(f, "(app {function} {arg})"),
-            Term::Get { object, key } => write!(f, "(get {object} {key})"),
-            Term::With { object, key, value } => write!(f, "(with {object} {key} {value})"),
-            Term::Has { object, key } => write!(f, "(has {object} {key})"),
+            TermKind::App { function, arg } => write!(f, "(app {function} {arg})"),
+            TermKind::Get { object, key } => write!(f, "(get {object} {key})"),
+            TermKind::With { object, key, value } => {
+                write!(f, "(with {object} {key} {value})")
+            }
+            TermKind::Has { object, key } => write!(f, "(has {object} {key})"),
         }
     }
 }
@@ -303,9 +383,9 @@ fn declaration_from_expr(expr: &SExpr, globals: &Object) -> ClickResult<Option<D
 fn term_from_expr(expr: &SExpr, scope: &[Symbol], globals: &Object) -> ClickResult<Term> {
     match expr {
         SExpr::Symbol(symbol) => match symbol.as_str() {
-            "nil" => Ok(Term::Nil),
-            "true" => Ok(Term::Bool(true)),
-            "false" => Ok(Term::Bool(false)),
+            "nil" => Ok(Term::nil()),
+            "true" => Ok(Term::bool(true)),
+            "false" => Ok(Term::bool(false)),
             _ => Err(format!("unbound atom '{symbol}'")),
         },
         SExpr::List(items) => term_from_list(items, scope, globals),
@@ -329,46 +409,46 @@ fn term_from_list(items: &[SExpr], scope: &[Symbol], globals: &Object) -> ClickR
         "theorem" => Err("theorem is only valid as a top-level declaration".to_string()),
         "object" => {
             expect_arity(operator.as_str(), tail, 0)?;
-            Ok(Term::Object(Object::new()))
+            Ok(Term::object(Object::new()))
         }
         "if" => {
             expect_arity(operator.as_str(), tail, 3)?;
-            Ok(Term::If {
-                condition: Box::new(term_from_expr(&tail[0], scope, globals)?),
-                then_branch: Box::new(term_from_expr(&tail[1], scope, globals)?),
-                else_branch: Box::new(term_from_expr(&tail[2], scope, globals)?),
-            })
+            Ok(Term::r#if(
+                term_from_expr(&tail[0], scope, globals)?,
+                term_from_expr(&tail[1], scope, globals)?,
+                term_from_expr(&tail[2], scope, globals)?,
+            ))
         }
         "lambda" => term_from_lambda(tail, scope, globals),
         "var" => term_from_var(tail, scope, globals),
         "app" => {
             expect_arity(operator.as_str(), tail, 2)?;
-            Ok(Term::App {
-                function: Box::new(term_from_expr(&tail[0], scope, globals)?),
-                arg: Box::new(term_from_expr(&tail[1], scope, globals)?),
-            })
+            Ok(Term::app(
+                term_from_expr(&tail[0], scope, globals)?,
+                term_from_expr(&tail[1], scope, globals)?,
+            ))
         }
         "get" => {
             expect_arity(operator.as_str(), tail, 2)?;
-            Ok(Term::Get {
-                object: Box::new(term_from_expr(&tail[0], scope, globals)?),
-                key: expect_symbol(&tail[1], "get key")?,
-            })
+            Ok(Term::get(
+                term_from_expr(&tail[0], scope, globals)?,
+                expect_symbol(&tail[1], "get key")?,
+            ))
         }
         "with" => {
             expect_arity(operator.as_str(), tail, 3)?;
-            Ok(Term::With {
-                object: Box::new(term_from_expr(&tail[0], scope, globals)?),
-                key: expect_symbol(&tail[1], "with key")?,
-                value: Box::new(term_from_expr(&tail[2], scope, globals)?),
-            })
+            Ok(Term::with(
+                term_from_expr(&tail[0], scope, globals)?,
+                expect_symbol(&tail[1], "with key")?,
+                term_from_expr(&tail[2], scope, globals)?,
+            ))
         }
         "has" => {
             expect_arity(operator.as_str(), tail, 2)?;
-            Ok(Term::Has {
-                object: Box::new(term_from_expr(&tail[0], scope, globals)?),
-                key: expect_symbol(&tail[1], "has key")?,
-            })
+            Ok(Term::has(
+                term_from_expr(&tail[0], scope, globals)?,
+                expect_symbol(&tail[1], "has key")?,
+            ))
         }
         "atom" | "atom_eq" | "car" | "cdr" | "cons" => {
             Err(format!("{operator} is no longer supported in the kernel"))
@@ -383,9 +463,11 @@ fn term_from_lambda(args: &[SExpr], scope: &[Symbol], globals: &Object) -> Click
     let binder = expect_symbol(&args[0], "lambda binder")?;
     let mut inner_scope = scope.to_vec();
     inner_scope.push(binder);
-    Ok(Term::Lambda {
-        body: Box::new(term_from_expr(&args[1], &inner_scope, globals)?),
-    })
+    Ok(Term::lambda(term_from_expr(
+        &args[1],
+        &inner_scope,
+        globals,
+    )?))
 }
 
 // Resolve a surface `var` into either a local index or a known global name.
@@ -394,9 +476,9 @@ fn term_from_var(args: &[SExpr], scope: &[Symbol], globals: &Object) -> ClickRes
     let name = expect_symbol(&args[0], "var name")?;
 
     if let Some(index) = local_index(scope, &name) {
-        Ok(Term::Local(index))
+        Ok(Term::local(index))
     } else if globals.has(name.as_str()) {
-        Ok(Term::Global(name))
+        Ok(Term::global(name))
     } else {
         Err(format!("unbound variable '{name}'"))
     }
@@ -438,16 +520,16 @@ fn expect_symbol(expr: &SExpr, role: &str) -> ClickResult<Symbol> {
 
 // Evaluate one well-scoped kernel term in the current top-level context.
 fn eval(term: &Term, globals: &Object) -> ClickResult<Term> {
-    match term {
-        Term::Nil => Ok(Term::Nil),
-        Term::Bool(value) => Ok(Term::Bool(*value)),
-        Term::Object(object) => Ok(Term::Object(object.clone())),
-        Term::Local(index) => Err(format!("encountered unbound local index {index}")),
-        Term::Global(name) => globals
+    match term.kind() {
+        TermKind::Nil => Ok(Term::nil()),
+        TermKind::Bool(value) => Ok(Term::bool(*value)),
+        TermKind::Object(object) => Ok(Term::object(object.clone())),
+        TermKind::Local(index) => Err(format!("encountered unbound local index {index}")),
+        TermKind::Global(name) => globals
             .get(name.as_str())
             .cloned()
             .ok_or_else(|| format!("unbound variable '{name}'")),
-        Term::If {
+        TermKind::If {
             condition,
             then_branch,
             else_branch,
@@ -459,49 +541,49 @@ fn eval(term: &Term, globals: &Object) -> ClickResult<Term> {
                 eval(else_branch, globals)
             }
         }
-        Term::Lambda { body } => Ok(Term::Lambda {
-            body: Box::new((**body).clone()),
-        }),
-        Term::App { function, arg } => {
+        TermKind::Lambda { body } => Ok(Term::lambda((**body).clone())),
+        TermKind::App { function, arg } => {
             let function = eval(function, globals)?;
             let arg = eval(arg, globals)?;
             apply(function, arg, globals)
         }
-        Term::Get { object, key } => {
+        TermKind::Get { object, key } => {
             let object = expect_object(eval(object, globals)?, "get object")?;
             object
                 .get(key.as_str())
                 .cloned()
                 .ok_or_else(|| format!("missing object key '{key}'"))
         }
-        Term::With { object, key, value } => {
+        TermKind::With { object, key, value } => {
             let object = expect_object(eval(object, globals)?, "with object")?;
             let value = eval(value, globals)?;
-            Ok(Term::Object(object.with(key.clone(), value)))
+            Ok(Term::object(object.with(key.clone(), value)))
         }
-        Term::Has { object, key } => {
+        TermKind::Has { object, key } => {
             let object = expect_object(eval(object, globals)?, "has object")?;
-            Ok(Term::Bool(object.has(key.as_str())))
+            Ok(Term::bool(object.has(key.as_str())))
         }
     }
 }
 
 // Extract an object value from runtime data where one is required.
 fn expect_object(term: Term, role: &str) -> ClickResult<Object> {
-    match term {
-        Term::Object(object) => Ok(object),
-        _ => Err(format!("{role} must be an object")),
+    let rendered = term.to_string();
+    match term.into_kind() {
+        TermKind::Object(object) => Ok(object),
+        _ => Err(format!("{role} must be an object, got {rendered}")),
     }
 }
 
 // Apply a function value by substituting the argument into its body.
 fn apply(function: Term, arg: Term, globals: &Object) -> ClickResult<Term> {
-    match function {
-        Term::Lambda { body } => {
+    let rendered = function.to_string();
+    match function.into_kind() {
+        TermKind::Lambda { body } => {
             let body = instantiate(&body, &arg);
             eval(&body, globals)
         }
-        _ => Err("attempted to call a non-function".to_string()),
+        _ => Err(format!("attempted to call a non-function: {rendered}")),
     }
 }
 
@@ -514,95 +596,82 @@ fn instantiate(body: &Term, arg: &Term) -> Term {
 
 // Shift local indices above the cutoff by a signed amount.
 fn shift(term: &Term, amount: isize, cutoff: usize) -> Term {
-    match term {
-        Term::Nil => Term::Nil,
-        Term::Bool(value) => Term::Bool(*value),
-        Term::Object(object) => Term::Object(object.clone()),
-        Term::Local(index) => {
+    match term.kind() {
+        TermKind::Nil => Term::nil(),
+        TermKind::Bool(value) => Term::bool(*value),
+        TermKind::Object(object) => Term::object(object.clone()),
+        TermKind::Local(index) => {
             if *index < cutoff {
-                Term::Local(*index)
+                Term::local(*index)
             } else {
                 let index = index
                     .checked_add_signed(amount)
                     .expect("de Bruijn shift underflowed");
-                Term::Local(index)
+                Term::local(index)
             }
         }
-        Term::Global(name) => Term::Global(name.clone()),
-        Term::If {
+        TermKind::Global(name) => Term::global(name.clone()),
+        TermKind::If {
             condition,
             then_branch,
             else_branch,
-        } => Term::If {
-            condition: Box::new(shift(condition, amount, cutoff)),
-            then_branch: Box::new(shift(then_branch, amount, cutoff)),
-            else_branch: Box::new(shift(else_branch, amount, cutoff)),
-        },
-        Term::Lambda { body } => Term::Lambda {
-            body: Box::new(shift(body, amount, cutoff + 1)),
-        },
-        Term::App { function, arg } => Term::App {
-            function: Box::new(shift(function, amount, cutoff)),
-            arg: Box::new(shift(arg, amount, cutoff)),
-        },
-        Term::Get { object, key } => Term::Get {
-            object: Box::new(shift(object, amount, cutoff)),
-            key: key.clone(),
-        },
-        Term::With { object, key, value } => Term::With {
-            object: Box::new(shift(object, amount, cutoff)),
-            key: key.clone(),
-            value: Box::new(shift(value, amount, cutoff)),
-        },
-        Term::Has { object, key } => Term::Has {
-            object: Box::new(shift(object, amount, cutoff)),
-            key: key.clone(),
-        },
+        } => Term::r#if(
+            shift(condition, amount, cutoff),
+            shift(then_branch, amount, cutoff),
+            shift(else_branch, amount, cutoff),
+        ),
+        TermKind::Lambda { body } => Term::lambda(shift(body, amount, cutoff + 1)),
+        TermKind::App { function, arg } => {
+            Term::app(shift(function, amount, cutoff), shift(arg, amount, cutoff))
+        }
+        TermKind::Get { object, key } => Term::get(shift(object, amount, cutoff), key.clone()),
+        TermKind::With { object, key, value } => Term::with(
+            shift(object, amount, cutoff),
+            key.clone(),
+            shift(value, amount, cutoff),
+        ),
+        TermKind::Has { object, key } => Term::has(shift(object, amount, cutoff), key.clone()),
     }
 }
 
 // Replace one local index with a term, adjusting beneath binders as needed.
 fn substitute(term: &Term, depth: usize, replacement: &Term) -> Term {
-    match term {
-        Term::Nil => Term::Nil,
-        Term::Bool(value) => Term::Bool(*value),
-        Term::Object(object) => Term::Object(object.clone()),
-        Term::Local(index) => {
+    match term.kind() {
+        TermKind::Nil => Term::nil(),
+        TermKind::Bool(value) => Term::bool(*value),
+        TermKind::Object(object) => Term::object(object.clone()),
+        TermKind::Local(index) => {
             if *index == depth {
                 shift(replacement, depth as isize, 0)
             } else {
-                Term::Local(*index)
+                Term::local(*index)
             }
         }
-        Term::Global(name) => Term::Global(name.clone()),
-        Term::If {
+        TermKind::Global(name) => Term::global(name.clone()),
+        TermKind::If {
             condition,
             then_branch,
             else_branch,
-        } => Term::If {
-            condition: Box::new(substitute(condition, depth, replacement)),
-            then_branch: Box::new(substitute(then_branch, depth, replacement)),
-            else_branch: Box::new(substitute(else_branch, depth, replacement)),
-        },
-        Term::Lambda { body } => Term::Lambda {
-            body: Box::new(substitute(body, depth + 1, replacement)),
-        },
-        Term::App { function, arg } => Term::App {
-            function: Box::new(substitute(function, depth, replacement)),
-            arg: Box::new(substitute(arg, depth, replacement)),
-        },
-        Term::Get { object, key } => Term::Get {
-            object: Box::new(substitute(object, depth, replacement)),
-            key: key.clone(),
-        },
-        Term::With { object, key, value } => Term::With {
-            object: Box::new(substitute(object, depth, replacement)),
-            key: key.clone(),
-            value: Box::new(substitute(value, depth, replacement)),
-        },
-        Term::Has { object, key } => Term::Has {
-            object: Box::new(substitute(object, depth, replacement)),
-            key: key.clone(),
-        },
+        } => Term::r#if(
+            substitute(condition, depth, replacement),
+            substitute(then_branch, depth, replacement),
+            substitute(else_branch, depth, replacement),
+        ),
+        TermKind::Lambda { body } => Term::lambda(substitute(body, depth + 1, replacement)),
+        TermKind::App { function, arg } => Term::app(
+            substitute(function, depth, replacement),
+            substitute(arg, depth, replacement),
+        ),
+        TermKind::Get { object, key } => {
+            Term::get(substitute(object, depth, replacement), key.clone())
+        }
+        TermKind::With { object, key, value } => Term::with(
+            substitute(object, depth, replacement),
+            key.clone(),
+            substitute(value, depth, replacement),
+        ),
+        TermKind::Has { object, key } => {
+            Term::has(substitute(object, depth, replacement), key.clone())
+        }
     }
 }

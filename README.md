@@ -19,7 +19,9 @@ The current prototype is intentionally narrow. It has:
 
 The reader parses surface S-expressions, then the kernel immediately lowers
 them into an internal `Term` language. Bound locals are represented internally
-with de Bruijn indices. Top-level names stay as atomic `Symbol`s.
+with de Bruijn indices. Top-level names stay as atomic `Symbol`s. In the Rust
+API, `Term` is opaque rather than a public enum so those lowered locals stay
+internal.
 
 ## Current Semantics
 
@@ -51,6 +53,10 @@ but they tied code inspection to ordinary list structure. The current design
 keeps `Term` as the real kernel syntax and postpones metaprogramming until
 Click has a binder-safe way to inspect terms without exposing raw de Bruijn
 indices.
+
+The same constraint now applies to host-side construction: there is not yet a
+binder-safe Rust builder for lambda bodies, so the public `Term` API only
+exposes binder-free construction today.
 
 See [docs/design.md](/Users/lacker/click/docs/design.md) for the current design
 notes.
