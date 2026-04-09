@@ -129,8 +129,10 @@ impl Object {
 }
 
 impl Term {
-    // Public constructors only cover binder-free surface terms. Lowered locals
-    // remain internal until there is a binder-safe host-side term API.
+    // Structural constructors should stay in kernel objects where possible.
+    // Smart constructors may lower named binders into hidden locals, but
+    // callers still manipulate kernel values rather than host closures or
+    // raw de Bruijn data.
     pub fn nil() -> Self {
         Self(TermKind::Nil)
     }
@@ -143,8 +145,14 @@ impl Term {
         Self(TermKind::Object(object))
     }
 
-    pub fn global(name: Symbol) -> Self {
+    // Construct a named variable occurrence. A surrounding smart `lambda`
+    // constructor may bind it; otherwise evaluation resolves it globally.
+    pub fn var(name: Symbol) -> Self {
         Self(TermKind::Global(name))
+    }
+
+    pub fn lambda(binder: Symbol, body: Term) -> Self {
+        Self::lowered_lambda(bind_named_var(&binder, &body, 0))
     }
 
     pub fn r#if(condition: Term, then_branch: Term, else_branch: Term) -> Self {
@@ -188,7 +196,7 @@ impl Term {
         Self(TermKind::Local(index))
     }
 
-    fn lambda(body: Term) -> Self {
+    fn lowered_lambda(body: Term) -> Self {
         Self(TermKind::Lambda {
             body: Box::new(body),
         })
@@ -463,7 +471,7 @@ fn term_from_lambda(args: &[SExpr], scope: &[Symbol], globals: &Object) -> Click
     let binder = expect_symbol(&args[0], "lambda binder")?;
     let mut inner_scope = scope.to_vec();
     inner_scope.push(binder);
-    Ok(Term::lambda(term_from_expr(
+    Ok(Term::lowered_lambda(term_from_expr(
         &args[1],
         &inner_scope,
         globals,
@@ -478,7 +486,7 @@ fn term_from_var(args: &[SExpr], scope: &[Symbol], globals: &Object) -> ClickRes
     if let Some(index) = local_index(scope, &name) {
         Ok(Term::local(index))
     } else if globals.has(name.as_str()) {
-        Ok(Term::global(name))
+        Ok(Term::var(name))
     } else {
         Err(format!("unbound variable '{name}'"))
     }
@@ -541,7 +549,7 @@ fn eval(term: &Term, globals: &Object) -> ClickResult<Term> {
                 eval(else_branch, globals)
             }
         }
-        TermKind::Lambda { body } => Ok(Term::lambda((**body).clone())),
+        TermKind::Lambda { body } => Ok(Term::lowered_lambda((**body).clone())),
         TermKind::App { function, arg } => {
             let function = eval(function, globals)?;
             let arg = eval(arg, globals)?;
@@ -594,6 +602,57 @@ fn instantiate(body: &Term, arg: &Term) -> Term {
     shift(&body, -1, 0)
 }
 
+// Lower one named host-side binder into the hidden de Bruijn core.
+fn bind_named_var(binder: &Symbol, body: &Term, depth: usize) -> Term {
+    match body.kind() {
+        TermKind::Nil => Term::nil(),
+        TermKind::Bool(value) => Term::bool(*value),
+        TermKind::Object(object) => Term::object(bind_named_object(object, binder, depth)),
+        TermKind::Local(index) => Term::local(*index),
+        TermKind::Global(name) => {
+            if name == binder {
+                Term::local(depth)
+            } else {
+                Term::var(name.clone())
+            }
+        }
+        TermKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => Term::r#if(
+            bind_named_var(binder, condition, depth),
+            bind_named_var(binder, then_branch, depth),
+            bind_named_var(binder, else_branch, depth),
+        ),
+        TermKind::Lambda { body } => Term::lowered_lambda(bind_named_var(binder, body, depth + 1)),
+        TermKind::App { function, arg } => Term::app(
+            bind_named_var(binder, function, depth),
+            bind_named_var(binder, arg, depth),
+        ),
+        TermKind::Get { object, key } => {
+            Term::get(bind_named_var(binder, object, depth), key.clone())
+        }
+        TermKind::With { object, key, value } => Term::with(
+            bind_named_var(binder, object, depth),
+            key.clone(),
+            bind_named_var(binder, value, depth),
+        ),
+        TermKind::Has { object, key } => {
+            Term::has(bind_named_var(binder, object, depth), key.clone())
+        }
+    }
+}
+
+fn bind_named_object(object: &Object, binder: &Symbol, depth: usize) -> Object {
+    let entries = object
+        .entries
+        .iter()
+        .map(|(key, value)| (key.clone(), bind_named_var(binder, value, depth)))
+        .collect();
+    Object { entries }
+}
+
 // Shift local indices above the cutoff by a signed amount.
 fn shift(term: &Term, amount: isize, cutoff: usize) -> Term {
     match term.kind() {
@@ -610,7 +669,7 @@ fn shift(term: &Term, amount: isize, cutoff: usize) -> Term {
                 Term::local(index)
             }
         }
-        TermKind::Global(name) => Term::global(name.clone()),
+        TermKind::Global(name) => Term::var(name.clone()),
         TermKind::If {
             condition,
             then_branch,
@@ -620,7 +679,7 @@ fn shift(term: &Term, amount: isize, cutoff: usize) -> Term {
             shift(then_branch, amount, cutoff),
             shift(else_branch, amount, cutoff),
         ),
-        TermKind::Lambda { body } => Term::lambda(shift(body, amount, cutoff + 1)),
+        TermKind::Lambda { body } => Term::lowered_lambda(shift(body, amount, cutoff + 1)),
         TermKind::App { function, arg } => {
             Term::app(shift(function, amount, cutoff), shift(arg, amount, cutoff))
         }
@@ -647,7 +706,7 @@ fn substitute(term: &Term, depth: usize, replacement: &Term) -> Term {
                 Term::local(*index)
             }
         }
-        TermKind::Global(name) => Term::global(name.clone()),
+        TermKind::Global(name) => Term::var(name.clone()),
         TermKind::If {
             condition,
             then_branch,
@@ -657,7 +716,7 @@ fn substitute(term: &Term, depth: usize, replacement: &Term) -> Term {
             substitute(then_branch, depth, replacement),
             substitute(else_branch, depth, replacement),
         ),
-        TermKind::Lambda { body } => Term::lambda(substitute(body, depth + 1, replacement)),
+        TermKind::Lambda { body } => Term::lowered_lambda(substitute(body, depth + 1, replacement)),
         TermKind::App { function, arg } => Term::app(
             substitute(function, depth, replacement),
             substitute(arg, depth, replacement),

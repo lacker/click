@@ -23,6 +23,11 @@ with de Bruijn indices. Top-level names stay as atomic `Symbol`s. In the Rust
 API, `Term` is opaque rather than a public enum so those lowered locals stay
 internal.
 
+The structural kernel API is intended to stay in terms of kernel objects.
+Smart constructors may lower internally, but they take `Term`, `Symbol`,
+`Object`, `Context`, and `Declaration` rather than host closures or raw de
+Bruijn data.
+
 ## Current Semantics
 
 - Ordinary symbols do not self-evaluate. Only `nil`, `true`, and `false` do.
@@ -54,9 +59,9 @@ keeps `Term` as the real kernel syntax and postpones metaprogramming until
 Click has a binder-safe way to inspect terms without exposing raw de Bruijn
 indices.
 
-The same constraint now applies to host-side construction: there is not yet a
-binder-safe Rust builder for lambda bodies, so the public `Term` API only
-exposes binder-free construction today.
+For example, host-side lambda construction uses `Term::lambda(Symbol, Term)`.
+That smart constructor captures free occurrences of the given symbol in the
+body term, then lowers the result into the hidden de Bruijn core.
 
 See [docs/design.md](/Users/lacker/click/docs/design.md) for the current design
 notes.

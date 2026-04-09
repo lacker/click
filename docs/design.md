@@ -81,6 +81,11 @@ as named globals. In the Rust API, `Term` is therefore an opaque type rather
 than a public enum, so those lowered local indices do not leak across the
 kernel boundary.
 
+The structural kernel API should be expressed in kernel objects rather than
+host-language helpers. Smart constructors may lower or scope-check internally,
+but their arguments should still be things like `Term`, `Symbol`, `Object`,
+`Context`, and `Declaration`, not Rust strings, numeric indices, or closures.
+
 Non-atomic surface code forms are tagged lists. For example:
 
 ```lisp
@@ -121,6 +126,9 @@ Those symbols are atomic kernel names, not inspectable strings.
 
 Variables are represented explicitly by name in the surface syntax. Internally,
 those names are carried by an atomic `Symbol` type rather than plain strings.
+The host-side smart constructor `Term::lambda(Symbol, Term)` follows the same
+named-variable story: it takes a body term, captures free occurrences of that
+symbol, and lowers the result to the hidden de Bruijn core.
 
 `lambda` binds a scope. Shadowing is allowed. During lowering, the innermost
 binder with a given name becomes local index `0`, the next one out becomes
@@ -158,8 +166,9 @@ The intended future direction is:
 
 - `Term` is the real kernel syntax.
 - raw de Bruijn indices remain an implementation detail.
-- host-side construction and inspection of terms should stay binder-safe rather
-  than re-exposing lowered locals as ordinary enum variants.
+- host-side construction should stay within the kernel object vocabulary, using
+  smart constructors like `Term::lambda(Symbol, Term)` rather than exposing raw
+  locals or closure-based host helpers.
 - Click-level introspection over terms should use dedicated, binder-safe term
   operations rather than generic list destructors.
 

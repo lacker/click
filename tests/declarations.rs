@@ -30,7 +30,7 @@ fn check_leaves_the_context_unchanged() {
     let checked = declare(
         &context,
         Declaration::Check {
-            actual: Term::global(Symbol::from("answer")),
+            actual: Term::var(Symbol::from("answer")),
             expected: Term::bool(true),
         },
     )
