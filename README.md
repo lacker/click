@@ -6,7 +6,6 @@ The current prototype is intentionally narrow. It has:
 
 - top-level `def`, `check`, and `theorem` declarations
 - `Type`
-- `Nil`
 - `record-type`
 - `sum-type`
 - `arrow`
@@ -17,7 +16,6 @@ The current prototype is intentionally narrow. It has:
 - `var`
 - `app`
 - `lambda`
-- `nil`
 
 The reader parses surface S-expressions, then the kernel immediately lowers
 them into an internal `Term` language. In that language, values are referred to
@@ -33,13 +31,16 @@ wrappers around that smaller kernel.
 
 ## Current Semantics
 
-- Ordinary symbols do not self-evaluate. Only `nil` does.
+- Ordinary symbols do not self-evaluate. `Type` is the only built-in atom
+  term.
 - Top-level `(def name expr)` extends the context for later forms.
 - Top-level `(check actual expected)` evaluates both terms and requires exact
   equality.
 - Top-level `(theorem name actual expected)` performs the same check, then
   binds the checked term to `name`.
 - `record` builds an immutable labeled product.
+- The empty record `(record)` serves as the unit-like value of the kernel, and
+  `(record-type)` is its type.
 - `get` projects a record field.
 - `variant` builds a tagged sum inhabitant with an explicit `sum-type`.
 - `case` eliminates a sum by matching on its tag.
@@ -61,9 +62,9 @@ Typing is explicit in the host API. A `NameMap` assigns terms to names, and
 `NameMap` as a value assignment. Lambdas do not store binder types directly;
 their binders are `Name`s, and the map provides the type information.
 
-The current type vocabulary is deliberately small: `Nil`, function types
-written as `(arrow A B)`, record types written as `(record-type ...)`, sum
-types written as `(sum-type ...)`, and a single universe `Type`.
+The current type vocabulary is deliberately small: function types written as
+`(arrow A B)`, record types written as `(record-type ...)`, sum types written
+as `(sum-type ...)`, and a single universe `Type`.
 
 ## Deliberate Omissions
 
@@ -83,7 +84,7 @@ notes.
 Run an expression directly:
 
 ```bash
-cargo run -- -e "(app (lambda x (var x)) nil)"
+cargo run -- -e "(app (lambda x (var x)) (record))"
 ```
 
 Run a file:
@@ -95,7 +96,7 @@ cargo run -- path/to/file.cl
 Pipe a program on stdin:
 
 ```bash
-printf "(record (answer nil))\n" | cargo run --
+printf "(record (answer (record)))\n" | cargo run --
 ```
 
 Install the binary:
@@ -110,15 +111,15 @@ cargo install --path .
 
 ```lisp
 (def id (lambda x (var x)))
-(check (app (var id) nil) nil)
-(theorem truth nil nil)
+(check (app (var id) (record)) (record))
+(theorem truth (record) (record))
 (record (answer (var truth)))
 ```
 
 This evaluates to:
 
 ```lisp
-(record (answer nil))
+(record (answer (record)))
 ```
 
 The Rust API uses `Name` directly for bindings. Surface syntax still uses

@@ -1,4 +1,4 @@
-use click::{Context, Declaration, Name, Symbol, Term, declare};
+use click::{Context, Declaration, Fields, Name, Symbol, Term, declare};
 
 #[test]
 fn lambda_uses_names_for_binders_and_variables() {
@@ -18,8 +18,8 @@ fn lambda_uses_names_for_binders_and_variables() {
     declare(
         &context,
         Declaration::Check {
-            actual: Term::app(Term::var(id_name), Term::nil()),
-            expected: Term::nil(),
+            actual: Term::app(Term::var(id_name), Term::record(Fields::new())),
+            expected: Term::record(Fields::new()),
         },
     )
     .expect("identity should apply");
@@ -45,10 +45,10 @@ fn nested_lambdas_preserve_outer_names() {
         &context,
         Declaration::Check {
             actual: Term::app(
-                Term::app(Term::var(fst_name), Term::nil()),
-                Term::record(click::Fields::new()),
+                Term::app(Term::var(fst_name), Term::record(Fields::new())),
+                Term::record(Fields::new()),
             ),
-            expected: Term::nil(),
+            expected: Term::record(Fields::new()),
         },
     )
     .expect("outer binder should remain visible beneath the inner lambda");
@@ -74,10 +74,10 @@ fn inner_lambda_shadows_the_outer_name() {
         &context,
         Declaration::Check {
             actual: Term::app(
-                Term::app(Term::var(shadow_name), Term::nil()),
-                Term::record(click::Fields::new()),
+                Term::app(Term::var(shadow_name), Term::record(Fields::new())),
+                Term::record(Fields::new()),
             ),
-            expected: Term::record(click::Fields::new()),
+            expected: Term::record(Fields::new()),
         },
     )
     .expect("inner binder should shadow the outer binder");

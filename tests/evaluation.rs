@@ -43,28 +43,28 @@ fn evaluation_cases() {
         ),
         ok!(
             "top level def extends the context for later forms",
-            "(def answer nil)\n(var answer)",
-            "nil"
+            "(def answer (record))\n(var answer)",
+            "(record)"
         ),
         ok!(
             "defs can be used by later definitions",
-            "(def flag (variant left nil (sum-type (left Nil) (right Nil))))\n(def answer (case (var flag) (left x nil) (right y (record))))\n(var answer)",
-            "nil"
+            "(def flag (variant left (record) (sum-type (left (record-type)) (right (record-type)))))\n(def answer (case (var flag) (left x (record)) (right y (record (other (record))))))\n(var answer)",
+            "(record)"
         ),
         ok!(
             "defs can hold functions",
-            "(def id (lambda x (var x)))\n(app (var id) nil)",
-            "nil"
+            "(def id (lambda x (var x)))\n(app (var id) (record))",
+            "(record)"
         ),
         ok!(
             "check validates an expected value and keeps processing",
-            "(check (app (lambda x (var x)) nil) nil)\n(record)",
+            "(check (app (lambda x (var x)) (record)) (record))\n(record)",
             "(record)"
         ),
         ok!(
             "theorem validates an expected value and binds it",
-            "(theorem truth nil nil)\n(var truth)",
-            "nil"
+            "(theorem truth (record) (record))\n(var truth)",
+            "(record)"
         ),
         ok!(
             "record builds an empty named record",
@@ -73,13 +73,13 @@ fn evaluation_cases() {
         ),
         ok!(
             "record can be built directly from fields",
-            "(record (foo nil))",
-            "(record (foo nil))"
+            "(record (foo (record)))",
+            "(record (foo (record)))"
         ),
         ok!(
             "get reads an inserted record key",
-            "(get (record (foo nil)) foo)",
-            "nil"
+            "(get (record (foo (record))) foo)",
+            "(record)"
         ),
         ok!(
             "lambda produces an internal function value",
@@ -87,7 +87,6 @@ fn evaluation_cases() {
             "#<function>"
         ),
         ok!("Type evaluates to itself", "Type", "Type"),
-        ok!("Nil evaluates to itself", "Nil", "Nil"),
         ok!(
             "record types evaluate to themselves",
             "(record-type)",
@@ -100,38 +99,38 @@ fn evaluation_cases() {
         ),
         ok!(
             "arrow types evaluate to themselves",
-            "(arrow Nil Nil)",
-            "(arrow Nil Nil)"
+            "(arrow (record-type) (record-type))",
+            "(arrow (record-type) (record-type))"
         ),
         ok!(
             "variants evaluate to themselves",
-            "(variant left nil (sum-type (left Nil) (right Nil)))",
-            "(variant left nil (sum-type (left Nil) (right Nil)))"
+            "(variant left (record) (sum-type (left (record-type)) (right (record-type))))",
+            "(variant left (record) (sum-type (left (record-type)) (right (record-type))))"
         ),
         ok!(
             "case selects the matching variant branch",
-            "(case (variant left nil (sum-type (left Nil) (right Nil))) (left x (var x)) (right y (record)))",
-            "nil"
+            "(case (variant left (record) (sum-type (left (record-type)) (right (record-type)))) (left x (var x)) (right y (record (other (record)))))",
+            "(record)"
         ),
         ok!(
             "app applies a named variable binder",
-            "(app (lambda x (var x)) nil)",
-            "nil"
+            "(app (lambda x (var x)) (record))",
+            "(record)"
         ),
         ok!(
             "app nests explicitly",
-            "(app (app (lambda x (lambda y (var x))) nil) (record))",
-            "nil"
+            "(app (app (lambda x (lambda y (var x))) (record)) (record (other (record))))",
+            "(record)"
         ),
         ok!(
             "substitution preserves outer binders under nested lambdas",
-            "(get (app (app (lambda x (lambda y (record (left (var x))))) nil) (record)) left)",
-            "nil"
+            "(get (app (app (lambda x (lambda y (record (left (var x))))) (record)) (record (other (record)))) left)",
+            "(record)"
         ),
         ok!(
             "keywords can be used as variable names",
-            "(app (lambda if (var if)) nil)",
-            "nil"
+            "(app (lambda if (var if)) (record))",
+            "(record)"
         ),
         err!(
             "top level var must be bound",
@@ -140,12 +139,12 @@ fn evaluation_cases() {
         ),
         err!(
             "app rejects non-functions",
-            "(app nil (record))",
+            "(app (record) (record))",
             "attempted to call a non-function"
         ),
         err!(
             "old implicit application syntax is rejected",
-            "((lambda x (var x)) nil)",
+            "((lambda x (var x)) (record))",
             "form heads must be keyword atoms"
         ),
         err!(
@@ -160,8 +159,8 @@ fn evaluation_cases() {
         ),
         ok!(
             "lambda allows shadowing and resolves the innermost binder",
-            "(app (app (lambda x (lambda x (var x))) nil) (record))",
-            "(record)"
+            "(app (app (lambda x (lambda x (var x))) (record)) (record (other (record))))",
+            "(record (other (record)))"
         ),
         err!(
             "lambda bodies are scope checked eagerly",
@@ -170,38 +169,38 @@ fn evaluation_cases() {
         ),
         err!(
             "unknown form tags are rejected",
-            "(hello nil)",
+            "(hello (record))",
             "unknown form 'hello'"
         ),
         err!(
             "nested def is rejected as a term form",
-            "(app (lambda x (def y nil)) (record))",
+            "(app (lambda x (def y (record))) (record))",
             "def is only valid as a top-level declaration"
         ),
         err!(
             "nested check is rejected as a term form",
-            "(app (lambda x (check nil nil)) (record))",
+            "(app (lambda x (check (record) (record))) (record))",
             "check is only valid as a top-level declaration"
         ),
         err!(
             "nested theorem is rejected as a term form",
-            "(app (lambda x (theorem y nil nil)) (record))",
+            "(app (lambda x (theorem y (record) (record))) (record))",
             "theorem is only valid as a top-level declaration"
         ),
         err!(
             "duplicate top level defs are rejected",
-            "(def x nil)\n(def x (record))",
+            "(def x (record))\n(def x (record (other (record))))",
             "definition 'x' is already declared"
         ),
         err!(
             "check fails when values differ",
-            "(check nil (record))",
-            "check failed: expected (record), got nil"
+            "(check (record) (record (other (record))))",
+            "check failed: expected (record (other (record))), got (record)"
         ),
         err!(
             "theorem fails when values differ",
-            "(theorem x nil (record))",
-            "theorem failed: expected (record), got nil"
+            "(theorem x (record) (record (other (record))))",
+            "theorem failed: expected (record (other (record))), got (record)"
         ),
         err!(
             "get rejects missing record keys",
@@ -210,32 +209,32 @@ fn evaluation_cases() {
         ),
         err!(
             "get rejects non-record inputs",
-            "(get nil foo)",
+            "(get Type foo)",
             "get record must be a record"
         ),
         err!(
             "case rejects non-variant scrutinees",
-            "(case nil (left x (var x)))",
-            "case scrutinee must be a variant, got nil"
+            "(case (record) (left x (var x)))",
+            "case scrutinee must be a variant, got (record)"
         ),
         err!(
             "if is no longer supported",
-            "(if nil nil nil)",
+            "(if (record) (record) (record))",
             "if is no longer supported in the kernel"
         ),
         err!(
             "case rejects missing branches for the chosen tag",
-            "(case (variant left nil (sum-type (left Nil) (right Nil))) (right y (record)))",
+            "(case (variant left (record) (sum-type (left (record-type)) (right (record-type)))) (right y (record)))",
             "missing case branch 'left'"
         ),
         ok!(
             "shebang line is ignored",
-            "#!/usr/bin/env click\n(record (answer nil))\n",
-            "(record (answer nil))"
+            "#!/usr/bin/env click\n(record (answer (record)))\n",
+            "(record (answer (record)))"
         ),
         ok!(
             "multiple top level forms return the last value",
-            "nil\n(record)\n",
+            "Type\n(record)\n",
             "(record)"
         ),
     ];

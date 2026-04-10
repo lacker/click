@@ -4,8 +4,8 @@ use click::{
 
 #[test]
 fn public_step_reports_values() {
-    match step(&NameMap::new(), &Term::nil()).expect("step should succeed") {
-        StepResult::Value(value) => assert_eq!(value, Term::nil()),
+    match step(&NameMap::new(), &Term::record(Fields::new())).expect("step should succeed") {
+        StepResult::Value(value) => assert_eq!(value, Term::record(Fields::new())),
         StepResult::Reduced(next) => panic!("expected a value, got reduct {next}"),
     }
 }
@@ -17,13 +17,13 @@ fn public_step_reduces_a_global_reference_using_the_context() {
         &Context::new(),
         Declaration::Def {
             name: answer.clone(),
-            value: Term::nil(),
+            value: Term::record(Fields::new()),
         },
     )
     .expect("definition should succeed");
 
     match step(context.values(), &Term::var(answer)).expect("step should succeed") {
-        StepResult::Reduced(next) => assert_eq!(next, Term::nil()),
+        StepResult::Reduced(next) => assert_eq!(next, Term::record(Fields::new())),
         StepResult::Value(value) => panic!("expected a reduct, got value {value}"),
     }
 }
@@ -37,11 +37,11 @@ fn public_step_performs_one_beta_reduction() {
             x.clone(),
             Term::app(Term::lambda(y.clone(), Term::var(y)), Term::var(x)),
         ),
-        Term::nil(),
+        Term::record(Fields::new()),
     );
 
     match step(&NameMap::new(), &term).expect("step should succeed") {
-        StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> nil)"),
+        StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> (record))"),
         StepResult::Value(value) => panic!("expected a reduct, got value {value}"),
     }
 }
@@ -53,18 +53,18 @@ fn public_step_selects_the_matching_case_branch() {
     let term = Term::case(
         Term::variant(
             Symbol::from("left"),
-            Term::nil(),
+            Term::record(Fields::new()),
             Fields::new()
-                .with(Symbol::from("left"), Term::nil_type())
-                .with(Symbol::from("right"), Term::nil_type()),
+                .with(Symbol::from("left"), Term::record_type(Fields::new()))
+                .with(Symbol::from("right"), Term::record_type(Fields::new())),
         ),
         Branches::new()
             .with(Symbol::from("left"), left.clone(), Term::var(left))
-            .with(Symbol::from("right"), right, Term::nil()),
+            .with(Symbol::from("right"), right, Term::record(Fields::new())),
     );
 
     match step(&NameMap::new(), &term).expect("step should succeed") {
-        StepResult::Reduced(next) => assert_eq!(next, Term::nil()),
+        StepResult::Reduced(next) => assert_eq!(next, Term::record(Fields::new())),
         StepResult::Value(value) => panic!("expected a reduct, got value {value}"),
     }
 }

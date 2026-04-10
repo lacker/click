@@ -21,17 +21,20 @@ fn temp_file(name: &str, contents: &str) -> PathBuf {
 #[test]
 fn evaluates_expression_argument() {
     let output = Command::new(bin())
-        .args(["-e", "(app (lambda x (var x)) nil)"])
+        .args(["-e", "(app (lambda x (var x)) (record))"])
         .output()
         .expect("command should run");
 
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "nil\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "(record)\n");
 }
 
 #[test]
 fn evaluates_file_and_ignores_shebang() {
-    let path = temp_file("shebang", "#!/usr/bin/env click\n(record (answer nil))\n");
+    let path = temp_file(
+        "shebang",
+        "#!/usr/bin/env click\n(record (answer (record)))\n",
+    );
 
     let output = Command::new(bin())
         .arg(&path)
@@ -41,7 +44,7 @@ fn evaluates_file_and_ignores_shebang() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "(record (answer nil))\n"
+        "(record (answer (record)))\n"
     );
 
     fs::remove_file(path).expect("temp file should be removed");
@@ -59,14 +62,17 @@ fn evaluates_stdin() {
         use std::io::Write;
 
         let stdin = child.stdin.as_mut().expect("stdin should be available");
-        write!(stdin, "(app (lambda x (record (answer (var x)))) nil)\n")
-            .expect("stdin write should succeed");
+        write!(
+            stdin,
+            "(app (lambda x (record (answer (var x)))) (record))\n"
+        )
+        .expect("stdin write should succeed");
     }
 
     let output = child.wait_with_output().expect("command should complete");
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "(record (answer nil))\n"
+        "(record (answer (record)))\n"
     );
 }
