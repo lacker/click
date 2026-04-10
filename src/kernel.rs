@@ -10,7 +10,7 @@ pub type ClickResult<T> = Result<T, String>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Context {
     names: BTreeMap<Symbol, Name>,
-    values: BTreeMap<Name, Term>,
+    values: NameMap,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,7 +19,7 @@ pub struct Object {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TypeMap {
+pub struct NameMap {
     entries: BTreeMap<Name, Term>,
 }
 
@@ -183,23 +183,23 @@ impl Object {
     }
 }
 
-impl TypeMap {
-    // Construct an empty type environment.
+impl NameMap {
+    // Construct an empty name assignment.
     pub fn new() -> Self {
         Self {
             entries: BTreeMap::new(),
         }
     }
 
-    // Look up the type assigned to one name.
+    // Look up the term assigned to one name.
     pub fn get(&self, name: &Name) -> Option<&Term> {
         self.entries.get(name)
     }
 
-    // Return a new environment extended with one name/type assignment.
-    pub fn with(&self, name: Name, r#type: Term) -> Self {
+    // Return a new assignment extended with one name/term entry.
+    pub fn with(&self, name: Name, term: Term) -> Self {
         let mut entries = self.entries.clone();
-        entries.insert(name, r#type);
+        entries.insert(name, term);
         Self { entries }
     }
 }
@@ -308,13 +308,18 @@ impl Context {
     pub fn new() -> Self {
         Self {
             names: BTreeMap::new(),
-            values: BTreeMap::new(),
+            values: NameMap::new(),
         }
     }
 
     // Look up the value currently bound to a top-level name.
     pub fn get(&self, name: &Name) -> Option<&Term> {
         self.values.get(name)
+    }
+
+    // Expose the current top-level value assignment.
+    pub fn values(&self) -> &NameMap {
+        &self.values
     }
 }
 
@@ -377,13 +382,13 @@ pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Conte
 }
 
 /// Reduce one well-scoped kernel term by a single operational step.
-pub fn step(context: &Context, term: &Term) -> ClickResult<StepResult> {
-    step_in_context(term, context.values())
+pub fn step(values: &NameMap, term: &Term) -> ClickResult<StepResult> {
+    step_in_names(term, values)
 }
 
 /// Compute the type of one kernel term relative to an explicit name/type map.
-pub fn type_of(types: &TypeMap, term: &Term) -> ClickResult<Term> {
-    type_of_in_context(term, types)
+pub fn type_of(names: &NameMap, term: &Term) -> ClickResult<Term> {
+    type_of_in_names(term, names)
 }
 
 // Private implementation stuff goes below here, to keep this file organized.
@@ -412,11 +417,6 @@ impl Term {
 }
 
 impl Context {
-    // Return the value environment visible to evaluation.
-    fn values(&self) -> &BTreeMap<Name, Term> {
-        &self.values
-    }
-
     fn resolve_symbol(&self, symbol: &Symbol) -> Option<Name> {
         self.names.get(symbol).cloned()
     }
@@ -429,8 +429,7 @@ impl Context {
     fn with_value(&self, name: Name, value: Term) -> Self {
         let mut names = self.names.clone();
         names.insert(name.symbol().clone(), name.clone());
-        let mut values = self.values.clone();
-        values.insert(name, value);
+        let values = self.values.with(name, value);
         Self { names, values }
     }
 }
@@ -692,10 +691,10 @@ fn expect_symbol(expr: &SExpr, role: &str) -> ClickResult<Symbol> {
 }
 
 // Evaluate one well-scoped kernel term by iterating single reduction steps.
-fn eval(term: &Term, globals: &BTreeMap<Name, Term>) -> ClickResult<Term> {
+fn eval(term: &Term, globals: &NameMap) -> ClickResult<Term> {
     let mut current = term.clone();
     loop {
-        match step_in_context(&current, globals)? {
+        match step_in_names(&current, globals)? {
             StepResult::Value(value) => return Ok(value),
             StepResult::Reduced(next) => current = next,
         }
@@ -703,7 +702,7 @@ fn eval(term: &Term, globals: &BTreeMap<Name, Term>) -> ClickResult<Term> {
 }
 
 // Internal one-step reduction under the current top-level value environment.
-fn step_in_context(term: &Term, globals: &BTreeMap<Name, Term>) -> ClickResult<StepResult> {
+fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
     match term.kind() {
         TermKind::Type => Ok(StepResult::Value(Term::r#type())),
         TermKind::BoolType => Ok(StepResult::Value(Term::bool_type())),
@@ -818,8 +817,8 @@ fn step_in_context(term: &Term, globals: &BTreeMap<Name, Term>) -> ClickResult<S
 }
 
 // Take one step and extract the reduct, rejecting terms that are already values.
-fn step_reduct(term: &Term, globals: &BTreeMap<Name, Term>) -> ClickResult<Term> {
-    match step_in_context(term, globals)? {
+fn step_reduct(term: &Term, globals: &NameMap) -> ClickResult<Term> {
+    match step_in_names(term, globals)? {
         StepResult::Reduced(next) => Ok(next),
         StepResult::Value(value) => Err(format!("expected a reducible term, got {value}")),
     }
@@ -911,14 +910,14 @@ fn substitute_object(object: &Object, binder: &Name, replacement: &Term) -> Obje
     Object { entries }
 }
 
-fn type_of_in_context(term: &Term, types: &TypeMap) -> ClickResult<Term> {
+fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
     match term.kind() {
         TermKind::Type => Ok(Term::r#type()),
         TermKind::BoolType | TermKind::NilType | TermKind::Arrow { .. } => Ok(Term::r#type()),
         TermKind::ObjectType(object) => {
             for value in object.entries.values() {
                 expect_equal(
-                    &type_of_in_context(value, types)?,
+                    &type_of_in_names(value, types)?,
                     &Term::r#type(),
                     "object-type",
                 )?;
@@ -937,9 +936,9 @@ fn type_of_in_context(term: &Term, types: &TypeMap) -> ClickResult<Term> {
             then_branch,
             else_branch,
         } => {
-            let _condition_type = type_of_in_context(condition, types)?;
-            let then_type = type_of_in_context(then_branch, types)?;
-            let else_type = type_of_in_context(else_branch, types)?;
+            let _condition_type = type_of_in_names(condition, types)?;
+            let then_type = type_of_in_names(then_branch, types)?;
+            let else_type = type_of_in_names(else_branch, types)?;
             expect_equal(&then_type, &else_type, "if")?;
             Ok(then_type)
         }
@@ -948,11 +947,11 @@ fn type_of_in_context(term: &Term, types: &TypeMap) -> ClickResult<Term> {
                 .get(binder)
                 .cloned()
                 .ok_or_else(|| format!("missing type for lambda binder '{binder}'"))?;
-            let body_type = type_of_in_context(body, types)?;
+            let body_type = type_of_in_names(body, types)?;
             Ok(Term::arrow(binder_type, body_type))
         }
         TermKind::App { function, arg } => {
-            let function_type = type_of_in_context(function, types)?;
+            let function_type = type_of_in_names(function, types)?;
             let TermKind::Arrow {
                 arg_type,
                 return_type,
@@ -962,12 +961,12 @@ fn type_of_in_context(term: &Term, types: &TypeMap) -> ClickResult<Term> {
                     "cannot apply a non-function term of type {function_type}"
                 ));
             };
-            let actual_arg_type = type_of_in_context(arg, types)?;
+            let actual_arg_type = type_of_in_names(arg, types)?;
             expect_equal(&actual_arg_type, arg_type, "app argument")?;
             Ok((**return_type).clone())
         }
         TermKind::Get { object, key } => {
-            let object_type = type_of_in_context(object, types)?;
+            let object_type = type_of_in_names(object, types)?;
             let fields = expect_object_type(&object_type, "get object type")?;
             fields
                 .get(key.as_str())
@@ -975,23 +974,23 @@ fn type_of_in_context(term: &Term, types: &TypeMap) -> ClickResult<Term> {
                 .ok_or_else(|| format!("missing object type for key '{key}'"))
         }
         TermKind::With { object, key, value } => {
-            let object_type = type_of_in_context(object, types)?;
+            let object_type = type_of_in_names(object, types)?;
             let fields = expect_object_type(&object_type, "with object type")?;
-            let value_type = type_of_in_context(value, types)?;
+            let value_type = type_of_in_names(value, types)?;
             Ok(Term::object_type(fields.with(key.clone(), value_type)))
         }
         TermKind::Has { object, .. } => {
-            let object_type = type_of_in_context(object, types)?;
+            let object_type = type_of_in_names(object, types)?;
             let _fields = expect_object_type(&object_type, "has object type")?;
             Ok(Term::bool_type())
         }
     }
 }
 
-fn type_of_object(object: &Object, types: &TypeMap) -> ClickResult<Term> {
+fn type_of_object(object: &Object, types: &NameMap) -> ClickResult<Term> {
     let mut fields = Object::new();
     for (key, value) in &object.entries {
-        fields = fields.with(key.clone(), type_of_in_context(value, types)?);
+        fields = fields.with(key.clone(), type_of_in_names(value, types)?);
     }
     Ok(Term::object_type(fields))
 }
@@ -1020,7 +1019,7 @@ mod tests {
             &Context::new(),
         );
 
-        match step_in_context(&term, &BTreeMap::new()).expect("step should succeed") {
+        match step_in_names(&term, &NameMap::new()).expect("step should succeed") {
             StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> true)"),
             StepResult::Value(value) => panic!("expected a reduction step, got value {value}"),
         }
@@ -1033,7 +1032,7 @@ mod tests {
             &Context::new(),
         );
 
-        match step_in_context(&term, &BTreeMap::new()).expect("step should succeed") {
+        match step_in_names(&term, &NameMap::new()).expect("step should succeed") {
             StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> false)"),
             StepResult::Value(value) => panic!("expected a reduction step, got value {value}"),
         }
@@ -1046,7 +1045,7 @@ mod tests {
             &Context::new(),
         );
 
-        match step_in_context(&term, &BTreeMap::new()).expect("step should succeed") {
+        match step_in_names(&term, &NameMap::new()).expect("step should succeed") {
             StepResult::Reduced(next) => {
                 assert_eq!(
                     next.to_string(),

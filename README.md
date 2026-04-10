@@ -30,8 +30,9 @@ exposing that structure directly.
 
 The structural kernel API is intended to stay in terms of kernel objects.
 Constructors and kernel operations should take `Term`, `Name`, `Symbol`,
-`Object`, `Context`, `TypeMap`, and `Declaration` rather than host closures or
-raw Rust strings or integers.
+`Object`, and `NameMap` rather than host closures or raw Rust strings or
+integers. `Context`, `Declaration`, and `run_source` are top-level wrappers
+around that smaller kernel.
 
 ## Current Semantics
 
@@ -48,9 +49,9 @@ raw Rust strings or integers.
 - `if` treats only `nil` and `false` as falsey.
 - `lambda` binds a fresh `Name`.
 - The primitive operational semantics is a single reduction step on `Term`s.
-- The Rust API exposes that reduction relation as `step(&Context, &Term) ->
+- The Rust API exposes that reduction relation as `step(&NameMap, &Term) ->
   ClickResult<StepResult>`.
-- The Rust API also exposes `type_of(&TypeMap, &Term) -> ClickResult<Term>`.
+- The Rust API also exposes `type_of(&NameMap, &Term) -> ClickResult<Term>`.
 - Full evaluation iterates those steps until it reaches a canonical `Term`.
 - There is no separate runtime `Value` or `Closure` datatype in the current
   kernel.
@@ -59,10 +60,10 @@ raw Rust strings or integers.
 for object keys and surface labels. `Name` refers to a value binding. Click
 code cannot inspect the character structure of either.
 
-Typing is explicit in the host API. A `TypeMap` assigns types to names, and
-`type_of` computes a term's type relative to that assignment. Lambdas do not
-store binder types directly; their binders are `Name`s, and the map provides
-the type information.
+Typing is explicit in the host API. A `NameMap` assigns terms to names, and
+`type_of` interprets that map as a type assignment. `step` interprets a
+`NameMap` as a value assignment. Lambdas do not store binder types directly;
+their binders are `Name`s, and the map provides the type information.
 
 The current type vocabulary is deliberately small: `Bool`, `Nil`, function
 types written as `(arrow A B)`, object types written as `(object-type ...)`,

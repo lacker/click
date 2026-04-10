@@ -26,13 +26,11 @@ The heart of the Click kernel is a few trusted Rust things.
 
 * A `type_of` function.
 
-* A `declare` function that processes top-level `def`, `check`, and `theorem`
-  declarations and extends a context in a pure way.
-
 * A strong enough type system that proofs can be implemented by
   typechecking.
 
-Everything else should be built on top of that kernel.
+Everything else should be built on top of that kernel. In particular, the
+top-level `Context` and `declare` machinery sit above the smallest kernel.
 
 ## Kernel Interface
 
@@ -59,16 +57,9 @@ helpers.
   because they are selecting one field from a set of options, not referring to
   value bindings.
 
-- `Context`
-  An immutable top-level environment of evaluated definitions. It maps surface
-  symbols to canonical names and names to evaluated values.
-
-- `TypeMap`
-  An immutable typing environment from `Name` to type `Term`.
-
-- `Declaration`
-  A top-level kernel action. The current variants are `Def`, `Check`, and
-  `Theorem`.
+- `NameMap`
+  An immutable map from `Name` to `Term`. The evaluator uses a `NameMap` as a
+  value assignment, and `type_of` uses a `NameMap` as a type assignment.
 
 - `StepResult`
   The result of a single reduction step. A term is either already a value or
@@ -82,28 +73,34 @@ helpers.
 
 - `Object` provides `new`, `with`, `has`, and `get`.
 
-- `Context` provides `new` and `get`.
+- `NameMap` provides `new`, `get`, and `with`.
 
-- `TypeMap` provides `new`, `get`, and `with`.
+- `step(&NameMap, &Term) -> ClickResult<StepResult>`
+  performs one reduction step relative to a name assignment.
+
+- `type_of(&NameMap, &Term) -> ClickResult<Term>`
+  computes the type of a term relative to an explicit assignment of types to
+  names.
+
+The smallest kernel should speak in terms of `Term`, `Name`, `Symbol`,
+`Object`, `NameMap`, and `StepResult`, not host closures or raw Rust strings,
+integers, or indices.
+
+## Top-Level Interface
+
+- `Context`
+  An immutable top-level environment of evaluated definitions. It maps surface
+  symbols to canonical names and carries a value `NameMap`.
+
+- `Declaration`
+  A top-level action. The current variants are `Def`, `Check`, and `Theorem`.
 
 - `declare(&Context, Declaration) -> ClickResult<Context>`
   applies one top-level declaration and returns the extended context.
 
-- `step(&Context, &Term) -> ClickResult<StepResult>`
-  performs one reduction step in a context.
-
-- `type_of(&TypeMap, &Term) -> ClickResult<Term>`
-  computes the type of a term relative to an explicit assignment of types to
-  names.
-
 - `run_source(&str) -> ClickResult<Option<Term>>`
   is a convenience entry point that parses surface syntax, processes any
   top-level declarations, and evaluates the final expression.
-
-The core structural interface should stay in kernel objects. It should speak in
-terms of `Term`, `Name`, `Symbol`, `Object`, `Context`, `TypeMap`,
-`Declaration`, and `StepResult`, not host closures or raw Rust strings,
-integers, or indices.
 
 ## Semantic Notes
 
@@ -134,7 +131,7 @@ context. In the current untyped prototype, `check` and `theorem` compare
 evaluated kernel values for exact equality. `theorem` also binds the checked
 value to a name.
 
-The first typing API is `type_of`. It takes a `TypeMap` from `Name` to type and
+The first typing API is `type_of`. It takes a `NameMap` from `Name` to type and
 computes a `Term` type for another `Term`. Lambdas do not carry binder types in
 their syntax; instead, the binder's `Name` must already have a type assignment
 in the map. This keeps evaluation Curry-style while still making typing a
