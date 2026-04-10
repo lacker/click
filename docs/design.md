@@ -24,7 +24,7 @@ The heart of the Click kernel is a few trusted Rust things.
 * A public single-step evaluator, plus an internal wrapper that iterates steps
   to a value.
 
-* A `typecheck` function.
+* A `type_of` function.
 
 * A `declare` function that processes top-level `def`, `check`, and `theorem`
   declarations and extends a context in a pure way.
@@ -63,6 +63,9 @@ helpers.
   An immutable top-level environment of evaluated definitions. It maps surface
   symbols to canonical names and names to evaluated values.
 
+- `TypeMap`
+  An immutable typing environment from `Name` to type `Term`.
+
 - `Declaration`
   A top-level kernel action. The current variants are `Def`, `Check`, and
   `Theorem`.
@@ -74,11 +77,14 @@ helpers.
 ### Kernel Operations
 
 - `Term` constructors build kernel syntax directly:
-  `nil`, `bool`, `object`, `var`, `lambda`, `if`, `app`, `get`, `with`, `has`
+  `type`, `bool_type`, `nil_type`, `object_type`, `arrow`, `nil`, `bool`,
+  `object`, `var`, `lambda`, `if`, `app`, `get`, `with`, `has`
 
-- `Object` provides `new`, `has`, and `get`.
+- `Object` provides `new`, `with`, `has`, and `get`.
 
 - `Context` provides `new` and `get`.
+
+- `TypeMap` provides `new`, `get`, and `with`.
 
 - `declare(&Context, Declaration) -> ClickResult<Context>`
   applies one top-level declaration and returns the extended context.
@@ -86,13 +92,18 @@ helpers.
 - `step(&Context, &Term) -> ClickResult<StepResult>`
   performs one reduction step in a context.
 
+- `type_of(&TypeMap, &Term) -> ClickResult<Term>`
+  computes the type of a term relative to an explicit assignment of types to
+  names.
+
 - `run_source(&str) -> ClickResult<Option<Term>>`
   is a convenience entry point that parses surface syntax, processes any
   top-level declarations, and evaluates the final expression.
 
 The core structural interface should stay in kernel objects. It should speak in
-terms of `Term`, `Name`, `Symbol`, `Object`, `Context`, `Declaration`, and
-`StepResult`, not host closures or raw Rust strings, integers, or indices.
+terms of `Term`, `Name`, `Symbol`, `Object`, `Context`, `TypeMap`,
+`Declaration`, and `StepResult`, not host closures or raw Rust strings,
+integers, or indices.
 
 ## Semantic Notes
 
@@ -123,16 +134,26 @@ context. In the current untyped prototype, `check` and `theorem` compare
 evaluated kernel values for exact equality. `theorem` also binds the checked
 value to a name.
 
+The first typing API is `type_of`. It takes a `TypeMap` from `Name` to type and
+computes a `Term` type for another `Term`. Lambdas do not carry binder types in
+their syntax; instead, the binder's `Name` must already have a type assignment
+in the map. This keeps evaluation Curry-style while still making typing a
+structural kernel operation.
+
+The current type vocabulary is intentionally small. `Bool`, `Nil`,
+`(arrow A B)`, and `(object-type ...)` are ordinary kernel terms, and they all
+live in a single `Type` universe. This is a prototype typing layer, not yet the
+final type theory.
+
 ## Open Questions
 
 - Click still needs a binder-safe code datatype and term-inspection interface.
   The current Rust `StepResult` is useful for the host kernel, but it is not
   yet a Click-level representation of execution.
 
-- The next typing step is likely a base `type_of(env, term)` judgment over an
-  environment that assigns types to names. That keeps the core closer to
-  programming-native evaluation, while still giving the kernel a structural
-  typing API.
+- The current `type_of` judgment is intentionally simple and environment-driven.
+  The next design question is whether Click should add bidirectional checking
+  on top of it, explicit annotations in terms, or both.
 
 - The recursion story is still open. Small-step semantics is the right
   substrate for talking about termination and divergence, but the actual theory
@@ -144,7 +165,7 @@ value to a name.
 Once the kernel is written, the next job is to build enough language on top of
 it to test whether the kernel shape is actually right.
 
-* Implement `eval` and `typecheck` in Click itself.
+* Implement `eval` and `type_of` in Click itself.
   This is more of a sufficiency test than a production plan.
 
 * Implement some basic types and type-like structures.

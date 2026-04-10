@@ -5,6 +5,11 @@
 The current prototype is intentionally narrow. It has:
 
 - top-level `def`, `check`, and `theorem` declarations
+- `Type`
+- `Bool`
+- `Nil`
+- `object-type`
+- `arrow`
 - `object`
 - `get`
 - `with`
@@ -25,8 +30,8 @@ exposing that structure directly.
 
 The structural kernel API is intended to stay in terms of kernel objects.
 Constructors and kernel operations should take `Term`, `Name`, `Symbol`,
-`Object`, `Context`, and `Declaration` rather than host closures or raw Rust
-strings or integers.
+`Object`, `Context`, `TypeMap`, and `Declaration` rather than host closures or
+raw Rust strings or integers.
 
 ## Current Semantics
 
@@ -45,6 +50,7 @@ strings or integers.
 - The primitive operational semantics is a single reduction step on `Term`s.
 - The Rust API exposes that reduction relation as `step(&Context, &Term) ->
   ClickResult<StepResult>`.
+- The Rust API also exposes `type_of(&TypeMap, &Term) -> ClickResult<Term>`.
 - Full evaluation iterates those steps until it reaches a canonical `Term`.
 - There is no separate runtime `Value` or `Closure` datatype in the current
   kernel.
@@ -52,6 +58,15 @@ strings or integers.
 `Symbol` and `Name` are different things. `Symbol` is an atomic selector, used
 for object keys and surface labels. `Name` refers to a value binding. Click
 code cannot inspect the character structure of either.
+
+Typing is explicit in the host API. A `TypeMap` assigns types to names, and
+`type_of` computes a term's type relative to that assignment. Lambdas do not
+store binder types directly; their binders are `Name`s, and the map provides
+the type information.
+
+The current type vocabulary is deliberately small: `Bool`, `Nil`, function
+types written as `(arrow A B)`, object types written as `(object-type ...)`,
+and a single universe `Type`.
 
 ## Deliberate Omissions
 

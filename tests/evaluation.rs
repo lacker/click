@@ -104,6 +104,19 @@ fn evaluation_cases() {
             "(lambda x (var x))",
             "#<function>"
         ),
+        ok!("Type evaluates to itself", "Type", "Type"),
+        ok!("Bool evaluates to itself", "Bool", "Bool"),
+        ok!("Nil evaluates to itself", "Nil", "Nil"),
+        ok!(
+            "arrow types evaluate to themselves",
+            "(arrow Bool Nil)",
+            "(arrow Bool Nil)"
+        ),
+        ok!(
+            "object types evaluate to themselves",
+            "(object-type)",
+            "(object-type)"
+        ),
         ok!(
             "app applies a named variable binder",
             "(app (lambda x (var x)) true)",

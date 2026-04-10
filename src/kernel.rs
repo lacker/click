@@ -19,6 +19,11 @@ pub struct Object {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypeMap {
+    entries: BTreeMap<Name, Term>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Declaration {
     Def {
         name: Name,
@@ -49,6 +54,14 @@ pub struct Term(TermKind);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TermKind {
+    Type,
+    BoolType,
+    NilType,
+    ObjectType(Object),
+    Arrow {
+        arg_type: Box<Term>,
+        return_type: Box<Term>,
+    },
     Nil,
     Bool(bool),
     Object(Object),
@@ -161,11 +174,62 @@ impl Object {
     pub fn get(&self, name: &str) -> Option<&Term> {
         self.entries.get(name)
     }
+
+    // Return a new object with one key updated or inserted.
+    pub fn with(&self, name: Symbol, value: Term) -> Self {
+        let mut entries = self.entries.clone();
+        entries.insert(name, value);
+        Self { entries }
+    }
+}
+
+impl TypeMap {
+    // Construct an empty type environment.
+    pub fn new() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+        }
+    }
+
+    // Look up the type assigned to one name.
+    pub fn get(&self, name: &Name) -> Option<&Term> {
+        self.entries.get(name)
+    }
+
+    // Return a new environment extended with one name/type assignment.
+    pub fn with(&self, name: Name, r#type: Term) -> Self {
+        let mut entries = self.entries.clone();
+        entries.insert(name, r#type);
+        Self { entries }
+    }
 }
 
 impl Term {
     // Structural constructors should stay in kernel objects where possible.
     // Names refer to values; symbols remain selectors such as object keys.
+    pub fn r#type() -> Self {
+        Self(TermKind::Type)
+    }
+
+    pub fn bool_type() -> Self {
+        Self(TermKind::BoolType)
+    }
+
+    pub fn nil_type() -> Self {
+        Self(TermKind::NilType)
+    }
+
+    pub fn object_type(object: Object) -> Self {
+        Self(TermKind::ObjectType(object))
+    }
+
+    pub fn arrow(arg_type: Term, return_type: Term) -> Self {
+        Self(TermKind::Arrow {
+            arg_type: Box::new(arg_type),
+            return_type: Box::new(return_type),
+        })
+    }
+
     pub fn nil() -> Self {
         Self(TermKind::Nil)
     }
@@ -317,6 +381,11 @@ pub fn step(context: &Context, term: &Term) -> ClickResult<StepResult> {
     step_in_context(term, context.values())
 }
 
+/// Compute the type of one kernel term relative to an explicit name/type map.
+pub fn type_of(types: &TypeMap, term: &Term) -> ClickResult<Term> {
+    type_of_in_context(term, types)
+}
+
 // Private implementation stuff goes below here, to keep this file organized.
 
 impl Term {
@@ -329,17 +398,16 @@ impl Term {
     fn is_value(&self) -> bool {
         matches!(
             self.kind(),
-            TermKind::Nil | TermKind::Bool(_) | TermKind::Object(_) | TermKind::Lambda { .. }
+            TermKind::Type
+                | TermKind::BoolType
+                | TermKind::NilType
+                | TermKind::ObjectType(_)
+                | TermKind::Arrow { .. }
+                | TermKind::Nil
+                | TermKind::Bool(_)
+                | TermKind::Object(_)
+                | TermKind::Lambda { .. }
         )
-    }
-}
-
-impl Object {
-    // Return a new object with one key updated or inserted.
-    fn with(&self, name: Symbol, value: Term) -> Self {
-        let mut entries = self.entries.clone();
-        entries.insert(name, value);
-        Self { entries }
     }
 }
 
@@ -371,6 +439,20 @@ impl fmt::Display for Term {
     // Render kernel values back into the small Click surface notation.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind() {
+            TermKind::Type => write!(f, "Type"),
+            TermKind::BoolType => write!(f, "Bool"),
+            TermKind::NilType => write!(f, "Nil"),
+            TermKind::ObjectType(object) => {
+                write!(f, "(object-type")?;
+                for (key, value) in &object.entries {
+                    write!(f, " ({key} {value})")?;
+                }
+                write!(f, ")")
+            }
+            TermKind::Arrow {
+                arg_type,
+                return_type,
+            } => write!(f, "(arrow {arg_type} {return_type})"),
             TermKind::Nil => write!(f, "nil"),
             TermKind::Bool(true) => write!(f, "true"),
             TermKind::Bool(false) => write!(f, "false"),
@@ -448,6 +530,9 @@ fn declaration_from_expr(expr: &SExpr, context: &Context) -> ClickResult<Option<
 fn term_from_expr(expr: &SExpr, scope: &[(Symbol, Name)], context: &Context) -> ClickResult<Term> {
     match expr {
         SExpr::Symbol(symbol) => match symbol.as_str() {
+            "Type" => Ok(Term::r#type()),
+            "Bool" => Ok(Term::bool_type()),
+            "Nil" => Ok(Term::nil_type()),
             "nil" => Ok(Term::nil()),
             "true" => Ok(Term::bool(true)),
             "false" => Ok(Term::bool(false)),
@@ -479,6 +564,17 @@ fn term_from_list(
         "object" => {
             expect_arity(operator.as_str(), tail, 0)?;
             Ok(Term::object(Object::new()))
+        }
+        "object-type" => {
+            expect_arity(operator.as_str(), tail, 0)?;
+            Ok(Term::object_type(Object::new()))
+        }
+        "arrow" => {
+            expect_arity(operator.as_str(), tail, 2)?;
+            Ok(Term::arrow(
+                term_from_expr(&tail[0], scope, context)?,
+                term_from_expr(&tail[1], scope, context)?,
+            ))
         }
         "if" => {
             expect_arity(operator.as_str(), tail, 3)?;
@@ -609,6 +705,17 @@ fn eval(term: &Term, globals: &BTreeMap<Name, Term>) -> ClickResult<Term> {
 // Internal one-step reduction under the current top-level value environment.
 fn step_in_context(term: &Term, globals: &BTreeMap<Name, Term>) -> ClickResult<StepResult> {
     match term.kind() {
+        TermKind::Type => Ok(StepResult::Value(Term::r#type())),
+        TermKind::BoolType => Ok(StepResult::Value(Term::bool_type())),
+        TermKind::NilType => Ok(StepResult::Value(Term::nil_type())),
+        TermKind::ObjectType(object) => Ok(StepResult::Value(Term::object_type(object.clone()))),
+        TermKind::Arrow {
+            arg_type,
+            return_type,
+        } => Ok(StepResult::Value(Term::arrow(
+            (**arg_type).clone(),
+            (**return_type).clone(),
+        ))),
         TermKind::Nil => Ok(StepResult::Value(Term::nil())),
         TermKind::Bool(value) => Ok(StepResult::Value(Term::bool(*value))),
         TermKind::Object(object) => Ok(StepResult::Value(Term::object(object.clone()))),
@@ -735,6 +842,19 @@ fn instantiate(binder: &Name, body: &Term, arg: &Term) -> Term {
 // Replace one bound name with a term, respecting shadowing beneath lambdas.
 fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
     match term.kind() {
+        TermKind::Type => Term::r#type(),
+        TermKind::BoolType => Term::bool_type(),
+        TermKind::NilType => Term::nil_type(),
+        TermKind::ObjectType(object) => {
+            Term::object_type(substitute_object(object, binder, replacement))
+        }
+        TermKind::Arrow {
+            arg_type,
+            return_type,
+        } => Term::arrow(
+            substitute_name(arg_type, binder, replacement),
+            substitute_name(return_type, binder, replacement),
+        ),
         TermKind::Nil => Term::nil(),
         TermKind::Bool(value) => Term::bool(*value),
         TermKind::Object(object) => Term::object(substitute_object(object, binder, replacement)),
@@ -789,6 +909,98 @@ fn substitute_object(object: &Object, binder: &Name, replacement: &Term) -> Obje
         .map(|(key, value)| (key.clone(), substitute_name(value, binder, replacement)))
         .collect();
     Object { entries }
+}
+
+fn type_of_in_context(term: &Term, types: &TypeMap) -> ClickResult<Term> {
+    match term.kind() {
+        TermKind::Type => Ok(Term::r#type()),
+        TermKind::BoolType | TermKind::NilType | TermKind::Arrow { .. } => Ok(Term::r#type()),
+        TermKind::ObjectType(object) => {
+            for value in object.entries.values() {
+                expect_equal(
+                    &type_of_in_context(value, types)?,
+                    &Term::r#type(),
+                    "object-type",
+                )?;
+            }
+            Ok(Term::r#type())
+        }
+        TermKind::Nil => Ok(Term::nil_type()),
+        TermKind::Bool(_) => Ok(Term::bool_type()),
+        TermKind::Object(object) => type_of_object(object, types),
+        TermKind::Var(name) => types
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("missing type for variable '{name}'")),
+        TermKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let _condition_type = type_of_in_context(condition, types)?;
+            let then_type = type_of_in_context(then_branch, types)?;
+            let else_type = type_of_in_context(else_branch, types)?;
+            expect_equal(&then_type, &else_type, "if")?;
+            Ok(then_type)
+        }
+        TermKind::Lambda { binder, body } => {
+            let binder_type = types
+                .get(binder)
+                .cloned()
+                .ok_or_else(|| format!("missing type for lambda binder '{binder}'"))?;
+            let body_type = type_of_in_context(body, types)?;
+            Ok(Term::arrow(binder_type, body_type))
+        }
+        TermKind::App { function, arg } => {
+            let function_type = type_of_in_context(function, types)?;
+            let TermKind::Arrow {
+                arg_type,
+                return_type,
+            } = function_type.kind()
+            else {
+                return Err(format!(
+                    "cannot apply a non-function term of type {function_type}"
+                ));
+            };
+            let actual_arg_type = type_of_in_context(arg, types)?;
+            expect_equal(&actual_arg_type, arg_type, "app argument")?;
+            Ok((**return_type).clone())
+        }
+        TermKind::Get { object, key } => {
+            let object_type = type_of_in_context(object, types)?;
+            let fields = expect_object_type(&object_type, "get object type")?;
+            fields
+                .get(key.as_str())
+                .cloned()
+                .ok_or_else(|| format!("missing object type for key '{key}'"))
+        }
+        TermKind::With { object, key, value } => {
+            let object_type = type_of_in_context(object, types)?;
+            let fields = expect_object_type(&object_type, "with object type")?;
+            let value_type = type_of_in_context(value, types)?;
+            Ok(Term::object_type(fields.with(key.clone(), value_type)))
+        }
+        TermKind::Has { object, .. } => {
+            let object_type = type_of_in_context(object, types)?;
+            let _fields = expect_object_type(&object_type, "has object type")?;
+            Ok(Term::bool_type())
+        }
+    }
+}
+
+fn type_of_object(object: &Object, types: &TypeMap) -> ClickResult<Term> {
+    let mut fields = Object::new();
+    for (key, value) in &object.entries {
+        fields = fields.with(key.clone(), type_of_in_context(value, types)?);
+    }
+    Ok(Term::object_type(fields))
+}
+
+fn expect_object_type(term: &Term, role: &str) -> ClickResult<Object> {
+    match term.kind() {
+        TermKind::ObjectType(object) => Ok(object.clone()),
+        _ => Err(format!("{role} must be an object type, got {term}")),
+    }
 }
 
 #[cfg(test)]
