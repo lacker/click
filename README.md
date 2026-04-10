@@ -6,7 +6,6 @@ The current prototype is intentionally narrow. It has:
 
 - top-level `def`, `check`, and `theorem` declarations
 - `Type`
-- `Bool`
 - `Nil`
 - `record-type`
 - `sum-type`
@@ -19,8 +18,6 @@ The current prototype is intentionally narrow. It has:
 - `app`
 - `lambda`
 - `nil`
-- `true`
-- `false`
 
 The reader parses surface S-expressions, then the kernel immediately lowers
 them into an internal `Term` language. In that language, values are referred to
@@ -36,7 +33,7 @@ wrappers around that smaller kernel.
 
 ## Current Semantics
 
-- Ordinary symbols do not self-evaluate. Only `nil`, `true`, and `false` do.
+- Ordinary symbols do not self-evaluate. Only `nil` does.
 - Top-level `(def name expr)` extends the context for later forms.
 - Top-level `(check actual expected)` evaluates both terms and requires exact
   equality.
@@ -64,9 +61,9 @@ Typing is explicit in the host API. A `NameMap` assigns terms to names, and
 `NameMap` as a value assignment. Lambdas do not store binder types directly;
 their binders are `Name`s, and the map provides the type information.
 
-The current type vocabulary is deliberately small: `Bool`, `Nil`, function
-types written as `(arrow A B)`, record types written as `(record-type ...)`,
-sum types written as `(sum-type ...)`, and a single universe `Type`.
+The current type vocabulary is deliberately small: `Nil`, function types
+written as `(arrow A B)`, record types written as `(record-type ...)`, sum
+types written as `(sum-type ...)`, and a single universe `Type`.
 
 ## Deliberate Omissions
 
@@ -86,7 +83,7 @@ notes.
 Run an expression directly:
 
 ```bash
-cargo run -- -e "(app (lambda x (var x)) true)"
+cargo run -- -e "(app (lambda x (var x)) nil)"
 ```
 
 Run a file:
@@ -98,7 +95,7 @@ cargo run -- path/to/file.cl
 Pipe a program on stdin:
 
 ```bash
-printf "(record (answer true))\n" | cargo run --
+printf "(record (answer nil))\n" | cargo run --
 ```
 
 Install the binary:
@@ -113,15 +110,15 @@ cargo install --path .
 
 ```lisp
 (def id (lambda x (var x)))
-(check (app (var id) true) true)
-(theorem truth true true)
+(check (app (var id) nil) nil)
+(theorem truth nil nil)
 (record (answer (var truth)))
 ```
 
 This evaluates to:
 
 ```lisp
-(record (answer true))
+(record (answer nil))
 ```
 
 The Rust API uses `Name` directly for bindings. Surface syntax still uses

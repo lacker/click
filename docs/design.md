@@ -71,8 +71,8 @@ helpers.
 ### Kernel Operations
 
 - `Term` constructors build kernel syntax directly:
-  `type`, `bool_type`, `nil_type`, `record_type`, `sum_type`, `arrow`, `nil`,
-  `bool`, `record`, `variant`, `var`, `lambda`, `app`, `case`, `get`
+  `type`, `nil_type`, `record_type`, `sum_type`, `arrow`, `nil`, `record`,
+  `variant`, `var`, `lambda`, `app`, `case`, `get`
 
 - `Fields` provides `new`, `with`, `has`, and `get`.
 
@@ -156,10 +156,10 @@ their syntax; instead, the binder's `Name` must already have a type assignment
 in the map. This keeps evaluation Curry-style while still making typing a
 structural kernel operation.
 
-The current type vocabulary is intentionally small. `Bool`, `Nil`,
-`(arrow A B)`, `(record-type ...)`, and `(sum-type ...)` are ordinary kernel
-terms, and they all live in a single `Type` universe. This is a prototype
-typing layer, not yet the final type theory.
+The current type vocabulary is intentionally small. `Nil`, `(arrow A B)`,
+`(record-type ...)`, and `(sum-type ...)` are ordinary kernel terms, and they
+all live in a single `Type` universe. This is a prototype typing layer, not
+yet the final type theory.
 
 ## Open Questions
 

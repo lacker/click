@@ -8,12 +8,12 @@ fn declare_extends_the_context_purely() {
         &context,
         Declaration::Def {
             name: answer.clone(),
-            value: Term::bool(true),
+            value: Term::nil(),
         },
     )
     .expect("declaration should succeed");
 
-    assert_eq!(context.get(&answer), Some(&Term::bool(true)));
+    assert_eq!(context.get(&answer), Some(&Term::nil()));
     assert_eq!(Context::new().get(&answer), None);
 }
 
@@ -24,7 +24,7 @@ fn check_leaves_the_context_unchanged() {
         &Context::new(),
         Declaration::Def {
             name: answer.clone(),
-            value: Term::bool(true),
+            value: Term::nil(),
         },
     )
     .expect("definition should succeed");
@@ -33,7 +33,7 @@ fn check_leaves_the_context_unchanged() {
         &context,
         Declaration::Check {
             actual: Term::var(answer),
-            expected: Term::bool(true),
+            expected: Term::nil(),
         },
     )
     .expect("check should succeed");
@@ -48,11 +48,11 @@ fn theorem_checks_and_binds_a_name() {
         &Context::new(),
         Declaration::Theorem {
             name: answer_value.clone(),
-            actual: Term::bool(true),
-            expected: Term::bool(true),
+            actual: Term::nil(),
+            expected: Term::nil(),
         },
     )
     .expect("theorem should succeed");
 
-    assert_eq!(context.get(&answer_value), Some(&Term::bool(true)));
+    assert_eq!(context.get(&answer_value), Some(&Term::nil()));
 }

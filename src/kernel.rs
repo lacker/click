@@ -66,7 +66,6 @@ struct CaseBranch {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TermKind {
     Type,
-    BoolType,
     NilType,
     RecordType(Fields),
     SumType(Fields),
@@ -75,7 +74,6 @@ enum TermKind {
         return_type: Box<Term>,
     },
     Nil,
-    Bool(bool),
     Record(Fields),
     Variant {
         tag: Symbol,
@@ -243,10 +241,6 @@ impl Term {
         Self(TermKind::Type)
     }
 
-    pub fn bool_type() -> Self {
-        Self(TermKind::BoolType)
-    }
-
     pub fn nil_type() -> Self {
         Self(TermKind::NilType)
     }
@@ -268,10 +262,6 @@ impl Term {
 
     pub fn nil() -> Self {
         Self(TermKind::Nil)
-    }
-
-    pub fn bool(value: bool) -> Self {
-        Self(TermKind::Bool(value))
     }
 
     pub fn record(fields: Fields) -> Self {
@@ -427,13 +417,11 @@ impl Term {
         matches!(
             self.kind(),
             TermKind::Type
-                | TermKind::BoolType
                 | TermKind::NilType
                 | TermKind::RecordType(_)
                 | TermKind::SumType(_)
                 | TermKind::Arrow { .. }
                 | TermKind::Nil
-                | TermKind::Bool(_)
                 | TermKind::Record(_)
                 | TermKind::Variant { .. }
                 | TermKind::Lambda { .. }
@@ -464,7 +452,6 @@ impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind() {
             TermKind::Type => write!(f, "Type"),
-            TermKind::BoolType => write!(f, "Bool"),
             TermKind::NilType => write!(f, "Nil"),
             TermKind::RecordType(fields) => format_fields("record-type", fields, f),
             TermKind::SumType(fields) => format_fields("sum-type", fields, f),
@@ -473,8 +460,6 @@ impl fmt::Display for Term {
                 return_type,
             } => write!(f, "(arrow {arg_type} {return_type})"),
             TermKind::Nil => write!(f, "nil"),
-            TermKind::Bool(true) => write!(f, "true"),
-            TermKind::Bool(false) => write!(f, "false"),
             TermKind::Record(fields) => format_fields("record", fields, f),
             TermKind::Variant {
                 tag,
@@ -562,11 +547,8 @@ fn term_from_expr(expr: &SExpr, scope: &[(Symbol, Name)], context: &Context) -> 
     match expr {
         SExpr::Symbol(symbol) => match symbol.as_str() {
             "Type" => Ok(Term::r#type()),
-            "Bool" => Ok(Term::bool_type()),
             "Nil" => Ok(Term::nil_type()),
             "nil" => Ok(Term::nil()),
-            "true" => Ok(Term::bool(true)),
-            "false" => Ok(Term::bool(false)),
             _ => Err(format!("unbound atom '{symbol}'")),
         },
         SExpr::List(items) => term_from_list(items, scope, context),
@@ -788,7 +770,6 @@ fn eval(term: &Term, globals: &NameMap) -> ClickResult<Term> {
 fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
     match term.kind() {
         TermKind::Type => Ok(StepResult::Value(Term::r#type())),
-        TermKind::BoolType => Ok(StepResult::Value(Term::bool_type())),
         TermKind::NilType => Ok(StepResult::Value(Term::nil_type())),
         TermKind::RecordType(fields) => {
             if fields_are_values(fields) {
@@ -816,7 +797,6 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
             (**return_type).clone(),
         ))),
         TermKind::Nil => Ok(StepResult::Value(Term::nil())),
-        TermKind::Bool(value) => Ok(StepResult::Value(Term::bool(*value))),
         TermKind::Record(fields) => {
             if fields_are_values(fields) {
                 Ok(StepResult::Value(Term::record(fields.clone())))
@@ -966,7 +946,6 @@ fn instantiate(binder: &Name, body: &Term, arg: &Term) -> Term {
 fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
     match term.kind() {
         TermKind::Type => Term::r#type(),
-        TermKind::BoolType => Term::bool_type(),
         TermKind::NilType => Term::nil_type(),
         TermKind::RecordType(fields) => {
             Term::record_type(substitute_fields(fields, binder, replacement))
@@ -980,7 +959,6 @@ fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
             substitute_name(return_type, binder, replacement),
         ),
         TermKind::Nil => Term::nil(),
-        TermKind::Bool(value) => Term::bool(*value),
         TermKind::Record(fields) => Term::record(substitute_fields(fields, binder, replacement)),
         TermKind::Variant {
             tag,
@@ -1059,11 +1037,10 @@ fn substitute_branches(branches: &Branches, binder: &Name, replacement: &Term) -
 fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
     match term.kind() {
         TermKind::Type => Ok(Term::r#type()),
-        TermKind::BoolType | TermKind::NilType | TermKind::Arrow { .. } => Ok(Term::r#type()),
+        TermKind::NilType | TermKind::Arrow { .. } => Ok(Term::r#type()),
         TermKind::RecordType(fields) => expect_fields_are_types(fields, types, "record-type"),
         TermKind::SumType(fields) => expect_fields_are_types(fields, types, "sum-type"),
         TermKind::Nil => Ok(Term::nil_type()),
-        TermKind::Bool(_) => Ok(Term::bool_type()),
         TermKind::Record(fields) => type_of_record(fields, types),
         TermKind::Variant {
             tag,
@@ -1194,12 +1171,12 @@ mod tests {
     #[test]
     fn step_stops_after_one_beta_reduction() {
         let term = parse_term(
-            "(app (lambda x (app (lambda y (var y)) (var x))) true)",
+            "(app (lambda x (app (lambda y (var y)) (var x))) nil)",
             &Context::new(),
         );
 
         match step_in_names(&term, &NameMap::new()).expect("step should succeed") {
-            StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> true)"),
+            StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> nil)"),
             StepResult::Value(value) => panic!("expected a reduction step, got value {value}"),
         }
     }
@@ -1207,12 +1184,12 @@ mod tests {
     #[test]
     fn step_chooses_a_case_branch_without_evaluating_it_further() {
         let term = parse_term(
-            "(case (variant left true (sum-type (left Bool) (right Nil))) (left x (app (lambda y (var y)) false)) (right z nil))",
+            "(case (variant left nil (sum-type (left Nil) (right Nil))) (left x (app (lambda y (var y)) nil)) (right z (record)))",
             &Context::new(),
         );
 
         match step_in_names(&term, &NameMap::new()).expect("step should succeed") {
-            StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> false)"),
+            StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> nil)"),
             StepResult::Value(value) => panic!("expected a reduction step, got value {value}"),
         }
     }
@@ -1220,16 +1197,13 @@ mod tests {
     #[test]
     fn step_reduces_the_function_side_of_an_application_first() {
         let term = parse_term(
-            "(app (case (variant left true (sum-type (left Bool) (right Nil))) (left x (lambda y (var y))) (right z nil)) (app (lambda y (var y)) false))",
+            "(app (case (variant left nil (sum-type (left Nil) (right Nil))) (left x (lambda y (var y))) (right z (record))) (app (lambda y (var y)) nil))",
             &Context::new(),
         );
 
         match step_in_names(&term, &NameMap::new()).expect("step should succeed") {
             StepResult::Reduced(next) => {
-                assert_eq!(
-                    next.to_string(),
-                    "(app #<function> (app #<function> false))"
-                )
+                assert_eq!(next.to_string(), "(app #<function> (app #<function> nil))")
             }
             StepResult::Value(value) => panic!("expected a reduction step, got value {value}"),
         }
