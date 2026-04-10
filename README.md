@@ -15,7 +15,6 @@ The current prototype is intentionally narrow. It has:
 - `variant`
 - `case`
 - `get`
-- `if`
 - `var`
 - `app`
 - `lambda`
@@ -47,7 +46,6 @@ wrappers around that smaller kernel.
 - `get` projects a record field.
 - `variant` builds a tagged sum inhabitant with an explicit `sum-type`.
 - `case` eliminates a sum by matching on its tag.
-- `if` treats only `nil` and `false` as falsey.
 - `lambda` binds a fresh `Name`.
 - The primitive operational semantics is a single reduction step on `Term`s.
 - The Rust API exposes that reduction relation as `step(&NameMap, &Term) ->
@@ -72,8 +70,8 @@ sum types written as `(sum-type ...)`, and a single universe `Type`.
 
 ## Deliberate Omissions
 
-The current kernel does not have `with`, `has`, `quote`, `car`, `cdr`, `cons`,
-`atom`, or `atom_eq`.
+The current kernel does not have `if`, `with`, `has`, `quote`, `car`, `cdr`,
+`cons`, `atom`, or `atom_eq`.
 
 That is deliberate. The older quote/list experiments were useful for learning,
 but they tied code inspection to ordinary list structure. The current design

@@ -31,10 +31,7 @@ fn evaluates_expression_argument() {
 
 #[test]
 fn evaluates_file_and_ignores_shebang() {
-    let path = temp_file(
-        "shebang",
-        "#!/usr/bin/env click\n(record (answer true))\n",
-    );
+    let path = temp_file("shebang", "#!/usr/bin/env click\n(record (answer true))\n");
 
     let output = Command::new(bin())
         .arg(&path)
@@ -62,11 +59,8 @@ fn evaluates_stdin() {
         use std::io::Write;
 
         let stdin = child.stdin.as_mut().expect("stdin should be available");
-        write!(
-            stdin,
-            "(app (lambda x (record (answer (var x)))) true)\n"
-        )
-        .expect("stdin write should succeed");
+        write!(stdin, "(app (lambda x (record (answer (var x)))) true)\n")
+            .expect("stdin write should succeed");
     }
 
     let output = child.wait_with_output().expect("command should complete");

@@ -83,11 +83,6 @@ enum TermKind {
         sum_type: Fields,
     },
     Var(Name),
-    If {
-        condition: Box<Term>,
-        then_branch: Box<Term>,
-        else_branch: Box<Term>,
-    },
     Lambda {
         binder: Name,
         body: Box<Term>,
@@ -299,14 +294,6 @@ impl Term {
         Self::lowered_lambda(binder, body)
     }
 
-    pub fn r#if(condition: Term, then_branch: Term, else_branch: Term) -> Self {
-        Self(TermKind::If {
-            condition: Box::new(condition),
-            then_branch: Box::new(then_branch),
-            else_branch: Box::new(else_branch),
-        })
-    }
-
     pub fn app(function: Term, arg: Term) -> Self {
         Self(TermKind::App {
             function: Box::new(function),
@@ -435,11 +422,6 @@ pub fn type_of(names: &NameMap, term: &Term) -> ClickResult<Term> {
 // Private implementation stuff goes below here, to keep this file organized.
 
 impl Term {
-    // Apply Click's truthiness rule: only `nil` and `false` are falsey.
-    fn is_truthy(&self) -> bool {
-        !matches!(self.kind(), TermKind::Nil | TermKind::Bool(false))
-    }
-
     // Recognize canonical terms that need no further evaluation.
     fn is_value(&self) -> bool {
         matches!(
@@ -505,11 +487,6 @@ impl fmt::Display for Term {
             }
             TermKind::Lambda { .. } => write!(f, "#<function>"),
             TermKind::Var(name) => write!(f, "(var {name})"),
-            TermKind::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => write!(f, "(if {condition} {then_branch} {else_branch})"),
             TermKind::App { function, arg } => write!(f, "(app {function} {arg})"),
             TermKind::Case {
                 scrutinee,
@@ -628,14 +605,6 @@ fn term_from_list(
                 term_from_expr(&tail[1], scope, context)?,
             ))
         }
-        "if" => {
-            expect_arity(operator.as_str(), tail, 3)?;
-            Ok(Term::r#if(
-                term_from_expr(&tail[0], scope, context)?,
-                term_from_expr(&tail[1], scope, context)?,
-                term_from_expr(&tail[2], scope, context)?,
-            ))
-        }
         "lambda" => term_from_lambda(tail, scope, context),
         "var" => term_from_var(tail, scope, context),
         "app" => {
@@ -653,7 +622,7 @@ fn term_from_list(
                 expect_symbol(&tail[1], "get key")?,
             ))
         }
-        "with" | "has" | "atom" | "atom_eq" | "car" | "cdr" | "cons" => {
+        "if" | "with" | "has" | "atom" | "atom_eq" | "car" | "cdr" | "cons" => {
             Err(format!("{operator} is no longer supported in the kernel"))
         }
         _ => Err(format!("unknown form '{operator}'")),
@@ -887,25 +856,6 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
             .cloned()
             .map(StepResult::Reduced)
             .ok_or_else(|| format!("unbound variable '{name}'")),
-        TermKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            if condition.is_value() {
-                if condition.is_truthy() {
-                    Ok(StepResult::Reduced((**then_branch).clone()))
-                } else {
-                    Ok(StepResult::Reduced((**else_branch).clone()))
-                }
-            } else {
-                Ok(StepResult::Reduced(Term::r#if(
-                    step_reduct(condition, globals)?,
-                    (**then_branch).clone(),
-                    (**else_branch).clone(),
-                )))
-            }
-        }
         TermKind::Lambda { binder, body } => Ok(StepResult::Value(Term::lowered_lambda(
             binder.clone(),
             (**body).clone(),
@@ -1048,15 +998,6 @@ fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
                 Term::var(name.clone())
             }
         }
-        TermKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => Term::r#if(
-            substitute_name(condition, binder, replacement),
-            substitute_name(then_branch, binder, replacement),
-            substitute_name(else_branch, binder, replacement),
-        ),
         TermKind::Lambda {
             binder: inner,
             body,
@@ -1146,17 +1087,6 @@ fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
             .get(name)
             .cloned()
             .ok_or_else(|| format!("missing type for variable '{name}'")),
-        TermKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            let _condition_type = type_of_in_names(condition, types)?;
-            let then_type = type_of_in_names(then_branch, types)?;
-            let else_type = type_of_in_names(else_branch, types)?;
-            expect_equal(&then_type, &else_type, "if")?;
-            Ok(then_type)
-        }
         TermKind::Lambda { binder, body } => {
             let binder_type = types
                 .get(binder)
@@ -1275,9 +1205,9 @@ mod tests {
     }
 
     #[test]
-    fn step_chooses_an_if_branch_without_evaluating_it_further() {
+    fn step_chooses_a_case_branch_without_evaluating_it_further() {
         let term = parse_term(
-            "(if true (app (lambda x (var x)) false) nil)",
+            "(case (variant left true (sum-type (left Bool) (right Nil))) (left x (app (lambda y (var y)) false)) (right z nil))",
             &Context::new(),
         );
 
@@ -1290,7 +1220,7 @@ mod tests {
     #[test]
     fn step_reduces_the_function_side_of_an_application_first() {
         let term = parse_term(
-            "(app (if true (lambda x (var x)) nil) (app (lambda y (var y)) false))",
+            "(app (case (variant left true (sum-type (left Bool) (right Nil))) (left x (lambda y (var y))) (right z nil)) (app (lambda y (var y)) false))",
             &Context::new(),
         );
 

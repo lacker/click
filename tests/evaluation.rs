@@ -48,7 +48,7 @@ fn evaluation_cases() {
         ),
         ok!(
             "defs can be used by later definitions",
-            "(def flag true)\n(def answer (if (var flag) false true))\n(var answer)",
+            "(def flag (variant left true (sum-type (left Bool) (right Nil))))\n(def answer (case (var flag) (left x false) (right y true)))\n(var answer)",
             "false"
         ),
         ok!(
@@ -79,14 +79,6 @@ fn evaluation_cases() {
         ok!(
             "get reads an inserted record key",
             "(get (record (foo true)) foo)",
-            "true"
-        ),
-        ok!("if takes the true branch", "(if true false nil)", "false"),
-        ok!("if treats nil as falsey", "(if nil true false)", "false"),
-        ok!("if treats false as falsey", "(if false true nil)", "nil"),
-        ok!(
-            "if treats records as truthy",
-            "(if (record) true false)",
             "true"
         ),
         ok!(
@@ -226,6 +218,11 @@ fn evaluation_cases() {
             "case rejects non-variant scrutinees",
             "(case true (left x (var x)))",
             "case scrutinee must be a variant, got true"
+        ),
+        err!(
+            "if is no longer supported",
+            "(if true false nil)",
+            "if is no longer supported in the kernel"
         ),
         err!(
             "case rejects missing branches for the chosen tag",

@@ -72,7 +72,7 @@ helpers.
 
 - `Term` constructors build kernel syntax directly:
   `type`, `bool_type`, `nil_type`, `record_type`, `sum_type`, `arrow`, `nil`,
-  `bool`, `record`, `variant`, `var`, `lambda`, `if`, `app`, `case`, `get`
+  `bool`, `record`, `variant`, `var`, `lambda`, `app`, `case`, `get`
 
 - `Fields` provides `new`, `with`, `has`, and `get`.
 
