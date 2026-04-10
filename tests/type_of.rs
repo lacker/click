@@ -1,23 +1,25 @@
-use click::{Fields, Name, NameMap, Symbol, Term, type_of};
+use click::{Name, NameMap, Symbol, SymbolMap, Term, type_of};
 
 #[test]
 fn literals_have_builtin_types() {
     assert_eq!(
-        type_of(&NameMap::new(), &Term::record(Fields::new())).expect("record should have a type"),
-        Term::record_type(Fields::new())
+        type_of(&NameMap::new(), &Term::record(SymbolMap::new()))
+            .expect("record should have a type"),
+        Term::record_type(SymbolMap::new())
     );
 }
 
 #[test]
 fn type_terms_live_in_type() {
-    let field_types = Fields::new().with(Symbol::from("flag"), Term::record_type(Fields::new()));
+    let field_types =
+        SymbolMap::new().with(Symbol::from("flag"), Term::record_type(SymbolMap::new()));
 
     assert_eq!(
         type_of(
             &NameMap::new(),
             &Term::arrow(
-                Term::record_type(Fields::new()),
-                Term::record_type(Fields::new()),
+                Term::record_type(SymbolMap::new()),
+                Term::record_type(SymbolMap::new()),
             ),
         )
         .expect("arrow type should be a type"),
@@ -32,7 +34,7 @@ fn type_terms_live_in_type() {
         type_of(
             &NameMap::new(),
             &Term::sum_type(
-                Fields::new().with(Symbol::from("left"), Term::record_type(Fields::new())),
+                SymbolMap::new().with(Symbol::from("left"), Term::record_type(SymbolMap::new())),
             ),
         )
         .expect("sum type should be a type"),
@@ -43,18 +45,18 @@ fn type_terms_live_in_type() {
 #[test]
 fn variables_and_lambdas_use_the_name_type_map() {
     let x = Name::fresh(Symbol::from("x"));
-    let types = NameMap::new().with(x.clone(), Term::record_type(Fields::new()));
+    let types = NameMap::new().with(x.clone(), Term::record_type(SymbolMap::new()));
 
     assert_eq!(
         type_of(&types, &Term::var(x.clone())).expect("variable should typecheck"),
-        Term::record_type(Fields::new())
+        Term::record_type(SymbolMap::new())
     );
     assert_eq!(
         type_of(&types, &Term::lambda(x.clone(), Term::var(x)))
             .expect("lambda should synthesize a function type"),
         Term::arrow(
-            Term::record_type(Fields::new()),
-            Term::record_type(Fields::new()),
+            Term::record_type(SymbolMap::new()),
+            Term::record_type(SymbolMap::new()),
         )
     );
 }
@@ -62,24 +64,24 @@ fn variables_and_lambdas_use_the_name_type_map() {
 #[test]
 fn application_of_identity_returns_the_result_type() {
     let x = Name::fresh(Symbol::from("x"));
-    let types = NameMap::new().with(x.clone(), Term::record_type(Fields::new()));
+    let types = NameMap::new().with(x.clone(), Term::record_type(SymbolMap::new()));
     let id = Term::lambda(x.clone(), Term::var(x));
 
     assert_eq!(
-        type_of(&types, &Term::app(id, Term::record(Fields::new())))
+        type_of(&types, &Term::app(id, Term::record(SymbolMap::new())))
             .expect("well-typed application should synthesize a result type"),
-        Term::record_type(Fields::new())
+        Term::record_type(SymbolMap::new())
     );
 }
 
 #[test]
 fn application_rejects_a_mismatched_argument_type() {
     let x = Name::fresh(Symbol::from("x"));
-    let types = NameMap::new().with(x.clone(), Term::record_type(Fields::new()));
+    let types = NameMap::new().with(x.clone(), Term::record_type(SymbolMap::new()));
     let id = Term::lambda(x.clone(), Term::var(x));
 
     assert_eq!(
-        type_of(&types, &Term::app(id, Term::sum_type(Fields::new())))
+        type_of(&types, &Term::app(id, Term::sum_type(SymbolMap::new())))
             .expect_err("application should fail"),
         "app argument failed: expected (record-type), got Type"
     );
@@ -88,9 +90,9 @@ fn application_rejects_a_mismatched_argument_type() {
 #[test]
 fn record_literals_and_get_synthesize_record_types() {
     let record =
-        Term::record(Fields::new().with(Symbol::from("flag"), Term::record(Fields::new())));
+        Term::record(SymbolMap::new().with(Symbol::from("flag"), Term::record(SymbolMap::new())));
     let record_type = Term::record_type(
-        Fields::new().with(Symbol::from("flag"), Term::record_type(Fields::new())),
+        SymbolMap::new().with(Symbol::from("flag"), Term::record_type(SymbolMap::new())),
     );
 
     assert_eq!(
@@ -103,22 +105,22 @@ fn record_literals_and_get_synthesize_record_types() {
             &Term::get(record.clone(), Symbol::from("flag"))
         )
         .expect("get should synthesize the field type"),
-        Term::record_type(Fields::new())
+        Term::record_type(SymbolMap::new())
     );
 }
 
 #[test]
 fn variant_synthesizes_its_explicit_sum_type() {
-    let sum_type = Fields::new()
-        .with(Symbol::from("left"), Term::record_type(Fields::new()))
-        .with(Symbol::from("right"), Term::record_type(Fields::new()));
+    let sum_type = SymbolMap::new()
+        .with(Symbol::from("left"), Term::record_type(SymbolMap::new()))
+        .with(Symbol::from("right"), Term::record_type(SymbolMap::new()));
 
     assert_eq!(
         type_of(
             &NameMap::new(),
             &Term::variant(
                 Symbol::from("left"),
-                Term::record(Fields::new()),
+                Term::record(SymbolMap::new()),
                 sum_type.clone()
             ),
         )
@@ -131,26 +133,30 @@ fn variant_synthesizes_its_explicit_sum_type() {
 fn match_synthesizes_the_common_handler_result_type() {
     let left = Name::fresh(Symbol::from("left_value"));
     let right = Name::fresh(Symbol::from("right_value"));
-    let sum_type = Fields::new()
-        .with(Symbol::from("left"), Term::record_type(Fields::new()))
-        .with(Symbol::from("right"), Term::record_type(Fields::new()));
+    let sum_type = SymbolMap::new()
+        .with(Symbol::from("left"), Term::record_type(SymbolMap::new()))
+        .with(Symbol::from("right"), Term::record_type(SymbolMap::new()));
 
     let term = Term::r#match(
-        Term::variant(Symbol::from("left"), Term::record(Fields::new()), sum_type),
-        Fields::new()
+        Term::variant(
+            Symbol::from("left"),
+            Term::record(SymbolMap::new()),
+            sum_type,
+        ),
+        SymbolMap::new()
             .with(
                 Symbol::from("left"),
                 Term::lambda(left.clone(), Term::var(left)),
             )
             .with(
                 Symbol::from("right"),
-                Term::lambda(right, Term::record(Fields::new())),
+                Term::lambda(right, Term::record(SymbolMap::new())),
             ),
     );
 
     assert_eq!(
         type_of(&NameMap::new(), &term).expect("match should synthesize a handler result type"),
-        Term::record_type(Fields::new())
+        Term::record_type(SymbolMap::new())
     );
 }
 
@@ -158,20 +164,24 @@ fn match_synthesizes_the_common_handler_result_type() {
 fn match_rejects_mismatched_handler_result_types() {
     let left = Name::fresh(Symbol::from("left_value"));
     let right = Name::fresh(Symbol::from("right_value"));
-    let sum_type = Fields::new()
-        .with(Symbol::from("left"), Term::record_type(Fields::new()))
-        .with(Symbol::from("right"), Term::record_type(Fields::new()));
+    let sum_type = SymbolMap::new()
+        .with(Symbol::from("left"), Term::record_type(SymbolMap::new()))
+        .with(Symbol::from("right"), Term::record_type(SymbolMap::new()));
 
     let term = Term::r#match(
-        Term::variant(Symbol::from("left"), Term::record(Fields::new()), sum_type),
-        Fields::new()
+        Term::variant(
+            Symbol::from("left"),
+            Term::record(SymbolMap::new()),
+            sum_type,
+        ),
+        SymbolMap::new()
             .with(
                 Symbol::from("left"),
-                Term::lambda(left, Term::record(Fields::new())),
+                Term::lambda(left, Term::record(SymbolMap::new())),
             )
             .with(
                 Symbol::from("right"),
-                Term::lambda(right.clone(), Term::sum_type(Fields::new())),
+                Term::lambda(right.clone(), Term::sum_type(SymbolMap::new())),
             ),
     );
 

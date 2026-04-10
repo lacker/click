@@ -52,8 +52,8 @@ helpers.
   An atomic reference to a value binding. Lambda binders, variable occurrences,
   and top-level definitions use `Name`.
 
-- `Fields`
-  An immutable map from `Symbol` to canonical `Term`. `Fields` is the shared
+- `SymbolMap`
+  An immutable map from `Symbol` to canonical `Term`. `SymbolMap` is the shared
   helper used by `record`, `record-type`, `sum-type`, and `match` handlers.
 
 - `NameMap`
@@ -70,7 +70,7 @@ helpers.
   `type`, `record_type`, `sum_type`, `arrow`, `record`, `variant`, `var`,
   `lambda`, `app`, `match`, `get`
 
-- `Fields` provides `new`, `with`, `has`, and `get`.
+- `SymbolMap` provides `new`, `with`, `has`, and `get`.
 
 - `NameMap` provides `new`, `get`, and `with`.
 
@@ -82,7 +82,7 @@ helpers.
   names.
 
 The smallest kernel should speak in terms of `Term`, `Name`, `Symbol`,
-`Fields`, `NameMap`, and `StepResult`, not host closures or raw
+`SymbolMap`, `NameMap`, and `StepResult`, not host closures or raw
 Rust strings, integers, or indices.
 
 ## Top-Level Interface

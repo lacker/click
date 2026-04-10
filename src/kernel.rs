@@ -14,7 +14,7 @@ pub struct Context {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Fields {
+pub struct SymbolMap {
     entries: BTreeMap<Symbol, Term>,
 }
 
@@ -55,17 +55,17 @@ pub struct Term(TermKind);
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TermKind {
     Type,
-    RecordType(Fields),
-    SumType(Fields),
+    RecordType(SymbolMap),
+    SumType(SymbolMap),
     Arrow {
         arg_type: Box<Term>,
         return_type: Box<Term>,
     },
-    Record(Fields),
+    Record(SymbolMap),
     Variant {
         tag: Symbol,
         value: Box<Term>,
-        sum_type: Fields,
+        sum_type: SymbolMap,
     },
     Var(Name),
     Lambda {
@@ -78,7 +78,7 @@ enum TermKind {
     },
     Match {
         scrutinee: Box<Term>,
-        handlers: Fields,
+        handlers: SymbolMap,
     },
     Get {
         record: Box<Term>,
@@ -149,7 +149,7 @@ impl fmt::Display for Name {
     }
 }
 
-impl Fields {
+impl SymbolMap {
     // Construct an empty labeled term map.
     pub fn new() -> Self {
         Self {
@@ -203,11 +203,11 @@ impl Term {
         Self(TermKind::Type)
     }
 
-    pub fn record_type(fields: Fields) -> Self {
+    pub fn record_type(fields: SymbolMap) -> Self {
         Self(TermKind::RecordType(fields))
     }
 
-    pub fn sum_type(fields: Fields) -> Self {
+    pub fn sum_type(fields: SymbolMap) -> Self {
         Self(TermKind::SumType(fields))
     }
 
@@ -218,11 +218,11 @@ impl Term {
         })
     }
 
-    pub fn record(fields: Fields) -> Self {
+    pub fn record(fields: SymbolMap) -> Self {
         Self(TermKind::Record(fields))
     }
 
-    pub fn variant(tag: Symbol, value: Term, sum_type: Fields) -> Self {
+    pub fn variant(tag: Symbol, value: Term, sum_type: SymbolMap) -> Self {
         Self(TermKind::Variant {
             tag,
             value: Box::new(value),
@@ -245,7 +245,7 @@ impl Term {
         })
     }
 
-    pub fn r#match(scrutinee: Term, handlers: Fields) -> Self {
+    pub fn r#match(scrutinee: Term, handlers: SymbolMap) -> Self {
         Self(TermKind::Match {
             scrutinee: Box::new(scrutinee),
             handlers,
@@ -404,20 +404,20 @@ impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind() {
             TermKind::Type => write!(f, "Type"),
-            TermKind::RecordType(fields) => format_fields("record-type", fields, f),
-            TermKind::SumType(fields) => format_fields("sum-type", fields, f),
+            TermKind::RecordType(fields) => format_symbol_map("record-type", fields, f),
+            TermKind::SumType(fields) => format_symbol_map("sum-type", fields, f),
             TermKind::Arrow {
                 arg_type,
                 return_type,
             } => write!(f, "(arrow {arg_type} {return_type})"),
-            TermKind::Record(fields) => format_fields("record", fields, f),
+            TermKind::Record(fields) => format_symbol_map("record", fields, f),
             TermKind::Variant {
                 tag,
                 value,
                 sum_type,
             } => {
                 write!(f, "(variant {tag} {value} ")?;
-                format_fields("sum-type", sum_type, f)?;
+                format_symbol_map("sum-type", sum_type, f)?;
                 write!(f, ")")
             }
             TermKind::Lambda { .. } => write!(f, "#<function>"),
@@ -433,7 +433,7 @@ impl fmt::Display for Term {
 }
 
 // Print one labeled term map with its tag.
-fn format_fields(tag: &str, fields: &Fields, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+fn format_symbol_map(tag: &str, fields: &SymbolMap, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "({tag}")?;
     for (key, value) in &fields.entries {
         write!(f, " ({key} {value})")?;
@@ -441,7 +441,7 @@ fn format_fields(tag: &str, fields: &Fields, f: &mut fmt::Formatter<'_>) -> fmt:
     write!(f, ")")
 }
 
-fn format_match(scrutinee: &Term, handlers: &Fields, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+fn format_match(scrutinee: &Term, handlers: &SymbolMap, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "(match {scrutinee}")?;
     for (tag, handler) in &handlers.entries {
         write!(f, " ({tag} {handler})")?;
@@ -522,11 +522,13 @@ fn term_from_list(
         "def" => Err("def is only valid as a top-level declaration".to_string()),
         "check" => Err("check is only valid as a top-level declaration".to_string()),
         "theorem" => Err("theorem is only valid as a top-level declaration".to_string()),
-        "record" => Ok(Term::record(fields_from_entries(tail, scope, context)?)),
-        "record-type" => Ok(Term::record_type(fields_from_entries(
+        "record" => Ok(Term::record(symbol_map_from_entries(tail, scope, context)?)),
+        "record-type" => Ok(Term::record_type(symbol_map_from_entries(
             tail, scope, context,
         )?)),
-        "sum-type" => Ok(Term::sum_type(fields_from_entries(tail, scope, context)?)),
+        "sum-type" => Ok(Term::sum_type(symbol_map_from_entries(
+            tail, scope, context,
+        )?)),
         "variant" => term_from_variant(tail, scope, context),
         "arrow" => {
             expect_arity(operator.as_str(), tail, 2)?;
@@ -560,12 +562,12 @@ fn term_from_list(
     }
 }
 
-fn fields_from_entries(
+fn symbol_map_from_entries(
     items: &[SExpr],
     scope: &[(Symbol, Name)],
     context: &Context,
-) -> ClickResult<Fields> {
-    let mut fields = Fields::new();
+) -> ClickResult<SymbolMap> {
+    let mut fields = SymbolMap::new();
     for item in items {
         let SExpr::List(parts) = item else {
             return Err("field entries must be lists".to_string());
@@ -619,7 +621,7 @@ fn term_from_match(
 ) -> ClickResult<Term> {
     expect_min_arity("match", args, 2)?;
     let scrutinee = term_from_expr(&args[0], scope, context)?;
-    let mut handlers = Fields::new();
+    let mut handlers = SymbolMap::new();
     for handler_expr in &args[1..] {
         let SExpr::List(parts) = handler_expr else {
             return Err("match handlers must be lists".to_string());
@@ -716,19 +718,19 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
     match term.kind() {
         TermKind::Type => Ok(StepResult::Value(Term::r#type())),
         TermKind::RecordType(fields) => {
-            if fields_are_values(fields) {
+            if symbol_map_values_are_values(fields) {
                 Ok(StepResult::Value(Term::record_type(fields.clone())))
             } else {
-                Ok(StepResult::Reduced(Term::record_type(step_fields(
+                Ok(StepResult::Reduced(Term::record_type(step_symbol_map(
                     fields, globals,
                 )?)))
             }
         }
         TermKind::SumType(fields) => {
-            if fields_are_values(fields) {
+            if symbol_map_values_are_values(fields) {
                 Ok(StepResult::Value(Term::sum_type(fields.clone())))
             } else {
-                Ok(StepResult::Reduced(Term::sum_type(step_fields(
+                Ok(StepResult::Reduced(Term::sum_type(step_symbol_map(
                     fields, globals,
                 )?)))
             }
@@ -741,10 +743,10 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
             (**return_type).clone(),
         ))),
         TermKind::Record(fields) => {
-            if fields_are_values(fields) {
+            if symbol_map_values_are_values(fields) {
                 Ok(StepResult::Value(Term::record(fields.clone())))
             } else {
-                Ok(StepResult::Reduced(Term::record(step_fields(
+                Ok(StepResult::Reduced(Term::record(step_symbol_map(
                     fields, globals,
                 )?)))
             }
@@ -754,11 +756,11 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
             value,
             sum_type,
         } => {
-            if !fields_are_values(sum_type) {
+            if !symbol_map_values_are_values(sum_type) {
                 Ok(StepResult::Reduced(Term::variant(
                     tag.clone(),
                     (**value).clone(),
-                    step_fields(sum_type, globals)?,
+                    step_symbol_map(sum_type, globals)?,
                 )))
             } else if !value.is_value() {
                 Ok(StepResult::Reduced(Term::variant(
@@ -853,11 +855,11 @@ fn step_reduct(term: &Term, globals: &NameMap) -> ClickResult<Term> {
     }
 }
 
-fn fields_are_values(fields: &Fields) -> bool {
+fn symbol_map_values_are_values(fields: &SymbolMap) -> bool {
     fields.entries.values().all(Term::is_value)
 }
 
-fn step_fields(fields: &Fields, globals: &NameMap) -> ClickResult<Fields> {
+fn step_symbol_map(fields: &SymbolMap, globals: &NameMap) -> ClickResult<SymbolMap> {
     let mut stepped = fields.clone();
     for value in stepped.entries.values_mut() {
         if !value.is_value() {
@@ -869,7 +871,7 @@ fn step_fields(fields: &Fields, globals: &NameMap) -> ClickResult<Fields> {
 }
 
 // Extract a record value from runtime data where one is required.
-fn expect_record(term: Term, role: &str) -> ClickResult<Fields> {
+fn expect_record(term: Term, role: &str) -> ClickResult<SymbolMap> {
     let rendered = term.to_string();
     match term.into_kind() {
         TermKind::Record(fields) => Ok(fields),
@@ -887,9 +889,11 @@ fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
     match term.kind() {
         TermKind::Type => Term::r#type(),
         TermKind::RecordType(fields) => {
-            Term::record_type(substitute_fields(fields, binder, replacement))
+            Term::record_type(substitute_symbol_map(fields, binder, replacement))
         }
-        TermKind::SumType(fields) => Term::sum_type(substitute_fields(fields, binder, replacement)),
+        TermKind::SumType(fields) => {
+            Term::sum_type(substitute_symbol_map(fields, binder, replacement))
+        }
         TermKind::Arrow {
             arg_type,
             return_type,
@@ -897,7 +901,9 @@ fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
             substitute_name(arg_type, binder, replacement),
             substitute_name(return_type, binder, replacement),
         ),
-        TermKind::Record(fields) => Term::record(substitute_fields(fields, binder, replacement)),
+        TermKind::Record(fields) => {
+            Term::record(substitute_symbol_map(fields, binder, replacement))
+        }
         TermKind::Variant {
             tag,
             value,
@@ -905,7 +911,7 @@ fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
         } => Term::variant(
             tag.clone(),
             substitute_name(value, binder, replacement),
-            substitute_fields(sum_type, binder, replacement),
+            substitute_symbol_map(sum_type, binder, replacement),
         ),
         TermKind::Var(name) => {
             if name == binder {
@@ -933,7 +939,7 @@ fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
             handlers,
         } => Term::r#match(
             substitute_name(scrutinee, binder, replacement),
-            substitute_fields(handlers, binder, replacement),
+            substitute_symbol_map(handlers, binder, replacement),
         ),
         TermKind::Get { record, key } => {
             Term::get(substitute_name(record, binder, replacement), key.clone())
@@ -941,28 +947,30 @@ fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
     }
 }
 
-fn substitute_fields(fields: &Fields, binder: &Name, replacement: &Term) -> Fields {
+fn substitute_symbol_map(fields: &SymbolMap, binder: &Name, replacement: &Term) -> SymbolMap {
     let entries = fields
         .entries
         .iter()
         .map(|(key, value)| (key.clone(), substitute_name(value, binder, replacement)))
         .collect();
-    Fields { entries }
+    SymbolMap { entries }
 }
 
 fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
     match term.kind() {
         TermKind::Type => Ok(Term::r#type()),
         TermKind::Arrow { .. } => Ok(Term::r#type()),
-        TermKind::RecordType(fields) => expect_fields_are_types(fields, types, "record-type"),
-        TermKind::SumType(fields) => expect_fields_are_types(fields, types, "sum-type"),
+        TermKind::RecordType(fields) => {
+            expect_symbol_map_terms_are_types(fields, types, "record-type")
+        }
+        TermKind::SumType(fields) => expect_symbol_map_terms_are_types(fields, types, "sum-type"),
         TermKind::Record(fields) => type_of_record(fields, types),
         TermKind::Variant {
             tag,
             value,
             sum_type,
         } => {
-            expect_fields_are_types(sum_type, types, "sum-type")?;
+            expect_symbol_map_terms_are_types(sum_type, types, "sum-type")?;
             let expected_payload_type = sum_type
                 .get(tag.as_str())
                 .cloned()
@@ -1072,29 +1080,33 @@ fn type_of_match_handler(
     }
 }
 
-fn expect_fields_are_types(fields: &Fields, types: &NameMap, role: &str) -> ClickResult<Term> {
+fn expect_symbol_map_terms_are_types(
+    fields: &SymbolMap,
+    types: &NameMap,
+    role: &str,
+) -> ClickResult<Term> {
     for value in fields.entries.values() {
         expect_equal(&type_of_in_names(value, types)?, &Term::r#type(), role)?;
     }
     Ok(Term::r#type())
 }
 
-fn type_of_record(fields: &Fields, types: &NameMap) -> ClickResult<Term> {
-    let mut field_types = Fields::new();
+fn type_of_record(fields: &SymbolMap, types: &NameMap) -> ClickResult<Term> {
+    let mut field_types = SymbolMap::new();
     for (key, value) in &fields.entries {
         field_types = field_types.with(key.clone(), type_of_in_names(value, types)?);
     }
     Ok(Term::record_type(field_types))
 }
 
-fn expect_record_type(term: &Term, role: &str) -> ClickResult<Fields> {
+fn expect_record_type(term: &Term, role: &str) -> ClickResult<SymbolMap> {
     match term.kind() {
         TermKind::RecordType(fields) => Ok(fields.clone()),
         _ => Err(format!("{role} must be a record type, got {term}")),
     }
 }
 
-fn expect_sum_type(term: &Term, role: &str) -> ClickResult<Fields> {
+fn expect_sum_type(term: &Term, role: &str) -> ClickResult<SymbolMap> {
     match term.kind() {
         TermKind::SumType(fields) => Ok(fields.clone()),
         _ => Err(format!("{role} must be a sum type, got {term}")),

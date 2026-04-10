@@ -1,4 +1,4 @@
-use click::{Context, Declaration, Fields, Name, Symbol, Term, declare};
+use click::{Context, Declaration, Name, Symbol, SymbolMap, Term, declare};
 
 #[test]
 fn declare_extends_the_context_purely() {
@@ -8,12 +8,12 @@ fn declare_extends_the_context_purely() {
         &context,
         Declaration::Def {
             name: answer.clone(),
-            value: Term::record(Fields::new()),
+            value: Term::record(SymbolMap::new()),
         },
     )
     .expect("declaration should succeed");
 
-    assert_eq!(context.get(&answer), Some(&Term::record(Fields::new())));
+    assert_eq!(context.get(&answer), Some(&Term::record(SymbolMap::new())));
     assert_eq!(Context::new().get(&answer), None);
 }
 
@@ -24,7 +24,7 @@ fn check_leaves_the_context_unchanged() {
         &Context::new(),
         Declaration::Def {
             name: answer.clone(),
-            value: Term::record(Fields::new()),
+            value: Term::record(SymbolMap::new()),
         },
     )
     .expect("definition should succeed");
@@ -33,7 +33,7 @@ fn check_leaves_the_context_unchanged() {
         &context,
         Declaration::Check {
             actual: Term::var(answer),
-            expected: Term::record(Fields::new()),
+            expected: Term::record(SymbolMap::new()),
         },
     )
     .expect("check should succeed");
@@ -48,14 +48,14 @@ fn theorem_checks_and_binds_a_name() {
         &Context::new(),
         Declaration::Theorem {
             name: answer_value.clone(),
-            actual: Term::record(Fields::new()),
-            expected: Term::record(Fields::new()),
+            actual: Term::record(SymbolMap::new()),
+            expected: Term::record(SymbolMap::new()),
         },
     )
     .expect("theorem should succeed");
 
     assert_eq!(
         context.get(&answer_value),
-        Some(&Term::record(Fields::new()))
+        Some(&Term::record(SymbolMap::new()))
     );
 }

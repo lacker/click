@@ -25,7 +25,7 @@ exposing that structure directly.
 
 The structural kernel API is intended to stay in terms of kernel objects.
 Constructors and kernel operations should take `Term`, `Name`, `Symbol`,
-`Fields`, and `NameMap` rather than host closures or raw Rust
+`SymbolMap`, and `NameMap` rather than host closures or raw Rust
 strings or integers. `Context`, `Declaration`, and `run_source` are top-level
 wrappers around that smaller kernel.
 
