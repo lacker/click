@@ -1,4 +1,4 @@
-use click::{Branches, Fields, Name, NameMap, Symbol, Term, type_of};
+use click::{Fields, Name, NameMap, Symbol, Term, type_of};
 
 #[test]
 fn literals_have_builtin_types() {
@@ -128,48 +128,56 @@ fn variant_synthesizes_its_explicit_sum_type() {
 }
 
 #[test]
-fn case_synthesizes_the_common_branch_result_type() {
+fn match_synthesizes_the_common_handler_result_type() {
     let left = Name::fresh(Symbol::from("left_value"));
     let right = Name::fresh(Symbol::from("right_value"));
     let sum_type = Fields::new()
         .with(Symbol::from("left"), Term::record_type(Fields::new()))
         .with(Symbol::from("right"), Term::record_type(Fields::new()));
 
-    let term = Term::case(
+    let term = Term::r#match(
         Term::variant(Symbol::from("left"), Term::record(Fields::new()), sum_type),
-        Branches::new()
-            .with(Symbol::from("left"), left.clone(), Term::var(left))
-            .with(Symbol::from("right"), right, Term::record(Fields::new())),
+        Fields::new()
+            .with(
+                Symbol::from("left"),
+                Term::lambda(left.clone(), Term::var(left)),
+            )
+            .with(
+                Symbol::from("right"),
+                Term::lambda(right, Term::record(Fields::new())),
+            ),
     );
 
     assert_eq!(
-        type_of(&NameMap::new(), &term).expect("case should synthesize a branch result type"),
+        type_of(&NameMap::new(), &term).expect("match should synthesize a handler result type"),
         Term::record_type(Fields::new())
     );
 }
 
 #[test]
-fn case_rejects_mismatched_branch_result_types() {
+fn match_rejects_mismatched_handler_result_types() {
     let left = Name::fresh(Symbol::from("left_value"));
     let right = Name::fresh(Symbol::from("right_value"));
     let sum_type = Fields::new()
         .with(Symbol::from("left"), Term::record_type(Fields::new()))
         .with(Symbol::from("right"), Term::record_type(Fields::new()));
 
-    let term = Term::case(
+    let term = Term::r#match(
         Term::variant(Symbol::from("left"), Term::record(Fields::new()), sum_type),
-        Branches::new()
-            .with(Symbol::from("left"), left, Term::record(Fields::new()))
+        Fields::new()
+            .with(
+                Symbol::from("left"),
+                Term::lambda(left, Term::record(Fields::new())),
+            )
             .with(
                 Symbol::from("right"),
-                right.clone(),
-                Term::sum_type(Fields::new()),
+                Term::lambda(right.clone(), Term::sum_type(Fields::new())),
             ),
     );
 
     assert_eq!(
-        type_of(&NameMap::new(), &term).expect_err("case should require matching branch types"),
-        "case branches failed: expected (record-type), got Type"
+        type_of(&NameMap::new(), &term).expect_err("match should require matching handler types"),
+        "match handlers failed: expected (record-type), got Type"
     );
 }
 

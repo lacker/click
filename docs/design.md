@@ -54,11 +54,7 @@ helpers.
 
 - `Fields`
   An immutable map from `Symbol` to canonical `Term`. `Fields` is the shared
-  helper used by `record`, `record-type`, and `sum-type`.
-
-- `Branches`
-  An immutable map from `Symbol` to case branches. Each branch carries a bound
-  `Name` for that tag's payload together with the branch body.
+  helper used by `record`, `record-type`, `sum-type`, and `match` handlers.
 
 - `NameMap`
   An immutable map from `Name` to `Term`. The evaluator uses a `NameMap` as a
@@ -72,11 +68,9 @@ helpers.
 
 - `Term` constructors build kernel syntax directly:
   `type`, `record_type`, `sum_type`, `arrow`, `record`, `variant`, `var`,
-  `lambda`, `app`, `case`, `get`
+  `lambda`, `app`, `match`, `get`
 
 - `Fields` provides `new`, `with`, `has`, and `get`.
-
-- `Branches` provides `new`, `with`, and `has`.
 
 - `NameMap` provides `new`, `get`, and `with`.
 
@@ -88,7 +82,7 @@ helpers.
   names.
 
 The smallest kernel should speak in terms of `Term`, `Name`, `Symbol`,
-`Fields`, `Branches`, `NameMap`, and `StepResult`, not host closures or raw
+`Fields`, `NameMap`, and `StepResult`, not host closures or raw
 Rust strings, integers, or indices.
 
 ## Top-Level Interface
@@ -140,11 +134,12 @@ The empty record now serves as the unit-like value of the kernel, and
 `type_of` design, a bare tagged payload does not determine its full sum type,
 so a variant term has to say which `sum-type` it belongs to.
 
-`case` is the elimination form for sums. It first reduces its scrutinee; once
-that is a `variant`, it substitutes the payload into the matching branch body.
-Typing for `case` is exact and structural: every branch named in the
-scrutinee's `sum-type` must be present, no extra branches are allowed, and all
-branch bodies must synthesize the same result type.
+`match` is the elimination form for sums. It first reduces its scrutinee; once
+that is a `variant`, it dispatches to the matching handler and turns the step
+into an ordinary application. Typing for `match` is exact and structural:
+every tag named in the scrutinee's `sum-type` must have a handler, no extra
+handlers are allowed, and all handler bodies must synthesize the same result
+type. In the surface language, handlers are usually lambdas.
 
 `declare` threads a context forward explicitly. It is pure: a definition
 evaluates its value in the current context, then returns a new extended

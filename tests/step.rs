@@ -1,6 +1,4 @@
-use click::{
-    Branches, Context, Declaration, Fields, Name, NameMap, StepResult, Symbol, Term, declare, step,
-};
+use click::{Context, Declaration, Fields, Name, NameMap, StepResult, Symbol, Term, declare, step};
 
 #[test]
 fn public_step_reports_values() {
@@ -47,10 +45,10 @@ fn public_step_performs_one_beta_reduction() {
 }
 
 #[test]
-fn public_step_selects_the_matching_case_branch() {
+fn public_step_selects_the_matching_match_handler() {
     let left = Name::fresh(Symbol::from("left_value"));
     let right = Name::fresh(Symbol::from("right_value"));
-    let term = Term::case(
+    let term = Term::r#match(
         Term::variant(
             Symbol::from("left"),
             Term::record(Fields::new()),
@@ -58,13 +56,19 @@ fn public_step_selects_the_matching_case_branch() {
                 .with(Symbol::from("left"), Term::record_type(Fields::new()))
                 .with(Symbol::from("right"), Term::record_type(Fields::new())),
         ),
-        Branches::new()
-            .with(Symbol::from("left"), left.clone(), Term::var(left))
-            .with(Symbol::from("right"), right, Term::record(Fields::new())),
+        Fields::new()
+            .with(
+                Symbol::from("left"),
+                Term::lambda(left.clone(), Term::var(left)),
+            )
+            .with(
+                Symbol::from("right"),
+                Term::lambda(right, Term::record(Fields::new())),
+            ),
     );
 
     match step(&NameMap::new(), &term).expect("step should succeed") {
-        StepResult::Reduced(next) => assert_eq!(next, Term::record(Fields::new())),
+        StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> (record))"),
         StepResult::Value(value) => panic!("expected a reduct, got value {value}"),
     }
 }

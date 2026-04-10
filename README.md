@@ -11,7 +11,7 @@ The current prototype is intentionally narrow. It has:
 - `arrow`
 - `record`
 - `variant`
-- `case`
+- `match`
 - `get`
 - `var`
 - `app`
@@ -25,7 +25,7 @@ exposing that structure directly.
 
 The structural kernel API is intended to stay in terms of kernel objects.
 Constructors and kernel operations should take `Term`, `Name`, `Symbol`,
-`Fields`, `Branches`, and `NameMap` rather than host closures or raw Rust
+`Fields`, and `NameMap` rather than host closures or raw Rust
 strings or integers. `Context`, `Declaration`, and `run_source` are top-level
 wrappers around that smaller kernel.
 
@@ -43,7 +43,7 @@ wrappers around that smaller kernel.
   `(record-type)` is its type.
 - `get` projects a record field.
 - `variant` builds a tagged sum inhabitant with an explicit `sum-type`.
-- `case` eliminates a sum by matching on its tag.
+- `match` eliminates a sum by dispatching to a tag handler.
 - `lambda` binds a fresh `Name`.
 - The primitive operational semantics is a single reduction step on `Term`s.
 - The Rust API exposes that reduction relation as `step(&NameMap, &Term) ->

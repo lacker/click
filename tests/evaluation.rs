@@ -48,7 +48,7 @@ fn evaluation_cases() {
         ),
         ok!(
             "defs can be used by later definitions",
-            "(def flag (variant left (record) (sum-type (left (record-type)) (right (record-type)))))\n(def answer (case (var flag) (left x (record)) (right y (record (other (record))))))\n(var answer)",
+            "(def flag (variant left (record) (sum-type (left (record-type)) (right (record-type)))))\n(def answer (match (var flag) (left (lambda x (record))) (right (lambda y (record (other (record)))))))\n(var answer)",
             "(record)"
         ),
         ok!(
@@ -108,8 +108,8 @@ fn evaluation_cases() {
             "(variant left (record) (sum-type (left (record-type)) (right (record-type))))"
         ),
         ok!(
-            "case selects the matching variant branch",
-            "(case (variant left (record) (sum-type (left (record-type)) (right (record-type)))) (left x (var x)) (right y (record (other (record)))))",
+            "match selects the matching variant handler",
+            "(match (variant left (record) (sum-type (left (record-type)) (right (record-type)))) (left (lambda x (var x))) (right (lambda y (record (other (record))))))",
             "(record)"
         ),
         ok!(
@@ -213,9 +213,9 @@ fn evaluation_cases() {
             "get record must be a record"
         ),
         err!(
-            "case rejects non-variant scrutinees",
-            "(case (record) (left x (var x)))",
-            "case scrutinee must be a variant, got (record)"
+            "match rejects non-variant scrutinees",
+            "(match (record) (left (lambda x (var x))))",
+            "match scrutinee must be a variant, got (record)"
         ),
         err!(
             "if is no longer supported",
@@ -223,9 +223,9 @@ fn evaluation_cases() {
             "if is no longer supported in the kernel"
         ),
         err!(
-            "case rejects missing branches for the chosen tag",
-            "(case (variant left (record) (sum-type (left (record-type)) (right (record-type)))) (right y (record)))",
-            "missing case branch 'left'"
+            "match rejects missing handlers for the chosen tag",
+            "(match (variant left (record) (sum-type (left (record-type)) (right (record-type)))) (right (lambda y (record))))",
+            "missing match handler 'left'"
         ),
         ok!(
             "shebang line is ignored",

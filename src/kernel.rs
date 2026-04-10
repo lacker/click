@@ -19,11 +19,6 @@ pub struct Fields {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Branches {
-    entries: BTreeMap<Symbol, CaseBranch>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NameMap {
     entries: BTreeMap<Name, Term>,
 }
@@ -58,12 +53,6 @@ pub struct Name {
 pub struct Term(TermKind);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct CaseBranch {
-    binder: Name,
-    body: Term,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 enum TermKind {
     Type,
     RecordType(Fields),
@@ -87,9 +76,9 @@ enum TermKind {
         function: Box<Term>,
         arg: Box<Term>,
     },
-    Case {
+    Match {
         scrutinee: Box<Term>,
-        branches: Branches,
+        handlers: Fields,
     },
     Get {
         record: Box<Term>,
@@ -186,31 +175,6 @@ impl Fields {
     }
 }
 
-impl Branches {
-    // Construct an empty tagged branch map.
-    pub fn new() -> Self {
-        Self {
-            entries: BTreeMap::new(),
-        }
-    }
-
-    // Check whether the map currently has a branch for the given tag.
-    pub fn has(&self, tag: &str) -> bool {
-        self.entries.contains_key(tag)
-    }
-
-    // Return a new branch map with one branch updated or inserted.
-    pub fn with(&self, tag: Symbol, binder: Name, body: Term) -> Self {
-        let mut entries = self.entries.clone();
-        entries.insert(tag, CaseBranch { binder, body });
-        Self { entries }
-    }
-
-    fn get(&self, tag: &str) -> Option<&CaseBranch> {
-        self.entries.get(tag)
-    }
-}
-
 impl NameMap {
     // Construct an empty name assignment.
     pub fn new() -> Self {
@@ -281,10 +245,10 @@ impl Term {
         })
     }
 
-    pub fn case(scrutinee: Term, branches: Branches) -> Self {
-        Self(TermKind::Case {
+    pub fn r#match(scrutinee: Term, handlers: Fields) -> Self {
+        Self(TermKind::Match {
             scrutinee: Box::new(scrutinee),
-            branches,
+            handlers,
         })
     }
 
@@ -459,10 +423,10 @@ impl fmt::Display for Term {
             TermKind::Lambda { .. } => write!(f, "#<function>"),
             TermKind::Var(name) => write!(f, "(var {name})"),
             TermKind::App { function, arg } => write!(f, "(app {function} {arg})"),
-            TermKind::Case {
+            TermKind::Match {
                 scrutinee,
-                branches,
-            } => format_case(scrutinee, branches, f),
+                handlers,
+            } => format_match(scrutinee, handlers, f),
             TermKind::Get { record, key } => write!(f, "(get {record} {key})"),
         }
     }
@@ -477,10 +441,10 @@ fn format_fields(tag: &str, fields: &Fields, f: &mut fmt::Formatter<'_>) -> fmt:
     write!(f, ")")
 }
 
-fn format_case(scrutinee: &Term, branches: &Branches, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "(case {scrutinee}")?;
-    for (tag, branch) in &branches.entries {
-        write!(f, " ({tag} {} {})", branch.binder, branch.body)?;
+fn format_match(scrutinee: &Term, handlers: &Fields, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "(match {scrutinee}")?;
+    for (tag, handler) in &handlers.entries {
+        write!(f, " ({tag} {handler})")?;
     }
     write!(f, ")")
 }
@@ -580,7 +544,7 @@ fn term_from_list(
                 term_from_expr(&tail[1], scope, context)?,
             ))
         }
-        "case" => term_from_case(tail, scope, context),
+        "match" => term_from_match(tail, scope, context),
         "get" => {
             expect_arity(operator.as_str(), tail, 2)?;
             Ok(Term::get(
@@ -588,6 +552,7 @@ fn term_from_list(
                 expect_symbol(&tail[1], "get key")?,
             ))
         }
+        "case" => Err("case is no longer supported in the kernel; use match".to_string()),
         "if" | "with" | "has" | "atom" | "atom_eq" | "car" | "cdr" | "cons" => {
             Err(format!("{operator} is no longer supported in the kernel"))
         }
@@ -647,33 +612,29 @@ fn term_from_variant(
     Ok(Term::variant(tag, value, fields.clone()))
 }
 
-fn term_from_case(
+fn term_from_match(
     args: &[SExpr],
     scope: &[(Symbol, Name)],
     context: &Context,
 ) -> ClickResult<Term> {
-    expect_min_arity("case", args, 2)?;
+    expect_min_arity("match", args, 2)?;
     let scrutinee = term_from_expr(&args[0], scope, context)?;
-    let mut branches = Branches::new();
-    for branch_expr in &args[1..] {
-        let SExpr::List(parts) = branch_expr else {
-            return Err("case branches must be lists".to_string());
+    let mut handlers = Fields::new();
+    for handler_expr in &args[1..] {
+        let SExpr::List(parts) = handler_expr else {
+            return Err("match handlers must be lists".to_string());
         };
-        if parts.len() != 3 {
-            return Err("case branches must have exactly three parts".to_string());
+        if parts.len() != 2 {
+            return Err("match handlers must have exactly two parts".to_string());
         }
-        let tag = expect_symbol(&parts[0], "case branch tag")?;
-        if branches.has(tag.as_str()) {
-            return Err(format!("duplicate case branch '{tag}'"));
+        let tag = expect_symbol(&parts[0], "match handler tag")?;
+        if handlers.has(tag.as_str()) {
+            return Err(format!("duplicate match handler '{tag}'"));
         }
-        let binder_symbol = expect_symbol(&parts[1], "case branch binder")?;
-        let binder = Name::fresh(binder_symbol.clone());
-        let mut inner_scope = scope.to_vec();
-        inner_scope.push((binder_symbol, binder.clone()));
-        let body = term_from_expr(&parts[2], &inner_scope, context)?;
-        branches = branches.with(tag, binder, body);
+        let handler = term_from_expr(&parts[1], scope, context)?;
+        handlers = handlers.with(tag, handler);
     }
-    Ok(Term::case(scrutinee, branches))
+    Ok(Term::r#match(scrutinee, handlers))
 }
 
 // Resolve a surface `var` into either a local name or a known global name.
@@ -843,29 +804,26 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
                 }
             }
         }
-        TermKind::Case {
+        TermKind::Match {
             scrutinee,
-            branches,
+            handlers,
         } => {
             if !scrutinee.is_value() {
-                Ok(StepResult::Reduced(Term::case(
+                Ok(StepResult::Reduced(Term::r#match(
                     step_reduct(scrutinee, globals)?,
-                    branches.clone(),
+                    handlers.clone(),
                 )))
             } else {
                 let rendered = scrutinee.to_string();
                 match scrutinee.kind() {
                     TermKind::Variant { tag, value, .. } => {
-                        let branch = branches
+                        let handler = handlers
                             .get(tag.as_str())
-                            .ok_or_else(|| format!("missing case branch '{tag}'"))?;
-                        Ok(StepResult::Reduced(instantiate(
-                            &branch.binder,
-                            &branch.body,
-                            value,
-                        )))
+                            .cloned()
+                            .ok_or_else(|| format!("missing match handler '{tag}'"))?;
+                        Ok(StepResult::Reduced(Term::app(handler, (**value).clone())))
                     }
-                    _ => Err(format!("case scrutinee must be a variant, got {rendered}")),
+                    _ => Err(format!("match scrutinee must be a variant, got {rendered}")),
                 }
             }
         }
@@ -970,12 +928,12 @@ fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
             substitute_name(function, binder, replacement),
             substitute_name(arg, binder, replacement),
         ),
-        TermKind::Case {
+        TermKind::Match {
             scrutinee,
-            branches,
-        } => Term::case(
+            handlers,
+        } => Term::r#match(
             substitute_name(scrutinee, binder, replacement),
-            substitute_branches(branches, binder, replacement),
+            substitute_fields(handlers, binder, replacement),
         ),
         TermKind::Get { record, key } => {
             Term::get(substitute_name(record, binder, replacement), key.clone())
@@ -990,28 +948,6 @@ fn substitute_fields(fields: &Fields, binder: &Name, replacement: &Term) -> Fiel
         .map(|(key, value)| (key.clone(), substitute_name(value, binder, replacement)))
         .collect();
     Fields { entries }
-}
-
-fn substitute_branches(branches: &Branches, binder: &Name, replacement: &Term) -> Branches {
-    let entries = branches
-        .entries
-        .iter()
-        .map(|(tag, branch)| {
-            let body = if branch.binder == *binder {
-                branch.body.clone()
-            } else {
-                substitute_name(&branch.body, binder, replacement)
-            };
-            (
-                tag.clone(),
-                CaseBranch {
-                    binder: branch.binder.clone(),
-                    body,
-                },
-            )
-        })
-        .collect();
-    Branches { entries }
 }
 
 fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
@@ -1066,36 +1002,33 @@ fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
             expect_equal(&actual_arg_type, arg_type, "app argument")?;
             Ok((**return_type).clone())
         }
-        TermKind::Case {
+        TermKind::Match {
             scrutinee,
-            branches,
+            handlers,
         } => {
             let scrutinee_type = type_of_in_names(scrutinee, types)?;
-            let sum_fields = expect_sum_type(&scrutinee_type, "case scrutinee type")?;
-            let mut branch_result_type = None;
+            let sum_fields = expect_sum_type(&scrutinee_type, "match scrutinee type")?;
+            let mut handler_result_type = None;
 
             for (tag, payload_type) in &sum_fields.entries {
-                let branch = branches
+                let handler = handlers
                     .get(tag.as_str())
-                    .ok_or_else(|| format!("missing case branch '{tag}'"))?;
-                let branch_type = type_of_in_names(
-                    &branch.body,
-                    &types.with(branch.binder.clone(), payload_type.clone()),
-                )?;
-                if let Some(expected_type) = &branch_result_type {
-                    expect_equal(&branch_type, expected_type, "case branches")?;
+                    .ok_or_else(|| format!("missing match handler '{tag}'"))?;
+                let result_type = type_of_match_handler(handler, payload_type, types, tag)?;
+                if let Some(expected_type) = &handler_result_type {
+                    expect_equal(&result_type, expected_type, "match handlers")?;
                 } else {
-                    branch_result_type = Some(branch_type);
+                    handler_result_type = Some(result_type);
                 }
             }
 
-            for tag in branches.entries.keys() {
+            for tag in handlers.entries.keys() {
                 if !sum_fields.has(tag.as_str()) {
-                    return Err(format!("unexpected case branch '{tag}'"));
+                    return Err(format!("unexpected match handler '{tag}'"));
                 }
             }
 
-            branch_result_type.ok_or_else(|| "cannot infer the type of an empty case".to_string())
+            handler_result_type.ok_or_else(|| "cannot infer the type of an empty match".to_string())
         }
         TermKind::Get { record, key } => {
             let record_type = type_of_in_names(record, types)?;
@@ -1104,6 +1037,37 @@ fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
                 .get(key.as_str())
                 .cloned()
                 .ok_or_else(|| format!("missing record type for key '{key}'"))
+        }
+    }
+}
+
+fn type_of_match_handler(
+    handler: &Term,
+    payload_type: &Term,
+    types: &NameMap,
+    tag: &Symbol,
+) -> ClickResult<Term> {
+    match handler.kind() {
+        TermKind::Lambda { binder, body } => {
+            type_of_in_names(body, &types.with(binder.clone(), payload_type.clone()))
+        }
+        _ => {
+            let handler_type = type_of_in_names(handler, types)?;
+            let TermKind::Arrow {
+                arg_type,
+                return_type,
+            } = handler_type.kind()
+            else {
+                return Err(format!(
+                    "match handler '{tag}' must have a function type, got {handler_type}"
+                ));
+            };
+            expect_equal(
+                arg_type,
+                payload_type,
+                &format!("match handler '{tag}' argument"),
+            )?;
+            Ok((**return_type).clone())
         }
     }
 }
@@ -1165,7 +1129,7 @@ mod tests {
     #[test]
     fn step_chooses_a_case_branch_without_evaluating_it_further() {
         let term = parse_term(
-            "(case (variant left (record) (sum-type (left (record-type)) (right (record-type)))) (left x (app (lambda y (var y)) (record))) (right z (record (other (record)))))",
+            "(match (variant left (record) (sum-type (left (record-type)) (right (record-type)))) (left (lambda x (app (lambda y (var y)) (record)))) (right (lambda z (record (other (record))))))",
             &Context::new(),
         );
 
@@ -1180,7 +1144,7 @@ mod tests {
     #[test]
     fn step_reduces_the_function_side_of_an_application_first() {
         let term = parse_term(
-            "(app (case (variant left (record) (sum-type (left (record-type)) (right (record-type)))) (left x (lambda y (var y))) (right z (record))) (app (lambda y (var y)) (record)))",
+            "(app (match (variant left (record) (sum-type (left (record-type)) (right (record-type)))) (left (lambda x (lambda y (var y)))) (right (lambda z (record)))) (app (lambda y (var y)) (record)))",
             &Context::new(),
         );
 
@@ -1188,7 +1152,7 @@ mod tests {
             StepResult::Reduced(next) => {
                 assert_eq!(
                     next.to_string(),
-                    "(app #<function> (app #<function> (record)))"
+                    "(app (app #<function> (record)) (app #<function> (record)))"
                 )
             }
             StepResult::Value(value) => panic!("expected a reduction step, got value {value}"),
