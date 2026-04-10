@@ -13,9 +13,8 @@ The current prototype is intentionally narrow. It has:
 - `arrow`
 - `record`
 - `variant`
+- `case`
 - `get`
-- `with`
-- `has`
 - `if`
 - `var`
 - `app`
@@ -32,9 +31,9 @@ exposing that structure directly.
 
 The structural kernel API is intended to stay in terms of kernel objects.
 Constructors and kernel operations should take `Term`, `Name`, `Symbol`,
-`Fields`, and `NameMap` rather than host closures or raw Rust strings or
-integers. `Context`, `Declaration`, and `run_source` are top-level wrappers
-around that smaller kernel.
+`Fields`, `Branches`, and `NameMap` rather than host closures or raw Rust
+strings or integers. `Context`, `Declaration`, and `run_source` are top-level
+wrappers around that smaller kernel.
 
 ## Current Semantics
 
@@ -45,10 +44,9 @@ around that smaller kernel.
 - Top-level `(theorem name actual expected)` performs the same check, then
   binds the checked term to `name`.
 - `record` builds an immutable labeled product.
-- `with` returns an updated record.
 - `get` projects a record field.
-- `has` checks whether a record field exists.
 - `variant` builds a tagged sum inhabitant with an explicit `sum-type`.
+- `case` eliminates a sum by matching on its tag.
 - `if` treats only `nil` and `false` as falsey.
 - `lambda` binds a fresh `Name`.
 - The primitive operational semantics is a single reduction step on `Term`s.
@@ -74,8 +72,8 @@ sum types written as `(sum-type ...)`, and a single universe `Type`.
 
 ## Deliberate Omissions
 
-The current kernel does not have `quote`, `car`, `cdr`, `cons`, `atom`, or
-`atom_eq`.
+The current kernel does not have `with`, `has`, `quote`, `car`, `cdr`, `cons`,
+`atom`, or `atom_eq`.
 
 That is deliberate. The older quote/list experiments were useful for learning,
 but they tied code inspection to ordinary list structure. The current design
@@ -102,7 +100,7 @@ cargo run -- path/to/file.cl
 Pipe a program on stdin:
 
 ```bash
-printf "(with (record) answer true)\n" | cargo run --
+printf "(record (answer true))\n" | cargo run --
 ```
 
 Install the binary:
@@ -119,7 +117,7 @@ cargo install --path .
 (def id (lambda x (var x)))
 (check (app (var id) true) true)
 (theorem truth true true)
-(with (record) answer (var truth))
+(record (answer (var truth)))
 ```
 
 This evaluates to:

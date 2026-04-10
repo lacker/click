@@ -2,6 +2,6 @@ pub mod kernel;
 mod reader;
 
 pub use kernel::{
-    ClickResult, Context, Declaration, Fields, Name, NameMap, StepResult, Symbol, Term, declare,
-    run_source, step, type_of,
+    Branches, ClickResult, Context, Declaration, Fields, Name, NameMap, StepResult, Symbol, Term,
+    declare, run_source, step, type_of,
 };

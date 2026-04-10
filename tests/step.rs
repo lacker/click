@@ -1,4 +1,6 @@
-use click::{Context, Declaration, Name, NameMap, StepResult, Symbol, Term, declare, step};
+use click::{
+    Branches, Context, Declaration, Fields, Name, NameMap, StepResult, Symbol, Term, declare, step,
+};
 
 #[test]
 fn public_step_reports_values() {
@@ -40,6 +42,29 @@ fn public_step_performs_one_beta_reduction() {
 
     match step(&NameMap::new(), &term).expect("step should succeed") {
         StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> true)"),
+        StepResult::Value(value) => panic!("expected a reduct, got value {value}"),
+    }
+}
+
+#[test]
+fn public_step_selects_the_matching_case_branch() {
+    let left = Name::fresh(Symbol::from("left_value"));
+    let right = Name::fresh(Symbol::from("right_value"));
+    let term = Term::case(
+        Term::variant(
+            Symbol::from("left"),
+            Term::bool(true),
+            Fields::new()
+                .with(Symbol::from("left"), Term::bool_type())
+                .with(Symbol::from("right"), Term::nil_type()),
+        ),
+        Branches::new()
+            .with(Symbol::from("left"), left.clone(), Term::var(left))
+            .with(Symbol::from("right"), right, Term::nil()),
+    );
+
+    match step(&NameMap::new(), &term).expect("step should succeed") {
+        StepResult::Reduced(next) => assert_eq!(next, Term::bool(true)),
         StepResult::Value(value) => panic!("expected a reduct, got value {value}"),
     }
 }

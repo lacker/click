@@ -19,6 +19,11 @@ pub struct Fields {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Branches {
+    entries: BTreeMap<Symbol, CaseBranch>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NameMap {
     entries: BTreeMap<Name, Term>,
 }
@@ -53,6 +58,12 @@ pub struct Name {
 pub struct Term(TermKind);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct CaseBranch {
+    binder: Name,
+    body: Term,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum TermKind {
     Type,
     BoolType,
@@ -85,16 +96,11 @@ enum TermKind {
         function: Box<Term>,
         arg: Box<Term>,
     },
+    Case {
+        scrutinee: Box<Term>,
+        branches: Branches,
+    },
     Get {
-        record: Box<Term>,
-        key: Symbol,
-    },
-    With {
-        record: Box<Term>,
-        key: Symbol,
-        value: Box<Term>,
-    },
-    Has {
         record: Box<Term>,
         key: Symbol,
     },
@@ -186,6 +192,31 @@ impl Fields {
         let mut entries = self.entries.clone();
         entries.insert(name, value);
         Self { entries }
+    }
+}
+
+impl Branches {
+    // Construct an empty tagged branch map.
+    pub fn new() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+        }
+    }
+
+    // Check whether the map currently has a branch for the given tag.
+    pub fn has(&self, tag: &str) -> bool {
+        self.entries.contains_key(tag)
+    }
+
+    // Return a new branch map with one branch updated or inserted.
+    pub fn with(&self, tag: Symbol, binder: Name, body: Term) -> Self {
+        let mut entries = self.entries.clone();
+        entries.insert(tag, CaseBranch { binder, body });
+        Self { entries }
+    }
+
+    fn get(&self, tag: &str) -> Option<&CaseBranch> {
+        self.entries.get(tag)
     }
 }
 
@@ -283,23 +314,15 @@ impl Term {
         })
     }
 
+    pub fn case(scrutinee: Term, branches: Branches) -> Self {
+        Self(TermKind::Case {
+            scrutinee: Box::new(scrutinee),
+            branches,
+        })
+    }
+
     pub fn get(record: Term, key: Symbol) -> Self {
         Self(TermKind::Get {
-            record: Box::new(record),
-            key,
-        })
-    }
-
-    pub fn with(record: Term, key: Symbol, value: Term) -> Self {
-        Self(TermKind::With {
-            record: Box::new(record),
-            key,
-            value: Box::new(value),
-        })
-    }
-
-    pub fn has(record: Term, key: Symbol) -> Self {
-        Self(TermKind::Has {
             record: Box::new(record),
             key,
         })
@@ -488,11 +511,11 @@ impl fmt::Display for Term {
                 else_branch,
             } => write!(f, "(if {condition} {then_branch} {else_branch})"),
             TermKind::App { function, arg } => write!(f, "(app {function} {arg})"),
+            TermKind::Case {
+                scrutinee,
+                branches,
+            } => format_case(scrutinee, branches, f),
             TermKind::Get { record, key } => write!(f, "(get {record} {key})"),
-            TermKind::With { record, key, value } => {
-                write!(f, "(with {record} {key} {value})")
-            }
-            TermKind::Has { record, key } => write!(f, "(has {record} {key})"),
         }
     }
 }
@@ -502,6 +525,14 @@ fn format_fields(tag: &str, fields: &Fields, f: &mut fmt::Formatter<'_>) -> fmt:
     write!(f, "({tag}")?;
     for (key, value) in &fields.entries {
         write!(f, " ({key} {value})")?;
+    }
+    write!(f, ")")
+}
+
+fn format_case(scrutinee: &Term, branches: &Branches, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "(case {scrutinee}")?;
+    for (tag, branch) in &branches.entries {
+        write!(f, " ({tag} {} {})", branch.binder, branch.body)?;
     }
     write!(f, ")")
 }
@@ -614,6 +645,7 @@ fn term_from_list(
                 term_from_expr(&tail[1], scope, context)?,
             ))
         }
+        "case" => term_from_case(tail, scope, context),
         "get" => {
             expect_arity(operator.as_str(), tail, 2)?;
             Ok(Term::get(
@@ -621,22 +653,7 @@ fn term_from_list(
                 expect_symbol(&tail[1], "get key")?,
             ))
         }
-        "with" => {
-            expect_arity(operator.as_str(), tail, 3)?;
-            Ok(Term::with(
-                term_from_expr(&tail[0], scope, context)?,
-                expect_symbol(&tail[1], "with key")?,
-                term_from_expr(&tail[2], scope, context)?,
-            ))
-        }
-        "has" => {
-            expect_arity(operator.as_str(), tail, 2)?;
-            Ok(Term::has(
-                term_from_expr(&tail[0], scope, context)?,
-                expect_symbol(&tail[1], "has key")?,
-            ))
-        }
-        "atom" | "atom_eq" | "car" | "cdr" | "cons" => {
+        "with" | "has" | "atom" | "atom_eq" | "car" | "cdr" | "cons" => {
             Err(format!("{operator} is no longer supported in the kernel"))
         }
         _ => Err(format!("unknown form '{operator}'")),
@@ -695,6 +712,35 @@ fn term_from_variant(
     Ok(Term::variant(tag, value, fields.clone()))
 }
 
+fn term_from_case(
+    args: &[SExpr],
+    scope: &[(Symbol, Name)],
+    context: &Context,
+) -> ClickResult<Term> {
+    expect_min_arity("case", args, 2)?;
+    let scrutinee = term_from_expr(&args[0], scope, context)?;
+    let mut branches = Branches::new();
+    for branch_expr in &args[1..] {
+        let SExpr::List(parts) = branch_expr else {
+            return Err("case branches must be lists".to_string());
+        };
+        if parts.len() != 3 {
+            return Err("case branches must have exactly three parts".to_string());
+        }
+        let tag = expect_symbol(&parts[0], "case branch tag")?;
+        if branches.has(tag.as_str()) {
+            return Err(format!("duplicate case branch '{tag}'"));
+        }
+        let binder_symbol = expect_symbol(&parts[1], "case branch binder")?;
+        let binder = Name::fresh(binder_symbol.clone());
+        let mut inner_scope = scope.to_vec();
+        inner_scope.push((binder_symbol, binder.clone()));
+        let body = term_from_expr(&parts[2], &inner_scope, context)?;
+        branches = branches.with(tag, binder, body);
+    }
+    Ok(Term::case(scrutinee, branches))
+}
+
 // Resolve a surface `var` into either a local name or a known global name.
 fn term_from_var(args: &[SExpr], scope: &[(Symbol, Name)], context: &Context) -> ClickResult<Term> {
     expect_arity("var", args, 1)?;
@@ -734,6 +780,17 @@ fn expect_arity(operator: &str, args: &[SExpr], expected: usize) -> ClickResult<
     } else {
         Err(format!(
             "{operator} expects {expected} argument(s), got {}",
+            args.len()
+        ))
+    }
+}
+
+fn expect_min_arity(operator: &str, args: &[SExpr], minimum: usize) -> ClickResult<()> {
+    if args.len() >= minimum {
+        Ok(())
+    } else {
+        Err(format!(
+            "{operator} expects at least {minimum} argument(s), got {}",
             args.len()
         ))
     }
@@ -874,6 +931,32 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
                 }
             }
         }
+        TermKind::Case {
+            scrutinee,
+            branches,
+        } => {
+            if !scrutinee.is_value() {
+                Ok(StepResult::Reduced(Term::case(
+                    step_reduct(scrutinee, globals)?,
+                    branches.clone(),
+                )))
+            } else {
+                let rendered = scrutinee.to_string();
+                match scrutinee.kind() {
+                    TermKind::Variant { tag, value, .. } => {
+                        let branch = branches
+                            .get(tag.as_str())
+                            .ok_or_else(|| format!("missing case branch '{tag}'"))?;
+                        Ok(StepResult::Reduced(instantiate(
+                            &branch.binder,
+                            &branch.body,
+                            value,
+                        )))
+                    }
+                    _ => Err(format!("case scrutinee must be a variant, got {rendered}")),
+                }
+            }
+        }
         TermKind::Get { record, key } => {
             if !record.is_value() {
                 Ok(StepResult::Reduced(Term::get(
@@ -887,37 +970,6 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
                     .cloned()
                     .map(StepResult::Reduced)
                     .ok_or_else(|| format!("missing record key '{key}'"))
-            }
-        }
-        TermKind::With { record, key, value } => {
-            if !record.is_value() {
-                Ok(StepResult::Reduced(Term::with(
-                    step_reduct(record, globals)?,
-                    key.clone(),
-                    (**value).clone(),
-                )))
-            } else if !value.is_value() {
-                Ok(StepResult::Reduced(Term::with(
-                    (**record).clone(),
-                    key.clone(),
-                    step_reduct(value, globals)?,
-                )))
-            } else {
-                let fields = expect_record((**record).clone(), "with record")?;
-                Ok(StepResult::Reduced(Term::record(
-                    fields.with(key.clone(), (**value).clone()),
-                )))
-            }
-        }
-        TermKind::Has { record, key } => {
-            if !record.is_value() {
-                Ok(StepResult::Reduced(Term::has(
-                    step_reduct(record, globals)?,
-                    key.clone(),
-                )))
-            } else {
-                let fields = expect_record((**record).clone(), "has record")?;
-                Ok(StepResult::Reduced(Term::bool(fields.has(key.as_str()))))
             }
         }
     }
@@ -1019,16 +1071,15 @@ fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
             substitute_name(function, binder, replacement),
             substitute_name(arg, binder, replacement),
         ),
+        TermKind::Case {
+            scrutinee,
+            branches,
+        } => Term::case(
+            substitute_name(scrutinee, binder, replacement),
+            substitute_branches(branches, binder, replacement),
+        ),
         TermKind::Get { record, key } => {
             Term::get(substitute_name(record, binder, replacement), key.clone())
-        }
-        TermKind::With { record, key, value } => Term::with(
-            substitute_name(record, binder, replacement),
-            key.clone(),
-            substitute_name(value, binder, replacement),
-        ),
-        TermKind::Has { record, key } => {
-            Term::has(substitute_name(record, binder, replacement), key.clone())
         }
     }
 }
@@ -1040,6 +1091,28 @@ fn substitute_fields(fields: &Fields, binder: &Name, replacement: &Term) -> Fiel
         .map(|(key, value)| (key.clone(), substitute_name(value, binder, replacement)))
         .collect();
     Fields { entries }
+}
+
+fn substitute_branches(branches: &Branches, binder: &Name, replacement: &Term) -> Branches {
+    let entries = branches
+        .entries
+        .iter()
+        .map(|(tag, branch)| {
+            let body = if branch.binder == *binder {
+                branch.body.clone()
+            } else {
+                substitute_name(&branch.body, binder, replacement)
+            };
+            (
+                tag.clone(),
+                CaseBranch {
+                    binder: branch.binder.clone(),
+                    body,
+                },
+            )
+        })
+        .collect();
+    Branches { entries }
 }
 
 fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
@@ -1107,6 +1180,37 @@ fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
             expect_equal(&actual_arg_type, arg_type, "app argument")?;
             Ok((**return_type).clone())
         }
+        TermKind::Case {
+            scrutinee,
+            branches,
+        } => {
+            let scrutinee_type = type_of_in_names(scrutinee, types)?;
+            let sum_fields = expect_sum_type(&scrutinee_type, "case scrutinee type")?;
+            let mut branch_result_type = None;
+
+            for (tag, payload_type) in &sum_fields.entries {
+                let branch = branches
+                    .get(tag.as_str())
+                    .ok_or_else(|| format!("missing case branch '{tag}'"))?;
+                let branch_type = type_of_in_names(
+                    &branch.body,
+                    &types.with(branch.binder.clone(), payload_type.clone()),
+                )?;
+                if let Some(expected_type) = &branch_result_type {
+                    expect_equal(&branch_type, expected_type, "case branches")?;
+                } else {
+                    branch_result_type = Some(branch_type);
+                }
+            }
+
+            for tag in branches.entries.keys() {
+                if !sum_fields.has(tag.as_str()) {
+                    return Err(format!("unexpected case branch '{tag}'"));
+                }
+            }
+
+            branch_result_type.ok_or_else(|| "cannot infer the type of an empty case".to_string())
+        }
         TermKind::Get { record, key } => {
             let record_type = type_of_in_names(record, types)?;
             let fields = expect_record_type(&record_type, "get record type")?;
@@ -1114,17 +1218,6 @@ fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
                 .get(key.as_str())
                 .cloned()
                 .ok_or_else(|| format!("missing record type for key '{key}'"))
-        }
-        TermKind::With { record, key, value } => {
-            let record_type = type_of_in_names(record, types)?;
-            let fields = expect_record_type(&record_type, "with record type")?;
-            let value_type = type_of_in_names(value, types)?;
-            Ok(Term::record_type(fields.with(key.clone(), value_type)))
-        }
-        TermKind::Has { record, .. } => {
-            let record_type = type_of_in_names(record, types)?;
-            let _fields = expect_record_type(&record_type, "has record type")?;
-            Ok(Term::bool_type())
         }
     }
 }
@@ -1148,6 +1241,13 @@ fn expect_record_type(term: &Term, role: &str) -> ClickResult<Fields> {
     match term.kind() {
         TermKind::RecordType(fields) => Ok(fields.clone()),
         _ => Err(format!("{role} must be a record type, got {term}")),
+    }
+}
+
+fn expect_sum_type(term: &Term, role: &str) -> ClickResult<Fields> {
+    match term.kind() {
+        TermKind::SumType(fields) => Ok(fields.clone()),
+        _ => Err(format!("{role} must be a sum type, got {term}")),
     }
 }
 

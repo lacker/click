@@ -56,6 +56,10 @@ helpers.
   An immutable map from `Symbol` to canonical `Term`. `Fields` is the shared
   helper used by `record`, `record-type`, and `sum-type`.
 
+- `Branches`
+  An immutable map from `Symbol` to case branches. Each branch carries a bound
+  `Name` for that tag's payload together with the branch body.
+
 - `NameMap`
   An immutable map from `Name` to `Term`. The evaluator uses a `NameMap` as a
   value assignment, and `type_of` uses a `NameMap` as a type assignment.
@@ -68,10 +72,11 @@ helpers.
 
 - `Term` constructors build kernel syntax directly:
   `type`, `bool_type`, `nil_type`, `record_type`, `sum_type`, `arrow`, `nil`,
-  `bool`, `record`, `variant`, `var`, `lambda`, `if`, `app`, `get`, `with`,
-  `has`
+  `bool`, `record`, `variant`, `var`, `lambda`, `if`, `app`, `case`, `get`
 
 - `Fields` provides `new`, `with`, `has`, and `get`.
+
+- `Branches` provides `new`, `with`, and `has`.
 
 - `NameMap` provides `new`, `get`, and `with`.
 
@@ -83,8 +88,8 @@ helpers.
   names.
 
 The smallest kernel should speak in terms of `Term`, `Name`, `Symbol`,
-`Fields`, `NameMap`, and `StepResult`, not host closures or raw Rust strings,
-integers, or indices.
+`Fields`, `Branches`, `NameMap`, and `StepResult`, not host closures or raw
+Rust strings, integers, or indices.
 
 ## Top-Level Interface
 
@@ -133,6 +138,12 @@ exact structural products: the type of a record is determined field-by-field.
 `type_of` design, a bare tagged payload does not determine its full sum type,
 so a variant term has to say which `sum-type` it belongs to.
 
+`case` is the elimination form for sums. It first reduces its scrutinee; once
+that is a `variant`, it substitutes the payload into the matching branch body.
+Typing for `case` is exact and structural: every branch named in the
+scrutinee's `sum-type` must be present, no extra branches are allowed, and all
+branch bodies must synthesize the same result type.
+
 `declare` threads a context forward explicitly. It is pure: a definition
 evaluates its value in the current context, then returns a new extended
 context. In the current untyped prototype, `check` and `theorem` compare
@@ -159,9 +170,6 @@ typing layer, not yet the final type theory.
 - The current `type_of` judgment is intentionally simple and environment-driven.
   The next design question is whether Click should add bidirectional checking
   on top of it, explicit annotations in terms, or both.
-
-- `variant` exists, but there is not yet a `case` form. That means sums can be
-  constructed and typed, but not yet eliminated in the kernel itself.
 
 - The recursion story is still open. Small-step semantics is the right
   substrate for talking about termination and divergence, but the actual theory

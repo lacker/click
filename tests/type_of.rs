@@ -1,4 +1,4 @@
-use click::{Fields, Name, NameMap, Symbol, Term, type_of};
+use click::{Branches, Fields, Name, NameMap, Symbol, Term, type_of};
 
 #[test]
 fn literals_have_builtin_types() {
@@ -85,17 +85,13 @@ fn application_rejects_a_mismatched_argument_type() {
 }
 
 #[test]
-fn record_operations_synthesize_record_types() {
-    let record = Term::with(
-        Term::record(Fields::new()),
-        Symbol::from("flag"),
-        Term::bool(true),
-    );
+fn record_literals_and_get_synthesize_record_types() {
+    let record = Term::record(Fields::new().with(Symbol::from("flag"), Term::bool(true)));
     let record_type =
         Term::record_type(Fields::new().with(Symbol::from("flag"), Term::bool_type()));
 
     assert_eq!(
-        type_of(&NameMap::new(), &record).expect("record update should typecheck"),
+        type_of(&NameMap::new(), &record).expect("record literal should typecheck"),
         record_type
     );
     assert_eq!(
@@ -104,11 +100,6 @@ fn record_operations_synthesize_record_types() {
             &Term::get(record.clone(), Symbol::from("flag"))
         )
         .expect("get should synthesize the field type"),
-        Term::bool_type()
-    );
-    assert_eq!(
-        type_of(&NameMap::new(), &Term::has(record, Symbol::from("flag")))
-            .expect("has should return Bool"),
         Term::bool_type()
     );
 }
@@ -126,6 +117,48 @@ fn variant_synthesizes_its_explicit_sum_type() {
         )
         .expect("variant should synthesize its sum type"),
         Term::sum_type(sum_type)
+    );
+}
+
+#[test]
+fn case_synthesizes_the_common_branch_result_type() {
+    let left = Name::fresh(Symbol::from("left_value"));
+    let right = Name::fresh(Symbol::from("right_value"));
+    let sum_type = Fields::new()
+        .with(Symbol::from("left"), Term::bool_type())
+        .with(Symbol::from("right"), Term::nil_type());
+
+    let term = Term::case(
+        Term::variant(Symbol::from("left"), Term::bool(true), sum_type),
+        Branches::new()
+            .with(Symbol::from("left"), left.clone(), Term::var(left))
+            .with(Symbol::from("right"), right, Term::bool(false)),
+    );
+
+    assert_eq!(
+        type_of(&NameMap::new(), &term).expect("case should synthesize a branch result type"),
+        Term::bool_type()
+    );
+}
+
+#[test]
+fn case_rejects_mismatched_branch_result_types() {
+    let left = Name::fresh(Symbol::from("left_value"));
+    let right = Name::fresh(Symbol::from("right_value"));
+    let sum_type = Fields::new()
+        .with(Symbol::from("left"), Term::bool_type())
+        .with(Symbol::from("right"), Term::nil_type());
+
+    let term = Term::case(
+        Term::variant(Symbol::from("left"), Term::bool(true), sum_type),
+        Branches::new()
+            .with(Symbol::from("left"), left, Term::bool(true))
+            .with(Symbol::from("right"), right.clone(), Term::var(right)),
+    );
+
+    assert_eq!(
+        type_of(&NameMap::new(), &term).expect_err("case should require matching branch types"),
+        "case branches failed: expected Bool, got Nil"
     );
 }
 

@@ -77,23 +77,8 @@ fn evaluation_cases() {
             "(record (foo true))"
         ),
         ok!(
-            "with inserts named values into a record",
-            "(with (record) foo true)",
-            "(record (foo true))"
-        ),
-        ok!(
-            "with overwrites an existing record key",
-            "(with (with (record) foo false) foo true)",
-            "(record (foo true))"
-        ),
-        ok!(
             "get reads an inserted record key",
-            "(get (with (record) foo true) foo)",
-            "true"
-        ),
-        ok!(
-            "has reports whether a record key exists",
-            "(has (with (record) foo true) foo)",
+            "(get (record (foo true)) foo)",
             "true"
         ),
         ok!("if takes the true branch", "(if true false nil)", "false"),
@@ -133,6 +118,11 @@ fn evaluation_cases() {
             "(variant left true (sum-type (left Bool) (right Nil)))"
         ),
         ok!(
+            "case selects the matching variant branch",
+            "(case (variant left true (sum-type (left Bool) (right Nil))) (left x (var x)) (right y false))",
+            "true"
+        ),
+        ok!(
             "app applies a named variable binder",
             "(app (lambda x (var x)) true)",
             "true"
@@ -144,7 +134,7 @@ fn evaluation_cases() {
         ),
         ok!(
             "substitution preserves outer binders under nested lambdas",
-            "(get (app (app (lambda x (lambda y (with (record) left (var x)))) true) false) left)",
+            "(get (app (app (lambda x (lambda y (record (left (var x))))) true) false) left)",
             "true"
         ),
         ok!(
@@ -233,13 +223,18 @@ fn evaluation_cases() {
             "get record must be a record"
         ),
         err!(
-            "with requires symbol keys",
-            "(with (record) (record) true)",
-            "with key must be an atom"
+            "case rejects non-variant scrutinees",
+            "(case true (left x (var x)))",
+            "case scrutinee must be a variant, got true"
+        ),
+        err!(
+            "case rejects missing branches for the chosen tag",
+            "(case (variant left true (sum-type (left Bool) (right Nil))) (right y false))",
+            "missing case branch 'left'"
         ),
         ok!(
             "shebang line is ignored",
-            "#!/usr/bin/env click\n(with (record) answer true)\n",
+            "#!/usr/bin/env click\n(record (answer true))\n",
             "(record (answer true))"
         ),
         ok!(
