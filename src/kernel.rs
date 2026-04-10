@@ -14,7 +14,7 @@ pub struct Context {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Object {
+pub struct Fields {
     entries: BTreeMap<Symbol, Term>,
 }
 
@@ -57,14 +57,20 @@ enum TermKind {
     Type,
     BoolType,
     NilType,
-    ObjectType(Object),
+    RecordType(Fields),
+    SumType(Fields),
     Arrow {
         arg_type: Box<Term>,
         return_type: Box<Term>,
     },
     Nil,
     Bool(bool),
-    Object(Object),
+    Record(Fields),
+    Variant {
+        tag: Symbol,
+        value: Box<Term>,
+        sum_type: Fields,
+    },
     Var(Name),
     If {
         condition: Box<Term>,
@@ -80,16 +86,16 @@ enum TermKind {
         arg: Box<Term>,
     },
     Get {
-        object: Box<Term>,
+        record: Box<Term>,
         key: Symbol,
     },
     With {
-        object: Box<Term>,
+        record: Box<Term>,
         key: Symbol,
         value: Box<Term>,
     },
     Has {
-        object: Box<Term>,
+        record: Box<Term>,
         key: Symbol,
     },
 }
@@ -157,15 +163,15 @@ impl fmt::Display for Name {
     }
 }
 
-impl Object {
-    // Construct an empty object with no named entries.
+impl Fields {
+    // Construct an empty labeled term map.
     pub fn new() -> Self {
         Self {
             entries: BTreeMap::new(),
         }
     }
 
-    // Check whether an object currently has a value for the given key.
+    // Check whether the map currently has a value for the given key.
     pub fn has(&self, name: &str) -> bool {
         self.entries.contains_key(name)
     }
@@ -175,7 +181,7 @@ impl Object {
         self.entries.get(name)
     }
 
-    // Return a new object with one key updated or inserted.
+    // Return a new map with one key updated or inserted.
     pub fn with(&self, name: Symbol, value: Term) -> Self {
         let mut entries = self.entries.clone();
         entries.insert(name, value);
@@ -206,7 +212,7 @@ impl NameMap {
 
 impl Term {
     // Structural constructors should stay in kernel objects where possible.
-    // Names refer to values; symbols remain selectors such as object keys.
+    // Names refer to values; symbols remain selectors such as record fields and sum tags.
     pub fn r#type() -> Self {
         Self(TermKind::Type)
     }
@@ -219,8 +225,12 @@ impl Term {
         Self(TermKind::NilType)
     }
 
-    pub fn object_type(object: Object) -> Self {
-        Self(TermKind::ObjectType(object))
+    pub fn record_type(fields: Fields) -> Self {
+        Self(TermKind::RecordType(fields))
+    }
+
+    pub fn sum_type(fields: Fields) -> Self {
+        Self(TermKind::SumType(fields))
     }
 
     pub fn arrow(arg_type: Term, return_type: Term) -> Self {
@@ -238,8 +248,16 @@ impl Term {
         Self(TermKind::Bool(value))
     }
 
-    pub fn object(object: Object) -> Self {
-        Self(TermKind::Object(object))
+    pub fn record(fields: Fields) -> Self {
+        Self(TermKind::Record(fields))
+    }
+
+    pub fn variant(tag: Symbol, value: Term, sum_type: Fields) -> Self {
+        Self(TermKind::Variant {
+            tag,
+            value: Box::new(value),
+            sum_type,
+        })
     }
 
     pub fn var(name: Name) -> Self {
@@ -265,24 +283,24 @@ impl Term {
         })
     }
 
-    pub fn get(object: Term, key: Symbol) -> Self {
+    pub fn get(record: Term, key: Symbol) -> Self {
         Self(TermKind::Get {
-            object: Box::new(object),
+            record: Box::new(record),
             key,
         })
     }
 
-    pub fn with(object: Term, key: Symbol, value: Term) -> Self {
+    pub fn with(record: Term, key: Symbol, value: Term) -> Self {
         Self(TermKind::With {
-            object: Box::new(object),
+            record: Box::new(record),
             key,
             value: Box::new(value),
         })
     }
 
-    pub fn has(object: Term, key: Symbol) -> Self {
+    pub fn has(record: Term, key: Symbol) -> Self {
         Self(TermKind::Has {
-            object: Box::new(object),
+            record: Box::new(record),
             key,
         })
     }
@@ -406,11 +424,13 @@ impl Term {
             TermKind::Type
                 | TermKind::BoolType
                 | TermKind::NilType
-                | TermKind::ObjectType(_)
+                | TermKind::RecordType(_)
+                | TermKind::SumType(_)
                 | TermKind::Arrow { .. }
                 | TermKind::Nil
                 | TermKind::Bool(_)
-                | TermKind::Object(_)
+                | TermKind::Record(_)
+                | TermKind::Variant { .. }
                 | TermKind::Lambda { .. }
         )
     }
@@ -441,13 +461,8 @@ impl fmt::Display for Term {
             TermKind::Type => write!(f, "Type"),
             TermKind::BoolType => write!(f, "Bool"),
             TermKind::NilType => write!(f, "Nil"),
-            TermKind::ObjectType(object) => {
-                write!(f, "(object-type")?;
-                for (key, value) in &object.entries {
-                    write!(f, " ({key} {value})")?;
-                }
-                write!(f, ")")
-            }
+            TermKind::RecordType(fields) => format_fields("record-type", fields, f),
+            TermKind::SumType(fields) => format_fields("sum-type", fields, f),
             TermKind::Arrow {
                 arg_type,
                 return_type,
@@ -455,7 +470,16 @@ impl fmt::Display for Term {
             TermKind::Nil => write!(f, "nil"),
             TermKind::Bool(true) => write!(f, "true"),
             TermKind::Bool(false) => write!(f, "false"),
-            TermKind::Object(object) => format_object(object, f),
+            TermKind::Record(fields) => format_fields("record", fields, f),
+            TermKind::Variant {
+                tag,
+                value,
+                sum_type,
+            } => {
+                write!(f, "(variant {tag} {value} ")?;
+                format_fields("sum-type", sum_type, f)?;
+                write!(f, ")")
+            }
             TermKind::Lambda { .. } => write!(f, "#<function>"),
             TermKind::Var(name) => write!(f, "(var {name})"),
             TermKind::If {
@@ -464,19 +488,19 @@ impl fmt::Display for Term {
                 else_branch,
             } => write!(f, "(if {condition} {then_branch} {else_branch})"),
             TermKind::App { function, arg } => write!(f, "(app {function} {arg})"),
-            TermKind::Get { object, key } => write!(f, "(get {object} {key})"),
-            TermKind::With { object, key, value } => {
-                write!(f, "(with {object} {key} {value})")
+            TermKind::Get { record, key } => write!(f, "(get {record} {key})"),
+            TermKind::With { record, key, value } => {
+                write!(f, "(with {record} {key} {value})")
             }
-            TermKind::Has { object, key } => write!(f, "(has {object} {key})"),
+            TermKind::Has { record, key } => write!(f, "(has {record} {key})"),
         }
     }
 }
 
-// Print an object as a tagged sequence of key/value entries.
-fn format_object(object: &Object, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "(object")?;
-    for (key, value) in &object.entries {
+// Print one labeled term map with its tag.
+fn format_fields(tag: &str, fields: &Fields, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "({tag}")?;
+    for (key, value) in &fields.entries {
         write!(f, " ({key} {value})")?;
     }
     write!(f, ")")
@@ -541,7 +565,7 @@ fn term_from_expr(expr: &SExpr, scope: &[(Symbol, Name)], context: &Context) -> 
     }
 }
 
-// Lower one tagged list form such as `object`, `lambda`, or `app`.
+// Lower one tagged list form such as `record`, `lambda`, or `app`.
 fn term_from_list(
     items: &[SExpr],
     scope: &[(Symbol, Name)],
@@ -560,14 +584,12 @@ fn term_from_list(
         "def" => Err("def is only valid as a top-level declaration".to_string()),
         "check" => Err("check is only valid as a top-level declaration".to_string()),
         "theorem" => Err("theorem is only valid as a top-level declaration".to_string()),
-        "object" => {
-            expect_arity(operator.as_str(), tail, 0)?;
-            Ok(Term::object(Object::new()))
-        }
-        "object-type" => {
-            expect_arity(operator.as_str(), tail, 0)?;
-            Ok(Term::object_type(Object::new()))
-        }
+        "record" => Ok(Term::record(fields_from_entries(tail, scope, context)?)),
+        "record-type" => Ok(Term::record_type(fields_from_entries(
+            tail, scope, context,
+        )?)),
+        "sum-type" => Ok(Term::sum_type(fields_from_entries(tail, scope, context)?)),
+        "variant" => term_from_variant(tail, scope, context),
         "arrow" => {
             expect_arity(operator.as_str(), tail, 2)?;
             Ok(Term::arrow(
@@ -621,6 +643,26 @@ fn term_from_list(
     }
 }
 
+fn fields_from_entries(
+    items: &[SExpr],
+    scope: &[(Symbol, Name)],
+    context: &Context,
+) -> ClickResult<Fields> {
+    let mut fields = Fields::new();
+    for item in items {
+        let SExpr::List(parts) = item else {
+            return Err("field entries must be lists".to_string());
+        };
+        if parts.len() != 2 {
+            return Err("field entries must have exactly two parts".to_string());
+        }
+        let key = expect_symbol(&parts[0], "field key")?;
+        let value = term_from_expr(&parts[1], scope, context)?;
+        fields = fields.with(key, value);
+    }
+    Ok(fields)
+}
+
 // Lower a `lambda` body under one more local binder.
 fn term_from_lambda(
     args: &[SExpr],
@@ -636,6 +678,21 @@ fn term_from_lambda(
         binder,
         term_from_expr(&args[1], &inner_scope, context)?,
     ))
+}
+
+fn term_from_variant(
+    args: &[SExpr],
+    scope: &[(Symbol, Name)],
+    context: &Context,
+) -> ClickResult<Term> {
+    expect_arity("variant", args, 3)?;
+    let tag = expect_symbol(&args[0], "variant tag")?;
+    let value = term_from_expr(&args[1], scope, context)?;
+    let sum_type = term_from_expr(&args[2], scope, context)?;
+    let TermKind::SumType(fields) = sum_type.kind() else {
+        return Err("variant expects an explicit sum-type term".to_string());
+    };
+    Ok(Term::variant(tag, value, fields.clone()))
 }
 
 // Resolve a surface `var` into either a local name or a known global name.
@@ -682,7 +739,7 @@ fn expect_arity(operator: &str, args: &[SExpr], expected: usize) -> ClickResult<
     }
 }
 
-// Extract an atom name from syntax where a binder or object key is expected.
+// Extract an atom name from syntax where a binder, field, or tag is expected.
 fn expect_symbol(expr: &SExpr, role: &str) -> ClickResult<Symbol> {
     match expr {
         SExpr::Symbol(symbol) => Ok(symbol.clone()),
@@ -707,7 +764,24 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
         TermKind::Type => Ok(StepResult::Value(Term::r#type())),
         TermKind::BoolType => Ok(StepResult::Value(Term::bool_type())),
         TermKind::NilType => Ok(StepResult::Value(Term::nil_type())),
-        TermKind::ObjectType(object) => Ok(StepResult::Value(Term::object_type(object.clone()))),
+        TermKind::RecordType(fields) => {
+            if fields_are_values(fields) {
+                Ok(StepResult::Value(Term::record_type(fields.clone())))
+            } else {
+                Ok(StepResult::Reduced(Term::record_type(step_fields(
+                    fields, globals,
+                )?)))
+            }
+        }
+        TermKind::SumType(fields) => {
+            if fields_are_values(fields) {
+                Ok(StepResult::Value(Term::sum_type(fields.clone())))
+            } else {
+                Ok(StepResult::Reduced(Term::sum_type(step_fields(
+                    fields, globals,
+                )?)))
+            }
+        }
         TermKind::Arrow {
             arg_type,
             return_type,
@@ -717,7 +791,40 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
         ))),
         TermKind::Nil => Ok(StepResult::Value(Term::nil())),
         TermKind::Bool(value) => Ok(StepResult::Value(Term::bool(*value))),
-        TermKind::Object(object) => Ok(StepResult::Value(Term::object(object.clone()))),
+        TermKind::Record(fields) => {
+            if fields_are_values(fields) {
+                Ok(StepResult::Value(Term::record(fields.clone())))
+            } else {
+                Ok(StepResult::Reduced(Term::record(step_fields(
+                    fields, globals,
+                )?)))
+            }
+        }
+        TermKind::Variant {
+            tag,
+            value,
+            sum_type,
+        } => {
+            if !fields_are_values(sum_type) {
+                Ok(StepResult::Reduced(Term::variant(
+                    tag.clone(),
+                    (**value).clone(),
+                    step_fields(sum_type, globals)?,
+                )))
+            } else if !value.is_value() {
+                Ok(StepResult::Reduced(Term::variant(
+                    tag.clone(),
+                    step_reduct(value, globals)?,
+                    sum_type.clone(),
+                )))
+            } else {
+                Ok(StepResult::Value(Term::variant(
+                    tag.clone(),
+                    (**value).clone(),
+                    sum_type.clone(),
+                )))
+            }
+        }
         TermKind::Var(name) => globals
             .get(name)
             .cloned()
@@ -767,50 +874,50 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
                 }
             }
         }
-        TermKind::Get { object, key } => {
-            if !object.is_value() {
+        TermKind::Get { record, key } => {
+            if !record.is_value() {
                 Ok(StepResult::Reduced(Term::get(
-                    step_reduct(object, globals)?,
+                    step_reduct(record, globals)?,
                     key.clone(),
                 )))
             } else {
-                let object = expect_object((**object).clone(), "get object")?;
-                object
+                let fields = expect_record((**record).clone(), "get record")?;
+                fields
                     .get(key.as_str())
                     .cloned()
                     .map(StepResult::Reduced)
-                    .ok_or_else(|| format!("missing object key '{key}'"))
+                    .ok_or_else(|| format!("missing record key '{key}'"))
             }
         }
-        TermKind::With { object, key, value } => {
-            if !object.is_value() {
+        TermKind::With { record, key, value } => {
+            if !record.is_value() {
                 Ok(StepResult::Reduced(Term::with(
-                    step_reduct(object, globals)?,
+                    step_reduct(record, globals)?,
                     key.clone(),
                     (**value).clone(),
                 )))
             } else if !value.is_value() {
                 Ok(StepResult::Reduced(Term::with(
-                    (**object).clone(),
+                    (**record).clone(),
                     key.clone(),
                     step_reduct(value, globals)?,
                 )))
             } else {
-                let object = expect_object((**object).clone(), "with object")?;
-                Ok(StepResult::Reduced(Term::object(
-                    object.with(key.clone(), (**value).clone()),
+                let fields = expect_record((**record).clone(), "with record")?;
+                Ok(StepResult::Reduced(Term::record(
+                    fields.with(key.clone(), (**value).clone()),
                 )))
             }
         }
-        TermKind::Has { object, key } => {
-            if !object.is_value() {
+        TermKind::Has { record, key } => {
+            if !record.is_value() {
                 Ok(StepResult::Reduced(Term::has(
-                    step_reduct(object, globals)?,
+                    step_reduct(record, globals)?,
                     key.clone(),
                 )))
             } else {
-                let object = expect_object((**object).clone(), "has object")?;
-                Ok(StepResult::Reduced(Term::bool(object.has(key.as_str()))))
+                let fields = expect_record((**record).clone(), "has record")?;
+                Ok(StepResult::Reduced(Term::bool(fields.has(key.as_str()))))
             }
         }
     }
@@ -824,12 +931,27 @@ fn step_reduct(term: &Term, globals: &NameMap) -> ClickResult<Term> {
     }
 }
 
-// Extract an object value from runtime data where one is required.
-fn expect_object(term: Term, role: &str) -> ClickResult<Object> {
+fn fields_are_values(fields: &Fields) -> bool {
+    fields.entries.values().all(Term::is_value)
+}
+
+fn step_fields(fields: &Fields, globals: &NameMap) -> ClickResult<Fields> {
+    let mut stepped = fields.clone();
+    for value in stepped.entries.values_mut() {
+        if !value.is_value() {
+            *value = step_reduct(value, globals)?;
+            return Ok(stepped);
+        }
+    }
+    Err("expected a reducible field entry".to_string())
+}
+
+// Extract a record value from runtime data where one is required.
+fn expect_record(term: Term, role: &str) -> ClickResult<Fields> {
     let rendered = term.to_string();
     match term.into_kind() {
-        TermKind::Object(object) => Ok(object),
-        _ => Err(format!("{role} must be an object, got {rendered}")),
+        TermKind::Record(fields) => Ok(fields),
+        _ => Err(format!("{role} must be a record, got {rendered}")),
     }
 }
 
@@ -844,9 +966,10 @@ fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
         TermKind::Type => Term::r#type(),
         TermKind::BoolType => Term::bool_type(),
         TermKind::NilType => Term::nil_type(),
-        TermKind::ObjectType(object) => {
-            Term::object_type(substitute_object(object, binder, replacement))
+        TermKind::RecordType(fields) => {
+            Term::record_type(substitute_fields(fields, binder, replacement))
         }
+        TermKind::SumType(fields) => Term::sum_type(substitute_fields(fields, binder, replacement)),
         TermKind::Arrow {
             arg_type,
             return_type,
@@ -856,7 +979,16 @@ fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
         ),
         TermKind::Nil => Term::nil(),
         TermKind::Bool(value) => Term::bool(*value),
-        TermKind::Object(object) => Term::object(substitute_object(object, binder, replacement)),
+        TermKind::Record(fields) => Term::record(substitute_fields(fields, binder, replacement)),
+        TermKind::Variant {
+            tag,
+            value,
+            sum_type,
+        } => Term::variant(
+            tag.clone(),
+            substitute_name(value, binder, replacement),
+            substitute_fields(sum_type, binder, replacement),
+        ),
         TermKind::Var(name) => {
             if name == binder {
                 replacement.clone()
@@ -887,46 +1019,56 @@ fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
             substitute_name(function, binder, replacement),
             substitute_name(arg, binder, replacement),
         ),
-        TermKind::Get { object, key } => {
-            Term::get(substitute_name(object, binder, replacement), key.clone())
+        TermKind::Get { record, key } => {
+            Term::get(substitute_name(record, binder, replacement), key.clone())
         }
-        TermKind::With { object, key, value } => Term::with(
-            substitute_name(object, binder, replacement),
+        TermKind::With { record, key, value } => Term::with(
+            substitute_name(record, binder, replacement),
             key.clone(),
             substitute_name(value, binder, replacement),
         ),
-        TermKind::Has { object, key } => {
-            Term::has(substitute_name(object, binder, replacement), key.clone())
+        TermKind::Has { record, key } => {
+            Term::has(substitute_name(record, binder, replacement), key.clone())
         }
     }
 }
 
-fn substitute_object(object: &Object, binder: &Name, replacement: &Term) -> Object {
-    let entries = object
+fn substitute_fields(fields: &Fields, binder: &Name, replacement: &Term) -> Fields {
+    let entries = fields
         .entries
         .iter()
         .map(|(key, value)| (key.clone(), substitute_name(value, binder, replacement)))
         .collect();
-    Object { entries }
+    Fields { entries }
 }
 
 fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
     match term.kind() {
         TermKind::Type => Ok(Term::r#type()),
         TermKind::BoolType | TermKind::NilType | TermKind::Arrow { .. } => Ok(Term::r#type()),
-        TermKind::ObjectType(object) => {
-            for value in object.entries.values() {
-                expect_equal(
-                    &type_of_in_names(value, types)?,
-                    &Term::r#type(),
-                    "object-type",
-                )?;
-            }
-            Ok(Term::r#type())
-        }
+        TermKind::RecordType(fields) => expect_fields_are_types(fields, types, "record-type"),
+        TermKind::SumType(fields) => expect_fields_are_types(fields, types, "sum-type"),
         TermKind::Nil => Ok(Term::nil_type()),
         TermKind::Bool(_) => Ok(Term::bool_type()),
-        TermKind::Object(object) => type_of_object(object, types),
+        TermKind::Record(fields) => type_of_record(fields, types),
+        TermKind::Variant {
+            tag,
+            value,
+            sum_type,
+        } => {
+            expect_fields_are_types(sum_type, types, "sum-type")?;
+            let expected_payload_type = sum_type
+                .get(tag.as_str())
+                .cloned()
+                .ok_or_else(|| format!("missing sum-type branch '{tag}'"))?;
+            let actual_payload_type = type_of_in_names(value, types)?;
+            expect_equal(
+                &actual_payload_type,
+                &expected_payload_type,
+                "variant payload",
+            )?;
+            Ok(Term::sum_type(sum_type.clone()))
+        }
         TermKind::Var(name) => types
             .get(name)
             .cloned()
@@ -965,40 +1107,47 @@ fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
             expect_equal(&actual_arg_type, arg_type, "app argument")?;
             Ok((**return_type).clone())
         }
-        TermKind::Get { object, key } => {
-            let object_type = type_of_in_names(object, types)?;
-            let fields = expect_object_type(&object_type, "get object type")?;
+        TermKind::Get { record, key } => {
+            let record_type = type_of_in_names(record, types)?;
+            let fields = expect_record_type(&record_type, "get record type")?;
             fields
                 .get(key.as_str())
                 .cloned()
-                .ok_or_else(|| format!("missing object type for key '{key}'"))
+                .ok_or_else(|| format!("missing record type for key '{key}'"))
         }
-        TermKind::With { object, key, value } => {
-            let object_type = type_of_in_names(object, types)?;
-            let fields = expect_object_type(&object_type, "with object type")?;
+        TermKind::With { record, key, value } => {
+            let record_type = type_of_in_names(record, types)?;
+            let fields = expect_record_type(&record_type, "with record type")?;
             let value_type = type_of_in_names(value, types)?;
-            Ok(Term::object_type(fields.with(key.clone(), value_type)))
+            Ok(Term::record_type(fields.with(key.clone(), value_type)))
         }
-        TermKind::Has { object, .. } => {
-            let object_type = type_of_in_names(object, types)?;
-            let _fields = expect_object_type(&object_type, "has object type")?;
+        TermKind::Has { record, .. } => {
+            let record_type = type_of_in_names(record, types)?;
+            let _fields = expect_record_type(&record_type, "has record type")?;
             Ok(Term::bool_type())
         }
     }
 }
 
-fn type_of_object(object: &Object, types: &NameMap) -> ClickResult<Term> {
-    let mut fields = Object::new();
-    for (key, value) in &object.entries {
-        fields = fields.with(key.clone(), type_of_in_names(value, types)?);
+fn expect_fields_are_types(fields: &Fields, types: &NameMap, role: &str) -> ClickResult<Term> {
+    for value in fields.entries.values() {
+        expect_equal(&type_of_in_names(value, types)?, &Term::r#type(), role)?;
     }
-    Ok(Term::object_type(fields))
+    Ok(Term::r#type())
 }
 
-fn expect_object_type(term: &Term, role: &str) -> ClickResult<Object> {
+fn type_of_record(fields: &Fields, types: &NameMap) -> ClickResult<Term> {
+    let mut field_types = Fields::new();
+    for (key, value) in &fields.entries {
+        field_types = field_types.with(key.clone(), type_of_in_names(value, types)?);
+    }
+    Ok(Term::record_type(field_types))
+}
+
+fn expect_record_type(term: &Term, role: &str) -> ClickResult<Fields> {
     match term.kind() {
-        TermKind::ObjectType(object) => Ok(object.clone()),
-        _ => Err(format!("{role} must be an object type, got {term}")),
+        TermKind::RecordType(fields) => Ok(fields.clone()),
+        _ => Err(format!("{role} must be a record type, got {term}")),
     }
 }
 

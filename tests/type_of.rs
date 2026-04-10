@@ -1,4 +1,4 @@
-use click::{Name, NameMap, Object, Symbol, Term, type_of};
+use click::{Fields, Name, NameMap, Symbol, Term, type_of};
 
 #[test]
 fn literals_have_builtin_types() {
@@ -14,7 +14,7 @@ fn literals_have_builtin_types() {
 
 #[test]
 fn type_terms_live_in_type() {
-    let field_types = Object::new().with(Symbol::from("flag"), Term::bool_type());
+    let field_types = Fields::new().with(Symbol::from("flag"), Term::bool_type());
 
     assert_eq!(
         type_of(&NameMap::new(), &Term::bool_type()).expect("Bool should be a type"),
@@ -29,8 +29,16 @@ fn type_terms_live_in_type() {
         Term::r#type()
     );
     assert_eq!(
-        type_of(&NameMap::new(), &Term::object_type(field_types))
-            .expect("object type should be a type"),
+        type_of(&NameMap::new(), &Term::record_type(field_types))
+            .expect("record type should be a type"),
+        Term::r#type()
+    );
+    assert_eq!(
+        type_of(
+            &NameMap::new(),
+            &Term::sum_type(Fields::new().with(Symbol::from("left"), Term::bool_type())),
+        )
+        .expect("sum type should be a type"),
         Term::r#type()
     );
 }
@@ -77,31 +85,47 @@ fn application_rejects_a_mismatched_argument_type() {
 }
 
 #[test]
-fn object_operations_synthesize_record_types() {
-    let object = Term::with(
-        Term::object(Object::new()),
+fn record_operations_synthesize_record_types() {
+    let record = Term::with(
+        Term::record(Fields::new()),
         Symbol::from("flag"),
         Term::bool(true),
     );
-    let object_type =
-        Term::object_type(Object::new().with(Symbol::from("flag"), Term::bool_type()));
+    let record_type =
+        Term::record_type(Fields::new().with(Symbol::from("flag"), Term::bool_type()));
 
     assert_eq!(
-        type_of(&NameMap::new(), &object).expect("object update should typecheck"),
-        object_type
+        type_of(&NameMap::new(), &record).expect("record update should typecheck"),
+        record_type
     );
     assert_eq!(
         type_of(
             &NameMap::new(),
-            &Term::get(object.clone(), Symbol::from("flag"))
+            &Term::get(record.clone(), Symbol::from("flag"))
         )
         .expect("get should synthesize the field type"),
         Term::bool_type()
     );
     assert_eq!(
-        type_of(&NameMap::new(), &Term::has(object, Symbol::from("flag")))
+        type_of(&NameMap::new(), &Term::has(record, Symbol::from("flag")))
             .expect("has should return Bool"),
         Term::bool_type()
+    );
+}
+
+#[test]
+fn variant_synthesizes_its_explicit_sum_type() {
+    let sum_type = Fields::new()
+        .with(Symbol::from("left"), Term::bool_type())
+        .with(Symbol::from("right"), Term::nil_type());
+
+    assert_eq!(
+        type_of(
+            &NameMap::new(),
+            &Term::variant(Symbol::from("left"), Term::bool(true), sum_type.clone()),
+        )
+        .expect("variant should synthesize its sum type"),
+        Term::sum_type(sum_type)
     );
 }
 

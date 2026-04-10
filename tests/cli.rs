@@ -33,7 +33,7 @@ fn evaluates_expression_argument() {
 fn evaluates_file_and_ignores_shebang() {
     let path = temp_file(
         "shebang",
-        "#!/usr/bin/env click\n(with (object) answer true)\n",
+        "#!/usr/bin/env click\n(with (record) answer true)\n",
     );
 
     let output = Command::new(bin())
@@ -44,7 +44,7 @@ fn evaluates_file_and_ignores_shebang() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "(object (answer true))\n"
+        "(record (answer true))\n"
     );
 
     fs::remove_file(path).expect("temp file should be removed");
@@ -64,7 +64,7 @@ fn evaluates_stdin() {
         let stdin = child.stdin.as_mut().expect("stdin should be available");
         write!(
             stdin,
-            "(app (lambda x (with (object) answer (var x))) true)\n"
+            "(app (lambda x (with (record) answer (var x))) true)\n"
         )
         .expect("stdin write should succeed");
     }
@@ -73,6 +73,6 @@ fn evaluates_stdin() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "(object (answer true))\n"
+        "(record (answer true))\n"
     );
 }

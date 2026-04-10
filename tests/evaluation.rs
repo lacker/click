@@ -67,36 +67,41 @@ fn evaluation_cases() {
             "true"
         ),
         ok!(
-            "object builds an empty named object",
-            "(object)",
-            "(object)"
+            "record builds an empty named record",
+            "(record)",
+            "(record)"
         ),
         ok!(
-            "with inserts named values into an object",
-            "(with (object) foo true)",
-            "(object (foo true))"
+            "record can be built directly from fields",
+            "(record (foo true))",
+            "(record (foo true))"
         ),
         ok!(
-            "with overwrites an existing object key",
-            "(with (with (object) foo false) foo true)",
-            "(object (foo true))"
+            "with inserts named values into a record",
+            "(with (record) foo true)",
+            "(record (foo true))"
         ),
         ok!(
-            "get reads an inserted object key",
-            "(get (with (object) foo true) foo)",
+            "with overwrites an existing record key",
+            "(with (with (record) foo false) foo true)",
+            "(record (foo true))"
+        ),
+        ok!(
+            "get reads an inserted record key",
+            "(get (with (record) foo true) foo)",
             "true"
         ),
         ok!(
-            "has reports whether an object key exists",
-            "(has (with (object) foo true) foo)",
+            "has reports whether a record key exists",
+            "(has (with (record) foo true) foo)",
             "true"
         ),
         ok!("if takes the true branch", "(if true false nil)", "false"),
         ok!("if treats nil as falsey", "(if nil true false)", "false"),
         ok!("if treats false as falsey", "(if false true nil)", "nil"),
         ok!(
-            "if treats objects as truthy",
-            "(if (object) true false)",
+            "if treats records as truthy",
+            "(if (record) true false)",
             "true"
         ),
         ok!(
@@ -108,14 +113,24 @@ fn evaluation_cases() {
         ok!("Bool evaluates to itself", "Bool", "Bool"),
         ok!("Nil evaluates to itself", "Nil", "Nil"),
         ok!(
+            "record types evaluate to themselves",
+            "(record-type)",
+            "(record-type)"
+        ),
+        ok!(
+            "sum types evaluate to themselves",
+            "(sum-type)",
+            "(sum-type)"
+        ),
+        ok!(
             "arrow types evaluate to themselves",
             "(arrow Bool Nil)",
             "(arrow Bool Nil)"
         ),
         ok!(
-            "object types evaluate to themselves",
-            "(object-type)",
-            "(object-type)"
+            "variants evaluate to themselves",
+            "(variant left true (sum-type (left Bool) (right Nil)))",
+            "(variant left true (sum-type (left Bool) (right Nil)))"
         ),
         ok!(
             "app applies a named variable binder",
@@ -129,7 +144,7 @@ fn evaluation_cases() {
         ),
         ok!(
             "substitution preserves outer binders under nested lambdas",
-            "(get (app (app (lambda x (lambda y (with (object) left (var x)))) true) false) left)",
+            "(get (app (app (lambda x (lambda y (with (record) left (var x)))) true) false) left)",
             "true"
         ),
         ok!(
@@ -208,29 +223,29 @@ fn evaluation_cases() {
             "theorem failed: expected false, got true"
         ),
         err!(
-            "get rejects missing object keys",
-            "(get (object) foo)",
-            "missing object key 'foo'"
+            "get rejects missing record keys",
+            "(get (record) foo)",
+            "missing record key 'foo'"
         ),
         err!(
-            "get rejects non-object inputs",
+            "get rejects non-record inputs",
             "(get true foo)",
-            "get object must be an object"
+            "get record must be a record"
         ),
         err!(
             "with requires symbol keys",
-            "(with (object) (object) true)",
+            "(with (record) (record) true)",
             "with key must be an atom"
         ),
         ok!(
             "shebang line is ignored",
-            "#!/usr/bin/env click\n(with (object) answer true)\n",
-            "(object (answer true))"
+            "#!/usr/bin/env click\n(with (record) answer true)\n",
+            "(record (answer true))"
         ),
         ok!(
             "multiple top level forms return the last value",
-            "true\n(object)\n",
-            "(object)"
+            "true\n(record)\n",
+            "(record)"
         ),
     ];
 

@@ -45,17 +45,16 @@ helpers.
   The core syntax of the kernel. `Term` is intentionally opaque in Rust.
 
 - `Symbol`
-  An atomic selector. `Symbol` is used for object keys and for surface labels
+  An atomic selector. `Symbol` is used for record fields, sum tags, and surface labels
   that the reader later resolves while lowering.
 
 - `Name`
   An atomic reference to a value binding. Lambda binders, variable occurrences,
   and top-level definitions use `Name`.
 
-- `Object`
-  An immutable map from `Symbol` to canonical `Term`. Objects use `Symbol`
-  because they are selecting one field from a set of options, not referring to
-  value bindings.
+- `Fields`
+  An immutable map from `Symbol` to canonical `Term`. `Fields` is the shared
+  helper used by `record`, `record-type`, and `sum-type`.
 
 - `NameMap`
   An immutable map from `Name` to `Term`. The evaluator uses a `NameMap` as a
@@ -68,10 +67,11 @@ helpers.
 ### Kernel Operations
 
 - `Term` constructors build kernel syntax directly:
-  `type`, `bool_type`, `nil_type`, `object_type`, `arrow`, `nil`, `bool`,
-  `object`, `var`, `lambda`, `if`, `app`, `get`, `with`, `has`
+  `type`, `bool_type`, `nil_type`, `record_type`, `sum_type`, `arrow`, `nil`,
+  `bool`, `record`, `variant`, `var`, `lambda`, `if`, `app`, `get`, `with`,
+  `has`
 
-- `Object` provides `new`, `with`, `has`, and `get`.
+- `Fields` provides `new`, `with`, `has`, and `get`.
 
 - `NameMap` provides `new`, `get`, and `with`.
 
@@ -83,7 +83,7 @@ helpers.
   names.
 
 The smallest kernel should speak in terms of `Term`, `Name`, `Symbol`,
-`Object`, `NameMap`, and `StepResult`, not host closures or raw Rust strings,
+`Fields`, `NameMap`, and `StepResult`, not host closures or raw Rust strings,
 integers, or indices.
 
 ## Top-Level Interface
@@ -125,6 +125,14 @@ A function value is a lambda term in value form. Application first reduces its
 function and argument one step at a time; once both are values, one beta step
 substitutes the argument for the bound name.
 
+Products and sums are now explicit in the kernel syntax. `record` values have
+`record-type` types. `variant` values have `sum-type` types. Records are still
+exact structural products: the type of a record is determined field-by-field.
+
+`variant` carries explicit sum structure. That is intentional. In the current
+`type_of` design, a bare tagged payload does not determine its full sum type,
+so a variant term has to say which `sum-type` it belongs to.
+
 `declare` threads a context forward explicitly. It is pure: a definition
 evaluates its value in the current context, then returns a new extended
 context. In the current untyped prototype, `check` and `theorem` compare
@@ -138,9 +146,9 @@ in the map. This keeps evaluation Curry-style while still making typing a
 structural kernel operation.
 
 The current type vocabulary is intentionally small. `Bool`, `Nil`,
-`(arrow A B)`, and `(object-type ...)` are ordinary kernel terms, and they all
-live in a single `Type` universe. This is a prototype typing layer, not yet the
-final type theory.
+`(arrow A B)`, `(record-type ...)`, and `(sum-type ...)` are ordinary kernel
+terms, and they all live in a single `Type` universe. This is a prototype
+typing layer, not yet the final type theory.
 
 ## Open Questions
 
@@ -151,6 +159,9 @@ final type theory.
 - The current `type_of` judgment is intentionally simple and environment-driven.
   The next design question is whether Click should add bidirectional checking
   on top of it, explicit annotations in terms, or both.
+
+- `variant` exists, but there is not yet a `case` form. That means sums can be
+  constructed and typed, but not yet eliminated in the kernel itself.
 
 - The recursion story is still open. Small-step semantics is the right
   substrate for talking about termination and divergence, but the actual theory

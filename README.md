@@ -8,9 +8,11 @@ The current prototype is intentionally narrow. It has:
 - `Type`
 - `Bool`
 - `Nil`
-- `object-type`
+- `record-type`
+- `sum-type`
 - `arrow`
-- `object`
+- `record`
+- `variant`
 - `get`
 - `with`
 - `has`
@@ -24,13 +26,13 @@ The current prototype is intentionally narrow. It has:
 
 The reader parses surface S-expressions, then the kernel immediately lowers
 them into an internal `Term` language. In that language, values are referred to
-by `Name` and object fields are selected by `Symbol`. `Term` is opaque rather
+by `Name` and record fields or sum tags are selected by `Symbol`. `Term` is opaque rather
 than a public enum so the kernel can change its internal representation without
 exposing that structure directly.
 
 The structural kernel API is intended to stay in terms of kernel objects.
 Constructors and kernel operations should take `Term`, `Name`, `Symbol`,
-`Object`, and `NameMap` rather than host closures or raw Rust strings or
+`Fields`, and `NameMap` rather than host closures or raw Rust strings or
 integers. `Context`, `Declaration`, and `run_source` are top-level wrappers
 around that smaller kernel.
 
@@ -42,10 +44,11 @@ around that smaller kernel.
   equality.
 - Top-level `(theorem name actual expected)` performs the same check, then
   binds the checked term to `name`.
-- `object` builds an immutable object from symbol keys to canonical terms.
-- `with` returns an updated object.
-- `get` projects an object field.
-- `has` checks whether an object field exists.
+- `record` builds an immutable labeled product.
+- `with` returns an updated record.
+- `get` projects a record field.
+- `has` checks whether a record field exists.
+- `variant` builds a tagged sum inhabitant with an explicit `sum-type`.
 - `if` treats only `nil` and `false` as falsey.
 - `lambda` binds a fresh `Name`.
 - The primitive operational semantics is a single reduction step on `Term`s.
@@ -57,7 +60,7 @@ around that smaller kernel.
   kernel.
 
 `Symbol` and `Name` are different things. `Symbol` is an atomic selector, used
-for object keys and surface labels. `Name` refers to a value binding. Click
+for record fields, sum tags, and surface labels. `Name` refers to a value binding. Click
 code cannot inspect the character structure of either.
 
 Typing is explicit in the host API. A `NameMap` assigns terms to names, and
@@ -66,8 +69,8 @@ Typing is explicit in the host API. A `NameMap` assigns terms to names, and
 their binders are `Name`s, and the map provides the type information.
 
 The current type vocabulary is deliberately small: `Bool`, `Nil`, function
-types written as `(arrow A B)`, object types written as `(object-type ...)`,
-and a single universe `Type`.
+types written as `(arrow A B)`, record types written as `(record-type ...)`,
+sum types written as `(sum-type ...)`, and a single universe `Type`.
 
 ## Deliberate Omissions
 
@@ -99,7 +102,7 @@ cargo run -- path/to/file.cl
 Pipe a program on stdin:
 
 ```bash
-printf "(with (object) answer true)\n" | cargo run --
+printf "(with (record) answer true)\n" | cargo run --
 ```
 
 Install the binary:
@@ -116,13 +119,13 @@ cargo install --path .
 (def id (lambda x (var x)))
 (check (app (var id) true) true)
 (theorem truth true true)
-(with (object) answer (var truth))
+(with (record) answer (var truth))
 ```
 
 This evaluates to:
 
 ```lisp
-(object (answer true))
+(record (answer true))
 ```
 
 The Rust API uses `Name` directly for bindings. Surface syntax still uses
