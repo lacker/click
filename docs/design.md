@@ -47,16 +47,21 @@ helpers.
   The core syntax of the kernel. `Term` is intentionally opaque in Rust.
 
 - `Symbol`
-  An atomic name. `Symbol` is used for top-level references, object keys, and
-  named variable occurrences before they are lowered under binders.
+  An atomic selector. `Symbol` is used for object keys and for surface labels
+  that the reader later resolves while lowering.
+
+- `Name`
+  An atomic reference to a value binding. Lambda binders, variable occurrences,
+  and top-level definitions use `Name`.
 
 - `Object`
-  An immutable map from `Symbol` to canonical `Term`. The kernel uses `Object`
-  internally for top-level environments, and Click code can also construct and
-  inspect objects directly.
+  An immutable map from `Symbol` to canonical `Term`. Objects use `Symbol`
+  because they are selecting one field from a set of options, not referring to
+  value bindings.
 
 - `Context`
-  An immutable top-level environment of evaluated definitions.
+  An immutable top-level environment of evaluated definitions. It maps surface
+  symbols to canonical names and names to evaluated values.
 
 - `Declaration`
   A top-level kernel action. The current variants are `Def`, `Check`, and
@@ -86,34 +91,31 @@ helpers.
   top-level declarations, and evaluates the final expression.
 
 The core structural interface should stay in kernel objects. It should speak in
-terms of `Term`, `Symbol`, `Object`, `Context`, `Declaration`, and
-`StepResult`, not host closures or raw indices.
+terms of `Term`, `Name`, `Symbol`, `Object`, `Context`, `Declaration`, and
+`StepResult`, not host closures or raw Rust strings, integers, or indices.
 
 ## Semantic Notes
 
 The reader parses surface S-expressions, and the kernel lowers them into an
-internal `Term` language before evaluation. In that internal language, bound
-locals are de Bruijn indices and top-level references stay as named `Symbol`s.
+internal `Term` language before evaluation. In that internal language, variable
+occurrences refer to `Name`, not `Symbol`. Surface syntax still spells binders
+and references with symbols, but lowering resolves each occurrence to either a
+fresh local name or an existing top-level name from the current context.
 
-Variables are represented by `Symbol`. In surface syntax, `(var x)` names a
-variable occurrence directly. In the Rust API, `Term::var(Symbol)` does the
-same thing. A surrounding `Term::lambda(Symbol, Term)` may capture matching
-free occurrences and lower them to hidden local indices; otherwise evaluation
-resolves them against the top-level context.
+`lambda` binds a `Name`. Shadowing is allowed because two binders may share the
+same display symbol while still being distinct names. During lowering, the
+reader allocates a fresh `Name` for each lambda binder and resolves `(var x)`
+to the innermost matching binder name, falling back to the top-level context if
+needed.
 
-`lambda` binds a scope. Shadowing is allowed. During lowering, the innermost
-binder with a given name becomes local index `0`, the next one out becomes
-local index `1`, and so on.
-
-Because lowering checks `var` uses against the current local scope and top-level
-context, ill-scoped variables are rejected eagerly, including inside lambda
-bodies.
+Because lowering resolves all variable references before evaluation, ill-scoped
+variables are rejected eagerly, including inside lambda bodies.
 
 The primitive operational semantics is a single reduction step on `Term`s, and
 full evaluation iterates that step relation until it reaches a canonical term.
-A function value is a lowered lambda term in value form. Application first
-reduces its function and argument one step at a time; once both are values, one
-beta step substitutes the argument for local index `0`.
+A function value is a lambda term in value form. Application first reduces its
+function and argument one step at a time; once both are values, one beta step
+substitutes the argument for the bound name.
 
 `declare` threads a context forward explicitly. It is pure: a definition
 evaluates its value in the current context, then returns a new extended
@@ -127,11 +129,10 @@ value to a name.
   The current Rust `StepResult` is useful for the host kernel, but it is not
   yet a Click-level representation of execution.
 
-- `Term::lambda(Symbol, Term)` is intentionally a smart constructor with
-  name-based capture semantics. That keeps the API small and entirely in kernel
-  objects, but it is not hygienic across reused subterms. If accidental capture
-  becomes a real problem, Click will likely want to split textual `Symbol`s
-  from fresh binder identities such as a distinct `Name` type.
+- The next typing step is likely a base `type_of(env, term)` judgment over an
+  environment that assigns types to names. That keeps the core closer to
+  programming-native evaluation, while still giving the kernel a structural
+  typing API.
 
 - The recursion story is still open. Small-step semantics is the right
   substrate for talking about termination and divergence, but the actual theory

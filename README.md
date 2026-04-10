@@ -18,15 +18,15 @@ The current prototype is intentionally narrow. It has:
 - `false`
 
 The reader parses surface S-expressions, then the kernel immediately lowers
-them into an internal `Term` language. Bound locals are represented internally
-with de Bruijn indices. Top-level names stay as atomic `Symbol`s. In the Rust
-API, `Term` is opaque rather than a public enum so those lowered locals stay
-internal.
+them into an internal `Term` language. In that language, values are referred to
+by `Name` and object fields are selected by `Symbol`. `Term` is opaque rather
+than a public enum so the kernel can change its internal representation without
+exposing that structure directly.
 
 The structural kernel API is intended to stay in terms of kernel objects.
-Smart constructors may lower internally, but they take `Term`, `Symbol`,
-`Object`, `Context`, and `Declaration` rather than host closures or raw de
-Bruijn data.
+Constructors and kernel operations should take `Term`, `Name`, `Symbol`,
+`Object`, `Context`, and `Declaration` rather than host closures or raw Rust
+strings or integers.
 
 ## Current Semantics
 
@@ -41,7 +41,7 @@ Bruijn data.
 - `get` projects an object field.
 - `has` checks whether an object field exists.
 - `if` treats only `nil` and `false` as falsey.
-- `lambda` binds a scope. Shadowing is allowed.
+- `lambda` binds a fresh `Name`.
 - The primitive operational semantics is a single reduction step on `Term`s.
 - The Rust API exposes that reduction relation as `step(&Context, &Term) ->
   ClickResult<StepResult>`.
@@ -49,8 +49,9 @@ Bruijn data.
 - There is no separate runtime `Value` or `Closure` datatype in the current
   kernel.
 
-Object keys and variable names are symbols, not strings. They are atomic in the
-kernel: Click code cannot inspect their character structure.
+`Symbol` and `Name` are different things. `Symbol` is an atomic selector, used
+for object keys and surface labels. `Name` refers to a value binding. Click
+code cannot inspect the character structure of either.
 
 ## Deliberate Omissions
 
@@ -60,12 +61,7 @@ The current kernel does not have `quote`, `car`, `cdr`, `cons`, `atom`, or
 That is deliberate. The older quote/list experiments were useful for learning,
 but they tied code inspection to ordinary list structure. The current design
 keeps `Term` as the real kernel syntax and postpones metaprogramming until
-Click has a binder-safe way to inspect terms without exposing raw de Bruijn
-indices.
-
-For example, host-side lambda construction uses `Term::lambda(Symbol, Term)`.
-That smart constructor captures free occurrences of the given symbol in the
-body term, then lowers the result into the hidden de Bruijn core.
+Click has a binder-safe way to inspect terms directly.
 
 See [docs/design.md](/Users/lacker/click/docs/design.md) for the current design
 notes.
@@ -112,6 +108,9 @@ This evaluates to:
 ```lisp
 (object (answer true))
 ```
+
+The Rust API uses `Name` directly for bindings. Surface syntax still uses
+symbols, and the reader resolves those into fresh names while lowering.
 
 ## Historical Bootstrap
 

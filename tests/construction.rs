@@ -1,14 +1,15 @@
-use click::{Context, Declaration, Symbol, Term, declare};
+use click::{Context, Declaration, Name, Symbol, Term, declare};
 
 #[test]
-fn smart_lambda_binds_a_named_occurrence() {
-    let x = Symbol::from("x");
+fn lambda_uses_names_for_binders_and_variables() {
+    let x = Name::fresh(Symbol::from("x"));
+    let id_name = Name::fresh(Symbol::from("id"));
     let id = Term::lambda(x.clone(), Term::var(x));
 
     let context = declare(
         &Context::new(),
         Declaration::Def {
-            name: Symbol::from("id"),
+            name: id_name.clone(),
             value: id,
         },
     )
@@ -17,7 +18,7 @@ fn smart_lambda_binds_a_named_occurrence() {
     declare(
         &context,
         Declaration::Check {
-            actual: Term::app(Term::var(Symbol::from("id")), Term::bool(true)),
+            actual: Term::app(Term::var(id_name), Term::bool(true)),
             expected: Term::bool(true),
         },
     )
@@ -25,15 +26,16 @@ fn smart_lambda_binds_a_named_occurrence() {
 }
 
 #[test]
-fn smart_lambda_threads_outer_binders_under_nested_lambdas() {
-    let x = Symbol::from("x");
-    let y = Symbol::from("y");
+fn nested_lambdas_preserve_outer_names() {
+    let x = Name::fresh(Symbol::from("x"));
+    let y = Name::fresh(Symbol::from("y"));
+    let fst_name = Name::fresh(Symbol::from("fst"));
     let fst = Term::lambda(x.clone(), Term::lambda(y, Term::var(x)));
 
     let context = declare(
         &Context::new(),
         Declaration::Def {
-            name: Symbol::from("fst"),
+            name: fst_name.clone(),
             value: fst,
         },
     )
@@ -43,7 +45,7 @@ fn smart_lambda_threads_outer_binders_under_nested_lambdas() {
         &context,
         Declaration::Check {
             actual: Term::app(
-                Term::app(Term::var(Symbol::from("fst")), Term::bool(true)),
+                Term::app(Term::var(fst_name), Term::bool(true)),
                 Term::bool(false),
             ),
             expected: Term::bool(true),
@@ -53,14 +55,16 @@ fn smart_lambda_threads_outer_binders_under_nested_lambdas() {
 }
 
 #[test]
-fn smart_lambda_respects_shadowing_by_name() {
-    let x = Symbol::from("x");
-    let shadow = Term::lambda(x.clone(), Term::lambda(x, Term::var(Symbol::from("x"))));
+fn inner_lambda_shadows_the_outer_name() {
+    let outer = Name::fresh(Symbol::from("x"));
+    let inner = Name::fresh(Symbol::from("x"));
+    let shadow_name = Name::fresh(Symbol::from("shadow"));
+    let shadow = Term::lambda(outer, Term::lambda(inner.clone(), Term::var(inner)));
 
     let context = declare(
         &Context::new(),
         Declaration::Def {
-            name: Symbol::from("shadow"),
+            name: shadow_name.clone(),
             value: shadow,
         },
     )
@@ -70,7 +74,7 @@ fn smart_lambda_respects_shadowing_by_name() {
         &context,
         Declaration::Check {
             actual: Term::app(
-                Term::app(Term::var(Symbol::from("shadow")), Term::bool(true)),
+                Term::app(Term::var(shadow_name), Term::bool(true)),
                 Term::bool(false),
             ),
             expected: Term::bool(false),

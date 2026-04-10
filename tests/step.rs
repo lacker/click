@@ -1,4 +1,4 @@
-use click::{Context, Declaration, StepResult, Symbol, Term, declare, step};
+use click::{Context, Declaration, Name, StepResult, Symbol, Term, declare, step};
 
 #[test]
 fn public_step_reports_values() {
@@ -10,16 +10,17 @@ fn public_step_reports_values() {
 
 #[test]
 fn public_step_reduces_a_global_reference_using_the_context() {
+    let answer = Name::fresh(Symbol::from("answer"));
     let context = declare(
         &Context::new(),
         Declaration::Def {
-            name: Symbol::from("answer"),
+            name: answer.clone(),
             value: Term::bool(true),
         },
     )
     .expect("definition should succeed");
 
-    match step(&context, &Term::var(Symbol::from("answer"))).expect("step should succeed") {
+    match step(&context, &Term::var(answer)).expect("step should succeed") {
         StepResult::Reduced(next) => assert_eq!(next, Term::bool(true)),
         StepResult::Value(value) => panic!("expected a reduct, got value {value}"),
     }
@@ -27,13 +28,12 @@ fn public_step_reduces_a_global_reference_using_the_context() {
 
 #[test]
 fn public_step_performs_one_beta_reduction() {
+    let x = Name::fresh(Symbol::from("x"));
+    let y = Name::fresh(Symbol::from("y"));
     let term = Term::app(
         Term::lambda(
-            Symbol::from("x"),
-            Term::app(
-                Term::lambda(Symbol::from("y"), Term::var(Symbol::from("y"))),
-                Term::var(Symbol::from("x")),
-            ),
+            x.clone(),
+            Term::app(Term::lambda(y.clone(), Term::var(y)), Term::var(x)),
         ),
         Term::bool(true),
     );

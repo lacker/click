@@ -1,6 +1,7 @@
 use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::reader::read;
 
@@ -8,7 +9,8 @@ pub type ClickResult<T> = Result<T, String>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Context {
-    values: Object,
+    names: BTreeMap<Symbol, Name>,
+    values: BTreeMap<Name, Term>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,7 +21,7 @@ pub struct Object {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Declaration {
     Def {
-        name: Symbol,
+        name: Name,
         value: Term,
     },
     Check {
@@ -27,7 +29,7 @@ pub enum Declaration {
         expected: Term,
     },
     Theorem {
-        name: Symbol,
+        name: Name,
         actual: Term,
         expected: Term,
     },
@@ -35,6 +37,12 @@ pub enum Declaration {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Symbol(String);
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Name {
+    id: usize,
+    symbol: Symbol,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Term(TermKind);
@@ -44,14 +52,14 @@ enum TermKind {
     Nil,
     Bool(bool),
     Object(Object),
-    Local(usize),
-    Global(Symbol),
+    Var(Name),
     If {
         condition: Box<Term>,
         then_branch: Box<Term>,
         else_branch: Box<Term>,
     },
     Lambda {
+        binder: Name,
         body: Box<Term>,
     },
     App {
@@ -85,9 +93,24 @@ pub enum StepResult {
     Reduced(Term),
 }
 
+static NEXT_NAME_ID: AtomicUsize = AtomicUsize::new(0);
+
 impl Symbol {
     fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl Name {
+    pub fn fresh(symbol: Symbol) -> Self {
+        Self {
+            id: NEXT_NAME_ID.fetch_add(1, Ordering::Relaxed),
+            symbol,
+        }
+    }
+
+    pub fn symbol(&self) -> &Symbol {
+        &self.symbol
     }
 }
 
@@ -115,6 +138,12 @@ impl fmt::Display for Symbol {
     }
 }
 
+impl fmt::Display for Name {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.symbol.fmt(f)
+    }
+}
+
 impl Object {
     // Construct an empty object with no named entries.
     pub fn new() -> Self {
@@ -136,9 +165,7 @@ impl Object {
 
 impl Term {
     // Structural constructors should stay in kernel objects where possible.
-    // Smart constructors may lower named binders into hidden locals, but
-    // callers still manipulate kernel values rather than host closures or
-    // raw de Bruijn data.
+    // Names refer to values; symbols remain selectors such as object keys.
     pub fn nil() -> Self {
         Self(TermKind::Nil)
     }
@@ -151,14 +178,12 @@ impl Term {
         Self(TermKind::Object(object))
     }
 
-    // Construct a named variable occurrence. A surrounding smart `lambda`
-    // constructor may bind it; otherwise evaluation resolves it globally.
-    pub fn var(name: Symbol) -> Self {
-        Self(TermKind::Global(name))
+    pub fn var(name: Name) -> Self {
+        Self(TermKind::Var(name))
     }
 
-    pub fn lambda(binder: Symbol, body: Term) -> Self {
-        Self::lowered_lambda(bind_named_var(&binder, &body, 0))
+    pub fn lambda(binder: Name, body: Term) -> Self {
+        Self::lowered_lambda(binder, body)
     }
 
     pub fn r#if(condition: Term, then_branch: Term, else_branch: Term) -> Self {
@@ -198,12 +223,9 @@ impl Term {
         })
     }
 
-    fn local(index: usize) -> Self {
-        Self(TermKind::Local(index))
-    }
-
-    fn lowered_lambda(body: Term) -> Self {
+    fn lowered_lambda(binder: Name, body: Term) -> Self {
         Self(TermKind::Lambda {
+            binder,
             body: Box::new(body),
         })
     }
@@ -221,12 +243,13 @@ impl Context {
     // Construct an empty top-level context with no named definitions.
     pub fn new() -> Self {
         Self {
-            values: Object::new(),
+            names: BTreeMap::new(),
+            values: BTreeMap::new(),
         }
     }
 
     // Look up the value currently bound to a top-level name.
-    pub fn get(&self, name: &str) -> Option<&Term> {
+    pub fn get(&self, name: &Name) -> Option<&Term> {
         self.values.get(name)
     }
 }
@@ -239,10 +262,10 @@ pub fn run_source(source: &str) -> ClickResult<Option<Term>> {
 
     let mut last = None;
     for expr in exprs {
-        match declaration_from_expr(&expr, context.values())? {
+        match declaration_from_expr(&expr, &context)? {
             Some(declaration) => context = declare(&context, declaration)?,
             None => {
-                let term = term_from_expr(&expr, &[], context.values())?;
+                let term = term_from_expr(&expr, &[], &context)?;
                 last = Some(eval(&term, context.values())?);
             }
         }
@@ -255,8 +278,11 @@ pub fn run_source(source: &str) -> ClickResult<Option<Term>> {
 pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Context> {
     match declaration {
         Declaration::Def { name, value } => {
-            if context.values.has(name.as_str()) {
-                return Err(format!("definition '{name}' is already declared"));
+            if context.has_symbol(name.symbol()) {
+                return Err(format!(
+                    "definition '{}' is already declared",
+                    name.symbol()
+                ));
             }
             let evaluated = eval(&value, context.values())?;
             Ok(context.with_value(name, evaluated))
@@ -272,8 +298,11 @@ pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Conte
             actual,
             expected,
         } => {
-            if context.values.has(name.as_str()) {
-                return Err(format!("definition '{name}' is already declared"));
+            if context.has_symbol(name.symbol()) {
+                return Err(format!(
+                    "definition '{}' is already declared",
+                    name.symbol()
+                ));
             }
             let actual = eval(&actual, context.values())?;
             let expected = eval(&expected, context.values())?;
@@ -316,15 +345,25 @@ impl Object {
 
 impl Context {
     // Return the value environment visible to evaluation.
-    fn values(&self) -> &Object {
+    fn values(&self) -> &BTreeMap<Name, Term> {
         &self.values
     }
 
+    fn resolve_symbol(&self, symbol: &Symbol) -> Option<Name> {
+        self.names.get(symbol).cloned()
+    }
+
+    fn has_symbol(&self, symbol: &Symbol) -> bool {
+        self.names.contains_key(symbol)
+    }
+
     // Return a new context extended with one evaluated top-level definition.
-    fn with_value(&self, name: Symbol, value: Term) -> Self {
-        Self {
-            values: self.values.with(name, value),
-        }
+    fn with_value(&self, name: Name, value: Term) -> Self {
+        let mut names = self.names.clone();
+        names.insert(name.symbol().clone(), name.clone());
+        let mut values = self.values.clone();
+        values.insert(name, value);
+        Self { names, values }
     }
 }
 
@@ -337,8 +376,7 @@ impl fmt::Display for Term {
             TermKind::Bool(false) => write!(f, "false"),
             TermKind::Object(object) => format_object(object, f),
             TermKind::Lambda { .. } => write!(f, "#<function>"),
-            TermKind::Local(index) => write!(f, "#<local {index}>"),
-            TermKind::Global(name) => write!(f, "(var {name})"),
+            TermKind::Var(name) => write!(f, "(var {name})"),
             TermKind::If {
                 condition,
                 then_branch,
@@ -364,7 +402,7 @@ fn format_object(object: &Object, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 }
 
 // Recognize top-level declaration forms and convert them into kernel declarations.
-fn declaration_from_expr(expr: &SExpr, globals: &Object) -> ClickResult<Option<Declaration>> {
+fn declaration_from_expr(expr: &SExpr, context: &Context) -> ClickResult<Option<Declaration>> {
     let SExpr::List(items) = expr else {
         return Ok(None);
     };
@@ -380,26 +418,26 @@ fn declaration_from_expr(expr: &SExpr, globals: &Object) -> ClickResult<Option<D
     match operator.as_str() {
         "def" => {
             expect_arity(operator.as_str(), tail, 2)?;
-            let name = expect_symbol(&tail[0], "def name")?;
+            let name = Name::fresh(expect_symbol(&tail[0], "def name")?);
             Ok(Some(Declaration::Def {
                 name,
-                value: term_from_expr(&tail[1], &[], globals)?,
+                value: term_from_expr(&tail[1], &[], context)?,
             }))
         }
         "check" => {
             expect_arity(operator.as_str(), tail, 2)?;
             Ok(Some(Declaration::Check {
-                actual: term_from_expr(&tail[0], &[], globals)?,
-                expected: term_from_expr(&tail[1], &[], globals)?,
+                actual: term_from_expr(&tail[0], &[], context)?,
+                expected: term_from_expr(&tail[1], &[], context)?,
             }))
         }
         "theorem" => {
             expect_arity(operator.as_str(), tail, 3)?;
-            let name = expect_symbol(&tail[0], "theorem name")?;
+            let name = Name::fresh(expect_symbol(&tail[0], "theorem name")?);
             Ok(Some(Declaration::Theorem {
                 name,
-                actual: term_from_expr(&tail[1], &[], globals)?,
-                expected: term_from_expr(&tail[2], &[], globals)?,
+                actual: term_from_expr(&tail[1], &[], context)?,
+                expected: term_from_expr(&tail[2], &[], context)?,
             }))
         }
         _ => Ok(None),
@@ -407,7 +445,7 @@ fn declaration_from_expr(expr: &SExpr, globals: &Object) -> ClickResult<Option<D
 }
 
 // Lower one surface expression into a well-scoped kernel term.
-fn term_from_expr(expr: &SExpr, scope: &[Symbol], globals: &Object) -> ClickResult<Term> {
+fn term_from_expr(expr: &SExpr, scope: &[(Symbol, Name)], context: &Context) -> ClickResult<Term> {
     match expr {
         SExpr::Symbol(symbol) => match symbol.as_str() {
             "nil" => Ok(Term::nil()),
@@ -415,12 +453,16 @@ fn term_from_expr(expr: &SExpr, scope: &[Symbol], globals: &Object) -> ClickResu
             "false" => Ok(Term::bool(false)),
             _ => Err(format!("unbound atom '{symbol}'")),
         },
-        SExpr::List(items) => term_from_list(items, scope, globals),
+        SExpr::List(items) => term_from_list(items, scope, context),
     }
 }
 
 // Lower one tagged list form such as `object`, `lambda`, or `app`.
-fn term_from_list(items: &[SExpr], scope: &[Symbol], globals: &Object) -> ClickResult<Term> {
+fn term_from_list(
+    items: &[SExpr],
+    scope: &[(Symbol, Name)],
+    context: &Context,
+) -> ClickResult<Term> {
     let Some((head, tail)) = items.split_first() else {
         return Err("cannot evaluate an empty list; use nil".to_string());
     };
@@ -441,39 +483,39 @@ fn term_from_list(items: &[SExpr], scope: &[Symbol], globals: &Object) -> ClickR
         "if" => {
             expect_arity(operator.as_str(), tail, 3)?;
             Ok(Term::r#if(
-                term_from_expr(&tail[0], scope, globals)?,
-                term_from_expr(&tail[1], scope, globals)?,
-                term_from_expr(&tail[2], scope, globals)?,
+                term_from_expr(&tail[0], scope, context)?,
+                term_from_expr(&tail[1], scope, context)?,
+                term_from_expr(&tail[2], scope, context)?,
             ))
         }
-        "lambda" => term_from_lambda(tail, scope, globals),
-        "var" => term_from_var(tail, scope, globals),
+        "lambda" => term_from_lambda(tail, scope, context),
+        "var" => term_from_var(tail, scope, context),
         "app" => {
             expect_arity(operator.as_str(), tail, 2)?;
             Ok(Term::app(
-                term_from_expr(&tail[0], scope, globals)?,
-                term_from_expr(&tail[1], scope, globals)?,
+                term_from_expr(&tail[0], scope, context)?,
+                term_from_expr(&tail[1], scope, context)?,
             ))
         }
         "get" => {
             expect_arity(operator.as_str(), tail, 2)?;
             Ok(Term::get(
-                term_from_expr(&tail[0], scope, globals)?,
+                term_from_expr(&tail[0], scope, context)?,
                 expect_symbol(&tail[1], "get key")?,
             ))
         }
         "with" => {
             expect_arity(operator.as_str(), tail, 3)?;
             Ok(Term::with(
-                term_from_expr(&tail[0], scope, globals)?,
+                term_from_expr(&tail[0], scope, context)?,
                 expect_symbol(&tail[1], "with key")?,
-                term_from_expr(&tail[2], scope, globals)?,
+                term_from_expr(&tail[2], scope, context)?,
             ))
         }
         "has" => {
             expect_arity(operator.as_str(), tail, 2)?;
             Ok(Term::has(
-                term_from_expr(&tail[0], scope, globals)?,
+                term_from_expr(&tail[0], scope, context)?,
                 expect_symbol(&tail[1], "has key")?,
             ))
         }
@@ -485,35 +527,43 @@ fn term_from_list(items: &[SExpr], scope: &[Symbol], globals: &Object) -> ClickR
 }
 
 // Lower a `lambda` body under one more local binder.
-fn term_from_lambda(args: &[SExpr], scope: &[Symbol], globals: &Object) -> ClickResult<Term> {
+fn term_from_lambda(
+    args: &[SExpr],
+    scope: &[(Symbol, Name)],
+    context: &Context,
+) -> ClickResult<Term> {
     expect_arity("lambda", args, 2)?;
-    let binder = expect_symbol(&args[0], "lambda binder")?;
+    let binder_symbol = expect_symbol(&args[0], "lambda binder")?;
+    let binder = Name::fresh(binder_symbol.clone());
     let mut inner_scope = scope.to_vec();
-    inner_scope.push(binder);
-    Ok(Term::lowered_lambda(term_from_expr(
-        &args[1],
-        &inner_scope,
-        globals,
-    )?))
+    inner_scope.push((binder_symbol, binder.clone()));
+    Ok(Term::lowered_lambda(
+        binder,
+        term_from_expr(&args[1], &inner_scope, context)?,
+    ))
 }
 
-// Resolve a surface `var` into either a local index or a known global name.
-fn term_from_var(args: &[SExpr], scope: &[Symbol], globals: &Object) -> ClickResult<Term> {
+// Resolve a surface `var` into either a local name or a known global name.
+fn term_from_var(args: &[SExpr], scope: &[(Symbol, Name)], context: &Context) -> ClickResult<Term> {
     expect_arity("var", args, 1)?;
-    let name = expect_symbol(&args[0], "var name")?;
+    let symbol = expect_symbol(&args[0], "var name")?;
 
-    if let Some(index) = local_index(scope, &name) {
-        Ok(Term::local(index))
-    } else if globals.has(name.as_str()) {
+    if let Some(name) = local_name(scope, &symbol) {
+        Ok(Term::var(name))
+    } else if let Some(name) = context.resolve_symbol(&symbol) {
         Ok(Term::var(name))
     } else {
-        Err(format!("unbound variable '{name}'"))
+        Err(format!("unbound variable '{symbol}'"))
     }
 }
 
-// Find the de Bruijn index for the innermost binder with the given name.
-fn local_index(scope: &[Symbol], name: &Symbol) -> Option<usize> {
-    scope.iter().rev().position(|binder| binder == name)
+// Find the innermost local name with the given surface symbol.
+fn local_name(scope: &[(Symbol, Name)], symbol: &Symbol) -> Option<Name> {
+    scope
+        .iter()
+        .rev()
+        .find(|(binder, _)| binder == symbol)
+        .map(|(_, name)| name.clone())
 }
 
 // Reject top-level assertions whose evaluated values do not match.
@@ -546,7 +596,7 @@ fn expect_symbol(expr: &SExpr, role: &str) -> ClickResult<Symbol> {
 }
 
 // Evaluate one well-scoped kernel term by iterating single reduction steps.
-fn eval(term: &Term, globals: &Object) -> ClickResult<Term> {
+fn eval(term: &Term, globals: &BTreeMap<Name, Term>) -> ClickResult<Term> {
     let mut current = term.clone();
     loop {
         match step_in_context(&current, globals)? {
@@ -557,14 +607,13 @@ fn eval(term: &Term, globals: &Object) -> ClickResult<Term> {
 }
 
 // Internal one-step reduction under the current top-level value environment.
-fn step_in_context(term: &Term, globals: &Object) -> ClickResult<StepResult> {
+fn step_in_context(term: &Term, globals: &BTreeMap<Name, Term>) -> ClickResult<StepResult> {
     match term.kind() {
         TermKind::Nil => Ok(StepResult::Value(Term::nil())),
         TermKind::Bool(value) => Ok(StepResult::Value(Term::bool(*value))),
         TermKind::Object(object) => Ok(StepResult::Value(Term::object(object.clone()))),
-        TermKind::Local(index) => Err(format!("encountered unbound local index {index}")),
-        TermKind::Global(name) => globals
-            .get(name.as_str())
+        TermKind::Var(name) => globals
+            .get(name)
             .cloned()
             .map(StepResult::Reduced)
             .ok_or_else(|| format!("unbound variable '{name}'")),
@@ -587,7 +636,10 @@ fn step_in_context(term: &Term, globals: &Object) -> ClickResult<StepResult> {
                 )))
             }
         }
-        TermKind::Lambda { body } => Ok(StepResult::Value(Term::lowered_lambda((**body).clone()))),
+        TermKind::Lambda { binder, body } => Ok(StepResult::Value(Term::lowered_lambda(
+            binder.clone(),
+            (**body).clone(),
+        ))),
         TermKind::App { function, arg } => {
             if !function.is_value() {
                 Ok(StepResult::Reduced(Term::app(
@@ -602,7 +654,9 @@ fn step_in_context(term: &Term, globals: &Object) -> ClickResult<StepResult> {
             } else {
                 let rendered = function.to_string();
                 match function.kind() {
-                    TermKind::Lambda { body } => Ok(StepResult::Reduced(instantiate(body, arg))),
+                    TermKind::Lambda { binder, body } => {
+                        Ok(StepResult::Reduced(instantiate(binder, body, arg)))
+                    }
                     _ => Err(format!("attempted to call a non-function: {rendered}")),
                 }
             }
@@ -657,7 +711,7 @@ fn step_in_context(term: &Term, globals: &Object) -> ClickResult<StepResult> {
 }
 
 // Take one step and extract the reduct, rejecting terms that are already values.
-fn step_reduct(term: &Term, globals: &Object) -> ClickResult<Term> {
+fn step_reduct(term: &Term, globals: &BTreeMap<Name, Term>) -> ClickResult<Term> {
     match step_in_context(term, globals)? {
         StepResult::Reduced(next) => Ok(next),
         StepResult::Value(value) => Err(format!("expected a reducible term, got {value}")),
@@ -673,23 +727,20 @@ fn expect_object(term: Term, role: &str) -> ClickResult<Object> {
     }
 }
 
-// Substitute an argument for local index 0 in a lambda body.
-fn instantiate(body: &Term, arg: &Term) -> Term {
-    let arg = shift(arg, 1, 0);
-    let body = substitute(body, 0, &arg);
-    shift(&body, -1, 0)
+// Substitute an argument for one bound name in a lambda body.
+fn instantiate(binder: &Name, body: &Term, arg: &Term) -> Term {
+    substitute_name(body, binder, arg)
 }
 
-// Lower one named host-side binder into the hidden de Bruijn core.
-fn bind_named_var(binder: &Symbol, body: &Term, depth: usize) -> Term {
-    match body.kind() {
+// Replace one bound name with a term, respecting shadowing beneath lambdas.
+fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
+    match term.kind() {
         TermKind::Nil => Term::nil(),
         TermKind::Bool(value) => Term::bool(*value),
-        TermKind::Object(object) => Term::object(bind_named_object(object, binder, depth)),
-        TermKind::Local(index) => Term::local(*index),
-        TermKind::Global(name) => {
+        TermKind::Object(object) => Term::object(substitute_object(object, binder, replacement)),
+        TermKind::Var(name) => {
             if name == binder {
-                Term::local(depth)
+                replacement.clone()
             } else {
                 Term::var(name.clone())
             }
@@ -699,138 +750,65 @@ fn bind_named_var(binder: &Symbol, body: &Term, depth: usize) -> Term {
             then_branch,
             else_branch,
         } => Term::r#if(
-            bind_named_var(binder, condition, depth),
-            bind_named_var(binder, then_branch, depth),
-            bind_named_var(binder, else_branch, depth),
+            substitute_name(condition, binder, replacement),
+            substitute_name(then_branch, binder, replacement),
+            substitute_name(else_branch, binder, replacement),
         ),
-        TermKind::Lambda { body } => Term::lowered_lambda(bind_named_var(binder, body, depth + 1)),
+        TermKind::Lambda {
+            binder: inner,
+            body,
+        } => {
+            if inner == binder {
+                Term::lowered_lambda(inner.clone(), (**body).clone())
+            } else {
+                Term::lowered_lambda(inner.clone(), substitute_name(body, binder, replacement))
+            }
+        }
         TermKind::App { function, arg } => Term::app(
-            bind_named_var(binder, function, depth),
-            bind_named_var(binder, arg, depth),
+            substitute_name(function, binder, replacement),
+            substitute_name(arg, binder, replacement),
         ),
         TermKind::Get { object, key } => {
-            Term::get(bind_named_var(binder, object, depth), key.clone())
+            Term::get(substitute_name(object, binder, replacement), key.clone())
         }
         TermKind::With { object, key, value } => Term::with(
-            bind_named_var(binder, object, depth),
+            substitute_name(object, binder, replacement),
             key.clone(),
-            bind_named_var(binder, value, depth),
+            substitute_name(value, binder, replacement),
         ),
         TermKind::Has { object, key } => {
-            Term::has(bind_named_var(binder, object, depth), key.clone())
+            Term::has(substitute_name(object, binder, replacement), key.clone())
         }
     }
 }
 
-fn bind_named_object(object: &Object, binder: &Symbol, depth: usize) -> Object {
+fn substitute_object(object: &Object, binder: &Name, replacement: &Term) -> Object {
     let entries = object
         .entries
         .iter()
-        .map(|(key, value)| (key.clone(), bind_named_var(binder, value, depth)))
+        .map(|(key, value)| (key.clone(), substitute_name(value, binder, replacement)))
         .collect();
     Object { entries }
-}
-
-// Shift local indices above the cutoff by a signed amount.
-fn shift(term: &Term, amount: isize, cutoff: usize) -> Term {
-    match term.kind() {
-        TermKind::Nil => Term::nil(),
-        TermKind::Bool(value) => Term::bool(*value),
-        TermKind::Object(object) => Term::object(object.clone()),
-        TermKind::Local(index) => {
-            if *index < cutoff {
-                Term::local(*index)
-            } else {
-                let index = index
-                    .checked_add_signed(amount)
-                    .expect("de Bruijn shift underflowed");
-                Term::local(index)
-            }
-        }
-        TermKind::Global(name) => Term::var(name.clone()),
-        TermKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => Term::r#if(
-            shift(condition, amount, cutoff),
-            shift(then_branch, amount, cutoff),
-            shift(else_branch, amount, cutoff),
-        ),
-        TermKind::Lambda { body } => Term::lowered_lambda(shift(body, amount, cutoff + 1)),
-        TermKind::App { function, arg } => {
-            Term::app(shift(function, amount, cutoff), shift(arg, amount, cutoff))
-        }
-        TermKind::Get { object, key } => Term::get(shift(object, amount, cutoff), key.clone()),
-        TermKind::With { object, key, value } => Term::with(
-            shift(object, amount, cutoff),
-            key.clone(),
-            shift(value, amount, cutoff),
-        ),
-        TermKind::Has { object, key } => Term::has(shift(object, amount, cutoff), key.clone()),
-    }
-}
-
-// Replace one local index with a term, adjusting beneath binders as needed.
-fn substitute(term: &Term, depth: usize, replacement: &Term) -> Term {
-    match term.kind() {
-        TermKind::Nil => Term::nil(),
-        TermKind::Bool(value) => Term::bool(*value),
-        TermKind::Object(object) => Term::object(object.clone()),
-        TermKind::Local(index) => {
-            if *index == depth {
-                shift(replacement, depth as isize, 0)
-            } else {
-                Term::local(*index)
-            }
-        }
-        TermKind::Global(name) => Term::var(name.clone()),
-        TermKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => Term::r#if(
-            substitute(condition, depth, replacement),
-            substitute(then_branch, depth, replacement),
-            substitute(else_branch, depth, replacement),
-        ),
-        TermKind::Lambda { body } => Term::lowered_lambda(substitute(body, depth + 1, replacement)),
-        TermKind::App { function, arg } => Term::app(
-            substitute(function, depth, replacement),
-            substitute(arg, depth, replacement),
-        ),
-        TermKind::Get { object, key } => {
-            Term::get(substitute(object, depth, replacement), key.clone())
-        }
-        TermKind::With { object, key, value } => Term::with(
-            substitute(object, depth, replacement),
-            key.clone(),
-            substitute(value, depth, replacement),
-        ),
-        TermKind::Has { object, key } => {
-            Term::has(substitute(object, depth, replacement), key.clone())
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn parse_term(source: &str, globals: &Object) -> Term {
+    fn parse_term(source: &str, context: &Context) -> Term {
         let exprs = read(source).expect("source should parse");
         assert_eq!(exprs.len(), 1, "test helper expects exactly one expression");
-        term_from_expr(&exprs[0], &[], globals).expect("expression should lower")
+        term_from_expr(&exprs[0], &[], context).expect("expression should lower")
     }
 
     #[test]
     fn step_stops_after_one_beta_reduction() {
         let term = parse_term(
             "(app (lambda x (app (lambda y (var y)) (var x))) true)",
-            &Object::new(),
+            &Context::new(),
         );
 
-        match step_in_context(&term, &Object::new()).expect("step should succeed") {
+        match step_in_context(&term, &BTreeMap::new()).expect("step should succeed") {
             StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> true)"),
             StepResult::Value(value) => panic!("expected a reduction step, got value {value}"),
         }
@@ -840,10 +818,10 @@ mod tests {
     fn step_chooses_an_if_branch_without_evaluating_it_further() {
         let term = parse_term(
             "(if true (app (lambda x (var x)) false) nil)",
-            &Object::new(),
+            &Context::new(),
         );
 
-        match step_in_context(&term, &Object::new()).expect("step should succeed") {
+        match step_in_context(&term, &BTreeMap::new()).expect("step should succeed") {
             StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> false)"),
             StepResult::Value(value) => panic!("expected a reduction step, got value {value}"),
         }
@@ -853,10 +831,10 @@ mod tests {
     fn step_reduces_the_function_side_of_an_application_first() {
         let term = parse_term(
             "(app (if true (lambda x (var x)) nil) (app (lambda y (var y)) false))",
-            &Object::new(),
+            &Context::new(),
         );
 
-        match step_in_context(&term, &Object::new()).expect("step should succeed") {
+        match step_in_context(&term, &BTreeMap::new()).expect("step should succeed") {
             StepResult::Reduced(next) => {
                 assert_eq!(
                     next.to_string(),
