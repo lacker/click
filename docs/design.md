@@ -75,21 +75,19 @@ The current kernel has:
 
 Ordinary symbols do not self-evaluate.
 
-The reader still produces raw S-expressions. The kernel immediately lowers
-those into an internal `Term` language before evaluation. In that internal
-term language, bound locals are de Bruijn indices and top-level references stay
-as named globals. In the Rust API, `Term` is therefore an opaque type rather
-than a public enum, so those lowered local indices do not leak across the
-kernel boundary.
+The reader parses surface S-expressions, and the kernel lowers them into an
+internal `Term` language before evaluation. In that internal language:
 
-The structural kernel API should be expressed in kernel objects rather than
-host-language helpers. Smart constructors may lower or scope-check internally,
-but their arguments should still be things like `Term`, `Symbol`, `Object`,
-`Context`, and `Declaration`, not Rust strings, numeric indices, or closures.
-The public `step(&Context, &Term)` API follows that rule and returns a
-`StepResult` over kernel `Term`s.
+- bound locals are de Bruijn indices
+- top-level references stay as named `Symbol`s
+- `Term` is opaque in Rust, so raw local indices do not leak through the
+  public API
 
-Non-atomic surface code forms are tagged lists. For example:
+The structural kernel API should stay in kernel objects. Public constructors
+and evaluators should speak in terms of `Term`, `Symbol`, `Object`, `Context`,
+`Declaration`, and `StepResult`, not host closures or raw indices.
+
+Surface term forms are tagged lists. For example:
 
 ```lisp
 (var x)
@@ -113,9 +111,9 @@ extended context. In the current untyped prototype, `check` and `theorem`
 compare evaluated kernel values for exact equality. `theorem` also binds the
 checked value to a name.
 
-Objects are primitive immutable maps from symbol names to canonical terms. The kernel
-uses them internally for top-level contexts, and Click code can also build and
-inspect them directly with:
+Objects are primitive immutable maps from symbol names to canonical terms. The
+kernel uses them internally for top-level contexts, and Click code can also
+build and inspect them directly with:
 
 ```lisp
 (object)
@@ -127,11 +125,11 @@ inspect them directly with:
 In those object forms, keys are syntax-level symbols, not runtime values.
 Those symbols are atomic kernel names, not inspectable strings.
 
-Variables are represented explicitly by name in the surface syntax. Internally,
-those names are carried by an atomic `Symbol` type rather than plain strings.
-The host-side smart constructor `Term::lambda(Symbol, Term)` follows the same
-named-variable story: it takes a body term, captures free occurrences of that
-symbol, and lowers the result to the hidden de Bruijn core.
+Variables are represented by `Symbol`. In surface syntax, `(var x)` names a
+variable occurrence directly. In the Rust API, `Term::var(Symbol)` does the
+same thing. A surrounding `Term::lambda(Symbol, Term)` may capture matching
+free occurrences and lower them to hidden local indices; otherwise evaluation
+resolves them against the top-level context.
 
 `lambda` binds a scope. Shadowing is allowed. During lowering, the innermost
 binder with a given name becomes local index `0`, the next one out becomes
@@ -150,35 +148,22 @@ values, one beta step substitutes the argument for local index `0`.
 Externally, one call to `step` either reports that a term is already a value or
 returns exactly one reduct.
 
-The earlier named-syntax experiments exposed the usual substitution problem:
-named binders need alpha-renaming or freshening to avoid accidental capture.
-The kernel avoids that by lowering locals to de Bruijn indices before
-evaluation.
+`Term` is the real kernel syntax. Raw de Bruijn indices are an implementation
+detail.
 
-## Deliberate Omissions
+## Open Questions
 
-The kernel no longer has `quote`, `car`, `cdr`, `cons`, `atom`, or `atom_eq`.
+- Click still needs a binder-safe code datatype and term-inspection interface.
+  The current Rust `StepResult` is useful for the host kernel, but it is not
+  yet a Click-level representation of execution.
 
-That is deliberate. The old quote/list path treated code as ordinary list data.
-That was convenient for bootstrapping, but it tied code introspection to the
-wrong interface. Once binders are represented internally with de Bruijn
-indices, exposing code as raw list structure would either leak those indices or
-force the kernel to pretend that binders are ordinary tree fields.
+- `Term::lambda(Symbol, Term)` is intentionally a smart constructor with
+  name-based capture semantics. That keeps the API small and entirely in kernel
+  objects, but it is not hygienic across reused subterms. If accidental capture
+  becomes a real problem, Click will likely want to split textual `Symbol`s
+  from fresh binder identities such as a distinct `Name` type.
 
-So the current kernel does not yet expose first-class code inspection. That is
-not because introspection is unimportant. It is because the right interface has
-to be binder-aware.
-
-The intended future direction is:
-
-- `Term` is the real kernel syntax.
-- raw de Bruijn indices remain an implementation detail.
-- host-side construction should stay within the kernel object vocabulary, using
-  smart constructors like `Term::lambda(Symbol, Term)` rather than exposing raw
-  locals or closure-based host helpers.
-- Click-level introspection over terms should use dedicated, binder-safe term
-  operations rather than generic list destructors.
-
-The older quote/list bootstrap experiments are therefore no longer the current
-path. They remain useful as historical experiments, but they are not the
-present kernel design.
+- The recursion story is still open. Small-step semantics is the right
+  substrate for talking about termination and divergence, but the actual theory
+  will depend on whether Click adopts unrestricted recursion, a total core, or
+  some explicit fuel or trace discipline.
