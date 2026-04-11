@@ -9,7 +9,6 @@ The current prototype is intentionally narrow. It has:
 - `record-type`
 - `sum-type`
 - `pi`
-- `arrow`
 - `record`
 - `variant`
 - `match`
@@ -62,13 +61,13 @@ Typing is explicit in the host API. A `NameMap` assigns terms to names, and
 `type_of` interprets that map as a type assignment. `step` interprets a
 `NameMap` as a value assignment. Lambdas do not store binder types directly;
 their binders are `Name`s, and the map provides the type information. `pi` is
-the kernel function type, while `(arrow A B)` is the non-dependent convenience
-form.
+the kernel function type. The reader also accepts `(arrow A B)` as non-dependent
+surface sugar, but canonical terms print as `pi`.
 
 The current type vocabulary is deliberately small: function types written as
-`(pi x A B)` or the non-dependent abbreviation `(arrow A B)`, record types
-written as `(record-type ...)`, sum types written as `(sum-type ...)`, and a
-single universe `Type`.
+`(pi x A B)`, record types written as `(record-type ...)`, sum types written as
+`(sum-type ...)`, and a single universe `Type`. Surface `(arrow A B)` is sugar
+for `(pi _ A B)`.
 
 ## Deliberate Omissions
 

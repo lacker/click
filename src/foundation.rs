@@ -204,7 +204,8 @@ fn term_from_list(
         "variant" => term_from_variant(tail, scope, context),
         "arrow" => {
             expect_arity(operator.as_str(), tail, 2)?;
-            Ok(Term::arrow(
+            Ok(Term::pi(
+                Name::fresh(Symbol::from("_")),
                 term_from_expr(&tail[0], scope, context)?,
                 term_from_expr(&tail[1], scope, context)?,
             ))

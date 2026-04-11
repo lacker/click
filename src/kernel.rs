@@ -69,7 +69,6 @@ pub enum StepResult {
 }
 
 static NEXT_NAME_ID: AtomicUsize = AtomicUsize::new(0);
-const ANONYMOUS_NAME_ID: usize = usize::MAX;
 
 impl Symbol {
     pub(crate) fn as_str(&self) -> &str {
@@ -87,17 +86,6 @@ impl Name {
 
     pub fn symbol(&self) -> &Symbol {
         &self.symbol
-    }
-
-    fn anonymous() -> Self {
-        Self {
-            id: ANONYMOUS_NAME_ID,
-            symbol: Symbol::from("_"),
-        }
-    }
-
-    fn is_anonymous(&self) -> bool {
-        self.id == ANONYMOUS_NAME_ID
     }
 }
 
@@ -201,10 +189,6 @@ impl Term {
         })
     }
 
-    pub fn arrow(arg_type: Term, return_type: Term) -> Self {
-        Self::pi(Name::anonymous(), arg_type, return_type)
-    }
-
     pub fn record(fields: SymbolMap) -> Self {
         Self(TermKind::Record(fields))
     }
@@ -306,13 +290,7 @@ impl fmt::Display for Term {
                 binder,
                 arg_type,
                 return_type,
-            } => {
-                if binder.is_anonymous() {
-                    write!(f, "(arrow {arg_type} {return_type})")
-                } else {
-                    write!(f, "(pi {binder} {arg_type} {return_type})")
-                }
-            }
+            } => write!(f, "(pi {binder} {arg_type} {return_type})"),
             TermKind::Record(fields) => format_symbol_map("record", fields, f),
             TermKind::Variant {
                 tag,
@@ -698,11 +676,7 @@ fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
                 .cloned()
                 .ok_or_else(|| format!("missing type for lambda binder '{binder}'"))?;
             let body_type = type_of_in_names(body, types)?;
-            if occurs_name(&body_type, binder) {
-                Ok(Term::pi(binder.clone(), binder_type, body_type))
-            } else {
-                Ok(Term::arrow(binder_type, body_type))
-            }
+            Ok(Term::pi(binder.clone(), binder_type, body_type))
         }
         TermKind::App { function, arg } => {
             let function_type = type_of_in_names(function, types)?;

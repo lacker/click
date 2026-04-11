@@ -98,9 +98,9 @@ fn evaluation_cases() {
             "(sum-type)"
         ),
         ok!(
-            "arrow types evaluate to themselves",
+            "arrow syntax lowers to canonical pi types",
             "(arrow (record-type) (record-type))",
-            "(arrow (record-type) (record-type))"
+            "(pi _ (record-type) (record-type))"
         ),
         ok!(
             "pi types evaluate to themselves",

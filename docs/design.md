@@ -72,8 +72,6 @@ helpers.
   `type`, `record_type`, `sum_type`, `pi`, `record`, `variant`, `var`,
   `lambda`, `app`, `match`, `get`
 
-- `Term::arrow(A, B)` is the non-dependent convenience constructor for `pi`.
-
 - `SymbolMap` provides `new`, `with`, `has`, and `get`.
 
 - `NameMap` provides `new`, `get`, and `with`.
@@ -138,9 +136,9 @@ The empty record now serves as the unit-like value of the kernel, and
 `record-type` is its type. There is no separate `Nil` primitive.
 
 Dependent functions are now explicit in the kernel syntax as `pi`. Surface
-`(arrow A B)` is only shorthand for a non-dependent function type. The kernel
-typing rule for `lambda` synthesizes `pi` when the body type depends on the
-binder, and otherwise synthesizes the non-dependent `arrow` abbreviation.
+`(arrow A B)` is only shorthand for a non-dependent function type, and it
+lowers to the canonical kernel form `(pi _ A B)`. The kernel typing rule for
+`lambda` always synthesizes `pi`.
 
 `variant` carries explicit sum structure. That is intentional. In the current
 `type_of` design, a bare tagged payload does not determine its full sum type,
@@ -169,8 +167,8 @@ evaluation Curry-style while still making typing a structural kernel operation.
 
 The current type vocabulary is intentionally small. `pi`,
 `(record-type ...)`, and `(sum-type ...)` are ordinary kernel terms, and they
-all live in a single `Type` universe. `(arrow A B)` is a surface abbreviation
-for the non-dependent `pi` case. This is a prototype typing layer, not yet the
+all live in a single `Type` universe. `(arrow A B)` is only surface sugar for
+the non-dependent `pi` case. This is a prototype typing layer, not yet the
 final type theory.
 
 ## Open Questions

@@ -18,12 +18,13 @@ fn type_terms_live_in_type() {
     assert_eq!(
         type_of(
             &NameMap::new(),
-            &Term::arrow(
+            &Term::pi(
+                Name::fresh(Symbol::from("_")),
                 Term::record_type(SymbolMap::new()),
                 Term::record_type(SymbolMap::new()),
             ),
         )
-        .expect("arrow type should be a type"),
+        .expect("non-dependent pi type should be a type"),
         Term::r#type()
     );
     assert_eq!(
@@ -69,9 +70,10 @@ fn variables_and_lambdas_use_the_name_type_map() {
         Term::record_type(SymbolMap::new())
     );
     assert_eq!(
-        type_of(&types, &Term::lambda(x.clone(), Term::var(x)))
+        type_of(&types, &Term::lambda(x.clone(), Term::var(x.clone())))
             .expect("lambda should synthesize a function type"),
-        Term::arrow(
+        Term::pi(
+            x,
             Term::record_type(SymbolMap::new()),
             Term::record_type(SymbolMap::new()),
         )
