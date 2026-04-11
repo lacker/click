@@ -32,7 +32,8 @@ enum TermKind {
     Type,
     RecordType(SymbolMap),
     SumType(SymbolMap),
-    Arrow {
+    Pi {
+        binder: Name,
         arg_type: Box<Term>,
         return_type: Box<Term>,
     },
@@ -68,6 +69,7 @@ pub enum StepResult {
 }
 
 static NEXT_NAME_ID: AtomicUsize = AtomicUsize::new(0);
+const ANONYMOUS_NAME_ID: usize = usize::MAX;
 
 impl Symbol {
     pub(crate) fn as_str(&self) -> &str {
@@ -85,6 +87,17 @@ impl Name {
 
     pub fn symbol(&self) -> &Symbol {
         &self.symbol
+    }
+
+    fn anonymous() -> Self {
+        Self {
+            id: ANONYMOUS_NAME_ID,
+            symbol: Symbol::from("_"),
+        }
+    }
+
+    fn is_anonymous(&self) -> bool {
+        self.id == ANONYMOUS_NAME_ID
     }
 }
 
@@ -180,11 +193,16 @@ impl Term {
         Self(TermKind::SumType(fields))
     }
 
-    pub fn arrow(arg_type: Term, return_type: Term) -> Self {
-        Self(TermKind::Arrow {
+    pub fn pi(binder: Name, arg_type: Term, return_type: Term) -> Self {
+        Self(TermKind::Pi {
+            binder,
             arg_type: Box::new(arg_type),
             return_type: Box::new(return_type),
         })
+    }
+
+    pub fn arrow(arg_type: Term, return_type: Term) -> Self {
+        Self::pi(Name::anonymous(), arg_type, return_type)
     }
 
     pub fn record(fields: SymbolMap) -> Self {
@@ -269,7 +287,7 @@ impl Term {
             TermKind::Type
                 | TermKind::RecordType(_)
                 | TermKind::SumType(_)
-                | TermKind::Arrow { .. }
+                | TermKind::Pi { .. }
                 | TermKind::Record(_)
                 | TermKind::Variant { .. }
                 | TermKind::Lambda { .. }
@@ -284,10 +302,17 @@ impl fmt::Display for Term {
             TermKind::Type => write!(f, "Type"),
             TermKind::RecordType(fields) => format_symbol_map("record-type", fields, f),
             TermKind::SumType(fields) => format_symbol_map("sum-type", fields, f),
-            TermKind::Arrow {
+            TermKind::Pi {
+                binder,
                 arg_type,
                 return_type,
-            } => write!(f, "(arrow {arg_type} {return_type})"),
+            } => {
+                if binder.is_anonymous() {
+                    write!(f, "(arrow {arg_type} {return_type})")
+                } else {
+                    write!(f, "(pi {binder} {arg_type} {return_type})")
+                }
+            }
             TermKind::Record(fields) => format_symbol_map("record", fields, f),
             TermKind::Variant {
                 tag,
@@ -349,10 +374,12 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
                 )?)))
             }
         }
-        TermKind::Arrow {
+        TermKind::Pi {
+            binder,
             arg_type,
             return_type,
-        } => Ok(StepResult::Value(Term::arrow(
+        } => Ok(StepResult::Value(Term::pi(
+            binder.clone(),
             (**arg_type).clone(),
             (**return_type).clone(),
         ))),
@@ -508,13 +535,22 @@ fn substitute_name(term: &Term, binder: &Name, replacement: &Term) -> Term {
         TermKind::SumType(fields) => {
             Term::sum_type(substitute_symbol_map(fields, binder, replacement))
         }
-        TermKind::Arrow {
+        TermKind::Pi {
+            binder: inner,
             arg_type,
             return_type,
-        } => Term::arrow(
-            substitute_name(arg_type, binder, replacement),
-            substitute_name(return_type, binder, replacement),
-        ),
+        } => {
+            let arg_type = substitute_name(arg_type, binder, replacement);
+            if inner == binder {
+                Term::pi(inner.clone(), arg_type, (**return_type).clone())
+            } else {
+                Term::pi(
+                    inner.clone(),
+                    arg_type,
+                    substitute_name(return_type, binder, replacement),
+                )
+            }
+        }
         TermKind::Record(fields) => {
             Term::record(substitute_symbol_map(fields, binder, replacement))
         }
@@ -570,10 +606,65 @@ fn substitute_symbol_map(fields: &SymbolMap, binder: &Name, replacement: &Term) 
     SymbolMap { entries }
 }
 
+fn occurs_name(term: &Term, target: &Name) -> bool {
+    match term.kind() {
+        TermKind::Type => false,
+        TermKind::RecordType(fields) | TermKind::SumType(fields) | TermKind::Record(fields) => {
+            occurs_name_in_symbol_map(fields, target)
+        }
+        TermKind::Pi {
+            binder,
+            arg_type,
+            return_type,
+        } => {
+            occurs_name(arg_type, target) || (binder != target && occurs_name(return_type, target))
+        }
+        TermKind::Variant {
+            value, sum_type, ..
+        } => occurs_name(value, target) || occurs_name_in_symbol_map(sum_type, target),
+        TermKind::Var(name) => name == target,
+        TermKind::Lambda { binder, body } => binder != target && occurs_name(body, target),
+        TermKind::App { function, arg } => {
+            occurs_name(function, target) || occurs_name(arg, target)
+        }
+        TermKind::Match {
+            scrutinee,
+            handlers,
+        } => occurs_name(scrutinee, target) || occurs_name_in_symbol_map(handlers, target),
+        TermKind::Get { record, .. } => occurs_name(record, target),
+    }
+}
+
+fn occurs_name_in_symbol_map(fields: &SymbolMap, target: &Name) -> bool {
+    fields
+        .entries
+        .values()
+        .any(|value| occurs_name(value, target))
+}
+
 fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
     match term.kind() {
         TermKind::Type => Ok(Term::r#type()),
-        TermKind::Arrow { .. } => Ok(Term::r#type()),
+        TermKind::Pi {
+            binder,
+            arg_type,
+            return_type,
+        } => {
+            expect_equal(
+                &type_of_in_names(arg_type, types)?,
+                &Term::r#type(),
+                "pi argument type",
+            )?;
+            expect_equal(
+                &type_of_in_names(
+                    return_type,
+                    &types.with(binder.clone(), (**arg_type).clone()),
+                )?,
+                &Term::r#type(),
+                "pi return type",
+            )?;
+            Ok(Term::r#type())
+        }
         TermKind::RecordType(fields) => {
             expect_symbol_map_terms_are_types(fields, types, "record-type")
         }
@@ -607,11 +698,16 @@ fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
                 .cloned()
                 .ok_or_else(|| format!("missing type for lambda binder '{binder}'"))?;
             let body_type = type_of_in_names(body, types)?;
-            Ok(Term::arrow(binder_type, body_type))
+            if occurs_name(&body_type, binder) {
+                Ok(Term::pi(binder.clone(), binder_type, body_type))
+            } else {
+                Ok(Term::arrow(binder_type, body_type))
+            }
         }
         TermKind::App { function, arg } => {
             let function_type = type_of_in_names(function, types)?;
-            let TermKind::Arrow {
+            let TermKind::Pi {
+                binder,
                 arg_type,
                 return_type,
             } = function_type.kind()
@@ -622,7 +718,7 @@ fn type_of_in_names(term: &Term, types: &NameMap) -> ClickResult<Term> {
             };
             let actual_arg_type = type_of_in_names(arg, types)?;
             expect_equal(&actual_arg_type, arg_type, "app argument")?;
-            Ok((**return_type).clone())
+            Ok(substitute_name(return_type, binder, arg))
         }
         TermKind::Match {
             scrutinee,
@@ -671,11 +767,20 @@ fn type_of_match_handler(
 ) -> ClickResult<Term> {
     match handler.kind() {
         TermKind::Lambda { binder, body } => {
-            type_of_in_names(body, &types.with(binder.clone(), payload_type.clone()))
+            let result_type =
+                type_of_in_names(body, &types.with(binder.clone(), payload_type.clone()))?;
+            if occurs_name(&result_type, binder) {
+                Err(format!(
+                    "match handler '{tag}' result type cannot depend on its argument"
+                ))
+            } else {
+                Ok(result_type)
+            }
         }
         _ => {
             let handler_type = type_of_in_names(handler, types)?;
-            let TermKind::Arrow {
+            let TermKind::Pi {
+                binder,
                 arg_type,
                 return_type,
             } = handler_type.kind()
@@ -689,7 +794,13 @@ fn type_of_match_handler(
                 payload_type,
                 &format!("match handler '{tag}' argument"),
             )?;
-            Ok((**return_type).clone())
+            if occurs_name(return_type, binder) {
+                Err(format!(
+                    "match handler '{tag}' result type cannot depend on its argument"
+                ))
+            } else {
+                Ok((**return_type).clone())
+            }
         }
     }
 }

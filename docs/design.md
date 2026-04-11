@@ -69,8 +69,10 @@ helpers.
 ### Kernel Operations
 
 - `Term` constructors build kernel syntax directly:
-  `type`, `record_type`, `sum_type`, `arrow`, `record`, `variant`, `var`,
+  `type`, `record_type`, `sum_type`, `pi`, `record`, `variant`, `var`,
   `lambda`, `app`, `match`, `get`
+
+- `Term::arrow(A, B)` is the non-dependent convenience constructor for `pi`.
 
 - `SymbolMap` provides `new`, `with`, `has`, and `get`.
 
@@ -135,6 +137,11 @@ exact structural products: the type of a record is determined field-by-field.
 The empty record now serves as the unit-like value of the kernel, and
 `record-type` is its type. There is no separate `Nil` primitive.
 
+Dependent functions are now explicit in the kernel syntax as `pi`. Surface
+`(arrow A B)` is only shorthand for a non-dependent function type. The kernel
+typing rule for `lambda` synthesizes `pi` when the body type depends on the
+binder, and otherwise synthesizes the non-dependent `arrow` abbreviation.
+
 `variant` carries explicit sum structure. That is intentional. In the current
 `type_of` design, a bare tagged payload does not determine its full sum type,
 so a variant term has to say which `sum-type` it belongs to.
@@ -144,7 +151,8 @@ that is a `variant`, it dispatches to the matching handler and turns the step
 into an ordinary application. Typing for `match` is exact and structural:
 every tag named in the scrutinee's `sum-type` must have a handler, no extra
 handlers are allowed, and all handler bodies must synthesize the same result
-type. In the surface language, handlers are usually lambdas.
+type. `match` is still non-dependent even though the kernel now has `pi`. In
+the surface language, handlers are usually lambdas.
 
 `declare` threads a context forward explicitly. It is pure: a definition
 evaluates its value in the current context, then returns a new extended
@@ -155,13 +163,15 @@ value to a name.
 The first typing API is `type_of`. It takes a `NameMap` from `Name` to type and
 computes a `Term` type for another `Term`. Lambdas do not carry binder types in
 their syntax; instead, the binder's `Name` must already have a type assignment
-in the map. This keeps evaluation Curry-style while still making typing a
-structural kernel operation.
+in the map. `pi` checks its codomain in a type environment extended by its
+binder. Application substitutes the argument into a `pi` codomain. This keeps
+evaluation Curry-style while still making typing a structural kernel operation.
 
-The current type vocabulary is intentionally small. `(arrow A B)`,
+The current type vocabulary is intentionally small. `pi`,
 `(record-type ...)`, and `(sum-type ...)` are ordinary kernel terms, and they
-all live in a single `Type` universe. This is a prototype typing layer, not
-yet the final type theory.
+all live in a single `Type` universe. `(arrow A B)` is a surface abbreviation
+for the non-dependent `pi` case. This is a prototype typing layer, not yet the
+final type theory.
 
 ## Open Questions
 
@@ -172,6 +182,10 @@ yet the final type theory.
 - The current `type_of` judgment is intentionally simple and environment-driven.
   The next design question is whether Click should add bidirectional checking
   on top of it, explicit annotations in terms, or both.
+
+- Click now has dependent functions, but it still does not have dependent
+  elimination for data. That means `Pi` exists, but induction does not follow
+  from the current `match`.
 
 - The recursion story is still open. Small-step semantics is the right
   substrate for talking about termination and divergence, but the actual theory

@@ -103,6 +103,11 @@ fn evaluation_cases() {
             "(arrow (record-type) (record-type))"
         ),
         ok!(
+            "pi types evaluate to themselves",
+            "(pi x Type (var x))",
+            "(pi x Type (var x))"
+        ),
+        ok!(
             "variants evaluate to themselves",
             "(variant left (record) (sum-type (left (record-type)) (right (record-type))))",
             "(variant left (record) (sum-type (left (record-type)) (right (record-type))))"

@@ -200,6 +200,7 @@ fn term_from_list(
         "sum-type" => Ok(Term::sum_type(symbol_map_from_entries(
             tail, scope, context,
         )?)),
+        "pi" => term_from_pi(tail, scope, context),
         "variant" => term_from_variant(tail, scope, context),
         "arrow" => {
             expect_arity(operator.as_str(), tail, 2)?;
@@ -283,6 +284,17 @@ fn term_from_variant(
         return Err("variant expects an explicit sum-type term".to_string());
     };
     Ok(Term::variant(tag, value, fields.clone()))
+}
+
+fn term_from_pi(args: &[SExpr], scope: &[(Symbol, Name)], context: &Context) -> ClickResult<Term> {
+    expect_arity("pi", args, 3)?;
+    let binder_symbol = expect_symbol(&args[0], "pi binder")?;
+    let binder = Name::fresh(binder_symbol.clone());
+    let arg_type = term_from_expr(&args[1], scope, context)?;
+    let mut inner_scope = scope.to_vec();
+    inner_scope.push((binder_symbol, binder.clone()));
+    let return_type = term_from_expr(&args[2], &inner_scope, context)?;
+    Ok(Term::pi(binder, arg_type, return_type))
 }
 
 fn term_from_match(
@@ -406,6 +418,12 @@ mod tests {
     fn lowering_resolves_nested_binders() {
         let term = parse_term("(lambda x (lambda y (var x)))", &Context::new());
         assert_eq!(term.to_string(), "#<function>");
+    }
+
+    #[test]
+    fn lowering_resolves_pi_binders_in_the_codomain() {
+        let term = parse_term("(pi x Type (var x))", &Context::new());
+        assert_eq!(term.to_string(), "(pi x Type (var x))");
     }
 
     #[test]
