@@ -1,7 +1,6 @@
+pub mod foundation;
 pub mod kernel;
 mod reader;
 
-pub use kernel::{
-    ClickResult, Context, Declaration, Name, NameMap, StepResult, Symbol, SymbolMap, Term, declare,
-    run_source, step, type_of,
-};
+pub use foundation::{Context, Declaration, declare, run_source};
+pub use kernel::{ClickResult, Name, NameMap, StepResult, Symbol, SymbolMap, Term, step, type_of};

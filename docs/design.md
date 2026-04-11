@@ -8,6 +8,8 @@ This document records the current design direction for `click`.
 
 Click code can prove things about Click code.
 
+The Click kernel should be simple to understand, but powerful enough to self-host.
+
 You can inspect Click programs, transform them, and prove those transformations
 correct, all inside Click.
 
@@ -86,6 +88,9 @@ The smallest kernel should speak in terms of `Term`, `Name`, `Symbol`,
 Rust strings, integers, or indices.
 
 ## Top-Level Interface
+
+This layer is the current Rust foundation: source lowering, context threading,
+and declaration processing built on top of the kernel.
 
 - `Context`
   An immutable top-level environment of evaluated definitions. It maps surface

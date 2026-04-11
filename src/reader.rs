@@ -1,4 +1,10 @@
-use crate::kernel::{ClickResult, SExpr, Symbol};
+use crate::kernel::{ClickResult, Symbol};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SExpr {
+    Symbol(Symbol),
+    List(Vec<SExpr>),
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Token {

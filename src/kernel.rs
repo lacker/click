@@ -3,15 +3,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::reader::read;
-
 pub type ClickResult<T> = Result<T, String>;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Context {
-    names: BTreeMap<Symbol, Name>,
-    values: NameMap,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SymbolMap {
@@ -21,23 +13,6 @@ pub struct SymbolMap {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NameMap {
     entries: BTreeMap<Name, Term>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Declaration {
-    Def {
-        name: Name,
-        value: Term,
-    },
-    Check {
-        actual: Term,
-        expected: Term,
-    },
-    Theorem {
-        name: Name,
-        actual: Term,
-        expected: Term,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -87,12 +62,6 @@ enum TermKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum SExpr {
-    Symbol(Symbol),
-    List(Vec<SExpr>),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StepResult {
     Value(Term),
     Reduced(Term),
@@ -101,7 +70,7 @@ pub enum StepResult {
 static NEXT_NAME_ID: AtomicUsize = AtomicUsize::new(0);
 
 impl Symbol {
-    fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
 }
@@ -266,90 +235,19 @@ impl Term {
         })
     }
 
+    pub(crate) fn sum_type_fields(&self) -> Option<&SymbolMap> {
+        match self.kind() {
+            TermKind::SumType(fields) => Some(fields),
+            _ => None,
+        }
+    }
+
     fn kind(&self) -> &TermKind {
         &self.0
     }
 
     fn into_kind(self) -> TermKind {
         self.0
-    }
-}
-
-impl Context {
-    // Construct an empty top-level context with no named definitions.
-    pub fn new() -> Self {
-        Self {
-            names: BTreeMap::new(),
-            values: NameMap::new(),
-        }
-    }
-
-    // Look up the value currently bound to a top-level name.
-    pub fn get(&self, name: &Name) -> Option<&Term> {
-        self.values.get(name)
-    }
-
-    // Expose the current top-level value assignment.
-    pub fn values(&self) -> &NameMap {
-        &self.values
-    }
-}
-
-/// Parse a source string, declare any top-level definitions, and evaluate the
-/// final top-level expression.
-pub fn run_source(source: &str) -> ClickResult<Option<Term>> {
-    let exprs = read(source)?;
-    let mut context = Context::new();
-
-    let mut last = None;
-    for expr in exprs {
-        match declaration_from_expr(&expr, &context)? {
-            Some(declaration) => context = declare(&context, declaration)?,
-            None => {
-                let term = term_from_expr(&expr, &[], &context)?;
-                last = Some(eval(&term, context.values())?);
-            }
-        }
-    }
-
-    Ok(last)
-}
-
-/// Check and apply one top-level declaration, producing an extended context.
-pub fn declare(context: &Context, declaration: Declaration) -> ClickResult<Context> {
-    match declaration {
-        Declaration::Def { name, value } => {
-            if context.has_symbol(name.symbol()) {
-                return Err(format!(
-                    "definition '{}' is already declared",
-                    name.symbol()
-                ));
-            }
-            let evaluated = eval(&value, context.values())?;
-            Ok(context.with_value(name, evaluated))
-        }
-        Declaration::Check { actual, expected } => {
-            let actual = eval(&actual, context.values())?;
-            let expected = eval(&expected, context.values())?;
-            expect_equal(&actual, &expected, "check")?;
-            Ok(context.clone())
-        }
-        Declaration::Theorem {
-            name,
-            actual,
-            expected,
-        } => {
-            if context.has_symbol(name.symbol()) {
-                return Err(format!(
-                    "definition '{}' is already declared",
-                    name.symbol()
-                ));
-            }
-            let actual = eval(&actual, context.values())?;
-            let expected = eval(&expected, context.values())?;
-            expect_equal(&actual, &expected, "theorem")?;
-            Ok(context.with_value(name, actual))
-        }
     }
 }
 
@@ -362,8 +260,6 @@ pub fn step(values: &NameMap, term: &Term) -> ClickResult<StepResult> {
 pub fn type_of(names: &NameMap, term: &Term) -> ClickResult<Term> {
     type_of_in_names(term, names)
 }
-
-// Private implementation stuff goes below here, to keep this file organized.
 
 impl Term {
     // Recognize canonical terms that need no further evaluation.
@@ -378,24 +274,6 @@ impl Term {
                 | TermKind::Variant { .. }
                 | TermKind::Lambda { .. }
         )
-    }
-}
-
-impl Context {
-    fn resolve_symbol(&self, symbol: &Symbol) -> Option<Name> {
-        self.names.get(symbol).cloned()
-    }
-
-    fn has_symbol(&self, symbol: &Symbol) -> bool {
-        self.names.contains_key(symbol)
-    }
-
-    // Return a new context extended with one evaluated top-level definition.
-    fn with_value(&self, name: Name, value: Term) -> Self {
-        let mut names = self.names.clone();
-        names.insert(name.symbol().clone(), name.clone());
-        let values = self.values.with(name, value);
-        Self { names, values }
     }
 }
 
@@ -447,270 +325,6 @@ fn format_match(scrutinee: &Term, handlers: &SymbolMap, f: &mut fmt::Formatter<'
         write!(f, " ({tag} {handler})")?;
     }
     write!(f, ")")
-}
-
-// Recognize top-level declaration forms and convert them into kernel declarations.
-fn declaration_from_expr(expr: &SExpr, context: &Context) -> ClickResult<Option<Declaration>> {
-    let SExpr::List(items) = expr else {
-        return Ok(None);
-    };
-
-    let Some((head, tail)) = items.split_first() else {
-        return Ok(None);
-    };
-
-    let SExpr::Symbol(operator) = head else {
-        return Ok(None);
-    };
-
-    match operator.as_str() {
-        "def" => {
-            expect_arity(operator.as_str(), tail, 2)?;
-            let name = Name::fresh(expect_symbol(&tail[0], "def name")?);
-            Ok(Some(Declaration::Def {
-                name,
-                value: term_from_expr(&tail[1], &[], context)?,
-            }))
-        }
-        "check" => {
-            expect_arity(operator.as_str(), tail, 2)?;
-            Ok(Some(Declaration::Check {
-                actual: term_from_expr(&tail[0], &[], context)?,
-                expected: term_from_expr(&tail[1], &[], context)?,
-            }))
-        }
-        "theorem" => {
-            expect_arity(operator.as_str(), tail, 3)?;
-            let name = Name::fresh(expect_symbol(&tail[0], "theorem name")?);
-            Ok(Some(Declaration::Theorem {
-                name,
-                actual: term_from_expr(&tail[1], &[], context)?,
-                expected: term_from_expr(&tail[2], &[], context)?,
-            }))
-        }
-        _ => Ok(None),
-    }
-}
-
-// Lower one surface expression into a well-scoped kernel term.
-fn term_from_expr(expr: &SExpr, scope: &[(Symbol, Name)], context: &Context) -> ClickResult<Term> {
-    match expr {
-        SExpr::Symbol(symbol) => match symbol.as_str() {
-            "Type" => Ok(Term::r#type()),
-            _ => Err(format!("unbound atom '{symbol}'")),
-        },
-        SExpr::List(items) => term_from_list(items, scope, context),
-    }
-}
-
-// Lower one tagged list form such as `record`, `lambda`, or `app`.
-fn term_from_list(
-    items: &[SExpr],
-    scope: &[(Symbol, Name)],
-    context: &Context,
-) -> ClickResult<Term> {
-    let Some((head, tail)) = items.split_first() else {
-        return Err("cannot evaluate an empty list".to_string());
-    };
-
-    let SExpr::Symbol(operator) = head else {
-        return Err("form heads must be keyword atoms".to_string());
-    };
-
-    match operator.as_str() {
-        "quote" => Err("quote is no longer supported in the kernel".to_string()),
-        "def" => Err("def is only valid as a top-level declaration".to_string()),
-        "check" => Err("check is only valid as a top-level declaration".to_string()),
-        "theorem" => Err("theorem is only valid as a top-level declaration".to_string()),
-        "record" => Ok(Term::record(symbol_map_from_entries(tail, scope, context)?)),
-        "record-type" => Ok(Term::record_type(symbol_map_from_entries(
-            tail, scope, context,
-        )?)),
-        "sum-type" => Ok(Term::sum_type(symbol_map_from_entries(
-            tail, scope, context,
-        )?)),
-        "variant" => term_from_variant(tail, scope, context),
-        "arrow" => {
-            expect_arity(operator.as_str(), tail, 2)?;
-            Ok(Term::arrow(
-                term_from_expr(&tail[0], scope, context)?,
-                term_from_expr(&tail[1], scope, context)?,
-            ))
-        }
-        "lambda" => term_from_lambda(tail, scope, context),
-        "var" => term_from_var(tail, scope, context),
-        "app" => {
-            expect_arity(operator.as_str(), tail, 2)?;
-            Ok(Term::app(
-                term_from_expr(&tail[0], scope, context)?,
-                term_from_expr(&tail[1], scope, context)?,
-            ))
-        }
-        "match" => term_from_match(tail, scope, context),
-        "get" => {
-            expect_arity(operator.as_str(), tail, 2)?;
-            Ok(Term::get(
-                term_from_expr(&tail[0], scope, context)?,
-                expect_symbol(&tail[1], "get key")?,
-            ))
-        }
-        "case" => Err("case is no longer supported in the kernel; use match".to_string()),
-        "if" | "with" | "has" | "atom" | "atom_eq" | "car" | "cdr" | "cons" => {
-            Err(format!("{operator} is no longer supported in the kernel"))
-        }
-        _ => Err(format!("unknown form '{operator}'")),
-    }
-}
-
-fn symbol_map_from_entries(
-    items: &[SExpr],
-    scope: &[(Symbol, Name)],
-    context: &Context,
-) -> ClickResult<SymbolMap> {
-    let mut fields = SymbolMap::new();
-    for item in items {
-        let SExpr::List(parts) = item else {
-            return Err("field entries must be lists".to_string());
-        };
-        if parts.len() != 2 {
-            return Err("field entries must have exactly two parts".to_string());
-        }
-        let key = expect_symbol(&parts[0], "field key")?;
-        let value = term_from_expr(&parts[1], scope, context)?;
-        fields = fields.with(key, value);
-    }
-    Ok(fields)
-}
-
-// Lower a `lambda` body under one more local binder.
-fn term_from_lambda(
-    args: &[SExpr],
-    scope: &[(Symbol, Name)],
-    context: &Context,
-) -> ClickResult<Term> {
-    expect_arity("lambda", args, 2)?;
-    let binder_symbol = expect_symbol(&args[0], "lambda binder")?;
-    let binder = Name::fresh(binder_symbol.clone());
-    let mut inner_scope = scope.to_vec();
-    inner_scope.push((binder_symbol, binder.clone()));
-    Ok(Term::lowered_lambda(
-        binder,
-        term_from_expr(&args[1], &inner_scope, context)?,
-    ))
-}
-
-fn term_from_variant(
-    args: &[SExpr],
-    scope: &[(Symbol, Name)],
-    context: &Context,
-) -> ClickResult<Term> {
-    expect_arity("variant", args, 3)?;
-    let tag = expect_symbol(&args[0], "variant tag")?;
-    let value = term_from_expr(&args[1], scope, context)?;
-    let sum_type = term_from_expr(&args[2], scope, context)?;
-    let TermKind::SumType(fields) = sum_type.kind() else {
-        return Err("variant expects an explicit sum-type term".to_string());
-    };
-    Ok(Term::variant(tag, value, fields.clone()))
-}
-
-fn term_from_match(
-    args: &[SExpr],
-    scope: &[(Symbol, Name)],
-    context: &Context,
-) -> ClickResult<Term> {
-    expect_min_arity("match", args, 2)?;
-    let scrutinee = term_from_expr(&args[0], scope, context)?;
-    let mut handlers = SymbolMap::new();
-    for handler_expr in &args[1..] {
-        let SExpr::List(parts) = handler_expr else {
-            return Err("match handlers must be lists".to_string());
-        };
-        if parts.len() != 2 {
-            return Err("match handlers must have exactly two parts".to_string());
-        }
-        let tag = expect_symbol(&parts[0], "match handler tag")?;
-        if handlers.has(tag.as_str()) {
-            return Err(format!("duplicate match handler '{tag}'"));
-        }
-        let handler = term_from_expr(&parts[1], scope, context)?;
-        handlers = handlers.with(tag, handler);
-    }
-    Ok(Term::r#match(scrutinee, handlers))
-}
-
-// Resolve a surface `var` into either a local name or a known global name.
-fn term_from_var(args: &[SExpr], scope: &[(Symbol, Name)], context: &Context) -> ClickResult<Term> {
-    expect_arity("var", args, 1)?;
-    let symbol = expect_symbol(&args[0], "var name")?;
-
-    if let Some(name) = local_name(scope, &symbol) {
-        Ok(Term::var(name))
-    } else if let Some(name) = context.resolve_symbol(&symbol) {
-        Ok(Term::var(name))
-    } else {
-        Err(format!("unbound variable '{symbol}'"))
-    }
-}
-
-// Find the innermost local name with the given surface symbol.
-fn local_name(scope: &[(Symbol, Name)], symbol: &Symbol) -> Option<Name> {
-    scope
-        .iter()
-        .rev()
-        .find(|(binder, _)| binder == symbol)
-        .map(|(_, name)| name.clone())
-}
-
-// Reject top-level assertions whose evaluated values do not match.
-fn expect_equal(actual: &Term, expected: &Term, role: &str) -> ClickResult<()> {
-    if actual == expected {
-        Ok(())
-    } else {
-        Err(format!("{role} failed: expected {expected}, got {actual}"))
-    }
-}
-
-// Reject forms whose argument count does not match the primitive's contract.
-fn expect_arity(operator: &str, args: &[SExpr], expected: usize) -> ClickResult<()> {
-    if args.len() == expected {
-        Ok(())
-    } else {
-        Err(format!(
-            "{operator} expects {expected} argument(s), got {}",
-            args.len()
-        ))
-    }
-}
-
-fn expect_min_arity(operator: &str, args: &[SExpr], minimum: usize) -> ClickResult<()> {
-    if args.len() >= minimum {
-        Ok(())
-    } else {
-        Err(format!(
-            "{operator} expects at least {minimum} argument(s), got {}",
-            args.len()
-        ))
-    }
-}
-
-// Extract an atom name from syntax where a binder, field, or tag is expected.
-fn expect_symbol(expr: &SExpr, role: &str) -> ClickResult<Symbol> {
-    match expr {
-        SExpr::Symbol(symbol) => Ok(symbol.clone()),
-        _ => Err(format!("{role} must be an atom")),
-    }
-}
-
-// Evaluate one well-scoped kernel term by iterating single reduction steps.
-fn eval(term: &Term, globals: &NameMap) -> ClickResult<Term> {
-    let mut current = term.clone();
-    loop {
-        match step_in_names(&current, globals)? {
-            StepResult::Value(value) => return Ok(value),
-            StepResult::Reduced(next) => current = next,
-        }
-    }
 }
 
 // Internal one-step reduction under the current top-level value environment.
@@ -1099,6 +713,14 @@ fn type_of_record(fields: &SymbolMap, types: &NameMap) -> ClickResult<Term> {
     Ok(Term::record_type(field_types))
 }
 
+fn expect_equal(actual: &Term, expected: &Term, role: &str) -> ClickResult<()> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!("{role} failed: expected {expected}, got {actual}"))
+    }
+}
+
 fn expect_record_type(term: &Term, role: &str) -> ClickResult<SymbolMap> {
     match term.kind() {
         TermKind::RecordType(fields) => Ok(fields.clone()),
@@ -1106,7 +728,7 @@ fn expect_record_type(term: &Term, role: &str) -> ClickResult<SymbolMap> {
     }
 }
 
-fn expect_sum_type(term: &Term, role: &str) -> ClickResult<SymbolMap> {
+pub(crate) fn expect_sum_type(term: &Term, role: &str) -> ClickResult<SymbolMap> {
     match term.kind() {
         TermKind::SumType(fields) => Ok(fields.clone()),
         _ => Err(format!("{role} must be a sum type, got {term}")),
@@ -1117,20 +739,33 @@ fn expect_sum_type(term: &Term, role: &str) -> ClickResult<SymbolMap> {
 mod tests {
     use super::*;
 
-    fn parse_term(source: &str, context: &Context) -> Term {
-        let exprs = read(source).expect("source should parse");
-        assert_eq!(exprs.len(), 1, "test helper expects exactly one expression");
-        term_from_expr(&exprs[0], &[], context).expect("expression should lower")
+    fn unit_record() -> Term {
+        Term::record(SymbolMap::new())
+    }
+
+    fn unit_record_type() -> Term {
+        Term::record_type(SymbolMap::new())
+    }
+
+    fn boolish_sum_type() -> SymbolMap {
+        SymbolMap::new()
+            .with(Symbol::from("left"), unit_record_type())
+            .with(Symbol::from("right"), unit_record_type())
     }
 
     #[test]
     fn step_stops_after_one_beta_reduction() {
-        let term = parse_term(
-            "(app (lambda x (app (lambda y (var y)) (var x))) (record))",
-            &Context::new(),
+        let x = Name::fresh(Symbol::from("x"));
+        let y = Name::fresh(Symbol::from("y"));
+        let term = Term::app(
+            Term::lambda(
+                x.clone(),
+                Term::app(Term::lambda(y.clone(), Term::var(y)), Term::var(x)),
+            ),
+            unit_record(),
         );
 
-        match step_in_names(&term, &NameMap::new()).expect("step should succeed") {
+        match step(&NameMap::new(), &term).expect("step should succeed") {
             StepResult::Reduced(next) => {
                 assert_eq!(next.to_string(), "(app #<function> (record))")
             }
@@ -1139,13 +774,32 @@ mod tests {
     }
 
     #[test]
-    fn step_chooses_a_case_branch_without_evaluating_it_further() {
-        let term = parse_term(
-            "(match (variant left (record) (sum-type (left (record-type)) (right (record-type)))) (left (lambda x (app (lambda y (var y)) (record)))) (right (lambda z (record (other (record))))))",
-            &Context::new(),
+    fn step_chooses_a_match_branch_without_evaluating_it_further() {
+        let x = Name::fresh(Symbol::from("x"));
+        let z = Name::fresh(Symbol::from("z"));
+        let term = Term::r#match(
+            Term::variant(Symbol::from("left"), unit_record(), boolish_sum_type()),
+            SymbolMap::new()
+                .with(
+                    Symbol::from("left"),
+                    Term::lambda(
+                        x,
+                        Term::app(
+                            Term::lambda(Name::fresh(Symbol::from("y")), unit_record()),
+                            unit_record(),
+                        ),
+                    ),
+                )
+                .with(
+                    Symbol::from("right"),
+                    Term::lambda(
+                        z,
+                        Term::record(SymbolMap::new().with(Symbol::from("other"), unit_record())),
+                    ),
+                ),
         );
 
-        match step_in_names(&term, &NameMap::new()).expect("step should succeed") {
+        match step(&NameMap::new(), &term).expect("step should succeed") {
             StepResult::Reduced(next) => {
                 assert_eq!(next.to_string(), "(app #<function> (record))")
             }
@@ -1155,12 +809,29 @@ mod tests {
 
     #[test]
     fn step_reduces_the_function_side_of_an_application_first() {
-        let term = parse_term(
-            "(app (match (variant left (record) (sum-type (left (record-type)) (right (record-type)))) (left (lambda x (lambda y (var y)))) (right (lambda z (record)))) (app (lambda y (var y)) (record)))",
-            &Context::new(),
+        let x = Name::fresh(Symbol::from("x"));
+        let z = Name::fresh(Symbol::from("z"));
+        let outer_arg = Term::app(
+            Term::lambda(Name::fresh(Symbol::from("y")), unit_record()),
+            unit_record(),
+        );
+        let term = Term::app(
+            Term::r#match(
+                Term::variant(Symbol::from("left"), unit_record(), boolish_sum_type()),
+                SymbolMap::new()
+                    .with(
+                        Symbol::from("left"),
+                        Term::lambda(
+                            x,
+                            Term::lambda(Name::fresh(Symbol::from("y")), unit_record()),
+                        ),
+                    )
+                    .with(Symbol::from("right"), Term::lambda(z, unit_record())),
+            ),
+            outer_arg,
         );
 
-        match step_in_names(&term, &NameMap::new()).expect("step should succeed") {
+        match step(&NameMap::new(), &term).expect("step should succeed") {
             StepResult::Reduced(next) => {
                 assert_eq!(
                     next.to_string(),
