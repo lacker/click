@@ -127,11 +127,13 @@ application are values, one beta step substitutes the argument for the bound
 name. In the current Rust kernel, canonical values are represented as fixed
 points of `step` rather than through a separate `StepResult` enum.
 
-The application fragment has started moving toward a more local machine-style
-step relation. When `step` sees a nested application on the pending side of an
-`app`, it can reify one layer of evaluation context into a fresh
-administrative lambda instead of recursively descending through the whole
-subterm. Other term formers still use the older recursive host-side descent.
+The current `step` relation is intentionally non-recursive at the host level,
+apart from substitution during beta reduction. When `step` needs work to happen
+under an outer term constructor, it reifies one layer of evaluation context
+into a fresh administrative lambda and returns an ordinary `app` term. For
+applications, that administrative step can also expose one nested pending child
+of the function or argument before beta reduction, so one kernel step stays
+local even when the source term is nested.
 
 Products and sums are now explicit in the kernel syntax. `record` values have
 `record-type` types. `variant` values have `sum-type` types. Records are still
@@ -194,10 +196,10 @@ final type theory.
   will depend on whether Click adopts unrestricted recursion, a total core, or
   some explicit fuel or trace discipline.
 
-- The current `step` API is now `Term -> Term`. Application has a first
-  experiment in local, non-recursive stepping via administrative lambdas, but
-  `match`, `get`, records, variants, and other forms still recurse through
-  subterms in Rust.
+- The current `step` API is now `Term -> Term`, and the evaluator uses
+  administrative lambdas as real kernel terms. That makes the execution story
+  more explicit, but it also means Click execution traces now include
+  evaluator-generated functions.
 
 ## Next Steps
 

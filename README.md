@@ -53,6 +53,10 @@ wrappers around that smaller kernel.
 - There is no separate runtime `Value` or `Closure` datatype in the current
   kernel.
 
+The current evaluator makes pending work explicit by introducing
+administrative lambdas during stepping, rather than by maintaining a separate
+host-side stack object.
+
 `Symbol` and `Name` are different things. `Symbol` is an atomic selector, used
 for record fields, sum tags, and surface labels. `Name` refers to a value binding. Click
 code cannot inspect the character structure of either.

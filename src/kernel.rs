@@ -335,14 +335,22 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<Term> {
             if symbol_map_values_are_values(fields) {
                 Ok(Term::record_type(fields.clone()))
             } else {
-                Ok(Term::record_type(step_symbol_map(fields, globals)?))
+                let (key, pending) =
+                    first_non_value_field(fields).expect("non-value field should exist");
+                Ok(continue_with(&pending, |next_field| {
+                    Term::record_type(fields.with(key.clone(), next_field))
+                }))
             }
         }
         TermKind::SumType(fields) => {
             if symbol_map_values_are_values(fields) {
                 Ok(Term::sum_type(fields.clone()))
             } else {
-                Ok(Term::sum_type(step_symbol_map(fields, globals)?))
+                let (key, pending) =
+                    first_non_value_field(fields).expect("non-value field should exist");
+                Ok(continue_with(&pending, |next_field| {
+                    Term::sum_type(fields.with(key.clone(), next_field))
+                }))
             }
         }
         TermKind::Pi {
@@ -358,7 +366,11 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<Term> {
             if symbol_map_values_are_values(fields) {
                 Ok(Term::record(fields.clone()))
             } else {
-                Ok(Term::record(step_symbol_map(fields, globals)?))
+                let (key, pending) =
+                    first_non_value_field(fields).expect("non-value field should exist");
+                Ok(continue_with(&pending, |next_field| {
+                    Term::record(fields.with(key.clone(), next_field))
+                }))
             }
         }
         TermKind::Variant {
@@ -367,17 +379,19 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<Term> {
             sum_type,
         } => {
             if !symbol_map_values_are_values(sum_type) {
-                Ok(Term::variant(
-                    tag.clone(),
-                    (**value).clone(),
-                    step_symbol_map(sum_type, globals)?,
-                ))
+                let (key, pending) =
+                    first_non_value_field(sum_type).expect("non-value sum field should exist");
+                Ok(continue_with(&pending, |next_field| {
+                    Term::variant(
+                        tag.clone(),
+                        (**value).clone(),
+                        sum_type.with(key.clone(), next_field),
+                    )
+                }))
             } else if !value.is_value() {
-                Ok(Term::variant(
-                    tag.clone(),
-                    step_reduct(value, globals)?,
-                    sum_type.clone(),
-                ))
+                Ok(continue_with(value, |next_value| {
+                    Term::variant(tag.clone(), next_value, sum_type.clone())
+                }))
             } else {
                 Ok(Term::variant(
                     tag.clone(),
@@ -399,10 +413,9 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<Term> {
             handlers,
         } => {
             if !scrutinee.is_value() {
-                Ok(Term::r#match(
-                    step_reduct(scrutinee, globals)?,
-                    handlers.clone(),
-                ))
+                Ok(continue_with(scrutinee, |next_scrutinee| {
+                    Term::r#match(next_scrutinee, handlers.clone())
+                }))
             } else {
                 let rendered = scrutinee.to_string();
                 match scrutinee.kind() {
@@ -419,7 +432,9 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<Term> {
         }
         TermKind::Get { record, key } => {
             if !record.is_value() {
-                Ok(Term::get(step_reduct(record, globals)?, key.clone()))
+                Ok(continue_with(record, |next_record| {
+                    Term::get(next_record, key.clone())
+                }))
             } else {
                 let fields = expect_record((**record).clone(), "get record")?;
                 fields
@@ -470,7 +485,107 @@ fn step_pending_in_function(function: &Term, arg: &Term, globals: &NameMap) -> C
                 }
             }
         }
-        _ => Ok(Term::app(step_reduct(function, globals)?, arg.clone())),
+        TermKind::Match {
+            scrutinee,
+            handlers,
+        } => {
+            if !scrutinee.is_value() {
+                Ok(continue_with(scrutinee, |next_scrutinee| {
+                    Term::app(Term::r#match(next_scrutinee, handlers.clone()), arg.clone())
+                }))
+            } else {
+                let rendered = scrutinee.to_string();
+                match scrutinee.kind() {
+                    TermKind::Variant { tag, value, .. } => {
+                        let handler = handlers
+                            .get(tag.as_str())
+                            .cloned()
+                            .ok_or_else(|| format!("missing match handler '{tag}'"))?;
+                        Ok(Term::app(
+                            Term::app(handler, (**value).clone()),
+                            arg.clone(),
+                        ))
+                    }
+                    _ => Err(format!("match scrutinee must be a variant, got {rendered}")),
+                }
+            }
+        }
+        TermKind::Get { record, key } => {
+            if !record.is_value() {
+                Ok(continue_with(record, |next_record| {
+                    Term::app(Term::get(next_record, key.clone()), arg.clone())
+                }))
+            } else {
+                let fields = expect_record((**record).clone(), "get record")?;
+                let projected = fields
+                    .get(key.as_str())
+                    .cloned()
+                    .ok_or_else(|| format!("missing record key '{key}'"))?;
+                Ok(Term::app(projected, arg.clone()))
+            }
+        }
+        TermKind::RecordType(fields) => {
+            let (key, pending) =
+                first_non_value_field(fields).expect("non-value field should exist");
+            Ok(continue_with(&pending, |next_field| {
+                Term::app(
+                    Term::record_type(fields.with(key.clone(), next_field)),
+                    arg.clone(),
+                )
+            }))
+        }
+        TermKind::SumType(fields) => {
+            let (key, pending) =
+                first_non_value_field(fields).expect("non-value field should exist");
+            Ok(continue_with(&pending, |next_field| {
+                Term::app(
+                    Term::sum_type(fields.with(key.clone(), next_field)),
+                    arg.clone(),
+                )
+            }))
+        }
+        TermKind::Record(fields) => {
+            let (key, pending) =
+                first_non_value_field(fields).expect("non-value field should exist");
+            Ok(continue_with(&pending, |next_field| {
+                Term::app(
+                    Term::record(fields.with(key.clone(), next_field)),
+                    arg.clone(),
+                )
+            }))
+        }
+        TermKind::Variant {
+            tag,
+            value,
+            sum_type,
+        } => {
+            if !symbol_map_values_are_values(sum_type) {
+                let (key, pending) =
+                    first_non_value_field(sum_type).expect("non-value sum field should exist");
+                Ok(continue_with(&pending, |next_field| {
+                    Term::app(
+                        Term::variant(
+                            tag.clone(),
+                            (**value).clone(),
+                            sum_type.with(key.clone(), next_field),
+                        ),
+                        arg.clone(),
+                    )
+                }))
+            } else if !value.is_value() {
+                Ok(continue_with(value, |next_value| {
+                    Term::app(
+                        Term::variant(tag.clone(), next_value, sum_type.clone()),
+                        arg.clone(),
+                    )
+                }))
+            } else {
+                Ok(Term::app(function.clone(), arg.clone()))
+            }
+        }
+        TermKind::Type | TermKind::Pi { .. } | TermKind::Lambda { .. } => {
+            Ok(Term::app(function.clone(), arg.clone()))
+        }
     }
 }
 
@@ -506,7 +621,110 @@ fn step_pending_in_arg(function: &Term, arg: &Term, globals: &NameMap) -> ClickR
                 }
             }
         }
-        _ => Ok(Term::app(function.clone(), step_reduct(arg, globals)?)),
+        TermKind::Match {
+            scrutinee,
+            handlers,
+        } => {
+            if !scrutinee.is_value() {
+                Ok(continue_with(scrutinee, |next_scrutinee| {
+                    Term::app(
+                        function.clone(),
+                        Term::r#match(next_scrutinee, handlers.clone()),
+                    )
+                }))
+            } else {
+                let rendered = scrutinee.to_string();
+                match scrutinee.kind() {
+                    TermKind::Variant { tag, value, .. } => {
+                        let handler = handlers
+                            .get(tag.as_str())
+                            .cloned()
+                            .ok_or_else(|| format!("missing match handler '{tag}'"))?;
+                        Ok(Term::app(
+                            function.clone(),
+                            Term::app(handler, (**value).clone()),
+                        ))
+                    }
+                    _ => Err(format!("match scrutinee must be a variant, got {rendered}")),
+                }
+            }
+        }
+        TermKind::Get { record, key } => {
+            if !record.is_value() {
+                Ok(continue_with(record, |next_record| {
+                    Term::app(function.clone(), Term::get(next_record, key.clone()))
+                }))
+            } else {
+                let fields = expect_record((**record).clone(), "get record")?;
+                let projected = fields
+                    .get(key.as_str())
+                    .cloned()
+                    .ok_or_else(|| format!("missing record key '{key}'"))?;
+                Ok(Term::app(function.clone(), projected))
+            }
+        }
+        TermKind::RecordType(fields) => {
+            let (key, pending) =
+                first_non_value_field(fields).expect("non-value field should exist");
+            Ok(continue_with(&pending, |next_field| {
+                Term::app(
+                    function.clone(),
+                    Term::record_type(fields.with(key.clone(), next_field)),
+                )
+            }))
+        }
+        TermKind::SumType(fields) => {
+            let (key, pending) =
+                first_non_value_field(fields).expect("non-value field should exist");
+            Ok(continue_with(&pending, |next_field| {
+                Term::app(
+                    function.clone(),
+                    Term::sum_type(fields.with(key.clone(), next_field)),
+                )
+            }))
+        }
+        TermKind::Record(fields) => {
+            let (key, pending) =
+                first_non_value_field(fields).expect("non-value field should exist");
+            Ok(continue_with(&pending, |next_field| {
+                Term::app(
+                    function.clone(),
+                    Term::record(fields.with(key.clone(), next_field)),
+                )
+            }))
+        }
+        TermKind::Variant {
+            tag,
+            value,
+            sum_type,
+        } => {
+            if !symbol_map_values_are_values(sum_type) {
+                let (key, pending) =
+                    first_non_value_field(sum_type).expect("non-value sum field should exist");
+                Ok(continue_with(&pending, |next_field| {
+                    Term::app(
+                        function.clone(),
+                        Term::variant(
+                            tag.clone(),
+                            (**value).clone(),
+                            sum_type.with(key.clone(), next_field),
+                        ),
+                    )
+                }))
+            } else if !value.is_value() {
+                Ok(continue_with(value, |next_value| {
+                    Term::app(
+                        function.clone(),
+                        Term::variant(tag.clone(), next_value, sum_type.clone()),
+                    )
+                }))
+            } else {
+                Ok(Term::app(function.clone(), arg.clone()))
+            }
+        }
+        TermKind::Type | TermKind::Pi { .. } | TermKind::Lambda { .. } => {
+            Ok(Term::app(function.clone(), arg.clone()))
+        }
     }
 }
 
@@ -528,29 +746,15 @@ fn resolve_name(globals: &NameMap, name: &Name) -> ClickResult<Term> {
         .ok_or_else(|| format!("unbound variable '{name}'"))
 }
 
-// Take one step and extract the reduct, rejecting terms that are already values.
-fn step_reduct(term: &Term, globals: &NameMap) -> ClickResult<Term> {
-    let next = step_in_names(term, globals)?;
-    if next == *term {
-        Err(format!("expected a reducible term, got {next}"))
-    } else {
-        Ok(next)
-    }
-}
-
 fn symbol_map_values_are_values(fields: &SymbolMap) -> bool {
     fields.entries.values().all(Term::is_value)
 }
 
-fn step_symbol_map(fields: &SymbolMap, globals: &NameMap) -> ClickResult<SymbolMap> {
-    let mut stepped = fields.clone();
-    for value in stepped.entries.values_mut() {
-        if !value.is_value() {
-            *value = step_reduct(value, globals)?;
-            return Ok(stepped);
-        }
-    }
-    Err("expected a reducible field entry".to_string())
+fn first_non_value_field(fields: &SymbolMap) -> Option<(Symbol, Term)> {
+    fields
+        .entries
+        .iter()
+        .find_map(|(key, value)| (!value.is_value()).then(|| (key.clone(), value.clone())))
 }
 
 // Extract a record value from runtime data where one is required.
@@ -1003,6 +1207,49 @@ mod tests {
             TermKind::App { function, arg } => {
                 assert!(matches!(function.kind(), TermKind::Lambda { .. }));
                 assert_eq!(**arg, Term::var(id));
+            }
+            _ => panic!("expected an administrative application, got {next}"),
+        }
+    }
+
+    #[test]
+    fn step_reifies_pending_match_scrutinees_into_an_administrative_lambda() {
+        let x = Name::fresh(Symbol::from("x"));
+        let id = Name::fresh(Symbol::from("id"));
+        let globals = NameMap::new().with(id.clone(), Term::lambda(x, unit_record()));
+        let term = Term::r#match(
+            Term::app(Term::var(id), unit_record()),
+            SymbolMap::new().with(
+                Symbol::from("left"),
+                Term::lambda(Name::fresh(Symbol::from("payload")), unit_record()),
+            ),
+        );
+
+        let next = step(&globals, &term).expect("step should succeed");
+        match next.kind() {
+            TermKind::App { function, arg } => {
+                assert!(matches!(function.kind(), TermKind::Lambda { .. }));
+                assert_eq!(arg.to_string(), "(app (var id) (record))");
+            }
+            _ => panic!("expected an administrative application, got {next}"),
+        }
+    }
+
+    #[test]
+    fn step_reifies_pending_record_fields_into_an_administrative_lambda() {
+        let x = Name::fresh(Symbol::from("x"));
+        let id = Name::fresh(Symbol::from("id"));
+        let globals = NameMap::new().with(id.clone(), Term::lambda(x, unit_record()));
+        let term = Term::record(SymbolMap::new().with(
+            Symbol::from("value"),
+            Term::app(Term::var(id), unit_record()),
+        ));
+
+        let next = step(&globals, &term).expect("step should succeed");
+        match next.kind() {
+            TermKind::App { function, arg } => {
+                assert!(matches!(function.kind(), TermKind::Lambda { .. }));
+                assert_eq!(arg.to_string(), "(app (var id) (record))");
             }
             _ => panic!("expected an administrative application, got {next}"),
         }
