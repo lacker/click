@@ -62,12 +62,6 @@ enum TermKind {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum StepResult {
-    Value(Term),
-    Reduced(Term),
-}
-
 static NEXT_NAME_ID: AtomicUsize = AtomicUsize::new(0);
 
 impl Symbol {
@@ -254,7 +248,10 @@ impl Term {
 }
 
 /// Reduce one well-scoped kernel term by a single operational step.
-pub fn step(values: &NameMap, term: &Term) -> ClickResult<StepResult> {
+///
+/// A canonical value is a fixed point of `step`: stepping it returns the same
+/// term unchanged.
+pub fn step(values: &NameMap, term: &Term) -> ClickResult<Term> {
     step_in_names(term, values)
 }
 
@@ -331,43 +328,37 @@ fn format_match(scrutinee: &Term, handlers: &SymbolMap, f: &mut fmt::Formatter<'
 }
 
 // Internal one-step reduction under the current top-level value environment.
-fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
+fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<Term> {
     match term.kind() {
-        TermKind::Type => Ok(StepResult::Value(Term::r#type())),
+        TermKind::Type => Ok(Term::r#type()),
         TermKind::RecordType(fields) => {
             if symbol_map_values_are_values(fields) {
-                Ok(StepResult::Value(Term::record_type(fields.clone())))
+                Ok(Term::record_type(fields.clone()))
             } else {
-                Ok(StepResult::Reduced(Term::record_type(step_symbol_map(
-                    fields, globals,
-                )?)))
+                Ok(Term::record_type(step_symbol_map(fields, globals)?))
             }
         }
         TermKind::SumType(fields) => {
             if symbol_map_values_are_values(fields) {
-                Ok(StepResult::Value(Term::sum_type(fields.clone())))
+                Ok(Term::sum_type(fields.clone()))
             } else {
-                Ok(StepResult::Reduced(Term::sum_type(step_symbol_map(
-                    fields, globals,
-                )?)))
+                Ok(Term::sum_type(step_symbol_map(fields, globals)?))
             }
         }
         TermKind::Pi {
             binder,
             arg_type,
             return_type,
-        } => Ok(StepResult::Value(Term::pi(
+        } => Ok(Term::pi(
             binder.clone(),
             (**arg_type).clone(),
             (**return_type).clone(),
-        ))),
+        )),
         TermKind::Record(fields) => {
             if symbol_map_values_are_values(fields) {
-                Ok(StepResult::Value(Term::record(fields.clone())))
+                Ok(Term::record(fields.clone()))
             } else {
-                Ok(StepResult::Reduced(Term::record(step_symbol_map(
-                    fields, globals,
-                )?)))
+                Ok(Term::record(step_symbol_map(fields, globals)?))
             }
         }
         TermKind::Variant {
@@ -376,51 +367,41 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
             sum_type,
         } => {
             if !symbol_map_values_are_values(sum_type) {
-                Ok(StepResult::Reduced(Term::variant(
+                Ok(Term::variant(
                     tag.clone(),
                     (**value).clone(),
                     step_symbol_map(sum_type, globals)?,
-                )))
+                ))
             } else if !value.is_value() {
-                Ok(StepResult::Reduced(Term::variant(
+                Ok(Term::variant(
                     tag.clone(),
                     step_reduct(value, globals)?,
                     sum_type.clone(),
-                )))
+                ))
             } else {
-                Ok(StepResult::Value(Term::variant(
+                Ok(Term::variant(
                     tag.clone(),
                     (**value).clone(),
                     sum_type.clone(),
-                )))
+                ))
             }
         }
         TermKind::Var(name) => globals
             .get(name)
             .cloned()
-            .map(StepResult::Reduced)
             .ok_or_else(|| format!("unbound variable '{name}'")),
-        TermKind::Lambda { binder, body } => Ok(StepResult::Value(Term::lowered_lambda(
-            binder.clone(),
-            (**body).clone(),
-        ))),
+        TermKind::Lambda { binder, body } => {
+            Ok(Term::lowered_lambda(binder.clone(), (**body).clone()))
+        }
         TermKind::App { function, arg } => {
             if !function.is_value() {
-                Ok(StepResult::Reduced(Term::app(
-                    step_reduct(function, globals)?,
-                    (**arg).clone(),
-                )))
+                Ok(Term::app(step_reduct(function, globals)?, (**arg).clone()))
             } else if !arg.is_value() {
-                Ok(StepResult::Reduced(Term::app(
-                    (**function).clone(),
-                    step_reduct(arg, globals)?,
-                )))
+                Ok(Term::app((**function).clone(), step_reduct(arg, globals)?))
             } else {
                 let rendered = function.to_string();
                 match function.kind() {
-                    TermKind::Lambda { binder, body } => {
-                        Ok(StepResult::Reduced(instantiate(binder, body, arg)))
-                    }
+                    TermKind::Lambda { binder, body } => Ok(instantiate(binder, body, arg)),
                     _ => Err(format!("attempted to call a non-function: {rendered}")),
                 }
             }
@@ -430,10 +411,10 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
             handlers,
         } => {
             if !scrutinee.is_value() {
-                Ok(StepResult::Reduced(Term::r#match(
+                Ok(Term::r#match(
                     step_reduct(scrutinee, globals)?,
                     handlers.clone(),
-                )))
+                ))
             } else {
                 let rendered = scrutinee.to_string();
                 match scrutinee.kind() {
@@ -442,7 +423,7 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
                             .get(tag.as_str())
                             .cloned()
                             .ok_or_else(|| format!("missing match handler '{tag}'"))?;
-                        Ok(StepResult::Reduced(Term::app(handler, (**value).clone())))
+                        Ok(Term::app(handler, (**value).clone()))
                     }
                     _ => Err(format!("match scrutinee must be a variant, got {rendered}")),
                 }
@@ -450,16 +431,12 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
         }
         TermKind::Get { record, key } => {
             if !record.is_value() {
-                Ok(StepResult::Reduced(Term::get(
-                    step_reduct(record, globals)?,
-                    key.clone(),
-                )))
+                Ok(Term::get(step_reduct(record, globals)?, key.clone()))
             } else {
                 let fields = expect_record((**record).clone(), "get record")?;
                 fields
                     .get(key.as_str())
                     .cloned()
-                    .map(StepResult::Reduced)
                     .ok_or_else(|| format!("missing record key '{key}'"))
             }
         }
@@ -468,9 +445,11 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<StepResult> {
 
 // Take one step and extract the reduct, rejecting terms that are already values.
 fn step_reduct(term: &Term, globals: &NameMap) -> ClickResult<Term> {
-    match step_in_names(term, globals)? {
-        StepResult::Reduced(next) => Ok(next),
-        StepResult::Value(value) => Err(format!("expected a reducible term, got {value}")),
+    let next = step_in_names(term, globals)?;
+    if next == *term {
+        Err(format!("expected a reducible term, got {next}"))
+    } else {
+        Ok(next)
     }
 }
 
@@ -850,12 +829,12 @@ mod tests {
             unit_record(),
         );
 
-        match step(&NameMap::new(), &term).expect("step should succeed") {
-            StepResult::Reduced(next) => {
-                assert_eq!(next.to_string(), "(app #<function> (record))")
-            }
-            StepResult::Value(value) => panic!("expected a reduction step, got value {value}"),
-        }
+        assert_eq!(
+            step(&NameMap::new(), &term)
+                .expect("step should succeed")
+                .to_string(),
+            "(app #<function> (record))"
+        );
     }
 
     #[test]
@@ -884,12 +863,12 @@ mod tests {
                 ),
         );
 
-        match step(&NameMap::new(), &term).expect("step should succeed") {
-            StepResult::Reduced(next) => {
-                assert_eq!(next.to_string(), "(app #<function> (record))")
-            }
-            StepResult::Value(value) => panic!("expected a reduction step, got value {value}"),
-        }
+        assert_eq!(
+            step(&NameMap::new(), &term)
+                .expect("step should succeed")
+                .to_string(),
+            "(app #<function> (record))"
+        );
     }
 
     #[test]
@@ -916,14 +895,11 @@ mod tests {
             outer_arg,
         );
 
-        match step(&NameMap::new(), &term).expect("step should succeed") {
-            StepResult::Reduced(next) => {
-                assert_eq!(
-                    next.to_string(),
-                    "(app (app #<function> (record)) (app #<function> (record)))"
-                )
-            }
-            StepResult::Value(value) => panic!("expected a reduction step, got value {value}"),
-        }
+        assert_eq!(
+            step(&NameMap::new(), &term)
+                .expect("step should succeed")
+                .to_string(),
+            "(app (app #<function> (record)) (app #<function> (record)))"
+        );
     }
 }

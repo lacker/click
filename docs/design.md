@@ -62,10 +62,6 @@ helpers.
   An immutable map from `Name` to `Term`. The evaluator uses a `NameMap` as a
   value assignment, and `type_of` uses a `NameMap` as a type assignment.
 
-- `StepResult`
-  The result of a single reduction step. A term is either already a value or
-  it reduces to exactly one next term.
-
 ### Kernel Operations
 
 - `Term` constructors build kernel syntax directly:
@@ -76,15 +72,16 @@ helpers.
 
 - `NameMap` provides `new`, `get`, and `with`.
 
-- `step(&NameMap, &Term) -> ClickResult<StepResult>`
-  performs one reduction step relative to a name assignment.
+- `step(&NameMap, &Term) -> ClickResult<Term>`
+  performs one reduction step relative to a name assignment. Canonical values
+  are fixed points of `step`: stepping them returns the same term unchanged.
 
 - `type_of(&NameMap, &Term) -> ClickResult<Term>`
   computes the type of a term relative to an explicit assignment of types to
   names.
 
 The smallest kernel should speak in terms of `Term`, `Name`, `Symbol`,
-`SymbolMap`, `NameMap`, and `StepResult`, not host closures or raw
+`SymbolMap`, and `NameMap`, not host closures or raw
 Rust strings, integers, or indices.
 
 ## Top-Level Interface
@@ -124,10 +121,12 @@ Because lowering resolves all variable references before evaluation, ill-scoped
 variables are rejected eagerly, including inside lambda bodies.
 
 The primitive operational semantics is a single reduction step on `Term`s, and
-full evaluation iterates that step relation until it reaches a canonical term.
-A function value is a lambda term in value form. Application first reduces its
+full evaluation iterates that step relation until it reaches a fixed point. A
+function value is a lambda term in value form. Application first reduces its
 function and argument one step at a time; once both are values, one beta step
-substitutes the argument for the bound name.
+substitutes the argument for the bound name. In the current Rust kernel,
+canonical values are represented as fixed points of `step` rather than through
+a separate `StepResult` enum.
 
 Products and sums are now explicit in the kernel syntax. `record` values have
 `record-type` types. `variant` values have `sum-type` types. Records are still
@@ -174,8 +173,8 @@ final type theory.
 ## Open Questions
 
 - Click still needs a binder-safe code datatype and term-inspection interface.
-  The current Rust `StepResult` is useful for the host kernel, but it is not
-  yet a Click-level representation of execution.
+  The current Rust `step` API is a fixed-point reducer on `Term`, but it is
+  not yet a Click-level representation of machine execution.
 
 - The current `type_of` judgment is intentionally simple and environment-driven.
   The next design question is whether Click should add bidirectional checking
@@ -189,6 +188,11 @@ final type theory.
   substrate for talking about termination and divergence, but the actual theory
   will depend on whether Click adopts unrestricted recursion, a total core, or
   some explicit fuel or trace discipline.
+
+- The current `step` API is now `Term -> Term`, but its implementation still
+  recursively descends through source terms. A later machine-state design may
+  re-express stepping so that one kernel step does only local state
+  transformation.
 
 ## Next Steps
 

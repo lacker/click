@@ -1,13 +1,11 @@
-use click::{
-    Context, Declaration, Name, NameMap, StepResult, Symbol, SymbolMap, Term, declare, step,
-};
+use click::{Context, Declaration, Name, NameMap, Symbol, SymbolMap, Term, declare, step};
 
 #[test]
-fn public_step_reports_values() {
-    match step(&NameMap::new(), &Term::record(SymbolMap::new())).expect("step should succeed") {
-        StepResult::Value(value) => assert_eq!(value, Term::record(SymbolMap::new())),
-        StepResult::Reduced(next) => panic!("expected a value, got reduct {next}"),
-    }
+fn public_step_leaves_values_unchanged() {
+    assert_eq!(
+        step(&NameMap::new(), &Term::record(SymbolMap::new())).expect("step should succeed"),
+        Term::record(SymbolMap::new())
+    );
 }
 
 #[test]
@@ -22,10 +20,10 @@ fn public_step_reduces_a_global_reference_using_the_context() {
     )
     .expect("definition should succeed");
 
-    match step(context.values(), &Term::var(answer)).expect("step should succeed") {
-        StepResult::Reduced(next) => assert_eq!(next, Term::record(SymbolMap::new())),
-        StepResult::Value(value) => panic!("expected a reduct, got value {value}"),
-    }
+    assert_eq!(
+        step(context.values(), &Term::var(answer)).expect("step should succeed"),
+        Term::record(SymbolMap::new())
+    );
 }
 
 #[test]
@@ -40,10 +38,12 @@ fn public_step_performs_one_beta_reduction() {
         Term::record(SymbolMap::new()),
     );
 
-    match step(&NameMap::new(), &term).expect("step should succeed") {
-        StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> (record))"),
-        StepResult::Value(value) => panic!("expected a reduct, got value {value}"),
-    }
+    assert_eq!(
+        step(&NameMap::new(), &term)
+            .expect("step should succeed")
+            .to_string(),
+        "(app #<function> (record))"
+    );
 }
 
 #[test]
@@ -69,8 +69,10 @@ fn public_step_selects_the_matching_match_handler() {
             ),
     );
 
-    match step(&NameMap::new(), &term).expect("step should succeed") {
-        StepResult::Reduced(next) => assert_eq!(next.to_string(), "(app #<function> (record))"),
-        StepResult::Value(value) => panic!("expected a reduct, got value {value}"),
-    }
+    assert_eq!(
+        step(&NameMap::new(), &term)
+            .expect("step should succeed")
+            .to_string(),
+        "(app #<function> (record))"
+    );
 }

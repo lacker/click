@@ -47,9 +47,9 @@ wrappers around that smaller kernel.
 - `lambda` binds a fresh `Name`.
 - The primitive operational semantics is a single reduction step on `Term`s.
 - The Rust API exposes that reduction relation as `step(&NameMap, &Term) ->
-  ClickResult<StepResult>`.
+  ClickResult<Term>`.
 - The Rust API also exposes `type_of(&NameMap, &Term) -> ClickResult<Term>`.
-- Full evaluation iterates those steps until it reaches a canonical `Term`.
+- Full evaluation iterates those steps until it reaches a fixed point.
 - There is no separate runtime `Value` or `Closure` datatype in the current
   kernel.
 

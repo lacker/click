@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::kernel::{ClickResult, Name, NameMap, StepResult, Symbol, SymbolMap, Term, step};
+use crate::kernel::{ClickResult, Name, NameMap, Symbol, SymbolMap, Term, step};
 use crate::reader::{SExpr, read};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -390,10 +390,11 @@ fn expect_symbol(expr: &SExpr, role: &str) -> ClickResult<Symbol> {
 fn eval(term: &Term, globals: &NameMap) -> ClickResult<Term> {
     let mut current = term.clone();
     loop {
-        match step(globals, &current)? {
-            StepResult::Value(value) => return Ok(value),
-            StepResult::Reduced(next) => current = next,
+        let next = step(globals, &current)?;
+        if next == current {
+            return Ok(current);
         }
+        current = next;
     }
 }
 
