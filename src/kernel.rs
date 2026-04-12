@@ -393,19 +393,7 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<Term> {
         TermKind::Lambda { binder, body } => {
             Ok(Term::lowered_lambda(binder.clone(), (**body).clone()))
         }
-        TermKind::App { function, arg } => {
-            if !function.is_value() {
-                Ok(Term::app(step_reduct(function, globals)?, (**arg).clone()))
-            } else if !arg.is_value() {
-                Ok(Term::app((**function).clone(), step_reduct(arg, globals)?))
-            } else {
-                let rendered = function.to_string();
-                match function.kind() {
-                    TermKind::Lambda { binder, body } => Ok(instantiate(binder, body, arg)),
-                    _ => Err(format!("attempted to call a non-function: {rendered}")),
-                }
-            }
-        }
+        TermKind::App { function, arg } => step_application(function, arg, globals),
         TermKind::Match {
             scrutinee,
             handlers,
@@ -441,6 +429,103 @@ fn step_in_names(term: &Term, globals: &NameMap) -> ClickResult<Term> {
             }
         }
     }
+}
+
+fn step_application(function: &Term, arg: &Term, globals: &NameMap) -> ClickResult<Term> {
+    if !function.is_value() {
+        step_pending_in_function(function, arg, globals)
+    } else if !arg.is_value() {
+        step_pending_in_arg(function, arg, globals)
+    } else {
+        let rendered = function.to_string();
+        match function.kind() {
+            TermKind::Lambda { binder, body } => Ok(instantiate(binder, body, arg)),
+            _ => Err(format!("attempted to call a non-function: {rendered}")),
+        }
+    }
+}
+
+fn step_pending_in_function(function: &Term, arg: &Term, globals: &NameMap) -> ClickResult<Term> {
+    match function.kind() {
+        TermKind::Var(name) => Ok(Term::app(resolve_name(globals, name)?, arg.clone())),
+        TermKind::App {
+            function: inner_function,
+            arg: inner_arg,
+        } => {
+            if !inner_function.is_value() {
+                Ok(continue_with(inner_function, |next_function| {
+                    Term::app(Term::app(next_function, (**inner_arg).clone()), arg.clone())
+                }))
+            } else if !inner_arg.is_value() {
+                Ok(continue_with(inner_arg, |next_arg| {
+                    Term::app(Term::app((**inner_function).clone(), next_arg), arg.clone())
+                }))
+            } else {
+                let rendered = inner_function.to_string();
+                match inner_function.kind() {
+                    TermKind::Lambda { binder, body } => {
+                        Ok(Term::app(instantiate(binder, body, inner_arg), arg.clone()))
+                    }
+                    _ => Err(format!("attempted to call a non-function: {rendered}")),
+                }
+            }
+        }
+        _ => Ok(Term::app(step_reduct(function, globals)?, arg.clone())),
+    }
+}
+
+fn step_pending_in_arg(function: &Term, arg: &Term, globals: &NameMap) -> ClickResult<Term> {
+    match arg.kind() {
+        TermKind::Var(name) => Ok(Term::app(function.clone(), resolve_name(globals, name)?)),
+        TermKind::App {
+            function: inner_function,
+            arg: inner_arg,
+        } => {
+            if !inner_function.is_value() {
+                Ok(continue_with(inner_function, |next_function| {
+                    Term::app(
+                        function.clone(),
+                        Term::app(next_function, (**inner_arg).clone()),
+                    )
+                }))
+            } else if !inner_arg.is_value() {
+                Ok(continue_with(inner_arg, |next_arg| {
+                    Term::app(
+                        function.clone(),
+                        Term::app((**inner_function).clone(), next_arg),
+                    )
+                }))
+            } else {
+                let rendered = inner_function.to_string();
+                match inner_function.kind() {
+                    TermKind::Lambda { binder, body } => Ok(Term::app(
+                        function.clone(),
+                        instantiate(binder, body, inner_arg),
+                    )),
+                    _ => Err(format!("attempted to call a non-function: {rendered}")),
+                }
+            }
+        }
+        _ => Ok(Term::app(function.clone(), step_reduct(arg, globals)?)),
+    }
+}
+
+fn continue_with<F>(pending: &Term, build: F) -> Term
+where
+    F: FnOnce(Term) -> Term,
+{
+    let binder = Name::fresh(Symbol::from("_"));
+    Term::app(
+        Term::lambda(binder.clone(), build(Term::var(binder))),
+        pending.clone(),
+    )
+}
+
+fn resolve_name(globals: &NameMap, name: &Name) -> ClickResult<Term> {
+    globals
+        .get(name)
+        .cloned()
+        .ok_or_else(|| format!("unbound variable '{name}'"))
 }
 
 // Take one step and extract the reduct, rejecting terms that are already values.
@@ -901,5 +986,25 @@ mod tests {
                 .to_string(),
             "(app (app #<function> (record)) (app #<function> (record)))"
         );
+    }
+
+    #[test]
+    fn step_reifies_nested_application_work_into_an_administrative_lambda() {
+        let x = Name::fresh(Symbol::from("x"));
+        let id = Name::fresh(Symbol::from("id"));
+        let globals = NameMap::new().with(id.clone(), Term::lambda(x, unit_record()));
+        let term = Term::app(
+            Term::app(Term::var(id.clone()), unit_record()),
+            unit_record(),
+        );
+
+        let next = step(&globals, &term).expect("step should succeed");
+        match next.kind() {
+            TermKind::App { function, arg } => {
+                assert!(matches!(function.kind(), TermKind::Lambda { .. }));
+                assert_eq!(**arg, Term::var(id));
+            }
+            _ => panic!("expected an administrative application, got {next}"),
+        }
     }
 }

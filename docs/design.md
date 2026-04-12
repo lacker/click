@@ -122,11 +122,16 @@ variables are rejected eagerly, including inside lambda bodies.
 
 The primitive operational semantics is a single reduction step on `Term`s, and
 full evaluation iterates that step relation until it reaches a fixed point. A
-function value is a lambda term in value form. Application first reduces its
-function and argument one step at a time; once both are values, one beta step
-substitutes the argument for the bound name. In the current Rust kernel,
-canonical values are represented as fixed points of `step` rather than through
-a separate `StepResult` enum.
+function value is a lambda term in value form. Once both sides of an
+application are values, one beta step substitutes the argument for the bound
+name. In the current Rust kernel, canonical values are represented as fixed
+points of `step` rather than through a separate `StepResult` enum.
+
+The application fragment has started moving toward a more local machine-style
+step relation. When `step` sees a nested application on the pending side of an
+`app`, it can reify one layer of evaluation context into a fresh
+administrative lambda instead of recursively descending through the whole
+subterm. Other term formers still use the older recursive host-side descent.
 
 Products and sums are now explicit in the kernel syntax. `record` values have
 `record-type` types. `variant` values have `sum-type` types. Records are still
@@ -189,10 +194,10 @@ final type theory.
   will depend on whether Click adopts unrestricted recursion, a total core, or
   some explicit fuel or trace discipline.
 
-- The current `step` API is now `Term -> Term`, but its implementation still
-  recursively descends through source terms. A later machine-state design may
-  re-express stepping so that one kernel step does only local state
-  transformation.
+- The current `step` API is now `Term -> Term`. Application has a first
+  experiment in local, non-recursive stepping via administrative lambdas, but
+  `match`, `get`, records, variants, and other forms still recurse through
+  subterms in Rust.
 
 ## Next Steps
 
