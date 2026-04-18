@@ -2,6 +2,9 @@
 
 This document records the current design direction for `click`.
 
+This file describes the currently implemented kernel direction. A separate
+computation-first redesign is sketched in [design-v2.md](./design-v2.md).
+
 ## Goal
 
 `click` is meant to become:
