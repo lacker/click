@@ -22,6 +22,41 @@ fn eval_returns_symbols_and_literal_objects_as_values() {
 }
 
 #[test]
+fn parse_turns_key_value_lists_into_nested_objects() {
+    let expected: Term = Object::new()
+        .with(":foo", sym(":bar"))
+        .with(":nested", Object::new().with(":x", sym(":y")).into())
+        .into();
+
+    assert_eq!(
+        v2::parse("(:foo :bar :nested (:x :y))").expect("parse should succeed"),
+        expected
+    );
+}
+
+#[test]
+fn parse_can_express_executable_object_shapes() {
+    let source = "(:apply (:function (:lambda (:param :x :body (:var :x))) :arg :ok))";
+
+    assert_eq!(
+        v2::eval(&v2::parse(source).expect("parse should succeed")).expect("eval should succeed"),
+        sym(":ok")
+    );
+}
+
+#[test]
+fn parse_rejects_malformed_objects() {
+    assert_eq!(
+        v2::parse("(:foo)").expect_err("odd object should fail"),
+        "objects must contain key/value pairs"
+    );
+    assert_eq!(
+        v2::parse("((:x :y) :z)").expect_err("non-symbol key should fail"),
+        "object keys must be symbols"
+    );
+}
+
+#[test]
 fn var_reads_from_the_explicit_environment() {
     let env: Term = Object::new().with(":x", sym(":value")).into();
 

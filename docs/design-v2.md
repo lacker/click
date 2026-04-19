@@ -70,6 +70,27 @@ syntax. The important part is the semantic shape:
 - symbol literals are data
 - object literals are data
 
+The first concrete parser is narrower and more Lispy:
+
+```text
+:foo
+(:left :payload)
+(:x :a :y :b)
+```
+
+That syntax reads a parenthesized form as an object containing alternating
+key/value pairs. Bare symbols read as symbols. So:
+
+```text
+(:x :a :y (:z :b))
+```
+
+parses to:
+
+```text
+{ :x :a, :y { :z :b } }
+```
+
 The core evaluator gives special meaning to certain distinguished symbols when
 they appear in specific object shapes, but there is no separate trusted term
 datatype for functions, applications, matches, or types.
@@ -152,16 +173,16 @@ The current concrete encoding proposal is:
 (:var :x)
 == { :var :x }
 
-(:lambda :x body)
+(:lambda (:param :x :body body))
 == { :lambda { :param :x, :body body } }
 
-(:apply f x)
+(:apply (:function f :arg x))
 == { :apply { :function f, :arg x } }
 
-(:match handlers value)
+(:match (:handlers handlers :value value))
 == { :match { :handlers handlers, :value value } }
 
-(:set object key value)
+(:set (:object object :key key :value value))
 == { :set { :object object, :key key, :value value } }
 ```
 
@@ -193,7 +214,7 @@ This keeps symbols usable as ordinary data while still allowing lexical scope.
 A lambda form introduces one symbol name and one body:
 
 ```text
-(:lambda :x body)
+(:lambda (:param :x :body body))
 ```
 
 Operationally `:lambda` should evaluate to a closure.
@@ -203,7 +224,7 @@ Operationally `:lambda` should evaluate to a closure.
 Function application should be explicit:
 
 ```text
-(:apply f x)
+(:apply (:function f :arg x))
 ```
 
 The language is meant to feel lambda-calculus-ish, so `:apply` is preferred to
@@ -224,13 +245,13 @@ value    = { :k2 payload }
 then:
 
 ```text
-(:match handlers value)
+(:match (:handlers handlers :value value))
 ```
 
 should dispatch to:
 
 ```text
-(:apply h2 payload)
+(:apply (:function h2 :arg payload))
 ```
 
 The first version should probably require exactly one overlap between handler
@@ -257,7 +278,7 @@ Because literal objects are inert data, the core likely needs a way to build or
 update objects computationally:
 
 ```text
-(:set object key value)
+(:set (:object object :key key :value value))
 ```
 
 `set` is not the fundamental way objects exist. Literal objects already exist.

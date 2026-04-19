@@ -1,3 +1,4 @@
+use crate::reader::{SExpr, read as read_sexprs};
 use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -134,6 +135,22 @@ impl fmt::Display for Term {
             }
         }
     }
+}
+
+pub fn parse(source: &str) -> ClickResult<Term> {
+    let mut terms = parse_many(source)?;
+    match terms.len() {
+        0 => Err("expected one v2 term, found none".to_string()),
+        1 => Ok(terms.remove(0)),
+        count => Err(format!("expected one v2 term, found {count}")),
+    }
+}
+
+pub fn parse_many(source: &str) -> ClickResult<Vec<Term>> {
+    read_sexprs(source)?
+        .into_iter()
+        .map(parse_sexpr)
+        .collect::<ClickResult<Vec<_>>>()
 }
 
 pub fn var(name: impl Into<Symbol>) -> Term {
@@ -663,6 +680,36 @@ fn apply_function_value(function: &Term, arg: &Term, next: &Term) -> Term {
         env.with(param.clone(), arg.clone()).into(),
         next.clone(),
     ))
+}
+
+fn parse_sexpr(expr: SExpr) -> ClickResult<Term> {
+    match expr {
+        SExpr::Symbol(symbol) => Ok(Term::symbol(symbol.to_string())),
+        SExpr::List(items) => parse_object(items),
+    }
+}
+
+fn parse_object(items: Vec<SExpr>) -> ClickResult<Term> {
+    if items.len() % 2 != 0 {
+        return Err("objects must contain key/value pairs".to_string());
+    }
+
+    let mut object = Object::new();
+    let mut items = items.into_iter();
+    while let Some(key_expr) = items.next() {
+        let value_expr = items
+            .next()
+            .expect("object parsing should advance in key/value pairs");
+        let SExpr::Symbol(key) = key_expr else {
+            return Err("object keys must be symbols".to_string());
+        };
+        let key = key.to_string();
+        if object.has(&key) {
+            return Err(format!("duplicate object key '{key}'"));
+        }
+        object = object.with(key, parse_sexpr(value_expr)?);
+    }
+    Ok(object.into())
 }
 
 fn tagged(tag: &str, payload: Term) -> Term {
