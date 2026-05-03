@@ -1,7 +1,17 @@
-pub mod foundation;
-pub mod kernel;
 mod reader;
-pub mod v2;
+mod v2;
 
-pub use foundation::{Context, Declaration, declare, run_source};
-pub use kernel::{ClickResult, Name, NameMap, Symbol, SymbolMap, Term, step, type_of};
+pub use v2::{
+    ClickResult, Object, Symbol, Term, apply, empty_env, eval, eval_in_env, eval_state, halt,
+    initial_state, lambda, r#match, parse, parse_many, return_state, set, step, var,
+};
+
+/// Parse one or more Click terms from source, evaluate each term independently,
+/// and return the final value if any term was present.
+pub fn run_source(source: &str) -> ClickResult<Option<Term>> {
+    let mut result = None;
+    for term in parse_many(source)? {
+        result = Some(eval(&term)?);
+    }
+    Ok(result)
+}

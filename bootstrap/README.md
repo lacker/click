@@ -62,5 +62,5 @@ File guide:
 The main historical lesson from this tree is still useful: once binders enter
 the language, the representation of code matters. The older named-syntax
 experiments found explicit environments simpler than naive named substitution.
-The current kernel addresses that differently by lowering surface syntax into
-de Bruijn-based `Term`s before evaluation.
+That lesson now directly informs the active Click design, which uses explicit
+environment-capturing closures and an explicit evaluator state machine.

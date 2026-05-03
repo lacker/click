@@ -2,224 +2,255 @@
 
 This document records the current design direction for `click`.
 
-This file describes the currently implemented kernel direction. A separate
-computation-first redesign is sketched in [design-v2.md](./design-v2.md).
+Click is now a reflective computation core first. The earlier typed-kernel-first
+design has been retired from the active language.
 
 ## Goal
 
-`click` is meant to become:
+Click should be:
 
-Click code can prove things about Click code.
+- small enough to understand operationally
+- uniform enough that code and data share one raw representation
+- explicit enough that evaluation state is ordinary Click data
+- permissive enough to represent partial or diverging programs
+- open to typing and proof checking as later layers rather than trusted syntax
 
-The Click kernel should be simple to understand, but powerful enough to self-host.
+The base language should compute. Type systems and proof systems should be
+built on top of that computational substrate.
 
-You can inspect Click programs, transform them, and prove those transformations
-correct, all inside Click.
+## Raw Terms
 
-Click aims for complete kernel introspection: the core semantics of the
-language should themselves be representable, inspectable, and reasoned about
-inside Click.
-
-## The Kernel
-
-The heart of the Click kernel is a few trusted Rust things.
-
-* A small internal term language.
-
-* A public single-step evaluator, plus an internal wrapper that iterates steps
-  to a value.
-
-* A `type_of` function.
-
-* A strong enough type system that proofs can be implemented by
-  typechecking.
-
-Everything else should be built on top of that kernel. In particular, the
-top-level `Context` and `declare` machinery sit above the smallest kernel.
-
-## Kernel Interface
-
-The Rust kernel interface should be centered on a small set of kernel objects,
-and then on operations over those objects. Eventually, the rest of the kernel
-should be expressible in terms of this interface rather than ad hoc host-side
-helpers.
-
-### Kernel Objects
-
-- `Term`
-  The core syntax of the kernel. `Term` is intentionally opaque in Rust.
+A raw Click `Term` is one of two things:
 
 - `Symbol`
-  An atomic selector. `Symbol` is used for record fields, sum tags, and surface labels
-  that the reader later resolves while lowering.
+- `Object`
 
-- `Name`
-  An atomic reference to a value binding. Lambda binders, variable occurrences,
-  and top-level definitions use `Name`.
+A `Symbol` is an atomic value such as `:foo`.
 
-- `SymbolMap`
-  An immutable map from `Symbol` to canonical `Term`. `SymbolMap` is the shared
-  helper used by `record`, `record-type`, `sum-type`, and `match` handlers.
+An `Object` is a finite unordered map from unique symbol keys to term values.
 
-- `NameMap`
-  An immutable map from `Name` to `Term`. The evaluator uses a `NameMap` as a
-  value assignment, and `type_of` uses a `NameMap` as a type assignment.
+So the core data model is:
 
-### Kernel Operations
+```text
+Term ::= Symbol | Object(Symbol -> Term)
+```
 
-- `Term` constructors build kernel syntax directly:
-  `type`, `record_type`, `sum_type`, `pi`, `record`, `variant`, `var`,
-  `lambda`, `app`, `match`, `get`
+There are no primitive lists, products, sums, closures, or types at the raw
+level. Those are all conventions or later layers built on top of symbols and
+objects.
 
-- `SymbolMap` provides `new`, `with`, `has`, and `get`.
+## Surface Syntax
 
-- `NameMap` provides `new`, `get`, and `with`.
+The current parser is intentionally small and Lispy:
 
-- `step(&NameMap, &Term) -> ClickResult<Term>`
-  performs one reduction step relative to a name assignment. Canonical values
-  are fixed points of `step`: stepping them returns the same term unchanged.
+```text
+:foo
+(:left :payload)
+(:x :a :y (:z :b))
+```
 
-- `type_of(&NameMap, &Term) -> ClickResult<Term>`
-  computes the type of a term relative to an explicit assignment of types to
-  names.
+Bare symbols parse as symbols. Parenthesized forms parse as objects containing
+alternating key/value pairs. So:
 
-The smallest kernel should speak in terms of `Term`, `Name`, `Symbol`,
-`SymbolMap`, and `NameMap`, not host closures or raw
-Rust strings, integers, or indices.
+```text
+(:x :a :y (:z :b))
+```
 
-## Top-Level Interface
+parses to the object:
 
-This layer is the current Rust foundation: source lowering, context threading,
-and declaration processing built on top of the kernel.
+```text
+{ :x :a, :y { :z :b } }
+```
 
-- `Context`
-  An immutable top-level environment of evaluated definitions. It maps surface
-  symbols to canonical names and carries a value `NameMap`.
+This is raw data by default. Objects do not evaluate underneath their fields
+unless they match one of the distinguished executable shapes described below.
 
-- `Declaration`
-  A top-level action. The current variants are `Def`, `Check`, and `Theorem`.
+## Executable Shapes
 
-- `declare(&Context, Declaration) -> ClickResult<Context>`
-  applies one top-level declaration and returns the extended context.
+The current reflective core gives special meaning to a small set of singleton
+objects:
 
-- `run_source(&str) -> ClickResult<Option<Term>>`
-  is a convenience entry point that parses surface syntax, processes any
-  top-level declarations, and evaluates the final expression.
+- `(:var :x)`
+- `(:lambda (:param :x :body body))`
+- `(:apply (:function f :arg x))`
+- `(:match (:handlers handlers :value value))`
+- `(:set (:object object :key key :value value))`
 
-## Semantic Notes
+Any object that does not match one of those shapes is inert data.
 
-The reader parses surface S-expressions, and the kernel lowers them into an
-internal `Term` language before evaluation. In that internal language, variable
-occurrences refer to `Name`, not `Symbol`. Surface syntax still spells binders
-and references with symbols, but lowering resolves each occurrence to either a
-fresh local name or an existing top-level name from the current context.
+### `:var`
 
-`lambda` binds a `Name`. Shadowing is allowed because two binders may share the
-same display symbol while still being distinct names. During lowering, the
-reader allocates a fresh `Name` for each lambda binder and resolves `(var x)`
-to the innermost matching binder name, falling back to the top-level context if
-needed.
+Symbols are data. Variable lookup is explicit:
 
-Because lowering resolves all variable references before evaluation, ill-scoped
-variables are rejected eagerly, including inside lambda bodies.
+```text
+:x
+(:var :x)
+```
 
-The primitive operational semantics is a single reduction step on `Term`s, and
-full evaluation iterates that step relation until it reaches a fixed point. A
-function value is a lambda term in value form. Once both sides of an
-application are values, one beta step substitutes the argument for the bound
-name. In the current Rust kernel, canonical values are represented as fixed
-points of `step` rather than through a separate `StepResult` enum.
+The first is a symbol value. The second is an expression that reads from the
+current environment.
 
-The current `step` relation is intentionally non-recursive at the host level,
-apart from substitution during beta reduction. When `step` needs work to happen
-under an outer term constructor, it reifies one layer of evaluation context
-into a fresh administrative lambda and returns an ordinary `app` term. For
-applications, that administrative step can also expose one nested pending child
-of the function or argument before beta reduction, so one kernel step stays
-local even when the source term is nested.
+### `:lambda`
 
-Products and sums are now explicit in the kernel syntax. `record` values have
-`record-type` types. `variant` values have `sum-type` types. Records are still
-exact structural products: the type of a record is determined field-by-field.
-The empty record now serves as the unit-like value of the kernel, and
-`record-type` is its type. There is no separate `Nil` primitive.
+Functions are written as objects and evaluate to closure objects. A closure
+captures its defining environment.
 
-Dependent functions are now explicit in the kernel syntax as `pi`. Surface
-`(arrow A B)` is only shorthand for a non-dependent function type, and it
-lowers to the canonical kernel form `(pi _ A B)`. The kernel typing rule for
-`lambda` always synthesizes `pi`.
+Concrete closure values use the ordinary object substrate:
 
-`variant` carries explicit sum structure. That is intentional. In the current
-`type_of` design, a bare tagged payload does not determine its full sum type,
-so a variant term has to say which `sum-type` it belongs to.
+```text
+{ :closure { :param :x, :body body, :env env } }
+```
 
-`match` is the elimination form for sums. It first reduces its scrutinee; once
-that is a `variant`, it dispatches to the matching handler and turns the step
-into an ordinary application. Typing for `match` is exact and structural:
-every tag named in the scrutinee's `sum-type` must have a handler, no extra
-handlers are allowed, and all handler bodies must synthesize the same result
-type. `match` is still non-dependent even though the kernel now has `pi`. In
-the surface language, handlers are usually lambdas.
+### `:apply`
 
-`declare` threads a context forward explicitly. It is pure: a definition
-evaluates its value in the current context, then returns a new extended
-context. In the current untyped prototype, `check` and `theorem` compare
-evaluated kernel values for exact equality. `theorem` also binds the checked
-value to a name.
+Application is explicit:
 
-The first typing API is `type_of`. It takes a `NameMap` from `Name` to type and
-computes a `Term` type for another `Term`. Lambdas do not carry binder types in
-their syntax; instead, the binder's `Name` must already have a type assignment
-in the map. `pi` checks its codomain in a type environment extended by its
-binder. Application substitutes the argument into a `pi` codomain. This keeps
-evaluation Curry-style while still making typing a structural kernel operation.
+```text
+(:apply (:function f :arg x))
+```
 
-The current type vocabulary is intentionally small. `pi`,
-`(record-type ...)`, and `(sum-type ...)` are ordinary kernel terms, and they
-all live in a single `Type` universe. `(arrow A B)` is only surface sugar for
-the non-dependent `pi` case. This is a prototype typing layer, not yet the
-final type theory.
+Applying a closure extends the closure's environment with its parameter binding
+and then evaluates the body in that extended environment.
+
+### `:match`
+
+`match` is the current generic eliminator for object-shaped data.
+
+If:
+
+```text
+handlers = { :left h1, :right h2 }
+value    = { :left payload }
+```
+
+then:
+
+```text
+(:match (:handlers handlers :value value))
+```
+
+evaluates the selected handler and applies it to `payload`.
+
+The current rule requires exactly one overlapping key between the handler object
+and the value object. Zero overlaps and multiple overlaps are both runtime
+errors.
+
+### `:set`
+
+Literal objects already exist as raw data. `:set` is the explicit way to build
+or update objects with computed keys or values:
+
+```text
+(:set (:object object :key key :value value))
+```
+
+## Environments And State
+
+The runtime model is deliberately explicit.
+
+Evaluation happens relative to:
+
+- an environment object
+- a continuation object
+- a current evaluator state
+
+The evaluator state shapes are:
+
+```text
+{ :eval { :expr expr, :env env, :cont cont } }
+{ :ret  { :value value, :cont cont } }
+```
+
+The current continuation vocabulary is:
+
+```text
+:halt
+
+{ :apply_function { :arg arg, :env env, :next cont } }
+{ :apply_argument { :function function_value, :next cont } }
+
+{ :set_object { :key key, :value value, :env env, :next cont } }
+{ :set_key { :object object_value, :value value, :env env, :next cont } }
+{ :set_value { :object object_value, :key key_value, :next cont } }
+
+{ :match_handlers { :value value_expr, :env env, :next cont } }
+{ :match_value { :handlers handlers_value, :env env, :next cont } }
+{ :match_apply { :payload payload, :next cont } }
+```
+
+This is the important shift away from the retired kernel: control state is no
+longer smuggled back into the language as evaluator-generated lambdas. The
+machine state is ordinary Click data.
+
+## Step Protocol
+
+`step` operates on one explicit evaluator state and returns one explicit
+response object:
+
+```text
+{ :continue next }
+{ :return value }
+{ :error info }
+```
+
+That keeps success, suspension, and failure in the language model rather than
+in host-side side channels.
+
+Current runtime errors include:
+
+- applying a non-closure
+- reading an unbound variable
+- malformed executable shapes
+- matching with zero overlaps
+- matching with more than one overlap
+- using `:set` with a non-object receiver or non-symbol key
+
+## Evaluation Strategy
+
+The intended strategy is small-step and local:
+
+- one step inspects one explicit state
+- one step returns one explicit response object
+- environments are extended explicitly during closure application
+- substitution is not the runtime model
+
+The host convenience evaluator repeatedly calls `step` until it reaches
+`:return` or `:error`.
+
+## Current Rust Surface
+
+The Rust API is centered on the reflective core:
+
+- raw term constructors such as `Term::symbol` and `Object::with`
+- helper constructors for executable shapes such as `var`, `lambda`, `apply`,
+  `match`, and `set`
+- `parse` and `parse_many`
+- `step`
+- `eval` and `eval_in_env`
+- `run_source` as a host convenience wrapper over parsed source text
+
+`run_source` is a convenience API, not a settled statement about the eventual
+top-level language. The core language semantics are still term-level and
+state-machine-level.
+
+## Deliberate Omissions
+
+The current active language does not have a built-in typed kernel, primitive
+records-vs-sums distinction, a trusted proof checker, quote syntax, or the old
+list-oriented metaprogramming primitives.
+
+The historical `bootstrap/` tree remains useful as a record of earlier
+experiments, especially the lesson that explicit environments are often simpler
+than substitution-heavy reflective evaluators.
 
 ## Open Questions
 
-- Click still needs a binder-safe code datatype and term-inspection interface.
-  The current Rust `step` API is a fixed-point reducer on `Term`, but it is
-  not yet a Click-level representation of machine execution.
-
-- The current `type_of` judgment is intentionally simple and environment-driven.
-  The next design question is whether Click should add bidirectional checking
-  on top of it, explicit annotations in terms, or both.
-
-- Click now has dependent functions, but it still does not have dependent
-  elimination for data. That means `Pi` exists, but induction does not follow
-  from the current `match`.
-
-- The recursion story is still open. Small-step semantics is the right
-  substrate for talking about termination and divergence, but the actual theory
-  will depend on whether Click adopts unrestricted recursion, a total core, or
-  some explicit fuel or trace discipline.
-
-- The current `step` API is now `Term -> Term`, and the evaluator uses
-  administrative lambdas as real kernel terms. That makes the execution story
-  more explicit, but it also means Click execution traces now include
-  evaluator-generated functions.
-
-## Next Steps
-
-Once the kernel is written, the next job is to build enough language on top of
-it to test whether the kernel shape is actually right.
-
-* Implement `eval` and `type_of` in Click itself.
-  This is more of a sufficiency test than a production plan.
-
-* Implement some basic types and type-like structures.
-  `Bool`
-  `Nat`
-  `Code`
-  `List<T>`
-  total functions
-  dependent types like `Vec<T, n>`
-
-* Implement some basic proofs.
-  reversing a list twice gives the same thing
-  addition is commutative and associative
+- What should the top-level program model be for files that contain more than
+  one term?
+- Should `match` stay exact-single-overlap, or should it grow a richer pattern
+  discipline?
+- How should `match` behave on bare symbols?
+- Is `:set` enough for computed object construction, or does the core want an
+  additional helper?
+- What should a typing or proof-checking layer look like above this raw
+  computation core?

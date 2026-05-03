@@ -88,6 +88,7 @@ Usage:
   click < FILE
 
 Notes:
+  Source uses symbols and alternating key/value object forms.
   A leading #! line is ignored in source files.
   If no FILE is given and stdin is not a terminal, click reads stdin."
     );
