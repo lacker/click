@@ -1,7 +1,7 @@
+mod core;
 mod reader;
-mod v2;
 
-pub use v2::{
+pub use core::{
     ClickResult, Object, Symbol, Term, apply, empty_env, eval, eval_in_env, eval_state, halt,
     initial_state, lambda, r#match, parse, parse_many, return_state, set, step, var,
 };

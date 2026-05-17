@@ -140,9 +140,9 @@ impl fmt::Display for Term {
 pub fn parse(source: &str) -> ClickResult<Term> {
     let mut terms = parse_many(source)?;
     match terms.len() {
-        0 => Err("expected one v2 term, found none".to_string()),
+        0 => Err("expected one Click term, found none".to_string()),
         1 => Ok(terms.remove(0)),
-        count => Err(format!("expected one v2 term, found {count}")),
+        count => Err(format!("expected one Click term, found {count}")),
     }
 }
 
