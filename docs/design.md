@@ -1,12 +1,5 @@
 # Click Design
 
-This document records the current design direction for `click`.
-
-Click is now a reflective computation core first. The earlier typed-kernel-first
-design has been retired from the active language.
-
-## Goal
-
 The goal of Click is to make it easy to prove things about programs, no matter
 what language those programs are written in.
 
