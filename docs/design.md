@@ -35,6 +35,13 @@ itself. A program may arrive with a precise type, a weak type, a union type, or
 no useful type at all. Click's job is to attach stronger meaning by proving
 refinement and subtype facts about the program as it exists.
 
+Language-specific runtime models will still be necessary. But Click should not
+make each language a separate proof universe with its own unrelated notions of
+function, computation, type, and evaluation. Foreign programs should be brought
+as close as possible to Click's native computation, state, subtype, and proof
+machinery, so proofs talk about the original program rather than an opaque
+interpreter wrapped around it.
+
 ## Raw Terms
 
 A raw Click `Term` is one of two things:
