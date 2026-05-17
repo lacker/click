@@ -7,20 +7,13 @@ design has been retired from the active language.
 
 ## Goal
 
-The Click kernel should be reflectively complete: Click should be able to
-represent Click programs, computations, types, proofs, evaluators, and checkers
-as Click data and computations, and should be able to check meaningful proofs
-about those mechanisms.
+The goal of Click is to make it easy to prove things about programs, no matter
+what language those programs are written in.
 
-Reflective completeness is the design test for kernel features. The kernel
-should have enough primitive power to internalize its own metatheory, but not so
-much that ordinary language features become trusted syntax. New forms, type
-systems, proof systems, and effect disciplines should be built as Click
-artifacts that elaborate into the trusted core.
-
-That means the base language should compute. Computation is not an add-on to a
-pure proof language; it is the substrate that later typing and proof layers
-reason about.
+The Click kernel should therefore be reflectively complete: Click should be able
+to represent programs, computations, types, proofs, evaluators, and checkers as
+Click data and computations, and should be able to check meaningful proofs about
+those mechanisms.
 
 ## Raw Terms
 
