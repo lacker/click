@@ -8,6 +8,33 @@ to represent programs, computations, types, proofs, evaluators, and checkers as
 Click data and computations, and should be able to check meaningful proofs about
 those mechanisms.
 
+## The Click Type System
+
+Many proof systems are built around dependent types. In the broad sense, Click
+should support dependent types: useful program properties often depend on
+program values. But Click should not be built around the narrower
+proofs-as-types style of dependent type system used by systems like Lean and
+Agda, where typechecking is fundamentally tied to deterministic normalization
+of total terms.
+
+That style is a poor fit for Click's goal. Practical programs are often
+mutable, partial, asynchronous, panic-capable, weakly typed, or written in
+languages whose type systems were not designed for theorem proving. Click
+should make the prover fit those programs, rather than requiring programs to be
+reshaped until they look natural to the prover.
+
+Click's type system should therefore be based on refinement types and subtypes.
+At the kernel level, there should be one connected subtype graph with a top type
+for all program objects. Every more precise type is a subtype or refinement of
+that top type. The main work of the proof system is to establish subtype
+relationships: that an existing program, value, computation, or runtime state
+belongs to a more precise type than the one it started with.
+
+This means proofs are not expected to live inside the source-language type
+itself. A program may arrive with a precise type, a weak type, a union type, or
+no useful type at all. Click's job is to attach stronger meaning by proving
+refinement and subtype facts about the program as it exists.
+
 ## Raw Terms
 
 A raw Click `Term` is one of two things:
