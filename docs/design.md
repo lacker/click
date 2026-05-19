@@ -1,280 +1,269 @@
-# Click Design
+# The Click Type System
 
-The goal of Click is to make it easy to prove things about programs, no matter
+Click's goal is to make it easy to prove things about programs, no matter
 what language those programs are written in.
 
-The Click kernel should therefore be reflectively complete: Click should be able
-to represent programs, computations, types, proofs, evaluators, and checkers as
-Click data and computations, and should be able to check meaningful proofs about
-those mechanisms.
+This means that Click needs a very flexible model for programs, computations, types,
+proofs, evaluators, and checkers.
 
-## The Click Type System
+Click does need a rigorous kernel. But practical programs are often mutable, partial,
+asynchronous, or weakly typed. They can panic or have undefined behavior.
+Click needs to be accepting of all these things.
 
-Many proof systems are built around dependent types. In the broad sense, Click
-should support dependent types: useful program properties often depend on
-program values. But Click should not be built around the narrower
-proofs-as-types style of dependent type system used by systems like Lean and
-Agda, where typechecking is fundamentally tied to deterministic normalization
-of total terms.
-
-That style is a poor fit for Click's goal. Practical programs are often
-mutable, partial, asynchronous, panic-capable, weakly typed, or written in
-languages whose type systems were not designed for theorem proving. Click
-should make the prover fit those programs, rather than requiring programs to be
+The prover should fit any program, rather than requiring programs to be
 reshaped until they look natural to the prover.
 
-Click's type system should therefore be based on refinement types and subtypes.
-At the kernel level, there should be one connected subtype graph with a top type
-for all program objects. Every more precise type is a subtype or refinement of
-that top type. The main work of the proof system is to establish subtype
-relationships: that an existing program, value, computation, or runtime state
-belongs to a more precise type than the one it started with.
+To achieve this flexibility, Click's type system is based on refinement types and subtypes.
+In Click, everything is an "object". Types are represented by predicates on objects.
 
-This means proofs are not expected to live inside the source-language type
-itself. A program may arrive with a precise type, a weak type, a union type, or
-no useful type at all. Click's job is to attach stronger meaning by proving
-refinement and subtype facts about the program as it exists.
+The Curry-Howard correspondence shows us that in a sense, proofs and types are the same thing.
+In traditional dependent type systems, the kernel implements a powerful type system, and then we build proofs based on types.
+Click works the other way around: we build a powerful proof system, and then we build types based on proofs.
 
-Language-specific runtime models will still be necessary. But Click should not
-make each language a separate proof universe with its own unrelated notions of
-function, computation, type, and evaluation. Foreign programs should be brought
-as close as possible to Click's native computation, state, subtype, and proof
-machinery, so proofs talk about the original program rather than an opaque
-interpreter wrapped around it.
+The upshot is that the Click type system becomes incredibly flexible. Almost any type in any programming language
+can be naturally represented as a Click type.
 
-## Raw Terms
+# The Click Kernel
 
-A raw Click `Term` is one of two things:
+So. How does the kernel work? Hmm.
 
-- `Symbol`
-- `Object`
+## Do not modify this line or anything above it. That zone is for human use.
+## Below this line is for AI use.
 
-A `Symbol` is an atomic value such as `:foo`.
+## Kernel Target
 
-An `Object` is a finite unordered map from unique symbol keys to term values.
+Below this line, the design question is deliberately narrow: what is the
+smallest kernel that can talk about objects, computation, equality, proofs, and
+checking?
 
-So the core data model is:
+The kernel should have:
+
+- raw objects
+- one built-in top type, `:Object`
+- structural object equality
+- small-step computation claims
+- large-step equality claims built from small steps
+- proof objects checked against explicit claims
+
+Everything else should earn its place by making a concrete proof easier.
+
+## Raw Objects
+
+The kernel's raw data language is:
 
 ```text
 Term ::= Symbol | Object(Symbol -> Term)
 ```
 
-There are no primitive lists, products, sums, closures, or types at the raw
-level. Those are all conventions or later layers built on top of symbols and
-objects.
+There are no primitive lists, functions, closures, records, sums, products, or
+source-language types. Those are object conventions.
 
-## Surface Syntax
+The current S-expression syntax is only notation for this raw data.
 
-The current parser is intentionally small and Lispy:
+## Object Type
 
-```text
-:foo
-(:left :payload)
-(:x :a :y (:z :b))
-```
-
-Bare symbols parse as symbols. Parenthesized forms parse as objects containing
-alternating key/value pairs. So:
+The kernel has one built-in top type:
 
 ```text
-(:x :a :y (:z :b))
+(:has-type (:term t :type :Object))
 ```
 
-parses to the object:
+Every well-formed raw term has type `:Object`. Richer types are refinements of
+`:Object`, not new primitive kernel domains.
+
+For example, list-ness is a refinement over objects shaped like:
 
 ```text
-{ :x :a, :y { :z :b } }
+(:nil ())
+(:cons (:head h :tail t))
 ```
 
-This is raw data by default. Objects do not evaluate underneath their fields
-unless they match one of the distinguished executable shapes described below.
+## Structural Equality
 
-## Executable Shapes
-
-The current reflective core gives special meaning to a small set of singleton
-objects:
-
-- `(:var :x)`
-- `(:lambda (:param :x :body body))`
-- `(:apply (:function f :arg x))`
-- `(:match (:handlers handlers :value value))`
-- `(:set (:object object :key key :value value))`
-
-Any object that does not match one of those shapes is inert data.
-
-### `:var`
-
-Symbols are data. Variable lookup is explicit:
+The kernel has built-in structural equality:
 
 ```text
-:x
-(:var :x)
+(:object-equal (:left a :right b))
 ```
 
-The first is a symbol value. The second is an expression that reads from the
-current environment.
+This equality is intentionally stupid:
 
-### `:lambda`
+- symbols are equal iff their names are equal
+- objects are equal iff they have the same keys and equal values at each key
+- object field order does not matter
+- symbols and objects are never equal
 
-Functions are written as objects and evaluate to closure objects. A closure
-captures its defining environment.
+This is not program equivalence or mathematical equality in a user theory. It
+is the base comparison operation the checker can trust directly.
 
-Concrete closure values use the ordinary object substrate:
+## Small Step
+
+The kernel has small-step claims:
 
 ```text
-{ :closure { :param :x, :body body, :env env } }
+(:small-step (:machine machine :from state :to result))
 ```
 
-### `:apply`
-
-Application is explicit:
+`machine`, `state`, and `result` are raw terms. A result is conventionally one
+of:
 
 ```text
-(:apply (:function f :arg x))
+(:continue next_state)
+(:return value)
+(:error info)
 ```
 
-Applying a closure extends the closure's environment with its parameter binding
-and then evaluates the body in that extended environment.
+The `:machine` field prevents one global step relation from mixing unrelated
+semantics. A Click evaluator, a WASM evaluator, and a rewrite system can all
+have their own steps.
 
-### `:match`
-
-`match` is the current generic eliminator for object-shaped data.
-
-If:
+The tiny kernel does not know which steps are valid. It only checks proofs of
+step claims. Version zero can allow explicit assumptions:
 
 ```text
-handlers = { :left h1, :right h2 }
-value    = { :left payload }
+(:assume :step-17)
 ```
 
-then:
+where the context contains:
 
 ```text
-(:match (:handlers handlers :value value))
+:step-17 =
+  (:small-step
+    (:machine machine
+     :from state
+     :to (:continue next_state)))
 ```
 
-evaluates the selected handler and applies it to `payload`.
+That is ugly, but useful: it lets us build the checker before designing a rule
+language.
 
-The current rule requires exactly one overlapping key between the handler object
-and the value object. Zero overlaps and multiple overlaps are both runtime
-errors.
+## Large-Step-Equals
 
-### `:set`
-
-Literal objects already exist as raw data. `:set` is the explicit way to build
-or update objects with computed keys or values:
+The kernel has large-step equality claims:
 
 ```text
-(:set (:object object :key key :value value))
+(:large-step-equals
+  (:machine machine :from state :value expected))
 ```
 
-## Environments And State
+This means that repeated small steps under `machine` eventually return a value
+structurally equal to `expected`.
 
-The runtime model is deliberately explicit.
+This is not a host evaluator. It is a checked finite proof over `:small-step`.
 
-Evaluation happens relative to:
-
-- an environment object
-- a continuation object
-- a current evaluator state
-
-The evaluator state shapes are:
+Return proof:
 
 ```text
-{ :eval { :expr expr, :env env, :cont cont } }
-{ :ret  { :value value, :cont cont } }
+(:large-return
+  (:step step_proof
+   :actual actual_value
+   :equal equal_proof))
 ```
 
-The current continuation vocabulary is:
+The checker verifies:
 
 ```text
-:halt
+step_proof proves
+  (:small-step (:machine machine :from state :to (:return actual_value)))
 
-{ :apply_function { :arg arg, :env env, :next cont } }
-{ :apply_argument { :function function_value, :next cont } }
-
-{ :set_object { :key key, :value value, :env env, :next cont } }
-{ :set_key { :object object_value, :value value, :env env, :next cont } }
-{ :set_value { :object object_value, :key key_value, :next cont } }
-
-{ :match_handlers { :value value_expr, :env env, :next cont } }
-{ :match_value { :handlers handlers_value, :env env, :next cont } }
-{ :match_apply { :payload payload, :next cont } }
+equal_proof proves
+  (:object-equal (:left actual_value :right expected))
 ```
 
-This is the important shift away from the retired kernel: control state is no
-longer smuggled back into the language as evaluator-generated lambdas. The
-machine state is ordinary Click data.
-
-## Step Protocol
-
-`step` operates on one explicit evaluator state and returns one explicit
-response object:
+Continue proof:
 
 ```text
-{ :continue next }
-{ :return value }
-{ :error info }
+(:large-continue
+  (:next next_state
+   :step step_proof
+   :rest rest_proof))
 ```
 
-That keeps success, suspension, and failure in the language model rather than
-in host-side side channels.
+The checker verifies:
 
-Current runtime errors include:
+```text
+step_proof proves
+  (:small-step (:machine machine :from state :to (:continue next_state)))
 
-- applying a non-closure
-- reading an unbound variable
-- malformed executable shapes
-- matching with zero overlaps
-- matching with more than one overlap
-- using `:set` with a non-object receiver or non-symbol key
+rest_proof proves
+  (:large-step-equals
+    (:machine machine :from next_state :value expected))
+```
 
-## Evaluation Strategy
+## Proof Checking
 
-The intended strategy is small-step and local:
+The trusted kernel operation is:
 
-- one step inspects one explicit state
-- one step returns one explicit response object
-- environments are extended explicitly during closure application
-- substitution is not the runtime model
+```text
+check(context, claim, proof) -> (:ok claim) | (:error info)
+```
 
-The host convenience evaluator repeatedly calls `step` until it reaches
-`:return` or `:error`.
+Initial proof forms:
 
-## Current Rust Surface
+- `(:assume name)` checks when `context[name]` is exactly the target claim
+- `(:object-type)` checks `:has-type` for a well-formed raw term and `:Object`
+- `(:object-equal)` checks structural equality directly
+- `(:large-return ...)` checks the return rule above
+- `(:large-continue ...)` checks the continue rule above
 
-The Rust API is centered on the reflective core:
+This is enough to check finite computation traces before we have tactics,
+induction, or checked evaluator rules.
 
-- raw term constructors such as `Term::symbol` and `Object::with`
-- helper constructors for executable shapes such as `var`, `lambda`, `apply`,
-  `match`, and `set`
-- `parse` and `parse_many`
-- `step`
-- `eval` and `eval_in_env`
-- `run_source` as a host convenience wrapper over parsed source text
+## Reverse List Test
 
-`run_source` is a convenience API, not a settled statement about the eventual
-top-level language. The core language semantics are still term-level and
-state-machine-level.
+A concrete test is proving that a reverse program returns the expected object
+for one input list.
 
-## Deliberate Omissions
+Input:
 
-The current active language does not have a built-in typed kernel, primitive
-records-vs-sums distinction, a trusted proof checker, quote syntax, or the old
-list-oriented metaprogramming primitives.
+```text
+(:cons
+  (:head :a
+   :tail (:cons
+     (:head :b
+      :tail (:cons
+        (:head :c
+         :tail (:nil ()))))))
+```
 
-The historical `bootstrap/` tree remains useful as a record of earlier
-experiments, especially the lesson that explicit environments are often simpler
-than substitution-heavy reflective evaluators.
+Expected:
+
+```text
+(:cons
+  (:head :c
+   :tail (:cons
+     (:head :b
+      :tail (:cons
+        (:head :a
+         :tail (:nil ()))))))
+```
+
+The first kernel-level goal is:
+
+```text
+(:large-step-equals
+  (:machine :click-seq
+   :from reverse_initial_state
+   :value expected))
+```
+
+The first proof can be an explicit finite trace whose steps are assumptions.
+That will be tedious, but it tests the kernel boundary. Once this works, the
+next design pressure is obvious: replace assumed steps with checked step rules.
+
+## Current Rust Experiment
+
+The current Rust evaluator hardcodes `:var`, `:lambda`, `:apply`, `:match`, and
+`:set`. It is useful as an experiment, but too specific to be the kernel.
+
+The direction here is to keep raw terms and move trust into explicit proof
+checking for small-step and large-step claims.
 
 ## Open Questions
 
-- What should the top-level program model be for files that contain more than
-  one term?
-- Should `match` stay exact-single-overlap, or should it grow a richer pattern
-  discipline?
-- How should `match` behave on bare symbols?
-- Is `:set` enough for computed object construction, or does the core want an
-  additional helper?
-- What should a typing or proof-checking layer look like above this raw
-  computation core?
+- Should explicit step assumptions exist in v0, or should checked step rules be
+  part of the first implementation?
+- What is the smallest useful step-rule language?
+- Should `:large-step-equals` also expose final states, not just returned
+  values?
+- What is the smallest refinement layer over `:Object`?
