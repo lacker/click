@@ -7,7 +7,7 @@ This means that Click needs a very flexible model for programs, computations, ty
 proofs, evaluators, and checkers.
 
 Click does need a rigorous kernel. But practical programs are often mutable, partial,
-asynchronous, or weakly typed. They can panic or have undefined behavior.
+asynchronous, nondeterministic, or weakly typed. They can panic or have undefined behavior.
 Click needs to be accepting of all these things.
 
 The prover should fit any program, rather than requiring programs to be
@@ -20,12 +20,34 @@ The Curry-Howard correspondence shows us that in a sense, proofs and types are t
 In traditional dependent type systems, the kernel implements a powerful type system, and then we build proofs based on types.
 Click works the other way around: we build a powerful proof system, and then we build types based on proofs.
 
-The upshot is that the Click type system becomes incredibly flexible. Almost any type in any programming language
+The upshot is that the Click type system becomes very flexible. Any type in any programming language
 can be naturally represented as a Click type.
 
 # The Click Kernel
 
-So. How does the kernel work? Hmm.
+The kernel implements:
+
+Object (type):
+think of it like untyped, simplified JSON.
+An object can either be an opaque "symbol", or a map of symbols to objects.
+
+Term (type):
+things that "look like executable things". There's some encoding for lambdas, maybe closures.
+Term is a subtype of object.
+
+Outcome (type):
+a wrapper, only used around term, that represents monadic computation-type value. Like done/continue/error.
+
+Since the type system is built on top of the proof system, we can't rely on the type system to ensure that
+functions are only called on arguments of the right type, or that a program terminates. That's why we need to represent
+the concepts of "error" and "infinite loop" in the kernel.
+
+step (function):
+Term -> Outcome<Term>
+The "small step" of the kernel.
+
+TODO: how to prove stuff?
+
 
 ## Do not modify this line or anything above it. That zone is for human use.
 ## Below this line is for AI use.
@@ -41,7 +63,7 @@ The kernel should have:
 - raw objects
 - one built-in top type, `:Object`
 - structural object equality
-- small-step computation claims
+- `step : Term -> Outcome<Term>`
 - large-step equality claims built from small steps
 - proof objects checked against explicit claims
 
@@ -98,58 +120,79 @@ is the base comparison operation the checker can trust directly.
 
 ## Small Step
 
-The kernel has small-step claims:
+Pseudo-type notation:
 
 ```text
-(:small-step (:machine machine :from state :to result))
+Outcome<T> =
+  (:next T)
+  (:return T)
+  (:error Term)
+
+step : Term -> Outcome<Term>
 ```
 
-`machine`, `state`, and `result` are raw terms. A result is conventionally one
-of:
+So yes: the input to `step` is a term, and one step produces an outcome whose
+payloads are also terms.
+
+The input term is the whole steppable state. If we need a machine tag, it lives
+inside the term:
 
 ```text
-(:continue next_state)
-(:return value)
-(:error info)
+(:state (:machine :click-seq :data ...))
 ```
 
-The `:machine` field prevents one global step relation from mixing unrelated
-semantics. A Click evaluator, a WASM evaluator, and a rewrite system can all
-have their own steps.
-
-The tiny kernel does not know which steps are valid. It only checks proofs of
-step claims. Version zero can allow explicit assumptions:
+That means we do not need `step(machine, state)` as the first shape. We can get
+that back by convention:
 
 ```text
-(:assume :step-17)
+step((:state (:machine m :data s)))
 ```
 
-where the context contains:
+If a term is not meaningful to step, `step` can return an error:
 
 ```text
-:step-17 =
-  (:small-step
-    (:machine machine
-     :from state
-     :to (:continue next_state)))
+(:error (:not-steppable term))
 ```
 
-That is ugly, but useful: it lets us build the checker before designing a rule
-language.
+A proof-facing claim says what one call to `step` returns:
+
+```text
+(:step-equals (:input state :outcome outcome))
+```
+
+Version zero can prove this from explicit assumptions. Later, checked step
+rules can prove the same claim without changing large-step checking.
+
+## Monadic Smell
+
+`next`, `return`, and `error` look monadic. This seems important.
+
+Roughly:
+
+- `(:return value)` is the pure/finished case
+- `(:next state)` is "keep going in this computation"
+- `(:error info)` is a distinguished effectful exit
+
+The kernel should probably not contain `bind` yet. But the shape of
+large-step proofs is already bind-like: prove one step, then continue proving
+the rest from the next state.
+
+Maybe the right rule is: the kernel understands the tiny operational monad of
+stepping, while richer monads live as object-level machines with laws proved
+about them.
 
 ## Large-Step-Equals
 
 The kernel has large-step equality claims:
 
 ```text
-(:large-step-equals
-  (:machine machine :from state :value expected))
+(:large-step-equals (:input state :value expected))
 ```
 
-This means that repeated small steps under `machine` eventually return a value
-structurally equal to `expected`.
+This means that repeated calls to `step` eventually return a value structurally
+equal to `expected`.
 
-This is not a host evaluator. It is a checked finite proof over `:small-step`.
+This is not a host evaluator. It is a checked finite proof over `:step`.
 
 Return proof:
 
@@ -164,7 +207,7 @@ The checker verifies:
 
 ```text
 step_proof proves
-  (:small-step (:machine machine :from state :to (:return actual_value)))
+  (:step-equals (:input state :outcome (:return actual_value)))
 
 equal_proof proves
   (:object-equal (:left actual_value :right expected))
@@ -183,12 +226,14 @@ The checker verifies:
 
 ```text
 step_proof proves
-  (:small-step (:machine machine :from state :to (:continue next_state)))
+  (:step-equals (:input state :outcome (:next next_state)))
 
 rest_proof proves
-  (:large-step-equals
-    (:machine machine :from next_state :value expected))
+  (:large-step-equals (:input next_state :value expected))
 ```
+
+An `:error` outcome does not prove `:large-step-equals`. If error behavior
+matters, it should get a separate large-step claim.
 
 ## Proof Checking
 
@@ -203,6 +248,7 @@ Initial proof forms:
 - `(:assume name)` checks when `context[name]` is exactly the target claim
 - `(:object-type)` checks `:has-type` for a well-formed raw term and `:Object`
 - `(:object-equal)` checks structural equality directly
+- `(:step-rule ...)` or `(:assume name)` proves `:step-equals`
 - `(:large-return ...)` checks the return rule above
 - `(:large-continue ...)` checks the continue rule above
 
@@ -242,8 +288,7 @@ The first kernel-level goal is:
 
 ```text
 (:large-step-equals
-  (:machine :click-seq
-   :from reverse_initial_state
+  (:input reverse_initial_state
    :value expected))
 ```
 
@@ -261,9 +306,12 @@ checking for small-step and large-step claims.
 
 ## Open Questions
 
+- Is `step : Term -> Outcome<Term>` really enough, with machine tags inside
+  terms?
 - Should explicit step assumptions exist in v0, or should checked step rules be
   part of the first implementation?
 - What is the smallest useful step-rule language?
 - Should `:large-step-equals` also expose final states, not just returned
   values?
+- Do we need a sibling claim for large-step errors?
 - What is the smallest refinement layer over `:Object`?
