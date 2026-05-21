@@ -27,13 +27,13 @@ can be naturally represented as a Click type.
 
 * A universal object format. One stupid data model with structural equality.
 
-* A small step relation that implements the CEK machine.
+* A minimal CEK machine in the kernel, exposed as a small-step relation.
 
 * A proof checker that validates proof objects against claim objects.
 
-* Powerful enough to encode basics, like a list type, and that reversing a list twice is the identity.
+* Powerful enough to define basic data types, like lists, and prove theorems about them, like reverse(reverse(xs)) = xs.
 
-* Powerful enough to define and check the lambda cube: λ→, λP, λ2, λC
+* Powerful enough to define and check type systems from the lambda cube: λ→, λP, λ2, λC
 
 * Powerful enough to model real languages: WebAssembly, LLVM IR, C, JavaScript, TypeScript, Python
 
