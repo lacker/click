@@ -33,9 +33,9 @@ can be naturally represented as a Click type.
 
 * Powerful enough to encode basics, like a list type, and that reversing a list twice is the identity.
 
-* Powerful enough to implement the lambda cube: λ→, λP, λ2, λC
+* Powerful enough to define and check the lambda cube: λ→, λP, λ2, λC
 
-* Powerful enough to implement real languages: WebAssembly, LLVM IR, C, JavaScript, TypeScript, Python
+* Powerful enough to model real languages: WebAssembly, LLVM IR, C, JavaScript, TypeScript, Python
 
 ## Do not modify this line or anything above it. That zone is for human use.
 ## Below this line is for AI use.
@@ -53,23 +53,29 @@ environments, continuations, small steps, and a large-step proof.
 
 ## Pseudo-Types
 
-Everything is represented as `Object`. These are refinements, not primitive
-runtime variants:
+Everything is represented as `Object`. A symbol is a primitive object. A
+record is a compound object:
 
 ```text
-Object
-Expr <: Object
-Value <: Object
-Environment <: Object
-Continuation <: Object
-EvalState <: Object
-EvalOutcome <: Object
-Claim <: Object
-Proof <: Object
+Object = Symbol | Record
+Record = finite map from Symbol to Object
 ```
 
-The kernel has stupid structural equality on objects: symbols by name, objects
-by keys and values.
+The rest of these are refinements, not primitive runtime variants:
+
+```text
+Expr <: Object
+Value <: Object
+Environment <: Record
+Continuation <: Object
+EvalState <: Record
+EvalOutcome <: Record
+Claim <: Record
+Proof <: Record
+```
+
+The kernel has stupid structural equality: symbols by name, records by keys and
+values.
 
 ## CEK Expressions
 
@@ -92,12 +98,12 @@ Value =
 ```
 
 Closures are where binding happens. Evaluating a lambda captures an
-environment. Later, inert objects can also be values.
+environment. Later, inert records can also be values.
 
 ## Environments
 
 ```text
-Environment = Object(Symbol -> Value)
+Environment = Record(Symbol -> Value)
 ```
 
 Examples:
@@ -107,7 +113,7 @@ Examples:
 (:x :ok)
 ```
 
-Environment extension is object update. No substitution in this demo.
+Environment extension is record update. No substitution in this demo.
 
 ## Continuations
 
