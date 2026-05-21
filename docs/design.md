@@ -1,4 +1,4 @@
-# The Click Type System
+# Click Philosophy and the Type System
 
 Click's goal is to make it easy to prove things about programs, no matter
 what language those programs are written in.
@@ -23,6 +23,19 @@ Click works the other way around: we build a powerful proof system, and then we 
 The upshot is that the Click type system becomes very flexible. Any type in any programming language
 can be naturally represented as a Click type.
 
+# Click Kernel Requirements
+
+* A universal object format. One stupid data model with structural equality.
+
+* A small step relation that implements the CEK machine.
+
+* A proof checker that validates proof objects against claim objects.
+
+* Powerful enough to encode basics, like a list type, and that reversing a list twice is the identity.
+
+* Powerful enough to implement the lambda cube: λ→, λP, λ2, λC
+
+* Powerful enough to implement real languages: WebAssembly, LLVM IR, C, JavaScript, TypeScript, Python
 
 ## Do not modify this line or anything above it. That zone is for human use.
 ## Below this line is for AI use.
