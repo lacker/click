@@ -23,295 +23,252 @@ Click works the other way around: we build a powerful proof system, and then we 
 The upshot is that the Click type system becomes very flexible. Any type in any programming language
 can be naturally represented as a Click type.
 
-# The Click Kernel
-
-The kernel implements:
-
-Object (type):
-think of it like untyped, simplified JSON.
-An object can either be an opaque "symbol", or a map of symbols to objects.
-
-Term (type):
-things that "look like executable things". There's some encoding for lambdas, maybe closures.
-Term is a subtype of object.
-
-Outcome (type):
-a wrapper, only used around term, that represents monadic computation-type value. Like done/continue/error.
-
-Since the type system is built on top of the proof system, we can't rely on the type system to ensure that
-functions are only called on arguments of the right type, or that a program terminates. That's why we need to represent
-the concepts of "error" and "infinite loop" in the kernel.
-
-step (function):
-Term -> Outcome<Term>
-The "small step" of the kernel.
-
-TODO: how to prove stuff?
-
 
 ## Do not modify this line or anything above it. That zone is for human use.
 ## Below this line is for AI use.
 
-## Kernel Target
+## Minimum Kernel Demo Proposal
 
-Below this line, the design question is deliberately narrow: what is the
-smallest kernel that can talk about objects, computation, equality, proofs, and
-checking?
-
-The kernel should have:
-
-- raw objects
-- one built-in top type, `:Object`
-- structural object equality
-- `step : Term -> Outcome<Term>`
-- large-step equality claims built from small steps
-- proof objects checked against explicit claims
-
-Everything else should earn its place by making a concrete proof easier.
-
-## Raw Objects
-
-The kernel's raw data language is:
+Goal: implement a tiny CEK evaluator and prove:
 
 ```text
-Term ::= Symbol | Object(Symbol -> Term)
+((lambda x. x) :ok) evaluates to :ok
 ```
 
-There are no primitive lists, functions, closures, records, sums, products, or
-source-language types. Those are object conventions.
+This is the smallest useful demo because it forces lambdas, closures,
+environments, continuations, small steps, and a large-step proof.
 
-The current S-expression syntax is only notation for this raw data.
+## Pseudo-Types
 
-## Object Type
-
-The kernel has one built-in top type:
+Everything is represented as `Object`. These are refinements, not primitive
+runtime variants:
 
 ```text
-(:has-type (:term t :type :Object))
+Object
+Expr <: Object
+Value <: Object
+Environment <: Object
+Continuation <: Object
+EvalState <: Object
+EvalOutcome <: Object
+Claim <: Object
+Proof <: Object
 ```
 
-Every well-formed raw term has type `:Object`. Richer types are refinements of
-`:Object`, not new primitive kernel domains.
+The kernel has stupid structural equality on objects: symbols by name, objects
+by keys and values.
 
-For example, list-ness is a refinement over objects shaped like:
+## CEK Expressions
 
 ```text
-(:nil ())
-(:cons (:head h :tail t))
+Expr =
+  Symbol
+  (:var Symbol)
+  (:lambda (:param Symbol :body Expr))
+  (:apply (:function Expr :arg Expr))
 ```
 
-## Structural Equality
+A bare symbol is a literal value. Variable lookup is explicit with `:var`.
 
-The kernel has built-in structural equality:
+## CEK Values
 
 ```text
-(:object-equal (:left a :right b))
+Value =
+  Symbol
+  (:closure (:param Symbol :body Expr :env Environment))
 ```
 
-This equality is intentionally stupid:
+Closures are where binding happens. Evaluating a lambda captures an
+environment. Later, inert objects can also be values.
 
-- symbols are equal iff their names are equal
-- objects are equal iff they have the same keys and equal values at each key
-- object field order does not matter
-- symbols and objects are never equal
-
-This is not program equivalence or mathematical equality in a user theory. It
-is the base comparison operation the checker can trust directly.
-
-## Small Step
-
-Pseudo-type notation:
+## Environments
 
 ```text
-Outcome<T> =
-  (:next T)
-  (:return T)
-  (:error Term)
-
-step : Term -> Outcome<Term>
+Environment = Object(Symbol -> Value)
 ```
 
-So yes: the input to `step` is a term, and one step produces an outcome whose
-payloads are also terms.
-
-The input term is the whole steppable state. If we need a machine tag, it lives
-inside the term:
+Examples:
 
 ```text
-(:state (:machine :click-seq :data ...))
+()
+(:x :ok)
 ```
 
-That means we do not need `step(machine, state)` as the first shape. We can get
-that back by convention:
+Environment extension is object update. No substitution in this demo.
+
+## Continuations
 
 ```text
-step((:state (:machine m :data s)))
+Continuation =
+  :halt
+  (:after-function
+    (:arg Expr
+     :env Environment
+     :then Continuation))
+  (:after-argument
+    (:function Value
+     :then Continuation))
 ```
 
-If a term is not meaningful to step, `step` can return an error:
+`Continuation` means what to do with a value that has just been produced.
+
+## EvalState
 
 ```text
-(:error (:not-steppable term))
+EvalState =
+  (:eval
+    (:expr Expr
+     :env Environment
+     :continuation Continuation))
+  (:continue
+    (:value Value
+     :continuation Continuation))
 ```
 
-A proof-facing claim says what one call to `step` returns:
+`(:eval ...)` inspects an expression. `(:continue ...)` feeds a value to a
+continuation. This is the CEK split.
+
+## EvalOutcome
 
 ```text
-(:step-equals (:input state :outcome outcome))
+EvalOutcome =
+  (:next EvalState)
+  (:return Value)
+  (:error Object)
 ```
-
-Version zero can prove this from explicit assumptions. Later, checked step
-rules can prove the same claim without changing large-step checking.
-
-## Monadic Smell
-
-`next`, `return`, and `error` look monadic. This seems important.
-
-Roughly:
-
-- `(:return value)` is the pure/finished case
-- `(:next state)` is "keep going in this computation"
-- `(:error info)` is a distinguished effectful exit
-
-The kernel should probably not contain `bind` yet. But the shape of
-large-step proofs is already bind-like: prove one step, then continue proving
-the rest from the next state.
-
-Maybe the right rule is: the kernel understands the tiny operational monad of
-stepping, while richer monads live as object-level machines with laws proved
-about them.
-
-## Large-Step-Equals
-
-The kernel has large-step equality claims:
 
 ```text
-(:large-step-equals (:input state :value expected))
+cek_step : EvalState -> EvalOutcome
 ```
 
-This means that repeated calls to `step` eventually return a value structurally
-equal to `expected`.
+This is the precise version of `step : Term -> Outcome<Term>` for the first
+demo.
 
-This is not a host evaluator. It is a checked finite proof over `:step`.
-
-Return proof:
+## CEK Step Rules
 
 ```text
-(:large-return
-  (:step step_proof
-   :actual actual_value
-   :equal equal_proof))
+eval Symbol:
+  next continue(Symbol, c)
+
+eval (:var name):
+  next continue(env[name], c)
+  error (:unbound name) if missing
+
+eval (:lambda (:param p :body body)):
+  next continue((:closure (:param p :body body :env env)), c)
+
+eval (:apply (:function f :arg x)):
+  next eval(f, env, (:after-function (:arg x :env env :then c)))
+
+continue(function_value, (:after-function (:arg x :env env :then c))):
+  next eval(x, env,
+    (:after-argument (:function function_value :then c)))
+
+continue(arg_value,
+  (:after-argument
+    (:function (:closure (:param p :body body :env closure_env))
+     :then c))):
+  next eval(body, extend(closure_env, p, arg_value), c)
+
+continue(value, :halt):
+  return value
 ```
 
-The checker verifies:
+If the function is not a closure, return `(:error (:not-a-function value))`.
+
+## Claims
+
+The minimum checker needs these claims:
 
 ```text
-step_proof proves
-  (:step-equals (:input state :outcome (:return actual_value)))
+(:object-equal (:left Object :right Object))
 
-equal_proof proves
-  (:object-equal (:left actual_value :right expected))
+(:cek-step-equals
+  (:input EvalState
+   :output EvalOutcome))
+
+(:cek-evals-to
+  (:input EvalState
+   :value Value))
 ```
 
-Continue proof:
+`cek-evals-to` is the large-step claim. It means repeated `cek_step` calls
+eventually return something structurally equal to `value`.
+
+## Proofs
+
+Minimum proof forms:
 
 ```text
-(:large-continue
-  (:next next_state
-   :step step_proof
-   :rest rest_proof))
+(:object-equal)                         // structural equality
+(:cek-step)                             // run trusted cek_step once
+(:cek-return (:step p1 :equal p2))       // one step returns
+(:cek-next (:step p1 :rest p2))          // one step continues
 ```
 
-The checker verifies:
+The checker rules:
 
 ```text
-step_proof proves
-  (:step-equals (:input state :outcome (:next next_state)))
+(:cek-return (:step p1 :equal p2))
+  p1 proves (:cek-step-equals (:input input :output (:return actual)))
+  p2 proves (:object-equal (:left actual :right expected))
+  therefore proves (:cek-evals-to (:input input :value expected))
 
-rest_proof proves
-  (:large-step-equals (:input next_state :value expected))
+(:cek-next (:step p1 :rest p2))
+  p1 proves (:cek-step-equals (:input input :output (:next next_input)))
+  p2 proves (:cek-evals-to (:input next_input :value expected))
+  therefore proves (:cek-evals-to (:input input :value expected))
 ```
 
-An `:error` outcome does not prove `:large-step-equals`. If error behavior
-matters, it should get a separate large-step claim.
+Errors do not prove `:cek-evals-to`. We can add error claims later.
 
-## Proof Checking
+## Demo Trace
 
-The trusted kernel operation is:
+Initial state:
 
 ```text
-check(context, claim, proof) -> (:ok claim) | (:error info)
+s0 =
+(:eval
+  (:expr (:apply
+    (:function (:lambda (:param :x :body (:var :x)))
+     :arg :ok))
+   :env ()
+   :continuation :halt))
 ```
 
-Initial proof forms:
-
-- `(:assume name)` checks when `context[name]` is exactly the target claim
-- `(:object-type)` checks `:has-type` for a well-formed raw term and `:Object`
-- `(:object-equal)` checks structural equality directly
-- `(:step-rule ...)` or `(:assume name)` proves `:step-equals`
-- `(:large-return ...)` checks the return rule above
-- `(:large-continue ...)` checks the continue rule above
-
-This is enough to check finite computation traces before we have tactics,
-induction, or checked evaluator rules.
-
-## Reverse List Test
-
-A concrete test is proving that a reverse program returns the expected object
-for one input list.
-
-Input:
+Claim:
 
 ```text
-(:cons
-  (:head :a
-   :tail (:cons
-     (:head :b
-      :tail (:cons
-        (:head :c
-         :tail (:nil ()))))))
+(:cek-evals-to (:input s0 :value :ok))
 ```
 
-Expected:
+Trace shape:
 
 ```text
-(:cons
-  (:head :c
-   :tail (:cons
-     (:head :b
-      :tail (:cons
-        (:head :a
-         :tail (:nil ()))))))
+s0 -> s1  eval application
+s1 -> s2  eval lambda into closure
+s2 -> s3  after-function, eval argument
+s3 -> s4  eval literal :ok
+s4 -> s5  after-argument, enter closure body with x = :ok
+s5 -> s6  eval (:var :x)
+s6 -> :ok
 ```
 
-The first kernel-level goal is:
+The proof is just nested `:cek-next` ending in `:cek-return`, with every
+one-step proof being `(:cek-step)`.
 
-```text
-(:large-step-equals
-  (:input reverse_initial_state
-   :value expected))
-```
+This is a real minimum demo. If this works, we have:
 
-The first proof can be an explicit finite trace whose steps are assumptions.
-That will be tedious, but it tests the kernel boundary. Once this works, the
-next design pressure is obvious: replace assumed steps with checked step rules.
+- object representation
+- lambda binding by environment
+- closures
+- continuations
+- one trusted small-step function
+- proof that the small-step function returns a claimed outcome
+- proof that many small steps evaluate to a value
 
-## Current Rust Experiment
+## What This Does Not Solve Yet
 
-The current Rust evaluator hardcodes `:var`, `:lambda`, `:apply`, `:match`, and
-`:set`. It is useful as an experiment, but too specific to be the kernel.
-
-The direction here is to keep raw terms and move trust into explicit proof
-checking for small-step and large-step claims.
-
-## Open Questions
-
-- Is `step : Term -> Outcome<Term>` really enough, with machine tags inside
-  terms?
-- Should explicit step assumptions exist in v0, or should checked step rules be
-  part of the first implementation?
-- What is the smallest useful step-rule language?
-- Should `:large-step-equals` also expose final states, not just returned
-  values?
-- Do we need a sibling claim for large-step errors?
-- What is the smallest refinement layer over `:Object`?
+No mutation/store, recursion, surface syntax, tactics, foreign languages,
+parallel stepping, or proof that a Rust implementation of `cek_step` matches a
+Click definition. Those should be later layers.
