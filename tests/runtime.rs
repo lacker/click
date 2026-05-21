@@ -9,15 +9,39 @@ fn tagged_payload<'a>(term: &'a Term, tag: &str) -> &'a Term {
     object.get(tag).expect("missing expected tag")
 }
 
+fn identity_expr() -> Term {
+    click::apply(click::lambda(":x", click::var(":x")), sym(":ok"))
+}
+
+fn identity_proof() -> Term {
+    let step = click::cek_step_proof();
+    click::cek_next_proof(
+        step.clone(),
+        click::cek_next_proof(
+            step.clone(),
+            click::cek_next_proof(
+                step.clone(),
+                click::cek_next_proof(
+                    step.clone(),
+                    click::cek_next_proof(
+                        step.clone(),
+                        click::cek_next_proof(
+                            step.clone(),
+                            click::cek_return_proof(step, click::object_equal_proof()),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
 #[test]
-fn eval_returns_symbols_and_literal_objects_as_values() {
+fn eval_returns_symbols_as_values() {
     assert_eq!(
         click::eval(&sym(":ok")).expect("eval should succeed"),
         sym(":ok")
     );
-
-    let object: Term = Object::new().with(":x", sym(":y")).into();
-    assert_eq!(click::eval(&object).expect("eval should succeed"), object);
 }
 
 #[test]
@@ -44,7 +68,7 @@ fn parse_many_reads_multiple_terms() {
 }
 
 #[test]
-fn parse_can_express_executable_object_shapes() {
+fn parse_can_express_the_cek_identity_program() {
     let source = "(:apply (:function (:lambda (:param :x :body (:var :x))) :arg :ok))";
 
     assert_eq!(
@@ -91,92 +115,81 @@ fn lambda_application_uses_lexical_closure_capture() {
 }
 
 #[test]
-fn set_updates_an_object_using_a_computed_key() {
-    let env: Term = Object::new().with(":field_name", sym(":answer")).into();
-    let expr = click::set(
-        Object::new().with(":existing", sym(":present")).into(),
-        click::var(":field_name"),
-        sym(":value"),
-    );
-    let expected: Term = Object::new()
-        .with(":answer", sym(":value"))
-        .with(":existing", sym(":present"))
-        .into();
-
-    assert_eq!(
-        click::eval_in_env(&expr, &env).expect("eval should succeed"),
-        expected
-    );
-}
-
-#[test]
-fn match_dispatches_on_the_unique_overlapping_key() {
-    let handlers: Term = Object::new()
-        .with(":left", click::lambda(":x", click::var(":x")))
-        .with(":right", click::lambda(":y", sym(":wrong")))
-        .into();
-    let value: Term = Object::new().with(":left", sym(":payload")).into();
-
-    assert_eq!(
-        click::eval(&click::r#match(handlers, value)).expect("eval should succeed"),
-        sym(":payload")
-    );
-}
-
-#[test]
-fn match_errors_without_a_unique_overlap() {
-    let handlers: Term = Object::new()
-        .with(":left", click::lambda(":x", click::var(":x")))
-        .with(":right", click::lambda(":y", click::var(":y")))
-        .into();
-
-    let no_overlap: Term = Object::new().with(":other", sym(":payload")).into();
-    assert_eq!(
-        click::eval(&click::r#match(handlers.clone(), no_overlap))
-            .expect_err("match without overlap should fail"),
-        ":match_none"
-    );
-
-    let ambiguous: Term = Object::new()
-        .with(":left", sym(":a"))
-        .with(":right", sym(":b"))
-        .into();
-    assert_eq!(
-        click::eval(&click::r#match(handlers, ambiguous))
-            .expect_err("match with two overlaps should fail"),
-        ":match_ambiguous"
-    );
-}
-
-#[test]
-fn step_uses_the_explicit_continue_return_error_protocol() {
-    let first = click::step(&click::initial_state(sym(":ok"))).expect("step should succeed");
-    let next_state = tagged_payload(&first, ":continue").clone();
-    let second = click::step(&next_state).expect("step should succeed");
+fn cek_step_returns_explicit_next_and_return_outcomes() {
+    let first = click::cek_step(&click::initial_state(sym(":ok"))).expect("step should succeed");
+    let next_state = tagged_payload(&first, ":next").clone();
+    let second = click::cek_step(&next_state).expect("step should succeed");
 
     assert_eq!(tagged_payload(&second, ":return"), &sym(":ok"));
+}
 
-    let error = click::step(&sym(":not_a_state")).expect("step should succeed");
-    assert_eq!(tagged_payload(&error, ":error"), &sym(":bad_state"));
+#[test]
+fn cek_step_reports_bad_states_as_error_outcomes() {
+    let error = click::cek_step(&sym(":not-a-state")).expect("step should succeed");
+    assert!(
+        tagged_payload(&error, ":error")
+            .as_object()
+            .expect("error should be structured")
+            .has(":bad_eval_state")
+    );
 }
 
 #[test]
 fn applying_a_non_closure_is_an_error() {
     assert_eq!(
-        click::eval(&click::apply(sym(":not_a_function"), sym(":arg")))
+        click::eval(&click::apply(sym(":not-a-function"), sym(":arg")))
             .expect_err("applying a bare symbol should fail"),
-        ":apply_non_closure"
+        "{:not-a-function :not-a-function}"
+    );
+}
+
+#[test]
+fn check_proves_structural_object_equality() {
+    let left: Term = Object::new().with(":x", sym(":ok")).into();
+    let claim = click::object_equal_claim(left.clone(), left);
+    let checked = click::check(&claim, &click::object_equal_proof());
+
+    assert_eq!(tagged_payload(&checked, ":ok"), &claim);
+}
+
+#[test]
+fn check_proves_one_cek_step_by_running_the_stepper() {
+    let input = click::initial_state(sym(":ok"));
+    let output = click::cek_step(&input).expect("step should succeed");
+    let claim = click::cek_step_equals_claim(input, output);
+    let checked = click::check(&claim, &click::cek_step_proof());
+
+    assert_eq!(tagged_payload(&checked, ":ok"), &claim);
+}
+
+#[test]
+fn check_proves_cek_evals_to_with_a_nested_trace_proof() {
+    let claim = click::cek_evals_to_claim(click::initial_state(identity_expr()), sym(":ok"));
+    let checked = click::check(&claim, &identity_proof());
+
+    assert_eq!(tagged_payload(&checked, ":ok"), &claim);
+}
+
+#[test]
+fn check_rejects_a_false_eval_claim() {
+    let claim = click::cek_evals_to_claim(click::initial_state(identity_expr()), sym(":wrong"));
+    let checked = click::check(&claim, &identity_proof());
+
+    assert!(
+        tagged_payload(&checked, ":error")
+            .as_object()
+            .expect("error should be structured")
+            .has(":object-not-equal")
     );
 }
 
 #[test]
 fn run_source_ignores_shebang_and_returns_the_last_value() {
     assert_eq!(
-        run_source("#!/usr/bin/env click\n(:first :ok)\n(:second :done)\n")
+        run_source("#!/usr/bin/env click\n:first\n:done\n")
             .expect("run_source should succeed")
-            .expect("source should produce a value")
-            .to_string(),
-        "{:second :done}"
+            .expect("source should produce a value"),
+        sym(":done")
     );
 }
 

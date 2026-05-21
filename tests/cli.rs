@@ -34,7 +34,7 @@ fn evaluates_expression_argument() {
 
 #[test]
 fn evaluates_file_and_ignores_shebang() {
-    let path = temp_file("shebang", "#!/usr/bin/env click\n(:answer :ok)\n");
+    let path = temp_file("shebang", "#!/usr/bin/env click\n:first\n:done\n");
 
     let output = Command::new(bin())
         .arg(&path)
@@ -42,7 +42,7 @@ fn evaluates_file_and_ignores_shebang() {
         .expect("command should run");
 
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "{:answer :ok}\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), ":done\n");
 
     fs::remove_file(path).expect("temp file should be removed");
 }
@@ -61,15 +61,12 @@ fn evaluates_stdin() {
         let stdin = child.stdin.as_mut().expect("stdin should be available");
         write!(
             stdin,
-            "(:set (:object (:existing :present) :key :answer :value :ok))\n"
+            "(:apply (:function (:lambda (:param :x :body (:var :x))) :arg :stdin-ok))\n"
         )
         .expect("stdin write should succeed");
     }
 
     let output = child.wait_with_output().expect("command should complete");
     assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "{:answer :ok, :existing :present}\n"
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), ":stdin-ok\n");
 }

@@ -73,6 +73,10 @@ impl Object {
     pub fn len(&self) -> usize {
         self.entries.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 impl Default for Object {
@@ -177,156 +181,62 @@ pub fn apply(function: Term, arg: Term) -> Term {
     )
 }
 
-pub fn r#match(handlers: Term, value: Term) -> Term {
-    tagged(
-        ":match",
-        Object::new()
-            .with(":handlers", handlers)
-            .with(":value", value)
-            .into(),
-    )
-}
-
-pub fn set(object: Term, key: Term, value: Term) -> Term {
-    tagged(
-        ":set",
-        Object::new()
-            .with(":object", object)
-            .with(":key", key)
-            .with(":value", value)
-            .into(),
-    )
-}
-
 pub fn empty_env() -> Term {
     Object::new().into()
-}
-
-pub fn initial_state(expr: Term) -> Term {
-    eval_state(expr, empty_env(), halt())
-}
-
-pub fn eval_state(expr: Term, env: Term, cont: Term) -> Term {
-    tagged(
-        ":eval",
-        Object::new()
-            .with(":expr", expr)
-            .with(":env", env)
-            .with(":cont", cont)
-            .into(),
-    )
-}
-
-pub fn return_state(value: Term, cont: Term) -> Term {
-    tagged(
-        ":ret",
-        Object::new()
-            .with(":value", value)
-            .with(":cont", cont)
-            .into(),
-    )
 }
 
 pub fn halt() -> Term {
     Term::symbol(":halt")
 }
 
-fn apply_function_cont(arg: Term, env: Term, next: Term) -> Term {
+pub fn initial_state(expr: Term) -> Term {
+    eval_state(expr, empty_env(), halt())
+}
+
+pub fn eval_state(expr: Term, env: Term, continuation: Term) -> Term {
     tagged(
-        ":apply_function",
+        ":eval",
         Object::new()
-            .with(":arg", arg)
+            .with(":expr", expr)
             .with(":env", env)
-            .with(":next", next)
+            .with(":continuation", continuation)
             .into(),
     )
 }
 
-fn apply_argument_cont(function: Term, next: Term) -> Term {
+pub fn continue_state(value: Term, continuation: Term) -> Term {
     tagged(
-        ":apply_argument",
-        Object::new()
-            .with(":function", function)
-            .with(":next", next)
-            .into(),
-    )
-}
-
-fn set_object_cont(key: Term, value: Term, env: Term, next: Term) -> Term {
-    tagged(
-        ":set_object",
-        Object::new()
-            .with(":key", key)
-            .with(":value", value)
-            .with(":env", env)
-            .with(":next", next)
-            .into(),
-    )
-}
-
-fn set_key_cont(object: Term, value: Term, env: Term, next: Term) -> Term {
-    tagged(
-        ":set_key",
-        Object::new()
-            .with(":object", object)
-            .with(":value", value)
-            .with(":env", env)
-            .with(":next", next)
-            .into(),
-    )
-}
-
-fn set_value_cont(object: Term, key: Term, next: Term) -> Term {
-    tagged(
-        ":set_value",
-        Object::new()
-            .with(":object", object)
-            .with(":key", key)
-            .with(":next", next)
-            .into(),
-    )
-}
-
-fn match_handlers_cont(value: Term, env: Term, next: Term) -> Term {
-    tagged(
-        ":match_handlers",
+        ":continue",
         Object::new()
             .with(":value", value)
-            .with(":env", env)
-            .with(":next", next)
+            .with(":continuation", continuation)
             .into(),
     )
 }
 
-fn match_value_cont(handlers: Term, env: Term, next: Term) -> Term {
+pub fn closure(param: impl Into<Symbol>, body: Term, env: Term) -> Term {
     tagged(
-        ":match_value",
+        ":closure",
         Object::new()
-            .with(":handlers", handlers)
+            .with(":param", Term::symbol(param))
+            .with(":body", body)
             .with(":env", env)
-            .with(":next", next)
             .into(),
     )
 }
 
-fn match_apply_cont(payload: Term, next: Term) -> Term {
-    tagged(
-        ":match_apply",
-        Object::new()
-            .with(":payload", payload)
-            .with(":next", next)
-            .into(),
-    )
-}
-
-pub fn step(state: &Term) -> ClickResult<Term> {
+pub fn cek_step(state: &Term) -> ClickResult<Term> {
     if let Some(payload) = tagged_payload(state, ":eval") {
         return step_eval(payload);
     }
-    if let Some(payload) = tagged_payload(state, ":ret") {
-        return step_return(payload);
+    if let Some(payload) = tagged_payload(state, ":continue") {
+        return step_continue(payload);
     }
-    Ok(response_error(Term::symbol(":bad_state")))
+    Ok(outcome_error(tagged(":bad_eval_state", state.clone())))
+}
+
+pub fn step(state: &Term) -> ClickResult<Term> {
+    cek_step(state)
 }
 
 pub fn eval(expr: &Term) -> ClickResult<Term> {
@@ -336,350 +246,393 @@ pub fn eval(expr: &Term) -> ClickResult<Term> {
 pub fn eval_in_env(expr: &Term, env: &Term) -> ClickResult<Term> {
     let mut state = eval_state(expr.clone(), env.clone(), halt());
     loop {
-        let response = step(&state)?;
-        if let Some(next) = tagged_payload(&response, ":continue") {
+        let outcome = cek_step(&state)?;
+        if let Some(next) = tagged_payload(&outcome, ":next") {
             state = next.clone();
-        } else if let Some(value) = tagged_payload(&response, ":return") {
+        } else if let Some(value) = tagged_payload(&outcome, ":return") {
             return Ok(value.clone());
-        } else if let Some(info) = tagged_payload(&response, ":error") {
+        } else if let Some(info) = tagged_payload(&outcome, ":error") {
             return Err(info.to_string());
         } else {
-            return Err(format!("malformed step response {response}"));
+            return Err(format!("malformed eval outcome {outcome}"));
         }
+    }
+}
+
+pub fn object_equal_claim(left: Term, right: Term) -> Term {
+    tagged(
+        ":object-equal",
+        Object::new()
+            .with(":left", left)
+            .with(":right", right)
+            .into(),
+    )
+}
+
+pub fn cek_step_equals_claim(input: Term, output: Term) -> Term {
+    tagged(
+        ":cek-step-equals",
+        Object::new()
+            .with(":input", input)
+            .with(":output", output)
+            .into(),
+    )
+}
+
+pub fn cek_evals_to_claim(input: Term, value: Term) -> Term {
+    tagged(
+        ":cek-evals-to",
+        Object::new()
+            .with(":input", input)
+            .with(":value", value)
+            .into(),
+    )
+}
+
+pub fn object_equal_proof() -> Term {
+    tagged(":object-equal", Object::new().into())
+}
+
+pub fn cek_step_proof() -> Term {
+    tagged(":cek-step", Object::new().into())
+}
+
+pub fn cek_return_proof(step_proof: Term, equal_proof: Term) -> Term {
+    tagged(
+        ":cek-return",
+        Object::new()
+            .with(":step", step_proof)
+            .with(":equal", equal_proof)
+            .into(),
+    )
+}
+
+pub fn cek_next_proof(step_proof: Term, rest_proof: Term) -> Term {
+    tagged(
+        ":cek-next",
+        Object::new()
+            .with(":step", step_proof)
+            .with(":rest", rest_proof)
+            .into(),
+    )
+}
+
+pub fn check(claim: &Term, proof: &Term) -> Term {
+    match check_inner(claim, proof) {
+        Ok(()) => tagged(":ok", claim.clone()),
+        Err(info) => outcome_error(info),
     }
 }
 
 fn step_eval(payload: &Term) -> ClickResult<Term> {
     let Some(fields) = payload.as_object() else {
-        return Ok(response_error(Term::symbol(":bad_eval_state")));
+        return Ok(outcome_error(Term::symbol(":bad_eval_state")));
     };
     let Some(expr) = fields.get(":expr") else {
-        return Ok(response_error(Term::symbol(":bad_eval_state")));
+        return Ok(outcome_error(Term::symbol(":bad_eval_state")));
     };
     let Some(env) = fields.get(":env") else {
-        return Ok(response_error(Term::symbol(":bad_eval_state")));
+        return Ok(outcome_error(Term::symbol(":bad_eval_state")));
     };
-    let Some(cont) = fields.get(":cont") else {
-        return Ok(response_error(Term::symbol(":bad_eval_state")));
+    let Some(continuation) = fields.get(":continuation") else {
+        return Ok(outcome_error(Term::symbol(":bad_eval_state")));
     };
 
     match expr {
-        Term::Symbol(_) => Ok(response_continue(return_state(expr.clone(), cont.clone()))),
-        Term::Object(object) => {
+        Term::Symbol(_) => Ok(outcome_next(continue_state(
+            expr.clone(),
+            continuation.clone(),
+        ))),
+        Term::Object(_) => {
             if let Some(name) = tagged_payload(expr, ":var") {
-                let Some(name) = name.as_symbol() else {
-                    return Ok(response_error(Term::symbol(":bad_var")));
-                };
-                let Some(env) = env.as_object() else {
-                    return Ok(response_error(Term::symbol(":bad_env")));
-                };
-                match env.get(name.as_str()) {
-                    Some(value) => Ok(response_continue(return_state(value.clone(), cont.clone()))),
-                    None => Ok(response_error(Term::symbol(":unbound"))),
-                }
+                step_var(name, env, continuation)
             } else if let Some(details) = tagged_payload(expr, ":lambda") {
-                let Some(details) = details.as_object() else {
-                    return Ok(response_error(Term::symbol(":bad_lambda")));
-                };
-                let Some(param) = details.get(":param") else {
-                    return Ok(response_error(Term::symbol(":bad_lambda")));
-                };
-                let Some(body) = details.get(":body") else {
-                    return Ok(response_error(Term::symbol(":bad_lambda")));
-                };
-                if param.as_symbol().is_none() {
-                    return Ok(response_error(Term::symbol(":bad_lambda")));
-                }
-                let closure = tagged(
-                    ":closure",
-                    Object::new()
-                        .with(":param", param.clone())
-                        .with(":body", body.clone())
-                        .with(":env", env.clone())
-                        .into(),
-                );
-                Ok(response_continue(return_state(closure, cont.clone())))
+                step_lambda(details, env, continuation)
             } else if let Some(details) = tagged_payload(expr, ":apply") {
-                let Some(details) = details.as_object() else {
-                    return Ok(response_error(Term::symbol(":bad_apply")));
-                };
-                let Some(function) = details.get(":function") else {
-                    return Ok(response_error(Term::symbol(":bad_apply")));
-                };
-                let Some(arg) = details.get(":arg") else {
-                    return Ok(response_error(Term::symbol(":bad_apply")));
-                };
-                Ok(response_continue(eval_state(
-                    function.clone(),
-                    env.clone(),
-                    apply_function_cont(arg.clone(), env.clone(), cont.clone()),
-                )))
-            } else if let Some(details) = tagged_payload(expr, ":set") {
-                let Some(details) = details.as_object() else {
-                    return Ok(response_error(Term::symbol(":bad_set")));
-                };
-                let Some(object_expr) = details.get(":object") else {
-                    return Ok(response_error(Term::symbol(":bad_set")));
-                };
-                let Some(key_expr) = details.get(":key") else {
-                    return Ok(response_error(Term::symbol(":bad_set")));
-                };
-                let Some(value_expr) = details.get(":value") else {
-                    return Ok(response_error(Term::symbol(":bad_set")));
-                };
-                Ok(response_continue(eval_state(
-                    object_expr.clone(),
-                    env.clone(),
-                    set_object_cont(
-                        key_expr.clone(),
-                        value_expr.clone(),
-                        env.clone(),
-                        cont.clone(),
-                    ),
-                )))
-            } else if let Some(details) = tagged_payload(expr, ":match") {
-                let Some(details) = details.as_object() else {
-                    return Ok(response_error(Term::symbol(":bad_match")));
-                };
-                let Some(handlers_expr) = details.get(":handlers") else {
-                    return Ok(response_error(Term::symbol(":bad_match")));
-                };
-                let Some(value_expr) = details.get(":value") else {
-                    return Ok(response_error(Term::symbol(":bad_match")));
-                };
-                Ok(response_continue(eval_state(
-                    handlers_expr.clone(),
-                    env.clone(),
-                    match_handlers_cont(value_expr.clone(), env.clone(), cont.clone()),
-                )))
+                step_apply(details, env, continuation)
             } else {
-                let _ = object;
-                Ok(response_continue(return_state(expr.clone(), cont.clone())))
+                Ok(outcome_error(tagged(":not-an-expr", expr.clone())))
             }
         }
     }
 }
 
-fn step_return(payload: &Term) -> ClickResult<Term> {
+fn step_var(name: &Term, env: &Term, continuation: &Term) -> ClickResult<Term> {
+    let Some(name) = name.as_symbol() else {
+        return Ok(outcome_error(Term::symbol(":bad_var")));
+    };
+    let Some(env) = env.as_object() else {
+        return Ok(outcome_error(Term::symbol(":bad_env")));
+    };
+    match env.get(name.as_str()) {
+        Some(value) => Ok(outcome_next(continue_state(
+            value.clone(),
+            continuation.clone(),
+        ))),
+        None => Ok(outcome_error(tagged(
+            ":unbound",
+            Term::symbol(name.clone()),
+        ))),
+    }
+}
+
+fn step_lambda(details: &Term, env: &Term, continuation: &Term) -> ClickResult<Term> {
+    let Some(details) = details.as_object() else {
+        return Ok(outcome_error(Term::symbol(":bad_lambda")));
+    };
+    let Some(param) = details.get(":param") else {
+        return Ok(outcome_error(Term::symbol(":bad_lambda")));
+    };
+    let Some(body) = details.get(":body") else {
+        return Ok(outcome_error(Term::symbol(":bad_lambda")));
+    };
+    let Some(param) = param.as_symbol() else {
+        return Ok(outcome_error(Term::symbol(":bad_lambda")));
+    };
+    Ok(outcome_next(continue_state(
+        closure(param.clone(), body.clone(), env.clone()),
+        continuation.clone(),
+    )))
+}
+
+fn step_apply(details: &Term, env: &Term, continuation: &Term) -> ClickResult<Term> {
+    let Some(details) = details.as_object() else {
+        return Ok(outcome_error(Term::symbol(":bad_apply")));
+    };
+    let Some(function) = details.get(":function") else {
+        return Ok(outcome_error(Term::symbol(":bad_apply")));
+    };
+    let Some(arg) = details.get(":arg") else {
+        return Ok(outcome_error(Term::symbol(":bad_apply")));
+    };
+    Ok(outcome_next(eval_state(
+        function.clone(),
+        env.clone(),
+        after_function_cont(arg.clone(), env.clone(), continuation.clone()),
+    )))
+}
+
+fn step_continue(payload: &Term) -> ClickResult<Term> {
     let Some(fields) = payload.as_object() else {
-        return Ok(response_error(Term::symbol(":bad_return_state")));
+        return Ok(outcome_error(Term::symbol(":bad_continue_state")));
     };
     let Some(value) = fields.get(":value") else {
-        return Ok(response_error(Term::symbol(":bad_return_state")));
+        return Ok(outcome_error(Term::symbol(":bad_continue_state")));
     };
-    let Some(cont) = fields.get(":cont") else {
-        return Ok(response_error(Term::symbol(":bad_return_state")));
+    let Some(continuation) = fields.get(":continuation") else {
+        return Ok(outcome_error(Term::symbol(":bad_continue_state")));
     };
 
-    if *cont == halt() {
-        return Ok(response_return(value.clone()));
+    if *continuation == halt() {
+        return Ok(outcome_return(value.clone()));
     }
 
-    if let Some(frame) = tagged_payload(cont, ":apply_function") {
+    if let Some(frame) = tagged_payload(continuation, ":after-function") {
         let Some(frame) = frame.as_object() else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
+            return Ok(outcome_error(Term::symbol(":bad_continuation")));
         };
         let Some(arg) = frame.get(":arg") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
+            return Ok(outcome_error(Term::symbol(":bad_continuation")));
         };
         let Some(env) = frame.get(":env") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
+            return Ok(outcome_error(Term::symbol(":bad_continuation")));
         };
-        let Some(next) = frame.get(":next") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
+        let Some(next) = frame.get(":then") else {
+            return Ok(outcome_error(Term::symbol(":bad_continuation")));
         };
-        return Ok(response_continue(eval_state(
+        return Ok(outcome_next(eval_state(
             arg.clone(),
             env.clone(),
-            apply_argument_cont(value.clone(), next.clone()),
+            after_argument_cont(value.clone(), next.clone()),
         )));
     }
 
-    if let Some(frame) = tagged_payload(cont, ":apply_argument") {
+    if let Some(frame) = tagged_payload(continuation, ":after-argument") {
         let Some(frame) = frame.as_object() else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
+            return Ok(outcome_error(Term::symbol(":bad_continuation")));
         };
         let Some(function) = frame.get(":function") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
+            return Ok(outcome_error(Term::symbol(":bad_continuation")));
         };
-        let Some(next) = frame.get(":next") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
+        let Some(next) = frame.get(":then") else {
+            return Ok(outcome_error(Term::symbol(":bad_continuation")));
         };
         return Ok(apply_function_value(function, value, next));
     }
 
-    if let Some(frame) = tagged_payload(cont, ":set_object") {
-        let Some(frame) = frame.as_object() else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(key) = frame.get(":key") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(value_expr) = frame.get(":value") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(env) = frame.get(":env") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(next) = frame.get(":next") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        return Ok(response_continue(eval_state(
-            key.clone(),
-            env.clone(),
-            set_key_cont(value.clone(), value_expr.clone(), env.clone(), next.clone()),
-        )));
-    }
-
-    if let Some(frame) = tagged_payload(cont, ":set_key") {
-        let Some(frame) = frame.as_object() else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(object) = frame.get(":object") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(value_expr) = frame.get(":value") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(env) = frame.get(":env") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(next) = frame.get(":next") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        return Ok(response_continue(eval_state(
-            value_expr.clone(),
-            env.clone(),
-            set_value_cont(object.clone(), value.clone(), next.clone()),
-        )));
-    }
-
-    if let Some(frame) = tagged_payload(cont, ":set_value") {
-        let Some(frame) = frame.as_object() else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(object) = frame.get(":object") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(key) = frame.get(":key") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(next) = frame.get(":next") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(object) = object.as_object() else {
-            return Ok(response_error(Term::symbol(":set_non_object")));
-        };
-        let Some(key) = key.as_symbol() else {
-            return Ok(response_error(Term::symbol(":set_non_symbol_key")));
-        };
-        return Ok(response_continue(return_state(
-            object.with(key.clone(), value.clone()).into(),
-            next.clone(),
-        )));
-    }
-
-    if let Some(frame) = tagged_payload(cont, ":match_handlers") {
-        let Some(frame) = frame.as_object() else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(value_expr) = frame.get(":value") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(env) = frame.get(":env") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(next) = frame.get(":next") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        return Ok(response_continue(eval_state(
-            value_expr.clone(),
-            env.clone(),
-            match_value_cont(value.clone(), env.clone(), next.clone()),
-        )));
-    }
-
-    if let Some(frame) = tagged_payload(cont, ":match_value") {
-        let Some(frame) = frame.as_object() else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(handlers) = frame.get(":handlers") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(env) = frame.get(":env") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(next) = frame.get(":next") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(handlers) = handlers.as_object() else {
-            return Ok(response_error(Term::symbol(":match_handlers_not_object")));
-        };
-        let Some(value_object) = value.as_object() else {
-            return Ok(response_error(Term::symbol(":match_value_not_object")));
-        };
-        let mut overlap = None;
-        for (key, handler) in &handlers.entries {
-            if let Some(payload) = value_object.get(key.as_str()) {
-                if overlap.is_some() {
-                    return Ok(response_error(Term::symbol(":match_ambiguous")));
-                }
-                overlap = Some((handler.clone(), payload.clone()));
-            }
-        }
-        let Some((handler, payload)) = overlap else {
-            return Ok(response_error(Term::symbol(":match_none")));
-        };
-        return Ok(response_continue(eval_state(
-            handler,
-            env.clone(),
-            match_apply_cont(payload, next.clone()),
-        )));
-    }
-
-    if let Some(frame) = tagged_payload(cont, ":match_apply") {
-        let Some(frame) = frame.as_object() else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(payload) = frame.get(":payload") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        let Some(next) = frame.get(":next") else {
-            return Ok(response_error(Term::symbol(":bad_cont")));
-        };
-        return Ok(apply_function_value(value, payload, next));
-    }
-
-    Ok(response_error(Term::symbol(":bad_cont")))
+    Ok(outcome_error(Term::symbol(":bad_continuation")))
 }
 
-fn apply_function_value(function: &Term, arg: &Term, next: &Term) -> Term {
+fn apply_function_value(function: &Term, arg: &Term, continuation: &Term) -> Term {
     let Some(details) = tagged_payload(function, ":closure") else {
-        return response_error(Term::symbol(":apply_non_closure"));
+        return outcome_error(tagged(":not-a-function", function.clone()));
     };
     let Some(details) = details.as_object() else {
-        return response_error(Term::symbol(":bad_closure"));
+        return outcome_error(Term::symbol(":bad_closure"));
     };
     let Some(param) = details.get(":param") else {
-        return response_error(Term::symbol(":bad_closure"));
+        return outcome_error(Term::symbol(":bad_closure"));
     };
     let Some(body) = details.get(":body") else {
-        return response_error(Term::symbol(":bad_closure"));
+        return outcome_error(Term::symbol(":bad_closure"));
     };
     let Some(env) = details.get(":env") else {
-        return response_error(Term::symbol(":bad_closure"));
+        return outcome_error(Term::symbol(":bad_closure"));
     };
     let Some(param) = param.as_symbol() else {
-        return response_error(Term::symbol(":bad_closure"));
+        return outcome_error(Term::symbol(":bad_closure"));
     };
     let Some(env) = env.as_object() else {
-        return response_error(Term::symbol(":bad_closure"));
+        return outcome_error(Term::symbol(":bad_closure"));
     };
-    response_continue(eval_state(
+    outcome_next(eval_state(
         body.clone(),
         env.with(param.clone(), arg.clone()).into(),
-        next.clone(),
+        continuation.clone(),
     ))
+}
+
+fn after_function_cont(arg: Term, env: Term, next: Term) -> Term {
+    tagged(
+        ":after-function",
+        Object::new()
+            .with(":arg", arg)
+            .with(":env", env)
+            .with(":then", next)
+            .into(),
+    )
+}
+
+fn after_argument_cont(function: Term, next: Term) -> Term {
+    tagged(
+        ":after-argument",
+        Object::new()
+            .with(":function", function)
+            .with(":then", next)
+            .into(),
+    )
+}
+
+fn check_inner(claim: &Term, proof: &Term) -> Result<(), Term> {
+    if let Some(payload) = tagged_payload(claim, ":object-equal") {
+        return check_object_equal(payload, proof);
+    }
+    if let Some(payload) = tagged_payload(claim, ":cek-step-equals") {
+        return check_cek_step_equals(payload, proof);
+    }
+    if let Some(payload) = tagged_payload(claim, ":cek-evals-to") {
+        return check_cek_evals_to(payload, proof);
+    }
+    Err(tagged(":unknown-claim", claim.clone()))
+}
+
+fn check_object_equal(payload: &Term, proof: &Term) -> Result<(), Term> {
+    require_empty_proof(proof, ":object-equal")?;
+    let fields = required_object(payload, ":bad_object_equal_claim")?;
+    let left = required_field(fields, ":left", ":bad_object_equal_claim")?;
+    let right = required_field(fields, ":right", ":bad_object_equal_claim")?;
+    if left == right {
+        Ok(())
+    } else {
+        Err(tagged(
+            ":object-not-equal",
+            Object::new()
+                .with(":left", left.clone())
+                .with(":right", right.clone())
+                .into(),
+        ))
+    }
+}
+
+fn check_cek_step_equals(payload: &Term, proof: &Term) -> Result<(), Term> {
+    require_empty_proof(proof, ":cek-step")?;
+    let (input, expected) = cek_step_claim_fields(payload)?;
+    let actual = cek_step(input).map_err(Term::symbol)?;
+    if &actual == expected {
+        Ok(())
+    } else {
+        Err(tagged(
+            ":step-mismatch",
+            Object::new()
+                .with(":actual", actual)
+                .with(":expected", expected.clone())
+                .into(),
+        ))
+    }
+}
+
+fn check_cek_evals_to(payload: &Term, proof: &Term) -> Result<(), Term> {
+    if let Some(details) = tagged_payload(proof, ":cek-return") {
+        return check_cek_return(payload, details);
+    }
+    if let Some(details) = tagged_payload(proof, ":cek-next") {
+        return check_cek_next(payload, details);
+    }
+    Err(tagged(":bad_proof", proof.clone()))
+}
+
+fn check_cek_return(payload: &Term, details: &Term) -> Result<(), Term> {
+    let (input, expected) = cek_evals_to_claim_fields(payload)?;
+    let details = required_object(details, ":bad_cek_return_proof")?;
+    let step_proof = required_field(details, ":step", ":bad_cek_return_proof")?;
+    let equal_proof = required_field(details, ":equal", ":bad_cek_return_proof")?;
+    let outcome = cek_step(input).map_err(Term::symbol)?;
+    let Some(actual) = tagged_payload(&outcome, ":return") else {
+        return Err(tagged(":expected-return", outcome));
+    };
+    let actual = actual.clone();
+    check_inner(&cek_step_equals_claim(input.clone(), outcome), step_proof)?;
+    check_inner(&object_equal_claim(actual, expected.clone()), equal_proof)
+}
+
+fn check_cek_next(payload: &Term, details: &Term) -> Result<(), Term> {
+    let (input, expected) = cek_evals_to_claim_fields(payload)?;
+    let details = required_object(details, ":bad_cek_next_proof")?;
+    let step_proof = required_field(details, ":step", ":bad_cek_next_proof")?;
+    let rest_proof = required_field(details, ":rest", ":bad_cek_next_proof")?;
+    let outcome = cek_step(input).map_err(Term::symbol)?;
+    let Some(next) = tagged_payload(&outcome, ":next") else {
+        return Err(tagged(":expected-next", outcome));
+    };
+    let next = next.clone();
+    check_inner(&cek_step_equals_claim(input.clone(), outcome), step_proof)?;
+    check_inner(&cek_evals_to_claim(next, expected.clone()), rest_proof)
+}
+
+fn cek_step_claim_fields(payload: &Term) -> Result<(&Term, &Term), Term> {
+    let fields = required_object(payload, ":bad_cek_step_claim")?;
+    let input = required_field(fields, ":input", ":bad_cek_step_claim")?;
+    let output = required_field(fields, ":output", ":bad_cek_step_claim")?;
+    Ok((input, output))
+}
+
+fn cek_evals_to_claim_fields(payload: &Term) -> Result<(&Term, &Term), Term> {
+    let fields = required_object(payload, ":bad_cek_evals_to_claim")?;
+    let input = required_field(fields, ":input", ":bad_cek_evals_to_claim")?;
+    let value = required_field(fields, ":value", ":bad_cek_evals_to_claim")?;
+    Ok((input, value))
+}
+
+fn require_empty_proof(proof: &Term, tag: &str) -> Result<(), Term> {
+    let Some(payload) = tagged_payload(proof, tag) else {
+        return Err(tagged(":bad_proof", proof.clone()));
+    };
+    let Some(object) = payload.as_object() else {
+        return Err(tagged(":bad_proof", proof.clone()));
+    };
+    if object.is_empty() {
+        Ok(())
+    } else {
+        Err(tagged(":bad_proof", proof.clone()))
+    }
+}
+
+fn required_object<'a>(term: &'a Term, error: &str) -> Result<&'a Object, Term> {
+    term.as_object().ok_or_else(|| Term::symbol(error))
+}
+
+fn required_field<'a>(object: &'a Object, field: &str, error: &str) -> Result<&'a Term, Term> {
+    object.get(field).ok_or_else(|| Term::symbol(error))
 }
 
 fn parse_sexpr(expr: SExpr) -> ClickResult<Term> {
@@ -724,14 +677,14 @@ fn tagged_payload<'a>(term: &'a Term, tag: &str) -> Option<&'a Term> {
     object.get(tag)
 }
 
-fn response_continue(next: Term) -> Term {
-    tagged(":continue", next)
+fn outcome_next(next: Term) -> Term {
+    tagged(":next", next)
 }
 
-fn response_return(value: Term) -> Term {
+fn outcome_return(value: Term) -> Term {
     tagged(":return", value)
 }
 
-fn response_error(info: Term) -> Term {
+fn outcome_error(info: Term) -> Term {
     tagged(":error", info)
 }

@@ -2,24 +2,19 @@
 
 `click` is a small experimental reflective language core.
 
-The active language is computation-first:
+The active code is a minimum CEK-kernel demo:
 
-- raw terms are either symbols or objects
-- objects are inert data unless they match one of a few executable shapes
-- closures, environments, continuations, and evaluator states are ordinary
+- raw terms are symbols or objects
+- expressions are symbols, `:var`, `:lambda`, and `:apply`
+- values are symbols and closures
+- environments, continuations, states, outcomes, claims, and proofs are ordinary
   objects
-- `step` runs over explicit machine states and returns explicit response
-  objects
+- `cek_step` runs one trusted small step over an explicit evaluator state
+- `check` validates small-step and many-step claims using proof objects
 
-The current executable forms are:
-
-- `:var`
-- `:lambda`
-- `:apply`
-- `:match`
-- `:set`
-
-See [docs/design.md](/Users/lacker/click/docs/design.md) for the full design.
+See [docs/design.md](docs/design.md) for the current design. The human-owned
+top of that file is protected; the lower section documents the current kernel
+proposal.
 
 ## Example
 
@@ -35,21 +30,23 @@ This evaluates to:
 :ok
 ```
 
-Matching on a singleton-key object:
+The same program starts as an explicit CEK state:
 
 ```text
-(:match
-  (:handlers
-    (:left (:lambda (:param :x :body (:var :x)))
-     :right (:lambda (:param :y :body :wrong)))
-   :value
-    (:left :payload)))
+(:eval
+  (:expr (:apply
+    (:function (:lambda (:param :x :body (:var :x)))
+     :arg :ok))
+   :env ()
+   :continuation :halt))
 ```
 
-This evaluates to:
+One step returns an outcome:
 
 ```text
-:payload
+(:next next-state)
+(:return value)
+(:error info)
 ```
 
 ## Usage
@@ -63,13 +60,13 @@ cargo run -- -e "(:apply (:function (:lambda (:param :x :body (:var :x))) :arg :
 Run a file:
 
 ```bash
-cargo run -- path/to/file.cl
+cargo run -- examples/identity.cl
 ```
 
 Pipe a program on stdin:
 
 ```bash
-printf "(:set (:object (:existing :present) :key :answer :value :ok))\n" | cargo run --
+printf "(:apply (:function (:lambda (:param :x :body (:var :x))) :arg :stdin-ok))\n" | cargo run --
 ```
 
 Install the binary:
@@ -86,13 +83,10 @@ The crate exposes the reflective core directly:
 
 - `Term`, `Object`, and `Symbol`
 - `parse` and `parse_many`
-- helper constructors such as `var`, `lambda`, `apply`, `match`, and `set`
-- `step`
-- `eval` and `eval_in_env`
-- `run_source` as a host convenience wrapper
-
-## Historical Note
-
-The `bootstrap/` directory is archival. It preserves earlier language-design
-experiments, especially quote/list-based and typed-kernel probes, but it does
-not describe the active Click language.
+- expression constructors: `var`, `lambda`, and `apply`
+- CEK constructors: `initial_state`, `eval_state`, `continue_state`, `halt`,
+  and `closure`
+- `cek_step` and `step`
+- `eval`, `eval_in_env`, and `run_source`
+- claim/proof helpers such as `cek_evals_to_claim`, `cek_next_proof`, and
+  `check`

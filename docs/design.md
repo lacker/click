@@ -200,8 +200,8 @@ eventually return something structurally equal to `value`.
 Minimum proof forms:
 
 ```text
-(:object-equal)                         // structural equality
-(:cek-step)                             // run trusted cek_step once
+(:object-equal ())                      // structural equality
+(:cek-step ())                          // run trusted cek_step once
 (:cek-return (:step p1 :equal p2))       // one step returns
 (:cek-next (:step p1 :rest p2))          // one step continues
 ```
@@ -255,7 +255,7 @@ s6 -> :ok
 ```
 
 The proof is just nested `:cek-next` ending in `:cek-return`, with every
-one-step proof being `(:cek-step)`.
+one-step proof being `(:cek-step ())`.
 
 This is a real minimum demo. If this works, we have:
 
