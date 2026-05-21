@@ -38,30 +38,28 @@ can be naturally represented as a Click type.
 * Powerful enough to model real languages: WebAssembly, LLVM IR, C, JavaScript, TypeScript, Python
 
 ## Do not modify this line or anything above it. That zone is for human use.
-## Below this line is for AI use.
+## Below this line is for AI use. Keep this document capped at 300 lines.
 
-## Minimum Kernel Demo Proposal
+## Revised Kernel Proposal
 
-Goal: implement a tiny CEK evaluator and prove:
+The kernel trusted base should stay small:
 
-```text
-((lambda x. x) :ok) evaluates to :ok
-```
+- `Object`
+- structural equality
+- one minimal CEK stepper
+- one proof checker
 
-This is the smallest useful demo because it forces lambdas, closures,
-environments, continuations, small steps, and a large-step proof.
+Everything else should be represented as explicit objects: data types, typing
+judgments, proof systems, tactics, language semantics, and extra checkers.
 
-## Pseudo-Types
-
-Everything is represented as `Object`. A symbol is a primitive object. A
-record is a compound object:
+## Object Model
 
 ```text
 Object = Symbol | Record
 Record = finite map from Symbol to Object
 ```
 
-The rest of these are refinements, not primitive runtime variants:
+These are refinements over `Object`, not primitive runtime variants:
 
 ```text
 Expr <: Object
@@ -77,7 +75,10 @@ Proof <: Record
 The kernel has stupid structural equality: symbols by name, records by keys and
 values.
 
-## CEK Expressions
+## CEK Machine
+
+The CEK machine is in the kernel. It gives Click one tiny trusted model of
+computation.
 
 ```text
 Expr =
@@ -85,39 +86,13 @@ Expr =
   (:var Symbol)
   (:lambda (:param Symbol :body Expr))
   (:apply (:function Expr :arg Expr))
-```
 
-A bare symbol is a literal value. Variable lookup is explicit with `:var`.
-
-## CEK Values
-
-```text
 Value =
   Symbol
   (:closure (:param Symbol :body Expr :env Environment))
-```
 
-Closures are where binding happens. Evaluating a lambda captures an
-environment. Later, inert records can also be values.
-
-## Environments
-
-```text
 Environment = Record(Symbol -> Value)
-```
 
-Examples:
-
-```text
-()
-(:x :ok)
-```
-
-Environment extension is record update. No substitution in this demo.
-
-## Continuations
-
-```text
 Continuation =
   :halt
   (:after-function
@@ -127,13 +102,7 @@ Continuation =
   (:after-argument
     (:function Value
      :then Continuation))
-```
 
-`Continuation` means what to do with a value that has just been produced.
-
-## EvalState
-
-```text
 EvalState =
   (:eval
     (:expr Expr
@@ -142,62 +111,39 @@ EvalState =
   (:continue
     (:value Value
      :continuation Continuation))
-```
 
-`(:eval ...)` inspects an expression. `(:continue ...)` feeds a value to a
-continuation. This is the CEK split.
-
-## EvalOutcome
-
-```text
 EvalOutcome =
   (:next EvalState)
   (:return Value)
   (:error Object)
-```
 
-```text
 cek_step : EvalState -> EvalOutcome
 ```
 
-This is the precise version of `step : Term -> Outcome<Term>` for the first
+A bare symbol is a literal value. Variable lookup is explicit with `:var`.
+Evaluating a lambda captures the current environment. Applying a closure extends
+the closure environment with the parameter binding. No substitution in this
 demo.
 
-## CEK Step Rules
+## CEK Rules
 
 ```text
-eval Symbol:
-  next continue(Symbol, c)
-
-eval (:var name):
-  next continue(env[name], c)
-  error (:unbound name) if missing
-
-eval (:lambda (:param p :body body)):
-  next continue((:closure (:param p :body body :env env)), c)
-
-eval (:apply (:function f :arg x)):
-  next eval(f, env, (:after-function (:arg x :env env :then c)))
-
-continue(function_value, (:after-function (:arg x :env env :then c))):
-  next eval(x, env,
-    (:after-argument (:function function_value :then c)))
-
-continue(arg_value,
-  (:after-argument
-    (:function (:closure (:param p :body body :env closure_env))
-     :then c))):
-  next eval(body, extend(closure_env, p, arg_value), c)
-
-continue(value, :halt):
-  return value
+eval Symbol -> continue(Symbol, c)
+eval (:var name) -> continue(env[name], c), or error (:unbound name)
+eval (:lambda (:param p :body body)) -> continue(closure(p, body, env), c)
+eval (:apply (:function f :arg x)) -> eval(f, env, after-function(x, env, c))
+continue(function_value, after-function(x, env, c)) ->
+  eval(x, env, after-argument(function_value, c))
+continue(arg_value, after-argument(closure(p, body, closure_env), c)) ->
+  eval(body, extend(closure_env, p, arg_value), c)
+continue(value, :halt) -> return value
 ```
 
 If the function is not a closure, return `(:error (:not-a-function value))`.
 
-## Claims
+## Finite Trace Proofs
 
-The minimum checker needs these claims:
+The first proof checker can prove exact finite CEK traces:
 
 ```text
 (:object-equal (:left Object :right Object))
@@ -214,8 +160,6 @@ The minimum checker needs these claims:
 `cek-evals-to` is the large-step claim. It means repeated `cek_step` calls
 eventually return something structurally equal to `value`.
 
-## Proofs
-
 Minimum proof forms:
 
 ```text
@@ -228,66 +172,128 @@ Minimum proof forms:
 The checker rules:
 
 ```text
-(:cek-return (:step p1 :equal p2))
-  p1 proves (:cek-step-equals (:input input :output (:return actual)))
-  p2 proves (:object-equal (:left actual :right expected))
-  therefore proves (:cek-evals-to (:input input :value expected))
+cek-return: if one step returns actual, and actual = expected,
+  then input evaluates to expected.
 
-(:cek-next (:step p1 :rest p2))
-  p1 proves (:cek-step-equals (:input input :output (:next next_input)))
-  p2 proves (:cek-evals-to (:input next_input :value expected))
-  therefore proves (:cek-evals-to (:input input :value expected))
+cek-next: if one step reaches next_input, and next_input evaluates to expected,
+  then input evaluates to expected.
 ```
 
-Errors do not prove `:cek-evals-to`. We can add error claims later.
-
-## Demo Trace
-
-Initial state:
+This proves:
 
 ```text
-s0 =
-(:eval
-  (:expr (:apply
-    (:function (:lambda (:param :x :body (:var :x)))
-     :arg :ok))
-   :env ()
-   :continuation :halt))
+((lambda x. x) :ok) evaluates to :ok
 ```
 
-Claim:
+It also gives immediate tests for shadowing, closure capture, evaluation order,
+and non-function errors.
+
+## Reverse-Reverse Target
+
+The requirements ask for something much stronger:
 
 ```text
-(:cek-evals-to (:input s0 :value :ok))
+for all lists xs:
+  reverse(reverse(xs)) = xs
 ```
 
-Trace shape:
+This cannot be proved with finite trace proofs alone. It needs a proof layer
+that can state and check general theorems.
+
+## Predicate Types
+
+Types should be predicates on `Object`, not a second kernel data model:
 
 ```text
-s0 -> s1  eval application
-s1 -> s2  eval lambda into closure
-s2 -> s3  after-function, eval argument
-s3 -> s4  eval literal :ok
-s4 -> s5  after-argument, enter closure body with x = :ok
-s5 -> s6  eval (:var :x)
-s6 -> :ok
+Predicate = Object -> Claim
+
+(:satisfies (:value Object :predicate Predicate))
 ```
 
-The proof is just nested `:cek-next` ending in `:cek-return`, with every
-one-step proof being `(:cek-step ())`.
+Basic type formers can be ordinary predicate combinators:
 
-This is a real minimum demo. If this works, we have:
+```text
+Unit(x) = x = ()
+Product(:head A :tail B)(x) = Record(x) and A(x.:head) and B(x.:tail)
+Sum(:nil Unit :cons Cons)(x) = exactly one variant tag, with valid payload
+```
 
-- object representation
-- lambda binding by environment
-- closures
-- continuations
-- one trusted small-step function
-- proof that the small-step function returns a claimed outcome
-- proof that many small steps evaluate to a value
+So lists do not need to be kernel-declared inductive types. They can be a
+recursive predicate built from sums and products:
 
-## What This Does Not Solve Yet
+```text
+List(A) =
+  recursive X.
+    Sum(
+      :nil Unit,
+      :cons Product(:head A :tail X))
+```
 
-No mutation/store, recursion, surface syntax, tactics, foreign languages,
-parallel stepping, or proof that a Rust implementation of `cek_step` matches a
-Click definition. Those should be later layers.
+Example list:
+
+```text
+(:cons
+  (:head :a
+   :tail (:cons
+     (:head :b
+      :tail (:nil ())))))
+```
+
+## Needed Proof Power
+
+To prove `reverse(reverse(xs)) = xs`, Click needs generic proof forms for:
+
+```text
+(:forall (:var Symbol :where Predicate :claim Claim))
+(:implies (:if Claim :then Claim))
+(:object-equal (:left Object :right Object))
+```
+
+It also needs definitions for functions over these predicate-shaped data:
+
+```text
+append((:nil ()), ys) = ys
+append((:cons (:head x :tail xs)), ys) =
+  (:cons (:head x :tail append(xs, ys)))
+
+reverse((:nil ())) = (:nil ())
+reverse((:cons (:head x :tail xs))) =
+  append(reverse(xs), (:cons (:head x :tail (:nil ()))))
+```
+
+And proof rules for:
+
+- introducing and instantiating `forall`
+- introducing and applying `implies`
+- unfolding named definitions
+- rewriting by equality
+- induction for recursive predicates like `List(A)`
+- importing and applying proven lemmas
+
+## Axioms
+
+We should not add theorem-specific kernel axioms. Adding
+`reverse(reverse(xs)) = xs` as an axiom would prove nothing about the kernel.
+
+But theories do need assumptions. The useful split is:
+
+- kernel rules are trusted and tiny
+- theory axioms are explicit objects
+- recursive predicates can expose explicit induction principles
+
+For the list theorem, the trusted/generic part should be the recursive-predicate
+induction schema, not the result. The list theory supplies `List`, `append`, and
+`reverse`. The proof supplies the induction argument.
+
+A real reverse-reverse proof probably needs these induction lemmas:
+
+```text
+append(xs, nil) = xs
+append(append(xs, ys), zs) = append(xs, append(ys, zs))
+reverse(append(xs, ys)) = append(reverse(ys), reverse(xs))
+reverse(reverse(xs)) = xs
+```
+
+Open design question: should `append` and `reverse` be CEK programs, rewrite
+equations, or both? The theorem is easier to state with equations. The language
+is more coherent if equations can be justified by CEK programs later.
