@@ -59,11 +59,12 @@ Object = Symbol | Record
 Record = finite map from Symbol to Object
 ```
 
-These are refinements over `Object`, not primitive runtime variants:
+These are refinements or aliases over `Object`, not primitive runtime variants:
 
 ```text
 Expr <: Object
-Value <: Object
+Value = Object
+Closure <: Record
 Environment <: Record
 Continuation <: Object
 EvalState <: Record
@@ -75,225 +76,218 @@ Proof <: Record
 The kernel has stupid structural equality: symbols by name, records by keys and
 values.
 
-## CEK Machine
+## Kernel Object Calculus
 
-The CEK machine is in the kernel. It gives Click one tiny trusted model of
-computation.
+The kernel CEK machine evaluates a tiny object calculus: lambda calculus plus
+immutable record operations.
 
 ```text
 Expr =
-  Symbol
-  (:var Symbol)
-  (:lambda (:param Symbol :body Expr))
-  (:apply (:function Expr :arg Expr))
+  | (:quote Object)
+  | (:var Symbol)
+  | (:lambda (:param Symbol :body Expr))
+  | (:apply (:function Expr :arg Expr))
+  | (:get (:record Expr :key Symbol))
+  | (:with (:record Expr :key Symbol :value Expr))
+  | (:has (:record Expr :key Symbol))
+  | (:equal (:left Expr :right Expr))
+  | (:if (:cond Expr :then Expr :else Expr))
 
-Value =
-  Symbol
-  (:closure (:param Symbol :body Expr :env Environment))
+Closure = (:closure (:param Symbol :body Expr :env Environment))
+Value = Object
 
 Environment = Record(Symbol -> Value)
 
 Continuation =
-  :halt
-  (:after-function
-    (:arg Expr
-     :env Environment
-     :then Continuation))
-  (:after-argument
-    (:function Value
-     :then Continuation))
+  | :halt
+  | (:after-function (:arg Expr :env Environment :then Continuation))
+  | (:after-argument (:function Value :then Continuation))
+  | (:after-get (:key Symbol :then Continuation))
+  | (:after-with-record
+      (:key Symbol :value Expr :env Environment :then Continuation))
+  | (:after-with-value (:record Record :key Symbol :then Continuation))
+  | (:after-has (:key Symbol :then Continuation))
+  | (:after-equal-left (:right Expr :env Environment :then Continuation))
+  | (:after-equal-right (:left Value :then Continuation))
+  | (:after-if (:then Expr :else Expr :env Environment :then Continuation))
 
 EvalState =
-  (:eval
-    (:expr Expr
-     :env Environment
-     :continuation Continuation))
-  (:continue
-    (:value Value
-     :continuation Continuation))
+  | (:eval (:expr Expr :env Environment :continuation Continuation))
+  | (:continue (:value Value :continuation Continuation))
 
 EvalOutcome =
-  (:next EvalState)
-  (:return Value)
-  (:error Object)
+  | (:next EvalState)
+  | (:return Value)
+  | (:error Object)
 
 cek_step : EvalState -> EvalOutcome
 ```
 
-A bare symbol is a literal value. Variable lookup is explicit with `:var`.
-Evaluating a lambda captures the current environment. Applying a closure extends
-the closure environment with the parameter binding. No substitution in this
-demo.
+`|` marks sum alternatives. `:quote` injects raw data into computation.
+Variable lookup is explicit with `:var`. Evaluating a lambda returns a closure.
+Applying a closure extends the closure environment with the parameter binding.
+Record operations provide the fundamental data structure.
 
-## CEK Rules
+## Calculus Rules
 
 ```text
-eval Symbol -> continue(Symbol, c)
+eval (:quote value) -> continue(value, c)
 eval (:var name) -> continue(env[name], c), or error (:unbound name)
 eval (:lambda (:param p :body body)) -> continue(closure(p, body, env), c)
 eval (:apply (:function f :arg x)) -> eval(f, env, after-function(x, env, c))
-continue(function_value, after-function(x, env, c)) ->
-  eval(x, env, after-argument(function_value, c))
-continue(arg_value, after-argument(closure(p, body, closure_env), c)) ->
-  eval(body, extend(closure_env, p, arg_value), c)
 continue(value, :halt) -> return value
 ```
 
-If the function is not a closure, return `(:error (:not-a-function value))`.
+Any form that evaluates subexpressions uses continuation frames. `:apply`
+evaluates function then argument. `:get`, `:with`, `:has`, `:equal`, and `:if`
+evaluate their inputs left-to-right.
+
+Record operation results:
+
+```text
+get(record, key) -> value, or error (:missing-field key) / (:not-a-record value)
+with(record, key, value) -> updated record, or error (:not-a-record value)
+has(value, key) -> :true if value is a record with key, else :false
+equal(left, right) -> :true or :false by structural equality
+if(:true, then, else) -> then
+if(:false, then, else) -> else
+if(other, then, else) -> error (:bad-condition other)
+```
 
 ## Finite Trace Proofs
 
-The first proof checker can prove exact finite CEK traces:
+The first checker can prove exact finite CEK traces:
 
 ```text
-(:object-equal (:left Object :right Object))
+(:equal (:left Object :right Object))
 
-(:cek-step-equals
+(:step-equals
   (:input EvalState
    :output EvalOutcome))
 
-(:cek-evals-to
+(:returns
   (:input EvalState
    :value Value))
 ```
 
-`cek-evals-to` is the large-step claim. It means repeated `cek_step` calls
-eventually return something structurally equal to `value`.
+`returns` is the large-step claim. It means repeated `cek_step` calls
+eventually return `value`.
 
 Minimum proof forms:
 
 ```text
-(:object-equal ())                      // structural equality
-(:cek-step ())                          // run trusted cek_step once
-(:cek-return (:step p1 :equal p2))       // one step returns
-(:cek-next (:step p1 :rest p2))          // one step continues
+(:equal-structural ())                 // structural equality
+(:step ())                             // run trusted cek_step once
+(:returns-return (:step p1 :equal p2))  // one step returns
+(:returns-next (:step p1 :rest p2))     // one step continues
 ```
 
-The checker rules:
+This proves `((lambda x. x) :ok) evaluates to :ok`, and gives immediate tests
+for shadowing, closure capture, evaluation order, `:get`, and errors.
+
+## General Claims
+
+Finite traces are not enough for theorem proving. The next kernel target is a
+small claim language:
 
 ```text
-cek-return: if one step returns actual, and actual = expected,
-  then input evaluates to expected.
-
-cek-next: if one step reaches next_input, and next_input evaluates to expected,
-  then input evaluates to expected.
+Claim =
+  (:equal (:left Object :right Object))
+  (:step-equals (:input EvalState :output EvalOutcome))
+  (:returns (:input EvalState :value Object))
+  (:terminates (:input EvalState))
+  (:and (:left Claim :right Claim))
+  (:implies (:if Claim :then Claim))
+  (:forall (:var Symbol :claim Claim))
+  (:exists (:var Symbol :claim Claim))
 ```
 
-This proves:
+`terminates` is shorthand for `exists value: returns(input, value)`.
+Variables in claims are proof variables, not CEK `:var` expressions.
 
-```text
-((lambda x. x) :ok) evaluates to :ok
-```
-
-It also gives immediate tests for shadowing, closure capture, evaluation order,
-and non-function errors.
-
-## Reverse-Reverse Target
-
-The requirements ask for something much stronger:
-
-```text
-for all lists xs:
-  reverse(reverse(xs)) = xs
-```
-
-This cannot be proved with finite trace proofs alone. It needs a proof layer
-that can state and check general theorems.
-
-## Predicate Types
-
-Types should be predicates on `Object`, not a second kernel data model:
+Types are predicates:
 
 ```text
 Predicate = Object -> Claim
-
-(:satisfies (:value Object :predicate Predicate))
+(:satisfies (:value x :predicate P)) means P(x)
 ```
 
-Basic type formers can be ordinary predicate combinators:
+So `List(x)` can mean "`is_list(x)` returns `:true`", not "x belongs to a
+kernel-declared inductive type".
+
+`field(r, k, v)` is not primitive. It means `:get` returns `v`:
 
 ```text
-Unit(x) = x = ()
-Product(:head A :tail B)(x) = Record(x) and A(x.:head) and B(x.:tail)
-Sum(:nil Unit :cons Cons)(x) = exactly one variant tag, with valid payload
+returns(initial_state((:get (:record (:quote r) :key k))), v)
 ```
 
-So lists do not need to be kernel-declared inductive types. They can be a
-recursive predicate built from sums and products:
+## Proof Language
+
+The checker is contextual: `check : Context -> Claim -> Proof -> ok | error |
+diverge`. `Context` holds definitions and labeled assumptions. Core forms:
 
 ```text
-List(A) =
-  recursive X.
-    Sum(
-      :nil Unit,
-      :cons Product(:head A :tail X))
+(:use Symbol)                         // use assumption or proven lemma
+(:equal-structural ())                // run structural equality
+(:step ())                            // run trusted cek_step once
+(:returns-return (:step Proof :equal Proof))
+(:returns-next (:step Proof :rest Proof))
+(:and-intro (:left Proof :right Proof))
+(:and-left Proof) / (:and-right Proof)
+(:implies-intro (:assume Symbol :body Proof))
+(:implies-elim (:function Proof :arg Proof))
+(:forall-intro (:var Symbol :body Proof))
+(:forall-elim (:proof Proof :value Object))
+(:exists-intro (:value Object :proof Proof))
+(:exists-elim (:proof Proof :witness Symbol :body Proof))
+(:rewrite (:equal Proof :body Proof))
+(:unfold Symbol)
+(:object-cases (:scrutinee Object :branches Record))
+(:object-induction (:var Symbol :body Proof))
 ```
 
-Example list:
+## Recursion Axiom
+
+The generic recursion principle should be structural induction over finite
+objects, not list-specific induction. It is based on `:get`.
 
 ```text
-(:cons
-  (:head :a
-   :tail (:cons
-     (:head :b
-      :tail (:nil ())))))
+To prove forall x: P(x),
+prove P(x) assuming:
+  P(part) for every proper part reachable from x
+  by one or more successful :get operations.
 ```
 
-## Needed Proof Power
+Since `Object` values are finite trees, `:get` paths are well-founded.
 
-To prove `reverse(reverse(xs)) = xs`, Click needs generic proof forms for:
+This is the base axiom that should prove termination of structurally recursive
+programs. For `is_list`, the recursive call is on the tail field, which is a
+part reached through two `:get` operations: first `:cons`, then `:tail`.
+
+## List Theory Target
+
+The list demo should be the second artifact:
 
 ```text
-(:forall (:var Symbol :where Predicate :claim Claim))
-(:implies (:if Claim :then Claim))
-(:object-equal (:left Object :right Object))
+nil = (:nil ())
+cons(h, t) = (:cons (:head h :tail t))
+
+is_list(x) returns :true or :false
+List(x) := is_list(x) returns :true
+
+rev_acc(x, acc)
+reverse(x) = rev_acc(x, nil)
 ```
 
-It also needs definitions for functions over these predicate-shaped data:
+Targets:
 
 ```text
-append((:nil ()), ys) = ys
-append((:cons (:head x :tail xs)), ys) =
-  (:cons (:head x :tail append(xs, ys)))
-
-reverse((:nil ())) = (:nil ())
-reverse((:cons (:head x :tail xs))) =
-  append(reverse(xs), (:cons (:head x :tail (:nil ()))))
+forall x: terminates(is_list(x))
+forall x acc:
+  List(x) and List(acc) implies
+  exists y: returns(rev_acc(x, acc), y) and List(y)
+forall x:
+  List(x) implies exists y: returns(reverse(x), y) and List(y)
 ```
 
-And proof rules for:
-
-- introducing and instantiating `forall`
-- introducing and applying `implies`
-- unfolding named definitions
-- rewriting by equality
-- induction for recursive predicates like `List(A)`
-- importing and applying proven lemmas
-
-## Axioms
-
-We should not add theorem-specific kernel axioms. Adding
-`reverse(reverse(xs)) = xs` as an axiom would prove nothing about the kernel.
-
-But theories do need assumptions. The useful split is:
-
-- kernel rules are trusted and tiny
-- theory axioms are explicit objects
-- recursive predicates can expose explicit induction principles
-
-For the list theorem, the trusted/generic part should be the recursive-predicate
-induction schema, not the result. The list theory supplies `List`, `append`, and
-`reverse`. The proof supplies the induction argument.
-
-A real reverse-reverse proof probably needs these induction lemmas:
-
-```text
-append(xs, nil) = xs
-append(append(xs, ys), zs) = append(xs, append(ys, zs))
-reverse(append(xs, ys)) = append(reverse(ys), reverse(xs))
-reverse(reverse(xs)) = xs
-```
-
-Open design question: should `append` and `reverse` be CEK programs, rewrite
-equations, or both? The theorem is easier to state with equations. The language
-is more coherent if equations can be justified by CEK programs later.
+This is enough before trying `reverse(reverse(xs)) = xs`.
