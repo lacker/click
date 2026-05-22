@@ -23,7 +23,7 @@ fn evaluates_expression_argument() {
     let output = Command::new(bin())
         .args([
             "-e",
-            "(:apply (:function (:lambda (:param :x :body (:var :x))) :arg :ok))",
+            "(:apply (:function (:lambda (:param :x :body (:var :x))) :arg (:quote :ok)))",
         ])
         .output()
         .expect("command should run");
@@ -34,7 +34,10 @@ fn evaluates_expression_argument() {
 
 #[test]
 fn evaluates_file_and_ignores_shebang() {
-    let path = temp_file("shebang", "#!/usr/bin/env click\n:first\n:done\n");
+    let path = temp_file(
+        "shebang",
+        "#!/usr/bin/env click\n(:quote :first)\n(:quote :done)\n",
+    );
 
     let output = Command::new(bin())
         .arg(&path)
@@ -61,7 +64,7 @@ fn evaluates_stdin() {
         let stdin = child.stdin.as_mut().expect("stdin should be available");
         write!(
             stdin,
-            "(:apply (:function (:lambda (:param :x :body (:var :x))) :arg :stdin-ok))\n"
+            "(:apply (:function (:lambda (:param :x :body (:var :x))) :arg (:quote :stdin-ok)))\n"
         )
         .expect("stdin write should succeed");
     }

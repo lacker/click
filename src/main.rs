@@ -89,7 +89,8 @@ Usage:
 
 Notes:
   Source uses symbols and alternating key/value object forms.
-  The active expression forms are :var, :lambda, and :apply.
+  Literal values must be written with :quote.
+  The active expression forms include :var, :lambda, :apply, and record ops.
   A leading #! line is ignored in source files.
   If no FILE is given and stdin is not a terminal, click reads stdin."
     );

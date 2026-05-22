@@ -10,24 +10,27 @@ fn tagged_payload<'a>(term: &'a Term, tag: &str) -> &'a Term {
 }
 
 fn identity_expr() -> Term {
-    click::apply(click::lambda(":x", click::var(":x")), sym(":ok"))
+    click::apply(
+        click::lambda(":x", click::var(":x")),
+        click::quote(sym(":ok")),
+    )
 }
 
 fn identity_proof() -> Term {
-    let step = click::cek_step_proof();
-    click::cek_next_proof(
+    let step = click::step_proof();
+    click::returns_next_proof(
         step.clone(),
-        click::cek_next_proof(
+        click::returns_next_proof(
             step.clone(),
-            click::cek_next_proof(
+            click::returns_next_proof(
                 step.clone(),
-                click::cek_next_proof(
+                click::returns_next_proof(
                     step.clone(),
-                    click::cek_next_proof(
+                    click::returns_next_proof(
                         step.clone(),
-                        click::cek_next_proof(
+                        click::returns_next_proof(
                             step.clone(),
-                            click::cek_return_proof(step, click::object_equal_proof()),
+                            click::returns_return_proof(step, click::equal_structural_proof()),
                         ),
                     ),
                 ),
@@ -37,10 +40,24 @@ fn identity_proof() -> Term {
 }
 
 #[test]
-fn eval_returns_symbols_as_values() {
+fn eval_requires_explicit_quote_for_literal_values() {
     assert_eq!(
-        click::eval(&sym(":ok")).expect("eval should succeed"),
+        click::eval(&click::quote(sym(":ok"))).expect("eval should succeed"),
         sym(":ok")
+    );
+
+    assert_eq!(
+        click::eval(&sym(":ok")).expect_err("bare symbols are not expressions"),
+        "{:not-an-expr :ok}"
+    );
+}
+
+#[test]
+fn quote_returns_record_values() {
+    let record: Term = Object::new().with(":answer", sym(":ok")).into();
+    assert_eq!(
+        click::eval(&click::quote(record.clone())).expect("eval should succeed"),
+        record
     );
 }
 
@@ -68,8 +85,8 @@ fn parse_many_reads_multiple_terms() {
 }
 
 #[test]
-fn parse_can_express_the_cek_identity_program() {
-    let source = "(:apply (:function (:lambda (:param :x :body (:var :x))) :arg :ok))";
+fn parse_can_express_the_quoted_identity_program() {
+    let source = "(:apply (:function (:lambda (:param :x :body (:var :x))) :arg (:quote :ok)))";
 
     assert_eq!(
         click::eval(&click::parse(source).expect("parse should succeed"))
@@ -105,7 +122,7 @@ fn lambda_application_uses_lexical_closure_capture() {
     let env: Term = Object::new().with(":captured", sym(":outer")).into();
     let expr = click::apply(
         click::lambda(":x", click::var(":captured")),
-        sym(":ignored"),
+        click::quote(sym(":ignored")),
     );
 
     assert_eq!(
@@ -115,10 +132,82 @@ fn lambda_application_uses_lexical_closure_capture() {
 }
 
 #[test]
+fn object_operations_read_update_test_compare_and_branch() {
+    let base: Term = Object::new().with(":answer", sym(":ok")).into();
+
+    assert_eq!(
+        click::eval(&click::get(click::quote(base.clone()), ":answer"))
+            .expect("get should succeed"),
+        sym(":ok")
+    );
+
+    let updated = click::eval(&click::with(
+        click::quote(base.clone()),
+        ":extra",
+        click::quote(sym(":yes")),
+    ))
+    .expect("with should succeed");
+    assert_eq!(
+        updated.as_object().and_then(|object| object.get(":extra")),
+        Some(&sym(":yes"))
+    );
+
+    assert_eq!(
+        click::eval(&click::has(click::quote(base.clone()), ":answer"))
+            .expect("has should succeed"),
+        sym(":true")
+    );
+    assert_eq!(
+        click::eval(&click::equal(
+            click::quote(sym(":same")),
+            click::quote(sym(":same"))
+        ))
+        .expect("equal should succeed"),
+        sym(":true")
+    );
+    assert_eq!(
+        click::eval(&click::if_expr(
+            click::quote(sym(":true")),
+            click::quote(sym(":then")),
+            click::quote(sym(":else")),
+        ))
+        .expect("if should succeed"),
+        sym(":then")
+    );
+}
+
+#[test]
+fn object_operations_report_errors() {
+    assert_eq!(
+        click::eval(&click::get(click::quote(sym(":not-record")), ":x"))
+            .expect_err("get on a symbol should fail"),
+        "{:not-a-record :not-record}"
+    );
+
+    let empty: Term = Object::new().into();
+    assert_eq!(
+        click::eval(&click::get(click::quote(empty), ":missing"))
+            .expect_err("missing field should fail"),
+        "{:missing-field :missing}"
+    );
+
+    assert_eq!(
+        click::eval(&click::if_expr(
+            click::quote(sym(":maybe")),
+            click::quote(sym(":then")),
+            click::quote(sym(":else")),
+        ))
+        .expect_err("non-boolean condition should fail"),
+        "{:bad-condition :maybe}"
+    );
+}
+
+#[test]
 fn cek_step_returns_explicit_next_and_return_outcomes() {
-    let first = click::cek_step(&click::initial_state(sym(":ok"))).expect("step should succeed");
+    let first =
+        click::cek_step(&click::initial_state(click::quote(sym(":ok")))).expect("step should run");
     let next_state = tagged_payload(&first, ":next").clone();
-    let second = click::cek_step(&next_state).expect("step should succeed");
+    let second = click::cek_step(&next_state).expect("step should run");
 
     assert_eq!(tagged_payload(&second, ":return"), &sym(":ok"));
 }
@@ -137,8 +226,11 @@ fn cek_step_reports_bad_states_as_error_outcomes() {
 #[test]
 fn applying_a_non_closure_is_an_error() {
     assert_eq!(
-        click::eval(&click::apply(sym(":not-a-function"), sym(":arg")))
-            .expect_err("applying a bare symbol should fail"),
+        click::eval(&click::apply(
+            click::quote(sym(":not-a-function")),
+            click::quote(sym(":arg")),
+        ))
+        .expect_err("applying a bare symbol should fail"),
         "{:not-a-function :not-a-function}"
     );
 }
@@ -146,33 +238,33 @@ fn applying_a_non_closure_is_an_error() {
 #[test]
 fn check_proves_structural_object_equality() {
     let left: Term = Object::new().with(":x", sym(":ok")).into();
-    let claim = click::object_equal_claim(left.clone(), left);
-    let checked = click::check(&claim, &click::object_equal_proof());
+    let claim = click::equal_claim(left.clone(), left);
+    let checked = click::check(&claim, &click::equal_structural_proof());
 
     assert_eq!(tagged_payload(&checked, ":ok"), &claim);
 }
 
 #[test]
 fn check_proves_one_cek_step_by_running_the_stepper() {
-    let input = click::initial_state(sym(":ok"));
+    let input = click::initial_state(click::quote(sym(":ok")));
     let output = click::cek_step(&input).expect("step should succeed");
-    let claim = click::cek_step_equals_claim(input, output);
-    let checked = click::check(&claim, &click::cek_step_proof());
+    let claim = click::step_equals_claim(input, output);
+    let checked = click::check(&claim, &click::step_proof());
 
     assert_eq!(tagged_payload(&checked, ":ok"), &claim);
 }
 
 #[test]
-fn check_proves_cek_evals_to_with_a_nested_trace_proof() {
-    let claim = click::cek_evals_to_claim(click::initial_state(identity_expr()), sym(":ok"));
+fn check_proves_returns_with_a_nested_trace_proof() {
+    let claim = click::returns_claim(click::initial_state(identity_expr()), sym(":ok"));
     let checked = click::check(&claim, &identity_proof());
 
     assert_eq!(tagged_payload(&checked, ":ok"), &claim);
 }
 
 #[test]
-fn check_rejects_a_false_eval_claim() {
-    let claim = click::cek_evals_to_claim(click::initial_state(identity_expr()), sym(":wrong"));
+fn check_rejects_a_false_returns_claim() {
+    let claim = click::returns_claim(click::initial_state(identity_expr()), sym(":wrong"));
     let checked = click::check(&claim, &identity_proof());
 
     assert!(
@@ -186,7 +278,7 @@ fn check_rejects_a_false_eval_claim() {
 #[test]
 fn run_source_ignores_shebang_and_returns_the_last_value() {
     assert_eq!(
-        run_source("#!/usr/bin/env click\n:first\n:done\n")
+        run_source("#!/usr/bin/env click\n(:quote :first)\n(:quote :done)\n")
             .expect("run_source should succeed")
             .expect("source should produce a value"),
         sym(":done")

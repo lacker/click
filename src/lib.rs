@@ -2,10 +2,10 @@ mod core;
 mod reader;
 
 pub use core::{
-    ClickResult, Object, Symbol, Term, apply, cek_evals_to_claim, cek_next_proof, cek_return_proof,
-    cek_step, cek_step_equals_claim, cek_step_proof, check, closure, continue_state, empty_env,
-    eval, eval_in_env, eval_state, halt, initial_state, lambda, object_equal_claim,
-    object_equal_proof, parse, parse_many, step, var,
+    ClickResult, Object, Symbol, Term, apply, cek_step, check, closure, continue_state, empty_env,
+    equal, equal_claim, equal_structural_proof, eval, eval_in_env, eval_state, get, halt, has,
+    if_expr, initial_state, lambda, parse, parse_many, quote, returns_claim, returns_next_proof,
+    returns_return_proof, step, step_equals_claim, step_proof, var, with,
 };
 
 /// Parse one or more Click terms from source, evaluate each term independently,

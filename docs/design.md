@@ -109,7 +109,8 @@ Continuation =
   | (:after-has (:key Symbol :then Continuation))
   | (:after-equal-left (:right Expr :env Environment :then Continuation))
   | (:after-equal-right (:left Value :then Continuation))
-  | (:after-if (:then Expr :else Expr :env Environment :then Continuation))
+  | (:after-if
+      (:then-branch Expr :else-branch Expr :env Environment :then Continuation))
 
 EvalState =
   | (:eval (:expr Expr :env Environment :continuation Continuation))
