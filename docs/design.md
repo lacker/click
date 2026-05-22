@@ -78,8 +78,8 @@ values.
 
 ## Kernel Object Calculus
 
-The kernel CEK machine evaluates a tiny object calculus: lambda calculus plus
-immutable record operations.
+The object calculus is lambda calculus plus immutable record operations. This is
+the source language of the kernel.
 
 ```text
 Expr =
@@ -95,7 +95,21 @@ Expr =
 
 Closure = (:closure (:param Symbol :body Expr :env Environment))
 Value = Object
+```
 
+`|` marks sum alternatives. `:quote` injects raw data into computation.
+Variable lookup is explicit with `:var`. Record operations provide the
+fundamental data structure.
+
+Operations are written as tagged objects. `:get` reads one key, `:with` returns
+an updated record, `:has` returns `:true` or `:false`, `:equal` uses structural
+equality, and `:if` branches on `:true` or `:false`.
+
+## CEK Machine
+
+The CEK machine is the trusted small-step semantics for the object calculus.
+
+```text
 Environment = Record(Symbol -> Value)
 
 Continuation =
@@ -124,12 +138,10 @@ EvalOutcome =
 cek_step : EvalState -> EvalOutcome
 ```
 
-`|` marks sum alternatives. `:quote` injects raw data into computation.
-Variable lookup is explicit with `:var`. Evaluating a lambda returns a closure.
-Applying a closure extends the closure environment with the parameter binding.
-Record operations provide the fundamental data structure.
+Evaluating a lambda returns a closure. Applying a closure extends the closure
+environment with the parameter binding.
 
-## Calculus Rules
+## CEK Rules
 
 ```text
 eval (:quote value) -> continue(value, c)
@@ -142,18 +154,6 @@ continue(value, :halt) -> return value
 Any form that evaluates subexpressions uses continuation frames. `:apply`
 evaluates function then argument. `:get`, `:with`, `:has`, `:equal`, and `:if`
 evaluate their inputs left-to-right.
-
-Record operation results:
-
-```text
-get(record, key) -> value, or error (:missing-field key) / (:not-a-record value)
-with(record, key, value) -> updated record, or error (:not-a-record value)
-has(value, key) -> :true if value is a record with key, else :false
-equal(left, right) -> :true or :false by structural equality
-if(:true, then, else) -> then
-if(:false, then, else) -> else
-if(other, then, else) -> error (:bad-condition other)
-```
 
 ## Finite Trace Proofs
 

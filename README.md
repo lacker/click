@@ -8,7 +8,7 @@ The active code is a kernel object-calculus demo:
 - expressions are explicit records such as `:quote`, `:var`, `:lambda`,
   `:apply`, `:get`, `:with`, `:has`, `:equal`, and `:if`
 - values are raw objects; closures are ordinary records
-- `cek_step` runs one trusted small step over an explicit evaluator state
+- `cek_step` runs one trusted small step over an explicit machine state
 - `check` validates finite-trace proof objects against claim objects
 
 See [docs/design.md](docs/design.md) for the current design.
