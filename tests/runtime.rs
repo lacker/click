@@ -48,7 +48,7 @@ fn eval_requires_explicit_quote_for_literal_values() {
 
     assert_eq!(
         click::eval(&sym(":ok")).expect_err("bare symbols are not expressions"),
-        "{:not-an-expr :ok}"
+        "(:not-an-expr :ok)"
     );
 }
 
@@ -71,6 +71,20 @@ fn parse_turns_key_value_lists_into_nested_objects() {
     assert_eq!(
         click::parse("(:foo :bar :nested (:x :y))").expect("parse should succeed"),
         expected
+    );
+}
+
+#[test]
+fn display_uses_parseable_object_syntax() {
+    let term: Term = Object::new()
+        .with(":foo", sym(":bar"))
+        .with(":nested", Object::new().with(":x", sym(":y")).into())
+        .into();
+
+    assert_eq!(term.to_string(), "(:foo :bar :nested (:x :y))");
+    assert_eq!(
+        click::parse(&term.to_string()).expect("displayed object should parse"),
+        term
     );
 }
 
@@ -181,14 +195,14 @@ fn object_operations_report_errors() {
     assert_eq!(
         click::eval(&click::get(click::quote(sym(":not-record")), ":x"))
             .expect_err("get on a symbol should fail"),
-        "{:not-a-record :not-record}"
+        "(:not-a-record :not-record)"
     );
 
     let empty: Term = Object::new().into();
     assert_eq!(
         click::eval(&click::get(click::quote(empty), ":missing"))
             .expect_err("missing field should fail"),
-        "{:missing-field :missing}"
+        "(:missing-field :missing)"
     );
 
     assert_eq!(
@@ -198,7 +212,7 @@ fn object_operations_report_errors() {
             click::quote(sym(":else")),
         ))
         .expect_err("non-boolean condition should fail"),
-        "{:bad-condition :maybe}"
+        "(:bad-condition :maybe)"
     );
 }
 
@@ -231,7 +245,7 @@ fn applying_a_non_closure_is_an_error() {
             click::quote(sym(":arg")),
         ))
         .expect_err("applying a bare symbol should fail"),
-        "{:not-a-function :not-a-function}"
+        "(:not-a-function :not-a-function)"
     );
 }
 

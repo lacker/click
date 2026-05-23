@@ -126,16 +126,16 @@ impl fmt::Display for Term {
         match self {
             Term::Symbol(symbol) => write!(f, "{symbol}"),
             Term::Object(object) => {
-                write!(f, "{{")?;
+                write!(f, "(")?;
                 let mut first = true;
                 for (key, value) in &object.entries {
                     if !first {
-                        write!(f, ", ")?;
+                        write!(f, " ")?;
                     }
                     first = false;
                     write!(f, "{key} {value}")?;
                 }
-                write!(f, "}}")
+                write!(f, ")")
             }
         }
     }
