@@ -375,7 +375,7 @@ pub fn returns_next_proof(step_proof: Term, rest_proof: Term) -> Term {
 
 pub fn check(claim: &Term, proof: &Term) -> Term {
     match check_inner(claim, proof) {
-        Ok(()) => tagged(":ok", claim.clone()),
+        Ok(()) => Term::symbol(":ok"),
         Err(info) => outcome_error(info),
     }
 }

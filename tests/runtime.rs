@@ -255,7 +255,7 @@ fn check_proves_structural_object_equality() {
     let claim = click::equal_claim(left.clone(), left);
     let checked = click::check(&claim, &click::equal_structural_proof());
 
-    assert_eq!(tagged_payload(&checked, ":ok"), &claim);
+    assert_eq!(checked, sym(":ok"));
 }
 
 #[test]
@@ -265,7 +265,7 @@ fn check_proves_one_cek_step_by_running_the_stepper() {
     let claim = click::step_equals_claim(input, output);
     let checked = click::check(&claim, &click::step_proof());
 
-    assert_eq!(tagged_payload(&checked, ":ok"), &claim);
+    assert_eq!(checked, sym(":ok"));
 }
 
 #[test]
@@ -273,7 +273,7 @@ fn check_proves_returns_with_a_nested_trace_proof() {
     let claim = click::returns_claim(click::initial_state(identity_expr()), sym(":ok"));
     let checked = click::check(&claim, &identity_proof());
 
-    assert_eq!(tagged_payload(&checked, ":ok"), &claim);
+    assert_eq!(checked, sym(":ok"));
 }
 
 #[test]
