@@ -88,6 +88,14 @@ pub enum Proof {
         lambda: Lambda,
         argument: Term,
     },
+    Project {
+        record: Record,
+        label: Symbol,
+    },
+    Case {
+        variant: Variant,
+        branches: Vec<CaseBranch>,
+    },
     ImpliesIntro {
         assumption: Symbol,
         premise: Prop,
@@ -170,6 +178,23 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             };
             let reduced = substitute(lambda.body.as_ref(), lambda.parameter, argument);
             Some(Prop::Equal(applied, reduced))
+        }
+        Proof::Project { record, label } => {
+            let projected = Term::Project {
+                record: Box::new(Term::Record(record.clone())),
+                label: *label,
+            };
+            let value = record_get(record, *label)?.clone();
+            Some(Prop::Equal(projected, value))
+        }
+        Proof::Case { variant, branches } => {
+            let cased = Term::Case {
+                variant: Box::new(Term::Variant(variant.clone())),
+                branches: branches.clone(),
+            };
+            let branch = case_branch(branches, variant.tag)?;
+            let reduced = substitute(&branch.body, branch.parameter, variant.value.as_ref());
+            Some(Prop::Equal(cased, reduced))
         }
         Proof::ImpliesIntro {
             assumption,
@@ -1311,6 +1336,60 @@ mod tests {
                 argument: argument.clone()
             },
             &Prop::Equal(apply(Term::Lambda(lambda), argument), Term::Quote(2))
+        ));
+    }
+
+    #[test]
+    fn project_proof_proves_projection_equal_to_field_value() {
+        let record = vec![field(1, Term::Quote(10)), field(2, Term::Quote(20))];
+
+        assert!(check(
+            &Proof::Project {
+                record: record.clone(),
+                label: 2
+            },
+            &Prop::Equal(project(Term::Record(record), 2), Term::Quote(20))
+        ));
+    }
+
+    #[test]
+    fn project_proof_with_missing_field_proves_nothing() {
+        let record = vec![field(1, Term::Quote(10))];
+
+        assert!(!check(
+            &Proof::Project { record, label: 2 },
+            &Prop::Equal(Term::Quote(1), Term::Quote(1))
+        ));
+    }
+
+    #[test]
+    fn case_proof_proves_case_equal_to_selected_branch() {
+        let variant = Variant {
+            tag: 1,
+            value: Box::new(Term::Quote(10)),
+        };
+        let branches = vec![branch(1, 2, Term::Var(2)), branch(3, 4, Term::Var(4))];
+
+        assert!(check(
+            &Proof::Case {
+                variant: variant.clone(),
+                branches: branches.clone(),
+            },
+            &Prop::Equal(case(Term::Variant(variant), branches), Term::Quote(10))
+        ));
+    }
+
+    #[test]
+    fn case_proof_with_missing_branch_proves_nothing() {
+        let variant = Variant {
+            tag: 1,
+            value: Box::new(Term::Quote(10)),
+        };
+        let branches = vec![branch(2, 3, Term::Var(3))];
+
+        assert!(!check(
+            &Proof::Case { variant, branches },
+            &Prop::Equal(Term::Quote(1), Term::Quote(1))
         ));
     }
 
