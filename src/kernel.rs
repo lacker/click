@@ -1,6 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub type Symbol = u64;
+pub type Context = HashMap<Symbol, Prop>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Lambda {
@@ -17,6 +18,97 @@ pub enum Term {
     Lambda(Lambda),
     Var(Symbol),
     Quote(Symbol),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Prop {
+    Equal(Term, Term),
+    Implies(Box<Prop>, Box<Prop>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Proof {
+    Assume(Symbol),
+    Refl(Term),
+    Symm(Box<Proof>),
+    Trans(Box<Proof>, Box<Proof>),
+    Beta {
+        lambda: Lambda,
+        argument: Term,
+    },
+    ImpliesIntro {
+        assumption: Symbol,
+        premise: Prop,
+        proof: Box<Proof>,
+    },
+    ImpliesElim {
+        implication: Box<Proof>,
+        premise: Box<Proof>,
+    },
+}
+
+pub fn check(proof: &Proof, prop: &Prop) -> bool {
+    check_in_context(proof, prop, &Context::new())
+}
+
+pub fn check_in_context(proof: &Proof, prop: &Prop, context: &Context) -> bool {
+    proven_prop(proof, context).as_ref() == Some(prop)
+}
+
+fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
+    match proof {
+        Proof::Assume(symbol) => context.get(symbol).cloned(),
+        Proof::Refl(term) => Some(Prop::Equal(term.clone(), term.clone())),
+        Proof::Symm(proof) => match proven_prop(proof, context)? {
+            Prop::Equal(left, right) => Some(Prop::Equal(right, left)),
+            Prop::Implies(_, _) => None,
+        },
+        Proof::Trans(first, second) => {
+            match (proven_prop(first, context)?, proven_prop(second, context)?) {
+                (Prop::Equal(left, middle), Prop::Equal(second_middle, right))
+                    if middle == second_middle =>
+                {
+                    Some(Prop::Equal(left, right))
+                }
+                _ => None,
+            }
+        }
+        Proof::Beta { lambda, argument } => {
+            let applied = Term::Apply {
+                function: Box::new(Term::Lambda(lambda.clone())),
+                argument: Box::new(argument.clone()),
+            };
+            let reduced = substitute(lambda.body.as_ref(), lambda.parameter, argument);
+            Some(Prop::Equal(applied, reduced))
+        }
+        Proof::ImpliesIntro {
+            assumption,
+            premise,
+            proof,
+        } => {
+            let mut context = context.clone();
+            context.insert(*assumption, premise.clone());
+            let conclusion = proven_prop(proof, &context)?;
+            Some(Prop::Implies(
+                Box::new(premise.clone()),
+                Box::new(conclusion),
+            ))
+        }
+        Proof::ImpliesElim {
+            implication,
+            premise,
+        } => {
+            let premise = proven_prop(premise, context)?;
+            match proven_prop(implication, context)? {
+                Prop::Implies(expected_premise, conclusion)
+                    if expected_premise.as_ref() == &premise =>
+                {
+                    Some(*conclusion)
+                }
+                _ => None,
+            }
+        }
+    }
 }
 
 pub fn substitute(term: &Term, variable: Symbol, replacement: &Term) -> Term {
@@ -171,6 +263,14 @@ mod tests {
         }
     }
 
+    fn equal(left: Term, right: Term) -> Prop {
+        Prop::Equal(left, right)
+    }
+
+    fn implies(premise: Prop, conclusion: Prop) -> Prop {
+        Prop::Implies(Box::new(premise), Box::new(conclusion))
+    }
+
     #[test]
     fn step_beta_reduces_identity_lambda() {
         let term = apply(lambda(1, Term::Var(1)), Term::Quote(2));
@@ -208,5 +308,134 @@ mod tests {
             free_symbols(&lambda(1, apply(Term::Var(1), Term::Quote(2)))),
             HashSet::new()
         );
+    }
+
+    #[test]
+    fn refl_proves_term_equal_to_itself() {
+        let term = Term::Quote(1);
+
+        assert!(check(
+            &Proof::Refl(term.clone()),
+            &Prop::Equal(term.clone(), term)
+        ));
+    }
+
+    #[test]
+    fn symm_flips_equality() {
+        let proof = Proof::Symm(Box::new(Proof::Beta {
+            lambda: Lambda {
+                parameter: 1,
+                body: Box::new(Term::Var(1)),
+            },
+            argument: Term::Quote(2),
+        }));
+
+        assert!(check(
+            &proof,
+            &Prop::Equal(
+                Term::Quote(2),
+                apply(lambda(1, Term::Var(1)), Term::Quote(2))
+            )
+        ));
+    }
+
+    #[test]
+    fn trans_chains_matching_equalities() {
+        let lambda = Lambda {
+            parameter: 1,
+            body: Box::new(Term::Var(1)),
+        };
+        let argument = Term::Quote(2);
+        let applied = apply(Term::Lambda(lambda.clone()), argument.clone());
+        let proof = Proof::Trans(
+            Box::new(Proof::Beta {
+                lambda,
+                argument: argument.clone(),
+            }),
+            Box::new(Proof::Refl(argument.clone())),
+        );
+
+        assert!(check(&proof, &Prop::Equal(applied, argument)));
+    }
+
+    #[test]
+    fn trans_rejects_mismatched_middle_terms() {
+        let proof = Proof::Trans(
+            Box::new(Proof::Refl(Term::Quote(1))),
+            Box::new(Proof::Refl(Term::Quote(2))),
+        );
+
+        assert!(!check(&proof, &Prop::Equal(Term::Quote(1), Term::Quote(2))));
+    }
+
+    #[test]
+    fn beta_proves_application_equal_to_substituted_body() {
+        let lambda = Lambda {
+            parameter: 1,
+            body: Box::new(Term::Var(1)),
+        };
+        let argument = Term::Quote(2);
+
+        assert!(check(
+            &Proof::Beta {
+                lambda: lambda.clone(),
+                argument: argument.clone()
+            },
+            &Prop::Equal(apply(Term::Lambda(lambda), argument), Term::Quote(2))
+        ));
+    }
+
+    #[test]
+    fn assume_uses_context() {
+        let prop = equal(Term::Quote(1), Term::Quote(1));
+        let mut context = Context::new();
+        context.insert(7, prop.clone());
+
+        assert!(check_in_context(&Proof::Assume(7), &prop, &context));
+        assert!(!check(&Proof::Assume(7), &prop));
+    }
+
+    #[test]
+    fn implies_intro_proves_assumption_implies_itself() {
+        let prop = equal(Term::Quote(1), Term::Quote(1));
+        let proof = Proof::ImpliesIntro {
+            assumption: 7,
+            premise: prop.clone(),
+            proof: Box::new(Proof::Assume(7)),
+        };
+
+        assert!(check(&proof, &implies(prop.clone(), prop)));
+    }
+
+    #[test]
+    fn implies_elim_applies_implication() {
+        let prop = equal(Term::Quote(1), Term::Quote(1));
+        let proof = Proof::ImpliesElim {
+            implication: Box::new(Proof::ImpliesIntro {
+                assumption: 7,
+                premise: prop.clone(),
+                proof: Box::new(Proof::Assume(7)),
+            }),
+            premise: Box::new(Proof::Refl(Term::Quote(1))),
+        };
+
+        assert!(check(&proof, &prop));
+    }
+
+    #[test]
+    fn implies_elim_rejects_mismatched_premise() {
+        let prop = equal(Term::Quote(1), Term::Quote(1));
+        let other = equal(Term::Quote(2), Term::Quote(2));
+        let proof = Proof::ImpliesElim {
+            implication: Box::new(Proof::ImpliesIntro {
+                assumption: 7,
+                premise: prop.clone(),
+                proof: Box::new(Proof::Assume(7)),
+            }),
+            premise: Box::new(Proof::Refl(Term::Quote(2))),
+        };
+
+        assert!(!check(&proof, &prop));
+        assert!(!check(&proof, &other));
     }
 }
