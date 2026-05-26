@@ -24,6 +24,13 @@ pub struct Field {
 pub type Record = Vec<Field>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CaseBranch {
+    pub tag: Symbol,
+    pub parameter: Symbol,
+    pub body: Term,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Term {
     Apply {
         function: Box<Term>,
@@ -32,6 +39,14 @@ pub enum Term {
     Lambda(Lambda),
     Variant(Variant),
     Record(Record),
+    Project {
+        record: Box<Term>,
+        label: Symbol,
+    },
+    Case {
+        variant: Box<Term>,
+        branches: Vec<CaseBranch>,
+    },
     Var(Symbol),
     Quote(Symbol),
 }
@@ -45,6 +60,10 @@ pub enum Step {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvalError {
     ApplyNonLambda(Term),
+    ProjectNonRecord(Term),
+    MissingField(Symbol),
+    CaseNonVariant(Term),
+    MissingCase(Symbol),
 }
 
 pub type EvalResult<T> = Result<T, EvalError>;
@@ -461,6 +480,15 @@ pub fn record_labels_are_unique(record: &Record) -> bool {
     record.iter().all(|field| labels.insert(field.label))
 }
 
+pub fn case_branch(branches: &[CaseBranch], tag: Symbol) -> Option<&CaseBranch> {
+    branches.iter().find(|branch| branch.tag == tag)
+}
+
+pub fn case_tags_are_unique(branches: &[CaseBranch]) -> bool {
+    let mut tags = HashSet::new();
+    branches.iter().all(|branch| tags.insert(branch.tag))
+}
+
 pub fn substitute(term: &Term, variable: Symbol, replacement: &Term) -> Term {
     match term {
         Term::Apply { function, argument } => Term::Apply {
@@ -500,7 +528,40 @@ pub fn substitute(term: &Term, variable: Symbol, replacement: &Term) -> Term {
                 })
                 .collect(),
         ),
+        Term::Project { record, label } => Term::Project {
+            record: Box::new(substitute(record, variable, replacement)),
+            label: *label,
+        },
+        Term::Case { variant, branches } => Term::Case {
+            variant: Box::new(substitute(variant, variable, replacement)),
+            branches: branches
+                .iter()
+                .map(|branch| substitute_case_branch(branch, variable, replacement))
+                .collect(),
+        },
         Term::Var(_) | Term::Quote(_) => term.clone(),
+    }
+}
+
+fn substitute_case_branch(branch: &CaseBranch, variable: Symbol, replacement: &Term) -> CaseBranch {
+    if branch.parameter == variable {
+        return branch.clone();
+    }
+
+    if free_symbols(replacement).contains(&branch.parameter) {
+        let fresh = fresh_symbol(&branch.body, replacement, variable);
+        let body = rename_bound_var(&branch.body, branch.parameter, fresh);
+        return CaseBranch {
+            tag: branch.tag,
+            parameter: fresh,
+            body: substitute(&body, variable, replacement),
+        };
+    }
+
+    CaseBranch {
+        tag: branch.tag,
+        parameter: branch.parameter,
+        body: substitute(&branch.body, variable, replacement),
     }
 }
 
@@ -544,6 +605,8 @@ pub fn step(term: &Term) -> EvalResult<Step> {
             Step::Normal => Ok(Step::Normal),
         },
         Term::Record(record) => step_record(record),
+        Term::Project { record, label } => step_project(record, *label),
+        Term::Case { variant, branches } => step_case(variant, branches),
         Term::Var(_) | Term::Quote(_) => Ok(Step::Normal),
     }
 }
@@ -564,6 +627,53 @@ fn step_record(record: &Record) -> EvalResult<Step> {
         }
     }
     Ok(Step::Normal)
+}
+
+fn step_project(record: &Term, label: Symbol) -> EvalResult<Step> {
+    match step(record)? {
+        Step::Reduced(record) => Ok(Step::Reduced(Term::Project {
+            record: Box::new(record),
+            label,
+        })),
+        Step::Normal => match record {
+            Term::Record(fields) => record_get(fields, label)
+                .cloned()
+                .map(Step::Reduced)
+                .ok_or(EvalError::MissingField(label)),
+            Term::Var(_) | Term::Apply { .. } | Term::Project { .. } | Term::Case { .. } => {
+                Ok(Step::Normal)
+            }
+            Term::Quote(_) | Term::Lambda(_) | Term::Variant(_) => {
+                Err(EvalError::ProjectNonRecord(record.clone()))
+            }
+        },
+    }
+}
+
+fn step_case(variant: &Term, branches: &[CaseBranch]) -> EvalResult<Step> {
+    match step(variant)? {
+        Step::Reduced(variant) => Ok(Step::Reduced(Term::Case {
+            variant: Box::new(variant),
+            branches: branches.to_vec(),
+        })),
+        Step::Normal => match variant {
+            Term::Variant(variant) => {
+                let branch = case_branch(branches, variant.tag)
+                    .ok_or(EvalError::MissingCase(variant.tag))?;
+                Ok(Step::Reduced(substitute(
+                    &branch.body,
+                    branch.parameter,
+                    variant.value.as_ref(),
+                )))
+            }
+            Term::Var(_) | Term::Apply { .. } | Term::Project { .. } | Term::Case { .. } => {
+                Ok(Step::Normal)
+            }
+            Term::Quote(_) | Term::Lambda(_) | Term::Record(_) => {
+                Err(EvalError::CaseNonVariant(variant.clone()))
+            }
+        },
+    }
 }
 
 pub fn normal_form(term: &Term) -> EvalResult<Term> {
@@ -602,6 +712,18 @@ fn add_free_symbols(term: &Term, symbols: &mut HashSet<Symbol>) {
                 add_free_symbols(&field.value, symbols);
             }
         }
+        Term::Project { record, .. } => {
+            add_free_symbols(record, symbols);
+        }
+        Term::Case { variant, branches } => {
+            add_free_symbols(variant, symbols);
+            for branch in branches {
+                let mut body_symbols = HashSet::new();
+                add_free_symbols(&branch.body, &mut body_symbols);
+                body_symbols.remove(&branch.parameter);
+                symbols.extend(body_symbols);
+            }
+        }
         Term::Var(symbol) => {
             symbols.insert(*symbol);
         }
@@ -633,6 +755,27 @@ fn rename_bound_var(term: &Term, old: Symbol, new: Symbol) -> Term {
                 })
                 .collect(),
         ),
+        Term::Project { record, label } => Term::Project {
+            record: Box::new(rename_bound_var(record, old, new)),
+            label: *label,
+        },
+        Term::Case { variant, branches } => Term::Case {
+            variant: Box::new(rename_bound_var(variant, old, new)),
+            branches: branches
+                .iter()
+                .map(|branch| {
+                    if branch.parameter == old {
+                        branch.clone()
+                    } else {
+                        CaseBranch {
+                            tag: branch.tag,
+                            parameter: branch.parameter,
+                            body: rename_bound_var(&branch.body, old, new),
+                        }
+                    }
+                })
+                .collect(),
+        },
         Term::Var(symbol) if *symbol == old => Term::Var(new),
         Term::Var(_) | Term::Quote(_) => term.clone(),
     }
@@ -669,6 +812,18 @@ fn add_all_symbols(term: &Term, symbols: &mut HashSet<Symbol>) {
             for field in record {
                 symbols.insert(field.label);
                 add_all_symbols(&field.value, symbols);
+            }
+        }
+        Term::Project { record, label } => {
+            symbols.insert(*label);
+            add_all_symbols(record, symbols);
+        }
+        Term::Case { variant, branches } => {
+            add_all_symbols(variant, symbols);
+            for branch in branches {
+                symbols.insert(branch.tag);
+                symbols.insert(branch.parameter);
+                add_all_symbols(&branch.body, symbols);
             }
         }
         Term::Var(symbol) | Term::Quote(symbol) => {
@@ -708,6 +863,28 @@ mod tests {
 
     fn record(fields: Vec<Field>) -> Term {
         Term::Record(fields)
+    }
+
+    fn project(record: Term, label: Symbol) -> Term {
+        Term::Project {
+            record: Box::new(record),
+            label,
+        }
+    }
+
+    fn branch(tag: Symbol, parameter: Symbol, body: Term) -> CaseBranch {
+        CaseBranch {
+            tag,
+            parameter,
+            body,
+        }
+    }
+
+    fn case(variant: Term, branches: Vec<CaseBranch>) -> Term {
+        Term::Case {
+            variant: Box::new(variant),
+            branches,
+        }
     }
 
     fn equal(left: Term, right: Term) -> Prop {
@@ -835,6 +1012,172 @@ mod tests {
     }
 
     #[test]
+    fn project_gets_present_record_field() {
+        let term = project(
+            record(vec![field(1, Term::Quote(10)), field(2, Term::Quote(20))]),
+            2,
+        );
+
+        assert_eq!(step(&term), Ok(Step::Reduced(Term::Quote(20))));
+    }
+
+    #[test]
+    fn project_reduces_record_expression_first() {
+        let term = project(
+            apply(
+                lambda(1, record(vec![field(2, Term::Var(1))])),
+                Term::Quote(30),
+            ),
+            2,
+        );
+
+        assert_eq!(
+            step(&term),
+            Ok(Step::Reduced(project(
+                record(vec![field(2, Term::Quote(30))]),
+                2
+            )))
+        );
+        assert_eq!(normal_form(&term), Ok(Term::Quote(30)));
+    }
+
+    #[test]
+    fn project_missing_field_errors() {
+        let term = project(record(vec![field(1, Term::Quote(10))]), 2);
+
+        assert_eq!(step(&term), Err(EvalError::MissingField(2)));
+    }
+
+    #[test]
+    fn project_known_non_record_errors() {
+        let term = project(Term::Quote(10), 2);
+
+        assert_eq!(
+            step(&term),
+            Err(EvalError::ProjectNonRecord(Term::Quote(10)))
+        );
+    }
+
+    #[test]
+    fn project_open_record_is_neutral() {
+        let term = project(Term::Var(1), 2);
+
+        assert_eq!(step(&term), Ok(Step::Normal));
+    }
+
+    #[test]
+    fn substitution_descends_into_projection_record() {
+        let term = project(Term::Var(1), 2);
+
+        assert_eq!(
+            substitute(&term, 1, &Term::Var(3)),
+            project(Term::Var(3), 2)
+        );
+    }
+
+    #[test]
+    fn case_branch_returns_first_matching_branch() {
+        let branches = vec![
+            branch(1, 10, Term::Quote(10)),
+            branch(2, 20, Term::Quote(20)),
+            branch(1, 30, Term::Quote(30)),
+        ];
+
+        assert_eq!(case_branch(&branches, 1), Some(&branches[0]));
+        assert_eq!(case_branch(&branches, 2), Some(&branches[1]));
+        assert_eq!(case_branch(&branches, 3), None);
+    }
+
+    #[test]
+    fn case_tags_are_unique_detects_duplicates() {
+        assert!(case_tags_are_unique(&vec![
+            branch(1, 10, Term::Quote(10)),
+            branch(2, 20, Term::Quote(20)),
+        ]));
+        assert!(!case_tags_are_unique(&vec![
+            branch(1, 10, Term::Quote(10)),
+            branch(1, 20, Term::Quote(20)),
+        ]));
+    }
+
+    #[test]
+    fn case_reduces_matching_variant_branch() {
+        let term = case(
+            variant(1, Term::Quote(10)),
+            vec![branch(1, 2, Term::Var(2)), branch(3, 4, Term::Var(4))],
+        );
+
+        assert_eq!(step(&term), Ok(Step::Reduced(Term::Quote(10))));
+    }
+
+    #[test]
+    fn case_reduces_variant_expression_first() {
+        let term = case(
+            apply(lambda(1, variant(2, Term::Var(1))), Term::Quote(30)),
+            vec![branch(2, 3, Term::Var(3))],
+        );
+
+        assert_eq!(
+            step(&term),
+            Ok(Step::Reduced(case(
+                variant(2, Term::Quote(30)),
+                vec![branch(2, 3, Term::Var(3))]
+            )))
+        );
+        assert_eq!(normal_form(&term), Ok(Term::Quote(30)));
+    }
+
+    #[test]
+    fn case_missing_branch_errors() {
+        let term = case(
+            variant(1, Term::Quote(10)),
+            vec![branch(2, 3, Term::Var(3))],
+        );
+
+        assert_eq!(step(&term), Err(EvalError::MissingCase(1)));
+    }
+
+    #[test]
+    fn case_known_non_variant_errors() {
+        let term = case(Term::Quote(10), vec![branch(1, 2, Term::Var(2))]);
+
+        assert_eq!(step(&term), Err(EvalError::CaseNonVariant(Term::Quote(10))));
+    }
+
+    #[test]
+    fn case_open_variant_is_neutral() {
+        let term = case(Term::Var(1), vec![branch(2, 3, Term::Var(3))]);
+
+        assert_eq!(step(&term), Ok(Step::Normal));
+    }
+
+    #[test]
+    fn substitution_descends_into_case_variant_and_branches() {
+        let term = case(
+            Term::Var(1),
+            vec![branch(2, 3, apply(Term::Var(3), Term::Var(4)))],
+        );
+
+        assert_eq!(
+            substitute(&term, 4, &Term::Quote(5)),
+            case(
+                Term::Var(1),
+                vec![branch(2, 3, apply(Term::Var(3), Term::Quote(5)))]
+            )
+        );
+    }
+
+    #[test]
+    fn substitution_avoids_case_branch_capture() {
+        let term = case(Term::Var(1), vec![branch(2, 3, Term::Var(4))]);
+
+        assert_eq!(
+            substitute(&term, 4, &Term::Var(3)),
+            case(Term::Var(1), vec![branch(2, 0, Term::Var(3))])
+        );
+    }
+
+    #[test]
     fn substitution_respects_shadowing() {
         let term = lambda(1, Term::Var(1));
 
@@ -867,8 +1210,11 @@ mod tests {
     #[test]
     fn free_symbols_ignore_variant_tags_and_record_labels() {
         assert_eq!(
-            free_symbols(&record(vec![field(100, variant(200, Term::Var(1)))])),
-            HashSet::from([1])
+            free_symbols(&case(
+                project(record(vec![field(100, variant(200, Term::Var(1)))]), 300,),
+                vec![branch(400, 2, apply(Term::Var(2), Term::Var(3)))]
+            )),
+            HashSet::from([1, 3])
         );
     }
 
