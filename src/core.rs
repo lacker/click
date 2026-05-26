@@ -19,6 +19,12 @@ pub enum Term {
     Object(Object),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Context {
+    claims: BTreeMap<Symbol, Term>,
+    definitions: BTreeMap<Symbol, Term>,
+}
+
 impl Symbol {
     pub fn as_str(&self) -> &str {
         &self.0
@@ -80,6 +86,47 @@ impl Object {
 }
 
 impl Default for Object {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Context {
+    pub fn new() -> Self {
+        Self {
+            claims: BTreeMap::new(),
+            definitions: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_claim(&self, name: impl Into<Symbol>, claim: Term) -> Self {
+        let mut claims = self.claims.clone();
+        claims.insert(name.into(), claim);
+        Self {
+            claims,
+            definitions: self.definitions.clone(),
+        }
+    }
+
+    pub fn with_definition(&self, name: impl Into<Symbol>, value: Term) -> Self {
+        let mut definitions = self.definitions.clone();
+        definitions.insert(name.into(), value);
+        Self {
+            claims: self.claims.clone(),
+            definitions,
+        }
+    }
+
+    pub fn get_claim(&self, name: &str) -> Option<&Term> {
+        self.claims.get(name)
+    }
+
+    pub fn get_definition(&self, name: &str) -> Option<&Term> {
+        self.definitions.get(name)
+    }
+}
+
+impl Default for Context {
     fn default() -> Self {
         Self::new()
     }
@@ -345,6 +392,80 @@ pub fn returns_claim(input: Term, value: Term) -> Term {
     )
 }
 
+pub fn terminates_claim(input: Term) -> Term {
+    tagged(":terminates", Object::new().with(":input", input).into())
+}
+
+pub fn true_claim() -> Term {
+    tagged(":true", Object::new().into())
+}
+
+pub fn false_claim() -> Term {
+    tagged(":false", Object::new().into())
+}
+
+pub fn and_claim(left: Term, right: Term) -> Term {
+    tagged(
+        ":and",
+        Object::new()
+            .with(":left", left)
+            .with(":right", right)
+            .into(),
+    )
+}
+
+pub fn or_claim(left: Term, right: Term) -> Term {
+    tagged(
+        ":or",
+        Object::new()
+            .with(":left", left)
+            .with(":right", right)
+            .into(),
+    )
+}
+
+pub fn not_claim(claim: Term) -> Term {
+    tagged(":not", claim)
+}
+
+pub fn implies_claim(if_claim: Term, then_claim: Term) -> Term {
+    tagged(
+        ":implies",
+        Object::new()
+            .with(":if", if_claim)
+            .with(":then", then_claim)
+            .into(),
+    )
+}
+
+pub fn forall_claim(var: impl Into<Symbol>, claim: Term) -> Term {
+    tagged(
+        ":forall",
+        Object::new()
+            .with(":var", Term::symbol(var))
+            .with(":claim", claim)
+            .into(),
+    )
+}
+
+pub fn exists_claim(var: impl Into<Symbol>, claim: Term) -> Term {
+    tagged(
+        ":exists",
+        Object::new()
+            .with(":var", Term::symbol(var))
+            .with(":claim", claim)
+            .into(),
+    )
+}
+
+pub fn logic_var(name: impl Into<Symbol>) -> Term {
+    tagged(":logic-var", Term::symbol(name))
+}
+
+pub fn empty_context() -> Context {
+    Context::new()
+}
+
 pub fn equal_structural_proof() -> Term {
     tagged(":equal-structural", Object::new().into())
 }
@@ -373,8 +494,156 @@ pub fn returns_next_proof(step_proof: Term, rest_proof: Term) -> Term {
     )
 }
 
+pub fn use_proof(name: impl Into<Symbol>) -> Term {
+    tagged(":use", Term::symbol(name))
+}
+
+pub fn true_intro_proof() -> Term {
+    tagged(":true-intro", Object::new().into())
+}
+
+pub fn false_elim_proof(proof: Term) -> Term {
+    tagged(":false-elim", Object::new().with(":proof", proof).into())
+}
+
+pub fn and_intro_proof(left: Term, right: Term) -> Term {
+    tagged(
+        ":and-intro",
+        Object::new()
+            .with(":left", left)
+            .with(":right", right)
+            .into(),
+    )
+}
+
+pub fn and_left_proof(proof: Term) -> Term {
+    tagged(":and-left", proof)
+}
+
+pub fn and_right_proof(proof: Term) -> Term {
+    tagged(":and-right", proof)
+}
+
+pub fn or_left_proof(proof: Term) -> Term {
+    tagged(":or-left", proof)
+}
+
+pub fn or_right_proof(proof: Term) -> Term {
+    tagged(":or-right", proof)
+}
+
+pub fn or_elim_proof(proof: Term, left: Term, right: Term) -> Term {
+    tagged(
+        ":or-elim",
+        Object::new()
+            .with(":proof", proof)
+            .with(":left", left)
+            .with(":right", right)
+            .into(),
+    )
+}
+
+pub fn not_intro_proof(assume: impl Into<Symbol>, body: Term) -> Term {
+    tagged(
+        ":not-intro",
+        Object::new()
+            .with(":assume", Term::symbol(assume))
+            .with(":body", body)
+            .into(),
+    )
+}
+
+pub fn not_elim_proof(not_proof: Term, positive: Term) -> Term {
+    tagged(
+        ":not-elim",
+        Object::new()
+            .with(":not", not_proof)
+            .with(":positive", positive)
+            .into(),
+    )
+}
+
+pub fn implies_intro_proof(assume: impl Into<Symbol>, body: Term) -> Term {
+    tagged(
+        ":implies-intro",
+        Object::new()
+            .with(":assume", Term::symbol(assume))
+            .with(":body", body)
+            .into(),
+    )
+}
+
+pub fn implies_elim_proof(function: Term, arg: Term) -> Term {
+    tagged(
+        ":implies-elim",
+        Object::new()
+            .with(":function", function)
+            .with(":arg", arg)
+            .into(),
+    )
+}
+
+pub fn forall_intro_proof(var: impl Into<Symbol>, body: Term) -> Term {
+    tagged(
+        ":forall-intro",
+        Object::new()
+            .with(":var", Term::symbol(var))
+            .with(":body", body)
+            .into(),
+    )
+}
+
+pub fn forall_elim_proof(proof: Term, value: Term) -> Term {
+    tagged(
+        ":forall-elim",
+        Object::new()
+            .with(":proof", proof)
+            .with(":value", value)
+            .into(),
+    )
+}
+
+pub fn exists_intro_proof(value: Term, proof: Term) -> Term {
+    tagged(
+        ":exists-intro",
+        Object::new()
+            .with(":value", value)
+            .with(":proof", proof)
+            .into(),
+    )
+}
+
+pub fn exists_elim_proof(proof: Term, witness: impl Into<Symbol>, body: Term) -> Term {
+    tagged(
+        ":exists-elim",
+        Object::new()
+            .with(":proof", proof)
+            .with(":witness", Term::symbol(witness))
+            .with(":body", body)
+            .into(),
+    )
+}
+
+pub fn rewrite_proof(equal: Term, body: Term) -> Term {
+    tagged(
+        ":rewrite",
+        Object::new()
+            .with(":equal", equal)
+            .with(":body", body)
+            .into(),
+    )
+}
+
+pub fn unfold_proof(name: impl Into<Symbol>) -> Term {
+    tagged(":unfold", Term::symbol(name))
+}
+
 pub fn check(claim: &Term, proof: &Term) -> Term {
-    match check_inner(claim, proof) {
+    check_in_context(&Context::new(), claim, proof)
+}
+
+pub fn check_in_context(context: &Context, claim: &Term, proof: &Term) -> Term {
+    match check_inner(context, claim, proof) {
         Ok(()) => Term::symbol(":ok"),
         Err(info) => outcome_error(info),
     }
@@ -931,7 +1200,36 @@ fn after_if_cont(then_expr: Term, else_expr: Term, env: Term, next: Term) -> Ter
     )
 }
 
-fn check_inner(claim: &Term, proof: &Term) -> Result<(), Term> {
+fn check_inner(context: &Context, claim: &Term, proof: &Term) -> Result<(), Term> {
+    if check_inferred(context, claim, proof)? {
+        return Ok(());
+    }
+
+    if let Some(name) = tagged_payload(proof, ":use") {
+        return check_use(context, claim, name);
+    }
+    if let Some(details) = tagged_payload(proof, ":false-elim") {
+        return check_false_elim(context, details);
+    }
+    if let Some(details) = tagged_payload(proof, ":or-elim") {
+        return check_or_elim(context, claim, details);
+    }
+    if let Some(details) = tagged_payload(proof, ":exists-elim") {
+        return check_exists_elim(context, claim, details);
+    }
+    if let Some(details) = tagged_payload(proof, ":rewrite") {
+        return check_rewrite(context, claim, details);
+    }
+    if let Some(name) = tagged_payload(proof, ":unfold") {
+        return check_unfold(context, claim, name);
+    }
+
+    if let Some(payload) = tagged_payload(claim, ":true") {
+        return check_true(payload, proof);
+    }
+    if tagged_payload(claim, ":false").is_some() {
+        return Err(tagged(":bad_proof", proof.clone()));
+    }
     if let Some(payload) = tagged_payload(claim, ":equal") {
         return check_equal(payload, proof);
     }
@@ -939,9 +1237,63 @@ fn check_inner(claim: &Term, proof: &Term) -> Result<(), Term> {
         return check_step_equals(payload, proof);
     }
     if let Some(payload) = tagged_payload(claim, ":returns") {
-        return check_returns(payload, proof);
+        return check_returns(context, payload, proof);
+    }
+    if let Some(payload) = tagged_payload(claim, ":terminates") {
+        return check_terminates(context, payload, proof);
+    }
+    if let Some(payload) = tagged_payload(claim, ":and") {
+        return check_and(context, payload, proof);
+    }
+    if let Some(payload) = tagged_payload(claim, ":or") {
+        return check_or(context, payload, proof);
+    }
+    if let Some(payload) = tagged_payload(claim, ":not") {
+        return check_not(context, payload, proof);
+    }
+    if let Some(payload) = tagged_payload(claim, ":implies") {
+        return check_implies(context, payload, proof);
+    }
+    if let Some(payload) = tagged_payload(claim, ":forall") {
+        return check_forall(context, payload, proof);
+    }
+    if let Some(payload) = tagged_payload(claim, ":exists") {
+        return check_exists(context, payload, proof);
     }
     Err(tagged(":unknown-claim", claim.clone()))
+}
+
+fn check_inferred(context: &Context, claim: &Term, proof: &Term) -> Result<bool, Term> {
+    match infer_claim(context, proof) {
+        Ok(inferred) => Ok(&inferred == claim),
+        Err(error) if tagged_payload(&error, ":cannot-infer").is_some() => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn check_use(context: &Context, claim: &Term, name: &Term) -> Result<(), Term> {
+    let Some(name) = name.as_symbol() else {
+        return Err(tagged(":bad_use", name.clone()));
+    };
+    let Some(known) = context.get_claim(name.as_str()) else {
+        return Err(tagged(":unknown-name", Term::symbol(name.clone())));
+    };
+    if known == claim {
+        Ok(())
+    } else {
+        Err(tagged(
+            ":claim-mismatch",
+            Object::new()
+                .with(":actual", known.clone())
+                .with(":expected", claim.clone())
+                .into(),
+        ))
+    }
+}
+
+fn check_true(payload: &Term, proof: &Term) -> Result<(), Term> {
+    require_empty_payload(payload, ":bad_true_claim")?;
+    require_empty_proof(proof, ":true-intro")
 }
 
 fn check_equal(payload: &Term, proof: &Term) -> Result<(), Term> {
@@ -979,17 +1331,17 @@ fn check_step_equals(payload: &Term, proof: &Term) -> Result<(), Term> {
     }
 }
 
-fn check_returns(payload: &Term, proof: &Term) -> Result<(), Term> {
+fn check_returns(context: &Context, payload: &Term, proof: &Term) -> Result<(), Term> {
     if let Some(details) = tagged_payload(proof, ":returns-return") {
-        return check_returns_return(payload, details);
+        return check_returns_return(context, payload, details);
     }
     if let Some(details) = tagged_payload(proof, ":returns-next") {
-        return check_returns_next(payload, details);
+        return check_returns_next(context, payload, details);
     }
     Err(tagged(":bad_proof", proof.clone()))
 }
 
-fn check_returns_return(payload: &Term, details: &Term) -> Result<(), Term> {
+fn check_returns_return(context: &Context, payload: &Term, details: &Term) -> Result<(), Term> {
     let (input, expected) = returns_claim_fields(payload)?;
     let details = required_object(details, ":bad_returns_return_proof")?;
     let step_proof = required_field(details, ":step", ":bad_returns_return_proof")?;
@@ -999,11 +1351,15 @@ fn check_returns_return(payload: &Term, details: &Term) -> Result<(), Term> {
         return Err(tagged(":expected-return", outcome));
     };
     let actual = actual.clone();
-    check_inner(&step_equals_claim(input.clone(), outcome), step_proof)?;
-    check_inner(&equal_claim(actual, expected.clone()), equal_proof)
+    check_inner(
+        context,
+        &step_equals_claim(input.clone(), outcome),
+        step_proof,
+    )?;
+    check_inner(context, &equal_claim(actual, expected.clone()), equal_proof)
 }
 
-fn check_returns_next(payload: &Term, details: &Term) -> Result<(), Term> {
+fn check_returns_next(context: &Context, payload: &Term, details: &Term) -> Result<(), Term> {
     let (input, expected) = returns_claim_fields(payload)?;
     let details = required_object(details, ":bad_returns_next_proof")?;
     let step_proof = required_field(details, ":step", ":bad_returns_next_proof")?;
@@ -1013,8 +1369,271 @@ fn check_returns_next(payload: &Term, details: &Term) -> Result<(), Term> {
         return Err(tagged(":expected-next", outcome));
     };
     let next = next.clone();
-    check_inner(&step_equals_claim(input.clone(), outcome), step_proof)?;
-    check_inner(&returns_claim(next, expected.clone()), rest_proof)
+    check_inner(
+        context,
+        &step_equals_claim(input.clone(), outcome),
+        step_proof,
+    )?;
+    check_inner(context, &returns_claim(next, expected.clone()), rest_proof)
+}
+
+fn check_terminates(context: &Context, payload: &Term, proof: &Term) -> Result<(), Term> {
+    let fields = required_object(payload, ":bad_terminates_claim")?;
+    let input = required_field(fields, ":input", ":bad_terminates_claim")?;
+    let value_var = Symbol::from(":value");
+    let claim = exists_claim(
+        value_var.clone(),
+        returns_claim(input.clone(), logic_var(value_var)),
+    );
+    check_inner(context, &claim, proof)
+}
+
+fn check_and(context: &Context, payload: &Term, proof: &Term) -> Result<(), Term> {
+    let fields = required_object(payload, ":bad_and_claim")?;
+    let left = required_field(fields, ":left", ":bad_and_claim")?;
+    let right = required_field(fields, ":right", ":bad_and_claim")?;
+    let Some(details) = tagged_payload(proof, ":and-intro") else {
+        return Err(tagged(":bad_proof", proof.clone()));
+    };
+    let details = required_object(details, ":bad_and_intro_proof")?;
+    let left_proof = required_field(details, ":left", ":bad_and_intro_proof")?;
+    let right_proof = required_field(details, ":right", ":bad_and_intro_proof")?;
+    check_inner(context, left, left_proof)?;
+    check_inner(context, right, right_proof)
+}
+
+fn check_or(context: &Context, payload: &Term, proof: &Term) -> Result<(), Term> {
+    let fields = required_object(payload, ":bad_or_claim")?;
+    let left = required_field(fields, ":left", ":bad_or_claim")?;
+    let right = required_field(fields, ":right", ":bad_or_claim")?;
+    if let Some(left_proof) = tagged_payload(proof, ":or-left") {
+        return check_inner(context, left, left_proof);
+    }
+    if let Some(right_proof) = tagged_payload(proof, ":or-right") {
+        return check_inner(context, right, right_proof);
+    }
+    Err(tagged(":bad_proof", proof.clone()))
+}
+
+fn check_not(context: &Context, claim: &Term, proof: &Term) -> Result<(), Term> {
+    let Some(details) = tagged_payload(proof, ":not-intro") else {
+        return Err(tagged(":bad_proof", proof.clone()));
+    };
+    let details = required_object(details, ":bad_not_intro_proof")?;
+    let assume = required_symbol_field(details, ":assume", ":bad_not_intro_proof")?;
+    let body = required_field(details, ":body", ":bad_not_intro_proof")?;
+    let context = context.with_claim(assume.clone(), claim.clone());
+    check_inner(&context, &false_claim(), body)
+}
+
+fn check_implies(context: &Context, payload: &Term, proof: &Term) -> Result<(), Term> {
+    let fields = required_object(payload, ":bad_implies_claim")?;
+    let if_claim = required_field(fields, ":if", ":bad_implies_claim")?;
+    let then_claim = required_field(fields, ":then", ":bad_implies_claim")?;
+    let Some(details) = tagged_payload(proof, ":implies-intro") else {
+        return Err(tagged(":bad_proof", proof.clone()));
+    };
+    let details = required_object(details, ":bad_implies_intro_proof")?;
+    let assume = required_symbol_field(details, ":assume", ":bad_implies_intro_proof")?;
+    let body = required_field(details, ":body", ":bad_implies_intro_proof")?;
+    let context = context.with_claim(assume.clone(), if_claim.clone());
+    check_inner(&context, then_claim, body)
+}
+
+fn check_forall(context: &Context, payload: &Term, proof: &Term) -> Result<(), Term> {
+    let fields = required_object(payload, ":bad_forall_claim")?;
+    let claim_var = required_symbol_field(fields, ":var", ":bad_forall_claim")?;
+    let claim_body = required_field(fields, ":claim", ":bad_forall_claim")?;
+    let Some(details) = tagged_payload(proof, ":forall-intro") else {
+        return Err(tagged(":bad_proof", proof.clone()));
+    };
+    let details = required_object(details, ":bad_forall_intro_proof")?;
+    let proof_var = required_symbol_field(details, ":var", ":bad_forall_intro_proof")?;
+    let body = required_field(details, ":body", ":bad_forall_intro_proof")?;
+    let target = substitute_logic_var(claim_body, claim_var, &logic_var(proof_var.clone()));
+    check_inner(context, &target, body)
+}
+
+fn check_exists(context: &Context, payload: &Term, proof: &Term) -> Result<(), Term> {
+    let fields = required_object(payload, ":bad_exists_claim")?;
+    let var = required_symbol_field(fields, ":var", ":bad_exists_claim")?;
+    let claim = required_field(fields, ":claim", ":bad_exists_claim")?;
+    let Some(details) = tagged_payload(proof, ":exists-intro") else {
+        return Err(tagged(":bad_proof", proof.clone()));
+    };
+    let details = required_object(details, ":bad_exists_intro_proof")?;
+    let value = required_field(details, ":value", ":bad_exists_intro_proof")?;
+    let proof = required_field(details, ":proof", ":bad_exists_intro_proof")?;
+    let target = substitute_logic_var(claim, var, value);
+    check_inner(context, &target, proof)
+}
+
+fn check_false_elim(context: &Context, details: &Term) -> Result<(), Term> {
+    let details = required_object(details, ":bad_false_elim_proof")?;
+    let proof = required_field(details, ":proof", ":bad_false_elim_proof")?;
+    check_inner(context, &false_claim(), proof)
+}
+
+fn check_or_elim(context: &Context, claim: &Term, details: &Term) -> Result<(), Term> {
+    let details = required_object(details, ":bad_or_elim_proof")?;
+    let proof = required_field(details, ":proof", ":bad_or_elim_proof")?;
+    let left_proof = required_field(details, ":left", ":bad_or_elim_proof")?;
+    let right_proof = required_field(details, ":right", ":bad_or_elim_proof")?;
+    let disjunction = infer_claim(context, proof)?;
+    let Some(payload) = tagged_payload(&disjunction, ":or") else {
+        return Err(tagged(":expected-or", disjunction));
+    };
+    let fields = required_object(payload, ":bad_or_claim")?;
+    let left = required_field(fields, ":left", ":bad_or_claim")?;
+    let right = required_field(fields, ":right", ":bad_or_claim")?;
+    check_inner(
+        context,
+        &implies_claim(left.clone(), claim.clone()),
+        left_proof,
+    )?;
+    check_inner(
+        context,
+        &implies_claim(right.clone(), claim.clone()),
+        right_proof,
+    )
+}
+
+fn check_exists_elim(context: &Context, claim: &Term, details: &Term) -> Result<(), Term> {
+    let details = required_object(details, ":bad_exists_elim_proof")?;
+    let proof = required_field(details, ":proof", ":bad_exists_elim_proof")?;
+    let witness = required_symbol_field(details, ":witness", ":bad_exists_elim_proof")?;
+    let body = required_field(details, ":body", ":bad_exists_elim_proof")?;
+    let exists_claim = infer_claim(context, proof)?;
+    let Some(payload) = tagged_payload(&exists_claim, ":exists") else {
+        return Err(tagged(":expected-exists", exists_claim));
+    };
+    let fields = required_object(payload, ":bad_exists_claim")?;
+    let var = required_symbol_field(fields, ":var", ":bad_exists_claim")?;
+    let body_claim = required_field(fields, ":claim", ":bad_exists_claim")?;
+    let witness_claim = substitute_logic_var(body_claim, var, &logic_var(witness.clone()));
+    let context = context.with_claim(witness.clone(), witness_claim);
+    check_inner(&context, claim, body)
+}
+
+fn check_rewrite(context: &Context, claim: &Term, details: &Term) -> Result<(), Term> {
+    let details = required_object(details, ":bad_rewrite_proof")?;
+    let equal_proof = required_field(details, ":equal", ":bad_rewrite_proof")?;
+    let body = required_field(details, ":body", ":bad_rewrite_proof")?;
+    let equality = infer_claim(context, equal_proof)?;
+    let Some(payload) = tagged_payload(&equality, ":equal") else {
+        return Err(tagged(":expected-equality", equality));
+    };
+    let fields = required_object(payload, ":bad_equal_claim")?;
+    let left = required_field(fields, ":left", ":bad_equal_claim")?;
+    let right = required_field(fields, ":right", ":bad_equal_claim")?;
+    let left_to_right = replace_term(claim, left, right);
+    if check_inner(context, &left_to_right, body).is_ok() {
+        return Ok(());
+    }
+    let right_to_left = replace_term(claim, right, left);
+    check_inner(context, &right_to_left, body)
+}
+
+fn check_unfold(context: &Context, claim: &Term, name: &Term) -> Result<(), Term> {
+    let Some(name) = name.as_symbol() else {
+        return Err(tagged(":bad_unfold", name.clone()));
+    };
+    let Some(definition) = context.get_definition(name.as_str()) else {
+        return Err(tagged(":unknown-name", Term::symbol(name.clone())));
+    };
+    let name = Term::symbol(name.clone());
+    check_inner(context, claim, &equal_structural_proof()).or_else(|_| {
+        if claim == &equal_claim(name.clone(), definition.clone())
+            || claim == &equal_claim(definition.clone(), name)
+        {
+            Ok(())
+        } else {
+            Err(tagged(":bad_unfold_target", claim.clone()))
+        }
+    })
+}
+
+fn infer_claim(context: &Context, proof: &Term) -> Result<Term, Term> {
+    if let Some(name) = tagged_payload(proof, ":use") {
+        let Some(name) = name.as_symbol() else {
+            return Err(tagged(":bad_use", name.clone()));
+        };
+        return context
+            .get_claim(name.as_str())
+            .cloned()
+            .ok_or_else(|| tagged(":unknown-name", Term::symbol(name.clone())));
+    }
+    if let Some(payload) = tagged_payload(proof, ":true-intro") {
+        require_empty_payload(payload, ":bad_true_intro_proof")?;
+        return Ok(true_claim());
+    }
+    if let Some(details) = tagged_payload(proof, ":and-intro") {
+        let details = required_object(details, ":bad_and_intro_proof")?;
+        let left = infer_claim(
+            context,
+            required_field(details, ":left", ":bad_and_intro_proof")?,
+        )?;
+        let right = infer_claim(
+            context,
+            required_field(details, ":right", ":bad_and_intro_proof")?,
+        )?;
+        return Ok(and_claim(left, right));
+    }
+    if let Some(proof) = tagged_payload(proof, ":and-left") {
+        let claim = infer_claim(context, proof)?;
+        let Some(payload) = tagged_payload(&claim, ":and") else {
+            return Err(tagged(":expected-and", claim));
+        };
+        let fields = required_object(payload, ":bad_and_claim")?;
+        return Ok(required_field(fields, ":left", ":bad_and_claim")?.clone());
+    }
+    if let Some(proof) = tagged_payload(proof, ":and-right") {
+        let claim = infer_claim(context, proof)?;
+        let Some(payload) = tagged_payload(&claim, ":and") else {
+            return Err(tagged(":expected-and", claim));
+        };
+        let fields = required_object(payload, ":bad_and_claim")?;
+        return Ok(required_field(fields, ":right", ":bad_and_claim")?.clone());
+    }
+    if let Some(details) = tagged_payload(proof, ":not-elim") {
+        let details = required_object(details, ":bad_not_elim_proof")?;
+        let not_proof = required_field(details, ":not", ":bad_not_elim_proof")?;
+        let positive = required_field(details, ":positive", ":bad_not_elim_proof")?;
+        let not_claim = infer_claim(context, not_proof)?;
+        let Some(positive_claim) = tagged_payload(&not_claim, ":not") else {
+            return Err(tagged(":expected-not", not_claim));
+        };
+        check_inner(context, positive_claim, positive)?;
+        return Ok(false_claim());
+    }
+    if let Some(details) = tagged_payload(proof, ":implies-elim") {
+        let details = required_object(details, ":bad_implies_elim_proof")?;
+        let function = required_field(details, ":function", ":bad_implies_elim_proof")?;
+        let arg = required_field(details, ":arg", ":bad_implies_elim_proof")?;
+        let function_claim = infer_claim(context, function)?;
+        let Some(payload) = tagged_payload(&function_claim, ":implies") else {
+            return Err(tagged(":expected-implies", function_claim));
+        };
+        let fields = required_object(payload, ":bad_implies_claim")?;
+        let if_claim = required_field(fields, ":if", ":bad_implies_claim")?;
+        let then_claim = required_field(fields, ":then", ":bad_implies_claim")?;
+        check_inner(context, if_claim, arg)?;
+        return Ok(then_claim.clone());
+    }
+    if let Some(details) = tagged_payload(proof, ":forall-elim") {
+        let details = required_object(details, ":bad_forall_elim_proof")?;
+        let proof = required_field(details, ":proof", ":bad_forall_elim_proof")?;
+        let value = required_field(details, ":value", ":bad_forall_elim_proof")?;
+        let claim = infer_claim(context, proof)?;
+        let Some(payload) = tagged_payload(&claim, ":forall") else {
+            return Err(tagged(":expected-forall", claim));
+        };
+        let fields = required_object(payload, ":bad_forall_claim")?;
+        let var = required_symbol_field(fields, ":var", ":bad_forall_claim")?;
+        let body = required_field(fields, ":claim", ":bad_forall_claim")?;
+        return Ok(substitute_logic_var(body, var, value));
+    }
+    Err(tagged(":cannot-infer", proof.clone()))
 }
 
 fn step_claim_fields(payload: &Term) -> Result<(&Term, &Term), Term> {
@@ -1051,6 +1670,62 @@ fn required_object<'a>(term: &'a Term, error: &str) -> Result<&'a Object, Term> 
 
 fn required_field<'a>(object: &'a Object, field: &str, error: &str) -> Result<&'a Term, Term> {
     object.get(field).ok_or_else(|| Term::symbol(error))
+}
+
+fn required_symbol_field<'a>(
+    object: &'a Object,
+    field: &str,
+    error: &str,
+) -> Result<&'a Symbol, Term> {
+    required_field(object, field, error)?
+        .as_symbol()
+        .ok_or_else(|| Term::symbol(error))
+}
+
+fn require_empty_payload(payload: &Term, error: &str) -> Result<(), Term> {
+    let object = required_object(payload, error)?;
+    if object.is_empty() {
+        Ok(())
+    } else {
+        Err(Term::symbol(error))
+    }
+}
+
+fn substitute_logic_var(term: &Term, var: &Symbol, replacement: &Term) -> Term {
+    if let Some(name) = tagged_payload(term, ":logic-var").and_then(Term::as_symbol) {
+        if name == var {
+            return replacement.clone();
+        }
+    }
+
+    match term {
+        Term::Symbol(_) => term.clone(),
+        Term::Object(object) => {
+            let mut substituted = Object::new();
+            for (key, value) in &object.entries {
+                substituted =
+                    substituted.with(key.clone(), substitute_logic_var(value, var, replacement));
+            }
+            substituted.into()
+        }
+    }
+}
+
+fn replace_term(term: &Term, from: &Term, to: &Term) -> Term {
+    if term == from {
+        return to.clone();
+    }
+
+    match term {
+        Term::Symbol(_) => term.clone(),
+        Term::Object(object) => {
+            let mut replaced = Object::new();
+            for (key, value) in &object.entries {
+                replaced = replaced.with(key.clone(), replace_term(value, from, to));
+            }
+            replaced.into()
+        }
+    }
 }
 
 fn parse_sexpr(expr: SExpr) -> ClickResult<Term> {

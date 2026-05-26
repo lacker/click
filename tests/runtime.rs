@@ -290,6 +290,160 @@ fn check_rejects_a_false_returns_claim() {
 }
 
 #[test]
+fn check_uses_named_claims_from_context() {
+    let claim = click::true_claim();
+    let context = click::Context::new()
+        .with_claim(":known", claim.clone())
+        .with_definition(":answer", sym(":ok"));
+
+    assert_eq!(
+        click::check_in_context(&context, &claim, &click::use_proof(":known")),
+        sym(":ok")
+    );
+    assert_eq!(
+        click::check_in_context(
+            &context,
+            &click::equal_claim(sym(":answer"), sym(":ok")),
+            &click::unfold_proof(":answer"),
+        ),
+        sym(":ok")
+    );
+}
+
+#[test]
+fn check_proves_first_order_connectives() {
+    let both = click::and_claim(click::true_claim(), click::true_claim());
+    assert_eq!(
+        click::check(
+            &both,
+            &click::and_intro_proof(click::true_intro_proof(), click::true_intro_proof()),
+        ),
+        sym(":ok")
+    );
+
+    let context = click::Context::new().with_claim(":both", both);
+    assert_eq!(
+        click::check_in_context(
+            &context,
+            &click::true_claim(),
+            &click::and_left_proof(click::use_proof(":both")),
+        ),
+        sym(":ok")
+    );
+
+    let either = click::or_claim(click::true_claim(), click::false_claim());
+    assert_eq!(
+        click::check(&either, &click::or_left_proof(click::true_intro_proof())),
+        sym(":ok")
+    );
+
+    let context = click::Context::new().with_claim(
+        ":either",
+        click::or_claim(click::true_claim(), click::true_claim()),
+    );
+    let branch = click::implies_intro_proof(":assumption", click::use_proof(":assumption"));
+    assert_eq!(
+        click::check_in_context(
+            &context,
+            &click::true_claim(),
+            &click::or_elim_proof(click::use_proof(":either"), branch.clone(), branch),
+        ),
+        sym(":ok")
+    );
+}
+
+#[test]
+fn check_proves_implication_and_negation() {
+    let implication = click::implies_claim(click::true_claim(), click::true_claim());
+    assert_eq!(
+        click::check(
+            &implication,
+            &click::implies_intro_proof(":assumption", click::use_proof(":assumption")),
+        ),
+        sym(":ok")
+    );
+
+    let context = click::Context::new()
+        .with_claim(":implication", implication)
+        .with_claim(":not-true", click::not_claim(click::true_claim()));
+    assert_eq!(
+        click::check_in_context(
+            &context,
+            &click::true_claim(),
+            &click::implies_elim_proof(click::use_proof(":implication"), click::true_intro_proof()),
+        ),
+        sym(":ok")
+    );
+
+    let contradiction =
+        click::not_elim_proof(click::use_proof(":not-true"), click::true_intro_proof());
+    assert_eq!(
+        click::check_in_context(&context, &click::false_claim(), &contradiction),
+        sym(":ok")
+    );
+    assert_eq!(
+        click::check_in_context(
+            &context,
+            &click::equal_claim(sym(":left"), sym(":right")),
+            &click::false_elim_proof(contradiction),
+        ),
+        sym(":ok")
+    );
+}
+
+#[test]
+fn check_proves_quantifiers_by_substitution() {
+    let reflexive_body = click::equal_claim(click::logic_var(":x"), click::logic_var(":x"));
+    let reflexive_claim = click::forall_claim(":x", reflexive_body);
+    let reflexive_proof = click::forall_intro_proof(":x", click::equal_structural_proof());
+
+    assert_eq!(click::check(&reflexive_claim, &reflexive_proof), sym(":ok"));
+
+    let context = click::Context::new().with_claim(":reflexive", reflexive_claim);
+    assert_eq!(
+        click::check_in_context(
+            &context,
+            &click::equal_claim(sym(":ok"), sym(":ok")),
+            &click::forall_elim_proof(click::use_proof(":reflexive"), sym(":ok")),
+        ),
+        sym(":ok")
+    );
+
+    let exists_ok =
+        click::exists_claim(":x", click::equal_claim(click::logic_var(":x"), sym(":ok")));
+    assert_eq!(
+        click::check(
+            &exists_ok,
+            &click::exists_intro_proof(sym(":ok"), click::equal_structural_proof()),
+        ),
+        sym(":ok")
+    );
+
+    let exists_true = click::exists_claim(":x", click::true_claim());
+    let context = click::Context::new().with_claim(":exists-true", exists_true);
+    assert_eq!(
+        click::check_in_context(
+            &context,
+            &click::true_claim(),
+            &click::exists_elim_proof(
+                click::use_proof(":exists-true"),
+                ":witness",
+                click::use_proof(":witness")
+            ),
+        ),
+        sym(":ok")
+    );
+}
+
+#[test]
+fn check_treats_terminates_as_an_exists_returns_claim() {
+    let claim = click::terminates_claim(click::initial_state(identity_expr()));
+    let proof = click::exists_intro_proof(sym(":ok"), identity_proof());
+
+    assert_eq!(click::check(&claim, &proof), sym(":ok"));
+}
+
+#[test]
 fn run_source_ignores_shebang_and_returns_the_last_value() {
     assert_eq!(
         run_source("#!/usr/bin/env click\n(:quote :first)\n(:quote :done)\n")
