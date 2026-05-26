@@ -191,23 +191,33 @@ for shadowing, closure capture, evaluation order, `:get`, and errors.
 
 ## Proof Calculus Claims
 
-Finite traces are not enough for theorem proving. The proof calculus needs a
-small claim language:
+Finite traces are not enough for theorem proving. The proof calculus starts as
+first-order logic over objects, plus primitive claims about object-calculus
+evaluation:
 
 ```text
+LogicObject = Object, possibly containing (:logic-var Symbol)
+
 Claim =
+  (:true ())
+  (:false ())
   (:equal (:left Object :right Object))
   (:step-equals (:input EvalState :output EvalOutcome))
   (:returns (:input EvalState :value Object))
   (:terminates (:input EvalState))
   (:and (:left Claim :right Claim))
+  (:or (:left Claim :right Claim))
+  (:not Claim)
   (:implies (:if Claim :then Claim))
   (:forall (:var Symbol :claim Claim))
   (:exists (:var Symbol :claim Claim))
 ```
 
-`terminates` is shorthand for `exists value: returns(input, value)`.
-Variables in claims are proof variables, not CEK `:var` expressions.
+Every `Object` position inside a claim may be a `LogicObject`. `terminates` is
+shorthand for `exists value: returns(input, value)`.
+Variables in claims are proof variables, represented by `:logic-var`, not CEK
+`:var` expressions. Quantifier elimination substitutes an object for matching
+logic-variable occurrences.
 
 Types are predicates:
 
@@ -229,7 +239,9 @@ returns(initial_state((:get (:record (:quote r) :key k))), v)
 
 Proofs are derivation objects for claims. The checker is the trusted algorithm:
 `check : Context -> Claim -> Proof -> ok | error | diverge`. `Context` holds
-definitions and labeled assumptions. Core forms:
+definitions and labeled assumptions.
+
+Core proof forms:
 
 ```text
 (:use Symbol)                         // use assumption or proven lemma
@@ -237,8 +249,16 @@ definitions and labeled assumptions. Core forms:
 (:step ())                            // run the trusted evaluator once
 (:returns-return (:step Proof :equal Proof))
 (:returns-next (:step Proof :rest Proof))
+(:true-intro ())
+(:false-elim (:proof Proof))
 (:and-intro (:left Proof :right Proof))
-(:and-left Proof) / (:and-right Proof)
+(:and-left Proof)
+(:and-right Proof)
+(:or-left Proof)
+(:or-right Proof)
+(:or-elim (:proof Proof :left Proof :right Proof))
+(:not-intro (:assume Symbol :body Proof))
+(:not-elim (:not Proof :positive Proof))
 (:implies-intro (:assume Symbol :body Proof))
 (:implies-elim (:function Proof :arg Proof))
 (:forall-intro (:var Symbol :body Proof))
@@ -247,52 +267,18 @@ definitions and labeled assumptions. Core forms:
 (:exists-elim (:proof Proof :witness Symbol :body Proof))
 (:rewrite (:equal Proof :body Proof))
 (:unfold Symbol)
-(:object-cases (:scrutinee Object :branches Record))
-(:object-induction (:var Symbol :body Proof))
 ```
 
-## Recursion Axiom
+The checker rules are syntax-directed:
 
-The generic recursion principle should be structural induction over finite
-objects, not list-specific induction. It is based on `:get`.
+- `:use` proves a claim if the named context claim is structurally equal.
+- `:equal-structural` proves equal objects; `:step` proves one evaluator step.
+- `:returns-return` and `:returns-next` prove `:returns` by finite traces.
+- `:true-intro` proves `:true`; `:false-elim` proves any claim from `:false`.
+- `:and`, `:or`, `:not`, and `:implies` use standard natural-deduction rules.
+- `:forall-elim` and `:exists-intro` substitute object values for logic vars.
+- `:implies-intro`, `:not-intro`, and `:exists-elim` extend local assumptions.
+- `:forall-intro` checks the body with a fresh logic variable.
+- `:rewrite` uses proved equality; `:unfold` expands a context definition.
 
-```text
-To prove forall x: P(x),
-prove P(x) assuming:
-  P(part) for every proper part reachable from x
-  by one or more successful :get operations.
-```
-
-Since `Object` values are finite trees, `:get` paths are well-founded.
-
-This is the base axiom that should prove termination of structurally recursive
-programs. For `is_list`, the recursive call is on the tail field, which is a
-part reached through two `:get` operations: first `:cons`, then `:tail`.
-
-## List Theory Target
-
-The list demo should be the second artifact:
-
-```text
-nil = (:nil ())
-cons(h, t) = (:cons (:head h :tail t))
-
-is_list(x) returns :true or :false
-List(x) := is_list(x) returns :true
-
-rev_acc(x, acc)
-reverse(x) = rev_acc(x, nil)
-```
-
-Targets:
-
-```text
-forall x: terminates(is_list(x))
-forall x acc:
-  List(x) and List(acc) implies
-  exists y: returns(rev_acc(x, acc), y) and List(y)
-forall x:
-  List(x) implies exists y: returns(reverse(x), y) and List(y)
-```
-
-This is enough before trying `reverse(reverse(xs)) = xs`.
+Induction is intentionally left out of this first proof calculus.
