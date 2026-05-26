@@ -37,6 +37,19 @@ pub enum Term {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Step {
+    Reduced(Term),
+    Normal,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EvalError {
+    ApplyNonLambda(Term),
+}
+
+pub type EvalResult<T> = Result<T, EvalError>;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Prop {
     Equal(Term, Term),
     Implies(Box<Prop>, Box<Prop>),
@@ -491,58 +504,76 @@ pub fn substitute(term: &Term, variable: Symbol, replacement: &Term) -> Term {
     }
 }
 
-pub fn step(term: &Term) -> Option<Term> {
+pub fn step(term: &Term) -> EvalResult<Step> {
     match term {
         Term::Apply { function, argument } => match function.as_ref() {
-            Term::Lambda(lambda) => {
-                Some(substitute(lambda.body.as_ref(), lambda.parameter, argument))
-            }
-            _ => step(function)
-                .map(|function| Term::Apply {
+            Term::Lambda(lambda) => Ok(Step::Reduced(substitute(
+                lambda.body.as_ref(),
+                lambda.parameter,
+                argument,
+            ))),
+            _ => match step(function)? {
+                Step::Reduced(function) => Ok(Step::Reduced(Term::Apply {
                     function: Box::new(function),
                     argument: argument.clone(),
-                })
-                .or_else(|| {
-                    step(argument).map(|argument| Term::Apply {
+                })),
+                Step::Normal if is_known_non_callable(function) => {
+                    Err(EvalError::ApplyNonLambda(function.as_ref().clone()))
+                }
+                Step::Normal => match step(argument)? {
+                    Step::Reduced(argument) => Ok(Step::Reduced(Term::Apply {
                         function: function.clone(),
                         argument: Box::new(argument),
-                    })
-                }),
+                    })),
+                    Step::Normal => Ok(Step::Normal),
+                },
+            },
         },
-        Term::Lambda(lambda) => step(lambda.body.as_ref()).map(|body| {
-            Term::Lambda(Lambda {
+        Term::Lambda(lambda) => match step(lambda.body.as_ref())? {
+            Step::Reduced(body) => Ok(Step::Reduced(Term::Lambda(Lambda {
                 parameter: lambda.parameter,
                 body: Box::new(body),
-            })
-        }),
-        Term::Variant(variant) => step(variant.value.as_ref()).map(|value| {
-            Term::Variant(Variant {
+            }))),
+            Step::Normal => Ok(Step::Normal),
+        },
+        Term::Variant(variant) => match step(variant.value.as_ref())? {
+            Step::Reduced(value) => Ok(Step::Reduced(Term::Variant(Variant {
                 tag: variant.tag,
                 value: Box::new(value),
-            })
-        }),
-        Term::Record(record) => step_record(record).map(Term::Record),
-        Term::Var(_) | Term::Quote(_) => None,
+            }))),
+            Step::Normal => Ok(Step::Normal),
+        },
+        Term::Record(record) => step_record(record),
+        Term::Var(_) | Term::Quote(_) => Ok(Step::Normal),
     }
 }
 
-fn step_record(record: &Record) -> Option<Record> {
+fn is_known_non_callable(term: &Term) -> bool {
+    matches!(term, Term::Quote(_) | Term::Variant(_) | Term::Record(_))
+}
+
+fn step_record(record: &Record) -> EvalResult<Step> {
     for (index, field) in record.iter().enumerate() {
-        if let Some(value) = step(&field.value) {
-            let mut record = record.clone();
-            record[index].value = value;
-            return Some(record);
+        match step(&field.value)? {
+            Step::Reduced(value) => {
+                let mut record = record.clone();
+                record[index].value = value;
+                return Ok(Step::Reduced(Term::Record(record)));
+            }
+            Step::Normal => {}
         }
     }
-    None
+    Ok(Step::Normal)
 }
 
-pub fn normal_form(term: &Term) -> Term {
+pub fn normal_form(term: &Term) -> EvalResult<Term> {
     let mut term = term.clone();
-    while let Some(next) = step(&term) {
-        term = next;
+    loop {
+        match step(&term)? {
+            Step::Reduced(next) => term = next,
+            Step::Normal => return Ok(term),
+        }
     }
-    term
 }
 
 pub fn free_symbols(term: &Term) -> HashSet<Symbol> {
@@ -713,7 +744,24 @@ mod tests {
     fn step_beta_reduces_identity_lambda() {
         let term = apply(lambda(1, Term::Var(1)), Term::Quote(2));
 
-        assert_eq!(step(&term), Some(Term::Quote(2)));
+        assert_eq!(step(&term), Ok(Step::Reduced(Term::Quote(2))));
+    }
+
+    #[test]
+    fn step_distinguishes_normal_terms_from_errors() {
+        assert_eq!(step(&Term::Quote(1)), Ok(Step::Normal));
+        assert_eq!(step(&apply(Term::Var(1), Term::Quote(2))), Ok(Step::Normal));
+    }
+
+    #[test]
+    fn step_errors_on_known_non_callable_application() {
+        let term = apply(Term::Quote(1), Term::Quote(2));
+
+        assert_eq!(step(&term), Err(EvalError::ApplyNonLambda(Term::Quote(1))));
+        assert_eq!(
+            normal_form(&term),
+            Err(EvalError::ApplyNonLambda(Term::Quote(1)))
+        );
     }
 
     #[test]
@@ -723,7 +771,7 @@ mod tests {
             Term::Quote(3),
         );
 
-        assert_eq!(normal_form(&term), Term::Quote(3));
+        assert_eq!(normal_form(&term), Ok(Term::Quote(3)));
     }
 
     #[test]
@@ -765,7 +813,7 @@ mod tests {
     fn step_reduces_inside_variant_payload() {
         let term = variant(1, apply(lambda(2, Term::Var(2)), Term::Quote(3)));
 
-        assert_eq!(step(&term), Some(variant(1, Term::Quote(3))));
+        assert_eq!(step(&term), Ok(Step::Reduced(variant(1, Term::Quote(3)))));
     }
 
     #[test]
@@ -778,11 +826,11 @@ mod tests {
 
         assert_eq!(
             step(&term),
-            Some(record(vec![
+            Ok(Step::Reduced(record(vec![
                 field(1, Term::Quote(1)),
                 field(2, Term::Quote(4)),
                 field(3, apply(lambda(5, Term::Var(5)), Term::Quote(6))),
-            ]))
+            ])))
         );
     }
 
