@@ -42,12 +42,13 @@ can be naturally represented as a Click type.
 
 ## Revised Kernel Proposal
 
-The kernel trusted base should stay small:
+The kernel should be described first by two calculi:
 
-- `Object`
-- structural equality
-- one minimal CEK stepper
-- one proof checker
+- the object calculus: symbols, records, and expressions that manipulate them
+- the proof calculus: claims, proof objects, and rules for deriving claims
+
+The trusted Rust implementation provides structural equality, evaluation, and
+proof checking as algorithms over those calculi.
 
 Everything else should be represented as explicit objects: data types, typing
 judgments, proof systems, tactics, language semantics, and extra checkers.
@@ -105,9 +106,11 @@ Operations are written as tagged objects. `:get` reads one key, `:with` returns
 an updated record, `:has` returns `:true` or `:false`, `:equal` uses structural
 equality, and `:if` branches on `:true` or `:false`.
 
-## CEK Machine
+## Object Calculus Evaluation
 
-The CEK machine is the trusted small-step semantics for the object calculus.
+The object calculus needs an evaluator, but the evaluator is an algorithm over
+the calculus rather than the first kernel concept. A CEK machine is the current
+small-step implementation strategy.
 
 ```text
 Environment = Record(Symbol -> Value)
@@ -141,7 +144,7 @@ cek_step : EvalState -> EvalOutcome
 Evaluating a lambda returns a closure. Applying a closure extends the closure
 environment with the parameter binding.
 
-## CEK Rules
+## Evaluation Rules
 
 ```text
 eval (:quote value) -> continue(value, c)
@@ -155,9 +158,9 @@ Any form that evaluates subexpressions uses continuation frames. `:apply`
 evaluates function then argument. `:get`, `:with`, `:has`, `:equal`, and `:if`
 evaluate their inputs left-to-right.
 
-## Finite Trace Proofs
+## Initial Evaluation Claims
 
-The first checker can prove exact finite CEK traces:
+The first proof checker can prove exact finite evaluation traces:
 
 ```text
 (:equal (:left Object :right Object))
@@ -171,14 +174,14 @@ The first checker can prove exact finite CEK traces:
    :value Value))
 ```
 
-`returns` is the large-step claim. It means repeated `cek_step` calls
-eventually return `value`.
+`returns` is the large-step claim. It means repeated evaluator steps eventually
+return `value`.
 
 Minimum proof forms:
 
 ```text
 (:equal-structural ())                 // structural equality
-(:step ())                             // run trusted cek_step once
+(:step ())                             // run the trusted evaluator once
 (:returns-return (:step p1 :equal p2))  // one step returns
 (:returns-next (:step p1 :rest p2))     // one step continues
 ```
@@ -186,9 +189,9 @@ Minimum proof forms:
 This proves `((lambda x. x) :ok) evaluates to :ok`, and gives immediate tests
 for shadowing, closure capture, evaluation order, `:get`, and errors.
 
-## General Claims
+## Proof Calculus Claims
 
-Finite traces are not enough for theorem proving. The next kernel target is a
+Finite traces are not enough for theorem proving. The proof calculus needs a
 small claim language:
 
 ```text
@@ -222,15 +225,16 @@ kernel-declared inductive type".
 returns(initial_state((:get (:record (:quote r) :key k))), v)
 ```
 
-## Proof Language
+## Proof Calculus
 
-The checker is contextual: `check : Context -> Claim -> Proof -> ok | error |
-diverge`. `Context` holds definitions and labeled assumptions. Core forms:
+Proofs are derivation objects for claims. The checker is the trusted algorithm:
+`check : Context -> Claim -> Proof -> ok | error | diverge`. `Context` holds
+definitions and labeled assumptions. Core forms:
 
 ```text
 (:use Symbol)                         // use assumption or proven lemma
 (:equal-structural ())                // run structural equality
-(:step ())                            // run trusted cek_step once
+(:step ())                            // run the trusted evaluator once
 (:returns-return (:step Proof :equal Proof))
 (:returns-next (:step Proof :rest Proof))
 (:and-intro (:left Proof :right Proof))
