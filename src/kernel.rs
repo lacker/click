@@ -10,12 +10,28 @@ pub struct Lambda {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Variant {
+    pub tag: Symbol,
+    pub value: Box<Term>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Field {
+    pub label: Symbol,
+    pub value: Term,
+}
+
+pub type Record = Vec<Field>;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Term {
     Apply {
         function: Box<Term>,
         argument: Box<Term>,
     },
     Lambda(Lambda),
+    Variant(Variant),
+    Record(Record),
     Var(Symbol),
     Quote(Symbol),
 }
@@ -420,6 +436,18 @@ fn context_mentions_symbol(context: &Context, symbol: Symbol) -> bool {
         .any(|prop| prop_mentions_symbol(prop, symbol))
 }
 
+pub fn record_get(record: &Record, label: Symbol) -> Option<&Term> {
+    record
+        .iter()
+        .find(|field| field.label == label)
+        .map(|field| &field.value)
+}
+
+pub fn record_labels_are_unique(record: &Record) -> bool {
+    let mut labels = HashSet::new();
+    record.iter().all(|field| labels.insert(field.label))
+}
+
 pub fn substitute(term: &Term, variable: Symbol, replacement: &Term) -> Term {
     match term {
         Term::Apply { function, argument } => Term::Apply {
@@ -446,6 +474,19 @@ pub fn substitute(term: &Term, variable: Symbol, replacement: &Term) -> Term {
             })
         }
         Term::Var(symbol) if *symbol == variable => replacement.clone(),
+        Term::Variant(variant) => Term::Variant(Variant {
+            tag: variant.tag,
+            value: Box::new(substitute(variant.value.as_ref(), variable, replacement)),
+        }),
+        Term::Record(record) => Term::Record(
+            record
+                .iter()
+                .map(|field| Field {
+                    label: field.label,
+                    value: substitute(&field.value, variable, replacement),
+                })
+                .collect(),
+        ),
         Term::Var(_) | Term::Quote(_) => term.clone(),
     }
 }
@@ -474,8 +515,26 @@ pub fn step(term: &Term) -> Option<Term> {
                 body: Box::new(body),
             })
         }),
+        Term::Variant(variant) => step(variant.value.as_ref()).map(|value| {
+            Term::Variant(Variant {
+                tag: variant.tag,
+                value: Box::new(value),
+            })
+        }),
+        Term::Record(record) => step_record(record).map(Term::Record),
         Term::Var(_) | Term::Quote(_) => None,
     }
+}
+
+fn step_record(record: &Record) -> Option<Record> {
+    for (index, field) in record.iter().enumerate() {
+        if let Some(value) = step(&field.value) {
+            let mut record = record.clone();
+            record[index].value = value;
+            return Some(record);
+        }
+    }
+    None
 }
 
 pub fn normal_form(term: &Term) -> Term {
@@ -504,6 +563,14 @@ fn add_free_symbols(term: &Term, symbols: &mut HashSet<Symbol>) {
             body_symbols.remove(&lambda.parameter);
             symbols.extend(body_symbols);
         }
+        Term::Variant(variant) => {
+            add_free_symbols(variant.value.as_ref(), symbols);
+        }
+        Term::Record(record) => {
+            for field in record {
+                add_free_symbols(&field.value, symbols);
+            }
+        }
         Term::Var(symbol) => {
             symbols.insert(*symbol);
         }
@@ -522,6 +589,19 @@ fn rename_bound_var(term: &Term, old: Symbol, new: Symbol) -> Term {
             parameter: lambda.parameter,
             body: Box::new(rename_bound_var(lambda.body.as_ref(), old, new)),
         }),
+        Term::Variant(variant) => Term::Variant(Variant {
+            tag: variant.tag,
+            value: Box::new(rename_bound_var(variant.value.as_ref(), old, new)),
+        }),
+        Term::Record(record) => Term::Record(
+            record
+                .iter()
+                .map(|field| Field {
+                    label: field.label,
+                    value: rename_bound_var(&field.value, old, new),
+                })
+                .collect(),
+        ),
         Term::Var(symbol) if *symbol == old => Term::Var(new),
         Term::Var(_) | Term::Quote(_) => term.clone(),
     }
@@ -550,6 +630,16 @@ fn add_all_symbols(term: &Term, symbols: &mut HashSet<Symbol>) {
             symbols.insert(lambda.parameter);
             add_all_symbols(lambda.body.as_ref(), symbols);
         }
+        Term::Variant(variant) => {
+            symbols.insert(variant.tag);
+            add_all_symbols(variant.value.as_ref(), symbols);
+        }
+        Term::Record(record) => {
+            for field in record {
+                symbols.insert(field.label);
+                add_all_symbols(&field.value, symbols);
+            }
+        }
         Term::Var(symbol) | Term::Quote(symbol) => {
             symbols.insert(*symbol);
         }
@@ -572,6 +662,21 @@ mod tests {
             function: Box::new(function),
             argument: Box::new(argument),
         }
+    }
+
+    fn variant(tag: Symbol, value: Term) -> Term {
+        Term::Variant(Variant {
+            tag,
+            value: Box::new(value),
+        })
+    }
+
+    fn field(label: Symbol, value: Term) -> Field {
+        Field { label, value }
+    }
+
+    fn record(fields: Vec<Field>) -> Term {
+        Term::Record(fields)
     }
 
     fn equal(left: Term, right: Term) -> Prop {
@@ -622,6 +727,66 @@ mod tests {
     }
 
     #[test]
+    fn record_get_returns_first_matching_field() {
+        let record = vec![
+            field(1, Term::Quote(10)),
+            field(2, Term::Quote(20)),
+            field(1, Term::Quote(30)),
+        ];
+
+        assert_eq!(record_get(&record, 1).cloned(), Some(Term::Quote(10)));
+        assert_eq!(record_get(&record, 2).cloned(), Some(Term::Quote(20)));
+        assert_eq!(record_get(&record, 3), None);
+    }
+
+    #[test]
+    fn record_labels_are_unique_detects_duplicates() {
+        assert!(record_labels_are_unique(&vec![
+            field(1, Term::Quote(10)),
+            field(2, Term::Quote(20)),
+        ]));
+        assert!(!record_labels_are_unique(&vec![
+            field(1, Term::Quote(10)),
+            field(1, Term::Quote(20)),
+        ]));
+    }
+
+    #[test]
+    fn substitution_descends_into_variants_and_records() {
+        let term = record(vec![field(1, variant(2, Term::Var(3)))]);
+
+        assert_eq!(
+            substitute(&term, 3, &Term::Quote(4)),
+            record(vec![field(1, variant(2, Term::Quote(4)))])
+        );
+    }
+
+    #[test]
+    fn step_reduces_inside_variant_payload() {
+        let term = variant(1, apply(lambda(2, Term::Var(2)), Term::Quote(3)));
+
+        assert_eq!(step(&term), Some(variant(1, Term::Quote(3))));
+    }
+
+    #[test]
+    fn step_reduces_first_reducible_record_field() {
+        let term = record(vec![
+            field(1, Term::Quote(1)),
+            field(2, apply(lambda(3, Term::Var(3)), Term::Quote(4))),
+            field(3, apply(lambda(5, Term::Var(5)), Term::Quote(6))),
+        ]);
+
+        assert_eq!(
+            step(&term),
+            Some(record(vec![
+                field(1, Term::Quote(1)),
+                field(2, Term::Quote(4)),
+                field(3, apply(lambda(5, Term::Var(5)), Term::Quote(6))),
+            ]))
+        );
+    }
+
+    #[test]
     fn substitution_respects_shadowing() {
         let term = lambda(1, Term::Var(1));
 
@@ -647,6 +812,14 @@ mod tests {
     fn free_symbols_keep_sibling_occurrences() {
         assert_eq!(
             free_symbols(&apply(Term::Var(1), lambda(1, Term::Var(1)))),
+            HashSet::from([1])
+        );
+    }
+
+    #[test]
+    fn free_symbols_ignore_variant_tags_and_record_labels() {
+        assert_eq!(
+            free_symbols(&record(vec![field(100, variant(200, Term::Var(1)))])),
             HashSet::from([1])
         );
     }
