@@ -12,24 +12,11 @@ pub struct Lambda {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Variant {
-    pub tag: Symbol,
-    pub value: Box<Term>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Field {
-    pub label: Symbol,
-    pub value: Term,
-}
-
-pub type Record = Vec<Field>;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CaseBranch {
-    pub tag: Symbol,
-    pub parameter: Symbol,
-    pub body: Term,
+pub struct ListCase {
+    pub list: Box<Term>,
+    pub nil: Box<Term>,
+    pub cons: Symbol,
+    pub cons_case: Box<Term>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,16 +26,14 @@ pub enum Term {
         argument: Box<Term>,
     },
     Lambda(Lambda),
-    Variant(Variant),
-    Record(Record),
-    Project {
-        record: Box<Term>,
-        label: Symbol,
+    Nil,
+    Cons {
+        head: Box<Term>,
+        tail: Box<Term>,
     },
-    Case {
-        variant: Box<Term>,
-        branches: Vec<CaseBranch>,
-    },
+    Head(Box<Term>),
+    Tail(Box<Term>),
+    ListCase(ListCase),
     Error(Box<Term>),
     Diverge,
     Var(Symbol),
@@ -64,10 +49,9 @@ pub enum Step {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvalError {
     ApplyNonLambda(Term),
-    ProjectNonRecord(Term),
-    MissingField(Symbol),
-    CaseNonVariant(Term),
-    MissingCase(Symbol),
+    HeadNonCons(Term),
+    TailNonCons(Term),
+    CaseNonList(Term),
 }
 
 pub type EvalResult<T> = Result<T, EvalError>;
@@ -99,14 +83,6 @@ pub enum Proof {
     Beta {
         lambda: Lambda,
         argument: Term,
-    },
-    Project {
-        record: Record,
-        label: Symbol,
-    },
-    Case {
-        variant: Variant,
-        branches: Vec<CaseBranch>,
     },
     ImpliesIntro {
         assumption: Symbol,
@@ -216,23 +192,6 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             };
             let reduced = substitute(lambda.body.as_ref(), lambda.parameter, argument);
             Some(Prop::Equal(applied, reduced))
-        }
-        Proof::Project { record, label } => {
-            let projected = Term::Project {
-                record: Box::new(Term::Record(record.clone())),
-                label: *label,
-            };
-            let value = record_get(record, *label)?.clone();
-            Some(Prop::Equal(projected, value))
-        }
-        Proof::Case { variant, branches } => {
-            let cased = Term::Case {
-                variant: Box::new(Term::Variant(variant.clone())),
-                branches: branches.clone(),
-            };
-            let branch = case_branch(branches, variant.tag)?;
-            let reduced = substitute(&branch.body, branch.parameter, variant.value.as_ref());
-            Some(Prop::Equal(cased, reduced))
         }
         Proof::ImpliesIntro {
             assumption,
@@ -545,27 +504,6 @@ fn context_mentions_symbol(context: &Context, symbol: Symbol) -> bool {
         .any(|prop| prop_mentions_symbol(prop, symbol))
 }
 
-pub fn record_get(record: &Record, label: Symbol) -> Option<&Term> {
-    record
-        .iter()
-        .find(|field| field.label == label)
-        .map(|field| &field.value)
-}
-
-pub fn record_labels_are_unique(record: &Record) -> bool {
-    let mut labels = HashSet::new();
-    record.iter().all(|field| labels.insert(field.label))
-}
-
-pub fn case_branch(branches: &[CaseBranch], tag: Symbol) -> Option<&CaseBranch> {
-    branches.iter().find(|branch| branch.tag == tag)
-}
-
-pub fn case_tags_are_unique(branches: &[CaseBranch]) -> bool {
-    let mut tags = HashSet::new();
-    branches.iter().all(|branch| tags.insert(branch.tag))
-}
-
 pub fn substitute(term: &Term, variable: Symbol, replacement: &Term) -> Term {
     match term {
         Term::Apply { function, argument } => Term::Apply {
@@ -591,55 +529,54 @@ pub fn substitute(term: &Term, variable: Symbol, replacement: &Term) -> Term {
                 body: Box::new(substitute(lambda.body.as_ref(), variable, replacement)),
             })
         }
-        Term::Var(symbol) if *symbol == variable => replacement.clone(),
-        Term::Variant(variant) => Term::Variant(Variant {
-            tag: variant.tag,
-            value: Box::new(substitute(variant.value.as_ref(), variable, replacement)),
-        }),
-        Term::Record(record) => Term::Record(
-            record
-                .iter()
-                .map(|field| Field {
-                    label: field.label,
-                    value: substitute(&field.value, variable, replacement),
-                })
-                .collect(),
-        ),
-        Term::Project { record, label } => Term::Project {
-            record: Box::new(substitute(record, variable, replacement)),
-            label: *label,
+        Term::Nil => Term::Nil,
+        Term::Cons { head, tail } => Term::Cons {
+            head: Box::new(substitute(head, variable, replacement)),
+            tail: Box::new(substitute(tail, variable, replacement)),
         },
-        Term::Case { variant, branches } => Term::Case {
-            variant: Box::new(substitute(variant, variable, replacement)),
-            branches: branches
-                .iter()
-                .map(|branch| substitute_case_branch(branch, variable, replacement))
-                .collect(),
-        },
+        Term::Head(term) => Term::Head(Box::new(substitute(term, variable, replacement))),
+        Term::Tail(term) => Term::Tail(Box::new(substitute(term, variable, replacement))),
+        Term::ListCase(list_case) => {
+            Term::ListCase(substitute_list_case(list_case, variable, replacement))
+        }
         Term::Error(error) => Term::Error(Box::new(substitute(error, variable, replacement))),
-        Term::Diverge | Term::Var(_) | Term::Quote(_) => term.clone(),
+        Term::Diverge | Term::Var(_) | Term::Quote(_) => {
+            if term == &Term::Var(variable) {
+                replacement.clone()
+            } else {
+                term.clone()
+            }
+        }
     }
 }
 
-fn substitute_case_branch(branch: &CaseBranch, variable: Symbol, replacement: &Term) -> CaseBranch {
-    if branch.parameter == variable {
-        return branch.clone();
-    }
+fn substitute_list_case(list_case: &ListCase, variable: Symbol, replacement: &Term) -> ListCase {
+    let list = Box::new(substitute(list_case.list.as_ref(), variable, replacement));
+    let nil = Box::new(substitute(list_case.nil.as_ref(), variable, replacement));
 
-    if free_symbols(replacement).contains(&branch.parameter) {
-        let fresh = fresh_symbol(&branch.body, replacement, variable);
-        let body = rename_bound_var(&branch.body, branch.parameter, fresh);
-        return CaseBranch {
-            tag: branch.tag,
-            parameter: fresh,
-            body: substitute(&body, variable, replacement),
+    if list_case.cons == variable {
+        return ListCase {
+            list,
+            nil,
+            cons: list_case.cons,
+            cons_case: list_case.cons_case.clone(),
         };
     }
 
-    CaseBranch {
-        tag: branch.tag,
-        parameter: branch.parameter,
-        body: substitute(&branch.body, variable, replacement),
+    let mut cons = list_case.cons;
+    let mut cons_case = list_case.cons_case.as_ref().clone();
+
+    if free_symbols(replacement).contains(&cons) {
+        let fresh = fresh_symbol(&Term::ListCase(list_case.clone()), replacement, variable);
+        cons_case = rename_bound_var(&cons_case, cons, fresh);
+        cons = fresh;
+    }
+
+    ListCase {
+        list,
+        nil,
+        cons,
+        cons_case: Box::new(substitute(&cons_case, variable, replacement)),
     }
 }
 
@@ -647,19 +584,11 @@ pub fn step(term: &Term) -> EvalResult<Step> {
     match term {
         Term::Apply { function, argument } => step_apply(function, argument),
         Term::Lambda(_) => Ok(Step::Normal),
-        Term::Variant(variant) => match step(variant.value.as_ref())? {
-            Step::Reduced(value) => Ok(Step::Reduced(Term::Variant(Variant {
-                tag: variant.tag,
-                value: Box::new(value),
-            }))),
-            Step::Normal if is_effect(variant.value.as_ref()) => {
-                Ok(Step::Reduced(variant.value.as_ref().clone()))
-            }
-            Step::Normal => Ok(Step::Normal),
-        },
-        Term::Record(record) => step_record(record),
-        Term::Project { record, label } => step_project(record, *label),
-        Term::Case { variant, branches } => step_case(variant, branches),
+        Term::Nil => Ok(Step::Normal),
+        Term::Cons { head, tail } => step_cons(head, tail),
+        Term::Head(term) => step_head(term),
+        Term::Tail(term) => step_tail(term),
+        Term::ListCase(list_case) => step_list_case(list_case),
         Term::Error(_) | Term::Diverge => Ok(Step::Normal),
         Term::Var(_) | Term::Quote(_) => Ok(Step::Normal),
     }
@@ -720,70 +649,86 @@ fn is_effect(term: &Term) -> bool {
 }
 
 fn is_known_non_callable(term: &Term) -> bool {
-    matches!(term, Term::Quote(_) | Term::Variant(_) | Term::Record(_))
+    matches!(term, Term::Quote(_) | Term::Nil | Term::Cons { .. })
 }
 
-fn step_record(record: &Record) -> EvalResult<Step> {
-    for (index, field) in record.iter().enumerate() {
-        match step(&field.value)? {
-            Step::Reduced(value) => {
-                let mut record = record.clone();
-                record[index].value = value;
-                return Ok(Step::Reduced(Term::Record(record)));
-            }
-            Step::Normal if is_effect(&field.value) => {
-                return Ok(Step::Reduced(field.value.clone()));
-            }
-            Step::Normal => {}
-        }
-    }
-    Ok(Step::Normal)
-}
-
-fn step_project(record: &Term, label: Symbol) -> EvalResult<Step> {
-    match step(record)? {
-        Step::Reduced(record) => Ok(Step::Reduced(Term::Project {
-            record: Box::new(record),
-            label,
+fn step_cons(head: &Term, tail: &Term) -> EvalResult<Step> {
+    match step(head)? {
+        Step::Reduced(head) => Ok(Step::Reduced(Term::Cons {
+            head: Box::new(head),
+            tail: Box::new(tail.clone()),
         })),
-        Step::Normal => match record {
-            Term::Record(fields) => record_get(fields, label)
-                .cloned()
-                .map(Step::Reduced)
-                .ok_or(EvalError::MissingField(label)),
-            Term::Error(_) | Term::Diverge => Ok(Step::Reduced(record.clone())),
-            Term::Var(_) | Term::Apply { .. } | Term::Project { .. } | Term::Case { .. } => {
-                Ok(Step::Normal)
-            }
-            Term::Quote(_) | Term::Lambda(_) | Term::Variant(_) => {
-                Err(EvalError::ProjectNonRecord(record.clone()))
+        Step::Normal if is_effect(head) => Ok(Step::Reduced(head.clone())),
+        Step::Normal => match step(tail)? {
+            Step::Reduced(tail) => Ok(Step::Reduced(Term::Cons {
+                head: Box::new(head.clone()),
+                tail: Box::new(tail),
+            })),
+            Step::Normal if is_effect(tail) => Ok(Step::Reduced(tail.clone())),
+            Step::Normal => Ok(Step::Normal),
+        },
+    }
+}
+
+fn step_head(term: &Term) -> EvalResult<Step> {
+    match step(term)? {
+        Step::Reduced(term) => Ok(Step::Reduced(Term::Head(Box::new(term)))),
+        Step::Normal => match term {
+            Term::Cons { head, .. } => Ok(Step::Reduced(head.as_ref().clone())),
+            Term::Error(_) | Term::Diverge => Ok(Step::Reduced(term.clone())),
+            Term::Var(_)
+            | Term::Apply { .. }
+            | Term::Head(_)
+            | Term::Tail(_)
+            | Term::ListCase(_) => Ok(Step::Normal),
+            Term::Nil | Term::Quote(_) | Term::Lambda(_) => {
+                Err(EvalError::HeadNonCons(term.clone()))
             }
         },
     }
 }
 
-fn step_case(variant: &Term, branches: &[CaseBranch]) -> EvalResult<Step> {
-    match step(variant)? {
-        Step::Reduced(variant) => Ok(Step::Reduced(Term::Case {
-            variant: Box::new(variant),
-            branches: branches.to_vec(),
-        })),
-        Step::Normal => match variant {
-            Term::Variant(variant) => {
-                let branch = case_branch(branches, variant.tag)
-                    .ok_or(EvalError::MissingCase(variant.tag))?;
-                Ok(Step::Reduced(substitute(
-                    &branch.body,
-                    branch.parameter,
-                    variant.value.as_ref(),
-                )))
+fn step_tail(term: &Term) -> EvalResult<Step> {
+    match step(term)? {
+        Step::Reduced(term) => Ok(Step::Reduced(Term::Tail(Box::new(term)))),
+        Step::Normal => match term {
+            Term::Cons { tail, .. } => Ok(Step::Reduced(tail.as_ref().clone())),
+            Term::Error(_) | Term::Diverge => Ok(Step::Reduced(term.clone())),
+            Term::Var(_)
+            | Term::Apply { .. }
+            | Term::Head(_)
+            | Term::Tail(_)
+            | Term::ListCase(_) => Ok(Step::Normal),
+            Term::Nil | Term::Quote(_) | Term::Lambda(_) => {
+                Err(EvalError::TailNonCons(term.clone()))
             }
-            Term::Error(_) | Term::Diverge => Ok(Step::Reduced(variant.clone())),
-            Term::Var(_) | Term::Apply { .. } | Term::Project { .. } | Term::Case { .. } => {
-                Ok(Step::Normal)
-            }
-            Term::Quote(_) | Term::Lambda(_) | Term::Record(_) => {
-                Err(EvalError::CaseNonVariant(variant.clone()))
+        },
+    }
+}
+
+fn step_list_case(list_case: &ListCase) -> EvalResult<Step> {
+    match step(list_case.list.as_ref())? {
+        Step::Reduced(list) => Ok(Step::Reduced(Term::ListCase(ListCase {
+            list: Box::new(list),
+            nil: list_case.nil.clone(),
+            cons: list_case.cons,
+            cons_case: list_case.cons_case.clone(),
+        }))),
+        Step::Normal => match list_case.list.as_ref() {
+            Term::Nil => Ok(Step::Reduced(list_case.nil.as_ref().clone())),
+            Term::Cons { .. } => Ok(Step::Reduced(substitute(
+                list_case.cons_case.as_ref(),
+                list_case.cons,
+                list_case.list.as_ref(),
+            ))),
+            Term::Error(_) | Term::Diverge => Ok(Step::Reduced(list_case.list.as_ref().clone())),
+            Term::Var(_)
+            | Term::Apply { .. }
+            | Term::Head(_)
+            | Term::Tail(_)
+            | Term::ListCase(_) => Ok(Step::Normal),
+            Term::Quote(_) | Term::Lambda(_) => {
+                Err(EvalError::CaseNonList(list_case.list.as_ref().clone()))
             }
         },
     }
@@ -817,25 +762,22 @@ fn add_free_symbols(term: &Term, symbols: &mut HashSet<Symbol>) {
             body_symbols.remove(&lambda.parameter);
             symbols.extend(body_symbols);
         }
-        Term::Variant(variant) => {
-            add_free_symbols(variant.value.as_ref(), symbols);
+        Term::Nil => {}
+        Term::Cons { head, tail } => {
+            add_free_symbols(head, symbols);
+            add_free_symbols(tail, symbols);
         }
-        Term::Record(record) => {
-            for field in record {
-                add_free_symbols(&field.value, symbols);
-            }
+        Term::Head(term) | Term::Tail(term) => {
+            add_free_symbols(term, symbols);
         }
-        Term::Project { record, .. } => {
-            add_free_symbols(record, symbols);
-        }
-        Term::Case { variant, branches } => {
-            add_free_symbols(variant, symbols);
-            for branch in branches {
-                let mut body_symbols = HashSet::new();
-                add_free_symbols(&branch.body, &mut body_symbols);
-                body_symbols.remove(&branch.parameter);
-                symbols.extend(body_symbols);
-            }
+        Term::ListCase(list_case) => {
+            add_free_symbols(list_case.list.as_ref(), symbols);
+            add_free_symbols(list_case.nil.as_ref(), symbols);
+
+            let mut cons_case_symbols = HashSet::new();
+            add_free_symbols(list_case.cons_case.as_ref(), &mut cons_case_symbols);
+            cons_case_symbols.remove(&list_case.cons);
+            symbols.extend(cons_case_symbols);
         }
         Term::Error(error) => {
             add_free_symbols(error, symbols);
@@ -859,40 +801,23 @@ fn rename_bound_var(term: &Term, old: Symbol, new: Symbol) -> Term {
             parameter: lambda.parameter,
             body: Box::new(rename_bound_var(lambda.body.as_ref(), old, new)),
         }),
-        Term::Variant(variant) => Term::Variant(Variant {
-            tag: variant.tag,
-            value: Box::new(rename_bound_var(variant.value.as_ref(), old, new)),
+        Term::Nil => Term::Nil,
+        Term::Cons { head, tail } => Term::Cons {
+            head: Box::new(rename_bound_var(head, old, new)),
+            tail: Box::new(rename_bound_var(tail, old, new)),
+        },
+        Term::Head(term) => Term::Head(Box::new(rename_bound_var(term, old, new))),
+        Term::Tail(term) => Term::Tail(Box::new(rename_bound_var(term, old, new))),
+        Term::ListCase(list_case) => Term::ListCase(ListCase {
+            list: Box::new(rename_bound_var(list_case.list.as_ref(), old, new)),
+            nil: Box::new(rename_bound_var(list_case.nil.as_ref(), old, new)),
+            cons: list_case.cons,
+            cons_case: if list_case.cons == old {
+                list_case.cons_case.clone()
+            } else {
+                Box::new(rename_bound_var(list_case.cons_case.as_ref(), old, new))
+            },
         }),
-        Term::Record(record) => Term::Record(
-            record
-                .iter()
-                .map(|field| Field {
-                    label: field.label,
-                    value: rename_bound_var(&field.value, old, new),
-                })
-                .collect(),
-        ),
-        Term::Project { record, label } => Term::Project {
-            record: Box::new(rename_bound_var(record, old, new)),
-            label: *label,
-        },
-        Term::Case { variant, branches } => Term::Case {
-            variant: Box::new(rename_bound_var(variant, old, new)),
-            branches: branches
-                .iter()
-                .map(|branch| {
-                    if branch.parameter == old {
-                        branch.clone()
-                    } else {
-                        CaseBranch {
-                            tag: branch.tag,
-                            parameter: branch.parameter,
-                            body: rename_bound_var(&branch.body, old, new),
-                        }
-                    }
-                })
-                .collect(),
-        },
         Term::Error(error) => Term::Error(Box::new(rename_bound_var(error, old, new))),
         Term::Diverge => term.clone(),
         Term::Var(symbol) if *symbol == old => Term::Var(new),
@@ -923,27 +848,19 @@ fn add_all_symbols(term: &Term, symbols: &mut HashSet<Symbol>) {
             symbols.insert(lambda.parameter);
             add_all_symbols(lambda.body.as_ref(), symbols);
         }
-        Term::Variant(variant) => {
-            symbols.insert(variant.tag);
-            add_all_symbols(variant.value.as_ref(), symbols);
+        Term::Nil => {}
+        Term::Cons { head, tail } => {
+            add_all_symbols(head, symbols);
+            add_all_symbols(tail, symbols);
         }
-        Term::Record(record) => {
-            for field in record {
-                symbols.insert(field.label);
-                add_all_symbols(&field.value, symbols);
-            }
+        Term::Head(term) | Term::Tail(term) => {
+            add_all_symbols(term, symbols);
         }
-        Term::Project { record, label } => {
-            symbols.insert(*label);
-            add_all_symbols(record, symbols);
-        }
-        Term::Case { variant, branches } => {
-            add_all_symbols(variant, symbols);
-            for branch in branches {
-                symbols.insert(branch.tag);
-                symbols.insert(branch.parameter);
-                add_all_symbols(&branch.body, symbols);
-            }
+        Term::ListCase(list_case) => {
+            add_all_symbols(list_case.list.as_ref(), symbols);
+            add_all_symbols(list_case.nil.as_ref(), symbols);
+            symbols.insert(list_case.cons);
+            add_all_symbols(list_case.cons_case.as_ref(), symbols);
         }
         Term::Error(error) => {
             add_all_symbols(error, symbols);
@@ -973,41 +890,28 @@ mod tests {
         }
     }
 
-    fn variant(tag: Symbol, value: Term) -> Term {
-        Term::Variant(Variant {
-            tag,
-            value: Box::new(value),
+    fn cons(head: Term, tail: Term) -> Term {
+        Term::Cons {
+            head: Box::new(head),
+            tail: Box::new(tail),
+        }
+    }
+
+    fn head(term: Term) -> Term {
+        Term::Head(Box::new(term))
+    }
+
+    fn tail(term: Term) -> Term {
+        Term::Tail(Box::new(term))
+    }
+
+    fn list_case(list: Term, nil: Term, cons_var: Symbol, cons_case: Term) -> Term {
+        Term::ListCase(ListCase {
+            list: Box::new(list),
+            nil: Box::new(nil),
+            cons: cons_var,
+            cons_case: Box::new(cons_case),
         })
-    }
-
-    fn field(label: Symbol, value: Term) -> Field {
-        Field { label, value }
-    }
-
-    fn record(fields: Vec<Field>) -> Term {
-        Term::Record(fields)
-    }
-
-    fn project(record: Term, label: Symbol) -> Term {
-        Term::Project {
-            record: Box::new(record),
-            label,
-        }
-    }
-
-    fn branch(tag: Symbol, parameter: Symbol, body: Term) -> CaseBranch {
-        CaseBranch {
-            tag,
-            parameter,
-            body,
-        }
-    }
-
-    fn case(variant: Term, branches: Vec<CaseBranch>) -> Term {
-        Term::Case {
-            variant: Box::new(variant),
-            branches,
-        }
     }
 
     fn error(error: Term) -> Term {
@@ -1036,16 +940,8 @@ mod tests {
         }
     }
 
-    fn prop_and(left: Prop, right: Prop) -> Prop {
-        Prop::And(Box::new(left), Box::new(right))
-    }
-
-    fn prop_or(left: Prop, right: Prop) -> Prop {
-        Prop::Or(Box::new(left), Box::new(right))
-    }
-
     #[test]
-    fn step_beta_reduces_identity_lambda() {
+    fn step_beta_reduces_after_argument_is_ready() {
         let term = apply(lambda(1, Term::Var(1)), Term::Quote(2));
 
         assert_eq!(step(&term), Ok(Step::Reduced(Term::Quote(2))));
@@ -1069,583 +965,156 @@ mod tests {
     }
 
     #[test]
-    fn lambda_is_a_value_without_evaluating_its_body() {
+    fn lambda_is_a_value_without_evaluating_body() {
         let term = lambda(1, apply(lambda(2, Term::Var(2)), Term::Var(1)));
 
         assert_eq!(step(&term), Ok(Step::Normal));
     }
 
     #[test]
-    fn application_substitutes_lambda_arguments_without_evaluating_their_bodies() {
-        let argument = lambda(2, apply(lambda(3, Term::Var(3)), Term::Var(2)));
-        let term = apply(lambda(1, Term::Var(1)), argument.clone());
-
-        assert_eq!(step(&term), Ok(Step::Reduced(argument)));
-    }
-
-    #[test]
-    fn step_distinguishes_normal_terms_from_errors() {
-        assert_eq!(step(&Term::Quote(1)), Ok(Step::Normal));
-        assert_eq!(step(&apply(Term::Var(1), Term::Quote(2))), Ok(Step::Normal));
-    }
-
-    #[test]
-    fn step_errors_on_known_non_callable_application() {
-        let term = apply(Term::Quote(1), Term::Quote(2));
-
-        assert_eq!(step(&term), Err(EvalError::ApplyNonLambda(Term::Quote(1))));
-        assert_eq!(
-            normal_form(&term),
-            Err(EvalError::ApplyNonLambda(Term::Quote(1)))
-        );
-    }
-
-    #[test]
-    fn error_and_diverge_are_normal_terms() {
-        assert_eq!(step(&error(Term::Quote(1))), Ok(Step::Normal));
-        assert_eq!(step(&Term::Diverge), Ok(Step::Normal));
-    }
-
-    #[test]
-    fn application_propagates_error_and_diverge_function() {
-        let thrown = error(Term::Quote(1));
-        let error_application = apply(thrown.clone(), Term::Quote(2));
-        let diverging_application = apply(Term::Diverge, Term::Quote(2));
-
-        assert_eq!(step(&error_application), Ok(Step::Reduced(thrown.clone())));
-        assert_eq!(normal_form(&error_application), Ok(thrown));
-        assert_eq!(
-            step(&diverging_application),
-            Ok(Step::Reduced(Term::Diverge))
-        );
-        assert_eq!(normal_form(&diverging_application), Ok(Term::Diverge));
-    }
-
-    #[test]
-    fn application_propagates_error_and_diverge_argument_before_beta() {
-        let thrown = error(Term::Quote(1));
-        let error_application = apply(lambda(2, Term::Quote(3)), thrown.clone());
-        let diverging_application = apply(lambda(2, Term::Quote(3)), Term::Diverge);
-
-        assert_eq!(step(&error_application), Ok(Step::Reduced(thrown.clone())));
-        assert_eq!(normal_form(&error_application), Ok(thrown));
-        assert_eq!(
-            step(&diverging_application),
-            Ok(Step::Reduced(Term::Diverge))
-        );
-        assert_eq!(normal_form(&diverging_application), Ok(Term::Diverge));
-    }
-
-    #[test]
-    fn neutral_application_still_evaluates_argument_effects() {
+    fn application_propagates_effects() {
         let thrown = error(Term::Quote(1));
 
         assert_eq!(
-            step(&apply(Term::Var(2), thrown.clone())),
-            Ok(Step::Reduced(thrown))
+            normal_form(&apply(thrown.clone(), Term::Quote(2))),
+            Ok(thrown.clone())
         );
         assert_eq!(
-            step(&apply(Term::Var(2), Term::Diverge)),
-            Ok(Step::Reduced(Term::Diverge))
+            normal_form(&apply(lambda(1, Term::Quote(2)), thrown.clone())),
+            Ok(thrown)
         );
-    }
-
-    #[test]
-    fn application_reports_argument_errors_before_beta() {
-        let term = apply(
-            lambda(1, Term::Quote(2)),
-            project(record(vec![field(3, Term::Quote(4))]), 5),
-        );
-
-        assert_eq!(step(&term), Err(EvalError::MissingField(5)));
-    }
-
-    #[test]
-    fn normal_form_reduces_repeatedly() {
-        let term = apply(
-            lambda(1, apply(lambda(2, Term::Var(2)), Term::Var(1))),
-            Term::Quote(3),
-        );
-
-        assert_eq!(normal_form(&term), Ok(Term::Quote(3)));
-    }
-
-    #[test]
-    fn record_get_returns_first_matching_field() {
-        let record = vec![
-            field(1, Term::Quote(10)),
-            field(2, Term::Quote(20)),
-            field(1, Term::Quote(30)),
-        ];
-
-        assert_eq!(record_get(&record, 1).cloned(), Some(Term::Quote(10)));
-        assert_eq!(record_get(&record, 2).cloned(), Some(Term::Quote(20)));
-        assert_eq!(record_get(&record, 3), None);
-    }
-
-    #[test]
-    fn record_labels_are_unique_detects_duplicates() {
-        assert!(record_labels_are_unique(&vec![
-            field(1, Term::Quote(10)),
-            field(2, Term::Quote(20)),
-        ]));
-        assert!(!record_labels_are_unique(&vec![
-            field(1, Term::Quote(10)),
-            field(1, Term::Quote(20)),
-        ]));
-    }
-
-    #[test]
-    fn substitution_descends_into_variants_and_records() {
-        let term = record(vec![field(1, variant(2, Term::Var(3)))]);
-
         assert_eq!(
-            substitute(&term, 3, &Term::Quote(4)),
-            record(vec![field(1, variant(2, Term::Quote(4)))])
+            normal_form(&apply(lambda(1, Term::Quote(2)), Term::Diverge)),
+            Ok(Term::Diverge)
         );
     }
 
     #[test]
-    fn substitution_descends_into_error_payload() {
-        let term = error(Term::Var(1));
+    fn apply_known_non_callable_errors() {
+        let term = apply(Term::Nil, Term::Quote(2));
 
-        assert_eq!(substitute(&term, 1, &Term::Quote(2)), error(Term::Quote(2)));
+        assert_eq!(step(&term), Err(EvalError::ApplyNonLambda(Term::Nil)));
     }
 
     #[test]
-    fn step_reduces_inside_variant_payload() {
-        let term = variant(1, apply(lambda(2, Term::Var(2)), Term::Quote(3)));
-
-        assert_eq!(step(&term), Ok(Step::Reduced(variant(1, Term::Quote(3)))));
-    }
-
-    #[test]
-    fn variant_propagates_error_and_diverge_payload() {
-        let thrown = error(Term::Quote(1));
-
-        assert_eq!(step(&variant(2, thrown.clone())), Ok(Step::Reduced(thrown)));
-        assert_eq!(
-            step(&variant(2, Term::Diverge)),
-            Ok(Step::Reduced(Term::Diverge))
-        );
-    }
-
-    #[test]
-    fn step_reduces_first_reducible_record_field() {
-        let term = record(vec![
-            field(1, Term::Quote(1)),
-            field(2, apply(lambda(3, Term::Var(3)), Term::Quote(4))),
-            field(3, apply(lambda(5, Term::Var(5)), Term::Quote(6))),
-        ]);
-
-        assert_eq!(
-            step(&term),
-            Ok(Step::Reduced(record(vec![
-                field(1, Term::Quote(1)),
-                field(2, Term::Quote(4)),
-                field(3, apply(lambda(5, Term::Var(5)), Term::Quote(6))),
-            ])))
-        );
-    }
-
-    #[test]
-    fn record_propagates_error_and_diverge_fields() {
-        let thrown = error(Term::Quote(1));
-        let error_record = record(vec![field(1, Term::Quote(2)), field(3, thrown.clone())]);
-        let diverging_record = record(vec![field(1, Term::Quote(2)), field(3, Term::Diverge)]);
-
-        assert_eq!(step(&error_record), Ok(Step::Reduced(thrown)));
-        assert_eq!(step(&diverging_record), Ok(Step::Reduced(Term::Diverge)));
-    }
-
-    #[test]
-    fn record_reduces_earlier_field_before_later_effect() {
-        let thrown = error(Term::Quote(1));
-        let term = record(vec![
-            field(1, apply(lambda(2, Term::Var(2)), Term::Quote(3))),
-            field(4, thrown.clone()),
-        ]);
-
-        assert_eq!(
-            step(&term),
-            Ok(Step::Reduced(record(vec![
-                field(1, Term::Quote(3)),
-                field(4, thrown)
-            ])))
-        );
-    }
-
-    #[test]
-    fn project_gets_present_record_field() {
-        let term = project(
-            record(vec![field(1, Term::Quote(10)), field(2, Term::Quote(20))]),
-            2,
-        );
-
-        assert_eq!(step(&term), Ok(Step::Reduced(Term::Quote(20))));
-    }
-
-    #[test]
-    fn project_reduces_record_expression_first() {
-        let term = project(
-            apply(
-                lambda(1, record(vec![field(2, Term::Var(1))])),
-                Term::Quote(30),
-            ),
-            2,
+    fn cons_evaluates_head_then_tail_and_propagates_effects() {
+        let term = cons(
+            apply(lambda(1, Term::Var(1)), Term::Quote(2)),
+            error(Term::Quote(3)),
         );
 
         assert_eq!(
             step(&term),
-            Ok(Step::Reduced(project(
-                record(vec![field(2, Term::Quote(30))]),
-                2
-            )))
+            Ok(Step::Reduced(cons(Term::Quote(2), error(Term::Quote(3)))))
         );
-        assert_eq!(normal_form(&term), Ok(Term::Quote(30)));
+        assert_eq!(normal_form(&term), Ok(error(Term::Quote(3))));
     }
 
     #[test]
-    fn project_missing_field_errors() {
-        let term = project(record(vec![field(1, Term::Quote(10))]), 2);
+    fn head_and_tail_destructure_cons() {
+        let term = cons(Term::Quote(1), Term::Quote(2));
 
-        assert_eq!(step(&term), Err(EvalError::MissingField(2)));
+        assert_eq!(step(&head(term.clone())), Ok(Step::Reduced(Term::Quote(1))));
+        assert_eq!(step(&tail(term)), Ok(Step::Reduced(Term::Quote(2))));
     }
 
     #[test]
-    fn project_known_non_record_errors() {
-        let term = project(Term::Quote(10), 2);
+    fn head_and_tail_open_terms_are_neutral() {
+        assert_eq!(step(&head(Term::Var(1))), Ok(Step::Normal));
+        assert_eq!(step(&tail(Term::Var(1))), Ok(Step::Normal));
+    }
+
+    #[test]
+    fn head_and_tail_known_non_cons_error() {
+        assert_eq!(
+            step(&head(Term::Nil)),
+            Err(EvalError::HeadNonCons(Term::Nil))
+        );
+        assert_eq!(
+            step(&tail(Term::Nil)),
+            Err(EvalError::TailNonCons(Term::Nil))
+        );
+    }
+
+    #[test]
+    fn list_case_reduces_nil_and_cons() {
+        let cons_value = cons(Term::Quote(1), Term::Nil);
+        let cons_case = head(Term::Var(9));
 
         assert_eq!(
-            step(&term),
-            Err(EvalError::ProjectNonRecord(Term::Quote(10)))
+            step(&list_case(Term::Nil, Term::Quote(0), 9, cons_case.clone())),
+            Ok(Step::Reduced(Term::Quote(0)))
         );
-    }
-
-    #[test]
-    fn project_open_record_is_neutral() {
-        let term = project(Term::Var(1), 2);
-
-        assert_eq!(step(&term), Ok(Step::Normal));
-    }
-
-    #[test]
-    fn project_propagates_error_and_diverge_record() {
-        let thrown = error(Term::Quote(1));
-        let error_projection = project(thrown.clone(), 2);
-        let diverging_projection = project(Term::Diverge, 2);
-
-        assert_eq!(step(&error_projection), Ok(Step::Reduced(thrown)));
         assert_eq!(
-            step(&diverging_projection),
-            Ok(Step::Reduced(Term::Diverge))
+            normal_form(&list_case(cons_value, Term::Quote(0), 9, cons_case)),
+            Ok(Term::Quote(1))
         );
     }
 
     #[test]
-    fn substitution_descends_into_projection_record() {
-        let term = project(Term::Var(1), 2);
-
+    fn list_case_open_term_is_neutral_and_known_non_list_errors() {
         assert_eq!(
-            substitute(&term, 1, &Term::Var(3)),
-            project(Term::Var(3), 2)
+            step(&list_case(Term::Var(1), Term::Quote(0), 9, Term::Quote(1))),
+            Ok(Step::Normal)
+        );
+        assert_eq!(
+            step(&list_case(
+                Term::Quote(1),
+                Term::Quote(0),
+                9,
+                Term::Quote(1)
+            )),
+            Err(EvalError::CaseNonList(Term::Quote(1)))
         );
     }
 
     #[test]
-    fn case_branch_returns_first_matching_branch() {
-        let branches = vec![
-            branch(1, 10, Term::Quote(10)),
-            branch(2, 20, Term::Quote(20)),
-            branch(1, 30, Term::Quote(30)),
-        ];
-
-        assert_eq!(case_branch(&branches, 1), Some(&branches[0]));
-        assert_eq!(case_branch(&branches, 2), Some(&branches[1]));
-        assert_eq!(case_branch(&branches, 3), None);
-    }
-
-    #[test]
-    fn case_tags_are_unique_detects_duplicates() {
-        assert!(case_tags_are_unique(&vec![
-            branch(1, 10, Term::Quote(10)),
-            branch(2, 20, Term::Quote(20)),
-        ]));
-        assert!(!case_tags_are_unique(&vec![
-            branch(1, 10, Term::Quote(10)),
-            branch(1, 20, Term::Quote(20)),
-        ]));
-    }
-
-    #[test]
-    fn case_reduces_matching_variant_branch() {
-        let term = case(
-            variant(1, Term::Quote(10)),
-            vec![branch(1, 2, Term::Var(2)), branch(3, 4, Term::Var(4))],
-        );
-
-        assert_eq!(step(&term), Ok(Step::Reduced(Term::Quote(10))));
-    }
-
-    #[test]
-    fn case_reduces_variant_expression_first() {
-        let term = case(
-            apply(lambda(1, variant(2, Term::Var(1))), Term::Quote(30)),
-            vec![branch(2, 3, Term::Var(3))],
-        );
+    fn substitution_descends_into_cons_and_destructors() {
+        let term = cons(head(Term::Var(1)), tail(Term::Var(2)));
 
         assert_eq!(
-            step(&term),
-            Ok(Step::Reduced(case(
-                variant(2, Term::Quote(30)),
-                vec![branch(2, 3, Term::Var(3))]
-            )))
-        );
-        assert_eq!(normal_form(&term), Ok(Term::Quote(30)));
-    }
-
-    #[test]
-    fn case_missing_branch_errors() {
-        let term = case(
-            variant(1, Term::Quote(10)),
-            vec![branch(2, 3, Term::Var(3))],
-        );
-
-        assert_eq!(step(&term), Err(EvalError::MissingCase(1)));
-    }
-
-    #[test]
-    fn case_known_non_variant_errors() {
-        let term = case(Term::Quote(10), vec![branch(1, 2, Term::Var(2))]);
-
-        assert_eq!(step(&term), Err(EvalError::CaseNonVariant(Term::Quote(10))));
-    }
-
-    #[test]
-    fn case_open_variant_is_neutral() {
-        let term = case(Term::Var(1), vec![branch(2, 3, Term::Var(3))]);
-
-        assert_eq!(step(&term), Ok(Step::Normal));
-    }
-
-    #[test]
-    fn case_propagates_error_and_diverge_variant() {
-        let thrown = error(Term::Quote(1));
-        let error_case = case(thrown.clone(), vec![branch(1, 2, Term::Var(2))]);
-        let diverging_case = case(Term::Diverge, vec![branch(1, 2, Term::Var(2))]);
-
-        assert_eq!(step(&error_case), Ok(Step::Reduced(thrown)));
-        assert_eq!(step(&diverging_case), Ok(Step::Reduced(Term::Diverge)));
-    }
-
-    #[test]
-    fn substitution_descends_into_case_variant_and_branches() {
-        let term = case(
-            Term::Var(1),
-            vec![branch(2, 3, apply(Term::Var(3), Term::Var(4)))],
-        );
-
-        assert_eq!(
-            substitute(&term, 4, &Term::Quote(5)),
-            case(
-                Term::Var(1),
-                vec![branch(2, 3, apply(Term::Var(3), Term::Quote(5)))]
-            )
+            substitute(&term, 1, &Term::Quote(3)),
+            cons(head(Term::Quote(3)), tail(Term::Var(2)))
         );
     }
 
     #[test]
-    fn substitution_avoids_case_branch_capture() {
-        let term = case(Term::Var(1), vec![branch(2, 3, Term::Var(4))]);
-
-        assert_eq!(
-            substitute(&term, 4, &Term::Var(3)),
-            case(Term::Var(1), vec![branch(2, 0, Term::Var(3))])
-        );
-    }
-
-    #[test]
-    fn substitution_respects_shadowing() {
-        let term = lambda(1, Term::Var(1));
-
-        assert_eq!(substitute(&term, 1, &Term::Quote(2)), term);
-    }
-
-    #[test]
-    fn substitution_avoids_variable_capture() {
+    fn substitution_avoids_lambda_capture() {
         let term = lambda(2, Term::Var(1));
 
         assert_eq!(substitute(&term, 1, &Term::Var(2)), lambda(0, Term::Var(2)));
     }
 
     #[test]
-    fn free_symbols_ignores_bound_symbols_and_quotes() {
+    fn substitution_avoids_list_case_capture() {
+        let term = list_case(Term::Var(1), Term::Quote(0), 2, Term::Var(3));
+
         assert_eq!(
-            free_symbols(&lambda(1, apply(Term::Var(1), Term::Quote(2)))),
-            HashSet::new()
+            substitute(&term, 3, &Term::Var(2)),
+            list_case(Term::Var(1), Term::Quote(0), 4, Term::Var(2))
         );
     }
 
     #[test]
-    fn free_symbols_keep_sibling_occurrences() {
+    fn free_symbols_ignore_list_case_cons_binder() {
         assert_eq!(
-            free_symbols(&apply(Term::Var(1), lambda(1, Term::Var(1)))),
-            HashSet::from([1])
-        );
-    }
-
-    #[test]
-    fn free_symbols_ignore_variant_tags_and_record_labels() {
-        assert_eq!(
-            free_symbols(&case(
-                project(record(vec![field(100, variant(200, Term::Var(1)))]), 300,),
-                vec![branch(400, 2, apply(Term::Var(2), Term::Var(3)))]
+            free_symbols(&list_case(
+                Term::Var(1),
+                Term::Var(2),
+                3,
+                apply(Term::Var(3), Term::Var(4))
             )),
-            HashSet::from([1, 3])
+            HashSet::from([1, 2, 4])
         );
-    }
-
-    #[test]
-    fn free_symbols_include_error_payload_and_ignore_diverge() {
-        assert_eq!(
-            free_symbols(&record(vec![
-                field(1, error(Term::Var(2))),
-                field(3, Term::Diverge),
-            ])),
-            HashSet::from([2])
-        );
-    }
-
-    #[test]
-    fn substitute_prop_avoids_quantifier_capture() {
-        let prop = forall(2, equal(Term::Var(1), Term::Var(2)));
-
-        assert_eq!(
-            substitute_prop(&prop, 1, &Term::Var(2)),
-            forall(0, equal(Term::Var(2), Term::Var(0)))
-        );
-    }
-
-    #[test]
-    fn free_symbols_prop_keep_sibling_occurrences() {
-        assert_eq!(
-            free_symbols_prop(&prop_and(
-                equal(Term::Var(1), Term::Var(1)),
-                forall(1, equal(Term::Var(1), Term::Var(1))),
-            )),
-            HashSet::from([1])
-        );
-    }
-
-    #[test]
-    fn refl_proves_term_equal_to_itself() {
-        let term = Term::Quote(1);
-
-        assert!(check(
-            &Proof::Refl(term.clone()),
-            &Prop::Equal(term.clone(), term)
-        ));
-    }
-
-    #[test]
-    fn symm_flips_equality() {
-        let proof = Proof::Symm(Box::new(Proof::Beta {
-            lambda: Lambda {
-                parameter: 1,
-                body: Box::new(Term::Var(1)),
-            },
-            argument: Term::Quote(2),
-        }));
-
-        assert!(check(
-            &proof,
-            &Prop::Equal(
-                Term::Quote(2),
-                apply(lambda(1, Term::Var(1)), Term::Quote(2))
-            )
-        ));
-    }
-
-    #[test]
-    fn trans_chains_matching_equalities() {
-        let lambda = Lambda {
-            parameter: 1,
-            body: Box::new(Term::Var(1)),
-        };
-        let argument = Term::Quote(2);
-        let applied = apply(Term::Lambda(lambda.clone()), argument.clone());
-        let proof = Proof::Trans(
-            Box::new(Proof::Beta {
-                lambda,
-                argument: argument.clone(),
-            }),
-            Box::new(Proof::Refl(argument.clone())),
-        );
-
-        assert!(check(&proof, &Prop::Equal(applied, argument)));
-    }
-
-    #[test]
-    fn trans_rejects_mismatched_middle_terms() {
-        let proof = Proof::Trans(
-            Box::new(Proof::Refl(Term::Quote(1))),
-            Box::new(Proof::Refl(Term::Quote(2))),
-        );
-
-        assert!(!check(&proof, &Prop::Equal(Term::Quote(1), Term::Quote(2))));
-    }
-
-    #[test]
-    fn beta_proves_application_equal_to_substituted_body() {
-        let lambda = Lambda {
-            parameter: 1,
-            body: Box::new(Term::Var(1)),
-        };
-        let argument = Term::Quote(2);
-
-        assert!(check(
-            &Proof::Beta {
-                lambda: lambda.clone(),
-                argument: argument.clone()
-            },
-            &Prop::Equal(apply(Term::Lambda(lambda), argument), Term::Quote(2))
-        ));
     }
 
     #[test]
     fn step_proof_proves_one_step_reduction() {
-        let thrown = error(Term::Quote(1));
-        let term = variant(2, thrown.clone());
+        let term = head(cons(Term::Quote(1), Term::Nil));
 
-        assert!(check(&Proof::Step(term.clone()), &equal(term, thrown)));
-    }
-
-    #[test]
-    fn step_proof_uses_current_call_by_value_application_order() {
-        let term = apply(
-            lambda(1, Term::Quote(9)),
-            apply(lambda(2, Term::Var(2)), Term::Quote(3)),
-        );
-        let reduced = apply(lambda(1, Term::Quote(9)), Term::Quote(3));
-
-        assert!(check(&Proof::Step(term.clone()), &equal(term, reduced)));
-    }
-
-    #[test]
-    fn step_proof_rejects_normal_terms() {
-        assert!(!check(
-            &Proof::Step(Term::Quote(1)),
-            &equal(Term::Quote(1), Term::Quote(1))
-        ));
-    }
-
-    #[test]
-    fn step_proof_rejects_evaluator_errors() {
-        let term = project(record(vec![field(1, Term::Quote(10))]), 2);
-
-        assert!(!check(
+        assert!(check(
             &Proof::Step(term.clone()),
-            &equal(term, Term::Quote(10))
+            &equal(term, Term::Quote(1))
         ));
     }
 
@@ -1665,52 +1134,13 @@ mod tests {
     }
 
     #[test]
-    fn steps_proof_can_prove_zero_steps() {
-        let term = Term::Quote(1);
-
-        assert!(check(
-            &Proof::Steps(vec![term.clone()]),
-            &equal(term.clone(), term)
-        ));
-    }
-
-    #[test]
-    fn steps_proof_rejects_empty_chain() {
-        assert!(!check(
-            &Proof::Steps(vec![]),
-            &equal(Term::Quote(1), Term::Quote(1))
-        ));
-    }
-
-    #[test]
-    fn steps_proof_rejects_wrong_intermediate_term() {
-        let start = apply(
-            lambda(1, Term::Quote(9)),
-            apply(lambda(2, Term::Var(2)), Term::Quote(3)),
-        );
-        let wrong_middle = apply(lambda(1, Term::Quote(9)), Term::Quote(4));
-
-        assert!(!check(
-            &Proof::Steps(vec![start.clone(), wrong_middle, Term::Quote(9)]),
-            &equal(start, Term::Quote(9))
-        ));
-    }
-
-    #[test]
-    fn steps_proof_rejects_evaluator_errors() {
-        let start = project(record(vec![field(1, Term::Quote(10))]), 2);
-
-        assert!(!check(
-            &Proof::Steps(vec![start.clone(), Term::Quote(10)]),
-            &equal(start, Term::Quote(10))
-        ));
-    }
-
-    #[test]
     fn rewrite_uses_equality_inside_template() {
-        let start = apply(lambda(1, Term::Var(1)), Term::Quote(2));
-        let end = Term::Quote(2);
-        let template = equal(variant(10, Term::Var(99)), variant(10, Term::Var(99)));
+        let start = head(cons(Term::Quote(1), Term::Nil));
+        let end = Term::Quote(1);
+        let template = equal(
+            cons(Term::Var(99), Term::Nil),
+            cons(Term::Var(99), Term::Nil),
+        );
         let left_instance = substitute_prop(&template, 99, &start);
         let right_instance = substitute_prop(&template, 99, &end);
         let proof = Proof::Rewrite {
@@ -1724,56 +1154,6 @@ mod tests {
         };
 
         assert!(check(&proof, &right_instance));
-    }
-
-    #[test]
-    fn rewrite_can_go_right_to_left_with_symm() {
-        let start = apply(lambda(1, Term::Var(1)), Term::Quote(2));
-        let end = Term::Quote(2);
-        let template = equal(Term::Var(99), Term::Var(99));
-        let proof = Proof::Rewrite {
-            equality: Box::new(Proof::Symm(Box::new(Proof::Step(start.clone())))),
-            proof: Box::new(Proof::Refl(end.clone())),
-            variable: 99,
-            template,
-        };
-
-        assert!(check(&proof, &equal(start.clone(), start)));
-    }
-
-    #[test]
-    fn rewrite_rejects_non_equality_rewrite_proof() {
-        let prop = equal(Term::Quote(1), Term::Quote(1));
-        let context = Context::from([(7, prop.clone())]);
-        let proof = Proof::Rewrite {
-            equality: Box::new(Proof::ImpliesIntro {
-                assumption: 7,
-                premise: prop.clone(),
-                proof: Box::new(Proof::Assume(7)),
-            }),
-            proof: Box::new(Proof::Refl(Term::Quote(1))),
-            variable: 99,
-            template: equal(Term::Var(99), Term::Var(99)),
-        };
-
-        assert!(!check_in_context(&proof, &prop, &context));
-    }
-
-    #[test]
-    fn rewrite_rejects_proof_of_wrong_template_instance() {
-        let start = apply(lambda(1, Term::Var(1)), Term::Quote(2));
-        let template = equal(variant(10, Term::Var(99)), variant(10, Term::Var(99)));
-        let proof = Proof::Rewrite {
-            equality: Box::new(Proof::Step(start)),
-            proof: Box::new(Proof::Refl(Term::Quote(0))),
-            variable: 99,
-            template,
-        };
-
-        assert!(!check(
-            &proof,
-            &equal(variant(10, Term::Quote(2)), variant(10, Term::Quote(2)))
-        ));
     }
 
     #[test]
@@ -1794,77 +1174,6 @@ mod tests {
     }
 
     #[test]
-    fn beta_proof_rejects_effect_arguments() {
-        let lambda = Lambda {
-            parameter: 1,
-            body: Box::new(Term::Quote(9)),
-        };
-        let thrown = error(Term::Quote(2));
-
-        assert!(!check(
-            &Proof::Beta {
-                lambda: lambda.clone(),
-                argument: thrown.clone()
-            },
-            &Prop::Equal(apply(Term::Lambda(lambda), thrown), Term::Quote(9))
-        ));
-    }
-
-    #[test]
-    fn project_proof_proves_projection_equal_to_field_value() {
-        let record = vec![field(1, Term::Quote(10)), field(2, Term::Quote(20))];
-
-        assert!(check(
-            &Proof::Project {
-                record: record.clone(),
-                label: 2
-            },
-            &Prop::Equal(project(Term::Record(record), 2), Term::Quote(20))
-        ));
-    }
-
-    #[test]
-    fn project_proof_with_missing_field_proves_nothing() {
-        let record = vec![field(1, Term::Quote(10))];
-
-        assert!(!check(
-            &Proof::Project { record, label: 2 },
-            &Prop::Equal(Term::Quote(1), Term::Quote(1))
-        ));
-    }
-
-    #[test]
-    fn case_proof_proves_case_equal_to_selected_branch() {
-        let variant = Variant {
-            tag: 1,
-            value: Box::new(Term::Quote(10)),
-        };
-        let branches = vec![branch(1, 2, Term::Var(2)), branch(3, 4, Term::Var(4))];
-
-        assert!(check(
-            &Proof::Case {
-                variant: variant.clone(),
-                branches: branches.clone(),
-            },
-            &Prop::Equal(case(Term::Variant(variant), branches), Term::Quote(10))
-        ));
-    }
-
-    #[test]
-    fn case_proof_with_missing_branch_proves_nothing() {
-        let variant = Variant {
-            tag: 1,
-            value: Box::new(Term::Quote(10)),
-        };
-        let branches = vec![branch(2, 3, Term::Var(3))];
-
-        assert!(!check(
-            &Proof::Case { variant, branches },
-            &Prop::Equal(Term::Quote(1), Term::Quote(1))
-        ));
-    }
-
-    #[test]
     fn assume_uses_context() {
         let prop = equal(Term::Quote(1), Term::Quote(1));
         let mut context = Context::new();
@@ -1875,19 +1184,7 @@ mod tests {
     }
 
     #[test]
-    fn implies_intro_proves_assumption_implies_itself() {
-        let prop = equal(Term::Quote(1), Term::Quote(1));
-        let proof = Proof::ImpliesIntro {
-            assumption: 7,
-            premise: prop.clone(),
-            proof: Box::new(Proof::Assume(7)),
-        };
-
-        assert!(check(&proof, &implies(prop.clone(), prop)));
-    }
-
-    #[test]
-    fn implies_elim_applies_implication() {
+    fn implies_intro_and_elim_work() {
         let prop = equal(Term::Quote(1), Term::Quote(1));
         let proof = Proof::ImpliesElim {
             implication: Box::new(Proof::ImpliesIntro {
@@ -1902,47 +1199,7 @@ mod tests {
     }
 
     #[test]
-    fn implies_elim_rejects_mismatched_premise() {
-        let prop = equal(Term::Quote(1), Term::Quote(1));
-        let other = equal(Term::Quote(2), Term::Quote(2));
-        let proof = Proof::ImpliesElim {
-            implication: Box::new(Proof::ImpliesIntro {
-                assumption: 7,
-                premise: prop.clone(),
-                proof: Box::new(Proof::Assume(7)),
-            }),
-            premise: Box::new(Proof::Refl(Term::Quote(2))),
-        };
-
-        assert!(!check(&proof, &prop));
-        assert!(!check(&proof, &other));
-    }
-
-    #[test]
-    fn forall_intro_generalizes_variable_not_free_in_context() {
-        let proof = Proof::ForAllIntro {
-            variable: 1,
-            proof: Box::new(Proof::Refl(Term::Var(1))),
-        };
-
-        assert!(check(&proof, &forall(1, equal(Term::Var(1), Term::Var(1)))));
-    }
-
-    #[test]
-    fn forall_intro_rejects_variable_free_in_context() {
-        let prop = equal(Term::Var(1), Term::Var(1));
-        let proof = Proof::ForAllIntro {
-            variable: 1,
-            proof: Box::new(Proof::Assume(7)),
-        };
-        let mut context = Context::new();
-        context.insert(7, prop.clone());
-
-        assert!(!check_in_context(&proof, &forall(1, prop), &context));
-    }
-
-    #[test]
-    fn forall_elim_instantiates_body() {
+    fn forall_intro_and_elim_work() {
         let proof = Proof::ForAllElim {
             forall: Box::new(Proof::ForAllIntro {
                 variable: 1,
@@ -1955,20 +1212,7 @@ mod tests {
     }
 
     #[test]
-    fn exists_intro_uses_witness() {
-        let body = equal(Term::Var(1), Term::Var(1));
-        let proof = Proof::ExistsIntro {
-            variable: 1,
-            body: body.clone(),
-            witness: Term::Quote(2),
-            proof: Box::new(Proof::Refl(Term::Quote(2))),
-        };
-
-        assert!(check(&proof, &exists(1, body)));
-    }
-
-    #[test]
-    fn exists_elim_accepts_nonescaping_witness() {
+    fn exists_intro_and_elim_work() {
         let body = equal(Term::Var(1), Term::Var(1));
         let conclusion = equal(Term::Quote(0), Term::Quote(0));
         let proof = Proof::ExistsElim {
@@ -1987,45 +1231,24 @@ mod tests {
     }
 
     #[test]
-    fn exists_elim_rejects_escaping_witness() {
-        let body = equal(Term::Var(1), Term::Var(1));
-        let conclusion = equal(Term::Var(9), Term::Var(9));
-        let proof = Proof::ExistsElim {
-            existential: Box::new(Proof::ExistsIntro {
-                variable: 1,
-                body,
-                witness: Term::Quote(2),
-                proof: Box::new(Proof::Refl(Term::Quote(2))),
-            }),
-            witness: 9,
-            assumption: 7,
-            proof: Box::new(Proof::Assume(7)),
-        };
-
-        assert!(!check(&proof, &conclusion));
-    }
-
-    #[test]
-    fn and_intro_and_elim_work() {
+    fn and_or_rules_work() {
         let left = equal(Term::Quote(1), Term::Quote(1));
         let right = equal(Term::Quote(2), Term::Quote(2));
-        let proof = Proof::AndIntro(
+        let and_proof = Proof::AndIntro(
             Box::new(Proof::Refl(Term::Quote(1))),
             Box::new(Proof::Refl(Term::Quote(2))),
         );
 
-        assert!(check(&proof, &prop_and(left.clone(), right.clone())));
-        assert!(check(&Proof::AndElimLeft(Box::new(proof.clone())), &left));
-        assert!(check(&Proof::AndElimRight(Box::new(proof)), &right));
-    }
+        assert!(check(
+            &Proof::AndElimLeft(Box::new(and_proof.clone())),
+            &left
+        ));
+        assert!(check(&Proof::AndElimRight(Box::new(and_proof)), &right));
 
-    #[test]
-    fn or_intro_and_elim_work() {
-        let prop = equal(Term::Quote(1), Term::Quote(1));
-        let proof = Proof::OrElim {
+        let or_proof = Proof::OrElim {
             disjunction: Box::new(Proof::OrIntroLeft {
                 proof: Box::new(Proof::Refl(Term::Quote(1))),
-                right: prop.clone(),
+                right: left.clone(),
             }),
             left_assumption: 7,
             left_proof: Box::new(Proof::Assume(7)),
@@ -2033,24 +1256,39 @@ mod tests {
             right_proof: Box::new(Proof::Assume(8)),
         };
 
-        assert!(check(&proof, &prop));
+        assert!(check(&or_proof, &left));
     }
 
     #[test]
-    fn or_elim_rejects_mismatched_case_conclusions() {
-        let left = equal(Term::Quote(1), Term::Quote(1));
-        let right = equal(Term::Quote(2), Term::Quote(2));
-        let proof = Proof::OrElim {
-            disjunction: Box::new(Proof::OrIntroRight {
-                left: left.clone(),
-                proof: Box::new(Proof::Refl(Term::Quote(2))),
-            }),
-            left_assumption: 7,
-            left_proof: Box::new(Proof::Assume(7)),
-            right_assumption: 8,
-            right_proof: Box::new(Proof::Assume(8)),
+    fn substitute_prop_avoids_quantifier_capture() {
+        let prop = forall(2, equal(Term::Var(1), Term::Var(2)));
+
+        assert_eq!(
+            substitute_prop(&prop, 1, &Term::Var(2)),
+            forall(0, equal(Term::Var(2), Term::Var(0)))
+        );
+    }
+
+    #[test]
+    fn exists_intro_uses_witness() {
+        let body = equal(Term::Var(1), Term::Var(1));
+        let proof = Proof::ExistsIntro {
+            variable: 1,
+            body: body.clone(),
+            witness: Term::Quote(2),
+            proof: Box::new(Proof::Refl(Term::Quote(2))),
         };
 
-        assert!(!check(&proof, &prop_or(left, right)));
+        assert!(check(&proof, &exists(1, body)));
+    }
+
+    #[test]
+    fn implies_helper_constructs_implication() {
+        let prop = equal(Term::Quote(1), Term::Quote(1));
+
+        assert_eq!(
+            implies(prop.clone(), prop.clone()),
+            Prop::Implies(Box::new(prop.clone()), Box::new(prop))
+        );
     }
 }

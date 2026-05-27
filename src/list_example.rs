@@ -1,33 +1,23 @@
-//! A small list experiment built on the kernel.
+//! A small list experiment built on the cons/nil kernel.
 //!
-//! This deliberately proves concrete finite facts. The current kernel has no
-//! recursive definitions or induction, so the fully general reverse theorem is
-//! not expressible here yet.
+//! This proves concrete finite facts with `Proof::Steps`. The general reverse
+//! theorem still needs an induction principle over the foundational list
+//! structure.
 
-use crate::{
-    CaseBranch, EvalError, Field, Lambda, Proof, Prop, Record, Step, Symbol, Term, Variant, check,
-    step,
-};
+use crate::{EvalError, Lambda, ListCase, Proof, Prop, Step, Symbol, Term, check, step};
 
 pub const TRUE: Symbol = 1;
 pub const FALSE: Symbol = 2;
 pub const UNIT: Symbol = 3;
 
-pub const NIL: Symbol = 10;
-pub const CONS: Symbol = 11;
-
-pub const HEAD: Symbol = 20;
-pub const TAIL: Symbol = 21;
-
 const LIST: Symbol = 1_000;
-const NIL_PAYLOAD: Symbol = 1_001;
-const CELL: Symbol = 1_002;
-const SELF: Symbol = 1_003;
-const ACC: Symbol = 1_004;
-const FIXED_POINT_FUNCTION: Symbol = 1_005;
-const FIXED_POINT_SELF: Symbol = 1_006;
-const FIXED_POINT_VALUE: Symbol = 1_007;
-const LOOP_ARGUMENT: Symbol = 1_008;
+const CELL: Symbol = 1_001;
+const SELF: Symbol = 1_002;
+const ACC: Symbol = 1_003;
+const FIXED_POINT_FUNCTION: Symbol = 1_004;
+const FIXED_POINT_SELF: Symbol = 1_005;
+const FIXED_POINT_VALUE: Symbol = 1_006;
+const LOOP_ARGUMENT: Symbol = 1_007;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvaluationProofError {
@@ -58,41 +48,32 @@ pub fn apply(function: Term, argument: Term) -> Term {
     }
 }
 
-pub fn variant(tag: Symbol, value: Term) -> Term {
-    Term::Variant(Variant {
-        tag,
-        value: Box::new(value),
+pub fn nil() -> Term {
+    Term::Nil
+}
+
+pub fn cons(head: Term, tail: Term) -> Term {
+    Term::Cons {
+        head: Box::new(head),
+        tail: Box::new(tail),
+    }
+}
+
+pub fn head(term: Term) -> Term {
+    Term::Head(Box::new(term))
+}
+
+pub fn tail(term: Term) -> Term {
+    Term::Tail(Box::new(term))
+}
+
+pub fn list_case(list: Term, nil: Term, cons: Symbol, cons_case: Term) -> Term {
+    Term::ListCase(ListCase {
+        list: Box::new(list),
+        nil: Box::new(nil),
+        cons,
+        cons_case: Box::new(cons_case),
     })
-}
-
-pub fn field(label: Symbol, value: Term) -> Field {
-    Field { label, value }
-}
-
-pub fn record(fields: Record) -> Term {
-    Term::Record(fields)
-}
-
-pub fn project(record: Term, label: Symbol) -> Term {
-    Term::Project {
-        record: Box::new(record),
-        label,
-    }
-}
-
-pub fn branch(tag: Symbol, parameter: Symbol, body: Term) -> CaseBranch {
-    CaseBranch {
-        tag,
-        parameter,
-        body,
-    }
-}
-
-pub fn case(variant: Term, branches: Vec<CaseBranch>) -> Term {
-    Term::Case {
-        variant: Box::new(variant),
-        branches,
-    }
 }
 
 pub fn true_value() -> Term {
@@ -111,15 +92,6 @@ pub fn error(symbol: Symbol) -> Term {
     Term::Error(Box::new(quote(symbol)))
 }
 
-pub fn nil() -> Term {
-    variant(NIL, unit())
-}
-
-/// `cons` is represented as a sum case whose payload is a product.
-pub fn cons(head: Term, tail: Term) -> Term {
-    variant(CONS, record(vec![field(HEAD, head), field(TAIL, tail)]))
-}
-
 pub fn singleton(value: Term) -> Term {
     cons(value, nil())
 }
@@ -132,10 +104,10 @@ pub fn triple(first: Term, second: Term, third: Term) -> Term {
     cons(first, pair(second, third))
 }
 
-/// A recursive list recognizer for proper list values.
+/// A recursive recognizer for proper cons/nil lists.
 ///
-/// Malformed non-variants still surface as evaluator errors because the kernel
-/// has no catchable pattern-match failure yet.
+/// Malformed non-list tails still surface as evaluator errors because the
+/// kernel has no catchable pattern-match failure yet.
 pub fn is_list() -> Term {
     apply(z_combinator(), is_list_body())
 }
@@ -145,12 +117,11 @@ fn is_list_body() -> Term {
         SELF,
         lambda(
             LIST,
-            case(
+            list_case(
                 var(LIST),
-                vec![
-                    branch(NIL, NIL_PAYLOAD, true_value()),
-                    branch(CONS, CELL, apply(var(SELF), project(var(CELL), TAIL))),
-                ],
+                true_value(),
+                CELL,
+                apply(var(SELF), tail(var(CELL))),
             ),
         ),
     )
@@ -198,19 +169,14 @@ fn reverse_acc_body() -> Term {
             LIST,
             lambda(
                 ACC,
-                case(
+                list_case(
                     var(LIST),
-                    vec![
-                        branch(NIL, NIL_PAYLOAD, var(ACC)),
-                        branch(
-                            CONS,
-                            CELL,
-                            apply(
-                                apply(var(SELF), project(var(CELL), TAIL)),
-                                cons(project(var(CELL), HEAD), var(ACC)),
-                            ),
-                        ),
-                    ],
+                    var(ACC),
+                    CELL,
+                    apply(
+                        apply(var(SELF), tail(var(CELL))),
+                        cons(head(var(CELL)), var(ACC)),
+                    ),
                 ),
             ),
         ),
@@ -410,9 +376,9 @@ mod tests {
     fn non_list_input_still_hits_meta_evaluator_error() {
         assert_eq!(
             evaluation_chain(is_list_call(quote(NOT_A_LIST)), 64),
-            Err(EvaluationProofError::Eval(EvalError::CaseNonVariant(
-                quote(NOT_A_LIST)
-            )))
+            Err(EvaluationProofError::Eval(EvalError::CaseNonList(quote(
+                NOT_A_LIST
+            ))))
         );
     }
 
@@ -420,9 +386,9 @@ mod tests {
     fn malformed_tail_still_hits_meta_evaluator_error() {
         assert_eq!(
             evaluation_chain(is_list_call(cons(quote(A), quote(NOT_A_LIST))), 512),
-            Err(EvaluationProofError::Eval(EvalError::CaseNonVariant(
-                quote(NOT_A_LIST)
-            )))
+            Err(EvaluationProofError::Eval(EvalError::CaseNonList(quote(
+                NOT_A_LIST
+            ))))
         );
     }
 
