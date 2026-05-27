@@ -86,6 +86,7 @@ pub enum Proof {
     Refl(Term),
     Symm(Box<Proof>),
     Trans(Box<Proof>, Box<Proof>),
+    Step(Term),
     Beta {
         lambda: Lambda,
         argument: Term,
@@ -173,6 +174,10 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
                 _ => None,
             }
         }
+        Proof::Step(term) => match step(term).ok()? {
+            Step::Reduced(reduced) => Some(Prop::Equal(term.clone(), reduced)),
+            Step::Normal => None,
+        },
         Proof::Beta { lambda, argument } => {
             if !argument_is_ready_for_beta(argument).ok()? {
                 return None;
@@ -1563,6 +1568,43 @@ mod tests {
                 argument: argument.clone()
             },
             &Prop::Equal(apply(Term::Lambda(lambda), argument), Term::Quote(2))
+        ));
+    }
+
+    #[test]
+    fn step_proof_proves_one_step_reduction() {
+        let thrown = error(Term::Quote(1));
+        let term = variant(2, thrown.clone());
+
+        assert!(check(&Proof::Step(term.clone()), &equal(term, thrown)));
+    }
+
+    #[test]
+    fn step_proof_uses_current_call_by_value_application_order() {
+        let term = apply(
+            lambda(1, Term::Quote(9)),
+            apply(lambda(2, Term::Var(2)), Term::Quote(3)),
+        );
+        let reduced = apply(lambda(1, Term::Quote(9)), Term::Quote(3));
+
+        assert!(check(&Proof::Step(term.clone()), &equal(term, reduced)));
+    }
+
+    #[test]
+    fn step_proof_rejects_normal_terms() {
+        assert!(!check(
+            &Proof::Step(Term::Quote(1)),
+            &equal(Term::Quote(1), Term::Quote(1))
+        ));
+    }
+
+    #[test]
+    fn step_proof_rejects_evaluator_errors() {
+        let term = project(record(vec![field(1, Term::Quote(10))]), 2);
+
+        assert!(!check(
+            &Proof::Step(term.clone()),
+            &equal(term, Term::Quote(10))
         ));
     }
 
