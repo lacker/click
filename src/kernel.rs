@@ -59,6 +59,7 @@ pub type EvalResult<T> = Result<T, EvalError>;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Prop {
     Equal(Term, Term),
+    IsList(Term),
     Implies(Box<Prop>, Box<Prop>),
     ForAll { variable: Symbol, body: Box<Prop> },
     Exists { variable: Symbol, body: Box<Prop> },
@@ -83,6 +84,22 @@ pub enum Proof {
     Beta {
         lambda: Lambda,
         argument: Term,
+    },
+    ListNil,
+    ListCons {
+        head: Term,
+        tail: Term,
+        tail_is_list: Box<Proof>,
+    },
+    ListInduction {
+        variable: Symbol,
+        property: Prop,
+        base: Box<Proof>,
+        head: Symbol,
+        tail: Symbol,
+        tail_is_list_assumption: Symbol,
+        induction_hypothesis_assumption: Symbol,
+        step: Box<Proof>,
     },
     ImpliesIntro {
         assumption: Symbol,
@@ -193,6 +210,38 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             let reduced = substitute(lambda.body.as_ref(), lambda.parameter, argument);
             Some(Prop::Equal(applied, reduced))
         }
+        Proof::ListNil => Some(Prop::IsList(Term::Nil)),
+        Proof::ListCons {
+            head,
+            tail,
+            tail_is_list,
+        } => match proven_prop(tail_is_list, context)? {
+            Prop::IsList(proven_tail) if proven_tail == *tail => Some(Prop::IsList(Term::Cons {
+                head: Box::new(head.clone()),
+                tail: Box::new(tail.clone()),
+            })),
+            _ => None,
+        },
+        Proof::ListInduction {
+            variable,
+            property,
+            base,
+            head,
+            tail,
+            tail_is_list_assumption,
+            induction_hypothesis_assumption,
+            step,
+        } => prove_list_induction(
+            context,
+            *variable,
+            property,
+            base,
+            *head,
+            *tail,
+            *tail_is_list_assumption,
+            *induction_hypothesis_assumption,
+            step,
+        ),
         Proof::ImpliesIntro {
             assumption,
             premise,
@@ -341,12 +390,98 @@ fn proven_steps(terms: &[Term]) -> Option<Prop> {
     Some(Prop::Equal(first.clone(), previous.clone()))
 }
 
+fn prove_list_induction(
+    context: &Context,
+    variable: Symbol,
+    property: &Prop,
+    base: &Proof,
+    head: Symbol,
+    tail: Symbol,
+    tail_is_list_assumption: Symbol,
+    induction_hypothesis_assumption: Symbol,
+    step: &Proof,
+) -> Option<Prop> {
+    if !list_induction_symbols_are_fresh(
+        context,
+        variable,
+        property,
+        head,
+        tail,
+        tail_is_list_assumption,
+        induction_hypothesis_assumption,
+    ) {
+        return None;
+    }
+
+    let base_prop = substitute_prop(property, variable, &Term::Nil);
+    if proven_prop(base, context)? != base_prop {
+        return None;
+    }
+
+    let tail_var = Term::Var(tail);
+    let step_prop = substitute_prop(
+        property,
+        variable,
+        &Term::Cons {
+            head: Box::new(Term::Var(head)),
+            tail: Box::new(tail_var.clone()),
+        },
+    );
+    let mut step_context = context.clone();
+    step_context.insert(tail_is_list_assumption, Prop::IsList(tail_var.clone()));
+    step_context.insert(
+        induction_hypothesis_assumption,
+        substitute_prop(property, variable, &tail_var),
+    );
+
+    if proven_prop(step, &step_context)? != step_prop {
+        return None;
+    }
+
+    let variable_term = Term::Var(variable);
+    Some(Prop::ForAll {
+        variable,
+        body: Box::new(Prop::Implies(
+            Box::new(Prop::IsList(variable_term.clone())),
+            Box::new(substitute_prop(property, variable, &variable_term)),
+        )),
+    })
+}
+
+fn list_induction_symbols_are_fresh(
+    context: &Context,
+    variable: Symbol,
+    property: &Prop,
+    head: Symbol,
+    tail: Symbol,
+    tail_is_list_assumption: Symbol,
+    induction_hypothesis_assumption: Symbol,
+) -> bool {
+    if head == tail || head == variable || tail == variable {
+        return false;
+    }
+
+    if tail_is_list_assumption == induction_hypothesis_assumption
+        || context.contains_key(&tail_is_list_assumption)
+        || context.contains_key(&induction_hypothesis_assumption)
+    {
+        return false;
+    }
+
+    !context_mentions_symbol(context, variable)
+        && !context_mentions_symbol(context, head)
+        && !context_mentions_symbol(context, tail)
+        && !prop_mentions_symbol(property, head)
+        && !prop_mentions_symbol(property, tail)
+}
+
 pub fn substitute_prop(prop: &Prop, variable: Symbol, replacement: &Term) -> Prop {
     match prop {
         Prop::Equal(left, right) => Prop::Equal(
             substitute(left, variable, replacement),
             substitute(right, variable, replacement),
         ),
+        Prop::IsList(term) => Prop::IsList(substitute(term, variable, replacement)),
         Prop::Implies(premise, conclusion) => Prop::Implies(
             Box::new(substitute_prop(premise, variable, replacement)),
             Box::new(substitute_prop(conclusion, variable, replacement)),
@@ -416,6 +551,9 @@ fn add_free_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
             add_free_symbols(left, symbols);
             add_free_symbols(right, symbols);
         }
+        Prop::IsList(term) => {
+            add_free_symbols(term, symbols);
+        }
         Prop::Implies(premise, conclusion)
         | Prop::And(premise, conclusion)
         | Prop::Or(premise, conclusion) => {
@@ -437,6 +575,7 @@ fn rename_bound_var_prop(prop: &Prop, old: Symbol, new: Symbol) -> Prop {
             rename_bound_var(left, old, new),
             rename_bound_var(right, old, new),
         ),
+        Prop::IsList(term) => Prop::IsList(rename_bound_var(term, old, new)),
         Prop::Implies(premise, conclusion) => Prop::Implies(
             Box::new(rename_bound_var_prop(premise, old, new)),
             Box::new(rename_bound_var_prop(conclusion, old, new)),
@@ -480,6 +619,9 @@ fn add_all_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
         Prop::Equal(left, right) => {
             add_all_symbols(left, symbols);
             add_all_symbols(right, symbols);
+        }
+        Prop::IsList(term) => {
+            add_all_symbols(term, symbols);
         }
         Prop::Implies(premise, conclusion)
         | Prop::And(premise, conclusion)
@@ -646,6 +788,14 @@ fn argument_is_ready_for_beta(argument: &Term) -> EvalResult<bool> {
 
 fn is_effect(term: &Term) -> bool {
     matches!(term, Term::Error(_) | Term::Diverge)
+}
+
+pub fn is_value(term: &Term) -> bool {
+    match term {
+        Term::Lambda(_) | Term::Nil | Term::Quote(_) => true,
+        Term::Cons { head, tail } => is_value(head) && is_value(tail),
+        _ => false,
+    }
 }
 
 fn is_known_non_callable(term: &Term) -> bool {
@@ -940,6 +1090,10 @@ mod tests {
         }
     }
 
+    fn list_prop(term: Term) -> Prop {
+        Prop::IsList(term)
+    }
+
     #[test]
     fn step_beta_reduces_after_argument_is_ready() {
         let term = apply(lambda(1, Term::Var(1)), Term::Quote(2));
@@ -969,6 +1123,20 @@ mod tests {
         let term = lambda(1, apply(lambda(2, Term::Var(2)), Term::Var(1)));
 
         assert_eq!(step(&term), Ok(Step::Normal));
+    }
+
+    #[test]
+    fn is_value_distinguishes_values_from_pending_computations() {
+        assert!(is_value(&Term::Nil));
+        assert!(is_value(&Term::Quote(1)));
+        assert!(is_value(&lambda(1, Term::Var(1))));
+        assert!(is_value(&cons(Term::Quote(1), Term::Nil)));
+
+        assert!(!is_value(&apply(Term::Var(1), Term::Quote(2))));
+        assert!(!is_value(&Term::Diverge));
+        assert!(!is_value(&error(Term::Quote(1))));
+        assert!(!is_value(&Term::Var(1)));
+        assert_eq!(step(&Term::Var(1)), Ok(Step::Normal));
     }
 
     #[test]
@@ -1171,6 +1339,99 @@ mod tests {
             },
             &Prop::Equal(apply(Term::Lambda(lam), argument), Term::Quote(9))
         ));
+    }
+
+    #[test]
+    fn list_intro_rules_prove_concrete_lists() {
+        let list = cons(Term::Quote(1), cons(Term::Quote(2), Term::Nil));
+        let proof = Proof::ListCons {
+            head: Term::Quote(1),
+            tail: cons(Term::Quote(2), Term::Nil),
+            tail_is_list: Box::new(Proof::ListCons {
+                head: Term::Quote(2),
+                tail: Term::Nil,
+                tail_is_list: Box::new(Proof::ListNil),
+            }),
+        };
+
+        assert!(check(&Proof::ListNil, &list_prop(Term::Nil)));
+        assert!(check(&proof, &list_prop(list)));
+    }
+
+    #[test]
+    fn list_cons_requires_tail_list_proof_for_the_same_tail() {
+        let proof = Proof::ListCons {
+            head: Term::Quote(1),
+            tail: cons(Term::Quote(2), Term::Nil),
+            tail_is_list: Box::new(Proof::ListNil),
+        };
+
+        assert!(!check(
+            &proof,
+            &list_prop(cons(Term::Quote(1), cons(Term::Quote(2), Term::Nil)))
+        ));
+    }
+
+    #[test]
+    fn list_induction_proves_properties_of_all_lists() {
+        let variable = 1;
+        let head = 2;
+        let tail = 3;
+        let tail_is_list_assumption = 4;
+        let induction_hypothesis_assumption = 5;
+        let property = list_prop(Term::Var(variable));
+        let proof = Proof::ListInduction {
+            variable,
+            property: property.clone(),
+            base: Box::new(Proof::ListNil),
+            head,
+            tail,
+            tail_is_list_assumption,
+            induction_hypothesis_assumption,
+            step: Box::new(Proof::ListCons {
+                head: Term::Var(head),
+                tail: Term::Var(tail),
+                tail_is_list: Box::new(Proof::Assume(tail_is_list_assumption)),
+            }),
+        };
+        let expected = forall(
+            variable,
+            implies(
+                list_prop(Term::Var(variable)),
+                list_prop(Term::Var(variable)),
+            ),
+        );
+
+        assert!(check(&proof, &expected));
+    }
+
+    #[test]
+    fn list_induction_rejects_stale_step_variables() {
+        let variable = 1;
+        let head = 2;
+        let tail = 3;
+        let tail_is_list_assumption = 4;
+        let induction_hypothesis_assumption = 5;
+        let property = list_prop(Term::Var(variable));
+        let proof = Proof::ListInduction {
+            variable,
+            property,
+            base: Box::new(Proof::ListNil),
+            head,
+            tail,
+            tail_is_list_assumption,
+            induction_hypothesis_assumption,
+            step: Box::new(Proof::Assume(tail_is_list_assumption)),
+        };
+        let expected = forall(
+            variable,
+            implies(
+                list_prop(Term::Var(variable)),
+                list_prop(Term::Var(variable)),
+            ),
+        );
+
+        assert!(!check(&proof, &expected));
     }
 
     #[test]

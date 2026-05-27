@@ -1,13 +1,11 @@
 //! A small list experiment built on the cons/nil kernel.
 //!
-//! This proves concrete finite facts with `Proof::Steps`. The general reverse
-//! theorem still needs an induction principle over the foundational list
-//! structure.
+//! This proves concrete finite facts about `reverse` with `Proof::Steps`.
+//! General reverse theorems should use the kernel's list proposition and
+//! induction rule rather than a userspace list recognizer.
 
 use crate::{EvalError, Lambda, ListCase, Proof, Prop, Step, Symbol, Term, check, step};
 
-pub const TRUE: Symbol = 1;
-pub const FALSE: Symbol = 2;
 pub const UNIT: Symbol = 3;
 
 const LIST: Symbol = 1_000;
@@ -76,14 +74,6 @@ pub fn list_case(list: Term, nil: Term, cons: Symbol, cons_case: Term) -> Term {
     })
 }
 
-pub fn true_value() -> Term {
-    quote(TRUE)
-}
-
-pub fn false_value() -> Term {
-    quote(FALSE)
-}
-
 pub fn unit() -> Term {
     quote(UNIT)
 }
@@ -102,33 +92,6 @@ pub fn pair(first: Term, second: Term) -> Term {
 
 pub fn triple(first: Term, second: Term, third: Term) -> Term {
     cons(first, pair(second, third))
-}
-
-/// A recursive recognizer for proper cons/nil lists.
-///
-/// Malformed non-list tails still surface as evaluator errors because the
-/// kernel has no catchable pattern-match failure yet.
-pub fn is_list() -> Term {
-    apply(z_combinator(), is_list_body())
-}
-
-fn is_list_body() -> Term {
-    lambda(
-        SELF,
-        lambda(
-            LIST,
-            list_case(
-                var(LIST),
-                true_value(),
-                CELL,
-                apply(var(SELF), tail(var(CELL))),
-            ),
-        ),
-    )
-}
-
-pub fn is_list_call(value: Term) -> Term {
-    apply(is_list(), value)
 }
 
 /// The call-by-value fixed-point combinator.
@@ -252,12 +215,11 @@ pub fn check_evaluates_to(term: Term, value: Term, proof: &Proof) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Context, Proof, check, check_in_context};
+    use crate::{Proof, check};
 
     const A: Symbol = 100;
     const B: Symbol = 101;
     const NOT_A_LIST: Symbol = 102;
-    const ASSUMPTION: Symbol = 200;
 
     fn prove_evaluation(term: Term, expected: Term) -> Proof {
         proof_by_evaluation(term, expected, 512).expect("example should evaluate")
@@ -266,21 +228,6 @@ mod tests {
     fn assert_evaluates(term: Term, expected: Term) {
         let proof = prove_evaluation(term.clone(), expected.clone());
         assert!(check_evaluates_to(term, expected, &proof));
-    }
-
-    #[test]
-    fn is_list_accepts_nil_and_singleton() {
-        assert_evaluates(is_list_call(nil()), true_value());
-        assert_evaluates(is_list_call(singleton(quote(A))), true_value());
-    }
-
-    #[test]
-    fn is_list_accepts_pair_and_triple() {
-        assert_evaluates(is_list_call(pair(quote(A), quote(B))), true_value());
-        assert_evaluates(
-            is_list_call(triple(quote(A), quote(B), quote(NOT_A_LIST))),
-            true_value(),
-        );
     }
 
     #[test]
@@ -312,59 +259,6 @@ mod tests {
     }
 
     #[test]
-    fn reversed_nil_is_a_list() {
-        assert_evaluates(is_list_call(reverse_call(nil())), true_value());
-    }
-
-    #[test]
-    fn reversed_singleton_is_a_list() {
-        let list = singleton(quote(A));
-
-        assert_evaluates(is_list_call(reverse_call(list)), true_value());
-    }
-
-    #[test]
-    fn reversed_pair_is_a_list() {
-        let list = pair(quote(A), quote(B));
-
-        assert_evaluates(is_list_call(reverse_call(list)), true_value());
-    }
-
-    #[test]
-    fn concrete_implication_for_reverse_nil_termination() {
-        let premise = evaluates_to(is_list_call(nil()), true_value());
-        let conclusion = evaluates_to(reverse_call(nil()), nil());
-        let conclusion_proof = prove_evaluation(reverse_call(nil()), nil());
-        let proof = Proof::ImpliesIntro {
-            assumption: ASSUMPTION,
-            premise: premise.clone(),
-            proof: Box::new(conclusion_proof),
-        };
-
-        assert!(check(
-            &proof,
-            &Prop::Implies(Box::new(premise), Box::new(conclusion))
-        ));
-    }
-
-    #[test]
-    fn concrete_implication_for_reversed_nil_is_list() {
-        let premise = evaluates_to(is_list_call(nil()), true_value());
-        let conclusion = evaluates_to(is_list_call(reverse_call(nil())), true_value());
-        let conclusion_proof = prove_evaluation(is_list_call(reverse_call(nil())), true_value());
-        let proof = Proof::ImpliesIntro {
-            assumption: ASSUMPTION,
-            premise: premise.clone(),
-            proof: Box::new(conclusion_proof),
-        };
-
-        assert!(check(
-            &proof,
-            &Prop::Implies(Box::new(premise), Box::new(conclusion))
-        ));
-    }
-
-    #[test]
     fn loop_forever_diverges() {
         let term = loop_forever_call();
         let proof = prove_evaluation(term.clone(), Term::Diverge);
@@ -373,9 +267,9 @@ mod tests {
     }
 
     #[test]
-    fn non_list_input_still_hits_meta_evaluator_error() {
+    fn reverse_non_list_input_hits_meta_evaluator_error() {
         assert_eq!(
-            evaluation_chain(is_list_call(quote(NOT_A_LIST)), 64),
+            evaluation_chain(reverse_call(quote(NOT_A_LIST)), 512),
             Err(EvaluationProofError::Eval(EvalError::CaseNonList(quote(
                 NOT_A_LIST
             ))))
@@ -383,9 +277,9 @@ mod tests {
     }
 
     #[test]
-    fn malformed_tail_still_hits_meta_evaluator_error() {
+    fn reverse_malformed_tail_hits_meta_evaluator_error() {
         assert_eq!(
-            evaluation_chain(is_list_call(cons(quote(A), quote(NOT_A_LIST))), 512),
+            evaluation_chain(reverse_call(cons(quote(A), quote(NOT_A_LIST))), 512),
             Err(EvaluationProofError::Eval(EvalError::CaseNonList(quote(
                 NOT_A_LIST
             ))))
@@ -395,26 +289,11 @@ mod tests {
     #[test]
     fn evaluation_proof_rejects_wrong_expected_value() {
         assert_eq!(
-            proof_by_evaluation(reverse_call(nil()), true_value(), 64),
+            proof_by_evaluation(reverse_call(nil()), quote(NOT_A_LIST), 64),
             Err(EvaluationProofError::UnexpectedNormalForm {
-                expected: true_value(),
+                expected: quote(NOT_A_LIST),
                 actual: nil(),
             })
         );
-    }
-
-    #[test]
-    fn general_reverse_theorem_is_not_available_from_concrete_facts() {
-        let variable = var(9_999);
-        let premise = evaluates_to(is_list_call(variable.clone()), true_value());
-        let conclusion = evaluates_to(is_list_call(reverse_call(variable)), true_value());
-        let context = Context::from([(ASSUMPTION, premise.clone())]);
-
-        assert!(!check(&Proof::Assume(ASSUMPTION), &conclusion));
-        assert!(!check_in_context(
-            &Proof::Assume(ASSUMPTION),
-            &conclusion,
-            &context,
-        ));
     }
 }
