@@ -19,14 +19,15 @@ pub const CONS: Symbol = 11;
 pub const HEAD: Symbol = 20;
 pub const TAIL: Symbol = 21;
 
-pub const ERROR_REVERSE_NEEDS_RECURSION: Symbol = 30;
-
 const LIST: Symbol = 1_000;
 const NIL_PAYLOAD: Symbol = 1_001;
 const CELL: Symbol = 1_002;
-const TAIL_PAYLOAD: Symbol = 1_003;
-const REST_CELL: Symbol = 1_004;
-const LOOP_ARGUMENT: Symbol = 1_005;
+const SELF: Symbol = 1_003;
+const ACC: Symbol = 1_004;
+const FIXED_POINT_FUNCTION: Symbol = 1_005;
+const FIXED_POINT_SELF: Symbol = 1_006;
+const FIXED_POINT_VALUE: Symbol = 1_007;
+const LOOP_ARGUMENT: Symbol = 1_008;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvaluationProofError {
@@ -127,19 +128,30 @@ pub fn pair(first: Term, second: Term) -> Term {
     cons(first, singleton(second))
 }
 
-/// A shallow list recognizer.
+pub fn triple(first: Term, second: Term, third: Term) -> Term {
+    cons(first, pair(second, third))
+}
+
+/// A recursive list recognizer for proper list values.
 ///
-/// This recognizes `nil` and `cons` at the outer constructor. A recursive
-/// `is_list` needs recursive definitions, which the kernel does not have yet.
+/// Malformed non-variants still surface as evaluator errors because the kernel
+/// has no catchable pattern-match failure yet.
 pub fn is_list() -> Term {
+    apply(z_combinator(), is_list_body())
+}
+
+fn is_list_body() -> Term {
     lambda(
-        LIST,
-        case(
-            var(LIST),
-            vec![
-                branch(NIL, NIL_PAYLOAD, true_value()),
-                branch(CONS, CELL, true_value()),
-            ],
+        SELF,
+        lambda(
+            LIST,
+            case(
+                var(LIST),
+                vec![
+                    branch(NIL, NIL_PAYLOAD, true_value()),
+                    branch(CONS, CELL, apply(var(SELF), project(var(CELL), TAIL))),
+                ],
+            ),
         ),
     )
 }
@@ -148,31 +160,65 @@ pub fn is_list_call(value: Term) -> Term {
     apply(is_list(), value)
 }
 
-/// A bounded reverse experiment.
+/// The call-by-value fixed-point combinator.
 ///
-/// This reverses `nil` and singleton lists. Longer lists return an explicit
-/// error marker because real reverse needs recursion.
-pub fn reverse() -> Term {
+/// The ordinary Y combinator unfolds too eagerly under this evaluator; this Z
+/// combinator delays the recursive self-reference under an extra lambda.
+pub fn z_combinator() -> Term {
     lambda(
-        LIST,
-        case(
-            var(LIST),
-            vec![
-                branch(NIL, NIL_PAYLOAD, nil()),
-                branch(
-                    CONS,
-                    CELL,
-                    case(
-                        project(var(CELL), TAIL),
-                        vec![
-                            branch(NIL, TAIL_PAYLOAD, cons(project(var(CELL), HEAD), nil())),
-                            branch(CONS, REST_CELL, error(ERROR_REVERSE_NEEDS_RECURSION)),
-                        ],
-                    ),
+        FIXED_POINT_FUNCTION,
+        apply(fixed_point_half(), fixed_point_half()),
+    )
+}
+
+fn fixed_point_half() -> Term {
+    lambda(
+        FIXED_POINT_SELF,
+        apply(
+            var(FIXED_POINT_FUNCTION),
+            lambda(
+                FIXED_POINT_VALUE,
+                apply(
+                    apply(var(FIXED_POINT_SELF), var(FIXED_POINT_SELF)),
+                    var(FIXED_POINT_VALUE),
                 ),
-            ],
+            ),
         ),
     )
+}
+
+pub fn reverse_acc() -> Term {
+    apply(z_combinator(), reverse_acc_body())
+}
+
+fn reverse_acc_body() -> Term {
+    lambda(
+        SELF,
+        lambda(
+            LIST,
+            lambda(
+                ACC,
+                case(
+                    var(LIST),
+                    vec![
+                        branch(NIL, NIL_PAYLOAD, var(ACC)),
+                        branch(
+                            CONS,
+                            CELL,
+                            apply(
+                                apply(var(SELF), project(var(CELL), TAIL)),
+                                cons(project(var(CELL), HEAD), var(ACC)),
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+        ),
+    )
+}
+
+pub fn reverse() -> Term {
+    lambda(LIST, apply(apply(reverse_acc(), var(LIST)), nil()))
 }
 
 pub fn reverse_call(value: Term) -> Term {
@@ -248,7 +294,7 @@ mod tests {
     const ASSUMPTION: Symbol = 200;
 
     fn prove_evaluation(term: Term, expected: Term) -> Proof {
-        proof_by_evaluation(term, expected, 64).expect("example should evaluate")
+        proof_by_evaluation(term, expected, 512).expect("example should evaluate")
     }
 
     fn assert_evaluates(term: Term, expected: Term) {
@@ -260,6 +306,15 @@ mod tests {
     fn is_list_accepts_nil_and_singleton() {
         assert_evaluates(is_list_call(nil()), true_value());
         assert_evaluates(is_list_call(singleton(quote(A))), true_value());
+    }
+
+    #[test]
+    fn is_list_accepts_pair_and_triple() {
+        assert_evaluates(is_list_call(pair(quote(A), quote(B))), true_value());
+        assert_evaluates(
+            is_list_call(triple(quote(A), quote(B), quote(NOT_A_LIST))),
+            true_value(),
+        );
     }
 
     #[test]
@@ -275,10 +330,18 @@ mod tests {
     }
 
     #[test]
-    fn reverse_pair_reaches_explicit_error_marker() {
+    fn reverse_pair_terminates_without_error() {
         assert_evaluates(
             reverse_call(pair(quote(A), quote(B))),
-            error(ERROR_REVERSE_NEEDS_RECURSION),
+            pair(quote(B), quote(A)),
+        );
+    }
+
+    #[test]
+    fn reverse_triple_terminates_without_error() {
+        assert_evaluates(
+            reverse_call(triple(quote(A), quote(B), quote(NOT_A_LIST))),
+            triple(quote(NOT_A_LIST), quote(B), quote(A)),
         );
     }
 
@@ -290,6 +353,13 @@ mod tests {
     #[test]
     fn reversed_singleton_is_a_list() {
         let list = singleton(quote(A));
+
+        assert_evaluates(is_list_call(reverse_call(list)), true_value());
+    }
+
+    #[test]
+    fn reversed_pair_is_a_list() {
+        let list = pair(quote(A), quote(B));
 
         assert_evaluates(is_list_call(reverse_call(list)), true_value());
     }
@@ -340,6 +410,16 @@ mod tests {
     fn non_list_input_still_hits_meta_evaluator_error() {
         assert_eq!(
             evaluation_chain(is_list_call(quote(NOT_A_LIST)), 64),
+            Err(EvaluationProofError::Eval(EvalError::CaseNonVariant(
+                quote(NOT_A_LIST)
+            )))
+        );
+    }
+
+    #[test]
+    fn malformed_tail_still_hits_meta_evaluator_error() {
+        assert_eq!(
+            evaluation_chain(is_list_call(cons(quote(A), quote(NOT_A_LIST))), 512),
             Err(EvaluationProofError::Eval(EvalError::CaseNonVariant(
                 quote(NOT_A_LIST)
             )))
