@@ -174,6 +174,10 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             }
         }
         Proof::Beta { lambda, argument } => {
+            if !argument_is_ready_for_beta(argument).ok()? {
+                return None;
+            }
+
             let applied = Term::Apply {
                 function: Box::new(Term::Lambda(lambda.clone())),
                 argument: Box::new(argument.clone()),
@@ -595,37 +599,8 @@ fn substitute_case_branch(branch: &CaseBranch, variable: Symbol, replacement: &T
 
 pub fn step(term: &Term) -> EvalResult<Step> {
     match term {
-        Term::Apply { function, argument } => match function.as_ref() {
-            Term::Lambda(lambda) => Ok(Step::Reduced(substitute(
-                lambda.body.as_ref(),
-                lambda.parameter,
-                argument,
-            ))),
-            Term::Error(_) | Term::Diverge => Ok(Step::Reduced(function.as_ref().clone())),
-            _ => match step(function)? {
-                Step::Reduced(function) => Ok(Step::Reduced(Term::Apply {
-                    function: Box::new(function),
-                    argument: argument.clone(),
-                })),
-                Step::Normal if is_known_non_callable(function) => {
-                    Err(EvalError::ApplyNonLambda(function.as_ref().clone()))
-                }
-                Step::Normal => match step(argument)? {
-                    Step::Reduced(argument) => Ok(Step::Reduced(Term::Apply {
-                        function: function.clone(),
-                        argument: Box::new(argument),
-                    })),
-                    Step::Normal => Ok(Step::Normal),
-                },
-            },
-        },
-        Term::Lambda(lambda) => match step(lambda.body.as_ref())? {
-            Step::Reduced(body) => Ok(Step::Reduced(Term::Lambda(Lambda {
-                parameter: lambda.parameter,
-                body: Box::new(body),
-            }))),
-            Step::Normal => Ok(Step::Normal),
-        },
+        Term::Apply { function, argument } => step_apply(function, argument),
+        Term::Lambda(_) => Ok(Step::Normal),
         Term::Variant(variant) => match step(variant.value.as_ref())? {
             Step::Reduced(value) => Ok(Step::Reduced(Term::Variant(Variant {
                 tag: variant.tag,
@@ -639,6 +614,60 @@ pub fn step(term: &Term) -> EvalResult<Step> {
         Term::Error(_) | Term::Diverge => Ok(Step::Normal),
         Term::Var(_) | Term::Quote(_) => Ok(Step::Normal),
     }
+}
+
+fn step_apply(function: &Term, argument: &Term) -> EvalResult<Step> {
+    match function {
+        Term::Lambda(lambda) => step_lambda_application(lambda, argument),
+        Term::Error(_) | Term::Diverge => Ok(Step::Reduced(function.clone())),
+        _ => match step(function)? {
+            Step::Reduced(function) => Ok(Step::Reduced(Term::Apply {
+                function: Box::new(function),
+                argument: Box::new(argument.clone()),
+            })),
+            Step::Normal if is_known_non_callable(function) => {
+                Err(EvalError::ApplyNonLambda(function.clone()))
+            }
+            Step::Normal => step_neutral_application(function, argument),
+        },
+    }
+}
+
+fn step_lambda_application(lambda: &Lambda, argument: &Term) -> EvalResult<Step> {
+    match step(argument)? {
+        Step::Reduced(argument) => Ok(Step::Reduced(Term::Apply {
+            function: Box::new(Term::Lambda(lambda.clone())),
+            argument: Box::new(argument),
+        })),
+        Step::Normal if is_effect(argument) => Ok(Step::Reduced(argument.clone())),
+        Step::Normal => Ok(Step::Reduced(substitute(
+            lambda.body.as_ref(),
+            lambda.parameter,
+            argument,
+        ))),
+    }
+}
+
+fn step_neutral_application(function: &Term, argument: &Term) -> EvalResult<Step> {
+    match step(argument)? {
+        Step::Reduced(argument) => Ok(Step::Reduced(Term::Apply {
+            function: Box::new(function.clone()),
+            argument: Box::new(argument),
+        })),
+        Step::Normal if is_effect(argument) => Ok(Step::Reduced(argument.clone())),
+        Step::Normal => Ok(Step::Normal),
+    }
+}
+
+fn argument_is_ready_for_beta(argument: &Term) -> EvalResult<bool> {
+    match step(argument)? {
+        Step::Reduced(_) => Ok(false),
+        Step::Normal => Ok(!is_effect(argument)),
+    }
+}
+
+fn is_effect(term: &Term) -> bool {
+    matches!(term, Term::Error(_) | Term::Diverge)
 }
 
 fn is_known_non_callable(term: &Term) -> bool {
@@ -971,6 +1000,38 @@ mod tests {
     }
 
     #[test]
+    fn application_reduces_argument_before_beta() {
+        let term = apply(
+            lambda(1, Term::Quote(9)),
+            apply(lambda(2, Term::Var(2)), Term::Quote(3)),
+        );
+
+        assert_eq!(
+            step(&term),
+            Ok(Step::Reduced(apply(
+                lambda(1, Term::Quote(9)),
+                Term::Quote(3)
+            )))
+        );
+        assert_eq!(normal_form(&term), Ok(Term::Quote(9)));
+    }
+
+    #[test]
+    fn lambda_is_a_value_without_evaluating_its_body() {
+        let term = lambda(1, apply(lambda(2, Term::Var(2)), Term::Var(1)));
+
+        assert_eq!(step(&term), Ok(Step::Normal));
+    }
+
+    #[test]
+    fn application_substitutes_lambda_arguments_without_evaluating_their_bodies() {
+        let argument = lambda(2, apply(lambda(3, Term::Var(3)), Term::Var(2)));
+        let term = apply(lambda(1, Term::Var(1)), argument.clone());
+
+        assert_eq!(step(&term), Ok(Step::Reduced(argument)));
+    }
+
+    #[test]
     fn step_distinguishes_normal_terms_from_errors() {
         assert_eq!(step(&Term::Quote(1)), Ok(Step::Normal));
         assert_eq!(step(&apply(Term::Var(1), Term::Quote(2))), Ok(Step::Normal));
@@ -1006,6 +1067,45 @@ mod tests {
             Ok(Step::Reduced(Term::Diverge))
         );
         assert_eq!(normal_form(&diverging_application), Ok(Term::Diverge));
+    }
+
+    #[test]
+    fn application_propagates_error_and_diverge_argument_before_beta() {
+        let thrown = error(Term::Quote(1));
+        let error_application = apply(lambda(2, Term::Quote(3)), thrown.clone());
+        let diverging_application = apply(lambda(2, Term::Quote(3)), Term::Diverge);
+
+        assert_eq!(step(&error_application), Ok(Step::Reduced(thrown.clone())));
+        assert_eq!(normal_form(&error_application), Ok(thrown));
+        assert_eq!(
+            step(&diverging_application),
+            Ok(Step::Reduced(Term::Diverge))
+        );
+        assert_eq!(normal_form(&diverging_application), Ok(Term::Diverge));
+    }
+
+    #[test]
+    fn neutral_application_still_evaluates_argument_effects() {
+        let thrown = error(Term::Quote(1));
+
+        assert_eq!(
+            step(&apply(Term::Var(2), thrown.clone())),
+            Ok(Step::Reduced(thrown))
+        );
+        assert_eq!(
+            step(&apply(Term::Var(2), Term::Diverge)),
+            Ok(Step::Reduced(Term::Diverge))
+        );
+    }
+
+    #[test]
+    fn application_reports_argument_errors_before_beta() {
+        let term = apply(
+            lambda(1, Term::Quote(2)),
+            project(record(vec![field(3, Term::Quote(4))]), 5),
+        );
+
+        assert_eq!(step(&term), Err(EvalError::MissingField(5)));
     }
 
     #[test]
@@ -1419,6 +1519,40 @@ mod tests {
                 argument: argument.clone()
             },
             &Prop::Equal(apply(Term::Lambda(lambda), argument), Term::Quote(2))
+        ));
+    }
+
+    #[test]
+    fn beta_proof_rejects_reducible_arguments() {
+        let lam = Lambda {
+            parameter: 1,
+            body: Box::new(Term::Quote(9)),
+        };
+        let argument = apply(lambda(2, Term::Var(2)), Term::Quote(3));
+
+        assert!(!check(
+            &Proof::Beta {
+                lambda: lam.clone(),
+                argument: argument.clone()
+            },
+            &Prop::Equal(apply(Term::Lambda(lam), argument), Term::Quote(9))
+        ));
+    }
+
+    #[test]
+    fn beta_proof_rejects_effect_arguments() {
+        let lambda = Lambda {
+            parameter: 1,
+            body: Box::new(Term::Quote(9)),
+        };
+        let thrown = error(Term::Quote(2));
+
+        assert!(!check(
+            &Proof::Beta {
+                lambda: lambda.clone(),
+                argument: thrown.clone()
+            },
+            &Prop::Equal(apply(Term::Lambda(lambda), thrown), Term::Quote(9))
         ));
     }
 
