@@ -87,6 +87,7 @@ pub enum Proof {
     Symm(Box<Proof>),
     Trans(Box<Proof>, Box<Proof>),
     Step(Term),
+    Steps(Vec<Term>),
     Beta {
         lambda: Lambda,
         argument: Term,
@@ -178,6 +179,7 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             Step::Reduced(reduced) => Some(Prop::Equal(term.clone(), reduced)),
             Step::Normal => None,
         },
+        Proof::Steps(terms) => proven_steps(terms),
         Proof::Beta { lambda, argument } => {
             if !argument_is_ready_for_beta(argument).ok()? {
                 return None;
@@ -339,6 +341,20 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             _ => None,
         },
     }
+}
+
+fn proven_steps(terms: &[Term]) -> Option<Prop> {
+    let (first, rest) = terms.split_first()?;
+    let mut previous = first;
+
+    for next in rest {
+        match step(previous).ok()? {
+            Step::Reduced(reduced) if &reduced == next => previous = next,
+            _ => return None,
+        }
+    }
+
+    Some(Prop::Equal(first.clone(), previous.clone()))
 }
 
 pub fn substitute_prop(prop: &Prop, variable: Symbol, replacement: &Term) -> Prop {
@@ -1605,6 +1621,63 @@ mod tests {
         assert!(!check(
             &Proof::Step(term.clone()),
             &equal(term, Term::Quote(10))
+        ));
+    }
+
+    #[test]
+    fn steps_proof_proves_multi_step_reduction() {
+        let start = apply(
+            lambda(1, Term::Quote(9)),
+            apply(lambda(2, Term::Var(2)), Term::Quote(3)),
+        );
+        let middle = apply(lambda(1, Term::Quote(9)), Term::Quote(3));
+        let end = Term::Quote(9);
+
+        assert!(check(
+            &Proof::Steps(vec![start.clone(), middle, end.clone()]),
+            &equal(start, end)
+        ));
+    }
+
+    #[test]
+    fn steps_proof_can_prove_zero_steps() {
+        let term = Term::Quote(1);
+
+        assert!(check(
+            &Proof::Steps(vec![term.clone()]),
+            &equal(term.clone(), term)
+        ));
+    }
+
+    #[test]
+    fn steps_proof_rejects_empty_chain() {
+        assert!(!check(
+            &Proof::Steps(vec![]),
+            &equal(Term::Quote(1), Term::Quote(1))
+        ));
+    }
+
+    #[test]
+    fn steps_proof_rejects_wrong_intermediate_term() {
+        let start = apply(
+            lambda(1, Term::Quote(9)),
+            apply(lambda(2, Term::Var(2)), Term::Quote(3)),
+        );
+        let wrong_middle = apply(lambda(1, Term::Quote(9)), Term::Quote(4));
+
+        assert!(!check(
+            &Proof::Steps(vec![start.clone(), wrong_middle, Term::Quote(9)]),
+            &equal(start, Term::Quote(9))
+        ));
+    }
+
+    #[test]
+    fn steps_proof_rejects_evaluator_errors() {
+        let start = project(record(vec![field(1, Term::Quote(10))]), 2);
+
+        assert!(!check(
+            &Proof::Steps(vec![start.clone(), Term::Quote(10)]),
+            &equal(start, Term::Quote(10))
         ));
     }
 
