@@ -606,6 +606,9 @@ pub fn step(term: &Term) -> EvalResult<Step> {
                 tag: variant.tag,
                 value: Box::new(value),
             }))),
+            Step::Normal if is_effect(variant.value.as_ref()) => {
+                Ok(Step::Reduced(variant.value.as_ref().clone()))
+            }
             Step::Normal => Ok(Step::Normal),
         },
         Term::Record(record) => step_record(record),
@@ -681,6 +684,9 @@ fn step_record(record: &Record) -> EvalResult<Step> {
                 let mut record = record.clone();
                 record[index].value = value;
                 return Ok(Step::Reduced(Term::Record(record)));
+            }
+            Step::Normal if is_effect(&field.value) => {
+                return Ok(Step::Reduced(field.value.clone()));
             }
             Step::Normal => {}
         }
@@ -1168,6 +1174,17 @@ mod tests {
     }
 
     #[test]
+    fn variant_propagates_error_and_diverge_payload() {
+        let thrown = error(Term::Quote(1));
+
+        assert_eq!(step(&variant(2, thrown.clone())), Ok(Step::Reduced(thrown)));
+        assert_eq!(
+            step(&variant(2, Term::Diverge)),
+            Ok(Step::Reduced(Term::Diverge))
+        );
+    }
+
+    #[test]
     fn step_reduces_first_reducible_record_field() {
         let term = record(vec![
             field(1, Term::Quote(1)),
@@ -1181,6 +1198,33 @@ mod tests {
                 field(1, Term::Quote(1)),
                 field(2, Term::Quote(4)),
                 field(3, apply(lambda(5, Term::Var(5)), Term::Quote(6))),
+            ])))
+        );
+    }
+
+    #[test]
+    fn record_propagates_error_and_diverge_fields() {
+        let thrown = error(Term::Quote(1));
+        let error_record = record(vec![field(1, Term::Quote(2)), field(3, thrown.clone())]);
+        let diverging_record = record(vec![field(1, Term::Quote(2)), field(3, Term::Diverge)]);
+
+        assert_eq!(step(&error_record), Ok(Step::Reduced(thrown)));
+        assert_eq!(step(&diverging_record), Ok(Step::Reduced(Term::Diverge)));
+    }
+
+    #[test]
+    fn record_reduces_earlier_field_before_later_effect() {
+        let thrown = error(Term::Quote(1));
+        let term = record(vec![
+            field(1, apply(lambda(2, Term::Var(2)), Term::Quote(3))),
+            field(4, thrown.clone()),
+        ]);
+
+        assert_eq!(
+            step(&term),
+            Ok(Step::Reduced(record(vec![
+                field(1, Term::Quote(3)),
+                field(4, thrown)
             ])))
         );
     }
