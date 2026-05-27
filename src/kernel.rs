@@ -88,6 +88,12 @@ pub enum Proof {
     Trans(Box<Proof>, Box<Proof>),
     Step(Term),
     Steps(Vec<Term>),
+    Rewrite {
+        equality: Box<Proof>,
+        proof: Box<Proof>,
+        variable: Symbol,
+        template: Prop,
+    },
     Beta {
         lambda: Lambda,
         argument: Term,
@@ -180,6 +186,23 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             Step::Normal => None,
         },
         Proof::Steps(terms) => proven_steps(terms),
+        Proof::Rewrite {
+            equality,
+            proof,
+            variable,
+            template,
+        } => {
+            let Prop::Equal(left, right) = proven_prop(equality, context)? else {
+                return None;
+            };
+
+            let left_instance = substitute_prop(template, *variable, &left);
+            if proven_prop(proof, context)? != left_instance {
+                return None;
+            }
+
+            Some(substitute_prop(template, *variable, &right))
+        }
         Proof::Beta { lambda, argument } => {
             if !argument_is_ready_for_beta(argument).ok()? {
                 return None;
@@ -1678,6 +1701,76 @@ mod tests {
         assert!(!check(
             &Proof::Steps(vec![start.clone(), Term::Quote(10)]),
             &equal(start, Term::Quote(10))
+        ));
+    }
+
+    #[test]
+    fn rewrite_uses_equality_inside_template() {
+        let start = apply(lambda(1, Term::Var(1)), Term::Quote(2));
+        let end = Term::Quote(2);
+        let template = equal(variant(10, Term::Var(99)), variant(10, Term::Var(99)));
+        let left_instance = substitute_prop(&template, 99, &start);
+        let right_instance = substitute_prop(&template, 99, &end);
+        let proof = Proof::Rewrite {
+            equality: Box::new(Proof::Step(start)),
+            proof: Box::new(Proof::Refl(match left_instance.clone() {
+                Prop::Equal(left, _) => left,
+                _ => unreachable!(),
+            })),
+            variable: 99,
+            template,
+        };
+
+        assert!(check(&proof, &right_instance));
+    }
+
+    #[test]
+    fn rewrite_can_go_right_to_left_with_symm() {
+        let start = apply(lambda(1, Term::Var(1)), Term::Quote(2));
+        let end = Term::Quote(2);
+        let template = equal(Term::Var(99), Term::Var(99));
+        let proof = Proof::Rewrite {
+            equality: Box::new(Proof::Symm(Box::new(Proof::Step(start.clone())))),
+            proof: Box::new(Proof::Refl(end.clone())),
+            variable: 99,
+            template,
+        };
+
+        assert!(check(&proof, &equal(start.clone(), start)));
+    }
+
+    #[test]
+    fn rewrite_rejects_non_equality_rewrite_proof() {
+        let prop = equal(Term::Quote(1), Term::Quote(1));
+        let context = Context::from([(7, prop.clone())]);
+        let proof = Proof::Rewrite {
+            equality: Box::new(Proof::ImpliesIntro {
+                assumption: 7,
+                premise: prop.clone(),
+                proof: Box::new(Proof::Assume(7)),
+            }),
+            proof: Box::new(Proof::Refl(Term::Quote(1))),
+            variable: 99,
+            template: equal(Term::Var(99), Term::Var(99)),
+        };
+
+        assert!(!check_in_context(&proof, &prop, &context));
+    }
+
+    #[test]
+    fn rewrite_rejects_proof_of_wrong_template_instance() {
+        let start = apply(lambda(1, Term::Var(1)), Term::Quote(2));
+        let template = equal(variant(10, Term::Var(99)), variant(10, Term::Var(99)));
+        let proof = Proof::Rewrite {
+            equality: Box::new(Proof::Step(start)),
+            proof: Box::new(Proof::Refl(Term::Quote(0))),
+            variable: 99,
+            template,
+        };
+
+        assert!(!check(
+            &proof,
+            &equal(variant(10, Term::Quote(2)), variant(10, Term::Quote(2)))
         ));
     }
 
