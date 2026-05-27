@@ -47,6 +47,8 @@ pub enum Term {
         variant: Box<Term>,
         branches: Vec<CaseBranch>,
     },
+    Error(Box<Term>),
+    Diverge,
     Var(Symbol),
     Quote(Symbol),
 }
@@ -564,7 +566,8 @@ pub fn substitute(term: &Term, variable: Symbol, replacement: &Term) -> Term {
                 .map(|branch| substitute_case_branch(branch, variable, replacement))
                 .collect(),
         },
-        Term::Var(_) | Term::Quote(_) => term.clone(),
+        Term::Error(error) => Term::Error(Box::new(substitute(error, variable, replacement))),
+        Term::Diverge | Term::Var(_) | Term::Quote(_) => term.clone(),
     }
 }
 
@@ -598,6 +601,7 @@ pub fn step(term: &Term) -> EvalResult<Step> {
                 lambda.parameter,
                 argument,
             ))),
+            Term::Error(_) | Term::Diverge => Ok(Step::Reduced(function.as_ref().clone())),
             _ => match step(function)? {
                 Step::Reduced(function) => Ok(Step::Reduced(Term::Apply {
                     function: Box::new(function),
@@ -632,6 +636,7 @@ pub fn step(term: &Term) -> EvalResult<Step> {
         Term::Record(record) => step_record(record),
         Term::Project { record, label } => step_project(record, *label),
         Term::Case { variant, branches } => step_case(variant, branches),
+        Term::Error(_) | Term::Diverge => Ok(Step::Normal),
         Term::Var(_) | Term::Quote(_) => Ok(Step::Normal),
     }
 }
@@ -665,6 +670,7 @@ fn step_project(record: &Term, label: Symbol) -> EvalResult<Step> {
                 .cloned()
                 .map(Step::Reduced)
                 .ok_or(EvalError::MissingField(label)),
+            Term::Error(_) | Term::Diverge => Ok(Step::Reduced(record.clone())),
             Term::Var(_) | Term::Apply { .. } | Term::Project { .. } | Term::Case { .. } => {
                 Ok(Step::Normal)
             }
@@ -691,6 +697,7 @@ fn step_case(variant: &Term, branches: &[CaseBranch]) -> EvalResult<Step> {
                     variant.value.as_ref(),
                 )))
             }
+            Term::Error(_) | Term::Diverge => Ok(Step::Reduced(variant.clone())),
             Term::Var(_) | Term::Apply { .. } | Term::Project { .. } | Term::Case { .. } => {
                 Ok(Step::Normal)
             }
@@ -749,6 +756,10 @@ fn add_free_symbols(term: &Term, symbols: &mut HashSet<Symbol>) {
                 symbols.extend(body_symbols);
             }
         }
+        Term::Error(error) => {
+            add_free_symbols(error, symbols);
+        }
+        Term::Diverge => {}
         Term::Var(symbol) => {
             symbols.insert(*symbol);
         }
@@ -801,6 +812,8 @@ fn rename_bound_var(term: &Term, old: Symbol, new: Symbol) -> Term {
                 })
                 .collect(),
         },
+        Term::Error(error) => Term::Error(Box::new(rename_bound_var(error, old, new))),
+        Term::Diverge => term.clone(),
         Term::Var(symbol) if *symbol == old => Term::Var(new),
         Term::Var(_) | Term::Quote(_) => term.clone(),
     }
@@ -851,6 +864,10 @@ fn add_all_symbols(term: &Term, symbols: &mut HashSet<Symbol>) {
                 add_all_symbols(&branch.body, symbols);
             }
         }
+        Term::Error(error) => {
+            add_all_symbols(error, symbols);
+        }
+        Term::Diverge => {}
         Term::Var(symbol) | Term::Quote(symbol) => {
             symbols.insert(*symbol);
         }
@@ -912,6 +929,10 @@ mod tests {
         }
     }
 
+    fn error(error: Term) -> Term {
+        Term::Error(Box::new(error))
+    }
+
     fn equal(left: Term, right: Term) -> Prop {
         Prop::Equal(left, right)
     }
@@ -967,6 +988,27 @@ mod tests {
     }
 
     #[test]
+    fn error_and_diverge_are_normal_terms() {
+        assert_eq!(step(&error(Term::Quote(1))), Ok(Step::Normal));
+        assert_eq!(step(&Term::Diverge), Ok(Step::Normal));
+    }
+
+    #[test]
+    fn application_propagates_error_and_diverge_function() {
+        let thrown = error(Term::Quote(1));
+        let error_application = apply(thrown.clone(), Term::Quote(2));
+        let diverging_application = apply(Term::Diverge, Term::Quote(2));
+
+        assert_eq!(step(&error_application), Ok(Step::Reduced(thrown.clone())));
+        assert_eq!(normal_form(&error_application), Ok(thrown));
+        assert_eq!(
+            step(&diverging_application),
+            Ok(Step::Reduced(Term::Diverge))
+        );
+        assert_eq!(normal_form(&diverging_application), Ok(Term::Diverge));
+    }
+
+    #[test]
     fn normal_form_reduces_repeatedly() {
         let term = apply(
             lambda(1, apply(lambda(2, Term::Var(2)), Term::Var(1))),
@@ -1009,6 +1051,13 @@ mod tests {
             substitute(&term, 3, &Term::Quote(4)),
             record(vec![field(1, variant(2, Term::Quote(4)))])
         );
+    }
+
+    #[test]
+    fn substitution_descends_into_error_payload() {
+        let term = error(Term::Var(1));
+
+        assert_eq!(substitute(&term, 1, &Term::Quote(2)), error(Term::Quote(2)));
     }
 
     #[test]
@@ -1088,6 +1137,19 @@ mod tests {
         let term = project(Term::Var(1), 2);
 
         assert_eq!(step(&term), Ok(Step::Normal));
+    }
+
+    #[test]
+    fn project_propagates_error_and_diverge_record() {
+        let thrown = error(Term::Quote(1));
+        let error_projection = project(thrown.clone(), 2);
+        let diverging_projection = project(Term::Diverge, 2);
+
+        assert_eq!(step(&error_projection), Ok(Step::Reduced(thrown)));
+        assert_eq!(
+            step(&diverging_projection),
+            Ok(Step::Reduced(Term::Diverge))
+        );
     }
 
     #[test]
@@ -1177,6 +1239,16 @@ mod tests {
     }
 
     #[test]
+    fn case_propagates_error_and_diverge_variant() {
+        let thrown = error(Term::Quote(1));
+        let error_case = case(thrown.clone(), vec![branch(1, 2, Term::Var(2))]);
+        let diverging_case = case(Term::Diverge, vec![branch(1, 2, Term::Var(2))]);
+
+        assert_eq!(step(&error_case), Ok(Step::Reduced(thrown)));
+        assert_eq!(step(&diverging_case), Ok(Step::Reduced(Term::Diverge)));
+    }
+
+    #[test]
     fn substitution_descends_into_case_variant_and_branches() {
         let term = case(
             Term::Var(1),
@@ -1240,6 +1312,17 @@ mod tests {
                 vec![branch(400, 2, apply(Term::Var(2), Term::Var(3)))]
             )),
             HashSet::from([1, 3])
+        );
+    }
+
+    #[test]
+    fn free_symbols_include_error_payload_and_ignore_diverge() {
+        assert_eq!(
+            free_symbols(&record(vec![
+                field(1, error(Term::Var(2))),
+                field(3, Term::Diverge),
+            ])),
+            HashSet::from([2])
         );
     }
 
