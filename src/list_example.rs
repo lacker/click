@@ -262,6 +262,9 @@ mod tests {
     const TAIL_IS_LIST: Symbol = 207;
     const INDUCTION_HYPOTHESIS: Symbol = 208;
     const REWRITE_TARGET: Symbol = 209;
+    const ACCUMULATOR_THEOREM_LIST: Symbol = 210;
+    const REVERSE_INPUT_IS_LIST: Symbol = 211;
+    const PUBLIC_REWRITE_TARGET: Symbol = 212;
 
     fn prove_evaluation(term: Term, expected: Term) -> Proof {
         proof_by_evaluation(term, expected, 512).expect("example should evaluate")
@@ -311,15 +314,17 @@ mod tests {
     }
 
     fn reverse_acc_cons_step_proof(
+        head: Symbol,
+        tail: Symbol,
         acc: Symbol,
         result: Symbol,
         acc_is_list_assumption: Symbol,
         head_is_value_assumption: Symbol,
         induction_hypothesis_assumption: Symbol,
     ) -> Proof {
-        let recursive_acc = cons(var(HEAD), var(acc));
+        let recursive_acc = cons(var(head), var(acc));
         let accumulator_is_list = Proof::ListCons {
-            head: var(HEAD),
+            head: var(head),
             tail: var(acc),
             head_is_value: Box::new(Proof::Assume(head_is_value_assumption)),
             tail_is_list: Box::new(Proof::Assume(acc_is_list_assumption)),
@@ -333,7 +338,7 @@ mod tests {
         };
         let rewrite = Proof::Rewrite {
             equality: Box::new(Proof::Symm(Box::new(reverse_acc_cons_unfolding_proof(
-                HEAD, TAIL, acc,
+                head, tail, acc,
             )))),
             proof: Box::new(induction_hypothesis),
             variable: REWRITE_TARGET,
@@ -345,6 +350,96 @@ mod tests {
             proof: Box::new(Proof::ImpliesIntro {
                 assumption: acc_is_list_assumption,
                 premise: is_list(var(acc)),
+                proof: Box::new(rewrite),
+            }),
+        }
+    }
+
+    fn reverse_acc_computes_to_list_proof(
+        list: Symbol,
+        acc: Symbol,
+        result: Symbol,
+        acc_is_list_assumption: Symbol,
+        head: Symbol,
+        tail: Symbol,
+        head_is_value_assumption: Symbol,
+        tail_is_list_assumption: Symbol,
+        induction_hypothesis_assumption: Symbol,
+    ) -> Proof {
+        let property = forall(
+            acc,
+            implies(
+                is_list(var(acc)),
+                computes_to_list(result, reverse_acc_call(var(list), var(acc))),
+            ),
+        );
+
+        Proof::ListInduction {
+            variable: list,
+            property,
+            base: Box::new(reverse_acc_nil_base_proof(
+                acc,
+                result,
+                acc_is_list_assumption,
+            )),
+            head,
+            tail,
+            head_is_value_assumption,
+            tail_is_list_assumption,
+            induction_hypothesis_assumption,
+            step: Box::new(reverse_acc_cons_step_proof(
+                head,
+                tail,
+                acc,
+                result,
+                acc_is_list_assumption,
+                head_is_value_assumption,
+                induction_hypothesis_assumption,
+            )),
+        }
+    }
+
+    fn reverse_computes_to_list_proof(
+        input: Symbol,
+        result: Symbol,
+        input_is_list_assumption: Symbol,
+    ) -> Proof {
+        let accumulator_theorem = reverse_acc_computes_to_list_proof(
+            ACCUMULATOR_THEOREM_LIST,
+            ACCUMULATOR,
+            result,
+            ACCUMULATOR_IS_LIST,
+            HEAD,
+            TAIL,
+            HEAD_IS_VALUE,
+            TAIL_IS_LIST,
+            INDUCTION_HYPOTHESIS,
+        );
+        let accumulator_result = Proof::ImpliesElim {
+            implication: Box::new(Proof::ForAllElim {
+                forall: Box::new(Proof::ImpliesElim {
+                    implication: Box::new(Proof::ForAllElim {
+                        forall: Box::new(accumulator_theorem),
+                        argument: var(input),
+                    }),
+                    premise: Box::new(Proof::Assume(input_is_list_assumption)),
+                }),
+                argument: nil(),
+            }),
+            premise: Box::new(Proof::ListNil),
+        };
+        let rewrite = Proof::Rewrite {
+            equality: Box::new(Proof::Symm(Box::new(Proof::Step(reverse_call(var(input)))))),
+            proof: Box::new(accumulator_result),
+            variable: PUBLIC_REWRITE_TARGET,
+            template: computes_to_list(result, var(PUBLIC_REWRITE_TARGET)),
+        };
+
+        Proof::ForAllIntro {
+            variable: input,
+            proof: Box::new(Proof::ImpliesIntro {
+                assumption: input_is_list_assumption,
+                premise: is_list(var(input)),
                 proof: Box::new(rewrite),
             }),
         }
@@ -426,39 +521,29 @@ mod tests {
 
     #[test]
     fn proves_reverse_acc_computes_to_list_for_all_lists() {
-        let property = forall(
+        let proof = reverse_acc_computes_to_list_proof(
+            X,
             ACCUMULATOR,
-            implies(
-                is_list(var(ACCUMULATOR)),
-                computes_to_list(RESULT, reverse_acc_call(var(X), var(ACCUMULATOR))),
-            ),
+            RESULT,
+            ACCUMULATOR_IS_LIST,
+            HEAD,
+            TAIL,
+            HEAD_IS_VALUE,
+            TAIL_IS_LIST,
+            INDUCTION_HYPOTHESIS,
         );
-        let proof = Proof::ListInduction {
-            variable: X,
-            property,
-            base: Box::new(reverse_acc_nil_base_proof(
-                ACCUMULATOR,
-                RESULT,
-                ACCUMULATOR_IS_LIST,
-            )),
-            head: HEAD,
-            tail: TAIL,
-            head_is_value_assumption: HEAD_IS_VALUE,
-            tail_is_list_assumption: TAIL_IS_LIST,
-            induction_hypothesis_assumption: INDUCTION_HYPOTHESIS,
-            step: Box::new(reverse_acc_cons_step_proof(
-                ACCUMULATOR,
-                RESULT,
-                ACCUMULATOR_IS_LIST,
-                HEAD_IS_VALUE,
-                INDUCTION_HYPOTHESIS,
-            )),
-        };
 
         assert!(check(
             &proof,
             &reverse_acc_computes_to_list_theorem(X, ACCUMULATOR, RESULT),
         ));
+    }
+
+    #[test]
+    fn proves_reverse_computes_to_list_for_all_lists() {
+        let proof = reverse_computes_to_list_proof(X, RESULT, REVERSE_INPUT_IS_LIST);
+
+        assert!(check(&proof, &reverse_computes_to_list_theorem(X, RESULT)));
     }
 
     #[test]
