@@ -228,6 +228,180 @@ pub fn diverges(term: Term) -> Prop {
     computes_to(term, Term::Diverge)
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Theorem {
+    prop: Prop,
+    proof: Proof,
+}
+
+impl Theorem {
+    pub fn from_proof(proof: Proof, prop: Prop) -> Option<Self> {
+        check(&proof, &prop).then_some(Self { prop, proof })
+    }
+
+    fn from_closed_proof(proof: Proof) -> Option<Self> {
+        let prop = proven_prop(&proof, &Context::new())?;
+        Some(Self { prop, proof })
+    }
+
+    pub fn prop(&self) -> &Prop {
+        &self.prop
+    }
+
+    pub fn proof(&self) -> &Proof {
+        &self.proof
+    }
+
+    pub fn into_proof(self) -> Proof {
+        self.proof
+    }
+
+    pub fn refl(term: Term) -> Self {
+        Self {
+            prop: equal(term.clone(), term.clone()),
+            proof: Proof::Refl(term),
+        }
+    }
+
+    pub fn symm(theorem: &Self) -> Option<Self> {
+        Self::from_closed_proof(Proof::Symm(Box::new(theorem.proof.clone())))
+    }
+
+    pub fn trans(first: &Self, second: &Self) -> Option<Self> {
+        Self::from_closed_proof(Proof::Trans(
+            Box::new(first.proof.clone()),
+            Box::new(second.proof.clone()),
+        ))
+    }
+
+    pub fn step(term: Term) -> Option<Self> {
+        Self::from_closed_proof(Proof::Step(term))
+    }
+
+    pub fn steps(terms: Vec<Term>) -> Option<Self> {
+        Self::from_closed_proof(Proof::Steps(terms))
+    }
+
+    pub fn rewrite(
+        equality: &Self,
+        theorem: &Self,
+        variable: Symbol,
+        template: Prop,
+    ) -> Option<Self> {
+        Self::from_closed_proof(Proof::Rewrite {
+            equality: Box::new(equality.proof.clone()),
+            proof: Box::new(theorem.proof.clone()),
+            variable,
+            template,
+        })
+    }
+
+    pub fn beta(lambda: Lambda, argument: Term) -> Option<Self> {
+        Self::from_closed_proof(Proof::Beta { lambda, argument })
+    }
+
+    pub fn value_lambda(lambda: Lambda) -> Self {
+        Self::from_closed_proof(Proof::ValueLambda(lambda))
+            .expect("value lambda theorem should be valid")
+    }
+
+    pub fn value_quote(symbol: Symbol) -> Self {
+        Self::from_closed_proof(Proof::ValueQuote(symbol))
+            .expect("value quote theorem should be valid")
+    }
+
+    pub fn value_nil() -> Self {
+        Self::from_closed_proof(Proof::ValueNil).expect("value nil theorem should be valid")
+    }
+
+    pub fn value_cons(
+        head: Term,
+        tail: Term,
+        head_is_value: &Self,
+        tail_is_value: &Self,
+    ) -> Option<Self> {
+        Self::from_closed_proof(Proof::ValueCons {
+            head,
+            tail,
+            head_is_value: Box::new(head_is_value.proof.clone()),
+            tail_is_value: Box::new(tail_is_value.proof.clone()),
+        })
+    }
+
+    pub fn list_nil() -> Self {
+        Self::from_closed_proof(Proof::ListNil).expect("list nil theorem should be valid")
+    }
+
+    pub fn list_cons(
+        head: Term,
+        tail: Term,
+        head_is_value: &Self,
+        tail_is_list: &Self,
+    ) -> Option<Self> {
+        Self::from_closed_proof(Proof::ListCons {
+            head,
+            tail,
+            head_is_value: Box::new(head_is_value.proof.clone()),
+            tail_is_list: Box::new(tail_is_list.proof.clone()),
+        })
+    }
+
+    pub fn implies_elim(implication: &Self, premise: &Self) -> Option<Self> {
+        Self::from_closed_proof(Proof::ImpliesElim {
+            implication: Box::new(implication.proof.clone()),
+            premise: Box::new(premise.proof.clone()),
+        })
+    }
+
+    pub fn forall_elim(forall: &Self, argument: Term) -> Option<Self> {
+        Self::from_closed_proof(Proof::ForAllElim {
+            forall: Box::new(forall.proof.clone()),
+            argument,
+        })
+    }
+
+    pub fn exists_intro(variable: Symbol, body: Prop, witness: Term, proof: &Self) -> Option<Self> {
+        Self::from_closed_proof(Proof::ExistsIntro {
+            variable,
+            body,
+            witness,
+            proof: Box::new(proof.proof.clone()),
+        })
+    }
+
+    pub fn and_intro(left: &Self, right: &Self) -> Self {
+        Self::from_closed_proof(Proof::AndIntro(
+            Box::new(left.proof.clone()),
+            Box::new(right.proof.clone()),
+        ))
+        .expect("and intro over closed theorems should be valid")
+    }
+
+    pub fn and_elim_left(theorem: &Self) -> Option<Self> {
+        Self::from_closed_proof(Proof::AndElimLeft(Box::new(theorem.proof.clone())))
+    }
+
+    pub fn and_elim_right(theorem: &Self) -> Option<Self> {
+        Self::from_closed_proof(Proof::AndElimRight(Box::new(theorem.proof.clone())))
+    }
+
+    pub fn or_intro_left(theorem: &Self, right: Prop) -> Self {
+        Self::from_closed_proof(Proof::OrIntroLeft {
+            proof: Box::new(theorem.proof.clone()),
+            right,
+        })
+        .expect("or intro left over a closed theorem should be valid")
+    }
+
+    pub fn or_intro_right(left: Prop, theorem: &Self) -> Self {
+        Self::from_closed_proof(Proof::OrIntroRight {
+            left,
+            proof: Box::new(theorem.proof.clone()),
+        })
+        .expect("or intro right over a closed theorem should be valid")
+    }
+}
+
 pub fn check(proof: &Proof, prop: &Prop) -> bool {
     check_in_context(proof, prop, &Context::new())
 }
@@ -1391,6 +1565,101 @@ mod tests {
             &Proof::Steps(vec![start.clone(), middle, end.clone()]),
             &equal(start, end)
         ));
+    }
+
+    #[test]
+    fn theorem_from_proof_checks_closed_proofs() {
+        let valid = Theorem::from_proof(
+            Proof::Refl(Term::Quote(1)),
+            equal(Term::Quote(1), Term::Quote(1)),
+        );
+        let invalid = Theorem::from_proof(
+            Proof::Refl(Term::Quote(1)),
+            equal(Term::Quote(1), Term::Quote(2)),
+        );
+
+        assert!(valid.is_some());
+        assert!(invalid.is_none());
+        assert!(
+            Theorem::from_proof(Proof::Assume(7), equal(Term::Quote(1), Term::Quote(1))).is_none()
+        );
+    }
+
+    #[test]
+    fn theorem_equality_rules_build_checked_theorems() {
+        let start = apply(lambda(1, Term::Var(1)), Term::Quote(2));
+        let step = Theorem::step(start.clone()).expect("term should step");
+        let refl = Theorem::refl(Term::Quote(2));
+        let trans = Theorem::trans(&step, &refl).expect("equalities should chain");
+        let symm = Theorem::symm(&step).expect("step equality should be symmetric");
+
+        assert_eq!(step.prop(), &equal(start.clone(), Term::Quote(2)));
+        assert_eq!(trans.prop(), &equal(start.clone(), Term::Quote(2)));
+        assert_eq!(symm.prop(), &equal(Term::Quote(2), start));
+        assert!(Theorem::step(Term::Quote(2)).is_none());
+    }
+
+    #[test]
+    fn theorem_rewrite_moves_props_across_equality() {
+        let term = apply(lambda(1, Term::Var(1)), Term::Nil);
+        let step = Theorem::step(term.clone()).expect("term should step");
+        let nil_to_term = Theorem::symm(&step).expect("step should be symmetric");
+        let theorem = Theorem::rewrite(
+            &nil_to_term,
+            &Theorem::list_nil(),
+            99,
+            is_list(Term::Var(99)),
+        )
+        .expect("rewrite should prove listness before evaluation");
+
+        assert_eq!(theorem.prop(), &is_list(term));
+    }
+
+    #[test]
+    fn theorem_value_and_list_rules_build_checked_theorems() {
+        let head = Term::Quote(1);
+        let tail = Term::Nil;
+        let head_value = Theorem::value_quote(1);
+        let tail_value = Theorem::value_nil();
+        let tail_list = Theorem::list_nil();
+        let list = cons(head.clone(), tail.clone());
+        let value = Theorem::value_cons(head.clone(), tail.clone(), &head_value, &tail_value)
+            .expect("cons of values is a value");
+        let list_theorem = Theorem::list_cons(head.clone(), tail.clone(), &head_value, &tail_list)
+            .expect("cons with value head and list tail is a list");
+
+        assert_eq!(value.prop(), &is_value(list.clone()));
+        assert_eq!(list_theorem.prop(), &is_list(list));
+        assert!(Theorem::list_cons(Term::Diverge, tail, &head_value, &tail_list).is_none());
+    }
+
+    #[test]
+    fn theorem_first_order_rules_build_checked_theorems() {
+        let prop = equal(Term::Quote(1), Term::Quote(1));
+        let implication = Theorem::from_proof(
+            Proof::ImpliesIntro {
+                assumption: 7,
+                premise: prop.clone(),
+                proof: Box::new(Proof::Assume(7)),
+            },
+            implies(prop.clone(), prop.clone()),
+        )
+        .expect("identity implication should check");
+        let conclusion = Theorem::implies_elim(&implication, &Theorem::refl(Term::Quote(1)))
+            .expect("modus ponens should apply");
+        let universal = Theorem::from_proof(
+            Proof::ForAllIntro {
+                variable: 1,
+                proof: Box::new(Proof::Refl(Term::Var(1))),
+            },
+            forall(1, equal(Term::Var(1), Term::Var(1))),
+        )
+        .expect("forall intro should check");
+        let instance = Theorem::forall_elim(&universal, Term::Quote(2))
+            .expect("forall theorem should instantiate");
+
+        assert_eq!(conclusion.prop(), &prop);
+        assert_eq!(instance.prop(), &equal(Term::Quote(2), Term::Quote(2)));
     }
 
     #[test]
