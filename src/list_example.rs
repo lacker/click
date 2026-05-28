@@ -4,7 +4,10 @@
 //! General reverse theorems should use the kernel's list proposition and
 //! induction rule rather than a userspace list recognizer.
 
-use crate::{Lambda, ListCase, Proof, Step, Symbol, Term, check, computes_to, step};
+use crate::{
+    Lambda, ListCase, Proof, Prop, Step, Symbol, Term, check, computes_to, computes_to_list,
+    forall, implies, is_list, step,
+};
 
 pub const UNIT: Symbol = 3;
 
@@ -146,11 +149,49 @@ fn reverse_acc_body() -> Term {
 }
 
 pub fn reverse() -> Term {
-    lambda(LIST, apply(apply(reverse_acc(), var(LIST)), nil()))
+    lambda(LIST, reverse_acc_call(var(LIST), nil()))
 }
 
 pub fn reverse_call(value: Term) -> Term {
     apply(reverse(), value)
+}
+
+pub fn reverse_acc_call(list: Term, acc: Term) -> Term {
+    apply(apply(reverse_acc(), list), acc)
+}
+
+/// If `list` and `acc` are lists, then `reverse_acc(list, acc)` computes to a list.
+///
+/// `result` names the existential result in `computes_to_list` and should be
+/// distinct from `list` and `acc`.
+pub fn reverse_acc_computes_to_list_theorem(list: Symbol, acc: Symbol, result: Symbol) -> Prop {
+    forall(
+        list,
+        implies(
+            is_list(var(list)),
+            forall(
+                acc,
+                implies(
+                    is_list(var(acc)),
+                    computes_to_list(result, reverse_acc_call(var(list), var(acc))),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If `list` is a list, then `reverse(list)` computes to a list.
+///
+/// `result` names the existential result in `computes_to_list` and should be
+/// distinct from `list`.
+pub fn reverse_computes_to_list_theorem(list: Symbol, result: Symbol) -> Prop {
+    forall(
+        list,
+        implies(
+            is_list(var(list)),
+            computes_to_list(result, reverse_call(var(list))),
+        ),
+    )
 }
 
 /// A function whose result is the denotational divergence marker.
@@ -206,11 +247,20 @@ pub fn check_evaluates_to(term: Term, value: Term, proof: &Proof) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Proof, check, diverges};
+    use crate::{Proof, and, check, diverges, exists, normal_form};
 
     const A: Symbol = 100;
     const B: Symbol = 101;
     const NOT_A_LIST: Symbol = 102;
+    const X: Symbol = 200;
+    const ACCUMULATOR: Symbol = 201;
+    const RESULT: Symbol = 202;
+    const HEAD: Symbol = 203;
+    const TAIL: Symbol = 204;
+    const ACCUMULATOR_IS_LIST: Symbol = 205;
+    const HEAD_IS_VALUE: Symbol = 206;
+    const TAIL_IS_LIST: Symbol = 207;
+    const INDUCTION_HYPOTHESIS: Symbol = 208;
 
     fn prove_evaluation(term: Term, expected: Term) -> Proof {
         proof_by_evaluation(term, expected, 512).expect("example should evaluate")
@@ -219,6 +269,143 @@ mod tests {
     fn assert_evaluates(term: Term, expected: Term) {
         let proof = prove_evaluation(term.clone(), expected.clone());
         assert!(check_evaluates_to(term, expected, &proof));
+    }
+
+    fn reverse_acc_nil_base_proof(acc: Symbol, result: Symbol, assumption: Symbol) -> Proof {
+        let term = reverse_acc_call(nil(), var(acc));
+        let result_body = and(computes_to(term.clone(), var(result)), is_list(var(result)));
+        let evaluation = proof_by_evaluation(term, var(acc), 128).expect("base case should reduce");
+
+        Proof::ForAllIntro {
+            variable: acc,
+            proof: Box::new(Proof::ImpliesIntro {
+                assumption,
+                premise: is_list(var(acc)),
+                proof: Box::new(Proof::ExistsIntro {
+                    variable: result,
+                    body: result_body,
+                    witness: var(acc),
+                    proof: Box::new(Proof::AndIntro(
+                        Box::new(evaluation),
+                        Box::new(Proof::Assume(assumption)),
+                    )),
+                }),
+            }),
+        }
+    }
+
+    #[test]
+    fn reverse_acc_computes_to_list_theorem_has_expected_shape() {
+        assert_eq!(
+            reverse_acc_computes_to_list_theorem(X, ACCUMULATOR, RESULT),
+            forall(
+                X,
+                implies(
+                    is_list(var(X)),
+                    forall(
+                        ACCUMULATOR,
+                        implies(
+                            is_list(var(ACCUMULATOR)),
+                            exists(
+                                RESULT,
+                                and(
+                                    computes_to(
+                                        reverse_acc_call(var(X), var(ACCUMULATOR)),
+                                        var(RESULT),
+                                    ),
+                                    is_list(var(RESULT)),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn reverse_computes_to_list_theorem_has_expected_shape() {
+        assert_eq!(
+            reverse_computes_to_list_theorem(X, RESULT),
+            forall(
+                X,
+                implies(
+                    is_list(var(X)),
+                    exists(
+                        RESULT,
+                        and(
+                            computes_to(reverse_call(var(X)), var(RESULT)),
+                            is_list(var(RESULT)),
+                        ),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn reverse_acc_nil_base_case_is_provable() {
+        let theorem_base = forall(
+            ACCUMULATOR,
+            implies(
+                is_list(var(ACCUMULATOR)),
+                computes_to_list(RESULT, reverse_acc_call(nil(), var(ACCUMULATOR))),
+            ),
+        );
+
+        assert!(check(
+            &reverse_acc_nil_base_proof(ACCUMULATOR, RESULT, ACCUMULATOR_IS_LIST),
+            &theorem_base,
+        ));
+    }
+
+    #[test]
+    fn reverse_acc_cons_case_symbolically_unfolds() {
+        let start = reverse_acc_call(cons(var(HEAD), var(TAIL)), var(ACCUMULATOR));
+        let recursive = reverse_acc_call(var(TAIL), cons(var(HEAD), var(ACCUMULATOR)));
+        let normal = normal_form(&recursive);
+        let start_to_normal =
+            proof_by_evaluation(start.clone(), normal.clone(), 128).expect("start should unfold");
+        let recursive_to_normal = proof_by_evaluation(recursive.clone(), normal, 128)
+            .expect("recursive call should unfold");
+        let proof = Proof::Trans(
+            Box::new(start_to_normal),
+            Box::new(Proof::Symm(Box::new(recursive_to_normal))),
+        );
+
+        assert!(check(&proof, &computes_to(start, recursive)));
+    }
+
+    #[test]
+    #[ignore = "needs the cons proof: use the induction hypothesis, then rewrite the existential conclusion"]
+    fn proves_reverse_acc_computes_to_list_for_all_lists() {
+        let property = forall(
+            ACCUMULATOR,
+            implies(
+                is_list(var(ACCUMULATOR)),
+                computes_to_list(RESULT, reverse_acc_call(var(X), var(ACCUMULATOR))),
+            ),
+        );
+        let proof = Proof::ListInduction {
+            variable: X,
+            property,
+            base: Box::new(reverse_acc_nil_base_proof(
+                ACCUMULATOR,
+                RESULT,
+                ACCUMULATOR_IS_LIST,
+            )),
+            head: HEAD,
+            tail: TAIL,
+            head_is_value_assumption: HEAD_IS_VALUE,
+            tail_is_list_assumption: TAIL_IS_LIST,
+            induction_hypothesis_assumption: INDUCTION_HYPOTHESIS,
+            step: Box::new(Proof::Assume(INDUCTION_HYPOTHESIS)),
+        };
+
+        assert!(check(
+            &proof,
+            &reverse_acc_computes_to_list_theorem(X, ACCUMULATOR, RESULT),
+        ));
     }
 
     #[test]
