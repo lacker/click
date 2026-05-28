@@ -51,6 +51,7 @@ pub enum Prop {
     Equal(Term, Term),
     IsValue(Term),
     IsList(Term),
+    ReverseAccumulates { list: Term, acc: Term, result: Term },
     Implies(Box<Prop>, Box<Prop>),
     ForAll { variable: Symbol, body: Box<Prop> },
     Exists { variable: Symbol, body: Box<Prop> },
@@ -91,6 +92,17 @@ pub enum Proof {
         tail: Term,
         head_is_value: Box<Proof>,
         tail_is_list: Box<Proof>,
+    },
+    ReverseAccNil {
+        acc: Term,
+    },
+    ReverseAccCons {
+        head: Term,
+        tail: Term,
+        acc: Term,
+        result: Term,
+        head_is_value: Box<Proof>,
+        tail_reverse_acc: Box<Proof>,
     },
     ListInduction {
         variable: Symbol,
@@ -162,6 +174,10 @@ pub fn is_value(term: Term) -> Prop {
 
 pub fn is_list(term: Term) -> Prop {
     Prop::IsList(term)
+}
+
+pub fn reverse_accumulates(list: Term, acc: Term, result: Term) -> Prop {
+    Prop::ReverseAccumulates { list, acc, result }
 }
 
 pub fn implies(premise: Prop, conclusion: Prop) -> Prop {
@@ -346,6 +362,29 @@ impl Theorem {
         })
     }
 
+    pub fn reverse_acc_nil(acc: Term) -> Self {
+        Self::from_closed_proof(Proof::ReverseAccNil { acc })
+            .expect("reverse accumulator nil theorem should be valid")
+    }
+
+    pub fn reverse_acc_cons(
+        head: Term,
+        tail: Term,
+        acc: Term,
+        result: Term,
+        head_is_value: &Self,
+        tail_reverse_acc: &Self,
+    ) -> Option<Self> {
+        Self::from_closed_proof(Proof::ReverseAccCons {
+            head,
+            tail,
+            acc,
+            result,
+            head_is_value: Box::new(head_is_value.proof.clone()),
+            tail_reverse_acc: Box::new(tail_reverse_acc.proof.clone()),
+        })
+    }
+
     pub fn implies_elim(implication: &Self, premise: &Self) -> Option<Self> {
         Self::from_closed_proof(Proof::ImpliesElim {
             implication: Box::new(implication.proof.clone()),
@@ -501,6 +540,42 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
                     head: Box::new(head.clone()),
                     tail: Box::new(tail.clone()),
                 }))
+            }
+            _ => None,
+        },
+        Proof::ReverseAccNil { acc } => Some(Prop::ReverseAccumulates {
+            list: Term::Nil,
+            acc: acc.clone(),
+            result: acc.clone(),
+        }),
+        Proof::ReverseAccCons {
+            head,
+            tail,
+            acc,
+            result,
+            head_is_value,
+            tail_reverse_acc,
+        } => match (
+            proven_prop(head_is_value, context)?,
+            proven_prop(tail_reverse_acc, context)?,
+        ) {
+            (
+                Prop::IsValue(proven_head),
+                Prop::ReverseAccumulates {
+                    list: proven_tail,
+                    acc: proven_acc,
+                    result: proven_result,
+                },
+            ) if proven_head == *head
+                && proven_tail == *tail
+                && proven_acc == cons_term(head.clone(), acc.clone())
+                && proven_result == *result =>
+            {
+                Some(Prop::ReverseAccumulates {
+                    list: cons_term(head.clone(), tail.clone()),
+                    acc: acc.clone(),
+                    result: result.clone(),
+                })
             }
             _ => None,
         },
@@ -674,6 +749,13 @@ fn proven_steps(terms: &[Term]) -> Option<Prop> {
     Some(Prop::Equal(first.clone(), previous.clone()))
 }
 
+fn cons_term(head: Term, tail: Term) -> Term {
+    Term::Cons {
+        head: Box::new(head),
+        tail: Box::new(tail),
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ListInductionSymbols {
     variable: Symbol,
@@ -785,6 +867,11 @@ pub fn substitute_prop(prop: &Prop, variable: Symbol, replacement: &Term) -> Pro
         ),
         Prop::IsValue(term) => Prop::IsValue(substitute(term, variable, replacement)),
         Prop::IsList(term) => Prop::IsList(substitute(term, variable, replacement)),
+        Prop::ReverseAccumulates { list, acc, result } => Prop::ReverseAccumulates {
+            list: substitute(list, variable, replacement),
+            acc: substitute(acc, variable, replacement),
+            result: substitute(result, variable, replacement),
+        },
         Prop::Implies(premise, conclusion) => Prop::Implies(
             Box::new(substitute_prop(premise, variable, replacement)),
             Box::new(substitute_prop(conclusion, variable, replacement)),
@@ -860,6 +947,11 @@ fn add_free_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
         Prop::IsList(term) => {
             add_free_symbols(term, symbols);
         }
+        Prop::ReverseAccumulates { list, acc, result } => {
+            add_free_symbols(list, symbols);
+            add_free_symbols(acc, symbols);
+            add_free_symbols(result, symbols);
+        }
         Prop::Implies(premise, conclusion)
         | Prop::And(premise, conclusion)
         | Prop::Or(premise, conclusion) => {
@@ -883,6 +975,11 @@ fn rename_bound_var_prop(prop: &Prop, old: Symbol, new: Symbol) -> Prop {
         ),
         Prop::IsValue(term) => Prop::IsValue(rename_bound_var(term, old, new)),
         Prop::IsList(term) => Prop::IsList(rename_bound_var(term, old, new)),
+        Prop::ReverseAccumulates { list, acc, result } => Prop::ReverseAccumulates {
+            list: rename_bound_var(list, old, new),
+            acc: rename_bound_var(acc, old, new),
+            result: rename_bound_var(result, old, new),
+        },
         Prop::Implies(premise, conclusion) => Prop::Implies(
             Box::new(rename_bound_var_prop(premise, old, new)),
             Box::new(rename_bound_var_prop(conclusion, old, new)),
@@ -932,6 +1029,11 @@ fn add_all_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
         }
         Prop::IsList(term) => {
             add_all_symbols(term, symbols);
+        }
+        Prop::ReverseAccumulates { list, acc, result } => {
+            add_all_symbols(list, symbols);
+            add_all_symbols(acc, symbols);
+            add_all_symbols(result, symbols);
         }
         Prop::Implies(premise, conclusion)
         | Prop::And(premise, conclusion)
@@ -1643,6 +1745,40 @@ mod tests {
     }
 
     #[test]
+    fn reverse_accumulator_rules_build_checked_theorems() {
+        let head = Term::Quote(1);
+        let acc = Term::Nil;
+        let result = cons(head.clone(), acc.clone());
+        let head_value = Theorem::value_quote(1);
+        let tail_relation = Theorem::reverse_acc_nil(result.clone());
+        let relation = Theorem::reverse_acc_cons(
+            head.clone(),
+            Term::Nil,
+            acc.clone(),
+            result.clone(),
+            &head_value,
+            &tail_relation,
+        )
+        .expect("reverse accumulator cons rule should apply");
+
+        assert_eq!(
+            relation.prop(),
+            &reverse_accumulates(cons(head.clone(), Term::Nil), acc, result)
+        );
+        assert!(
+            Theorem::reverse_acc_cons(
+                Term::Diverge,
+                Term::Nil,
+                Term::Nil,
+                cons(head, Term::Nil),
+                &head_value,
+                &tail_relation,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn theorem_first_order_rules_build_checked_theorems() {
         let prop = equal(Term::Quote(1), Term::Quote(1));
         let implication = Theorem::from_proof(
@@ -2010,6 +2146,14 @@ mod tests {
                 9,
                 computes_to(term.clone(), Term::Error(Box::new(Term::Var(9)))),
             )
+        );
+        assert_eq!(
+            reverse_accumulates(term.clone(), Term::Nil, Term::Var(9)),
+            Prop::ReverseAccumulates {
+                list: term.clone(),
+                acc: Term::Nil,
+                result: Term::Var(9),
+            }
         );
         assert_eq!(diverges(term.clone()), computes_to(term, Term::Diverge));
         assert_eq!(
