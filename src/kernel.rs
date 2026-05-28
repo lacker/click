@@ -514,18 +514,18 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             tail_is_list_assumption,
             induction_hypothesis_assumption,
             step,
-        } => prove_list_induction(
-            context,
-            *variable,
-            property,
-            base,
-            *head,
-            *tail,
-            *head_is_value_assumption,
-            *tail_is_list_assumption,
-            *induction_hypothesis_assumption,
-            step,
-        ),
+        } => {
+            let symbols = ListInductionSymbols {
+                variable: *variable,
+                head: *head,
+                tail: *tail,
+                head_is_value_assumption: *head_is_value_assumption,
+                tail_is_list_assumption: *tail_is_list_assumption,
+                induction_hypothesis_assumption: *induction_hypothesis_assumption,
+            };
+
+            prove_list_induction(context, symbols, property, base, step)
+        }
         Proof::ImpliesIntro {
             assumption,
             premise,
@@ -674,30 +674,35 @@ fn proven_steps(terms: &[Term]) -> Option<Prop> {
     Some(Prop::Equal(first.clone(), previous.clone()))
 }
 
-fn prove_list_induction(
-    context: &Context,
+#[derive(Clone, Copy)]
+struct ListInductionSymbols {
     variable: Symbol,
-    property: &Prop,
-    base: &Proof,
     head: Symbol,
     tail: Symbol,
     head_is_value_assumption: Symbol,
     tail_is_list_assumption: Symbol,
     induction_hypothesis_assumption: Symbol,
+}
+
+fn prove_list_induction(
+    context: &Context,
+    symbols: ListInductionSymbols,
+    property: &Prop,
+    base: &Proof,
     step: &Proof,
 ) -> Option<Prop> {
-    if !list_induction_symbols_are_fresh(
-        context,
+    if !list_induction_symbols_are_fresh(context, symbols, property) {
+        return None;
+    }
+
+    let ListInductionSymbols {
         variable,
-        property,
         head,
         tail,
         head_is_value_assumption,
         tail_is_list_assumption,
         induction_hypothesis_assumption,
-    ) {
-        return None;
-    }
+    } = symbols;
 
     let base_prop = substitute_prop(property, variable, &Term::Nil);
     if proven_prop(base, context)? != base_prop {
@@ -737,14 +742,18 @@ fn prove_list_induction(
 
 fn list_induction_symbols_are_fresh(
     context: &Context,
-    variable: Symbol,
+    symbols: ListInductionSymbols,
     property: &Prop,
-    head: Symbol,
-    tail: Symbol,
-    head_is_value_assumption: Symbol,
-    tail_is_list_assumption: Symbol,
-    induction_hypothesis_assumption: Symbol,
 ) -> bool {
+    let ListInductionSymbols {
+        variable,
+        head,
+        tail,
+        head_is_value_assumption,
+        tail_is_list_assumption,
+        induction_hypothesis_assumption,
+    } = symbols;
+
     if head == tail || head == variable || tail == variable {
         return false;
     }
