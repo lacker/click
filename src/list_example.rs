@@ -261,6 +261,7 @@ mod tests {
     const HEAD_IS_VALUE: Symbol = 206;
     const TAIL_IS_LIST: Symbol = 207;
     const INDUCTION_HYPOTHESIS: Symbol = 208;
+    const REWRITE_TARGET: Symbol = 209;
 
     fn prove_evaluation(term: Term, expected: Term) -> Proof {
         proof_by_evaluation(term, expected, 512).expect("example should evaluate")
@@ -290,6 +291,61 @@ mod tests {
                         Box::new(Proof::Assume(assumption)),
                     )),
                 }),
+            }),
+        }
+    }
+
+    fn reverse_acc_cons_unfolding_proof(head: Symbol, tail: Symbol, acc: Symbol) -> Proof {
+        let start = reverse_acc_call(cons(var(head), var(tail)), var(acc));
+        let recursive = reverse_acc_call(var(tail), cons(var(head), var(acc)));
+        let normal = normal_form(&recursive);
+        let start_to_normal =
+            proof_by_evaluation(start, normal.clone(), 128).expect("start should unfold");
+        let recursive_to_normal =
+            proof_by_evaluation(recursive, normal, 128).expect("recursive call should unfold");
+
+        Proof::Trans(
+            Box::new(start_to_normal),
+            Box::new(Proof::Symm(Box::new(recursive_to_normal))),
+        )
+    }
+
+    fn reverse_acc_cons_step_proof(
+        acc: Symbol,
+        result: Symbol,
+        acc_is_list_assumption: Symbol,
+        head_is_value_assumption: Symbol,
+        induction_hypothesis_assumption: Symbol,
+    ) -> Proof {
+        let recursive_acc = cons(var(HEAD), var(acc));
+        let accumulator_is_list = Proof::ListCons {
+            head: var(HEAD),
+            tail: var(acc),
+            head_is_value: Box::new(Proof::Assume(head_is_value_assumption)),
+            tail_is_list: Box::new(Proof::Assume(acc_is_list_assumption)),
+        };
+        let induction_hypothesis = Proof::ImpliesElim {
+            implication: Box::new(Proof::ForAllElim {
+                forall: Box::new(Proof::Assume(induction_hypothesis_assumption)),
+                argument: recursive_acc,
+            }),
+            premise: Box::new(accumulator_is_list),
+        };
+        let rewrite = Proof::Rewrite {
+            equality: Box::new(Proof::Symm(Box::new(reverse_acc_cons_unfolding_proof(
+                HEAD, TAIL, acc,
+            )))),
+            proof: Box::new(induction_hypothesis),
+            variable: REWRITE_TARGET,
+            template: computes_to_list(result, var(REWRITE_TARGET)),
+        };
+
+        Proof::ForAllIntro {
+            variable: acc,
+            proof: Box::new(Proof::ImpliesIntro {
+                assumption: acc_is_list_assumption,
+                premise: is_list(var(acc)),
+                proof: Box::new(rewrite),
             }),
         }
     }
@@ -363,21 +419,12 @@ mod tests {
     fn reverse_acc_cons_case_symbolically_unfolds() {
         let start = reverse_acc_call(cons(var(HEAD), var(TAIL)), var(ACCUMULATOR));
         let recursive = reverse_acc_call(var(TAIL), cons(var(HEAD), var(ACCUMULATOR)));
-        let normal = normal_form(&recursive);
-        let start_to_normal =
-            proof_by_evaluation(start.clone(), normal.clone(), 128).expect("start should unfold");
-        let recursive_to_normal = proof_by_evaluation(recursive.clone(), normal, 128)
-            .expect("recursive call should unfold");
-        let proof = Proof::Trans(
-            Box::new(start_to_normal),
-            Box::new(Proof::Symm(Box::new(recursive_to_normal))),
-        );
+        let proof = reverse_acc_cons_unfolding_proof(HEAD, TAIL, ACCUMULATOR);
 
         assert!(check(&proof, &computes_to(start, recursive)));
     }
 
     #[test]
-    #[ignore = "needs the cons proof: use the induction hypothesis, then rewrite the existential conclusion"]
     fn proves_reverse_acc_computes_to_list_for_all_lists() {
         let property = forall(
             ACCUMULATOR,
@@ -399,7 +446,13 @@ mod tests {
             head_is_value_assumption: HEAD_IS_VALUE,
             tail_is_list_assumption: TAIL_IS_LIST,
             induction_hypothesis_assumption: INDUCTION_HYPOTHESIS,
-            step: Box::new(Proof::Assume(INDUCTION_HYPOTHESIS)),
+            step: Box::new(reverse_acc_cons_step_proof(
+                ACCUMULATOR,
+                RESULT,
+                ACCUMULATOR_IS_LIST,
+                HEAD_IS_VALUE,
+                INDUCTION_HYPOTHESIS,
+            )),
         };
 
         assert!(check(
