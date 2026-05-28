@@ -47,16 +47,6 @@ pub enum Step {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum EvalError {
-    ApplyNonLambda(Term),
-    HeadNonCons(Term),
-    TailNonCons(Term),
-    CaseNonList(Term),
-}
-
-pub type EvalResult<T> = Result<T, EvalError>;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Prop {
     Equal(Term, Term),
     IsList(Term),
@@ -176,7 +166,7 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
                 _ => None,
             }
         }
-        Proof::Step(term) => match step(term).ok()? {
+        Proof::Step(term) => match step(term) {
             Step::Reduced(reduced) => Some(Prop::Equal(term.clone(), reduced)),
             Step::Normal => None,
         },
@@ -199,7 +189,7 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             Some(substitute_prop(template, *variable, &right))
         }
         Proof::Beta { lambda, argument } => {
-            if !argument_is_ready_for_beta(argument).ok()? {
+            if !argument_is_ready_for_beta(argument) {
                 return None;
             }
 
@@ -381,7 +371,7 @@ fn proven_steps(terms: &[Term]) -> Option<Prop> {
     let mut previous = first;
 
     for next in rest {
-        match step(previous).ok()? {
+        match step(previous) {
             Step::Reduced(reduced) if &reduced == next => previous = next,
             _ => return None,
         }
@@ -722,67 +712,63 @@ fn substitute_list_case(list_case: &ListCase, variable: Symbol, replacement: &Te
     }
 }
 
-pub fn step(term: &Term) -> EvalResult<Step> {
+pub fn step(term: &Term) -> Step {
     match term {
         Term::Apply { function, argument } => step_apply(function, argument),
-        Term::Lambda(_) => Ok(Step::Normal),
-        Term::Nil => Ok(Step::Normal),
+        Term::Lambda(_) => Step::Normal,
+        Term::Nil => Step::Normal,
         Term::Cons { head, tail } => step_cons(head, tail),
         Term::Head(term) => step_head(term),
         Term::Tail(term) => step_tail(term),
         Term::ListCase(list_case) => step_list_case(list_case),
-        Term::Error(_) | Term::Diverge => Ok(Step::Normal),
-        Term::Var(_) | Term::Quote(_) => Ok(Step::Normal),
+        Term::Error(_) | Term::Diverge => Step::Normal,
+        Term::Var(_) | Term::Quote(_) => Step::Normal,
     }
 }
 
-fn step_apply(function: &Term, argument: &Term) -> EvalResult<Step> {
+fn step_apply(function: &Term, argument: &Term) -> Step {
     match function {
         Term::Lambda(lambda) => step_lambda_application(lambda, argument),
-        Term::Error(_) | Term::Diverge => Ok(Step::Reduced(function.clone())),
-        _ => match step(function)? {
-            Step::Reduced(function) => Ok(Step::Reduced(Term::Apply {
+        Term::Error(_) | Term::Diverge => Step::Reduced(function.clone()),
+        _ => match step(function) {
+            Step::Reduced(function) => Step::Reduced(Term::Apply {
                 function: Box::new(function),
                 argument: Box::new(argument.clone()),
-            })),
+            }),
             Step::Normal if is_known_non_callable(function) => {
-                Err(EvalError::ApplyNonLambda(function.clone()))
+                Step::Reduced(runtime_error(function.clone()))
             }
             Step::Normal => step_neutral_application(function, argument),
         },
     }
 }
 
-fn step_lambda_application(lambda: &Lambda, argument: &Term) -> EvalResult<Step> {
-    match step(argument)? {
-        Step::Reduced(argument) => Ok(Step::Reduced(Term::Apply {
+fn step_lambda_application(lambda: &Lambda, argument: &Term) -> Step {
+    match step(argument) {
+        Step::Reduced(argument) => Step::Reduced(Term::Apply {
             function: Box::new(Term::Lambda(lambda.clone())),
             argument: Box::new(argument),
-        })),
-        Step::Normal if is_effect(argument) => Ok(Step::Reduced(argument.clone())),
-        Step::Normal => Ok(Step::Reduced(substitute(
-            lambda.body.as_ref(),
-            lambda.parameter,
-            argument,
-        ))),
+        }),
+        Step::Normal if is_effect(argument) => Step::Reduced(argument.clone()),
+        Step::Normal => Step::Reduced(substitute(lambda.body.as_ref(), lambda.parameter, argument)),
     }
 }
 
-fn step_neutral_application(function: &Term, argument: &Term) -> EvalResult<Step> {
-    match step(argument)? {
-        Step::Reduced(argument) => Ok(Step::Reduced(Term::Apply {
+fn step_neutral_application(function: &Term, argument: &Term) -> Step {
+    match step(argument) {
+        Step::Reduced(argument) => Step::Reduced(Term::Apply {
             function: Box::new(function.clone()),
             argument: Box::new(argument),
-        })),
-        Step::Normal if is_effect(argument) => Ok(Step::Reduced(argument.clone())),
-        Step::Normal => Ok(Step::Normal),
+        }),
+        Step::Normal if is_effect(argument) => Step::Reduced(argument.clone()),
+        Step::Normal => Step::Normal,
     }
 }
 
-fn argument_is_ready_for_beta(argument: &Term) -> EvalResult<bool> {
-    match step(argument)? {
-        Step::Reduced(_) => Ok(false),
-        Step::Normal => Ok(!is_effect(argument)),
+fn argument_is_ready_for_beta(argument: &Term) -> bool {
+    match step(argument) {
+        Step::Reduced(_) => false,
+        Step::Normal => !is_effect(argument),
     }
 }
 
@@ -802,94 +788,98 @@ fn is_known_non_callable(term: &Term) -> bool {
     matches!(term, Term::Quote(_) | Term::Nil | Term::Cons { .. })
 }
 
-fn step_cons(head: &Term, tail: &Term) -> EvalResult<Step> {
-    match step(head)? {
-        Step::Reduced(head) => Ok(Step::Reduced(Term::Cons {
+fn runtime_error(payload: Term) -> Term {
+    Term::Error(Box::new(payload))
+}
+
+fn step_cons(head: &Term, tail: &Term) -> Step {
+    match step(head) {
+        Step::Reduced(head) => Step::Reduced(Term::Cons {
             head: Box::new(head),
             tail: Box::new(tail.clone()),
-        })),
-        Step::Normal if is_effect(head) => Ok(Step::Reduced(head.clone())),
-        Step::Normal => match step(tail)? {
-            Step::Reduced(tail) => Ok(Step::Reduced(Term::Cons {
+        }),
+        Step::Normal if is_effect(head) => Step::Reduced(head.clone()),
+        Step::Normal => match step(tail) {
+            Step::Reduced(tail) => Step::Reduced(Term::Cons {
                 head: Box::new(head.clone()),
                 tail: Box::new(tail),
-            })),
-            Step::Normal if is_effect(tail) => Ok(Step::Reduced(tail.clone())),
-            Step::Normal => Ok(Step::Normal),
+            }),
+            Step::Normal if is_effect(tail) => Step::Reduced(tail.clone()),
+            Step::Normal => Step::Normal,
         },
     }
 }
 
-fn step_head(term: &Term) -> EvalResult<Step> {
-    match step(term)? {
-        Step::Reduced(term) => Ok(Step::Reduced(Term::Head(Box::new(term)))),
+fn step_head(term: &Term) -> Step {
+    match step(term) {
+        Step::Reduced(term) => Step::Reduced(Term::Head(Box::new(term))),
         Step::Normal => match term {
-            Term::Cons { head, .. } => Ok(Step::Reduced(head.as_ref().clone())),
-            Term::Error(_) | Term::Diverge => Ok(Step::Reduced(term.clone())),
+            Term::Cons { head, .. } => Step::Reduced(head.as_ref().clone()),
+            Term::Error(_) | Term::Diverge => Step::Reduced(term.clone()),
             Term::Var(_)
             | Term::Apply { .. }
             | Term::Head(_)
             | Term::Tail(_)
-            | Term::ListCase(_) => Ok(Step::Normal),
+            | Term::ListCase(_) => Step::Normal,
             Term::Nil | Term::Quote(_) | Term::Lambda(_) => {
-                Err(EvalError::HeadNonCons(term.clone()))
+                Step::Reduced(runtime_error(term.clone()))
             }
         },
     }
 }
 
-fn step_tail(term: &Term) -> EvalResult<Step> {
-    match step(term)? {
-        Step::Reduced(term) => Ok(Step::Reduced(Term::Tail(Box::new(term)))),
+fn step_tail(term: &Term) -> Step {
+    match step(term) {
+        Step::Reduced(term) => Step::Reduced(Term::Tail(Box::new(term))),
         Step::Normal => match term {
-            Term::Cons { tail, .. } => Ok(Step::Reduced(tail.as_ref().clone())),
-            Term::Error(_) | Term::Diverge => Ok(Step::Reduced(term.clone())),
+            Term::Cons { tail, .. } => Step::Reduced(tail.as_ref().clone()),
+            Term::Error(_) | Term::Diverge => Step::Reduced(term.clone()),
             Term::Var(_)
             | Term::Apply { .. }
             | Term::Head(_)
             | Term::Tail(_)
-            | Term::ListCase(_) => Ok(Step::Normal),
+            | Term::ListCase(_) => Step::Normal,
             Term::Nil | Term::Quote(_) | Term::Lambda(_) => {
-                Err(EvalError::TailNonCons(term.clone()))
+                Step::Reduced(runtime_error(term.clone()))
             }
         },
     }
 }
 
-fn step_list_case(list_case: &ListCase) -> EvalResult<Step> {
-    match step(list_case.list.as_ref())? {
-        Step::Reduced(list) => Ok(Step::Reduced(Term::ListCase(ListCase {
+fn step_list_case(list_case: &ListCase) -> Step {
+    match step(list_case.list.as_ref()) {
+        Step::Reduced(list) => Step::Reduced(Term::ListCase(ListCase {
             list: Box::new(list),
             nil: list_case.nil.clone(),
             cons: list_case.cons,
             cons_case: list_case.cons_case.clone(),
-        }))),
+        })),
         Step::Normal => match list_case.list.as_ref() {
-            Term::Nil => Ok(Step::Reduced(list_case.nil.as_ref().clone())),
-            Term::Cons { .. } => Ok(Step::Reduced(substitute(
+            Term::Nil => Step::Reduced(list_case.nil.as_ref().clone()),
+            Term::Cons { .. } => Step::Reduced(substitute(
                 list_case.cons_case.as_ref(),
                 list_case.cons,
                 list_case.list.as_ref(),
-            ))),
-            Term::Error(_) | Term::Diverge => Ok(Step::Reduced(list_case.list.as_ref().clone())),
+            )),
+            Term::Error(_) | Term::Diverge => Step::Reduced(list_case.list.as_ref().clone()),
             Term::Var(_)
             | Term::Apply { .. }
             | Term::Head(_)
             | Term::Tail(_)
-            | Term::ListCase(_) => Ok(Step::Normal),
+            | Term::ListCase(_) => Step::Normal,
             Term::Quote(_) | Term::Lambda(_) => {
-                Err(EvalError::CaseNonList(list_case.list.as_ref().clone()))
+                Step::Reduced(runtime_error(list_case.list.as_ref().clone()))
             }
         },
     }
 }
 
-pub fn normal_form(term: &Term) -> EvalResult<Term> {
+pub fn normal_form(term: &Term) -> Term {
     let mut term = term.clone();
     loop {
-        match step(&term)? {
+        match step(&term) {
             Step::Reduced(next) => term = next,
-            Step::Normal => return Ok(term),
+            Step::Normal => return term,
         }
     }
 }
@@ -1098,7 +1088,7 @@ mod tests {
     fn step_beta_reduces_after_argument_is_ready() {
         let term = apply(lambda(1, Term::Var(1)), Term::Quote(2));
 
-        assert_eq!(step(&term), Ok(Step::Reduced(Term::Quote(2))));
+        assert_eq!(step(&term), Step::Reduced(Term::Quote(2)));
     }
 
     #[test]
@@ -1110,19 +1100,16 @@ mod tests {
 
         assert_eq!(
             step(&term),
-            Ok(Step::Reduced(apply(
-                lambda(1, Term::Quote(9)),
-                Term::Quote(3)
-            )))
+            Step::Reduced(apply(lambda(1, Term::Quote(9)), Term::Quote(3)))
         );
-        assert_eq!(normal_form(&term), Ok(Term::Quote(9)));
+        assert_eq!(normal_form(&term), Term::Quote(9));
     }
 
     #[test]
     fn lambda_is_a_value_without_evaluating_body() {
         let term = lambda(1, apply(lambda(2, Term::Var(2)), Term::Var(1)));
 
-        assert_eq!(step(&term), Ok(Step::Normal));
+        assert_eq!(step(&term), Step::Normal);
     }
 
     #[test]
@@ -1136,7 +1123,7 @@ mod tests {
         assert!(!is_value(&Term::Diverge));
         assert!(!is_value(&error(Term::Quote(1))));
         assert!(!is_value(&Term::Var(1)));
-        assert_eq!(step(&Term::Var(1)), Ok(Step::Normal));
+        assert_eq!(step(&Term::Var(1)), Step::Normal);
     }
 
     #[test]
@@ -1145,23 +1132,23 @@ mod tests {
 
         assert_eq!(
             normal_form(&apply(thrown.clone(), Term::Quote(2))),
-            Ok(thrown.clone())
+            thrown.clone()
         );
         assert_eq!(
             normal_form(&apply(lambda(1, Term::Quote(2)), thrown.clone())),
-            Ok(thrown)
+            thrown
         );
         assert_eq!(
             normal_form(&apply(lambda(1, Term::Quote(2)), Term::Diverge)),
-            Ok(Term::Diverge)
+            Term::Diverge
         );
     }
 
     #[test]
-    fn apply_known_non_callable_errors() {
+    fn apply_known_non_callable_reduces_to_error() {
         let term = apply(Term::Nil, Term::Quote(2));
 
-        assert_eq!(step(&term), Err(EvalError::ApplyNonLambda(Term::Nil)));
+        assert_eq!(step(&term), Step::Reduced(error(Term::Nil)));
     }
 
     #[test]
@@ -1173,35 +1160,29 @@ mod tests {
 
         assert_eq!(
             step(&term),
-            Ok(Step::Reduced(cons(Term::Quote(2), error(Term::Quote(3)))))
+            Step::Reduced(cons(Term::Quote(2), error(Term::Quote(3))))
         );
-        assert_eq!(normal_form(&term), Ok(error(Term::Quote(3))));
+        assert_eq!(normal_form(&term), error(Term::Quote(3)));
     }
 
     #[test]
     fn head_and_tail_destructure_cons() {
         let term = cons(Term::Quote(1), Term::Quote(2));
 
-        assert_eq!(step(&head(term.clone())), Ok(Step::Reduced(Term::Quote(1))));
-        assert_eq!(step(&tail(term)), Ok(Step::Reduced(Term::Quote(2))));
+        assert_eq!(step(&head(term.clone())), Step::Reduced(Term::Quote(1)));
+        assert_eq!(step(&tail(term)), Step::Reduced(Term::Quote(2)));
     }
 
     #[test]
     fn head_and_tail_open_terms_are_neutral() {
-        assert_eq!(step(&head(Term::Var(1))), Ok(Step::Normal));
-        assert_eq!(step(&tail(Term::Var(1))), Ok(Step::Normal));
+        assert_eq!(step(&head(Term::Var(1))), Step::Normal);
+        assert_eq!(step(&tail(Term::Var(1))), Step::Normal);
     }
 
     #[test]
-    fn head_and_tail_known_non_cons_error() {
-        assert_eq!(
-            step(&head(Term::Nil)),
-            Err(EvalError::HeadNonCons(Term::Nil))
-        );
-        assert_eq!(
-            step(&tail(Term::Nil)),
-            Err(EvalError::TailNonCons(Term::Nil))
-        );
+    fn head_and_tail_known_non_cons_reduce_to_error() {
+        assert_eq!(step(&head(Term::Nil)), Step::Reduced(error(Term::Nil)));
+        assert_eq!(step(&tail(Term::Nil)), Step::Reduced(error(Term::Nil)));
     }
 
     #[test]
@@ -1211,19 +1192,19 @@ mod tests {
 
         assert_eq!(
             step(&list_case(Term::Nil, Term::Quote(0), 9, cons_case.clone())),
-            Ok(Step::Reduced(Term::Quote(0)))
+            Step::Reduced(Term::Quote(0))
         );
         assert_eq!(
             normal_form(&list_case(cons_value, Term::Quote(0), 9, cons_case)),
-            Ok(Term::Quote(1))
+            Term::Quote(1)
         );
     }
 
     #[test]
-    fn list_case_open_term_is_neutral_and_known_non_list_errors() {
+    fn list_case_open_term_is_neutral_and_known_non_list_reduces_to_error() {
         assert_eq!(
             step(&list_case(Term::Var(1), Term::Quote(0), 9, Term::Quote(1))),
-            Ok(Step::Normal)
+            Step::Normal
         );
         assert_eq!(
             step(&list_case(
@@ -1232,7 +1213,7 @@ mod tests {
                 9,
                 Term::Quote(1)
             )),
-            Err(EvalError::CaseNonList(Term::Quote(1)))
+            Step::Reduced(error(Term::Quote(1)))
         );
     }
 

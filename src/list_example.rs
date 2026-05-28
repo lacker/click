@@ -4,7 +4,7 @@
 //! General reverse theorems should use the kernel's list proposition and
 //! induction rule rather than a userspace list recognizer.
 
-use crate::{EvalError, Lambda, ListCase, Proof, Prop, Step, Symbol, Term, check, step};
+use crate::{Lambda, ListCase, Proof, Prop, Step, Symbol, Term, check, step};
 
 pub const UNIT: Symbol = 3;
 
@@ -19,7 +19,6 @@ const LOOP_ARGUMENT: Symbol = 1_007;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvaluationProofError {
-    Eval(EvalError),
     StepLimitExceeded { limit: usize },
     UnexpectedNormalForm { expected: Term, actual: Term },
 }
@@ -177,7 +176,7 @@ pub fn evaluation_chain(term: Term, limit: usize) -> Result<Vec<Term>, Evaluatio
     let mut chain = vec![term.clone()];
 
     for _ in 0..limit {
-        match step(&term).map_err(EvaluationProofError::Eval)? {
+        match step(&term) {
             Step::Reduced(next) => {
                 chain.push(next.clone());
                 term = next;
@@ -267,22 +266,15 @@ mod tests {
     }
 
     #[test]
-    fn reverse_non_list_input_hits_meta_evaluator_error() {
-        assert_eq!(
-            evaluation_chain(reverse_call(quote(NOT_A_LIST)), 512),
-            Err(EvaluationProofError::Eval(EvalError::CaseNonList(quote(
-                NOT_A_LIST
-            ))))
-        );
+    fn reverse_non_list_input_reduces_to_error() {
+        assert_evaluates(reverse_call(quote(NOT_A_LIST)), error(NOT_A_LIST));
     }
 
     #[test]
-    fn reverse_malformed_tail_hits_meta_evaluator_error() {
-        assert_eq!(
-            evaluation_chain(reverse_call(cons(quote(A), quote(NOT_A_LIST))), 512),
-            Err(EvaluationProofError::Eval(EvalError::CaseNonList(quote(
-                NOT_A_LIST
-            ))))
+    fn reverse_malformed_tail_reduces_to_error() {
+        assert_evaluates(
+            reverse_call(cons(quote(A), quote(NOT_A_LIST))),
+            error(NOT_A_LIST),
         );
     }
 
