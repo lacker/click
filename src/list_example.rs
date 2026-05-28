@@ -4,7 +4,7 @@
 //! General reverse theorems should use the kernel's list proposition and
 //! induction rule rather than a userspace list recognizer.
 
-use crate::{Lambda, ListCase, Proof, Prop, Step, Symbol, Term, check, step};
+use crate::{Lambda, ListCase, Proof, Step, Symbol, Term, check, computes_to, step};
 
 pub const UNIT: Symbol = 3;
 
@@ -162,14 +162,6 @@ pub fn loop_forever_call() -> Term {
     apply(loop_forever(), unit())
 }
 
-pub fn evaluates_to(term: Term, value: Term) -> Prop {
-    Prop::Equal(term, value)
-}
-
-pub fn diverges(term: Term) -> Prop {
-    Prop::Equal(term, Term::Diverge)
-}
-
 /// Build the concrete evaluator path for a term, stopping at a normal form.
 pub fn evaluation_chain(term: Term, limit: usize) -> Result<Vec<Term>, EvaluationProofError> {
     let mut term = term;
@@ -208,13 +200,13 @@ pub fn proof_by_evaluation(
 }
 
 pub fn check_evaluates_to(term: Term, value: Term, proof: &Proof) -> bool {
-    check(proof, &evaluates_to(term, value))
+    check(proof, &computes_to(term, value))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Proof, check};
+    use crate::{Proof, check, diverges};
 
     const A: Symbol = 100;
     const B: Symbol = 101;

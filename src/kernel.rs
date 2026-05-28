@@ -152,6 +152,82 @@ pub enum Proof {
     },
 }
 
+pub fn equal(left: Term, right: Term) -> Prop {
+    Prop::Equal(left, right)
+}
+
+pub fn is_value(term: Term) -> Prop {
+    Prop::IsValue(term)
+}
+
+pub fn is_list(term: Term) -> Prop {
+    Prop::IsList(term)
+}
+
+pub fn implies(premise: Prop, conclusion: Prop) -> Prop {
+    Prop::Implies(Box::new(premise), Box::new(conclusion))
+}
+
+pub fn forall(variable: Symbol, body: Prop) -> Prop {
+    Prop::ForAll {
+        variable,
+        body: Box::new(body),
+    }
+}
+
+pub fn exists(variable: Symbol, body: Prop) -> Prop {
+    Prop::Exists {
+        variable,
+        body: Box::new(body),
+    }
+}
+
+pub fn and(left: Prop, right: Prop) -> Prop {
+    Prop::And(Box::new(left), Box::new(right))
+}
+
+pub fn or(left: Prop, right: Prop) -> Prop {
+    Prop::Or(Box::new(left), Box::new(right))
+}
+
+pub fn computes_to(term: Term, value: Term) -> Prop {
+    equal(term, value)
+}
+
+/// `variable` names the existential result and should be fresh for `term`.
+pub fn terminates(variable: Symbol, term: Term) -> Prop {
+    exists(
+        variable,
+        and(
+            computes_to(term, Term::Var(variable)),
+            is_value(Term::Var(variable)),
+        ),
+    )
+}
+
+/// `variable` names the existential list value and should be fresh for `term`.
+pub fn computes_to_list(variable: Symbol, term: Term) -> Prop {
+    exists(
+        variable,
+        and(
+            computes_to(term, Term::Var(variable)),
+            is_list(Term::Var(variable)),
+        ),
+    )
+}
+
+/// `variable` names the existential error payload and should be fresh for `term`.
+pub fn errors(variable: Symbol, term: Term) -> Prop {
+    exists(
+        variable,
+        computes_to(term, Term::Error(Box::new(Term::Var(variable)))),
+    )
+}
+
+pub fn diverges(term: Term) -> Prop {
+    computes_to(term, Term::Diverge)
+}
+
 pub fn check(proof: &Proof, prop: &Prop) -> bool {
     check_in_context(proof, prop, &Context::new())
 }
@@ -837,10 +913,10 @@ fn is_effect(term: &Term) -> bool {
     matches!(term, Term::Error(_) | Term::Diverge)
 }
 
-pub fn is_value(term: &Term) -> bool {
+pub fn term_is_value(term: &Term) -> bool {
     match term {
         Term::Lambda(_) | Term::Nil | Term::Quote(_) => true,
-        Term::Cons { head, tail } => is_value(head) && is_value(tail),
+        Term::Cons { head, tail } => term_is_value(head) && term_is_value(tail),
         _ => false,
     }
 }
@@ -1119,36 +1195,6 @@ mod tests {
         Term::Error(Box::new(error))
     }
 
-    fn equal(left: Term, right: Term) -> Prop {
-        Prop::Equal(left, right)
-    }
-
-    fn implies(premise: Prop, conclusion: Prop) -> Prop {
-        Prop::Implies(Box::new(premise), Box::new(conclusion))
-    }
-
-    fn forall(variable: Symbol, body: Prop) -> Prop {
-        Prop::ForAll {
-            variable,
-            body: Box::new(body),
-        }
-    }
-
-    fn exists(variable: Symbol, body: Prop) -> Prop {
-        Prop::Exists {
-            variable,
-            body: Box::new(body),
-        }
-    }
-
-    fn list_prop(term: Term) -> Prop {
-        Prop::IsList(term)
-    }
-
-    fn value_prop(term: Term) -> Prop {
-        Prop::IsValue(term)
-    }
-
     #[test]
     fn step_beta_reduces_after_argument_is_ready() {
         let term = apply(lambda(1, Term::Var(1)), Term::Quote(2));
@@ -1179,15 +1225,15 @@ mod tests {
 
     #[test]
     fn is_value_distinguishes_values_from_pending_computations() {
-        assert!(is_value(&Term::Nil));
-        assert!(is_value(&Term::Quote(1)));
-        assert!(is_value(&lambda(1, Term::Var(1))));
-        assert!(is_value(&cons(Term::Quote(1), Term::Nil)));
+        assert!(term_is_value(&Term::Nil));
+        assert!(term_is_value(&Term::Quote(1)));
+        assert!(term_is_value(&lambda(1, Term::Var(1))));
+        assert!(term_is_value(&cons(Term::Quote(1), Term::Nil)));
 
-        assert!(!is_value(&apply(Term::Var(1), Term::Quote(2))));
-        assert!(!is_value(&Term::Diverge));
-        assert!(!is_value(&error(Term::Quote(1))));
-        assert!(!is_value(&Term::Var(1)));
+        assert!(!term_is_value(&apply(Term::Var(1), Term::Quote(2))));
+        assert!(!term_is_value(&Term::Diverge));
+        assert!(!term_is_value(&error(Term::Quote(1))));
+        assert!(!term_is_value(&Term::Var(1)));
         assert_eq!(step(&Term::Var(1)), Step::Normal);
     }
 
@@ -1403,11 +1449,11 @@ mod tests {
 
         assert!(check(
             &Proof::ValueLambda(lambda.clone()),
-            &value_prop(Term::Lambda(lambda))
+            &is_value(Term::Lambda(lambda))
         ));
-        assert!(check(&Proof::ValueQuote(1), &value_prop(Term::Quote(1))));
-        assert!(check(&Proof::ValueNil, &value_prop(Term::Nil)));
-        assert!(check(&proof, &value_prop(list)));
+        assert!(check(&Proof::ValueQuote(1), &is_value(Term::Quote(1))));
+        assert!(check(&Proof::ValueNil, &is_value(Term::Nil)));
+        assert!(check(&proof, &is_value(list)));
     }
 
     #[test]
@@ -1419,7 +1465,7 @@ mod tests {
             tail_is_value: Box::new(Proof::ValueNil),
         };
 
-        assert!(!check(&proof, &value_prop(cons(Term::Diverge, Term::Nil))));
+        assert!(!check(&proof, &is_value(cons(Term::Diverge, Term::Nil))));
     }
 
     #[test]
@@ -1437,8 +1483,8 @@ mod tests {
             }),
         };
 
-        assert!(check(&Proof::ListNil, &list_prop(Term::Nil)));
-        assert!(check(&proof, &list_prop(list)));
+        assert!(check(&Proof::ListNil, &is_list(Term::Nil)));
+        assert!(check(&proof, &is_list(list)));
     }
 
     #[test]
@@ -1452,7 +1498,7 @@ mod tests {
 
         assert!(!check(
             &proof,
-            &list_prop(cons(Term::Quote(1), cons(Term::Quote(2), Term::Nil)))
+            &is_list(cons(Term::Quote(1), cons(Term::Quote(2), Term::Nil)))
         ));
     }
 
@@ -1465,7 +1511,7 @@ mod tests {
             tail_is_list: Box::new(Proof::ListNil),
         };
 
-        assert!(!check(&proof, &list_prop(cons(Term::Diverge, Term::Nil))));
+        assert!(!check(&proof, &is_list(cons(Term::Diverge, Term::Nil))));
     }
 
     #[test]
@@ -1475,10 +1521,10 @@ mod tests {
             equality: Box::new(Proof::Symm(Box::new(Proof::Step(term.clone())))),
             proof: Box::new(Proof::ListNil),
             variable: 99,
-            template: list_prop(Term::Var(99)),
+            template: is_list(Term::Var(99)),
         };
 
-        assert!(check(&proof, &list_prop(term)));
+        assert!(check(&proof, &is_list(term)));
     }
 
     #[test]
@@ -1489,7 +1535,7 @@ mod tests {
         let head_is_value_assumption = 4;
         let tail_is_list_assumption = 5;
         let induction_hypothesis_assumption = 6;
-        let property = value_prop(Term::Var(variable));
+        let property = is_value(Term::Var(variable));
         let proof = Proof::ListInduction {
             variable,
             property: property.clone(),
@@ -1508,10 +1554,7 @@ mod tests {
         };
         let expected = forall(
             variable,
-            implies(
-                list_prop(Term::Var(variable)),
-                value_prop(Term::Var(variable)),
-            ),
+            implies(is_list(Term::Var(variable)), is_value(Term::Var(variable))),
         );
 
         assert!(check(&proof, &expected));
@@ -1525,7 +1568,7 @@ mod tests {
         let head_is_value_assumption = 4;
         let tail_is_list_assumption = 5;
         let induction_hypothesis_assumption = 6;
-        let property = list_prop(Term::Var(variable));
+        let property = is_list(Term::Var(variable));
         let proof = Proof::ListInduction {
             variable,
             property,
@@ -1539,10 +1582,7 @@ mod tests {
         };
         let expected = forall(
             variable,
-            implies(
-                list_prop(Term::Var(variable)),
-                list_prop(Term::Var(variable)),
-            ),
+            implies(is_list(Term::Var(variable)), is_list(Term::Var(variable))),
         );
 
         assert!(!check(&proof, &expected));
@@ -1658,12 +1698,48 @@ mod tests {
     }
 
     #[test]
-    fn implies_helper_constructs_implication() {
+    fn prop_helpers_construct_expected_shapes() {
         let prop = equal(Term::Quote(1), Term::Quote(1));
+        let term = apply(lambda(1, Term::Var(1)), Term::Quote(2));
 
         assert_eq!(
             implies(prop.clone(), prop.clone()),
             Prop::Implies(Box::new(prop.clone()), Box::new(prop))
+        );
+        assert_eq!(
+            terminates(9, term.clone()),
+            exists(
+                9,
+                and(
+                    computes_to(term.clone(), Term::Var(9)),
+                    is_value(Term::Var(9)),
+                ),
+            )
+        );
+        assert_eq!(
+            computes_to_list(9, term.clone()),
+            exists(
+                9,
+                and(
+                    computes_to(term.clone(), Term::Var(9)),
+                    is_list(Term::Var(9))
+                ),
+            )
+        );
+        assert_eq!(
+            errors(9, term.clone()),
+            exists(
+                9,
+                computes_to(term.clone(), Term::Error(Box::new(Term::Var(9)))),
+            )
+        );
+        assert_eq!(diverges(term.clone()), computes_to(term, Term::Diverge));
+        assert_eq!(
+            or(is_value(Term::Quote(1)), is_list(Term::Nil)),
+            Prop::Or(
+                Box::new(Prop::IsValue(Term::Quote(1))),
+                Box::new(Prop::IsList(Term::Nil))
+            )
         );
     }
 }
