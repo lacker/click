@@ -23,6 +23,11 @@
   (lambda list
     ((reverse_acc list) nil)))
 
+(theorem nil_is_list
+  (is-list nil)
+  (proof
+    (list-nil)))
+
 (theorem reverse_acc_computes_to_list
   (forall list
     (implies
@@ -95,6 +100,6 @@
                   list)
                 (assume list_is_list))
               nil)
-            (list-nil))
+            (known nil_is_list))
           rewrite_target
           (computes-to-list result rewrite_target))))))

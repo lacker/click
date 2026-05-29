@@ -10,6 +10,7 @@ pub const REVERSE_ACC: Name = Name(1);
 pub const REVERSE: Name = Name(2);
 pub const REVERSE_ACC_COMPUTES_TO_LIST: Name = Name(3);
 pub const REVERSE_COMPUTES_TO_LIST: Name = Name(4);
+pub const NIL_IS_LIST: Name = Name(5);
 
 pub fn theory() -> Theory {
     let mut theory = Theory::new();
@@ -72,6 +73,18 @@ pub fn reverse_acc_computes_to_list() -> Option<Theorem> {
     reverse_acc_computes_to_list_in_theory(&theory)
 }
 
+pub fn nil_is_list() -> Option<Theorem> {
+    let theory = term_theory();
+    nil_is_list_in_theory(&theory)
+}
+
+fn nil_is_list_in_theory(theory: &Theory) -> Option<Theorem> {
+    theory.from_proof(
+        list::nil_is_list_source_proof(),
+        list::nil_is_list_source_theorem(),
+    )
+}
+
 fn reverse_acc_computes_to_list_in_theory(theory: &Theory) -> Option<Theorem> {
     theory.from_proof(
         list::reverse_acc_computes_to_list_source_proof(),
@@ -129,6 +142,7 @@ mod tests {
     fn term_theory_does_not_define_theorems() {
         let theory = term_theory();
 
+        assert!(theory.theorem(NIL_IS_LIST).is_none());
         assert!(theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(REVERSE_COMPUTES_TO_LIST).is_none());
     }
@@ -138,6 +152,10 @@ mod tests {
         let mut theory = Theory::new();
 
         assert!(!define_theorems_in_theory(&mut theory));
+        assert_eq!(
+            theory.theorem(NIL_IS_LIST),
+            Some(&list::nil_is_list_source_theorem())
+        );
         assert!(theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(REVERSE_COMPUTES_TO_LIST).is_none());
     }
@@ -145,9 +163,11 @@ mod tests {
     #[test]
     fn theory_defines_reverse_theorems() {
         let theory = theory();
+        let nil_prop = list::nil_is_list_source_theorem();
         let reverse_acc_prop = list::reverse_acc_computes_to_list_source_theorem();
         let reverse_prop = list::reverse_computes_to_list_source_theorem();
 
+        assert_eq!(theory.theorem(NIL_IS_LIST), Some(&nil_prop));
         assert_eq!(
             theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST),
             Some(&reverse_acc_prop)
@@ -162,6 +182,12 @@ mod tests {
                 .expect("reverse theorem should be defined")
                 .prop(),
             &reverse_prop,
+        );
+        assert_eq!(
+            nil_is_list()
+                .expect("nil theorem source proof should check")
+                .prop(),
+            &nil_prop,
         );
     }
 
