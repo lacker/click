@@ -80,29 +80,33 @@ pub fn define_theorems_in_theory(theory: &mut Theory) -> bool {
 }
 
 pub fn define(environment: &mut Environment) -> bool {
-    define_terms(environment) && define_theorems(environment)
+    let mut theory = Theory::from_environment(environment.clone());
+    if !define_in_theory(&mut theory) {
+        return false;
+    }
+
+    *environment = theory.into_environment();
+    true
 }
 
 pub fn define_terms(environment: &mut Environment) -> bool {
-    let Ok(definitions) = list::term_definitions() else {
+    let mut theory = Theory::from_environment(environment.clone());
+    if !define_terms_in_theory(&mut theory) {
         return false;
-    };
+    }
 
-    definitions
-        .into_iter()
-        .all(|(name, term)| environment.define_term(name, &term))
+    *environment = theory.into_environment();
+    true
 }
 
 pub fn define_theorems(environment: &mut Environment) -> bool {
-    let Some(reverse_acc) = reverse_acc_computes_to_list_in_environment(environment) else {
+    let mut theory = Theory::from_environment(environment.clone());
+    if !define_theorems_in_theory(&mut theory) {
         return false;
-    };
-    let Some(reverse) = reverse_computes_to_list_in_environment(environment) else {
-        return false;
-    };
+    }
 
-    environment.define_theorem(REVERSE_ACC_COMPUTES_TO_LIST, &reverse_acc)
-        && environment.define_theorem(REVERSE_COMPUTES_TO_LIST, &reverse)
+    *environment = theory.into_environment();
+    true
 }
 
 pub fn reverse_acc_computes_to_list() -> Option<Theorem> {
@@ -125,22 +129,6 @@ fn reverse_acc_computes_to_list_in_theory(theory: &Theory) -> Option<Theorem> {
     )
 }
 
-fn reverse_acc_computes_to_list_in_environment(environment: &Environment) -> Option<Theorem> {
-    Theorem::from_proof_in_environment(
-        list::reverse_acc_computes_to_list_proof(
-            REVERSE_ACC_THEOREM_LIST,
-            REVERSE_ACC_THEOREM_ACC,
-            REVERSE_ACC_THEOREM_RESULT,
-        ),
-        list::reverse_acc_computes_to_list_theorem(
-            REVERSE_ACC_THEOREM_LIST,
-            REVERSE_ACC_THEOREM_ACC,
-            REVERSE_ACC_THEOREM_RESULT,
-        ),
-        environment,
-    )
-}
-
 pub fn reverse_computes_to_list() -> Option<Theorem> {
     let theory = term_theory();
     reverse_computes_to_list_in_theory(&theory)
@@ -150,14 +138,6 @@ fn reverse_computes_to_list_in_theory(theory: &Theory) -> Option<Theorem> {
     theory.from_proof(
         list::reverse_computes_to_list_proof(REVERSE_THEOREM_LIST, REVERSE_THEOREM_RESULT),
         list::reverse_computes_to_list_theorem(REVERSE_THEOREM_LIST, REVERSE_THEOREM_RESULT),
-    )
-}
-
-fn reverse_computes_to_list_in_environment(environment: &Environment) -> Option<Theorem> {
-    Theorem::from_proof_in_environment(
-        list::reverse_computes_to_list_proof(REVERSE_THEOREM_LIST, REVERSE_THEOREM_RESULT),
-        list::reverse_computes_to_list_theorem(REVERSE_THEOREM_LIST, REVERSE_THEOREM_RESULT),
-        environment,
     )
 }
 
@@ -172,48 +152,49 @@ pub fn reverse() -> Term {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        Proof, Step, Theorem, check_in_environment, computes_to_list, step_in_environment,
-    };
+    use crate::{Step, computes_to_list};
 
     #[test]
-    fn environment_defines_reverse() {
-        let env = environment();
+    fn theory_defines_reverse() {
+        let theory = theory();
 
-        assert_eq!(env.term(REVERSE_ACC), Some(&list::reverse_acc_definition()));
-        assert_eq!(env.term(REVERSE), Some(&list::reverse_definition()));
+        assert_eq!(
+            theory.term(REVERSE_ACC),
+            Some(&list::reverse_acc_definition())
+        );
+        assert_eq!(theory.term(REVERSE), Some(&list::reverse_definition()));
         assert_eq!(reverse_acc(), Term::Const(REVERSE_ACC));
         assert_eq!(reverse(), Term::Const(REVERSE));
         assert_eq!(
-            step_in_environment(&reverse_acc(), &env),
+            theory.reduce(&reverse_acc()),
             Step::Reduced(list::reverse_acc_definition())
         );
         assert_eq!(
-            step_in_environment(&reverse(), &env),
+            theory.reduce(&reverse()),
             Step::Reduced(list::reverse_definition())
         );
     }
 
     #[test]
-    fn term_environment_does_not_define_theorems() {
-        let env = term_environment();
+    fn term_theory_does_not_define_theorems() {
+        let theory = term_theory();
 
-        assert!(env.theorem(REVERSE_ACC_COMPUTES_TO_LIST).is_none());
-        assert!(env.theorem(REVERSE_COMPUTES_TO_LIST).is_none());
+        assert!(theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST).is_none());
+        assert!(theory.theorem(REVERSE_COMPUTES_TO_LIST).is_none());
     }
 
     #[test]
     fn theorem_definitions_require_terms() {
-        let mut env = Environment::new();
+        let mut theory = Theory::new();
 
-        assert!(!define_theorems(&mut env));
-        assert!(env.theorem(REVERSE_ACC_COMPUTES_TO_LIST).is_none());
-        assert!(env.theorem(REVERSE_COMPUTES_TO_LIST).is_none());
+        assert!(!define_theorems_in_theory(&mut theory));
+        assert!(theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST).is_none());
+        assert!(theory.theorem(REVERSE_COMPUTES_TO_LIST).is_none());
     }
 
     #[test]
-    fn environment_defines_reverse_theorems() {
-        let env = environment();
+    fn theory_defines_reverse_theorems() {
+        let theory = theory();
         let reverse_acc_prop = list::reverse_acc_computes_to_list_theorem(
             REVERSE_ACC_THEOREM_LIST,
             REVERSE_ACC_THEOREM_ACC,
@@ -223,17 +204,16 @@ mod tests {
             list::reverse_computes_to_list_theorem(REVERSE_THEOREM_LIST, REVERSE_THEOREM_RESULT);
 
         assert_eq!(
-            env.theorem(REVERSE_ACC_COMPUTES_TO_LIST),
+            theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST),
             Some(&reverse_acc_prop)
         );
-        assert_eq!(env.theorem(REVERSE_COMPUTES_TO_LIST), Some(&reverse_prop));
-        assert!(check_in_environment(
-            &Proof::Known(REVERSE_ACC_COMPUTES_TO_LIST),
-            &reverse_acc_prop,
-            &env,
-        ));
         assert_eq!(
-            Theorem::known(&env, REVERSE_COMPUTES_TO_LIST)
+            theory.theorem(REVERSE_COMPUTES_TO_LIST),
+            Some(&reverse_prop)
+        );
+        assert_eq!(
+            theory
+                .known(REVERSE_COMPUTES_TO_LIST)
                 .expect("reverse theorem should be defined")
                 .prop(),
             &reverse_prop,

@@ -29,7 +29,7 @@ impl Environment {
         self.terms.get(&name)
     }
 
-    pub fn define_term(&mut self, name: Name, term: &Term) -> bool {
+    pub(crate) fn define_term(&mut self, name: Name, term: &Term) -> bool {
         if self.terms.contains_key(&name)
             || self.theorems.contains_key(&name)
             || !free_symbols(term).is_empty()
@@ -41,7 +41,7 @@ impl Environment {
         true
     }
 
-    pub fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
+    pub(crate) fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
         if self.terms.contains_key(&name) || self.theorems.contains_key(&name) {
             return false;
         }
@@ -292,7 +292,7 @@ impl Theorem {
         check(&proof, &prop).then_some(Self { prop, proof })
     }
 
-    pub fn from_proof_in_environment(
+    fn from_proof_in_environment(
         proof: Proof,
         prop: Prop,
         environment: &Environment,
@@ -305,10 +305,6 @@ impl Theorem {
         Some(Self { prop, proof })
     }
 
-    pub fn known(environment: &Environment, name: Name) -> Option<Self> {
-        Self::from_closed_proof_in_environment(Proof::Known(name), environment)
-    }
-
     fn from_closed_proof_in_environment(proof: Proof, environment: &Environment) -> Option<Self> {
         let prop = proven_prop(&proof, environment, &Context::new())?;
         Some(Self { prop, proof })
@@ -316,14 +312,6 @@ impl Theorem {
 
     pub fn prop(&self) -> &Prop {
         &self.prop
-    }
-
-    pub fn proof(&self) -> &Proof {
-        &self.proof
-    }
-
-    pub fn into_proof(self) -> Proof {
-        self.proof
     }
 
     pub fn refl(term: Term) -> Self {
@@ -348,16 +336,8 @@ impl Theorem {
         Self::from_closed_proof(Proof::Step(term))
     }
 
-    pub fn step_in_environment(term: Term, environment: &Environment) -> Option<Self> {
-        Self::from_closed_proof_in_environment(Proof::Step(term), environment)
-    }
-
     pub fn steps(terms: Vec<Term>) -> Option<Self> {
         Self::from_closed_proof(Proof::Steps(terms))
-    }
-
-    pub fn steps_in_environment(terms: Vec<Term>, environment: &Environment) -> Option<Self> {
-        Self::from_closed_proof_in_environment(Proof::Steps(terms), environment)
     }
 
     pub fn rewrite(
@@ -510,7 +490,7 @@ impl Theory {
     }
 
     pub fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
-        if !self.check(theorem.proof(), theorem.prop()) {
+        if !self.check(&theorem.proof, theorem.prop()) {
             return false;
         }
 
@@ -2002,42 +1982,38 @@ mod tests {
     }
 
     #[test]
-    fn environment_known_proofs_cite_named_theorems() {
+    fn theory_known_proofs_cite_named_theorems() {
         let name = Name(42);
         let theorem = Theorem::refl(Term::Quote(Symbol(1)));
         let replacement = Theorem::refl(Term::Quote(Symbol(2)));
-        let mut environment = Environment::new();
+        let mut theory = Theory::new();
 
-        assert!(environment.define_theorem(name, &theorem));
-        assert!(!environment.define_theorem(name, &replacement));
-        assert_eq!(environment.theorem(name), Some(theorem.prop()));
-        assert!(check_in_environment(
-            &Proof::Known(name),
-            theorem.prop(),
-            &environment,
-        ));
+        assert!(theory.define_theorem(name, &theorem));
+        assert!(!theory.define_theorem(name, &replacement));
+        assert_eq!(theory.theorem(name), Some(theorem.prop()));
+        assert!(theory.check(&Proof::Known(name), theorem.prop()));
         assert!(!check(&Proof::Known(name), theorem.prop()));
 
-        let known = Theorem::known(&environment, name).expect("known theorem should check");
+        let known = theory.known(name).expect("known theorem should check");
         assert_eq!(known.prop(), theorem.prop());
     }
 
     #[test]
-    fn environment_defines_closed_terms() {
+    fn theory_defines_closed_terms() {
         let name = Name(4);
         let term = Term::Quote(Symbol(1));
         let replacement = Term::Quote(Symbol(2));
         let theorem = Theorem::refl(Term::Nil);
-        let mut environment = Environment::new();
+        let mut theory = Theory::new();
 
-        assert!(environment.define_term(name, &term));
-        assert_eq!(environment.term(name), Some(&term));
-        assert!(!environment.define_term(name, &replacement));
-        assert!(!environment.define_theorem(name, &theorem));
-        assert!(!environment.define_term(Name(5), &Term::Var(Symbol(1))));
+        assert!(theory.define_term(name, &term));
+        assert_eq!(theory.term(name), Some(&term));
+        assert!(!theory.define_term(name, &replacement));
+        assert!(!theory.define_theorem(name, &theorem));
+        assert!(!theory.define_term(Name(5), &Term::Var(Symbol(1))));
 
-        assert!(environment.define_theorem(Name(6), &theorem));
-        assert!(!environment.define_term(Name(6), &Term::Nil));
+        assert!(theory.define_theorem(Name(6), &theorem));
+        assert!(!theory.define_term(Name(6), &Term::Nil));
     }
 
     #[test]
@@ -2046,7 +2022,7 @@ mod tests {
         let id_term = lambda(Symbol(1), Term::Var(Symbol(1)));
         let argument = Term::Quote(Symbol(2));
         let call = apply(Term::Const(id), argument.clone());
-        let mut environment = Environment::new();
+        let mut theory = Theory::new();
 
         assert_eq!(step(&Term::Const(id)), Step::Normal);
         assert_eq!(
@@ -2054,15 +2030,12 @@ mod tests {
             Step::Normal
         );
 
-        assert!(environment.define_term(id, &id_term));
+        assert!(theory.define_term(id, &id_term));
         assert_eq!(
-            step_in_environment(&Term::Const(id), &environment),
+            theory.reduce(&Term::Const(id)),
             Step::Reduced(id_term.clone())
         );
-        assert_eq!(
-            normal_form_in_environment(&call, &environment),
-            argument.clone()
-        );
+        assert_eq!(theory.normal_form(&call), argument.clone());
         assert_eq!(normal_form(&call), call);
     }
 
@@ -2071,26 +2044,26 @@ mod tests {
         let name = Name(11);
         let term = Term::Const(name);
         let value = Term::Quote(Symbol(7));
-        let mut environment = Environment::new();
+        let mut theory = Theory::new();
 
-        assert!(environment.define_term(name, &value));
-        assert!(check_in_environment(
+        assert!(theory.define_term(name, &value));
+        assert!(theory.check(
             &Proof::Step(term.clone()),
-            &equal(term.clone(), value.clone()),
-            &environment
+            &equal(term.clone(), value.clone())
         ));
         assert!(!check(
             &Proof::Step(term.clone()),
             &equal(term.clone(), value.clone())
         ));
 
-        let theorem = Theorem::step_in_environment(term.clone(), &environment)
+        let theorem = theory
+            .step(term.clone())
             .expect("defined constant should step");
         assert_eq!(theorem.prop(), &equal(term, value));
     }
 
     #[test]
-    fn environment_known_proofs_compose_with_rules() {
+    fn raw_checker_known_proofs_compose_with_rules() {
         let start = head(cons(Term::Quote(Symbol(1)), Term::Nil));
         let end = Term::Quote(Symbol(1));
         let step = Theorem::step(start.clone()).expect("term should step");
