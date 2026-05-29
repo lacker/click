@@ -1,13 +1,15 @@
 //! List definitions and theorems for the standard prelude.
 
 use crate::{
-    Lambda, ListCase, Name, Proof, Prop, Step, Symbol, Term, Theory, and, computes_to,
-    computes_to_list, forall, implies, is_list,
+    Lambda, ListCase, Name, Proof, Prop, Step, Symbol, Term, Theory, alpha_eq_term, and,
+    computes_to, computes_to_list, forall, implies, is_list,
 };
 
 use super::{
     REVERSE, REVERSE_ACC, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST,
-    source::{NameBinding, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
+    source::{
+        NameBinding, ParseError, ParsedModule, ParsedTheorem, ProofExpr, ProofScript, SymbolBinding,
+    },
 };
 
 pub const UNIT: Symbol = Symbol(3);
@@ -220,13 +222,11 @@ fn theorem_symbol(name: Name, spelling: &str) -> Symbol {
 }
 
 pub fn reverse_acc_computes_to_list_source_proof() -> Proof {
-    let theorem = theorem_definition(REVERSE_ACC_COMPUTES_TO_LIST);
-    proof_for_theorem(&theorem).expect("prelude list source should have a proof provider")
+    source_proof(REVERSE_ACC_COMPUTES_TO_LIST)
 }
 
 pub fn reverse_computes_to_list_source_proof() -> Proof {
-    let theorem = theorem_definition(REVERSE_COMPUTES_TO_LIST);
-    proof_for_theorem(&theorem).expect("prelude list source should have a proof provider")
+    source_proof(REVERSE_COMPUTES_TO_LIST)
 }
 
 #[cfg(test)]
@@ -234,18 +234,132 @@ pub(super) fn reverse_computes_to_list_source_result_symbol() -> Symbol {
     theorem_symbol(REVERSE_COMPUTES_TO_LIST, "result")
 }
 
-pub(super) fn proof_for_theorem(theorem: &ParsedTheorem) -> Option<Proof> {
-    match theorem.name {
-        REVERSE_ACC_COMPUTES_TO_LIST => Some(reverse_acc_computes_to_list_proof(
-            theorem.symbol("list")?,
-            theorem.symbol("acc")?,
-            theorem.symbol("result")?,
+pub(super) fn proof_for_theorem(theorem: &ParsedTheorem, theory: &Theory) -> Option<Proof> {
+    match &theorem.proof {
+        ProofScript::Proof(proof) => proof_expr_to_proof(proof, theory),
+    }
+}
+
+fn source_proof(name: Name) -> Proof {
+    let module = module().expect("prelude list source should parse");
+    let mut theory = super::term_theory();
+
+    for theorem in module.theorems {
+        let proof =
+            proof_for_theorem(&theorem, &theory).expect("prelude list source should prove theorem");
+
+        if theorem.name == name {
+            return proof;
+        }
+
+        theory
+            .define_theorem_from_proof(theorem.name, proof, theorem.prop)
+            .expect("prelude list source theorem dependency should check");
+    }
+
+    panic!("prelude list source should define requested theorem proof");
+}
+
+fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
+    match proof {
+        ProofExpr::Known(name) => Some(Proof::Known(*name)),
+        ProofExpr::Assume(symbol) => Some(Proof::Assume(*symbol)),
+        ProofExpr::Symm(proof) => Some(Proof::Symm(Box::new(proof_expr_to_proof(proof, theory)?))),
+        ProofExpr::Trans(first, second) => Some(Proof::Trans(
+            Box::new(proof_expr_to_proof(first, theory)?),
+            Box::new(proof_expr_to_proof(second, theory)?),
         )),
-        REVERSE_COMPUTES_TO_LIST => Some(reverse_computes_to_list_proof(
-            theorem.symbol("list")?,
-            theorem.symbol("result")?,
+        ProofExpr::EvalTo {
+            term,
+            expected,
+            limit,
+        } => proof_by_reduction_in_theory(term.clone(), expected.clone(), theory, *limit).ok(),
+        ProofExpr::EvalSame { left, right, limit } => {
+            proof_by_same_normal_form_in_theory(left.clone(), right.clone(), theory, *limit).ok()
+        }
+        ProofExpr::Rewrite {
+            equality,
+            proof,
+            variable,
+            template,
+        } => Some(Proof::Rewrite {
+            equality: Box::new(proof_expr_to_proof(equality, theory)?),
+            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+            variable: *variable,
+            template: template.clone(),
+        }),
+        ProofExpr::ListNil => Some(Proof::ListNil),
+        ProofExpr::ImpliesIntro {
+            assumption,
+            premise,
+            proof,
+        } => Some(Proof::ImpliesIntro {
+            assumption: *assumption,
+            premise: premise.clone(),
+            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+        }),
+        ProofExpr::ImpliesElim {
+            implication,
+            premise,
+        } => Some(Proof::ImpliesElim {
+            implication: Box::new(proof_expr_to_proof(implication, theory)?),
+            premise: Box::new(proof_expr_to_proof(premise, theory)?),
+        }),
+        ProofExpr::ExistsIntro {
+            variable,
+            body,
+            witness,
+            proof,
+        } => Some(Proof::ExistsIntro {
+            variable: *variable,
+            body: body.clone(),
+            witness: witness.clone(),
+            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+        }),
+        ProofExpr::AndIntro(left, right) => Some(Proof::AndIntro(
+            Box::new(proof_expr_to_proof(left, theory)?),
+            Box::new(proof_expr_to_proof(right, theory)?),
         )),
-        _ => None,
+        ProofExpr::ListCons {
+            head,
+            tail,
+            head_is_value,
+            tail_is_list,
+        } => Some(Proof::ListCons {
+            head: head.clone(),
+            tail: tail.clone(),
+            head_is_value: Box::new(proof_expr_to_proof(head_is_value, theory)?),
+            tail_is_list: Box::new(proof_expr_to_proof(tail_is_list, theory)?),
+        }),
+        ProofExpr::ListInduction {
+            variable,
+            property,
+            base,
+            head,
+            tail,
+            head_is_value_assumption,
+            tail_is_list_assumption,
+            induction_hypothesis_assumption,
+            step,
+        } => Some(Proof::ListInduction {
+            variable: *variable,
+            property: property.clone(),
+            base: Box::new(proof_expr_to_proof(base, theory)?),
+            head: *head,
+            tail: *tail,
+            head_is_value_assumption: *head_is_value_assumption,
+            tail_is_list_assumption: *tail_is_list_assumption,
+            induction_hypothesis_assumption: *induction_hypothesis_assumption,
+            step: Box::new(proof_expr_to_proof(step, theory)?),
+        }),
+        ProofExpr::ForAllIntro { variable, proof } => Some(Proof::ForAllIntro {
+            variable: *variable,
+            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+        }),
+        ProofExpr::ForAllElim { forall, argument } => Some(Proof::ForAllElim {
+            forall: Box::new(proof_expr_to_proof(forall, theory)?),
+            argument: argument.clone(),
+        }),
     }
 }
 
@@ -352,11 +466,70 @@ pub fn proof_by_evaluation_in_theory(
         .cloned()
         .expect("evaluation chains are nonempty");
 
-    if actual != expected {
+    if !alpha_eq_term(&actual, &expected) {
         return Err(EvaluationProofError::UnexpectedNormalForm { expected, actual });
     }
 
     Ok(Proof::Steps(chain))
+}
+
+pub fn proof_by_reduction_in_theory(
+    term: Term,
+    expected: Term,
+    theory: &Theory,
+    limit: usize,
+) -> Result<Proof, EvaluationProofError> {
+    let mut term = term;
+    let mut chain = vec![term.clone()];
+
+    if alpha_eq_term(&term, &expected) {
+        return Ok(Proof::Steps(chain));
+    }
+
+    for _ in 0..limit {
+        match theory.reduce(&term) {
+            Step::Reduced(next) => {
+                chain.push(next.clone());
+                if alpha_eq_term(&next, &expected) {
+                    return Ok(Proof::Steps(chain));
+                }
+                term = next;
+            }
+            Step::Normal => {
+                return Err(EvaluationProofError::UnexpectedNormalForm {
+                    expected,
+                    actual: term,
+                });
+            }
+        }
+    }
+
+    Err(EvaluationProofError::StepLimitExceeded { limit })
+}
+
+pub fn proof_by_same_normal_form_in_theory(
+    left: Term,
+    right: Term,
+    theory: &Theory,
+    limit: usize,
+) -> Result<Proof, EvaluationProofError> {
+    let left_normal = theory.normal_form(&left);
+    let right_normal = theory.normal_form(&right);
+
+    if !alpha_eq_term(&left_normal, &right_normal) {
+        return Err(EvaluationProofError::UnexpectedNormalForm {
+            expected: left_normal,
+            actual: right_normal,
+        });
+    }
+
+    let left_proof = proof_by_evaluation_in_theory(left, left_normal, theory, limit)?;
+    let right_proof = proof_by_evaluation_in_theory(right, right_normal, theory, limit)?;
+
+    Ok(Proof::Trans(
+        Box::new(left_proof),
+        Box::new(Proof::Symm(Box::new(right_proof))),
+    ))
 }
 
 pub fn check_evaluates_to(term: Term, value: Term, proof: &Proof) -> bool {
@@ -726,6 +899,18 @@ mod tests {
             reverse_computes_to_list_source_theorem(),
             reverse_computes_to_list_theorem(list, result)
         );
+    }
+
+    #[test]
+    fn reverse_source_theorem_uses_source_proof_script() {
+        assert!(matches!(
+            theorem_definition(REVERSE_ACC_COMPUTES_TO_LIST).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(REVERSE_COMPUTES_TO_LIST).proof,
+            ProofScript::Proof(_)
+        ));
     }
 
     #[test]

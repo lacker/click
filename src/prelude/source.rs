@@ -29,10 +29,12 @@ pub(super) struct LocalSymbol {
 pub(super) struct ParsedTheorem {
     pub name: Name,
     pub prop: Prop,
+    pub proof: ProofScript,
     local_symbols: Vec<LocalSymbol>,
 }
 
 impl ParsedTheorem {
+    #[cfg(test)]
     pub(super) fn symbol(&self, spelling: &str) -> Option<Symbol> {
         let mut matches = self
             .local_symbols
@@ -42,6 +44,77 @@ impl ParsedTheorem {
 
         matches.next().is_none().then_some(symbol)
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum ProofScript {
+    Proof(ProofExpr),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum ProofExpr {
+    Known(Name),
+    Assume(Symbol),
+    Symm(Box<ProofExpr>),
+    Trans(Box<ProofExpr>, Box<ProofExpr>),
+    EvalTo {
+        term: Term,
+        expected: Term,
+        limit: usize,
+    },
+    EvalSame {
+        left: Term,
+        right: Term,
+        limit: usize,
+    },
+    Rewrite {
+        equality: Box<ProofExpr>,
+        proof: Box<ProofExpr>,
+        variable: Symbol,
+        template: Prop,
+    },
+    ListNil,
+    ImpliesIntro {
+        assumption: Symbol,
+        premise: Prop,
+        proof: Box<ProofExpr>,
+    },
+    ImpliesElim {
+        implication: Box<ProofExpr>,
+        premise: Box<ProofExpr>,
+    },
+    ExistsIntro {
+        variable: Symbol,
+        body: Prop,
+        witness: Term,
+        proof: Box<ProofExpr>,
+    },
+    AndIntro(Box<ProofExpr>, Box<ProofExpr>),
+    ListCons {
+        head: Term,
+        tail: Term,
+        head_is_value: Box<ProofExpr>,
+        tail_is_list: Box<ProofExpr>,
+    },
+    ListInduction {
+        variable: Symbol,
+        property: Prop,
+        base: Box<ProofExpr>,
+        head: Symbol,
+        tail: Symbol,
+        head_is_value_assumption: Symbol,
+        tail_is_list_assumption: Symbol,
+        induction_hypothesis_assumption: Symbol,
+        step: Box<ProofExpr>,
+    },
+    ForAllIntro {
+        variable: Symbol,
+        proof: Box<ProofExpr>,
+    },
+    ForAllElim {
+        forall: Box<ProofExpr>,
+        argument: Term,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -123,15 +196,25 @@ pub(super) fn parse_module(
                     )));
                 }
 
+                let Some(proof_expr) = form.proof else {
+                    return Err(ParseError::new(format!(
+                        "theorem `{}` is missing a proof script",
+                        form.name
+                    )));
+                };
+
                 let mut theorem_parser = TermParser::new_with_local_symbols(
                     term_definitions,
+                    theorem_definitions,
                     symbols,
                     FIRST_THEOREM_SYMBOL,
                 )?;
                 let prop = theorem_parser.prop(form.body)?;
+                let proof = theorem_parser.proof_script(proof_expr)?;
                 theorems.push(ParsedTheorem {
                     name,
                     prop,
+                    proof,
                     local_symbols: theorem_parser.into_local_symbols(),
                 });
             }
@@ -164,25 +247,30 @@ struct TopLevelForm<'a> {
     kind: &'a str,
     name: &'a str,
     body: &'a Expr,
+    proof: Option<&'a Expr>,
 }
 
 fn top_level_form(expression: &Expr) -> Result<TopLevelForm<'_>, ParseError> {
     let Expr::List(items) = expression else {
         return Err(ParseError::new("top-level form must be a list"));
     };
-    if items.len() != 3 {
-        return Err(ParseError::new(
-            "top-level form must be (def <name> <term>) or (theorem <name> <prop>)",
-        ));
-    }
-
     let kind = atom(&items[0])?;
     match kind {
-        "def" | "theorem" => Ok(TopLevelForm {
+        "def" if items.len() == 3 => Ok(TopLevelForm {
             kind,
             name: atom(&items[1])?,
             body: &items[2],
+            proof: None,
         }),
+        "theorem" if items.len() == 4 => Ok(TopLevelForm {
+            kind,
+            name: atom(&items[1])?,
+            body: &items[2],
+            proof: Some(&items[3]),
+        }),
+        "def" | "theorem" => Err(ParseError::new(
+            "top-level form must be (def <name> <term>) or (theorem <name> <prop> <proof>)",
+        )),
         _ => Err(ParseError::new(format!("unknown top-level form `{kind}`"))),
     }
 }
@@ -282,6 +370,7 @@ fn atom(expression: &Expr) -> Result<&str, ParseError> {
 
 struct TermParser<'a> {
     definitions: HashMap<&'a str, Name>,
+    theorems: HashMap<&'a str, Name>,
     symbols: HashMap<&'a str, Symbol>,
     scopes: Vec<HashMap<String, Symbol>>,
     local_symbols: Vec<LocalSymbol>,
@@ -289,9 +378,23 @@ struct TermParser<'a> {
     used_symbols: HashSet<Symbol>,
 }
 
+#[derive(Clone, Copy)]
+enum PropSymbolMode {
+    Declare,
+    Reference,
+}
+
 impl<'a> TermParser<'a> {
     fn new(
         definitions: &'a [NameBinding],
+        symbols: &'a [SymbolBinding],
+    ) -> Result<Self, ParseError> {
+        Self::new_with_theorems(definitions, &[], symbols)
+    }
+
+    fn new_with_theorems(
+        definitions: &'a [NameBinding],
+        theorems: &'a [NameBinding],
         symbols: &'a [SymbolBinding],
     ) -> Result<Self, ParseError> {
         let mut definition_map = HashMap::new();
@@ -306,6 +409,8 @@ impl<'a> TermParser<'a> {
                 )));
             }
         }
+
+        let theorem_map = name_map(theorems, "theorem")?;
 
         let mut symbol_map = HashMap::new();
         for binding in symbols {
@@ -324,6 +429,7 @@ impl<'a> TermParser<'a> {
 
         Ok(Self {
             definitions: definition_map,
+            theorems: theorem_map,
             symbols: symbol_map,
             scopes: Vec::new(),
             local_symbols: Vec::new(),
@@ -334,10 +440,11 @@ impl<'a> TermParser<'a> {
 
     fn new_with_local_symbols(
         definitions: &'a [NameBinding],
+        theorems: &'a [NameBinding],
         symbols: &'a [SymbolBinding],
         first_local_symbol: Symbol,
     ) -> Result<Self, ParseError> {
-        let mut parser = Self::new(definitions, symbols)?;
+        let mut parser = Self::new_with_theorems(definitions, theorems, symbols)?;
         parser.next_local_symbol = Some(first_local_symbol.0);
         Ok(parser)
     }
@@ -348,6 +455,10 @@ impl<'a> TermParser<'a> {
 
     fn definition(&self, spelling: &str) -> Option<Name> {
         self.definitions.get(spelling).copied()
+    }
+
+    fn theorem(&self, spelling: &str) -> Option<Name> {
+        self.theorems.get(spelling).copied()
     }
 
     fn term(&mut self, expression: &Expr) -> Result<Term, ParseError> {
@@ -363,6 +474,9 @@ impl<'a> TermParser<'a> {
             "diverge" => Ok(Term::Diverge),
             _ => {
                 if let Some(symbol) = self.variable(spelling) {
+                    return Ok(Term::Var(symbol));
+                }
+                if let Some(symbol) = self.local_symbol(spelling) {
                     return Ok(Term::Var(symbol));
                 }
                 if let Some(name) = self.definition(spelling) {
@@ -477,6 +591,18 @@ impl<'a> TermParser<'a> {
     }
 
     fn prop(&mut self, expression: &Expr) -> Result<Prop, ParseError> {
+        self.prop_with_symbols(expression, PropSymbolMode::Declare)
+    }
+
+    fn proof_prop(&mut self, expression: &Expr) -> Result<Prop, ParseError> {
+        self.prop_with_symbols(expression, PropSymbolMode::Reference)
+    }
+
+    fn prop_with_symbols(
+        &mut self,
+        expression: &Expr,
+        symbol_mode: PropSymbolMode,
+    ) -> Result<Prop, ParseError> {
         let Expr::List(items) = expression else {
             return Err(ParseError::new("expected proposition"));
         };
@@ -490,13 +616,13 @@ impl<'a> TermParser<'a> {
             "computes-to" => self.computes_to(items),
             "is-value" => self.is_value(items),
             "is-list" => self.is_list(items),
-            "implies" => self.implies(items),
-            "forall" => self.forall(items),
-            "exists" => self.exists(items),
-            "and" => self.and(items),
-            "or" => self.or(items),
-            "computes-to-list" => self.computes_to_list(items),
-            "errors" => self.errors(items),
+            "implies" => self.implies(items, symbol_mode),
+            "forall" => self.forall(items, symbol_mode),
+            "exists" => self.exists(items, symbol_mode),
+            "and" => self.and(items, symbol_mode),
+            "or" => self.or(items, symbol_mode),
+            "computes-to-list" => self.computes_to_list(items, symbol_mode),
+            "errors" => self.errors(items, symbol_mode),
             "diverges" => self.diverges(items),
             _ => Err(ParseError::new(format!("unknown proposition `{form}`"))),
         }
@@ -522,55 +648,68 @@ impl<'a> TermParser<'a> {
         Ok(is_list(self.term(&items[1])?))
     }
 
-    fn implies(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+    fn implies(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
         expect_len("implies", items, 3)?;
-        Ok(implies(self.prop(&items[1])?, self.prop(&items[2])?))
+        Ok(implies(
+            self.prop_with_symbols(&items[1], symbol_mode)?,
+            self.prop_with_symbols(&items[2], symbol_mode)?,
+        ))
     }
 
-    fn forall(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+    fn forall(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
         expect_len("forall", items, 3)?;
         let variable = atom(&items[1])?;
-        let symbol = self.binder_symbol(variable)?;
+        let symbol = self.prop_symbol(variable, symbol_mode)?;
         self.push_variable(variable, symbol);
-        let body = self.prop(&items[2])?;
+        let body = self.prop_with_symbols(&items[2], symbol_mode)?;
         self.pop_variable();
 
         Ok(forall(symbol, body))
     }
 
-    fn exists(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+    fn exists(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
         expect_len("exists", items, 3)?;
         let variable = atom(&items[1])?;
-        let symbol = self.binder_symbol(variable)?;
+        let symbol = self.prop_symbol(variable, symbol_mode)?;
         self.push_variable(variable, symbol);
-        let body = self.prop(&items[2])?;
+        let body = self.prop_with_symbols(&items[2], symbol_mode)?;
         self.pop_variable();
 
         Ok(exists(symbol, body))
     }
 
-    fn and(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+    fn and(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
         expect_len("and", items, 3)?;
-        Ok(and(self.prop(&items[1])?, self.prop(&items[2])?))
+        Ok(and(
+            self.prop_with_symbols(&items[1], symbol_mode)?,
+            self.prop_with_symbols(&items[2], symbol_mode)?,
+        ))
     }
 
-    fn or(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+    fn or(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
         expect_len("or", items, 3)?;
-        Ok(or(self.prop(&items[1])?, self.prop(&items[2])?))
+        Ok(or(
+            self.prop_with_symbols(&items[1], symbol_mode)?,
+            self.prop_with_symbols(&items[2], symbol_mode)?,
+        ))
     }
 
-    fn computes_to_list(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+    fn computes_to_list(
+        &mut self,
+        items: &[Expr],
+        symbol_mode: PropSymbolMode,
+    ) -> Result<Prop, ParseError> {
         expect_len("computes-to-list", items, 3)?;
         Ok(computes_to_list(
-            self.binder_symbol(atom(&items[1])?)?,
+            self.prop_symbol(atom(&items[1])?, symbol_mode)?,
             self.term(&items[2])?,
         ))
     }
 
-    fn errors(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+    fn errors(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
         expect_len("errors", items, 3)?;
         Ok(errors(
-            self.binder_symbol(atom(&items[1])?)?,
+            self.prop_symbol(atom(&items[1])?, symbol_mode)?,
             self.term(&items[2])?,
         ))
     }
@@ -578,6 +717,215 @@ impl<'a> TermParser<'a> {
     fn diverges(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
         expect_len("diverges", items, 2)?;
         Ok(diverges(self.term(&items[1])?))
+    }
+
+    fn proof_script(&mut self, expression: &Expr) -> Result<ProofScript, ParseError> {
+        let Expr::List(items) = expression else {
+            return Err(ParseError::new("expected proof script"));
+        };
+        let Some(head) = items.first() else {
+            return Err(ParseError::new("empty proof script"));
+        };
+        let form = atom(head)?;
+
+        match form {
+            "proof" => {
+                expect_len("proof", items, 2)?;
+                Ok(ProofScript::Proof(self.proof_expr(&items[1])?))
+            }
+            _ => Err(ParseError::new(format!("unknown proof script `{form}`"))),
+        }
+    }
+
+    fn proof_expr(&mut self, expression: &Expr) -> Result<ProofExpr, ParseError> {
+        let Expr::List(items) = expression else {
+            return Err(ParseError::new("expected proof expression"));
+        };
+        let Some(head) = items.first() else {
+            return Err(ParseError::new("empty proof expression"));
+        };
+        let form = atom(head)?;
+
+        match form {
+            "known" => self.proof_known(items),
+            "assume" => self.proof_assume(items),
+            "symm" => self.proof_symm(items),
+            "trans" => self.proof_trans(items),
+            "eval-to" => self.proof_eval_to(items),
+            "eval-same" => self.proof_eval_same(items),
+            "rewrite" => self.proof_rewrite(items),
+            "list-nil" => self.proof_list_nil(items),
+            "list-cons" => self.proof_list_cons(items),
+            "list-induction" => self.proof_list_induction(items),
+            "implies-intro" => self.proof_implies_intro(items),
+            "implies-elim" => self.proof_implies_elim(items),
+            "exists-intro" => self.proof_exists_intro(items),
+            "and-intro" => self.proof_and_intro(items),
+            "forall-intro" => self.proof_forall_intro(items),
+            "forall-elim" => self.proof_forall_elim(items),
+            _ => Err(ParseError::new(format!(
+                "unknown proof expression `{form}`"
+            ))),
+        }
+    }
+
+    fn proof_known(&self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("known", items, 2)?;
+        let theorem = atom(&items[1])?;
+        let Some(name) = self.theorem(theorem) else {
+            return Err(ParseError::new(format!("unknown theorem `{theorem}`")));
+        };
+
+        Ok(ProofExpr::Known(name))
+    }
+
+    fn proof_assume(&self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("assume", items, 2)?;
+        Ok(ProofExpr::Assume(
+            self.existing_local_symbol(atom(&items[1])?)?,
+        ))
+    }
+
+    fn proof_symm(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("symm", items, 2)?;
+        Ok(ProofExpr::Symm(Box::new(self.proof_expr(&items[1])?)))
+    }
+
+    fn proof_trans(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("trans", items, 3)?;
+        Ok(ProofExpr::Trans(
+            Box::new(self.proof_expr(&items[1])?),
+            Box::new(self.proof_expr(&items[2])?),
+        ))
+    }
+
+    fn proof_eval_to(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        match items.len() {
+            3 => Ok(ProofExpr::EvalTo {
+                term: self.term(&items[1])?,
+                expected: self.term(&items[2])?,
+                limit: 128,
+            }),
+            4 => Ok(ProofExpr::EvalTo {
+                term: self.term(&items[1])?,
+                expected: self.term(&items[2])?,
+                limit: parse_usize(atom(&items[3])?)?,
+            }),
+            _ => Err(ParseError::new(format!(
+                "`eval-to` expects 2 or 3 arguments, got {}",
+                items.len().saturating_sub(1)
+            ))),
+        }
+    }
+
+    fn proof_eval_same(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        match items.len() {
+            3 => Ok(ProofExpr::EvalSame {
+                left: self.term(&items[1])?,
+                right: self.term(&items[2])?,
+                limit: 128,
+            }),
+            4 => Ok(ProofExpr::EvalSame {
+                left: self.term(&items[1])?,
+                right: self.term(&items[2])?,
+                limit: parse_usize(atom(&items[3])?)?,
+            }),
+            _ => Err(ParseError::new(format!(
+                "`eval-same` expects 2 or 3 arguments, got {}",
+                items.len().saturating_sub(1)
+            ))),
+        }
+    }
+
+    fn proof_rewrite(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("rewrite", items, 5)?;
+        Ok(ProofExpr::Rewrite {
+            equality: Box::new(self.proof_expr(&items[1])?),
+            proof: Box::new(self.proof_expr(&items[2])?),
+            variable: self.proof_symbol(atom(&items[3])?)?,
+            template: self.proof_prop(&items[4])?,
+        })
+    }
+
+    fn proof_list_nil(&self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("list-nil", items, 1)?;
+        Ok(ProofExpr::ListNil)
+    }
+
+    fn proof_list_cons(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("list-cons", items, 5)?;
+        Ok(ProofExpr::ListCons {
+            head: self.term(&items[1])?,
+            tail: self.term(&items[2])?,
+            head_is_value: Box::new(self.proof_expr(&items[3])?),
+            tail_is_list: Box::new(self.proof_expr(&items[4])?),
+        })
+    }
+
+    fn proof_list_induction(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("list-induction", items, 10)?;
+        Ok(ProofExpr::ListInduction {
+            variable: self.proof_symbol(atom(&items[1])?)?,
+            property: self.proof_prop(&items[2])?,
+            base: Box::new(self.proof_expr(&items[3])?),
+            head: self.proof_symbol(atom(&items[4])?)?,
+            tail: self.proof_symbol(atom(&items[5])?)?,
+            head_is_value_assumption: self.proof_symbol(atom(&items[6])?)?,
+            tail_is_list_assumption: self.proof_symbol(atom(&items[7])?)?,
+            induction_hypothesis_assumption: self.proof_symbol(atom(&items[8])?)?,
+            step: Box::new(self.proof_expr(&items[9])?),
+        })
+    }
+
+    fn proof_implies_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("implies-intro", items, 4)?;
+        Ok(ProofExpr::ImpliesIntro {
+            assumption: self.proof_symbol(atom(&items[1])?)?,
+            premise: self.proof_prop(&items[2])?,
+            proof: Box::new(self.proof_expr(&items[3])?),
+        })
+    }
+
+    fn proof_implies_elim(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("implies-elim", items, 3)?;
+        Ok(ProofExpr::ImpliesElim {
+            implication: Box::new(self.proof_expr(&items[1])?),
+            premise: Box::new(self.proof_expr(&items[2])?),
+        })
+    }
+
+    fn proof_exists_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("exists-intro", items, 5)?;
+        Ok(ProofExpr::ExistsIntro {
+            variable: self.proof_symbol(atom(&items[1])?)?,
+            body: self.proof_prop(&items[2])?,
+            witness: self.term(&items[3])?,
+            proof: Box::new(self.proof_expr(&items[4])?),
+        })
+    }
+
+    fn proof_and_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("and-intro", items, 3)?;
+        Ok(ProofExpr::AndIntro(
+            Box::new(self.proof_expr(&items[1])?),
+            Box::new(self.proof_expr(&items[2])?),
+        ))
+    }
+
+    fn proof_forall_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("forall-intro", items, 3)?;
+        Ok(ProofExpr::ForAllIntro {
+            variable: self.proof_symbol(atom(&items[1])?)?,
+            proof: Box::new(self.proof_expr(&items[2])?),
+        })
+    }
+
+    fn proof_forall_elim(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("forall-elim", items, 3)?;
+        Ok(ProofExpr::ForAllElim {
+            forall: Box::new(self.proof_expr(&items[1])?),
+            argument: self.term(&items[2])?,
+        })
     }
 
     fn static_symbol(&self, spelling: &str) -> Result<Symbol, ParseError> {
@@ -593,6 +941,26 @@ impl<'a> TermParser<'a> {
         }
 
         self.static_symbol(spelling)
+    }
+
+    fn prop_symbol(&mut self, spelling: &str, mode: PropSymbolMode) -> Result<Symbol, ParseError> {
+        match mode {
+            PropSymbolMode::Declare => self.binder_symbol(spelling),
+            PropSymbolMode::Reference => self.proof_symbol(spelling),
+        }
+    }
+
+    fn proof_symbol(&mut self, spelling: &str) -> Result<Symbol, ParseError> {
+        if let Some(symbol) = self.local_symbol(spelling) {
+            return Ok(symbol);
+        }
+
+        self.binder_symbol(spelling)
+    }
+
+    fn existing_local_symbol(&self, spelling: &str) -> Result<Symbol, ParseError> {
+        self.local_symbol(spelling)
+            .ok_or_else(|| ParseError::new(format!("unknown proof symbol `{spelling}`")))
     }
 
     fn allocate_local_symbol(&mut self, spelling: &str) -> Result<Symbol, ParseError> {
@@ -613,6 +981,16 @@ impl<'a> TermParser<'a> {
                 return Ok(symbol);
             }
         }
+    }
+
+    fn local_symbol(&self, spelling: &str) -> Option<Symbol> {
+        let mut matches = self
+            .local_symbols
+            .iter()
+            .filter(|symbol| symbol.spelling == spelling);
+        let symbol = matches.next()?.symbol;
+
+        matches.next().is_none().then_some(symbol)
     }
 
     fn variable(&self, spelling: &str) -> Option<Symbol> {
@@ -642,6 +1020,11 @@ fn expect_len(form: &str, items: &[Expr], len: usize) -> Result<(), ParseError> 
             items.len().saturating_sub(1)
         )))
     }
+}
+
+fn parse_usize(atom: &str) -> Result<usize, ParseError> {
+    atom.parse()
+        .map_err(|_| ParseError::new(format!("expected natural number, got `{atom}`")))
 }
 
 #[cfg(test)]
@@ -677,7 +1060,10 @@ mod tests {
                 (def use_id (id nil))
                 (theorem use_id_computes
                   (forall value
-                    (computes-to (use_id value) value)))
+                    (computes-to (use_id value) value))
+                  (proof
+                    (forall-intro value
+                      (eval-to (use_id value) value))))
                 ",
                 &terms,
                 &theorems,
@@ -712,6 +1098,17 @@ mod tests {
                             Term::Var(Symbol(2_000)),
                         ),
                     ),
+                    proof: ProofScript::Proof(ProofExpr::ForAllIntro {
+                        variable: Symbol(2_000),
+                        proof: Box::new(ProofExpr::EvalTo {
+                            term: Term::Apply {
+                                function: Box::new(Term::Const(Name(2))),
+                                argument: Box::new(Term::Var(Symbol(2_000))),
+                            },
+                            expected: Term::Var(Symbol(2_000)),
+                            limit: 128,
+                        }),
+                    }),
                     local_symbols: vec![LocalSymbol {
                         spelling: "value".to_owned(),
                         symbol: Symbol(2_000),
@@ -753,7 +1150,8 @@ mod tests {
                   (forall x
                     (implies
                       (is-list x)
-                      (computes-to-list result (use_id x)))))
+                      (computes-to-list result (use_id x))))
+                  (proof (list-nil)))
                 ",
                 &terms,
                 &theorems,
@@ -776,6 +1174,7 @@ mod tests {
                             ),
                         ),
                     ),
+                    proof: ProofScript::Proof(ProofExpr::ListNil),
                     local_symbols: vec![
                         LocalSymbol {
                             spelling: "x".to_owned(),

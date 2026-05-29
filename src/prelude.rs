@@ -56,7 +56,7 @@ pub fn define_theorems_in_theory(theory: &mut Theory) -> bool {
 
 fn define_module_theorems(theory: &mut Theory, module: &source::ParsedModule) -> bool {
     module.theorems.iter().all(|theorem| {
-        let Some(proof) = list::proof_for_theorem(theorem) else {
+        let Some(proof) = list::proof_for_theorem(theorem, theory) else {
             return false;
         };
 

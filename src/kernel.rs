@@ -688,7 +688,156 @@ fn check_in_bindings_and_context(
     bindings: &Bindings,
     context: &Context,
 ) -> bool {
-    proven_prop(proof, bindings, context).as_ref() == Some(prop)
+    proven_prop(proof, bindings, context).is_some_and(|proven| alpha_eq_prop(&proven, prop))
+}
+
+pub fn alpha_eq_prop(left: &Prop, right: &Prop) -> bool {
+    alpha_eq_prop_in_context(left, right, &mut Vec::new())
+}
+
+pub fn alpha_eq_term(left: &Term, right: &Term) -> bool {
+    alpha_eq_term_in_context(left, right, &mut Vec::new())
+}
+
+fn alpha_eq_prop_in_context(
+    left: &Prop,
+    right: &Prop,
+    bindings: &mut Vec<(Symbol, Symbol)>,
+) -> bool {
+    match (left, right) {
+        (Prop::Equal(left_left, left_right), Prop::Equal(right_left, right_right)) => {
+            alpha_eq_term_in_context(left_left, right_left, bindings)
+                && alpha_eq_term_in_context(left_right, right_right, bindings)
+        }
+        (Prop::IsValue(left), Prop::IsValue(right)) => {
+            alpha_eq_term_in_context(left, right, bindings)
+        }
+        (Prop::IsList(left), Prop::IsList(right)) => {
+            alpha_eq_term_in_context(left, right, bindings)
+        }
+        (
+            Prop::Implies(left_premise, left_conclusion),
+            Prop::Implies(right_premise, right_conclusion),
+        )
+        | (Prop::And(left_premise, left_conclusion), Prop::And(right_premise, right_conclusion))
+        | (Prop::Or(left_premise, left_conclusion), Prop::Or(right_premise, right_conclusion)) => {
+            alpha_eq_prop_in_context(left_premise, right_premise, bindings)
+                && alpha_eq_prop_in_context(left_conclusion, right_conclusion, bindings)
+        }
+        (
+            Prop::ForAll {
+                variable: left_variable,
+                body: left_body,
+            },
+            Prop::ForAll {
+                variable: right_variable,
+                body: right_body,
+            },
+        )
+        | (
+            Prop::Exists {
+                variable: left_variable,
+                body: left_body,
+            },
+            Prop::Exists {
+                variable: right_variable,
+                body: right_body,
+            },
+        ) => alpha_eq_binder(*left_variable, *right_variable, bindings, |bindings| {
+            alpha_eq_prop_in_context(left_body, right_body, bindings)
+        }),
+        _ => false,
+    }
+}
+
+fn alpha_eq_term_in_context(
+    left: &Term,
+    right: &Term,
+    bindings: &mut Vec<(Symbol, Symbol)>,
+) -> bool {
+    match (left, right) {
+        (
+            Term::Apply {
+                function: left_function,
+                argument: left_argument,
+            },
+            Term::Apply {
+                function: right_function,
+                argument: right_argument,
+            },
+        ) => {
+            alpha_eq_term_in_context(left_function, right_function, bindings)
+                && alpha_eq_term_in_context(left_argument, right_argument, bindings)
+        }
+        (Term::Lambda(left), Term::Lambda(right)) => {
+            alpha_eq_binder(left.parameter, right.parameter, bindings, |bindings| {
+                alpha_eq_term_in_context(&left.body, &right.body, bindings)
+            })
+        }
+        (Term::Nil, Term::Nil) => true,
+        (
+            Term::Cons {
+                head: left_head,
+                tail: left_tail,
+            },
+            Term::Cons {
+                head: right_head,
+                tail: right_tail,
+            },
+        ) => {
+            alpha_eq_term_in_context(left_head, right_head, bindings)
+                && alpha_eq_term_in_context(left_tail, right_tail, bindings)
+        }
+        (Term::Head(left), Term::Head(right)) | (Term::Tail(left), Term::Tail(right)) => {
+            alpha_eq_term_in_context(left, right, bindings)
+        }
+        (Term::ListCase(left), Term::ListCase(right)) => {
+            alpha_eq_term_in_context(&left.list, &right.list, bindings)
+                && alpha_eq_term_in_context(&left.nil, &right.nil, bindings)
+                && alpha_eq_binder(left.cons, right.cons, bindings, |bindings| {
+                    alpha_eq_term_in_context(&left.cons_case, &right.cons_case, bindings)
+                })
+        }
+        (Term::Const(left), Term::Const(right)) => left == right,
+        (Term::Error(left), Term::Error(right)) => alpha_eq_term_in_context(left, right, bindings),
+        (Term::Diverge, Term::Diverge) => true,
+        (Term::Var(left), Term::Var(right)) => alpha_eq_symbol(*left, *right, bindings),
+        (Term::Quote(left), Term::Quote(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn alpha_eq_binder<T>(
+    left: Symbol,
+    right: Symbol,
+    bindings: &mut Vec<(Symbol, Symbol)>,
+    compare_body: impl FnOnce(&mut Vec<(Symbol, Symbol)>) -> T,
+) -> T {
+    bindings.push((left, right));
+    let result = compare_body(bindings);
+    bindings.pop();
+    result
+}
+
+fn alpha_eq_symbol(left: Symbol, right: Symbol, bindings: &[(Symbol, Symbol)]) -> bool {
+    match (
+        alpha_bound_position(left, bindings, |(left, _)| *left),
+        alpha_bound_position(right, bindings, |(_, right)| *right),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        (None, None) => left == right,
+        _ => false,
+    }
+}
+
+fn alpha_bound_position(
+    symbol: Symbol,
+    bindings: &[(Symbol, Symbol)],
+    select: impl Fn(&(Symbol, Symbol)) -> Symbol,
+) -> Option<usize> {
+    bindings
+        .iter()
+        .rposition(|binding| select(binding) == symbol)
 }
 
 fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context) -> Option<Prop> {
@@ -706,7 +855,7 @@ fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context) -> Option<
                 proven_prop(second, bindings, context)?,
             ) {
                 (Prop::Equal(left, middle), Prop::Equal(second_middle, right))
-                    if middle == second_middle =>
+                    if alpha_eq_term(&middle, &second_middle) =>
                 {
                     Some(Prop::Equal(left, right))
                 }
@@ -729,7 +878,7 @@ fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context) -> Option<
             };
 
             let left_instance = substitute_prop(template, *variable, &left);
-            if proven_prop(proof, bindings, context)? != left_instance {
+            if !alpha_eq_prop(&proven_prop(proof, bindings, context)?, &left_instance) {
                 return None;
             }
 
@@ -760,7 +909,7 @@ fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context) -> Option<
             proven_prop(tail_is_value, bindings, context)?,
         ) {
             (Prop::IsValue(proven_head), Prop::IsValue(proven_tail))
-                if proven_head == *head && proven_tail == *tail =>
+                if alpha_eq_term(&proven_head, head) && alpha_eq_term(&proven_tail, tail) =>
             {
                 Some(Prop::IsValue(Term::Cons {
                     head: Box::new(head.clone()),
@@ -780,7 +929,7 @@ fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context) -> Option<
             proven_prop(tail_is_list, bindings, context)?,
         ) {
             (Prop::IsValue(proven_head), Prop::IsList(proven_tail))
-                if proven_head == *head && proven_tail == *tail =>
+                if alpha_eq_term(&proven_head, head) && alpha_eq_term(&proven_tail, tail) =>
             {
                 Some(Prop::IsList(Term::Cons {
                     head: Box::new(head.clone()),
@@ -831,7 +980,7 @@ fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context) -> Option<
             let premise = proven_prop(premise, bindings, context)?;
             match proven_prop(implication, bindings, context)? {
                 Prop::Implies(expected_premise, conclusion)
-                    if expected_premise.as_ref() == &premise =>
+                    if alpha_eq_prop(&expected_premise, &premise) =>
                 {
                     Some(*conclusion)
                 }
@@ -859,7 +1008,7 @@ fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context) -> Option<
             proof,
         } => {
             let witness_body = substitute_prop(body, *variable, witness);
-            if proven_prop(proof, bindings, context)? == witness_body {
+            if alpha_eq_prop(&proven_prop(proof, bindings, context)?, &witness_body) {
                 Some(Prop::Exists {
                     variable: *variable,
                     body: Box::new(body.clone()),
@@ -934,7 +1083,7 @@ fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context) -> Option<
                 right_context.insert(*right_assumption, *right);
                 let right_conclusion = proven_prop(right_proof, bindings, &right_context)?;
 
-                if left_conclusion == right_conclusion {
+                if alpha_eq_prop(&left_conclusion, &right_conclusion) {
                     Some(left_conclusion)
                 } else {
                     None
@@ -951,7 +1100,7 @@ fn proven_steps(terms: &[Term], bindings: &Bindings) -> Option<Prop> {
 
     for next in rest {
         match step_in_bindings(previous, bindings) {
-            Step::Reduced(reduced) if &reduced == next => previous = next,
+            Step::Reduced(reduced) if alpha_eq_term(&reduced, next) => previous = next,
             _ => return None,
         }
     }
@@ -991,7 +1140,7 @@ fn prove_list_induction(
     } = symbols;
 
     let base_prop = substitute_prop(property, variable, &Term::Nil);
-    if proven_prop(base, bindings, context)? != base_prop {
+    if !alpha_eq_prop(&proven_prop(base, bindings, context)?, &base_prop) {
         return None;
     }
 
@@ -1012,7 +1161,7 @@ fn prove_list_induction(
         substitute_prop(property, variable, &tail_var),
     );
 
-    if proven_prop(step, bindings, &step_context)? != step_prop {
+    if !alpha_eq_prop(&proven_prop(step, bindings, &step_context)?, &step_prop) {
         return None;
     }
 
@@ -1677,6 +1826,76 @@ mod tests {
 
     fn error(error: Term) -> Term {
         Term::Error(Box::new(error))
+    }
+
+    #[test]
+    fn alpha_eq_prop_renames_bound_variables_only() {
+        let left = forall(
+            Symbol(1),
+            exists(Symbol(2), equal(Term::Var(Symbol(1)), Term::Var(Symbol(2)))),
+        );
+        let right = forall(
+            Symbol(10),
+            exists(
+                Symbol(11),
+                equal(Term::Var(Symbol(10)), Term::Var(Symbol(11))),
+            ),
+        );
+
+        assert!(alpha_eq_prop(&left, &right));
+        assert!(!alpha_eq_prop(
+            &equal(Term::Var(Symbol(1)), Term::Var(Symbol(2))),
+            &equal(Term::Var(Symbol(1)), Term::Var(Symbol(11))),
+        ));
+    }
+
+    #[test]
+    fn alpha_eq_term_renames_lambda_and_list_case_binders() {
+        let left = lambda(
+            Symbol(1),
+            list_case(
+                Term::Var(Symbol(9)),
+                Term::Nil,
+                Symbol(2),
+                apply(Term::Var(Symbol(1)), Term::Var(Symbol(2))),
+            ),
+        );
+        let right = lambda(
+            Symbol(10),
+            list_case(
+                Term::Var(Symbol(9)),
+                Term::Nil,
+                Symbol(20),
+                apply(Term::Var(Symbol(10)), Term::Var(Symbol(20))),
+            ),
+        );
+        let reversed = lambda(
+            Symbol(10),
+            list_case(
+                Term::Var(Symbol(9)),
+                Term::Nil,
+                Symbol(20),
+                apply(Term::Var(Symbol(20)), Term::Var(Symbol(10))),
+            ),
+        );
+
+        assert!(alpha_eq_term(&left, &right));
+        assert!(!alpha_eq_term(&left, &reversed));
+        assert!(!alpha_eq_term(
+            &lambda(Symbol(1), Term::Quote(Symbol(1))),
+            &lambda(Symbol(2), Term::Quote(Symbol(2))),
+        ));
+    }
+
+    #[test]
+    fn checker_accepts_alpha_equivalent_goal() {
+        let proof = Proof::ForAllIntro {
+            variable: Symbol(1),
+            proof: Box::new(Proof::Refl(Term::Var(Symbol(1)))),
+        };
+        let expected = forall(Symbol(2), equal(Term::Var(Symbol(2)), Term::Var(Symbol(2))));
+
+        assert!(check(&proof, &expected));
     }
 
     #[test]
