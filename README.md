@@ -17,6 +17,10 @@ The basic design:
 * Lisp-style lists
 * handles divergence and error effects 
 
+Medium-term goals:
+* Have some syntax and way of loading .lisp files.
+* Build out a “standard library” with lots of things about lists.
+
 ## Current architecture
 
 The kernel has a few distinct layers:
