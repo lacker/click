@@ -15,12 +15,12 @@ The basic design:
 * LCF-style theorem prover
 * Loose typing
 * Lisp-style lists
-* handles divergence and error effects 
+* Should handle divergence and error effects
 
 Medium-term goals:
 * Keep code quality high. Clean up when things should be cleaned up.
-* Have some syntax and way of loading .lisp files.
-* Build out a “standard library” with lots of things about lists.
+* Make the whole prelude load from `.lisp` files.
+* Build out a “standard library” with lots of definitions and proofs about lists.
 
 ## Current architecture
 
