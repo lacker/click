@@ -51,6 +51,11 @@ impl Environment {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Theory {
+    environment: Environment,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Lambda {
     pub parameter: Symbol,
@@ -472,6 +477,232 @@ impl Theorem {
             proof: Box::new(theorem.proof.clone()),
         })
         .expect("or intro right over a closed theorem should be valid")
+    }
+}
+
+impl Theory {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_environment(environment: Environment) -> Self {
+        Self { environment }
+    }
+
+    pub fn environment(&self) -> &Environment {
+        &self.environment
+    }
+
+    pub fn into_environment(self) -> Environment {
+        self.environment
+    }
+
+    pub fn theorem(&self, name: Name) -> Option<&Prop> {
+        self.environment.theorem(name)
+    }
+
+    pub fn term(&self, name: Name) -> Option<&Term> {
+        self.environment.term(name)
+    }
+
+    pub fn define_term(&mut self, name: Name, term: &Term) -> bool {
+        self.environment.define_term(name, term)
+    }
+
+    pub fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
+        if !self.check(theorem.proof(), theorem.prop()) {
+            return false;
+        }
+
+        self.environment.define_theorem(name, theorem)
+    }
+
+    pub fn define_theorem_from_proof(
+        &mut self,
+        name: Name,
+        proof: Proof,
+        prop: Prop,
+    ) -> Option<Theorem> {
+        let theorem = self.from_proof(proof, prop)?;
+        self.define_theorem(name, &theorem).then_some(theorem)
+    }
+
+    pub fn check(&self, proof: &Proof, prop: &Prop) -> bool {
+        check_in_environment(proof, prop, &self.environment)
+    }
+
+    pub fn check_in_context(&self, proof: &Proof, prop: &Prop, context: &Context) -> bool {
+        check_in_environment_and_context(proof, prop, &self.environment, context)
+    }
+
+    pub fn from_proof(&self, proof: Proof, prop: Prop) -> Option<Theorem> {
+        Theorem::from_proof_in_environment(proof, prop, &self.environment)
+    }
+
+    fn from_closed_proof(&self, proof: Proof) -> Option<Theorem> {
+        Theorem::from_closed_proof_in_environment(proof, &self.environment)
+    }
+
+    pub fn known(&self, name: Name) -> Option<Theorem> {
+        self.from_closed_proof(Proof::Known(name))
+    }
+
+    pub fn reduce(&self, term: &Term) -> Step {
+        step_in_environment(term, &self.environment)
+    }
+
+    pub fn normal_form(&self, term: &Term) -> Term {
+        normal_form_in_environment(term, &self.environment)
+    }
+
+    pub fn refl(&self, term: Term) -> Theorem {
+        Theorem::refl(term)
+    }
+
+    pub fn symm(&self, theorem: &Theorem) -> Option<Theorem> {
+        self.from_closed_proof(Proof::Symm(Box::new(theorem.proof.clone())))
+    }
+
+    pub fn trans(&self, first: &Theorem, second: &Theorem) -> Option<Theorem> {
+        self.from_closed_proof(Proof::Trans(
+            Box::new(first.proof.clone()),
+            Box::new(second.proof.clone()),
+        ))
+    }
+
+    pub fn step(&self, term: Term) -> Option<Theorem> {
+        self.from_closed_proof(Proof::Step(term))
+    }
+
+    pub fn steps(&self, terms: Vec<Term>) -> Option<Theorem> {
+        self.from_closed_proof(Proof::Steps(terms))
+    }
+
+    pub fn rewrite(
+        &self,
+        equality: &Theorem,
+        theorem: &Theorem,
+        variable: Symbol,
+        template: Prop,
+    ) -> Option<Theorem> {
+        self.from_closed_proof(Proof::Rewrite {
+            equality: Box::new(equality.proof.clone()),
+            proof: Box::new(theorem.proof.clone()),
+            variable,
+            template,
+        })
+    }
+
+    pub fn beta(&self, lambda: Lambda, argument: Term) -> Option<Theorem> {
+        self.from_closed_proof(Proof::Beta { lambda, argument })
+    }
+
+    pub fn value_lambda(&self, lambda: Lambda) -> Theorem {
+        self.from_closed_proof(Proof::ValueLambda(lambda))
+            .expect("value lambda theorem should be valid in every theory")
+    }
+
+    pub fn value_quote(&self, symbol: Symbol) -> Theorem {
+        self.from_closed_proof(Proof::ValueQuote(symbol))
+            .expect("value quote theorem should be valid in every theory")
+    }
+
+    pub fn value_nil(&self) -> Theorem {
+        self.from_closed_proof(Proof::ValueNil)
+            .expect("value nil theorem should be valid in every theory")
+    }
+
+    pub fn value_cons(
+        &self,
+        head: Term,
+        tail: Term,
+        head_is_value: &Theorem,
+        tail_is_value: &Theorem,
+    ) -> Option<Theorem> {
+        self.from_closed_proof(Proof::ValueCons {
+            head,
+            tail,
+            head_is_value: Box::new(head_is_value.proof.clone()),
+            tail_is_value: Box::new(tail_is_value.proof.clone()),
+        })
+    }
+
+    pub fn list_nil(&self) -> Theorem {
+        self.from_closed_proof(Proof::ListNil)
+            .expect("list nil theorem should be valid in every theory")
+    }
+
+    pub fn list_cons(
+        &self,
+        head: Term,
+        tail: Term,
+        head_is_value: &Theorem,
+        tail_is_list: &Theorem,
+    ) -> Option<Theorem> {
+        self.from_closed_proof(Proof::ListCons {
+            head,
+            tail,
+            head_is_value: Box::new(head_is_value.proof.clone()),
+            tail_is_list: Box::new(tail_is_list.proof.clone()),
+        })
+    }
+
+    pub fn implies_elim(&self, implication: &Theorem, premise: &Theorem) -> Option<Theorem> {
+        self.from_closed_proof(Proof::ImpliesElim {
+            implication: Box::new(implication.proof.clone()),
+            premise: Box::new(premise.proof.clone()),
+        })
+    }
+
+    pub fn forall_elim(&self, forall: &Theorem, argument: Term) -> Option<Theorem> {
+        self.from_closed_proof(Proof::ForAllElim {
+            forall: Box::new(forall.proof.clone()),
+            argument,
+        })
+    }
+
+    pub fn exists_intro(
+        &self,
+        variable: Symbol,
+        body: Prop,
+        witness: Term,
+        proof: &Theorem,
+    ) -> Option<Theorem> {
+        self.from_closed_proof(Proof::ExistsIntro {
+            variable,
+            body,
+            witness,
+            proof: Box::new(proof.proof.clone()),
+        })
+    }
+
+    pub fn and_intro(&self, left: &Theorem, right: &Theorem) -> Option<Theorem> {
+        self.from_closed_proof(Proof::AndIntro(
+            Box::new(left.proof.clone()),
+            Box::new(right.proof.clone()),
+        ))
+    }
+
+    pub fn and_elim_left(&self, theorem: &Theorem) -> Option<Theorem> {
+        self.from_closed_proof(Proof::AndElimLeft(Box::new(theorem.proof.clone())))
+    }
+
+    pub fn and_elim_right(&self, theorem: &Theorem) -> Option<Theorem> {
+        self.from_closed_proof(Proof::AndElimRight(Box::new(theorem.proof.clone())))
+    }
+
+    pub fn or_intro_left(&self, theorem: &Theorem, right: Prop) -> Option<Theorem> {
+        self.from_closed_proof(Proof::OrIntroLeft {
+            proof: Box::new(theorem.proof.clone()),
+            right,
+        })
+    }
+
+    pub fn or_intro_right(&self, left: Prop, theorem: &Theorem) -> Option<Theorem> {
+        self.from_closed_proof(Proof::OrIntroRight {
+            left,
+            proof: Box::new(theorem.proof.clone()),
+        })
     }
 }
 
@@ -1871,6 +2102,26 @@ mod tests {
             &equal(end, start),
             &environment,
         ));
+    }
+
+    #[test]
+    fn theory_combinators_use_their_environment() {
+        let start = head(cons(Term::Quote(Symbol(1)), Term::Nil));
+        let end = Term::Quote(Symbol(1));
+        let step = Theorem::step(start.clone()).expect("term should step");
+        let mut theory = Theory::new();
+
+        assert!(theory.define_theorem(Name(7), &step));
+        let known = theory.known(Name(7)).expect("known theorem should check");
+
+        assert!(Theorem::symm(&known).is_none());
+        assert_eq!(
+            theory
+                .symm(&known)
+                .expect("known theorem should compose")
+                .prop(),
+            &equal(end, start)
+        );
     }
 
     #[test]
