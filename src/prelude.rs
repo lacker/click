@@ -3,18 +3,12 @@
 pub mod list;
 mod source;
 
-use crate::{Name, Symbol, Term, Theorem, Theory};
+use crate::{Name, Term, Theorem, Theory};
 
 pub const REVERSE_ACC: Name = Name(1);
 pub const REVERSE: Name = Name(2);
 pub const REVERSE_ACC_COMPUTES_TO_LIST: Name = Name(3);
 pub const REVERSE_COMPUTES_TO_LIST: Name = Name(4);
-
-const REVERSE_ACC_THEOREM_LIST: Symbol = Symbol(2_000);
-const REVERSE_ACC_THEOREM_ACC: Symbol = Symbol(2_001);
-const REVERSE_ACC_THEOREM_RESULT: Symbol = Symbol(2_002);
-const REVERSE_THEOREM_LIST: Symbol = Symbol(2_003);
-const REVERSE_THEOREM_RESULT: Symbol = Symbol(2_004);
 
 pub fn theory() -> Theory {
     let mut theory = term_theory();
@@ -43,16 +37,8 @@ pub fn define_terms_in_theory(theory: &mut Theory) -> bool {
 }
 
 pub fn define_theorems_in_theory(theory: &mut Theory) -> bool {
-    let reverse_acc_prop = list::reverse_acc_computes_to_list_theorem(
-        REVERSE_ACC_THEOREM_LIST,
-        REVERSE_ACC_THEOREM_ACC,
-        REVERSE_ACC_THEOREM_RESULT,
-    );
-    let reverse_acc_proof = list::reverse_acc_computes_to_list_proof(
-        REVERSE_ACC_THEOREM_LIST,
-        REVERSE_ACC_THEOREM_ACC,
-        REVERSE_ACC_THEOREM_RESULT,
-    );
+    let reverse_acc_prop = list::reverse_acc_computes_to_list_source_theorem();
+    let reverse_acc_proof = list::reverse_acc_computes_to_list_source_proof();
     let Some(_) = theory.define_theorem_from_proof(
         REVERSE_ACC_COMPUTES_TO_LIST,
         reverse_acc_proof,
@@ -61,10 +47,8 @@ pub fn define_theorems_in_theory(theory: &mut Theory) -> bool {
         return false;
     };
 
-    let reverse_prop =
-        list::reverse_computes_to_list_theorem(REVERSE_THEOREM_LIST, REVERSE_THEOREM_RESULT);
-    let reverse_proof =
-        list::reverse_computes_to_list_proof(REVERSE_THEOREM_LIST, REVERSE_THEOREM_RESULT);
+    let reverse_prop = list::reverse_computes_to_list_source_theorem();
+    let reverse_proof = list::reverse_computes_to_list_source_proof();
 
     theory
         .define_theorem_from_proof(REVERSE_COMPUTES_TO_LIST, reverse_proof, reverse_prop)
@@ -78,16 +62,8 @@ pub fn reverse_acc_computes_to_list() -> Option<Theorem> {
 
 fn reverse_acc_computes_to_list_in_theory(theory: &Theory) -> Option<Theorem> {
     theory.from_proof(
-        list::reverse_acc_computes_to_list_proof(
-            REVERSE_ACC_THEOREM_LIST,
-            REVERSE_ACC_THEOREM_ACC,
-            REVERSE_ACC_THEOREM_RESULT,
-        ),
-        list::reverse_acc_computes_to_list_theorem(
-            REVERSE_ACC_THEOREM_LIST,
-            REVERSE_ACC_THEOREM_ACC,
-            REVERSE_ACC_THEOREM_RESULT,
-        ),
+        list::reverse_acc_computes_to_list_source_proof(),
+        list::reverse_acc_computes_to_list_source_theorem(),
     )
 }
 
@@ -98,8 +74,8 @@ pub fn reverse_computes_to_list() -> Option<Theorem> {
 
 fn reverse_computes_to_list_in_theory(theory: &Theory) -> Option<Theorem> {
     theory.from_proof(
-        list::reverse_computes_to_list_proof(REVERSE_THEOREM_LIST, REVERSE_THEOREM_RESULT),
-        list::reverse_computes_to_list_theorem(REVERSE_THEOREM_LIST, REVERSE_THEOREM_RESULT),
+        list::reverse_computes_to_list_source_proof(),
+        list::reverse_computes_to_list_source_theorem(),
     )
 }
 
@@ -157,13 +133,8 @@ mod tests {
     #[test]
     fn theory_defines_reverse_theorems() {
         let theory = theory();
-        let reverse_acc_prop = list::reverse_acc_computes_to_list_theorem(
-            REVERSE_ACC_THEOREM_LIST,
-            REVERSE_ACC_THEOREM_ACC,
-            REVERSE_ACC_THEOREM_RESULT,
-        );
-        let reverse_prop =
-            list::reverse_computes_to_list_theorem(REVERSE_THEOREM_LIST, REVERSE_THEOREM_RESULT);
+        let reverse_acc_prop = list::reverse_acc_computes_to_list_source_theorem();
+        let reverse_prop = list::reverse_computes_to_list_source_theorem();
 
         assert_eq!(
             theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST),
@@ -197,7 +168,10 @@ mod tests {
 
         assert_eq!(
             conclusion.prop(),
-            &computes_to_list(REVERSE_THEOREM_RESULT, list::reverse_call(list::nil()))
+            &computes_to_list(
+                list::reverse_computes_to_list_source_result_symbol(),
+                list::reverse_call(list::nil()),
+            )
         );
     }
 }

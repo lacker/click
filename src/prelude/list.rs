@@ -6,8 +6,8 @@ use crate::{
 };
 
 use super::{
-    REVERSE, REVERSE_ACC,
-    source::{NameBinding, ParseError, SymbolBinding},
+    REVERSE, REVERSE_ACC, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST,
+    source::{NameBinding, ParseError, ParsedTheorem, SymbolBinding},
 };
 
 pub const UNIT: Symbol = Symbol(3);
@@ -34,7 +34,18 @@ const TERM_DEFINITIONS: &[NameBinding] = &[
     },
 ];
 
-const SOURCE_SYMBOLS: &[SymbolBinding] = &[
+const THEOREM_DEFINITIONS: &[NameBinding] = &[
+    NameBinding {
+        spelling: "reverse_acc_computes_to_list",
+        name: REVERSE_ACC_COMPUTES_TO_LIST,
+    },
+    NameBinding {
+        spelling: "reverse_computes_to_list",
+        name: REVERSE_COMPUTES_TO_LIST,
+    },
+];
+
+const TERM_SYMBOLS: &[SymbolBinding] = &[
     SymbolBinding {
         spelling: "unit",
         symbol: UNIT,
@@ -154,7 +165,16 @@ pub fn reverse_acc() -> Term {
 }
 
 pub(super) fn term_definitions() -> Result<Vec<(Name, Term)>, ParseError> {
-    super::source::parse_term_definitions(SOURCE, TERM_DEFINITIONS, SOURCE_SYMBOLS)
+    super::source::parse_term_definitions(SOURCE, TERM_DEFINITIONS, TERM_SYMBOLS)
+}
+
+pub(super) fn theorem_definitions() -> Result<Vec<ParsedTheorem>, ParseError> {
+    super::source::parse_theorem_definitions(
+        SOURCE,
+        THEOREM_DEFINITIONS,
+        TERM_DEFINITIONS,
+        TERM_SYMBOLS,
+    )
 }
 
 pub fn reverse_acc_definition() -> Term {
@@ -175,6 +195,48 @@ fn definition(name: Name) -> Term {
         .into_iter()
         .find_map(|(definition_name, term)| (definition_name == name).then_some(term))
         .expect("prelude list source should define requested term")
+}
+
+pub fn reverse_acc_computes_to_list_source_theorem() -> Prop {
+    theorem_definition(REVERSE_ACC_COMPUTES_TO_LIST).prop
+}
+
+pub fn reverse_computes_to_list_source_theorem() -> Prop {
+    theorem_definition(REVERSE_COMPUTES_TO_LIST).prop
+}
+
+fn theorem_definition(name: Name) -> ParsedTheorem {
+    theorem_definitions()
+        .expect("prelude list source should parse theorem statements")
+        .into_iter()
+        .find(|theorem| theorem.name == name)
+        .expect("prelude list source should define requested theorem")
+}
+
+fn theorem_symbol(name: Name, spelling: &str) -> Symbol {
+    theorem_definition(name)
+        .symbol(spelling)
+        .expect("prelude list source should define requested theorem symbol once")
+}
+
+pub fn reverse_acc_computes_to_list_source_proof() -> Proof {
+    reverse_acc_computes_to_list_proof(
+        theorem_symbol(REVERSE_ACC_COMPUTES_TO_LIST, "list"),
+        theorem_symbol(REVERSE_ACC_COMPUTES_TO_LIST, "acc"),
+        theorem_symbol(REVERSE_ACC_COMPUTES_TO_LIST, "result"),
+    )
+}
+
+pub fn reverse_computes_to_list_source_proof() -> Proof {
+    reverse_computes_to_list_proof(
+        theorem_symbol(REVERSE_COMPUTES_TO_LIST, "list"),
+        theorem_symbol(REVERSE_COMPUTES_TO_LIST, "result"),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn reverse_computes_to_list_source_result_symbol() -> Symbol {
+    theorem_symbol(REVERSE_COMPUTES_TO_LIST, "result")
 }
 
 pub fn reverse_call(value: Term) -> Term {
@@ -614,6 +676,18 @@ mod tests {
     }
 
     #[test]
+    fn reverse_acc_source_theorem_has_expected_shape() {
+        let list = theorem_symbol(REVERSE_ACC_COMPUTES_TO_LIST, "list");
+        let acc = theorem_symbol(REVERSE_ACC_COMPUTES_TO_LIST, "acc");
+        let result = theorem_symbol(REVERSE_ACC_COMPUTES_TO_LIST, "result");
+
+        assert_eq!(
+            reverse_acc_computes_to_list_source_theorem(),
+            reverse_acc_computes_to_list_theorem(list, acc, result)
+        );
+    }
+
+    #[test]
     fn reverse_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             reverse_computes_to_list_theorem(X, RESULT),
@@ -630,6 +704,17 @@ mod tests {
                     ),
                 ),
             )
+        );
+    }
+
+    #[test]
+    fn reverse_source_theorem_has_expected_shape() {
+        let list = theorem_symbol(REVERSE_COMPUTES_TO_LIST, "list");
+        let result = theorem_symbol(REVERSE_COMPUTES_TO_LIST, "result");
+
+        assert_eq!(
+            reverse_computes_to_list_source_theorem(),
+            reverse_computes_to_list_theorem(list, result)
         );
     }
 

@@ -22,3 +22,18 @@
 (def reverse
   (lambda list
     ((reverse_acc list) nil)))
+
+(theorem reverse_acc_computes_to_list
+  (forall list
+    (implies
+      (is-list list)
+      (forall acc
+        (implies
+          (is-list acc)
+          (computes-to-list result (reverse_acc list acc)))))))
+
+(theorem reverse_computes_to_list
+  (forall list
+    (implies
+      (is-list list)
+      (computes-to-list result (reverse list)))))

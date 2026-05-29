@@ -1,6 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{Lambda, ListCase, Name, Symbol, Term};
+use crate::{
+    Lambda, ListCase, Name, Prop, Symbol, Term, and, computes_to, computes_to_list, diverges,
+    equal, errors, exists, forall, implies, is_list, is_value, or,
+};
+
+const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
 
 #[derive(Clone, Copy)]
 pub(super) struct NameBinding {
@@ -12,6 +17,31 @@ pub(super) struct NameBinding {
 pub(super) struct SymbolBinding {
     pub spelling: &'static str,
     pub symbol: Symbol,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct LocalSymbol {
+    spelling: String,
+    symbol: Symbol,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ParsedTheorem {
+    pub name: Name,
+    pub prop: Prop,
+    local_symbols: Vec<LocalSymbol>,
+}
+
+impl ParsedTheorem {
+    pub(super) fn symbol(&self, spelling: &str) -> Option<Symbol> {
+        let mut matches = self
+            .local_symbols
+            .iter()
+            .filter(|symbol| symbol.spelling == spelling);
+        let symbol = matches.next()?.symbol;
+
+        matches.next().is_none().then_some(symbol)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,26 +82,25 @@ pub(super) fn parse_term_definitions(
     let mut terms = Vec::new();
 
     for expression in expressions {
-        let Expr::List(items) = expression else {
-            return Err(ParseError::new("top-level form must be a list"));
-        };
-        if items.len() != 3 || atom(&items[0])? != "def" {
-            return Err(ParseError::new(
-                "top-level form must be (def <name> <term>)",
-            ));
+        let form = top_level_form(&expression)?;
+        if form.kind != "def" {
+            continue;
         }
 
-        let spelling = atom(&items[1])?;
-        let Some(name) = parser.definition(spelling) else {
-            return Err(ParseError::new(format!("unknown definition `{spelling}`")));
+        let Some(name) = parser.definition(form.name) else {
+            return Err(ParseError::new(format!(
+                "unknown definition `{}`",
+                form.name
+            )));
         };
         if !defined.insert(name) {
             return Err(ParseError::new(format!(
-                "duplicate definition `{spelling}`"
+                "duplicate definition `{}`",
+                form.name
             )));
         }
 
-        let term = parser.term(&items[2])?;
+        let term = parser.term(form.body)?;
         terms.push((name, term));
     }
 
@@ -85,6 +114,99 @@ pub(super) fn parse_term_definitions(
     }
 
     Ok(terms)
+}
+
+pub(super) fn parse_theorem_definitions(
+    source: &str,
+    definitions: &[NameBinding],
+    terms: &[NameBinding],
+    symbols: &[SymbolBinding],
+) -> Result<Vec<ParsedTheorem>, ParseError> {
+    let tokens = tokenize(source);
+    let expressions = parse_expressions(&tokens)?;
+    let theorem_names = name_map(definitions, "theorem")?;
+    let mut defined = HashSet::new();
+    let mut theorems = Vec::new();
+
+    for expression in expressions {
+        let form = top_level_form(&expression)?;
+        if form.kind != "theorem" {
+            continue;
+        }
+
+        let Some(name) = theorem_names.get(form.name).copied() else {
+            return Err(ParseError::new(format!("unknown theorem `{}`", form.name)));
+        };
+        if !defined.insert(name) {
+            return Err(ParseError::new(format!(
+                "duplicate theorem `{}`",
+                form.name
+            )));
+        }
+
+        let mut parser = TermParser::new_with_local_symbols(terms, symbols, FIRST_THEOREM_SYMBOL)?;
+        let prop = parser.prop(form.body)?;
+        theorems.push(ParsedTheorem {
+            name,
+            prop,
+            local_symbols: parser.into_local_symbols(),
+        });
+    }
+
+    for binding in definitions {
+        if !defined.contains(&binding.name) {
+            return Err(ParseError::new(format!(
+                "missing theorem `{}`",
+                binding.spelling
+            )));
+        }
+    }
+
+    Ok(theorems)
+}
+
+struct TopLevelForm<'a> {
+    kind: &'a str,
+    name: &'a str,
+    body: &'a Expr,
+}
+
+fn top_level_form(expression: &Expr) -> Result<TopLevelForm<'_>, ParseError> {
+    let Expr::List(items) = expression else {
+        return Err(ParseError::new("top-level form must be a list"));
+    };
+    if items.len() != 3 {
+        return Err(ParseError::new(
+            "top-level form must be (def <name> <term>) or (theorem <name> <prop>)",
+        ));
+    }
+
+    let kind = atom(&items[0])?;
+    match kind {
+        "def" | "theorem" => Ok(TopLevelForm {
+            kind,
+            name: atom(&items[1])?,
+            body: &items[2],
+        }),
+        _ => Err(ParseError::new(format!("unknown top-level form `{kind}`"))),
+    }
+}
+
+fn name_map<'a>(
+    bindings: &'a [NameBinding],
+    kind: &str,
+) -> Result<HashMap<&'a str, Name>, ParseError> {
+    let mut names = HashMap::new();
+    for binding in bindings {
+        if names.insert(binding.spelling, binding.name).is_some() {
+            return Err(ParseError::new(format!(
+                "duplicate {kind} binding `{}`",
+                binding.spelling
+            )));
+        }
+    }
+
+    Ok(names)
 }
 
 fn tokenize(source: &str) -> Vec<Token> {
@@ -167,6 +289,9 @@ struct TermParser<'a> {
     definitions: HashMap<&'a str, Name>,
     symbols: HashMap<&'a str, Symbol>,
     scopes: Vec<HashMap<String, Symbol>>,
+    local_symbols: Vec<LocalSymbol>,
+    next_local_symbol: Option<u64>,
+    used_symbols: HashSet<Symbol>,
 }
 
 impl<'a> TermParser<'a> {
@@ -200,11 +325,30 @@ impl<'a> TermParser<'a> {
             }
         }
 
+        let used_symbols = symbol_map.values().copied().collect();
+
         Ok(Self {
             definitions: definition_map,
             symbols: symbol_map,
             scopes: Vec::new(),
+            local_symbols: Vec::new(),
+            next_local_symbol: None,
+            used_symbols,
         })
+    }
+
+    fn new_with_local_symbols(
+        definitions: &'a [NameBinding],
+        symbols: &'a [SymbolBinding],
+        first_local_symbol: Symbol,
+    ) -> Result<Self, ParseError> {
+        let mut parser = Self::new(definitions, symbols)?;
+        parser.next_local_symbol = Some(first_local_symbol.0);
+        Ok(parser)
+    }
+
+    fn into_local_symbols(self) -> Vec<LocalSymbol> {
+        self.local_symbols
     }
 
     fn definition(&self, spelling: &str) -> Option<Name> {
@@ -259,7 +403,7 @@ impl<'a> TermParser<'a> {
     fn lambda(&mut self, items: &[Expr]) -> Result<Term, ParseError> {
         expect_len("lambda", items, 3)?;
         let parameter = atom(&items[1])?;
-        let symbol = self.symbol(parameter)?;
+        let symbol = self.binder_symbol(parameter)?;
         self.push_variable(parameter, symbol);
         let body = self.term(&items[2])?;
         self.pop_variable();
@@ -275,7 +419,7 @@ impl<'a> TermParser<'a> {
         let list = self.term(&items[1])?;
         let nil = self.term(&items[2])?;
         let cons = atom(&items[3])?;
-        let cons_symbol = self.symbol(cons)?;
+        let cons_symbol = self.binder_symbol(cons)?;
 
         self.push_variable(cons, cons_symbol);
         let cons_case = self.term(&items[4])?;
@@ -314,7 +458,7 @@ impl<'a> TermParser<'a> {
 
     fn quote(&mut self, items: &[Expr]) -> Result<Term, ParseError> {
         expect_len("quote", items, 2)?;
-        Ok(Term::Quote(self.symbol(atom(&items[1])?)?))
+        Ok(Term::Quote(self.static_symbol(atom(&items[1])?)?))
     }
 
     fn application(&mut self, items: &[Expr]) -> Result<Term, ParseError> {
@@ -337,11 +481,143 @@ impl<'a> TermParser<'a> {
         Ok(term)
     }
 
-    fn symbol(&self, spelling: &str) -> Result<Symbol, ParseError> {
+    fn prop(&mut self, expression: &Expr) -> Result<Prop, ParseError> {
+        let Expr::List(items) = expression else {
+            return Err(ParseError::new("expected proposition"));
+        };
+        let Some(head) = items.first() else {
+            return Err(ParseError::new("empty proposition"));
+        };
+        let form = atom(head)?;
+
+        match form {
+            "equal" => self.equal(items),
+            "computes-to" => self.computes_to(items),
+            "is-value" => self.is_value(items),
+            "is-list" => self.is_list(items),
+            "implies" => self.implies(items),
+            "forall" => self.forall(items),
+            "exists" => self.exists(items),
+            "and" => self.and(items),
+            "or" => self.or(items),
+            "computes-to-list" => self.computes_to_list(items),
+            "errors" => self.errors(items),
+            "diverges" => self.diverges(items),
+            _ => Err(ParseError::new(format!("unknown proposition `{form}`"))),
+        }
+    }
+
+    fn equal(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("equal", items, 3)?;
+        Ok(equal(self.term(&items[1])?, self.term(&items[2])?))
+    }
+
+    fn computes_to(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("computes-to", items, 3)?;
+        Ok(computes_to(self.term(&items[1])?, self.term(&items[2])?))
+    }
+
+    fn is_value(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("is-value", items, 2)?;
+        Ok(is_value(self.term(&items[1])?))
+    }
+
+    fn is_list(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("is-list", items, 2)?;
+        Ok(is_list(self.term(&items[1])?))
+    }
+
+    fn implies(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("implies", items, 3)?;
+        Ok(implies(self.prop(&items[1])?, self.prop(&items[2])?))
+    }
+
+    fn forall(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("forall", items, 3)?;
+        let variable = atom(&items[1])?;
+        let symbol = self.binder_symbol(variable)?;
+        self.push_variable(variable, symbol);
+        let body = self.prop(&items[2])?;
+        self.pop_variable();
+
+        Ok(forall(symbol, body))
+    }
+
+    fn exists(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("exists", items, 3)?;
+        let variable = atom(&items[1])?;
+        let symbol = self.binder_symbol(variable)?;
+        self.push_variable(variable, symbol);
+        let body = self.prop(&items[2])?;
+        self.pop_variable();
+
+        Ok(exists(symbol, body))
+    }
+
+    fn and(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("and", items, 3)?;
+        Ok(and(self.prop(&items[1])?, self.prop(&items[2])?))
+    }
+
+    fn or(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("or", items, 3)?;
+        Ok(or(self.prop(&items[1])?, self.prop(&items[2])?))
+    }
+
+    fn computes_to_list(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("computes-to-list", items, 3)?;
+        Ok(computes_to_list(
+            self.binder_symbol(atom(&items[1])?)?,
+            self.term(&items[2])?,
+        ))
+    }
+
+    fn errors(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("errors", items, 3)?;
+        Ok(errors(
+            self.binder_symbol(atom(&items[1])?)?,
+            self.term(&items[2])?,
+        ))
+    }
+
+    fn diverges(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("diverges", items, 2)?;
+        Ok(diverges(self.term(&items[1])?))
+    }
+
+    fn static_symbol(&self, spelling: &str) -> Result<Symbol, ParseError> {
         self.symbols
             .get(spelling)
             .copied()
             .ok_or_else(|| ParseError::new(format!("unknown symbol `{spelling}`")))
+    }
+
+    fn binder_symbol(&mut self, spelling: &str) -> Result<Symbol, ParseError> {
+        if self.next_local_symbol.is_some() {
+            return self.allocate_local_symbol(spelling);
+        }
+
+        self.static_symbol(spelling)
+    }
+
+    fn allocate_local_symbol(&mut self, spelling: &str) -> Result<Symbol, ParseError> {
+        let Some(mut next) = self.next_local_symbol else {
+            return Err(ParseError::new(format!("unknown symbol `{spelling}`")));
+        };
+
+        loop {
+            let symbol = Symbol(next);
+            next += 1;
+            self.next_local_symbol = Some(next);
+
+            if self.used_symbols.insert(symbol) {
+                self.local_symbols.push(LocalSymbol {
+                    spelling: spelling.to_owned(),
+                    symbol,
+                });
+                return Ok(symbol);
+            }
+        }
     }
 
     fn variable(&self, spelling: &str) -> Option<Symbol> {
@@ -400,6 +676,7 @@ mod tests {
                 ; comments are ignored
                 (def id (lambda x x))
                 (def use_id (id nil))
+                (theorem id_computes (forall x (computes-to x x)))
                 ",
                 &definitions,
                 &symbols,
@@ -434,5 +711,59 @@ mod tests {
             .expect_err("free identifier should fail");
 
         assert_eq!(error.message, "unknown identifier `x`");
+    }
+
+    #[test]
+    fn parses_theorem_definitions() {
+        let theorems = [NameBinding {
+            spelling: "use_id_computes_to_list",
+            name: Name(3),
+        }];
+        let terms = [NameBinding {
+            spelling: "use_id",
+            name: Name(2),
+        }];
+
+        assert_eq!(
+            parse_theorem_definitions(
+                "
+                (def use_id nil)
+                (theorem use_id_computes_to_list
+                  (forall x
+                    (implies
+                      (is-list x)
+                      (computes-to-list result (use_id x)))))
+                ",
+                &theorems,
+                &terms,
+                &[],
+            ),
+            Ok(vec![ParsedTheorem {
+                name: Name(3),
+                prop: forall(
+                    Symbol(2_000),
+                    implies(
+                        is_list(Term::Var(Symbol(2_000))),
+                        computes_to_list(
+                            Symbol(2_001),
+                            Term::Apply {
+                                function: Box::new(Term::Const(Name(2))),
+                                argument: Box::new(Term::Var(Symbol(2_000))),
+                            },
+                        ),
+                    ),
+                ),
+                local_symbols: vec![
+                    LocalSymbol {
+                        spelling: "x".to_owned(),
+                        symbol: Symbol(2_000),
+                    },
+                    LocalSymbol {
+                        spelling: "result".to_owned(),
+                        symbol: Symbol(2_001),
+                    },
+                ],
+            }])
+        );
     }
 }
