@@ -2,8 +2,33 @@ use std::collections::{HashMap, HashSet};
 
 pub mod list_example;
 
+pub type Name = u64;
 pub type Symbol = u64;
 pub type Context = HashMap<Symbol, Prop>;
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Environment {
+    theorems: HashMap<Name, Prop>,
+}
+
+impl Environment {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn theorem(&self, name: Name) -> Option<&Prop> {
+        self.theorems.get(&name)
+    }
+
+    pub fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
+        if self.theorems.contains_key(&name) {
+            return false;
+        }
+
+        self.theorems.insert(name, theorem.prop().clone());
+        true
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Lambda {
@@ -60,6 +85,7 @@ pub enum Prop {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Proof {
+    Known(Name),
     Assume(Symbol),
     Refl(Term),
     Symm(Box<Proof>),
@@ -239,8 +265,25 @@ impl Theorem {
         check(&proof, &prop).then_some(Self { prop, proof })
     }
 
+    pub fn from_proof_in_environment(
+        proof: Proof,
+        prop: Prop,
+        environment: &Environment,
+    ) -> Option<Self> {
+        check_in_environment(&proof, &prop, environment).then_some(Self { prop, proof })
+    }
+
     fn from_closed_proof(proof: Proof) -> Option<Self> {
-        let prop = proven_prop(&proof, &Context::new())?;
+        let prop = proven_prop(&proof, &Environment::new(), &Context::new())?;
+        Some(Self { prop, proof })
+    }
+
+    pub fn known(environment: &Environment, name: Name) -> Option<Self> {
+        Self::from_closed_proof_in_environment(Proof::Known(name), environment)
+    }
+
+    fn from_closed_proof_in_environment(proof: Proof, environment: &Environment) -> Option<Self> {
+        let prop = proven_prop(&proof, environment, &Context::new())?;
         Some(Self { prop, proof })
     }
 
@@ -407,19 +450,36 @@ pub fn check(proof: &Proof, prop: &Prop) -> bool {
 }
 
 pub fn check_in_context(proof: &Proof, prop: &Prop, context: &Context) -> bool {
-    proven_prop(proof, context).as_ref() == Some(prop)
+    check_in_environment_and_context(proof, prop, &Environment::new(), context)
 }
 
-fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
+pub fn check_in_environment(proof: &Proof, prop: &Prop, environment: &Environment) -> bool {
+    check_in_environment_and_context(proof, prop, environment, &Context::new())
+}
+
+pub fn check_in_environment_and_context(
+    proof: &Proof,
+    prop: &Prop,
+    environment: &Environment,
+    context: &Context,
+) -> bool {
+    proven_prop(proof, environment, context).as_ref() == Some(prop)
+}
+
+fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> Option<Prop> {
     match proof {
+        Proof::Known(name) => environment.theorem(*name).cloned(),
         Proof::Assume(symbol) => context.get(symbol).cloned(),
         Proof::Refl(term) => Some(Prop::Equal(term.clone(), term.clone())),
-        Proof::Symm(proof) => match proven_prop(proof, context)? {
+        Proof::Symm(proof) => match proven_prop(proof, environment, context)? {
             Prop::Equal(left, right) => Some(Prop::Equal(right, left)),
             _ => None,
         },
         Proof::Trans(first, second) => {
-            match (proven_prop(first, context)?, proven_prop(second, context)?) {
+            match (
+                proven_prop(first, environment, context)?,
+                proven_prop(second, environment, context)?,
+            ) {
                 (Prop::Equal(left, middle), Prop::Equal(second_middle, right))
                     if middle == second_middle =>
                 {
@@ -439,12 +499,12 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             variable,
             template,
         } => {
-            let Prop::Equal(left, right) = proven_prop(equality, context)? else {
+            let Prop::Equal(left, right) = proven_prop(equality, environment, context)? else {
                 return None;
             };
 
             let left_instance = substitute_prop(template, *variable, &left);
-            if proven_prop(proof, context)? != left_instance {
+            if proven_prop(proof, environment, context)? != left_instance {
                 return None;
             }
 
@@ -471,8 +531,8 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             head_is_value,
             tail_is_value,
         } => match (
-            proven_prop(head_is_value, context)?,
-            proven_prop(tail_is_value, context)?,
+            proven_prop(head_is_value, environment, context)?,
+            proven_prop(tail_is_value, environment, context)?,
         ) {
             (Prop::IsValue(proven_head), Prop::IsValue(proven_tail))
                 if proven_head == *head && proven_tail == *tail =>
@@ -491,8 +551,8 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             head_is_value,
             tail_is_list,
         } => match (
-            proven_prop(head_is_value, context)?,
-            proven_prop(tail_is_list, context)?,
+            proven_prop(head_is_value, environment, context)?,
+            proven_prop(tail_is_list, environment, context)?,
         ) {
             (Prop::IsValue(proven_head), Prop::IsList(proven_tail))
                 if proven_head == *head && proven_tail == *tail =>
@@ -524,7 +584,7 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
                 induction_hypothesis_assumption: *induction_hypothesis_assumption,
             };
 
-            prove_list_induction(context, symbols, property, base, step)
+            prove_list_induction(environment, context, symbols, property, base, step)
         }
         Proof::ImpliesIntro {
             assumption,
@@ -533,7 +593,7 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
         } => {
             let mut context = context.clone();
             context.insert(*assumption, premise.clone());
-            let conclusion = proven_prop(proof, &context)?;
+            let conclusion = proven_prop(proof, environment, &context)?;
             Some(Prop::Implies(
                 Box::new(premise.clone()),
                 Box::new(conclusion),
@@ -543,8 +603,8 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             implication,
             premise,
         } => {
-            let premise = proven_prop(premise, context)?;
-            match proven_prop(implication, context)? {
+            let premise = proven_prop(premise, environment, context)?;
+            match proven_prop(implication, environment, context)? {
                 Prop::Implies(expected_premise, conclusion)
                     if expected_premise.as_ref() == &premise =>
                 {
@@ -557,16 +617,18 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             if context_mentions_symbol(context, *variable) {
                 return None;
             }
-            let body = proven_prop(proof, context)?;
+            let body = proven_prop(proof, environment, context)?;
             Some(Prop::ForAll {
                 variable: *variable,
                 body: Box::new(body),
             })
         }
-        Proof::ForAllElim { forall, argument } => match proven_prop(forall, context)? {
-            Prop::ForAll { variable, body } => Some(substitute_prop(&body, variable, argument)),
-            _ => None,
-        },
+        Proof::ForAllElim { forall, argument } => {
+            match proven_prop(forall, environment, context)? {
+                Prop::ForAll { variable, body } => Some(substitute_prop(&body, variable, argument)),
+                _ => None,
+            }
+        }
         Proof::ExistsIntro {
             variable,
             body,
@@ -574,7 +636,7 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             proof,
         } => {
             let witness_body = substitute_prop(body, *variable, witness);
-            if proven_prop(proof, context)? == witness_body {
+            if proven_prop(proof, environment, context)? == witness_body {
                 Some(Prop::Exists {
                     variable: *variable,
                     body: Box::new(body.clone()),
@@ -588,7 +650,7 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             witness,
             assumption,
             proof,
-        } => match proven_prop(existential, context)? {
+        } => match proven_prop(existential, environment, context)? {
             Prop::Exists { variable, body } => {
                 let existential = Prop::Exists {
                     variable,
@@ -603,7 +665,7 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
                 let witness_prop = substitute_prop(&body, variable, &Term::Var(*witness));
                 let mut context = context.clone();
                 context.insert(*assumption, witness_prop);
-                let conclusion = proven_prop(proof, &context)?;
+                let conclusion = proven_prop(proof, environment, &context)?;
 
                 if prop_mentions_symbol(&conclusion, *witness) {
                     None
@@ -614,24 +676,24 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             _ => None,
         },
         Proof::AndIntro(left, right) => Some(Prop::And(
-            Box::new(proven_prop(left, context)?),
-            Box::new(proven_prop(right, context)?),
+            Box::new(proven_prop(left, environment, context)?),
+            Box::new(proven_prop(right, environment, context)?),
         )),
-        Proof::AndElimLeft(proof) => match proven_prop(proof, context)? {
+        Proof::AndElimLeft(proof) => match proven_prop(proof, environment, context)? {
             Prop::And(left, _) => Some(*left),
             _ => None,
         },
-        Proof::AndElimRight(proof) => match proven_prop(proof, context)? {
+        Proof::AndElimRight(proof) => match proven_prop(proof, environment, context)? {
             Prop::And(_, right) => Some(*right),
             _ => None,
         },
         Proof::OrIntroLeft { proof, right } => Some(Prop::Or(
-            Box::new(proven_prop(proof, context)?),
+            Box::new(proven_prop(proof, environment, context)?),
             Box::new(right.clone()),
         )),
         Proof::OrIntroRight { left, proof } => Some(Prop::Or(
             Box::new(left.clone()),
-            Box::new(proven_prop(proof, context)?),
+            Box::new(proven_prop(proof, environment, context)?),
         )),
         Proof::OrElim {
             disjunction,
@@ -639,15 +701,15 @@ fn proven_prop(proof: &Proof, context: &Context) -> Option<Prop> {
             left_proof,
             right_assumption,
             right_proof,
-        } => match proven_prop(disjunction, context)? {
+        } => match proven_prop(disjunction, environment, context)? {
             Prop::Or(left, right) => {
                 let mut left_context = context.clone();
                 left_context.insert(*left_assumption, *left);
-                let left_conclusion = proven_prop(left_proof, &left_context)?;
+                let left_conclusion = proven_prop(left_proof, environment, &left_context)?;
 
                 let mut right_context = context.clone();
                 right_context.insert(*right_assumption, *right);
-                let right_conclusion = proven_prop(right_proof, &right_context)?;
+                let right_conclusion = proven_prop(right_proof, environment, &right_context)?;
 
                 if left_conclusion == right_conclusion {
                     Some(left_conclusion)
@@ -685,6 +747,7 @@ struct ListInductionSymbols {
 }
 
 fn prove_list_induction(
+    environment: &Environment,
     context: &Context,
     symbols: ListInductionSymbols,
     property: &Prop,
@@ -705,7 +768,7 @@ fn prove_list_induction(
     } = symbols;
 
     let base_prop = substitute_prop(property, variable, &Term::Nil);
-    if proven_prop(base, context)? != base_prop {
+    if proven_prop(base, environment, context)? != base_prop {
         return None;
     }
 
@@ -726,7 +789,7 @@ fn prove_list_induction(
         substitute_prop(property, variable, &tail_var),
     );
 
-    if proven_prop(step, &step_context)? != step_prop {
+    if proven_prop(step, environment, &step_context)? != step_prop {
         return None;
     }
 
@@ -1592,6 +1655,42 @@ mod tests {
         assert!(
             Theorem::from_proof(Proof::Assume(7), equal(Term::Quote(1), Term::Quote(1))).is_none()
         );
+    }
+
+    #[test]
+    fn environment_known_proofs_cite_named_theorems() {
+        let name = 42;
+        let theorem = Theorem::refl(Term::Quote(1));
+        let replacement = Theorem::refl(Term::Quote(2));
+        let mut environment = Environment::new();
+
+        assert!(environment.define_theorem(name, &theorem));
+        assert!(!environment.define_theorem(name, &replacement));
+        assert_eq!(environment.theorem(name), Some(theorem.prop()));
+        assert!(check_in_environment(
+            &Proof::Known(name),
+            theorem.prop(),
+            &environment,
+        ));
+        assert!(!check(&Proof::Known(name), theorem.prop()));
+
+        let known = Theorem::known(&environment, name).expect("known theorem should check");
+        assert_eq!(known.prop(), theorem.prop());
+    }
+
+    #[test]
+    fn environment_known_proofs_compose_with_rules() {
+        let start = head(cons(Term::Quote(1), Term::Nil));
+        let end = Term::Quote(1);
+        let step = Theorem::step(start.clone()).expect("term should step");
+        let mut environment = Environment::new();
+
+        assert!(environment.define_theorem(7, &step));
+        assert!(check_in_environment(
+            &Proof::Symm(Box::new(Proof::Known(7))),
+            &equal(end, start),
+            &environment,
+        ));
     }
 
     #[test]
