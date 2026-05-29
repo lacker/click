@@ -1,6 +1,7 @@
 //! Standard definitions layered on top of the kernel.
 
 pub mod list;
+mod proof;
 mod source;
 
 use crate::{Name, Term, Theorem, Theory};
@@ -56,7 +57,7 @@ pub fn define_theorems_in_theory(theory: &mut Theory) -> bool {
 
 fn define_module_theorems(theory: &mut Theory, module: &source::ParsedModule) -> bool {
     module.theorems.iter().all(|theorem| {
-        let Some(proof) = list::proof_for_theorem(theorem, theory) else {
+        let Some(proof) = proof::proof_for_theorem(theorem, theory) else {
             return false;
         };
 

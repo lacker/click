@@ -1,0 +1,245 @@
+//! Shared proof-script and evaluation-proof helpers for prelude modules.
+
+use crate::{Name, Proof, Step, Term, Theory, alpha_eq_term, computes_to};
+
+use super::source::{ParsedModule, ParsedTheorem, ProofExpr, ProofScript};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EvaluationProofError {
+    StepLimitExceeded { limit: usize },
+    UnexpectedNormalForm { expected: Term, actual: Term },
+}
+
+pub(super) fn proof_for_theorem(theorem: &ParsedTheorem, theory: &Theory) -> Option<Proof> {
+    match &theorem.proof {
+        ProofScript::Proof(proof) => proof_expr_to_proof(proof, theory),
+    }
+}
+
+pub(super) fn source_proof(module: ParsedModule, name: Name, mut theory: Theory) -> Proof {
+    for theorem in module.theorems {
+        let proof =
+            proof_for_theorem(&theorem, &theory).expect("prelude source should prove theorem");
+
+        if theorem.name == name {
+            return proof;
+        }
+
+        theory
+            .define_theorem_from_proof(theorem.name, proof, theorem.prop)
+            .expect("prelude source theorem dependency should check");
+    }
+
+    panic!("prelude source should define requested theorem proof");
+}
+
+fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
+    match proof {
+        ProofExpr::Known(name) => Some(Proof::Known(*name)),
+        ProofExpr::Assume(symbol) => Some(Proof::Assume(*symbol)),
+        ProofExpr::Symm(proof) => Some(Proof::Symm(Box::new(proof_expr_to_proof(proof, theory)?))),
+        ProofExpr::Trans(first, second) => Some(Proof::Trans(
+            Box::new(proof_expr_to_proof(first, theory)?),
+            Box::new(proof_expr_to_proof(second, theory)?),
+        )),
+        ProofExpr::EvalTo {
+            term,
+            expected,
+            limit,
+        } => proof_by_reduction_in_theory(term.clone(), expected.clone(), theory, *limit).ok(),
+        ProofExpr::EvalSame { left, right, limit } => {
+            proof_by_same_normal_form_in_theory(left.clone(), right.clone(), theory, *limit).ok()
+        }
+        ProofExpr::Rewrite {
+            equality,
+            proof,
+            variable,
+            template,
+        } => Some(Proof::Rewrite {
+            equality: Box::new(proof_expr_to_proof(equality, theory)?),
+            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+            variable: *variable,
+            template: template.clone(),
+        }),
+        ProofExpr::ListNil => Some(Proof::ListNil),
+        ProofExpr::ImpliesIntro {
+            assumption,
+            premise,
+            proof,
+        } => Some(Proof::ImpliesIntro {
+            assumption: *assumption,
+            premise: premise.clone(),
+            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+        }),
+        ProofExpr::ImpliesElim {
+            implication,
+            premise,
+        } => Some(Proof::ImpliesElim {
+            implication: Box::new(proof_expr_to_proof(implication, theory)?),
+            premise: Box::new(proof_expr_to_proof(premise, theory)?),
+        }),
+        ProofExpr::ExistsIntro {
+            variable,
+            body,
+            witness,
+            proof,
+        } => Some(Proof::ExistsIntro {
+            variable: *variable,
+            body: body.clone(),
+            witness: witness.clone(),
+            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+        }),
+        ProofExpr::AndIntro(left, right) => Some(Proof::AndIntro(
+            Box::new(proof_expr_to_proof(left, theory)?),
+            Box::new(proof_expr_to_proof(right, theory)?),
+        )),
+        ProofExpr::ListCons {
+            head,
+            tail,
+            head_is_value,
+            tail_is_list,
+        } => Some(Proof::ListCons {
+            head: head.clone(),
+            tail: tail.clone(),
+            head_is_value: Box::new(proof_expr_to_proof(head_is_value, theory)?),
+            tail_is_list: Box::new(proof_expr_to_proof(tail_is_list, theory)?),
+        }),
+        ProofExpr::ListInduction {
+            variable,
+            property,
+            base,
+            head,
+            tail,
+            head_is_value_assumption,
+            tail_is_list_assumption,
+            induction_hypothesis_assumption,
+            step,
+        } => Some(Proof::ListInduction {
+            variable: *variable,
+            property: property.clone(),
+            base: Box::new(proof_expr_to_proof(base, theory)?),
+            head: *head,
+            tail: *tail,
+            head_is_value_assumption: *head_is_value_assumption,
+            tail_is_list_assumption: *tail_is_list_assumption,
+            induction_hypothesis_assumption: *induction_hypothesis_assumption,
+            step: Box::new(proof_expr_to_proof(step, theory)?),
+        }),
+        ProofExpr::ForAllIntro { variable, proof } => Some(Proof::ForAllIntro {
+            variable: *variable,
+            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+        }),
+        ProofExpr::ForAllElim { forall, argument } => Some(Proof::ForAllElim {
+            forall: Box::new(proof_expr_to_proof(forall, theory)?),
+            argument: argument.clone(),
+        }),
+    }
+}
+
+pub(super) fn evaluation_chain_in_theory(
+    term: Term,
+    theory: &Theory,
+    limit: usize,
+) -> Result<Vec<Term>, EvaluationProofError> {
+    let mut term = term;
+    let mut chain = vec![term.clone()];
+
+    for _ in 0..limit {
+        match theory.reduce(&term) {
+            Step::Reduced(next) => {
+                chain.push(next.clone());
+                term = next;
+            }
+            Step::Normal => return Ok(chain),
+        }
+    }
+
+    Err(EvaluationProofError::StepLimitExceeded { limit })
+}
+
+pub(super) fn proof_by_evaluation_in_theory(
+    term: Term,
+    expected: Term,
+    theory: &Theory,
+    limit: usize,
+) -> Result<Proof, EvaluationProofError> {
+    let chain = evaluation_chain_in_theory(term, theory, limit)?;
+    let actual = chain
+        .last()
+        .cloned()
+        .expect("evaluation chains are nonempty");
+
+    if !alpha_eq_term(&actual, &expected) {
+        return Err(EvaluationProofError::UnexpectedNormalForm { expected, actual });
+    }
+
+    Ok(Proof::Steps(chain))
+}
+
+pub(super) fn proof_by_reduction_in_theory(
+    term: Term,
+    expected: Term,
+    theory: &Theory,
+    limit: usize,
+) -> Result<Proof, EvaluationProofError> {
+    let mut term = term;
+    let mut chain = vec![term.clone()];
+
+    if alpha_eq_term(&term, &expected) {
+        return Ok(Proof::Steps(chain));
+    }
+
+    for _ in 0..limit {
+        match theory.reduce(&term) {
+            Step::Reduced(next) => {
+                chain.push(next.clone());
+                if alpha_eq_term(&next, &expected) {
+                    return Ok(Proof::Steps(chain));
+                }
+                term = next;
+            }
+            Step::Normal => {
+                return Err(EvaluationProofError::UnexpectedNormalForm {
+                    expected,
+                    actual: term,
+                });
+            }
+        }
+    }
+
+    Err(EvaluationProofError::StepLimitExceeded { limit })
+}
+
+pub(super) fn proof_by_same_normal_form_in_theory(
+    left: Term,
+    right: Term,
+    theory: &Theory,
+    limit: usize,
+) -> Result<Proof, EvaluationProofError> {
+    let left_normal = theory.normal_form(&left);
+    let right_normal = theory.normal_form(&right);
+
+    if !alpha_eq_term(&left_normal, &right_normal) {
+        return Err(EvaluationProofError::UnexpectedNormalForm {
+            expected: left_normal,
+            actual: right_normal,
+        });
+    }
+
+    let left_proof = proof_by_evaluation_in_theory(left, left_normal, theory, limit)?;
+    let right_proof = proof_by_evaluation_in_theory(right, right_normal, theory, limit)?;
+
+    Ok(Proof::Trans(
+        Box::new(left_proof),
+        Box::new(Proof::Symm(Box::new(right_proof))),
+    ))
+}
+
+pub(super) fn check_evaluates_to_in_theory(
+    term: Term,
+    value: Term,
+    proof: &Proof,
+    theory: &Theory,
+) -> bool {
+    theory.check(proof, &computes_to(term, value))
+}
