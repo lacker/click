@@ -9,16 +9,16 @@ use crate::{
     forall, implies, is_list, normal_form, step,
 };
 
-pub const UNIT: Symbol = 3;
+pub const UNIT: Symbol = Symbol(3);
 
-const LIST: Symbol = 1_000;
-const CELL: Symbol = 1_001;
-const SELF: Symbol = 1_002;
-const ACC: Symbol = 1_003;
-const FIXED_POINT_FUNCTION: Symbol = 1_004;
-const FIXED_POINT_SELF: Symbol = 1_005;
-const FIXED_POINT_VALUE: Symbol = 1_006;
-const LOOP_ARGUMENT: Symbol = 1_007;
+const LIST: Symbol = Symbol(1_000);
+const CELL: Symbol = Symbol(1_001);
+const SELF: Symbol = Symbol(1_002);
+const ACC: Symbol = Symbol(1_003);
+const FIXED_POINT_FUNCTION: Symbol = Symbol(1_004);
+const FIXED_POINT_SELF: Symbol = Symbol(1_005);
+const FIXED_POINT_VALUE: Symbol = Symbol(1_006);
+const LOOP_ARGUMENT: Symbol = Symbol(1_007);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvaluationProofError {
@@ -348,9 +348,9 @@ fn add_used_symbol(used: &mut Vec<Symbol>, symbol: Symbol) {
 }
 
 fn next_fresh_symbol(used: &mut Vec<Symbol>) -> Symbol {
-    let mut symbol = 0;
+    let mut symbol = Symbol(0);
     while used.contains(&symbol) {
-        symbol += 1;
+        symbol = Symbol(symbol.0 + 1);
     }
 
     used.push(symbol);
@@ -500,15 +500,15 @@ mod tests {
     use super::*;
     use crate::{Proof, check, diverges, exists};
 
-    const A: Symbol = 100;
-    const B: Symbol = 101;
-    const NOT_A_LIST: Symbol = 102;
-    const X: Symbol = 200;
-    const ACCUMULATOR: Symbol = 201;
-    const RESULT: Symbol = 202;
-    const HEAD: Symbol = 203;
-    const TAIL: Symbol = 204;
-    const ACCUMULATOR_IS_LIST: Symbol = 205;
+    const A: Symbol = Symbol(100);
+    const B: Symbol = Symbol(101);
+    const NOT_A_LIST: Symbol = Symbol(102);
+    const X: Symbol = Symbol(200);
+    const ACCUMULATOR: Symbol = Symbol(201);
+    const RESULT: Symbol = Symbol(202);
+    const HEAD: Symbol = Symbol(203);
+    const TAIL: Symbol = Symbol(204);
+    const ACCUMULATOR_IS_LIST: Symbol = Symbol(205);
 
     fn prove_evaluation(term: Term, expected: Term) -> Proof {
         proof_by_evaluation(term, expected, 512).expect("example should evaluate")
