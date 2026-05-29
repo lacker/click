@@ -11,25 +11,25 @@ pub struct Symbol(pub u64);
 pub type Context = HashMap<Symbol, Prop>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Environment {
+struct Bindings {
     terms: HashMap<Name, Term>,
     theorems: HashMap<Name, Prop>,
 }
 
-impl Environment {
-    pub fn new() -> Self {
+impl Bindings {
+    fn new() -> Self {
         Self::default()
     }
 
-    pub fn theorem(&self, name: Name) -> Option<&Prop> {
+    fn theorem(&self, name: Name) -> Option<&Prop> {
         self.theorems.get(&name)
     }
 
-    pub fn term(&self, name: Name) -> Option<&Term> {
+    fn term(&self, name: Name) -> Option<&Term> {
         self.terms.get(&name)
     }
 
-    pub(crate) fn define_term(&mut self, name: Name, term: &Term) -> bool {
+    fn define_term(&mut self, name: Name, term: &Term) -> bool {
         if self.terms.contains_key(&name)
             || self.theorems.contains_key(&name)
             || !free_symbols(term).is_empty()
@@ -41,7 +41,7 @@ impl Environment {
         true
     }
 
-    pub(crate) fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
+    fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
         if self.terms.contains_key(&name) || self.theorems.contains_key(&name) {
             return false;
         }
@@ -53,7 +53,7 @@ impl Environment {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Theory {
-    environment: Environment,
+    bindings: Bindings,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -292,21 +292,17 @@ impl Theorem {
         check(&proof, &prop).then_some(Self { prop, proof })
     }
 
-    fn from_proof_in_environment(
-        proof: Proof,
-        prop: Prop,
-        environment: &Environment,
-    ) -> Option<Self> {
-        check_in_environment(&proof, &prop, environment).then_some(Self { prop, proof })
+    fn from_proof_in_bindings(proof: Proof, prop: Prop, bindings: &Bindings) -> Option<Self> {
+        check_in_bindings(&proof, &prop, bindings).then_some(Self { prop, proof })
     }
 
     fn from_closed_proof(proof: Proof) -> Option<Self> {
-        let prop = proven_prop(&proof, &Environment::new(), &Context::new())?;
+        let prop = proven_prop(&proof, &Bindings::new(), &Context::new())?;
         Some(Self { prop, proof })
     }
 
-    fn from_closed_proof_in_environment(proof: Proof, environment: &Environment) -> Option<Self> {
-        let prop = proven_prop(&proof, environment, &Context::new())?;
+    fn from_closed_proof_in_bindings(proof: Proof, bindings: &Bindings) -> Option<Self> {
+        let prop = proven_prop(&proof, bindings, &Context::new())?;
         Some(Self { prop, proof })
     }
 
@@ -465,28 +461,16 @@ impl Theory {
         Self::default()
     }
 
-    pub fn from_environment(environment: Environment) -> Self {
-        Self { environment }
-    }
-
-    pub fn environment(&self) -> &Environment {
-        &self.environment
-    }
-
-    pub fn into_environment(self) -> Environment {
-        self.environment
-    }
-
     pub fn theorem(&self, name: Name) -> Option<&Prop> {
-        self.environment.theorem(name)
+        self.bindings.theorem(name)
     }
 
     pub fn term(&self, name: Name) -> Option<&Term> {
-        self.environment.term(name)
+        self.bindings.term(name)
     }
 
     pub fn define_term(&mut self, name: Name, term: &Term) -> bool {
-        self.environment.define_term(name, term)
+        self.bindings.define_term(name, term)
     }
 
     pub fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
@@ -494,7 +478,7 @@ impl Theory {
             return false;
         }
 
-        self.environment.define_theorem(name, theorem)
+        self.bindings.define_theorem(name, theorem)
     }
 
     pub fn define_theorem_from_proof(
@@ -508,19 +492,19 @@ impl Theory {
     }
 
     pub fn check(&self, proof: &Proof, prop: &Prop) -> bool {
-        check_in_environment(proof, prop, &self.environment)
+        check_in_bindings(proof, prop, &self.bindings)
     }
 
     pub fn check_in_context(&self, proof: &Proof, prop: &Prop, context: &Context) -> bool {
-        check_in_environment_and_context(proof, prop, &self.environment, context)
+        check_in_bindings_and_context(proof, prop, &self.bindings, context)
     }
 
     pub fn from_proof(&self, proof: Proof, prop: Prop) -> Option<Theorem> {
-        Theorem::from_proof_in_environment(proof, prop, &self.environment)
+        Theorem::from_proof_in_bindings(proof, prop, &self.bindings)
     }
 
     fn from_closed_proof(&self, proof: Proof) -> Option<Theorem> {
-        Theorem::from_closed_proof_in_environment(proof, &self.environment)
+        Theorem::from_closed_proof_in_bindings(proof, &self.bindings)
     }
 
     pub fn known(&self, name: Name) -> Option<Theorem> {
@@ -528,11 +512,11 @@ impl Theory {
     }
 
     pub fn reduce(&self, term: &Term) -> Step {
-        step_in_environment(term, &self.environment)
+        step_in_bindings(term, &self.bindings)
     }
 
     pub fn normal_form(&self, term: &Term) -> Term {
-        normal_form_in_environment(term, &self.environment)
+        normal_form_in_bindings(term, &self.bindings)
     }
 
     pub fn refl(&self, term: Term) -> Theorem {
@@ -691,35 +675,35 @@ pub fn check(proof: &Proof, prop: &Prop) -> bool {
 }
 
 pub fn check_in_context(proof: &Proof, prop: &Prop, context: &Context) -> bool {
-    check_in_environment_and_context(proof, prop, &Environment::new(), context)
+    check_in_bindings_and_context(proof, prop, &Bindings::new(), context)
 }
 
-pub fn check_in_environment(proof: &Proof, prop: &Prop, environment: &Environment) -> bool {
-    check_in_environment_and_context(proof, prop, environment, &Context::new())
+fn check_in_bindings(proof: &Proof, prop: &Prop, bindings: &Bindings) -> bool {
+    check_in_bindings_and_context(proof, prop, bindings, &Context::new())
 }
 
-pub fn check_in_environment_and_context(
+fn check_in_bindings_and_context(
     proof: &Proof,
     prop: &Prop,
-    environment: &Environment,
+    bindings: &Bindings,
     context: &Context,
 ) -> bool {
-    proven_prop(proof, environment, context).as_ref() == Some(prop)
+    proven_prop(proof, bindings, context).as_ref() == Some(prop)
 }
 
-fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> Option<Prop> {
+fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context) -> Option<Prop> {
     match proof {
-        Proof::Known(name) => environment.theorem(*name).cloned(),
+        Proof::Known(name) => bindings.theorem(*name).cloned(),
         Proof::Assume(symbol) => context.get(symbol).cloned(),
         Proof::Refl(term) => Some(Prop::Equal(term.clone(), term.clone())),
-        Proof::Symm(proof) => match proven_prop(proof, environment, context)? {
+        Proof::Symm(proof) => match proven_prop(proof, bindings, context)? {
             Prop::Equal(left, right) => Some(Prop::Equal(right, left)),
             _ => None,
         },
         Proof::Trans(first, second) => {
             match (
-                proven_prop(first, environment, context)?,
-                proven_prop(second, environment, context)?,
+                proven_prop(first, bindings, context)?,
+                proven_prop(second, bindings, context)?,
             ) {
                 (Prop::Equal(left, middle), Prop::Equal(second_middle, right))
                     if middle == second_middle =>
@@ -729,30 +713,30 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
                 _ => None,
             }
         }
-        Proof::Step(term) => match step_in_environment(term, environment) {
+        Proof::Step(term) => match step_in_bindings(term, bindings) {
             Step::Reduced(reduced) => Some(Prop::Equal(term.clone(), reduced)),
             Step::Normal => None,
         },
-        Proof::Steps(terms) => proven_steps(terms, environment),
+        Proof::Steps(terms) => proven_steps(terms, bindings),
         Proof::Rewrite {
             equality,
             proof,
             variable,
             template,
         } => {
-            let Prop::Equal(left, right) = proven_prop(equality, environment, context)? else {
+            let Prop::Equal(left, right) = proven_prop(equality, bindings, context)? else {
                 return None;
             };
 
             let left_instance = substitute_prop(template, *variable, &left);
-            if proven_prop(proof, environment, context)? != left_instance {
+            if proven_prop(proof, bindings, context)? != left_instance {
                 return None;
             }
 
             Some(substitute_prop(template, *variable, &right))
         }
         Proof::Beta { lambda, argument } => {
-            if !argument_is_ready_for_beta(argument, environment) {
+            if !argument_is_ready_for_beta(argument, bindings) {
                 return None;
             }
 
@@ -772,8 +756,8 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
             head_is_value,
             tail_is_value,
         } => match (
-            proven_prop(head_is_value, environment, context)?,
-            proven_prop(tail_is_value, environment, context)?,
+            proven_prop(head_is_value, bindings, context)?,
+            proven_prop(tail_is_value, bindings, context)?,
         ) {
             (Prop::IsValue(proven_head), Prop::IsValue(proven_tail))
                 if proven_head == *head && proven_tail == *tail =>
@@ -792,8 +776,8 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
             head_is_value,
             tail_is_list,
         } => match (
-            proven_prop(head_is_value, environment, context)?,
-            proven_prop(tail_is_list, environment, context)?,
+            proven_prop(head_is_value, bindings, context)?,
+            proven_prop(tail_is_list, bindings, context)?,
         ) {
             (Prop::IsValue(proven_head), Prop::IsList(proven_tail))
                 if proven_head == *head && proven_tail == *tail =>
@@ -825,7 +809,7 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
                 induction_hypothesis_assumption: *induction_hypothesis_assumption,
             };
 
-            prove_list_induction(environment, context, symbols, property, base, step)
+            prove_list_induction(bindings, context, symbols, property, base, step)
         }
         Proof::ImpliesIntro {
             assumption,
@@ -834,7 +818,7 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
         } => {
             let mut context = context.clone();
             context.insert(*assumption, premise.clone());
-            let conclusion = proven_prop(proof, environment, &context)?;
+            let conclusion = proven_prop(proof, bindings, &context)?;
             Some(Prop::Implies(
                 Box::new(premise.clone()),
                 Box::new(conclusion),
@@ -844,8 +828,8 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
             implication,
             premise,
         } => {
-            let premise = proven_prop(premise, environment, context)?;
-            match proven_prop(implication, environment, context)? {
+            let premise = proven_prop(premise, bindings, context)?;
+            match proven_prop(implication, bindings, context)? {
                 Prop::Implies(expected_premise, conclusion)
                     if expected_premise.as_ref() == &premise =>
                 {
@@ -858,18 +842,16 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
             if context_mentions_symbol(context, *variable) {
                 return None;
             }
-            let body = proven_prop(proof, environment, context)?;
+            let body = proven_prop(proof, bindings, context)?;
             Some(Prop::ForAll {
                 variable: *variable,
                 body: Box::new(body),
             })
         }
-        Proof::ForAllElim { forall, argument } => {
-            match proven_prop(forall, environment, context)? {
-                Prop::ForAll { variable, body } => Some(substitute_prop(&body, variable, argument)),
-                _ => None,
-            }
-        }
+        Proof::ForAllElim { forall, argument } => match proven_prop(forall, bindings, context)? {
+            Prop::ForAll { variable, body } => Some(substitute_prop(&body, variable, argument)),
+            _ => None,
+        },
         Proof::ExistsIntro {
             variable,
             body,
@@ -877,7 +859,7 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
             proof,
         } => {
             let witness_body = substitute_prop(body, *variable, witness);
-            if proven_prop(proof, environment, context)? == witness_body {
+            if proven_prop(proof, bindings, context)? == witness_body {
                 Some(Prop::Exists {
                     variable: *variable,
                     body: Box::new(body.clone()),
@@ -891,7 +873,7 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
             witness,
             assumption,
             proof,
-        } => match proven_prop(existential, environment, context)? {
+        } => match proven_prop(existential, bindings, context)? {
             Prop::Exists { variable, body } => {
                 let existential = Prop::Exists {
                     variable,
@@ -906,7 +888,7 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
                 let witness_prop = substitute_prop(&body, variable, &Term::Var(*witness));
                 let mut context = context.clone();
                 context.insert(*assumption, witness_prop);
-                let conclusion = proven_prop(proof, environment, &context)?;
+                let conclusion = proven_prop(proof, bindings, &context)?;
 
                 if prop_mentions_symbol(&conclusion, *witness) {
                     None
@@ -917,24 +899,24 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
             _ => None,
         },
         Proof::AndIntro(left, right) => Some(Prop::And(
-            Box::new(proven_prop(left, environment, context)?),
-            Box::new(proven_prop(right, environment, context)?),
+            Box::new(proven_prop(left, bindings, context)?),
+            Box::new(proven_prop(right, bindings, context)?),
         )),
-        Proof::AndElimLeft(proof) => match proven_prop(proof, environment, context)? {
+        Proof::AndElimLeft(proof) => match proven_prop(proof, bindings, context)? {
             Prop::And(left, _) => Some(*left),
             _ => None,
         },
-        Proof::AndElimRight(proof) => match proven_prop(proof, environment, context)? {
+        Proof::AndElimRight(proof) => match proven_prop(proof, bindings, context)? {
             Prop::And(_, right) => Some(*right),
             _ => None,
         },
         Proof::OrIntroLeft { proof, right } => Some(Prop::Or(
-            Box::new(proven_prop(proof, environment, context)?),
+            Box::new(proven_prop(proof, bindings, context)?),
             Box::new(right.clone()),
         )),
         Proof::OrIntroRight { left, proof } => Some(Prop::Or(
             Box::new(left.clone()),
-            Box::new(proven_prop(proof, environment, context)?),
+            Box::new(proven_prop(proof, bindings, context)?),
         )),
         Proof::OrElim {
             disjunction,
@@ -942,15 +924,15 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
             left_proof,
             right_assumption,
             right_proof,
-        } => match proven_prop(disjunction, environment, context)? {
+        } => match proven_prop(disjunction, bindings, context)? {
             Prop::Or(left, right) => {
                 let mut left_context = context.clone();
                 left_context.insert(*left_assumption, *left);
-                let left_conclusion = proven_prop(left_proof, environment, &left_context)?;
+                let left_conclusion = proven_prop(left_proof, bindings, &left_context)?;
 
                 let mut right_context = context.clone();
                 right_context.insert(*right_assumption, *right);
-                let right_conclusion = proven_prop(right_proof, environment, &right_context)?;
+                let right_conclusion = proven_prop(right_proof, bindings, &right_context)?;
 
                 if left_conclusion == right_conclusion {
                     Some(left_conclusion)
@@ -963,12 +945,12 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
     }
 }
 
-fn proven_steps(terms: &[Term], environment: &Environment) -> Option<Prop> {
+fn proven_steps(terms: &[Term], bindings: &Bindings) -> Option<Prop> {
     let (first, rest) = terms.split_first()?;
     let mut previous = first;
 
     for next in rest {
-        match step_in_environment(previous, environment) {
+        match step_in_bindings(previous, bindings) {
             Step::Reduced(reduced) if &reduced == next => previous = next,
             _ => return None,
         }
@@ -988,7 +970,7 @@ struct ListInductionSymbols {
 }
 
 fn prove_list_induction(
-    environment: &Environment,
+    bindings: &Bindings,
     context: &Context,
     symbols: ListInductionSymbols,
     property: &Prop,
@@ -1009,7 +991,7 @@ fn prove_list_induction(
     } = symbols;
 
     let base_prop = substitute_prop(property, variable, &Term::Nil);
-    if proven_prop(base, environment, context)? != base_prop {
+    if proven_prop(base, bindings, context)? != base_prop {
         return None;
     }
 
@@ -1030,7 +1012,7 @@ fn prove_list_induction(
         substitute_prop(property, variable, &tail_var),
     );
 
-    if proven_prop(step, environment, &step_context)? != step_prop {
+    if proven_prop(step, bindings, &step_context)? != step_prop {
         return None;
     }
 
@@ -1337,19 +1319,19 @@ fn substitute_list_case(list_case: &ListCase, variable: Symbol, replacement: &Te
 }
 
 pub fn step(term: &Term) -> Step {
-    step_in_environment(term, &Environment::new())
+    step_in_bindings(term, &Bindings::new())
 }
 
-pub fn step_in_environment(term: &Term, environment: &Environment) -> Step {
+fn step_in_bindings(term: &Term, bindings: &Bindings) -> Step {
     match term {
-        Term::Apply { function, argument } => step_apply(function, argument, environment),
+        Term::Apply { function, argument } => step_apply(function, argument, bindings),
         Term::Lambda(_) => Step::Normal,
         Term::Nil => Step::Normal,
-        Term::Cons { head, tail } => step_cons(head, tail, environment),
-        Term::Head(term) => step_head(term, environment),
-        Term::Tail(term) => step_tail(term, environment),
-        Term::ListCase(list_case) => step_list_case(list_case, environment),
-        Term::Const(name) => match environment.term(*name) {
+        Term::Cons { head, tail } => step_cons(head, tail, bindings),
+        Term::Head(term) => step_head(term, bindings),
+        Term::Tail(term) => step_tail(term, bindings),
+        Term::ListCase(list_case) => step_list_case(list_case, bindings),
+        Term::Const(name) => match bindings.term(*name) {
             Some(term) => Step::Reduced(term.clone()),
             None => Step::Normal,
         },
@@ -1358,11 +1340,11 @@ pub fn step_in_environment(term: &Term, environment: &Environment) -> Step {
     }
 }
 
-fn step_apply(function: &Term, argument: &Term, environment: &Environment) -> Step {
+fn step_apply(function: &Term, argument: &Term, bindings: &Bindings) -> Step {
     match function {
-        Term::Lambda(lambda) => step_lambda_application(lambda, argument, environment),
+        Term::Lambda(lambda) => step_lambda_application(lambda, argument, bindings),
         Term::Error(_) | Term::Diverge => Step::Reduced(function.clone()),
-        _ => match step_in_environment(function, environment) {
+        _ => match step_in_bindings(function, bindings) {
             Step::Reduced(function) => Step::Reduced(Term::Apply {
                 function: Box::new(function),
                 argument: Box::new(argument.clone()),
@@ -1370,13 +1352,13 @@ fn step_apply(function: &Term, argument: &Term, environment: &Environment) -> St
             Step::Normal if is_known_non_callable(function) => {
                 Step::Reduced(runtime_error(function.clone()))
             }
-            Step::Normal => step_neutral_application(function, argument, environment),
+            Step::Normal => step_neutral_application(function, argument, bindings),
         },
     }
 }
 
-fn step_lambda_application(lambda: &Lambda, argument: &Term, environment: &Environment) -> Step {
-    match step_in_environment(argument, environment) {
+fn step_lambda_application(lambda: &Lambda, argument: &Term, bindings: &Bindings) -> Step {
+    match step_in_bindings(argument, bindings) {
         Step::Reduced(argument) => Step::Reduced(Term::Apply {
             function: Box::new(Term::Lambda(lambda.clone())),
             argument: Box::new(argument),
@@ -1386,8 +1368,8 @@ fn step_lambda_application(lambda: &Lambda, argument: &Term, environment: &Envir
     }
 }
 
-fn step_neutral_application(function: &Term, argument: &Term, environment: &Environment) -> Step {
-    match step_in_environment(argument, environment) {
+fn step_neutral_application(function: &Term, argument: &Term, bindings: &Bindings) -> Step {
+    match step_in_bindings(argument, bindings) {
         Step::Reduced(argument) => Step::Reduced(Term::Apply {
             function: Box::new(function.clone()),
             argument: Box::new(argument),
@@ -1397,8 +1379,8 @@ fn step_neutral_application(function: &Term, argument: &Term, environment: &Envi
     }
 }
 
-fn argument_is_ready_for_beta(argument: &Term, environment: &Environment) -> bool {
-    match step_in_environment(argument, environment) {
+fn argument_is_ready_for_beta(argument: &Term, bindings: &Bindings) -> bool {
+    match step_in_bindings(argument, bindings) {
         Step::Reduced(_) => false,
         Step::Normal => !is_effect(argument),
     }
@@ -1424,14 +1406,14 @@ fn runtime_error(payload: Term) -> Term {
     Term::Error(Box::new(payload))
 }
 
-fn step_cons(head: &Term, tail: &Term, environment: &Environment) -> Step {
-    match step_in_environment(head, environment) {
+fn step_cons(head: &Term, tail: &Term, bindings: &Bindings) -> Step {
+    match step_in_bindings(head, bindings) {
         Step::Reduced(head) => Step::Reduced(Term::Cons {
             head: Box::new(head),
             tail: Box::new(tail.clone()),
         }),
         Step::Normal if is_effect(head) => Step::Reduced(head.clone()),
-        Step::Normal => match step_in_environment(tail, environment) {
+        Step::Normal => match step_in_bindings(tail, bindings) {
             Step::Reduced(tail) => Step::Reduced(Term::Cons {
                 head: Box::new(head.clone()),
                 tail: Box::new(tail),
@@ -1442,8 +1424,8 @@ fn step_cons(head: &Term, tail: &Term, environment: &Environment) -> Step {
     }
 }
 
-fn step_head(term: &Term, environment: &Environment) -> Step {
-    match step_in_environment(term, environment) {
+fn step_head(term: &Term, bindings: &Bindings) -> Step {
+    match step_in_bindings(term, bindings) {
         Step::Reduced(term) => Step::Reduced(Term::Head(Box::new(term))),
         Step::Normal => match term {
             Term::Cons { head, .. } => Step::Reduced(head.as_ref().clone()),
@@ -1461,8 +1443,8 @@ fn step_head(term: &Term, environment: &Environment) -> Step {
     }
 }
 
-fn step_tail(term: &Term, environment: &Environment) -> Step {
-    match step_in_environment(term, environment) {
+fn step_tail(term: &Term, bindings: &Bindings) -> Step {
+    match step_in_bindings(term, bindings) {
         Step::Reduced(term) => Step::Reduced(Term::Tail(Box::new(term))),
         Step::Normal => match term {
             Term::Cons { tail, .. } => Step::Reduced(tail.as_ref().clone()),
@@ -1480,8 +1462,8 @@ fn step_tail(term: &Term, environment: &Environment) -> Step {
     }
 }
 
-fn step_list_case(list_case: &ListCase, environment: &Environment) -> Step {
-    match step_in_environment(list_case.list.as_ref(), environment) {
+fn step_list_case(list_case: &ListCase, bindings: &Bindings) -> Step {
+    match step_in_bindings(list_case.list.as_ref(), bindings) {
         Step::Reduced(list) => Step::Reduced(Term::ListCase(ListCase {
             list: Box::new(list),
             nil: list_case.nil.clone(),
@@ -1510,13 +1492,13 @@ fn step_list_case(list_case: &ListCase, environment: &Environment) -> Step {
 }
 
 pub fn normal_form(term: &Term) -> Term {
-    normal_form_in_environment(term, &Environment::new())
+    normal_form_in_bindings(term, &Bindings::new())
 }
 
-pub fn normal_form_in_environment(term: &Term, environment: &Environment) -> Term {
+fn normal_form_in_bindings(term: &Term, bindings: &Bindings) -> Term {
     let mut term = term.clone();
     loop {
-        match step_in_environment(&term, environment) {
+        match step_in_bindings(&term, bindings) {
             Step::Reduced(next) => term = next,
             Step::Normal => return term,
         }
@@ -2040,7 +2022,7 @@ mod tests {
     }
 
     #[test]
-    fn step_proofs_use_environment_term_definitions() {
+    fn step_proofs_use_bindings_term_definitions() {
         let name = Name(11);
         let term = Term::Const(name);
         let value = Term::Quote(Symbol(7));
@@ -2067,18 +2049,18 @@ mod tests {
         let start = head(cons(Term::Quote(Symbol(1)), Term::Nil));
         let end = Term::Quote(Symbol(1));
         let step = Theorem::step(start.clone()).expect("term should step");
-        let mut environment = Environment::new();
+        let mut bindings = Bindings::new();
 
-        assert!(environment.define_theorem(Name(7), &step));
-        assert!(check_in_environment(
+        assert!(bindings.define_theorem(Name(7), &step));
+        assert!(check_in_bindings(
             &Proof::Symm(Box::new(Proof::Known(Name(7)))),
             &equal(end, start),
-            &environment,
+            &bindings,
         ));
     }
 
     #[test]
-    fn theory_combinators_use_their_environment() {
+    fn theory_combinators_use_their_bindings() {
         let start = head(cons(Term::Quote(Symbol(1)), Term::Nil));
         let end = Term::Quote(Symbol(1));
         let step = Theorem::step(start.clone()).expect("term should step");

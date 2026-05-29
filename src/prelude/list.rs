@@ -1,9 +1,8 @@
 //! List definitions and theorems for the standard prelude.
 
 use crate::{
-    Environment, Lambda, ListCase, Name, Proof, Prop, Step, Symbol, Term, Theory, and,
-    check_in_environment, computes_to, computes_to_list, forall, implies, is_list,
-    step_in_environment,
+    Lambda, ListCase, Name, Proof, Prop, Step, Symbol, Term, Theory, and, computes_to,
+    computes_to_list, forall, implies, is_list,
 };
 
 use super::{
@@ -256,28 +255,6 @@ pub fn evaluation_chain_in_theory(
     Err(EvaluationProofError::StepLimitExceeded { limit })
 }
 
-/// Build the concrete evaluator path for a term, stopping at a normal form.
-pub fn evaluation_chain_in_environment(
-    term: Term,
-    environment: &Environment,
-    limit: usize,
-) -> Result<Vec<Term>, EvaluationProofError> {
-    let mut term = term;
-    let mut chain = vec![term.clone()];
-
-    for _ in 0..limit {
-        match step_in_environment(&term, environment) {
-            Step::Reduced(next) => {
-                chain.push(next.clone());
-                term = next;
-            }
-            Step::Normal => return Ok(chain),
-        }
-    }
-
-    Err(EvaluationProofError::StepLimitExceeded { limit })
-}
-
 /// A small tactic that turns bounded evaluation into a `Proof::Steps` object.
 ///
 /// This uses the prelude term theory. Use `proof_by_evaluation_in_theory`
@@ -310,25 +287,6 @@ pub fn proof_by_evaluation_in_theory(
     Ok(Proof::Steps(chain))
 }
 
-pub fn proof_by_evaluation_in_environment(
-    term: Term,
-    expected: Term,
-    environment: &Environment,
-    limit: usize,
-) -> Result<Proof, EvaluationProofError> {
-    let chain = evaluation_chain_in_environment(term, environment, limit)?;
-    let actual = chain
-        .last()
-        .cloned()
-        .expect("evaluation chains are nonempty");
-
-    if actual != expected {
-        return Err(EvaluationProofError::UnexpectedNormalForm { expected, actual });
-    }
-
-    Ok(Proof::Steps(chain))
-}
-
 pub fn check_evaluates_to(term: Term, value: Term, proof: &Proof) -> bool {
     let theory = super::term_theory();
     check_evaluates_to_in_theory(term, value, proof, &theory)
@@ -341,15 +299,6 @@ pub fn check_evaluates_to_in_theory(
     theory: &Theory,
 ) -> bool {
     theory.check(proof, &computes_to(term, value))
-}
-
-pub fn check_evaluates_to_in_environment(
-    term: Term,
-    value: Term,
-    proof: &Proof,
-    environment: &Environment,
-) -> bool {
-    check_in_environment(proof, &computes_to(term, value), environment)
 }
 
 /// Proves `reverse_acc_computes_to_list_theorem(list, acc, result)`.

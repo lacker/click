@@ -3,7 +3,7 @@
 pub mod list;
 mod source;
 
-use crate::{Environment, Name, Symbol, Term, Theorem, Theory};
+use crate::{Name, Symbol, Term, Theorem, Theory};
 
 pub const REVERSE_ACC: Name = Name(1);
 pub const REVERSE: Name = Name(2);
@@ -26,14 +26,6 @@ pub fn term_theory() -> Theory {
     let mut theory = Theory::new();
     assert!(define_terms_in_theory(&mut theory));
     theory
-}
-
-pub fn environment() -> Environment {
-    theory().into_environment()
-}
-
-pub fn term_environment() -> Environment {
-    term_theory().into_environment()
 }
 
 pub fn define_in_theory(theory: &mut Theory) -> bool {
@@ -77,36 +69,6 @@ pub fn define_theorems_in_theory(theory: &mut Theory) -> bool {
     theory
         .define_theorem_from_proof(REVERSE_COMPUTES_TO_LIST, reverse_proof, reverse_prop)
         .is_some()
-}
-
-pub fn define(environment: &mut Environment) -> bool {
-    let mut theory = Theory::from_environment(environment.clone());
-    if !define_in_theory(&mut theory) {
-        return false;
-    }
-
-    *environment = theory.into_environment();
-    true
-}
-
-pub fn define_terms(environment: &mut Environment) -> bool {
-    let mut theory = Theory::from_environment(environment.clone());
-    if !define_terms_in_theory(&mut theory) {
-        return false;
-    }
-
-    *environment = theory.into_environment();
-    true
-}
-
-pub fn define_theorems(environment: &mut Environment) -> bool {
-    let mut theory = Theory::from_environment(environment.clone());
-    if !define_theorems_in_theory(&mut theory) {
-        return false;
-    }
-
-    *environment = theory.into_environment();
-    true
 }
 
 pub fn reverse_acc_computes_to_list() -> Option<Theorem> {

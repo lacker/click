@@ -10,7 +10,27 @@ English is very flexible. You can cram all sorts of stuff into an English senten
 Even if it is kind of disgusting. Like sushi burrito hors d'oeuvres.
 
 Click aims to do the same thing, for programming languages.
-In particular we want to be very loose about the typing that the kernel enforces, and
-very permissive of different "effects" like divergence, nondeterminism, and concurrency.
 
-It's sort of trending LCF-style, but not exactly.
+The basic design:
+* LCF-style theorem prover
+* Loose typing
+* Lisp-style lists
+* handles divergence and error effects 
+
+## Current architecture
+
+The kernel has a few distinct layers:
+
+- `Term`, `Prop`, and `Proof` are syntax. They represent programs, propositions
+  about programs, and proof scripts.
+- The kernel checker is the fixed trusted core. It implements evaluation,
+  substitution, and the primitive proof rules.
+- `Theory` is the growing collection of named definitions and named theorems.
+  New terms and theorems are added through `Theory`, which checks them against
+  the kernel rules.
+- `Theorem` is a checked proposition. Public code can inspect its proposition,
+  but does not get to pull out the proof object and treat it as unchecked data.
+
+The standard prelude is just a theory built on top of the kernel. It currently
+contains the list definitions for `reverse_acc` and `reverse`, plus theorems
+about those definitions.
