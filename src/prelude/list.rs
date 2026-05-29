@@ -1,12 +1,8 @@
-//! A small list experiment built on the cons/nil kernel.
-//!
-//! This proves concrete finite facts about `reverse` with `Proof::Steps`.
-//! General reverse theorems should use the kernel's list proposition and
-//! induction rule rather than a userspace list recognizer.
+//! List definitions and theorems for the standard prelude.
 
 use crate::{
     Environment, Lambda, ListCase, Proof, Prop, Step, Symbol, Term, and, check_in_environment,
-    computes_to, computes_to_list, forall, implies, is_list, normal_form_in_environment, prelude,
+    computes_to, computes_to_list, forall, implies, is_list, normal_form_in_environment,
     step_in_environment,
 };
 
@@ -125,7 +121,7 @@ fn fixed_point_half() -> Term {
 }
 
 pub fn reverse_acc() -> Term {
-    prelude::reverse_acc()
+    super::reverse_acc()
 }
 
 pub fn reverse_acc_definition() -> Term {
@@ -154,7 +150,7 @@ fn reverse_acc_body() -> Term {
 }
 
 pub fn reverse() -> Term {
-    prelude::reverse()
+    super::reverse()
 }
 
 pub fn reverse_definition() -> Term {
@@ -214,7 +210,7 @@ pub fn loop_forever_call() -> Term {
 
 /// Build the concrete evaluator path using the prelude definitions.
 pub fn evaluation_chain(term: Term, limit: usize) -> Result<Vec<Term>, EvaluationProofError> {
-    let environment = prelude::environment();
+    let environment = super::environment();
     evaluation_chain_in_environment(term, &environment, limit)
 }
 
@@ -249,7 +245,7 @@ pub fn proof_by_evaluation(
     expected: Term,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
-    let environment = prelude::environment();
+    let environment = super::environment();
     proof_by_evaluation_in_environment(term, expected, &environment, limit)
 }
 
@@ -273,7 +269,7 @@ pub fn proof_by_evaluation_in_environment(
 }
 
 pub fn check_evaluates_to(term: Term, value: Term, proof: &Proof) -> bool {
-    let environment = prelude::environment();
+    let environment = super::environment();
     check_evaluates_to_in_environment(term, value, proof, &environment)
 }
 
@@ -402,7 +398,7 @@ fn next_fresh_symbol(used: &mut Vec<Symbol>) -> Symbol {
 fn reverse_acc_nil_base_proof(acc: Symbol, result: Symbol, assumption: Symbol) -> Proof {
     let term = reverse_acc_call(nil(), var(acc));
     let result_body = and(computes_to(term.clone(), var(result)), is_list(var(result)));
-    let environment = prelude::environment();
+    let environment = super::environment();
     let evaluation = proof_by_evaluation_in_environment(term, var(acc), &environment, 128)
         .expect("base case should reduce");
 
@@ -427,7 +423,7 @@ fn reverse_acc_nil_base_proof(acc: Symbol, result: Symbol, assumption: Symbol) -
 fn reverse_acc_cons_unfolding_proof(head: Symbol, tail: Symbol, acc: Symbol) -> Proof {
     let start = reverse_acc_call(cons(var(head), var(tail)), var(acc));
     let recursive = reverse_acc_call(var(tail), cons(var(head), var(acc)));
-    let environment = prelude::environment();
+    let environment = super::environment();
     let normal = normal_form_in_environment(&recursive, &environment);
     let start_to_normal =
         proof_by_evaluation_in_environment(start, normal.clone(), &environment, 128)
@@ -622,7 +618,7 @@ mod tests {
 
     #[test]
     fn reverse_acc_nil_base_case_is_provable() {
-        let environment = prelude::environment();
+        let environment = crate::prelude::environment();
         let theorem_base = forall(
             ACCUMULATOR,
             implies(
@@ -640,7 +636,7 @@ mod tests {
 
     #[test]
     fn reverse_acc_cons_case_symbolically_unfolds() {
-        let environment = prelude::environment();
+        let environment = crate::prelude::environment();
         let start = reverse_acc_call(cons(var(HEAD), var(TAIL)), var(ACCUMULATOR));
         let recursive = reverse_acc_call(var(TAIL), cons(var(HEAD), var(ACCUMULATOR)));
         let proof = reverse_acc_cons_unfolding_proof(HEAD, TAIL, ACCUMULATOR);
@@ -654,7 +650,7 @@ mod tests {
 
     #[test]
     fn proves_reverse_acc_computes_to_list_for_all_lists() {
-        let environment = prelude::environment();
+        let environment = crate::prelude::environment();
         let proof = reverse_acc_computes_to_list_proof(X, ACCUMULATOR, RESULT);
 
         assert!(check_in_environment(
@@ -666,7 +662,7 @@ mod tests {
 
     #[test]
     fn proves_reverse_computes_to_list_for_all_lists() {
-        let environment = prelude::environment();
+        let environment = crate::prelude::environment();
         let proof = reverse_computes_to_list_proof(X, RESULT);
 
         assert!(check_in_environment(
@@ -706,7 +702,7 @@ mod tests {
 
     #[test]
     fn loop_forever_diverges() {
-        let environment = prelude::environment();
+        let environment = crate::prelude::environment();
         let term = loop_forever_call();
         let proof = prove_evaluation(term.clone(), Term::Diverge);
 

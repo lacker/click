@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-pub mod list_example;
 pub mod prelude;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
