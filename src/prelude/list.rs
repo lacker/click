@@ -1,12 +1,19 @@
 //! List definitions and theorems for the standard prelude.
 
 use crate::{
-    Environment, Lambda, ListCase, Proof, Prop, Step, Symbol, Term, and, check_in_environment,
-    computes_to, computes_to_list, forall, implies, is_list, normal_form_in_environment,
-    step_in_environment,
+    Environment, Lambda, ListCase, Name, Proof, Prop, Step, Symbol, Term, and,
+    check_in_environment, computes_to, computes_to_list, forall, implies, is_list,
+    normal_form_in_environment, step_in_environment,
+};
+
+use super::{
+    REVERSE, REVERSE_ACC,
+    source::{NameBinding, ParseError, SymbolBinding},
 };
 
 pub const UNIT: Symbol = Symbol(3);
+
+const SOURCE: &str = include_str!("list.lisp");
 
 const LIST: Symbol = Symbol(1_000);
 const CELL: Symbol = Symbol(1_001);
@@ -16,6 +23,56 @@ const FIXED_POINT_FUNCTION: Symbol = Symbol(1_004);
 const FIXED_POINT_SELF: Symbol = Symbol(1_005);
 const FIXED_POINT_VALUE: Symbol = Symbol(1_006);
 const LOOP_ARGUMENT: Symbol = Symbol(1_007);
+
+const TERM_DEFINITIONS: &[NameBinding] = &[
+    NameBinding {
+        spelling: "reverse_acc",
+        name: REVERSE_ACC,
+    },
+    NameBinding {
+        spelling: "reverse",
+        name: REVERSE,
+    },
+];
+
+const SOURCE_SYMBOLS: &[SymbolBinding] = &[
+    SymbolBinding {
+        spelling: "unit",
+        symbol: UNIT,
+    },
+    SymbolBinding {
+        spelling: "list",
+        symbol: LIST,
+    },
+    SymbolBinding {
+        spelling: "cell",
+        symbol: CELL,
+    },
+    SymbolBinding {
+        spelling: "self",
+        symbol: SELF,
+    },
+    SymbolBinding {
+        spelling: "acc",
+        symbol: ACC,
+    },
+    SymbolBinding {
+        spelling: "fixed_point_function",
+        symbol: FIXED_POINT_FUNCTION,
+    },
+    SymbolBinding {
+        spelling: "fixed_point_self",
+        symbol: FIXED_POINT_SELF,
+    },
+    SymbolBinding {
+        spelling: "fixed_point_value",
+        symbol: FIXED_POINT_VALUE,
+    },
+    SymbolBinding {
+        spelling: "loop_argument",
+        symbol: LOOP_ARGUMENT,
+    },
+];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvaluationProofError {
@@ -93,60 +150,16 @@ pub fn triple(first: Term, second: Term, third: Term) -> Term {
     cons(first, pair(second, third))
 }
 
-/// The call-by-value fixed-point combinator.
-///
-/// The ordinary Y combinator unfolds too eagerly under this evaluator; this Z
-/// combinator delays the recursive self-reference under an extra lambda.
-pub fn z_combinator() -> Term {
-    lambda(
-        FIXED_POINT_FUNCTION,
-        apply(fixed_point_half(), fixed_point_half()),
-    )
-}
-
-fn fixed_point_half() -> Term {
-    lambda(
-        FIXED_POINT_SELF,
-        apply(
-            var(FIXED_POINT_FUNCTION),
-            lambda(
-                FIXED_POINT_VALUE,
-                apply(
-                    apply(var(FIXED_POINT_SELF), var(FIXED_POINT_SELF)),
-                    var(FIXED_POINT_VALUE),
-                ),
-            ),
-        ),
-    )
-}
-
 pub fn reverse_acc() -> Term {
     super::reverse_acc()
 }
 
-pub fn reverse_acc_definition() -> Term {
-    apply(z_combinator(), reverse_acc_body())
+pub(super) fn term_definitions() -> Result<Vec<(Name, Term)>, ParseError> {
+    super::source::parse_term_definitions(SOURCE, TERM_DEFINITIONS, SOURCE_SYMBOLS)
 }
 
-fn reverse_acc_body() -> Term {
-    lambda(
-        SELF,
-        lambda(
-            LIST,
-            lambda(
-                ACC,
-                list_case(
-                    var(LIST),
-                    var(ACC),
-                    CELL,
-                    apply(
-                        apply(var(SELF), tail(var(CELL))),
-                        cons(head(var(CELL)), var(ACC)),
-                    ),
-                ),
-            ),
-        ),
-    )
+pub fn reverse_acc_definition() -> Term {
+    definition(REVERSE_ACC)
 }
 
 pub fn reverse() -> Term {
@@ -154,7 +167,15 @@ pub fn reverse() -> Term {
 }
 
 pub fn reverse_definition() -> Term {
-    lambda(LIST, reverse_acc_call(var(LIST), nil()))
+    definition(REVERSE)
+}
+
+fn definition(name: Name) -> Term {
+    term_definitions()
+        .expect("prelude list source should parse")
+        .into_iter()
+        .find_map(|(definition_name, term)| (definition_name == name).then_some(term))
+        .expect("prelude list source should define requested term")
 }
 
 pub fn reverse_call(value: Term) -> Term {

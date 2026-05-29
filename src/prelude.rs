@@ -1,6 +1,7 @@
 //! Standard definitions layered on top of the kernel.
 
 pub mod list;
+mod source;
 
 use crate::{Environment, Name, Symbol, Term, Theorem};
 
@@ -32,8 +33,13 @@ pub fn define(environment: &mut Environment) -> bool {
 }
 
 pub fn define_terms(environment: &mut Environment) -> bool {
-    environment.define_term(REVERSE_ACC, &list::reverse_acc_definition())
-        && environment.define_term(REVERSE, &list::reverse_definition())
+    let Ok(definitions) = list::term_definitions() else {
+        return false;
+    };
+
+    definitions
+        .into_iter()
+        .all(|(name, term)| environment.define_term(name, &term))
 }
 
 pub fn define_theorems(environment: &mut Environment) -> bool {
