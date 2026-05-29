@@ -154,6 +154,10 @@ fn reverse_acc_body() -> Term {
 }
 
 pub fn reverse() -> Term {
+    prelude::reverse()
+}
+
+pub fn reverse_definition() -> Term {
     lambda(LIST, reverse_acc_call(var(LIST), nil()))
 }
 
@@ -506,6 +510,9 @@ fn reverse_acc_computes_to_list_proof_with_symbols(symbols: ReverseAccProofSymbo
 fn reverse_computes_to_list_proof_with_symbols(symbols: ReverseProofSymbols) -> Proof {
     let accumulator_theorem =
         reverse_acc_computes_to_list_proof_with_symbols(symbols.accumulator_symbols);
+    let start = reverse_call(var(symbols.input));
+    let unfolded = apply(reverse_definition(), var(symbols.input));
+    let accumulator_call = reverse_acc_call(var(symbols.input), nil());
     let accumulator_result = Proof::ImpliesElim {
         implication: Box::new(Proof::ForAllElim {
             forall: Box::new(Proof::ImpliesElim {
@@ -520,9 +527,11 @@ fn reverse_computes_to_list_proof_with_symbols(symbols: ReverseProofSymbols) -> 
         premise: Box::new(Proof::ListNil),
     };
     let rewrite = Proof::Rewrite {
-        equality: Box::new(Proof::Symm(Box::new(Proof::Step(reverse_call(var(
-            symbols.input,
-        )))))),
+        equality: Box::new(Proof::Symm(Box::new(Proof::Steps(vec![
+            start,
+            unfolded,
+            accumulator_call,
+        ])))),
         proof: Box::new(accumulator_result),
         variable: symbols.rewrite_target,
         template: computes_to_list(symbols.result, var(symbols.rewrite_target)),
