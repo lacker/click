@@ -210,7 +210,7 @@ pub fn loop_forever_call() -> Term {
 
 /// Build the concrete evaluator path using the prelude definitions.
 pub fn evaluation_chain(term: Term, limit: usize) -> Result<Vec<Term>, EvaluationProofError> {
-    let environment = super::environment();
+    let environment = super::term_environment();
     evaluation_chain_in_environment(term, &environment, limit)
 }
 
@@ -245,7 +245,7 @@ pub fn proof_by_evaluation(
     expected: Term,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
-    let environment = super::environment();
+    let environment = super::term_environment();
     proof_by_evaluation_in_environment(term, expected, &environment, limit)
 }
 
@@ -269,7 +269,7 @@ pub fn proof_by_evaluation_in_environment(
 }
 
 pub fn check_evaluates_to(term: Term, value: Term, proof: &Proof) -> bool {
-    let environment = super::environment();
+    let environment = super::term_environment();
     check_evaluates_to_in_environment(term, value, proof, &environment)
 }
 
@@ -398,7 +398,7 @@ fn next_fresh_symbol(used: &mut Vec<Symbol>) -> Symbol {
 fn reverse_acc_nil_base_proof(acc: Symbol, result: Symbol, assumption: Symbol) -> Proof {
     let term = reverse_acc_call(nil(), var(acc));
     let result_body = and(computes_to(term.clone(), var(result)), is_list(var(result)));
-    let environment = super::environment();
+    let environment = super::term_environment();
     let evaluation = proof_by_evaluation_in_environment(term, var(acc), &environment, 128)
         .expect("base case should reduce");
 
@@ -423,7 +423,7 @@ fn reverse_acc_nil_base_proof(acc: Symbol, result: Symbol, assumption: Symbol) -
 fn reverse_acc_cons_unfolding_proof(head: Symbol, tail: Symbol, acc: Symbol) -> Proof {
     let start = reverse_acc_call(cons(var(head), var(tail)), var(acc));
     let recursive = reverse_acc_call(var(tail), cons(var(head), var(acc)));
-    let environment = super::environment();
+    let environment = super::term_environment();
     let normal = normal_form_in_environment(&recursive, &environment);
     let start_to_normal =
         proof_by_evaluation_in_environment(start, normal.clone(), &environment, 128)
