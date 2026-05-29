@@ -45,6 +45,12 @@ impl ParsedTheorem {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ParsedModule {
+    pub terms: Vec<(Name, Term)>,
+    pub theorems: Vec<ParsedTheorem>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ParseError {
     message: String,
 }
@@ -70,42 +76,71 @@ enum Expr {
     List(Vec<Expr>),
 }
 
-pub(super) fn parse_term_definitions(
+pub(super) fn parse_module(
     source: &str,
-    definitions: &[NameBinding],
+    term_definitions: &[NameBinding],
+    theorem_definitions: &[NameBinding],
     symbols: &[SymbolBinding],
-) -> Result<Vec<(Name, Term)>, ParseError> {
+) -> Result<ParsedModule, ParseError> {
     let tokens = tokenize(source);
     let expressions = parse_expressions(&tokens)?;
-    let mut parser = TermParser::new(definitions, symbols)?;
-    let mut defined = HashSet::new();
+    let mut term_parser = TermParser::new(term_definitions, symbols)?;
+    let theorem_names = name_map(theorem_definitions, "theorem")?;
+    let mut defined_terms = HashSet::new();
+    let mut defined_theorems = HashSet::new();
     let mut terms = Vec::new();
+    let mut theorems = Vec::new();
 
     for expression in expressions {
         let form = top_level_form(&expression)?;
-        if form.kind != "def" {
-            continue;
-        }
 
-        let Some(name) = parser.definition(form.name) else {
-            return Err(ParseError::new(format!(
-                "unknown definition `{}`",
-                form.name
-            )));
-        };
-        if !defined.insert(name) {
-            return Err(ParseError::new(format!(
-                "duplicate definition `{}`",
-                form.name
-            )));
-        }
+        match form.kind {
+            "def" => {
+                let Some(name) = term_parser.definition(form.name) else {
+                    return Err(ParseError::new(format!(
+                        "unknown definition `{}`",
+                        form.name
+                    )));
+                };
+                if !defined_terms.insert(name) {
+                    return Err(ParseError::new(format!(
+                        "duplicate definition `{}`",
+                        form.name
+                    )));
+                }
 
-        let term = parser.term(form.body)?;
-        terms.push((name, term));
+                let term = term_parser.term(form.body)?;
+                terms.push((name, term));
+            }
+            "theorem" => {
+                let Some(name) = theorem_names.get(form.name).copied() else {
+                    return Err(ParseError::new(format!("unknown theorem `{}`", form.name)));
+                };
+                if !defined_theorems.insert(name) {
+                    return Err(ParseError::new(format!(
+                        "duplicate theorem `{}`",
+                        form.name
+                    )));
+                }
+
+                let mut theorem_parser = TermParser::new_with_local_symbols(
+                    term_definitions,
+                    symbols,
+                    FIRST_THEOREM_SYMBOL,
+                )?;
+                let prop = theorem_parser.prop(form.body)?;
+                theorems.push(ParsedTheorem {
+                    name,
+                    prop,
+                    local_symbols: theorem_parser.into_local_symbols(),
+                });
+            }
+            _ => unreachable!("top_level_form only returns known form kinds"),
+        }
     }
 
-    for binding in definitions {
-        if !defined.contains(&binding.name) {
+    for binding in term_definitions {
+        if !defined_terms.contains(&binding.name) {
             return Err(ParseError::new(format!(
                 "missing definition `{}`",
                 binding.spelling
@@ -113,48 +148,8 @@ pub(super) fn parse_term_definitions(
         }
     }
 
-    Ok(terms)
-}
-
-pub(super) fn parse_theorem_definitions(
-    source: &str,
-    definitions: &[NameBinding],
-    terms: &[NameBinding],
-    symbols: &[SymbolBinding],
-) -> Result<Vec<ParsedTheorem>, ParseError> {
-    let tokens = tokenize(source);
-    let expressions = parse_expressions(&tokens)?;
-    let theorem_names = name_map(definitions, "theorem")?;
-    let mut defined = HashSet::new();
-    let mut theorems = Vec::new();
-
-    for expression in expressions {
-        let form = top_level_form(&expression)?;
-        if form.kind != "theorem" {
-            continue;
-        }
-
-        let Some(name) = theorem_names.get(form.name).copied() else {
-            return Err(ParseError::new(format!("unknown theorem `{}`", form.name)));
-        };
-        if !defined.insert(name) {
-            return Err(ParseError::new(format!(
-                "duplicate theorem `{}`",
-                form.name
-            )));
-        }
-
-        let mut parser = TermParser::new_with_local_symbols(terms, symbols, FIRST_THEOREM_SYMBOL)?;
-        let prop = parser.prop(form.body)?;
-        theorems.push(ParsedTheorem {
-            name,
-            prop,
-            local_symbols: parser.into_local_symbols(),
-        });
-    }
-
-    for binding in definitions {
-        if !defined.contains(&binding.name) {
+    for binding in theorem_definitions {
+        if !defined_theorems.contains(&binding.name) {
             return Err(ParseError::new(format!(
                 "missing theorem `{}`",
                 binding.spelling
@@ -162,7 +157,7 @@ pub(super) fn parse_theorem_definitions(
         }
     }
 
-    Ok(theorems)
+    Ok(ParsedModule { terms, theorems })
 }
 
 struct TopLevelForm<'a> {
@@ -654,8 +649,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_term_definitions() {
-        let definitions = [
+    fn parses_module_terms_and_theorems() {
+        let terms = [
             NameBinding {
                 spelling: "id",
                 name: Name(1),
@@ -665,38 +660,64 @@ mod tests {
                 name: Name(2),
             },
         ];
+        let theorems = [NameBinding {
+            spelling: "use_id_computes",
+            name: Name(3),
+        }];
         let symbols = [SymbolBinding {
             spelling: "x",
             symbol: Symbol(1),
         }];
 
         assert_eq!(
-            parse_term_definitions(
+            parse_module(
                 "
                 ; comments are ignored
                 (def id (lambda x x))
                 (def use_id (id nil))
-                (theorem id_computes (forall x (computes-to x x)))
+                (theorem use_id_computes
+                  (forall value
+                    (computes-to (use_id value) value)))
                 ",
-                &definitions,
+                &terms,
+                &theorems,
                 &symbols,
             ),
-            Ok(vec![
-                (
-                    Name(1),
-                    Term::Lambda(Lambda {
-                        parameter: Symbol(1),
-                        body: Box::new(Term::Var(Symbol(1))),
-                    }),
-                ),
-                (
-                    Name(2),
-                    Term::Apply {
-                        function: Box::new(Term::Const(Name(1))),
-                        argument: Box::new(Term::Nil),
-                    },
-                ),
-            ])
+            Ok(ParsedModule {
+                terms: vec![
+                    (
+                        Name(1),
+                        Term::Lambda(Lambda {
+                            parameter: Symbol(1),
+                            body: Box::new(Term::Var(Symbol(1))),
+                        }),
+                    ),
+                    (
+                        Name(2),
+                        Term::Apply {
+                            function: Box::new(Term::Const(Name(1))),
+                            argument: Box::new(Term::Nil),
+                        },
+                    ),
+                ],
+                theorems: vec![ParsedTheorem {
+                    name: Name(3),
+                    prop: forall(
+                        Symbol(2_000),
+                        computes_to(
+                            Term::Apply {
+                                function: Box::new(Term::Const(Name(2))),
+                                argument: Box::new(Term::Var(Symbol(2_000))),
+                            },
+                            Term::Var(Symbol(2_000)),
+                        ),
+                    ),
+                    local_symbols: vec![LocalSymbol {
+                        spelling: "value".to_owned(),
+                        symbol: Symbol(2_000),
+                    }],
+                }],
+            })
         );
     }
 
@@ -707,14 +728,14 @@ mod tests {
             name: Name(1),
         }];
 
-        let error = parse_term_definitions("(def bad x)", &definitions, &[])
+        let error = parse_module("(def bad x)", &definitions, &[], &[])
             .expect_err("free identifier should fail");
 
         assert_eq!(error.message, "unknown identifier `x`");
     }
 
     #[test]
-    fn parses_theorem_definitions() {
+    fn allocates_theorem_local_symbols() {
         let theorems = [NameBinding {
             spelling: "use_id_computes_to_list",
             name: Name(3),
@@ -725,7 +746,7 @@ mod tests {
         }];
 
         assert_eq!(
-            parse_theorem_definitions(
+            parse_module(
                 "
                 (def use_id nil)
                 (theorem use_id_computes_to_list
@@ -734,36 +755,39 @@ mod tests {
                       (is-list x)
                       (computes-to-list result (use_id x)))))
                 ",
-                &theorems,
                 &terms,
+                &theorems,
                 &[],
             ),
-            Ok(vec![ParsedTheorem {
-                name: Name(3),
-                prop: forall(
-                    Symbol(2_000),
-                    implies(
-                        is_list(Term::Var(Symbol(2_000))),
-                        computes_to_list(
-                            Symbol(2_001),
-                            Term::Apply {
-                                function: Box::new(Term::Const(Name(2))),
-                                argument: Box::new(Term::Var(Symbol(2_000))),
-                            },
+            Ok(ParsedModule {
+                terms: vec![(Name(2), Term::Nil)],
+                theorems: vec![ParsedTheorem {
+                    name: Name(3),
+                    prop: forall(
+                        Symbol(2_000),
+                        implies(
+                            is_list(Term::Var(Symbol(2_000))),
+                            computes_to_list(
+                                Symbol(2_001),
+                                Term::Apply {
+                                    function: Box::new(Term::Const(Name(2))),
+                                    argument: Box::new(Term::Var(Symbol(2_000))),
+                                },
+                            ),
                         ),
                     ),
-                ),
-                local_symbols: vec![
-                    LocalSymbol {
-                        spelling: "x".to_owned(),
-                        symbol: Symbol(2_000),
-                    },
-                    LocalSymbol {
-                        spelling: "result".to_owned(),
-                        symbol: Symbol(2_001),
-                    },
-                ],
-            }])
+                    local_symbols: vec![
+                        LocalSymbol {
+                            spelling: "x".to_owned(),
+                            symbol: Symbol(2_000),
+                        },
+                        LocalSymbol {
+                            spelling: "result".to_owned(),
+                            symbol: Symbol(2_001),
+                        },
+                    ],
+                }],
+            })
         );
     }
 }

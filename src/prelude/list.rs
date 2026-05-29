@@ -7,7 +7,7 @@ use crate::{
 
 use super::{
     REVERSE, REVERSE_ACC, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST,
-    source::{NameBinding, ParseError, ParsedTheorem, SymbolBinding},
+    source::{NameBinding, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
 
 pub const UNIT: Symbol = Symbol(3);
@@ -164,17 +164,16 @@ pub fn reverse_acc() -> Term {
     super::reverse_acc()
 }
 
+pub(super) fn module() -> Result<ParsedModule, ParseError> {
+    super::source::parse_module(SOURCE, TERM_DEFINITIONS, THEOREM_DEFINITIONS, TERM_SYMBOLS)
+}
+
 pub(super) fn term_definitions() -> Result<Vec<(Name, Term)>, ParseError> {
-    super::source::parse_term_definitions(SOURCE, TERM_DEFINITIONS, TERM_SYMBOLS)
+    Ok(module()?.terms)
 }
 
 pub(super) fn theorem_definitions() -> Result<Vec<ParsedTheorem>, ParseError> {
-    super::source::parse_theorem_definitions(
-        SOURCE,
-        THEOREM_DEFINITIONS,
-        TERM_DEFINITIONS,
-        TERM_SYMBOLS,
-    )
+    Ok(module()?.theorems)
 }
 
 pub fn reverse_acc_definition() -> Term {
@@ -213,6 +212,7 @@ fn theorem_definition(name: Name) -> ParsedTheorem {
         .expect("prelude list source should define requested theorem")
 }
 
+#[cfg(test)]
 fn theorem_symbol(name: Name, spelling: &str) -> Symbol {
     theorem_definition(name)
         .symbol(spelling)
@@ -220,23 +220,33 @@ fn theorem_symbol(name: Name, spelling: &str) -> Symbol {
 }
 
 pub fn reverse_acc_computes_to_list_source_proof() -> Proof {
-    reverse_acc_computes_to_list_proof(
-        theorem_symbol(REVERSE_ACC_COMPUTES_TO_LIST, "list"),
-        theorem_symbol(REVERSE_ACC_COMPUTES_TO_LIST, "acc"),
-        theorem_symbol(REVERSE_ACC_COMPUTES_TO_LIST, "result"),
-    )
+    let theorem = theorem_definition(REVERSE_ACC_COMPUTES_TO_LIST);
+    proof_for_theorem(&theorem).expect("prelude list source should have a proof provider")
 }
 
 pub fn reverse_computes_to_list_source_proof() -> Proof {
-    reverse_computes_to_list_proof(
-        theorem_symbol(REVERSE_COMPUTES_TO_LIST, "list"),
-        theorem_symbol(REVERSE_COMPUTES_TO_LIST, "result"),
-    )
+    let theorem = theorem_definition(REVERSE_COMPUTES_TO_LIST);
+    proof_for_theorem(&theorem).expect("prelude list source should have a proof provider")
 }
 
 #[cfg(test)]
 pub(super) fn reverse_computes_to_list_source_result_symbol() -> Symbol {
     theorem_symbol(REVERSE_COMPUTES_TO_LIST, "result")
+}
+
+pub(super) fn proof_for_theorem(theorem: &ParsedTheorem) -> Option<Proof> {
+    match theorem.name {
+        REVERSE_ACC_COMPUTES_TO_LIST => Some(reverse_acc_computes_to_list_proof(
+            theorem.symbol("list")?,
+            theorem.symbol("acc")?,
+            theorem.symbol("result")?,
+        )),
+        REVERSE_COMPUTES_TO_LIST => Some(reverse_computes_to_list_proof(
+            theorem.symbol("list")?,
+            theorem.symbol("result")?,
+        )),
+        _ => None,
+    }
 }
 
 pub fn reverse_call(value: Term) -> Term {

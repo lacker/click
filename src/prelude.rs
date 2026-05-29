@@ -11,8 +11,8 @@ pub const REVERSE_ACC_COMPUTES_TO_LIST: Name = Name(3);
 pub const REVERSE_COMPUTES_TO_LIST: Name = Name(4);
 
 pub fn theory() -> Theory {
-    let mut theory = term_theory();
-    assert!(define_theorems_in_theory(&mut theory));
+    let mut theory = Theory::new();
+    assert!(define_in_theory(&mut theory));
     theory
 }
 
@@ -23,36 +23,47 @@ pub fn term_theory() -> Theory {
 }
 
 pub fn define_in_theory(theory: &mut Theory) -> bool {
-    define_terms_in_theory(theory) && define_theorems_in_theory(theory)
-}
-
-pub fn define_terms_in_theory(theory: &mut Theory) -> bool {
-    let Ok(definitions) = list::term_definitions() else {
+    let Ok(module) = list::module() else {
         return false;
     };
 
-    definitions
-        .into_iter()
+    define_module_terms(theory, &module) && define_module_theorems(theory, &module)
+}
+
+pub fn define_terms_in_theory(theory: &mut Theory) -> bool {
+    let Ok(module) = list::module() else {
+        return false;
+    };
+
+    define_module_terms(theory, &module)
+}
+
+fn define_module_terms(theory: &mut Theory, module: &source::ParsedModule) -> bool {
+    module
+        .terms
+        .iter()
+        .cloned()
         .all(|(name, term)| theory.define_term(name, &term))
 }
 
 pub fn define_theorems_in_theory(theory: &mut Theory) -> bool {
-    let reverse_acc_prop = list::reverse_acc_computes_to_list_source_theorem();
-    let reverse_acc_proof = list::reverse_acc_computes_to_list_source_proof();
-    let Some(_) = theory.define_theorem_from_proof(
-        REVERSE_ACC_COMPUTES_TO_LIST,
-        reverse_acc_proof,
-        reverse_acc_prop,
-    ) else {
+    let Ok(module) = list::module() else {
         return false;
     };
 
-    let reverse_prop = list::reverse_computes_to_list_source_theorem();
-    let reverse_proof = list::reverse_computes_to_list_source_proof();
+    define_module_theorems(theory, &module)
+}
 
-    theory
-        .define_theorem_from_proof(REVERSE_COMPUTES_TO_LIST, reverse_proof, reverse_prop)
-        .is_some()
+fn define_module_theorems(theory: &mut Theory, module: &source::ParsedModule) -> bool {
+    module.theorems.iter().all(|theorem| {
+        let Some(proof) = list::proof_for_theorem(theorem) else {
+            return false;
+        };
+
+        theory
+            .define_theorem_from_proof(theorem.name, proof, theorem.prop.clone())
+            .is_some()
+    })
 }
 
 pub fn reverse_acc_computes_to_list() -> Option<Theorem> {
