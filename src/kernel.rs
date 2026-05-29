@@ -12,6 +12,7 @@ pub type Context = HashMap<Symbol, Prop>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Environment {
+    terms: HashMap<Name, Term>,
     theorems: HashMap<Name, Prop>,
 }
 
@@ -24,8 +25,24 @@ impl Environment {
         self.theorems.get(&name)
     }
 
+    pub fn term(&self, name: Name) -> Option<&Term> {
+        self.terms.get(&name)
+    }
+
+    pub fn define_term(&mut self, name: Name, term: &Term) -> bool {
+        if self.terms.contains_key(&name)
+            || self.theorems.contains_key(&name)
+            || !free_symbols(term).is_empty()
+        {
+            return false;
+        }
+
+        self.terms.insert(name, term.clone());
+        true
+    }
+
     pub fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
-        if self.theorems.contains_key(&name) {
+        if self.terms.contains_key(&name) || self.theorems.contains_key(&name) {
             return false;
         }
 
@@ -63,6 +80,7 @@ pub enum Term {
     Head(Box<Term>),
     Tail(Box<Term>),
     ListCase(ListCase),
+    Const(Name),
     Error(Box<Term>),
     Diverge,
     Var(Symbol),
@@ -325,8 +343,16 @@ impl Theorem {
         Self::from_closed_proof(Proof::Step(term))
     }
 
+    pub fn step_in_environment(term: Term, environment: &Environment) -> Option<Self> {
+        Self::from_closed_proof_in_environment(Proof::Step(term), environment)
+    }
+
     pub fn steps(terms: Vec<Term>) -> Option<Self> {
         Self::from_closed_proof(Proof::Steps(terms))
+    }
+
+    pub fn steps_in_environment(terms: Vec<Term>, environment: &Environment) -> Option<Self> {
+        Self::from_closed_proof_in_environment(Proof::Steps(terms), environment)
     }
 
     pub fn rewrite(
@@ -492,11 +518,11 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
                 _ => None,
             }
         }
-        Proof::Step(term) => match step(term) {
+        Proof::Step(term) => match step_in_environment(term, environment) {
             Step::Reduced(reduced) => Some(Prop::Equal(term.clone(), reduced)),
             Step::Normal => None,
         },
-        Proof::Steps(terms) => proven_steps(terms),
+        Proof::Steps(terms) => proven_steps(terms, environment),
         Proof::Rewrite {
             equality,
             proof,
@@ -515,7 +541,7 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
             Some(substitute_prop(template, *variable, &right))
         }
         Proof::Beta { lambda, argument } => {
-            if !argument_is_ready_for_beta(argument) {
+            if !argument_is_ready_for_beta(argument, environment) {
                 return None;
             }
 
@@ -726,12 +752,12 @@ fn proven_prop(proof: &Proof, environment: &Environment, context: &Context) -> O
     }
 }
 
-fn proven_steps(terms: &[Term]) -> Option<Prop> {
+fn proven_steps(terms: &[Term], environment: &Environment) -> Option<Prop> {
     let (first, rest) = terms.split_first()?;
     let mut previous = first;
 
     for next in rest {
-        match step(previous) {
+        match step_in_environment(previous, environment) {
             Step::Reduced(reduced) if &reduced == next => previous = next,
             _ => return None,
         }
@@ -1059,7 +1085,7 @@ pub fn substitute(term: &Term, variable: Symbol, replacement: &Term) -> Term {
             Term::ListCase(substitute_list_case(list_case, variable, replacement))
         }
         Term::Error(error) => Term::Error(Box::new(substitute(error, variable, replacement))),
-        Term::Diverge | Term::Var(_) | Term::Quote(_) => {
+        Term::Const(_) | Term::Diverge | Term::Var(_) | Term::Quote(_) => {
             if term == &Term::Var(variable) {
                 replacement.clone()
             } else {
@@ -1100,24 +1126,32 @@ fn substitute_list_case(list_case: &ListCase, variable: Symbol, replacement: &Te
 }
 
 pub fn step(term: &Term) -> Step {
+    step_in_environment(term, &Environment::new())
+}
+
+pub fn step_in_environment(term: &Term, environment: &Environment) -> Step {
     match term {
-        Term::Apply { function, argument } => step_apply(function, argument),
+        Term::Apply { function, argument } => step_apply(function, argument, environment),
         Term::Lambda(_) => Step::Normal,
         Term::Nil => Step::Normal,
-        Term::Cons { head, tail } => step_cons(head, tail),
-        Term::Head(term) => step_head(term),
-        Term::Tail(term) => step_tail(term),
-        Term::ListCase(list_case) => step_list_case(list_case),
+        Term::Cons { head, tail } => step_cons(head, tail, environment),
+        Term::Head(term) => step_head(term, environment),
+        Term::Tail(term) => step_tail(term, environment),
+        Term::ListCase(list_case) => step_list_case(list_case, environment),
+        Term::Const(name) => match environment.term(*name) {
+            Some(term) => Step::Reduced(term.clone()),
+            None => Step::Normal,
+        },
         Term::Error(_) | Term::Diverge => Step::Normal,
         Term::Var(_) | Term::Quote(_) => Step::Normal,
     }
 }
 
-fn step_apply(function: &Term, argument: &Term) -> Step {
+fn step_apply(function: &Term, argument: &Term, environment: &Environment) -> Step {
     match function {
-        Term::Lambda(lambda) => step_lambda_application(lambda, argument),
+        Term::Lambda(lambda) => step_lambda_application(lambda, argument, environment),
         Term::Error(_) | Term::Diverge => Step::Reduced(function.clone()),
-        _ => match step(function) {
+        _ => match step_in_environment(function, environment) {
             Step::Reduced(function) => Step::Reduced(Term::Apply {
                 function: Box::new(function),
                 argument: Box::new(argument.clone()),
@@ -1125,13 +1159,13 @@ fn step_apply(function: &Term, argument: &Term) -> Step {
             Step::Normal if is_known_non_callable(function) => {
                 Step::Reduced(runtime_error(function.clone()))
             }
-            Step::Normal => step_neutral_application(function, argument),
+            Step::Normal => step_neutral_application(function, argument, environment),
         },
     }
 }
 
-fn step_lambda_application(lambda: &Lambda, argument: &Term) -> Step {
-    match step(argument) {
+fn step_lambda_application(lambda: &Lambda, argument: &Term, environment: &Environment) -> Step {
+    match step_in_environment(argument, environment) {
         Step::Reduced(argument) => Step::Reduced(Term::Apply {
             function: Box::new(Term::Lambda(lambda.clone())),
             argument: Box::new(argument),
@@ -1141,8 +1175,8 @@ fn step_lambda_application(lambda: &Lambda, argument: &Term) -> Step {
     }
 }
 
-fn step_neutral_application(function: &Term, argument: &Term) -> Step {
-    match step(argument) {
+fn step_neutral_application(function: &Term, argument: &Term, environment: &Environment) -> Step {
+    match step_in_environment(argument, environment) {
         Step::Reduced(argument) => Step::Reduced(Term::Apply {
             function: Box::new(function.clone()),
             argument: Box::new(argument),
@@ -1152,8 +1186,8 @@ fn step_neutral_application(function: &Term, argument: &Term) -> Step {
     }
 }
 
-fn argument_is_ready_for_beta(argument: &Term) -> bool {
-    match step(argument) {
+fn argument_is_ready_for_beta(argument: &Term, environment: &Environment) -> bool {
+    match step_in_environment(argument, environment) {
         Step::Reduced(_) => false,
         Step::Normal => !is_effect(argument),
     }
@@ -1179,14 +1213,14 @@ fn runtime_error(payload: Term) -> Term {
     Term::Error(Box::new(payload))
 }
 
-fn step_cons(head: &Term, tail: &Term) -> Step {
-    match step(head) {
+fn step_cons(head: &Term, tail: &Term, environment: &Environment) -> Step {
+    match step_in_environment(head, environment) {
         Step::Reduced(head) => Step::Reduced(Term::Cons {
             head: Box::new(head),
             tail: Box::new(tail.clone()),
         }),
         Step::Normal if is_effect(head) => Step::Reduced(head.clone()),
-        Step::Normal => match step(tail) {
+        Step::Normal => match step_in_environment(tail, environment) {
             Step::Reduced(tail) => Step::Reduced(Term::Cons {
                 head: Box::new(head.clone()),
                 tail: Box::new(tail),
@@ -1197,13 +1231,14 @@ fn step_cons(head: &Term, tail: &Term) -> Step {
     }
 }
 
-fn step_head(term: &Term) -> Step {
-    match step(term) {
+fn step_head(term: &Term, environment: &Environment) -> Step {
+    match step_in_environment(term, environment) {
         Step::Reduced(term) => Step::Reduced(Term::Head(Box::new(term))),
         Step::Normal => match term {
             Term::Cons { head, .. } => Step::Reduced(head.as_ref().clone()),
             Term::Error(_) | Term::Diverge => Step::Reduced(term.clone()),
-            Term::Var(_)
+            Term::Const(_)
+            | Term::Var(_)
             | Term::Apply { .. }
             | Term::Head(_)
             | Term::Tail(_)
@@ -1215,13 +1250,14 @@ fn step_head(term: &Term) -> Step {
     }
 }
 
-fn step_tail(term: &Term) -> Step {
-    match step(term) {
+fn step_tail(term: &Term, environment: &Environment) -> Step {
+    match step_in_environment(term, environment) {
         Step::Reduced(term) => Step::Reduced(Term::Tail(Box::new(term))),
         Step::Normal => match term {
             Term::Cons { tail, .. } => Step::Reduced(tail.as_ref().clone()),
             Term::Error(_) | Term::Diverge => Step::Reduced(term.clone()),
-            Term::Var(_)
+            Term::Const(_)
+            | Term::Var(_)
             | Term::Apply { .. }
             | Term::Head(_)
             | Term::Tail(_)
@@ -1233,8 +1269,8 @@ fn step_tail(term: &Term) -> Step {
     }
 }
 
-fn step_list_case(list_case: &ListCase) -> Step {
-    match step(list_case.list.as_ref()) {
+fn step_list_case(list_case: &ListCase, environment: &Environment) -> Step {
+    match step_in_environment(list_case.list.as_ref(), environment) {
         Step::Reduced(list) => Step::Reduced(Term::ListCase(ListCase {
             list: Box::new(list),
             nil: list_case.nil.clone(),
@@ -1249,7 +1285,8 @@ fn step_list_case(list_case: &ListCase) -> Step {
                 list_case.list.as_ref(),
             )),
             Term::Error(_) | Term::Diverge => Step::Reduced(list_case.list.as_ref().clone()),
-            Term::Var(_)
+            Term::Const(_)
+            | Term::Var(_)
             | Term::Apply { .. }
             | Term::Head(_)
             | Term::Tail(_)
@@ -1262,9 +1299,13 @@ fn step_list_case(list_case: &ListCase) -> Step {
 }
 
 pub fn normal_form(term: &Term) -> Term {
+    normal_form_in_environment(term, &Environment::new())
+}
+
+pub fn normal_form_in_environment(term: &Term, environment: &Environment) -> Term {
     let mut term = term.clone();
     loop {
-        match step(&term) {
+        match step_in_environment(&term, environment) {
             Step::Reduced(next) => term = next,
             Step::Normal => return term,
         }
@@ -1309,7 +1350,7 @@ fn add_free_symbols(term: &Term, symbols: &mut HashSet<Symbol>) {
         Term::Error(error) => {
             add_free_symbols(error, symbols);
         }
-        Term::Diverge => {}
+        Term::Const(_) | Term::Diverge => {}
         Term::Var(symbol) => {
             symbols.insert(*symbol);
         }
@@ -1346,7 +1387,7 @@ fn rename_bound_var(term: &Term, old: Symbol, new: Symbol) -> Term {
             },
         }),
         Term::Error(error) => Term::Error(Box::new(rename_bound_var(error, old, new))),
-        Term::Diverge => term.clone(),
+        Term::Const(_) | Term::Diverge => term.clone(),
         Term::Var(symbol) if *symbol == old => Term::Var(new),
         Term::Var(_) | Term::Quote(_) => term.clone(),
     }
@@ -1392,7 +1433,7 @@ fn add_all_symbols(term: &Term, symbols: &mut HashSet<Symbol>) {
         Term::Error(error) => {
             add_all_symbols(error, symbols);
         }
-        Term::Diverge => {}
+        Term::Const(_) | Term::Diverge => {}
         Term::Var(symbol) | Term::Quote(symbol) => {
             symbols.insert(*symbol);
         }
@@ -1748,6 +1789,73 @@ mod tests {
 
         let known = Theorem::known(&environment, name).expect("known theorem should check");
         assert_eq!(known.prop(), theorem.prop());
+    }
+
+    #[test]
+    fn environment_defines_closed_terms() {
+        let name = Name(4);
+        let term = Term::Quote(Symbol(1));
+        let replacement = Term::Quote(Symbol(2));
+        let theorem = Theorem::refl(Term::Nil);
+        let mut environment = Environment::new();
+
+        assert!(environment.define_term(name, &term));
+        assert_eq!(environment.term(name), Some(&term));
+        assert!(!environment.define_term(name, &replacement));
+        assert!(!environment.define_theorem(name, &theorem));
+        assert!(!environment.define_term(Name(5), &Term::Var(Symbol(1))));
+
+        assert!(environment.define_theorem(Name(6), &theorem));
+        assert!(!environment.define_term(Name(6), &Term::Nil));
+    }
+
+    #[test]
+    fn term_definitions_unfold_during_evaluation() {
+        let id = Name(8);
+        let id_term = lambda(Symbol(1), Term::Var(Symbol(1)));
+        let argument = Term::Quote(Symbol(2));
+        let call = apply(Term::Const(id), argument.clone());
+        let mut environment = Environment::new();
+
+        assert_eq!(step(&Term::Const(id)), Step::Normal);
+        assert_eq!(
+            step(&apply(Term::Const(Name(9)), argument.clone())),
+            Step::Normal
+        );
+
+        assert!(environment.define_term(id, &id_term));
+        assert_eq!(
+            step_in_environment(&Term::Const(id), &environment),
+            Step::Reduced(id_term.clone())
+        );
+        assert_eq!(
+            normal_form_in_environment(&call, &environment),
+            argument.clone()
+        );
+        assert_eq!(normal_form(&call), call);
+    }
+
+    #[test]
+    fn step_proofs_use_environment_term_definitions() {
+        let name = Name(11);
+        let term = Term::Const(name);
+        let value = Term::Quote(Symbol(7));
+        let mut environment = Environment::new();
+
+        assert!(environment.define_term(name, &value));
+        assert!(check_in_environment(
+            &Proof::Step(term.clone()),
+            &equal(term.clone(), value.clone()),
+            &environment
+        ));
+        assert!(!check(
+            &Proof::Step(term.clone()),
+            &equal(term.clone(), value.clone())
+        ));
+
+        let theorem = Theorem::step_in_environment(term.clone(), &environment)
+            .expect("defined constant should step");
+        assert_eq!(theorem.prop(), &equal(term, value));
     }
 
     #[test]
