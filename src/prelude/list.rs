@@ -1,12 +1,13 @@
 //! List definitions and theorems for the standard prelude.
 
 use crate::{
-    Lambda, ListCase, Name, Proof, Prop, Symbol, Term, Theory, computes_to_list, forall, implies,
-    is_list,
+    Lambda, ListCase, Name, Proof, Prop, Symbol, Term, Theorem, Theory, computes_to_list, forall,
+    implies, is_list,
 };
 
 use super::{
     NIL_IS_LIST, REVERSE, REVERSE_ACC, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST,
+    REVERSE_NIL_COMPUTES_TO_LIST,
     source::{NameBinding, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
 
@@ -51,6 +52,10 @@ const THEOREM_DEFINITIONS: &[NameBinding] = &[
     NameBinding {
         spelling: "reverse_computes_to_list",
         name: REVERSE_COMPUTES_TO_LIST,
+    },
+    NameBinding {
+        spelling: "reverse_nil_computes_to_list",
+        name: REVERSE_NIL_COMPUTES_TO_LIST,
     },
 ];
 
@@ -171,14 +176,6 @@ pub(super) fn module() -> Result<ParsedModule, ParseError> {
     super::source::parse_module(SOURCE, TERM_DEFINITIONS, THEOREM_DEFINITIONS, TERM_SYMBOLS)
 }
 
-pub(super) fn term_definitions() -> Result<Vec<(Name, Term)>, ParseError> {
-    Ok(module()?.terms)
-}
-
-pub(super) fn theorem_definitions() -> Result<Vec<ParsedTheorem>, ParseError> {
-    Ok(module()?.theorems)
-}
-
 pub fn reverse_acc_definition() -> Term {
     definition(REVERSE_ACC)
 }
@@ -192,30 +189,38 @@ pub fn reverse_definition() -> Term {
 }
 
 fn definition(name: Name) -> Term {
-    term_definitions()
+    module()
         .expect("prelude list source should parse")
-        .into_iter()
-        .find_map(|(definition_name, term)| (definition_name == name).then_some(term))
+        .term(name)
+        .cloned()
         .expect("prelude list source should define requested term")
 }
 
 pub fn reverse_acc_computes_to_list_source_theorem() -> Prop {
-    theorem_definition(REVERSE_ACC_COMPUTES_TO_LIST).prop
+    theorem_prop(REVERSE_ACC_COMPUTES_TO_LIST)
 }
 
 pub fn nil_is_list_source_theorem() -> Prop {
-    theorem_definition(NIL_IS_LIST).prop
+    theorem_prop(NIL_IS_LIST)
 }
 
 pub fn reverse_computes_to_list_source_theorem() -> Prop {
-    theorem_definition(REVERSE_COMPUTES_TO_LIST).prop
+    theorem_prop(REVERSE_COMPUTES_TO_LIST)
+}
+
+pub fn reverse_nil_computes_to_list_source_theorem() -> Prop {
+    theorem_prop(REVERSE_NIL_COMPUTES_TO_LIST)
+}
+
+fn theorem_prop(name: Name) -> Prop {
+    theorem_definition(name).prop
 }
 
 fn theorem_definition(name: Name) -> ParsedTheorem {
-    theorem_definitions()
+    module()
         .expect("prelude list source should parse theorem statements")
-        .into_iter()
-        .find(|theorem| theorem.name == name)
+        .theorem(name)
+        .cloned()
         .expect("prelude list source should define requested theorem")
 }
 
@@ -226,27 +231,15 @@ fn theorem_symbol(name: Name, spelling: &str) -> Symbol {
         .expect("prelude list source should define requested theorem symbol once")
 }
 
-pub fn reverse_acc_computes_to_list_source_proof() -> Proof {
-    source_proof(REVERSE_ACC_COMPUTES_TO_LIST)
-}
-
-pub fn nil_is_list_source_proof() -> Proof {
-    source_proof(NIL_IS_LIST)
-}
-
-pub fn reverse_computes_to_list_source_proof() -> Proof {
-    source_proof(REVERSE_COMPUTES_TO_LIST)
-}
-
 #[cfg(test)]
 pub(super) fn reverse_computes_to_list_source_result_symbol() -> Symbol {
     theorem_symbol(REVERSE_COMPUTES_TO_LIST, "result")
 }
 
-fn source_proof(name: Name) -> Proof {
-    let module = module().expect("prelude list source should parse");
+pub(super) fn checked_source_theorem(name: Name) -> Option<Theorem> {
+    let module = module().ok()?;
 
-    super::proof::source_proof(module, name, super::term_theory())
+    super::proof::source_theorem(module, name, super::term_theory())
 }
 
 pub fn reverse_call(value: Term) -> Term {
@@ -467,6 +460,16 @@ mod tests {
     }
 
     #[test]
+    fn reverse_nil_source_theorem_has_expected_shape() {
+        let result = theorem_symbol(REVERSE_NIL_COMPUTES_TO_LIST, "result");
+
+        assert_eq!(
+            reverse_nil_computes_to_list_source_theorem(),
+            computes_to_list(result, reverse_call(nil()))
+        );
+    }
+
+    #[test]
     fn reverse_source_theorem_uses_source_proof_script() {
         assert!(matches!(
             theorem_definition(NIL_IS_LIST).proof,
@@ -478,6 +481,10 @@ mod tests {
         ));
         assert!(matches!(
             theorem_definition(REVERSE_COMPUTES_TO_LIST).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(REVERSE_NIL_COMPUTES_TO_LIST).proof,
             ProofScript::Proof(_)
         ));
     }

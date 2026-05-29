@@ -123,6 +123,18 @@ pub(super) struct ParsedModule {
     pub theorems: Vec<ParsedTheorem>,
 }
 
+impl ParsedModule {
+    pub(super) fn term(&self, name: Name) -> Option<&Term> {
+        self.terms
+            .iter()
+            .find_map(|(term_name, term)| (*term_name == name).then_some(term))
+    }
+
+    pub(super) fn theorem(&self, name: Name) -> Option<&ParsedTheorem> {
+        self.theorems.iter().find(|theorem| theorem.name == name)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ParseError {
     message: String,

@@ -1,6 +1,6 @@
 //! Shared proof-script and evaluation-proof helpers for prelude modules.
 
-use crate::{Name, Proof, Step, Term, Theory, alpha_eq_term, computes_to};
+use crate::{Name, Proof, Step, Term, Theorem, Theory, alpha_eq_term, computes_to};
 
 use super::source::{ParsedModule, ParsedTheorem, ProofExpr, ProofScript};
 
@@ -16,21 +16,22 @@ pub(super) fn proof_for_theorem(theorem: &ParsedTheorem, theory: &Theory) -> Opt
     }
 }
 
-pub(super) fn source_proof(module: ParsedModule, name: Name, mut theory: Theory) -> Proof {
+pub(super) fn source_theorem(
+    module: ParsedModule,
+    name: Name,
+    mut theory: Theory,
+) -> Option<Theorem> {
     for theorem in module.theorems {
-        let proof =
-            proof_for_theorem(&theorem, &theory).expect("prelude source should prove theorem");
+        let requested = theorem.name == name;
+        let proof = proof_for_theorem(&theorem, &theory)?;
+        let theorem = theory.define_theorem_from_proof(theorem.name, proof, theorem.prop)?;
 
-        if theorem.name == name {
-            return proof;
+        if requested {
+            return Some(theorem);
         }
-
-        theory
-            .define_theorem_from_proof(theorem.name, proof, theorem.prop)
-            .expect("prelude source theorem dependency should check");
     }
 
-    panic!("prelude source should define requested theorem proof");
+    None
 }
 
 fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {

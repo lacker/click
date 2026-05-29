@@ -103,3 +103,12 @@
             (known nil_is_list))
           rewrite_target
           (computes-to-list result rewrite_target))))))
+
+(theorem reverse_nil_computes_to_list
+  (computes-to-list result (reverse nil))
+  (proof
+    (implies-elim
+      (forall-elim
+        (known reverse_computes_to_list)
+        nil)
+      (known nil_is_list))))
