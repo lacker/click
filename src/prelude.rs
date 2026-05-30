@@ -45,8 +45,7 @@ fn define_module_terms(theory: &mut Theory, module: &source::ParsedModule) -> bo
     module
         .terms
         .iter()
-        .cloned()
-        .all(|(name, term)| theory.define_term(name, &term))
+        .all(|(name, term)| theory.define_term(*name, term))
 }
 
 pub fn define_theorems_in_theory(theory: &mut Theory) -> bool {

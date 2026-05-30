@@ -503,12 +503,12 @@ impl Theory {
         Theorem::from_proof_in_bindings(proof, prop, &self.bindings)
     }
 
-    fn from_closed_proof(&self, proof: Proof) -> Option<Theorem> {
+    fn theorem_from_closed_proof(&self, proof: Proof) -> Option<Theorem> {
         Theorem::from_closed_proof_in_bindings(proof, &self.bindings)
     }
 
     pub fn known(&self, name: Name) -> Option<Theorem> {
-        self.from_closed_proof(Proof::Known(name))
+        self.theorem_from_closed_proof(Proof::Known(name))
     }
 
     pub fn reduce(&self, term: &Term) -> Step {
@@ -524,22 +524,22 @@ impl Theory {
     }
 
     pub fn symm(&self, theorem: &Theorem) -> Option<Theorem> {
-        self.from_closed_proof(Proof::Symm(Box::new(theorem.proof.clone())))
+        self.theorem_from_closed_proof(Proof::Symm(Box::new(theorem.proof.clone())))
     }
 
     pub fn trans(&self, first: &Theorem, second: &Theorem) -> Option<Theorem> {
-        self.from_closed_proof(Proof::Trans(
+        self.theorem_from_closed_proof(Proof::Trans(
             Box::new(first.proof.clone()),
             Box::new(second.proof.clone()),
         ))
     }
 
     pub fn step(&self, term: Term) -> Option<Theorem> {
-        self.from_closed_proof(Proof::Step(term))
+        self.theorem_from_closed_proof(Proof::Step(term))
     }
 
     pub fn steps(&self, terms: Vec<Term>) -> Option<Theorem> {
-        self.from_closed_proof(Proof::Steps(terms))
+        self.theorem_from_closed_proof(Proof::Steps(terms))
     }
 
     pub fn rewrite(
@@ -549,7 +549,7 @@ impl Theory {
         variable: Symbol,
         template: Prop,
     ) -> Option<Theorem> {
-        self.from_closed_proof(Proof::Rewrite {
+        self.theorem_from_closed_proof(Proof::Rewrite {
             equality: Box::new(equality.proof.clone()),
             proof: Box::new(theorem.proof.clone()),
             variable,
@@ -558,21 +558,21 @@ impl Theory {
     }
 
     pub fn beta(&self, lambda: Lambda, argument: Term) -> Option<Theorem> {
-        self.from_closed_proof(Proof::Beta { lambda, argument })
+        self.theorem_from_closed_proof(Proof::Beta { lambda, argument })
     }
 
     pub fn value_lambda(&self, lambda: Lambda) -> Theorem {
-        self.from_closed_proof(Proof::ValueLambda(lambda))
+        self.theorem_from_closed_proof(Proof::ValueLambda(lambda))
             .expect("value lambda theorem should be valid in every theory")
     }
 
     pub fn value_quote(&self, symbol: Symbol) -> Theorem {
-        self.from_closed_proof(Proof::ValueQuote(symbol))
+        self.theorem_from_closed_proof(Proof::ValueQuote(symbol))
             .expect("value quote theorem should be valid in every theory")
     }
 
     pub fn value_nil(&self) -> Theorem {
-        self.from_closed_proof(Proof::ValueNil)
+        self.theorem_from_closed_proof(Proof::ValueNil)
             .expect("value nil theorem should be valid in every theory")
     }
 
@@ -583,7 +583,7 @@ impl Theory {
         head_is_value: &Theorem,
         tail_is_value: &Theorem,
     ) -> Option<Theorem> {
-        self.from_closed_proof(Proof::ValueCons {
+        self.theorem_from_closed_proof(Proof::ValueCons {
             head,
             tail,
             head_is_value: Box::new(head_is_value.proof.clone()),
@@ -592,7 +592,7 @@ impl Theory {
     }
 
     pub fn list_nil(&self) -> Theorem {
-        self.from_closed_proof(Proof::ListNil)
+        self.theorem_from_closed_proof(Proof::ListNil)
             .expect("list nil theorem should be valid in every theory")
     }
 
@@ -603,7 +603,7 @@ impl Theory {
         head_is_value: &Theorem,
         tail_is_list: &Theorem,
     ) -> Option<Theorem> {
-        self.from_closed_proof(Proof::ListCons {
+        self.theorem_from_closed_proof(Proof::ListCons {
             head,
             tail,
             head_is_value: Box::new(head_is_value.proof.clone()),
@@ -612,14 +612,14 @@ impl Theory {
     }
 
     pub fn implies_elim(&self, implication: &Theorem, premise: &Theorem) -> Option<Theorem> {
-        self.from_closed_proof(Proof::ImpliesElim {
+        self.theorem_from_closed_proof(Proof::ImpliesElim {
             implication: Box::new(implication.proof.clone()),
             premise: Box::new(premise.proof.clone()),
         })
     }
 
     pub fn forall_elim(&self, forall: &Theorem, argument: Term) -> Option<Theorem> {
-        self.from_closed_proof(Proof::ForAllElim {
+        self.theorem_from_closed_proof(Proof::ForAllElim {
             forall: Box::new(forall.proof.clone()),
             argument,
         })
@@ -632,7 +632,7 @@ impl Theory {
         witness: Term,
         proof: &Theorem,
     ) -> Option<Theorem> {
-        self.from_closed_proof(Proof::ExistsIntro {
+        self.theorem_from_closed_proof(Proof::ExistsIntro {
             variable,
             body,
             witness,
@@ -641,29 +641,29 @@ impl Theory {
     }
 
     pub fn and_intro(&self, left: &Theorem, right: &Theorem) -> Option<Theorem> {
-        self.from_closed_proof(Proof::AndIntro(
+        self.theorem_from_closed_proof(Proof::AndIntro(
             Box::new(left.proof.clone()),
             Box::new(right.proof.clone()),
         ))
     }
 
     pub fn and_elim_left(&self, theorem: &Theorem) -> Option<Theorem> {
-        self.from_closed_proof(Proof::AndElimLeft(Box::new(theorem.proof.clone())))
+        self.theorem_from_closed_proof(Proof::AndElimLeft(Box::new(theorem.proof.clone())))
     }
 
     pub fn and_elim_right(&self, theorem: &Theorem) -> Option<Theorem> {
-        self.from_closed_proof(Proof::AndElimRight(Box::new(theorem.proof.clone())))
+        self.theorem_from_closed_proof(Proof::AndElimRight(Box::new(theorem.proof.clone())))
     }
 
     pub fn or_intro_left(&self, theorem: &Theorem, right: Prop) -> Option<Theorem> {
-        self.from_closed_proof(Proof::OrIntroLeft {
+        self.theorem_from_closed_proof(Proof::OrIntroLeft {
             proof: Box::new(theorem.proof.clone()),
             right,
         })
     }
 
     pub fn or_intro_right(&self, left: Prop, theorem: &Theorem) -> Option<Theorem> {
-        self.from_closed_proof(Proof::OrIntroRight {
+        self.theorem_from_closed_proof(Proof::OrIntroRight {
             left,
             proof: Box::new(theorem.proof.clone()),
         })
