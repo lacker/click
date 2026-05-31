@@ -12,6 +12,8 @@ pub const REVERSE_ACC_COMPUTES_TO_LIST: Name = Name(3);
 pub const REVERSE_COMPUTES_TO_LIST: Name = Name(4);
 pub const NIL_IS_LIST: Name = Name(5);
 pub const REVERSE_NIL_COMPUTES_TO_LIST: Name = Name(6);
+pub const APPEND: Name = Name(7);
+pub const APPEND_NIL_COMPUTES_TO_LIST: Name = Name(8);
 
 pub fn theory() -> Theory {
     let mut theory = Theory::new();
@@ -84,12 +86,20 @@ pub fn reverse_nil_computes_to_list() -> Option<Theorem> {
     list::checked_source_theorem(REVERSE_NIL_COMPUTES_TO_LIST)
 }
 
+pub fn append_nil_computes_to_list() -> Option<Theorem> {
+    list::checked_source_theorem(APPEND_NIL_COMPUTES_TO_LIST)
+}
+
 pub fn reverse_acc() -> Term {
     Term::Const(REVERSE_ACC)
 }
 
 pub fn reverse() -> Term {
     Term::Const(REVERSE)
+}
+
+pub fn append() -> Term {
+    Term::Const(APPEND)
 }
 
 #[cfg(test)]
@@ -106,8 +116,10 @@ mod tests {
             Some(&list::reverse_acc_definition())
         );
         assert_eq!(theory.term(REVERSE), Some(&list::reverse_definition()));
+        assert_eq!(theory.term(APPEND), Some(&list::append_definition()));
         assert_eq!(reverse_acc(), Term::Const(REVERSE_ACC));
         assert_eq!(reverse(), Term::Const(REVERSE));
+        assert_eq!(append(), Term::Const(APPEND));
         assert_eq!(
             theory.reduce(&reverse_acc()),
             Step::Reduced(list::reverse_acc_definition())
@@ -115,6 +127,10 @@ mod tests {
         assert_eq!(
             theory.reduce(&reverse()),
             Step::Reduced(list::reverse_definition())
+        );
+        assert_eq!(
+            theory.reduce(&append()),
+            Step::Reduced(list::append_definition())
         );
     }
 
@@ -126,6 +142,7 @@ mod tests {
         assert!(theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(REVERSE_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(REVERSE_NIL_COMPUTES_TO_LIST).is_none());
+        assert!(theory.theorem(APPEND_NIL_COMPUTES_TO_LIST).is_none());
     }
 
     #[test]
@@ -140,6 +157,7 @@ mod tests {
         assert!(theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(REVERSE_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(REVERSE_NIL_COMPUTES_TO_LIST).is_none());
+        assert!(theory.theorem(APPEND_NIL_COMPUTES_TO_LIST).is_none());
     }
 
     #[test]
@@ -149,6 +167,7 @@ mod tests {
         let reverse_acc_prop = list::reverse_acc_computes_to_list_source_theorem();
         let reverse_prop = list::reverse_computes_to_list_source_theorem();
         let reverse_nil_prop = list::reverse_nil_computes_to_list_source_theorem();
+        let append_nil_prop = list::append_nil_computes_to_list_source_theorem();
 
         assert_eq!(theory.theorem(NIL_IS_LIST), Some(&nil_prop));
         assert_eq!(
@@ -162,6 +181,10 @@ mod tests {
         assert_eq!(
             theory.theorem(REVERSE_NIL_COMPUTES_TO_LIST),
             Some(&reverse_nil_prop)
+        );
+        assert_eq!(
+            theory.theorem(APPEND_NIL_COMPUTES_TO_LIST),
+            Some(&append_nil_prop)
         );
         assert_eq!(
             theory
@@ -187,6 +210,12 @@ mod tests {
                 .expect("reverse nil theorem source proof should check with dependencies")
                 .prop(),
             &reverse_nil_prop,
+        );
+        assert_eq!(
+            append_nil_computes_to_list()
+                .expect("append nil theorem source proof should check with dependencies")
+                .prop(),
+            &append_nil_prop,
         );
     }
 

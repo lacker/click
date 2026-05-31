@@ -37,5 +37,5 @@ The kernel has a few distinct layers:
   but does not get to pull out the proof object and treat it as unchecked data.
 
 The standard prelude is just a theory built on top of the kernel. It currently
-contains the list definitions for `reverse_acc` and `reverse`, plus theorems
-about those definitions.
+contains the list definitions for `reverse_acc`, `reverse`, and `append`, plus
+theorems about those definitions.

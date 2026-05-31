@@ -6,8 +6,8 @@ use crate::{
 };
 
 use super::{
-    NIL_IS_LIST, REVERSE, REVERSE_ACC, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST,
-    REVERSE_NIL_COMPUTES_TO_LIST,
+    APPEND, APPEND_NIL_COMPUTES_TO_LIST, NIL_IS_LIST, REVERSE, REVERSE_ACC,
+    REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST, REVERSE_NIL_COMPUTES_TO_LIST,
     source::{NameBinding, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
 
@@ -28,6 +28,8 @@ const FIXED_POINT_FUNCTION: Symbol = Symbol(1_004);
 const FIXED_POINT_SELF: Symbol = Symbol(1_005);
 const FIXED_POINT_VALUE: Symbol = Symbol(1_006);
 const LOOP_ARGUMENT: Symbol = Symbol(1_007);
+const LEFT: Symbol = Symbol(1_008);
+const RIGHT: Symbol = Symbol(1_009);
 
 const TERM_DEFINITIONS: &[NameBinding] = &[
     NameBinding {
@@ -37,6 +39,10 @@ const TERM_DEFINITIONS: &[NameBinding] = &[
     NameBinding {
         spelling: "reverse",
         name: REVERSE,
+    },
+    NameBinding {
+        spelling: "append",
+        name: APPEND,
     },
 ];
 
@@ -56,6 +62,10 @@ const THEOREM_DEFINITIONS: &[NameBinding] = &[
     NameBinding {
         spelling: "reverse_nil_computes_to_list",
         name: REVERSE_NIL_COMPUTES_TO_LIST,
+    },
+    NameBinding {
+        spelling: "append_nil_computes_to_list",
+        name: APPEND_NIL_COMPUTES_TO_LIST,
     },
 ];
 
@@ -95,6 +105,14 @@ const TERM_SYMBOLS: &[SymbolBinding] = &[
     SymbolBinding {
         spelling: "loop_argument",
         symbol: LOOP_ARGUMENT,
+    },
+    SymbolBinding {
+        spelling: "left",
+        symbol: LEFT,
+    },
+    SymbolBinding {
+        spelling: "right",
+        symbol: RIGHT,
     },
 ];
 
@@ -188,6 +206,14 @@ pub fn reverse_definition() -> Term {
     definition(REVERSE)
 }
 
+pub fn append() -> Term {
+    super::append()
+}
+
+pub fn append_definition() -> Term {
+    definition(APPEND)
+}
+
 fn definition(name: Name) -> Term {
     module()
         .expect("prelude list source should parse")
@@ -210,6 +236,10 @@ pub fn reverse_computes_to_list_source_theorem() -> Prop {
 
 pub fn reverse_nil_computes_to_list_source_theorem() -> Prop {
     theorem_prop(REVERSE_NIL_COMPUTES_TO_LIST)
+}
+
+pub fn append_nil_computes_to_list_source_theorem() -> Prop {
+    theorem_prop(APPEND_NIL_COMPUTES_TO_LIST)
 }
 
 fn theorem_prop(name: Name) -> Prop {
@@ -250,6 +280,10 @@ pub fn reverse_acc_call(list: Term, acc: Term) -> Term {
     apply(apply(reverse_acc(), list), acc)
 }
 
+pub fn append_call(left: Term, right: Term) -> Term {
+    apply(apply(append(), left), right)
+}
+
 /// If `list` and `acc` are lists, then `reverse_acc(list, acc)` computes to a list.
 ///
 /// `result` names the existential result in `computes_to_list` and should be
@@ -280,6 +314,17 @@ pub fn reverse_computes_to_list_theorem(list: Symbol, result: Symbol) -> Prop {
         implies(
             is_list(var(list)),
             computes_to_list(result, reverse_call(var(list))),
+        ),
+    )
+}
+
+/// If `right` is a list, then `append(nil, right)` computes to a list.
+pub fn append_nil_computes_to_list_theorem(right: Symbol, result: Symbol) -> Prop {
+    forall(
+        right,
+        implies(
+            is_list(var(right)),
+            computes_to_list(result, append_call(nil(), var(right))),
         ),
     )
 }
@@ -470,6 +515,37 @@ mod tests {
     }
 
     #[test]
+    fn append_nil_computes_to_list_theorem_has_expected_shape() {
+        assert_eq!(
+            append_nil_computes_to_list_theorem(X, RESULT),
+            forall(
+                X,
+                implies(
+                    is_list(var(X)),
+                    exists(
+                        RESULT,
+                        and(
+                            computes_to(append_call(nil(), var(X)), var(RESULT)),
+                            is_list(var(RESULT)),
+                        ),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn append_nil_source_theorem_has_expected_shape() {
+        let right = theorem_symbol(APPEND_NIL_COMPUTES_TO_LIST, "right");
+        let result = theorem_symbol(APPEND_NIL_COMPUTES_TO_LIST, "result");
+
+        assert_eq!(
+            append_nil_computes_to_list_source_theorem(),
+            append_nil_computes_to_list_theorem(right, result)
+        );
+    }
+
+    #[test]
     fn reverse_source_theorem_uses_source_proof_script() {
         assert!(matches!(
             theorem_definition(NIL_IS_LIST).proof,
@@ -485,6 +561,10 @@ mod tests {
         ));
         assert!(matches!(
             theorem_definition(REVERSE_NIL_COMPUTES_TO_LIST).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(APPEND_NIL_COMPUTES_TO_LIST).proof,
             ProofScript::Proof(_)
         ));
     }
@@ -514,6 +594,21 @@ mod tests {
         assert_evaluates(
             reverse_call(triple(quote(A), quote(B), quote(NOT_A_LIST))),
             triple(quote(NOT_A_LIST), quote(B), quote(A)),
+        );
+    }
+
+    #[test]
+    fn append_nil_returns_right_list() {
+        let list = pair(quote(A), quote(B));
+
+        assert_evaluates(append_call(nil(), list.clone()), list);
+    }
+
+    #[test]
+    fn append_pair_terminates_without_error() {
+        assert_evaluates(
+            append_call(pair(quote(A), quote(B)), singleton(quote(NOT_A_LIST))),
+            triple(quote(A), quote(B), quote(NOT_A_LIST)),
         );
     }
 

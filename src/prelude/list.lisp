@@ -23,6 +23,26 @@
   (lambda list
     ((reverse_acc list) nil)))
 
+(def append
+  ((lambda fixed_point_function
+     ((lambda fixed_point_self
+        (fixed_point_function
+          (lambda fixed_point_value
+            ((fixed_point_self fixed_point_self) fixed_point_value))))
+      (lambda fixed_point_self
+        (fixed_point_function
+          (lambda fixed_point_value
+            ((fixed_point_self fixed_point_self) fixed_point_value))))))
+   (lambda self
+     (lambda left
+       (lambda right
+         (list-case left
+           right
+           cell
+           (cons
+             (head cell)
+             ((self (tail cell)) right))))))))
+
 (theorem nil_is_list
   (is-list nil)
   (proof
@@ -112,3 +132,21 @@
         (known reverse_computes_to_list)
         nil)
       (known nil_is_list))))
+
+(theorem append_nil_computes_to_list
+  (forall right
+    (implies
+      (is-list right)
+      (computes-to-list result (append nil right))))
+  (proof
+    (forall-intro right
+      (implies-intro right_is_list
+        (is-list right)
+        (exists-intro result
+          (and
+            (computes-to (append nil right) result)
+            (is-list result))
+          right
+          (and-intro
+            (eval-to (append nil right) right)
+            (assume right_is_list)))))))
