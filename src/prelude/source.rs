@@ -98,7 +98,7 @@ pub(super) enum ProofExpr {
     AndIntro(Box<ProofExpr>, Box<ProofExpr>),
     AndElimLeft(Box<ProofExpr>),
     AndElimRight(Box<ProofExpr>),
-    ListCons {
+    ConsIsList {
         head: Computation,
         tail: Computation,
         head_is_value: Box<ProofExpr>,
@@ -509,7 +509,7 @@ impl<'a> SourceParser<'a> {
                     return Ok(Computation::Var(symbol));
                 }
                 if let Some(name) = self.definition(spelling) {
-                    return Ok(Computation::Const(name));
+                    return Ok(Computation::Ref(name));
                 }
 
                 Err(ParseError::new(format!("unknown identifier `{spelling}`")))
@@ -790,7 +790,7 @@ impl<'a> SourceParser<'a> {
             "eval-same" => self.proof_eval_same(items),
             "rewrite" => self.proof_rewrite(items),
             "list-nil" => self.proof_list_nil(items),
-            "list-cons" => self.proof_list_cons(items),
+            "cons-is-list" => self.proof_cons_is_list(items),
             "list-induction" => self.proof_list_induction(items),
             "implies-intro" => self.proof_implies_intro(items),
             "implies-elim" => self.proof_implies_elim(items),
@@ -890,9 +890,9 @@ impl<'a> SourceParser<'a> {
         Ok(ProofExpr::ListNil)
     }
 
-    fn proof_list_cons(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        expect_len("list-cons", items, 5)?;
-        Ok(ProofExpr::ListCons {
+    fn proof_cons_is_list(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("cons-is-list", items, 5)?;
+        Ok(ProofExpr::ConsIsList {
             head: self.computation(&items[1])?,
             tail: self.computation(&items[2])?,
             head_is_value: Box::new(self.proof_expr(&items[3])?),
@@ -1148,7 +1148,7 @@ mod tests {
                     (
                         Name(2),
                         Computation::Apply {
-                            function: Box::new(Computation::Const(Name(1))),
+                            function: Box::new(Computation::Ref(Name(1))),
                             argument: Box::new(Computation::Nil),
                         },
                     ),
@@ -1159,7 +1159,7 @@ mod tests {
                         Symbol(2_000),
                         computes_to(
                             Computation::Apply {
-                                function: Box::new(Computation::Const(Name(2))),
+                                function: Box::new(Computation::Ref(Name(2))),
                                 argument: Box::new(Computation::Var(Symbol(2_000))),
                             },
                             Computation::Var(Symbol(2_000)),
@@ -1169,7 +1169,7 @@ mod tests {
                         variable: Symbol(2_000),
                         proof: Box::new(ProofExpr::EvalTo {
                             computation: Computation::Apply {
-                                function: Box::new(Computation::Const(Name(2))),
+                                function: Box::new(Computation::Ref(Name(2))),
                                 argument: Box::new(Computation::Var(Symbol(2_000))),
                             },
                             expected: Computation::Var(Symbol(2_000)),
@@ -1225,9 +1225,9 @@ mod tests {
                 computations: vec![(Name(1), Computation::Error(ErrorName(7)))],
                 theorems: vec![ParsedTheorem {
                     name: Name(2),
-                    prop: errors_with(Computation::Const(Name(1)), ErrorName(7)),
+                    prop: errors_with(Computation::Ref(Name(1)), ErrorName(7)),
                     proof: ProofScript::Proof(ProofExpr::EvalTo {
-                        computation: Computation::Const(Name(1)),
+                        computation: Computation::Ref(Name(1)),
                         expected: Computation::Error(ErrorName(7)),
                         limit: 128,
                     }),
@@ -1274,7 +1274,7 @@ mod tests {
                             computes_to_list(
                                 Symbol(2_001),
                                 Computation::Apply {
-                                    function: Box::new(Computation::Const(Name(2))),
+                                    function: Box::new(Computation::Ref(Name(2))),
                                     argument: Box::new(Computation::Var(Symbol(2_000))),
                                 },
                             ),

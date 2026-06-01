@@ -13,7 +13,7 @@ pub(super) fn step_in_bindings(computation: &Computation, bindings: &Bindings) -
         Computation::Head(computation) => step_head(computation, bindings),
         Computation::Tail(computation) => step_tail(computation, bindings),
         Computation::ListCase(list_case) => step_list_case(list_case, bindings),
-        Computation::Const(name) => match bindings.computation(*name) {
+        Computation::Ref(name) => match bindings.computation(*name) {
             Some(computation) => Step::Reduced(computation.clone()),
             None => Step::Normal,
         },
@@ -113,7 +113,7 @@ fn step_head(computation: &Computation, bindings: &Bindings) -> Step {
         Step::Normal => match computation {
             Computation::Cons { head, .. } => Step::Reduced(head.as_ref().clone()),
             Computation::Error(_) | Computation::Diverge => Step::Reduced(computation.clone()),
-            Computation::Const(_)
+            Computation::Ref(_)
             | Computation::Var(_)
             | Computation::Apply { .. }
             | Computation::Head(_)
@@ -132,7 +132,7 @@ fn step_tail(computation: &Computation, bindings: &Bindings) -> Step {
         Step::Normal => match computation {
             Computation::Cons { tail, .. } => Step::Reduced(tail.as_ref().clone()),
             Computation::Error(_) | Computation::Diverge => Step::Reduced(computation.clone()),
-            Computation::Const(_)
+            Computation::Ref(_)
             | Computation::Var(_)
             | Computation::Apply { .. }
             | Computation::Head(_)
@@ -163,7 +163,7 @@ fn step_list_case(list_case: &ListCase, bindings: &Bindings) -> Step {
             Computation::Error(_) | Computation::Diverge => {
                 Step::Reduced(list_case.list.as_ref().clone())
             }
-            Computation::Const(_)
+            Computation::Ref(_)
             | Computation::Var(_)
             | Computation::Apply { .. }
             | Computation::Head(_)

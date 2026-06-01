@@ -90,7 +90,7 @@
               (forall-elim
                 (assume induction_hypothesis)
                 (cons head acc))
-              (list-cons
+              (cons-is-list
                 head
                 acc
                 (assume head_is_value)
@@ -208,7 +208,7 @@
                   (computes-to
                     (append (cons head tail) right)
                     (cons head rewrite_target)))
-                (list-cons
+                (cons-is-list
                   head
                   tail_result
                   (assume head_is_value)

@@ -96,15 +96,15 @@ pub fn append_computes_to_list() -> Option<Theorem> {
 }
 
 pub fn reverse_acc() -> Computation {
-    Computation::Const(REVERSE_ACC)
+    Computation::Ref(REVERSE_ACC)
 }
 
 pub fn reverse() -> Computation {
-    Computation::Const(REVERSE)
+    Computation::Ref(REVERSE)
 }
 
 pub fn append() -> Computation {
-    Computation::Const(APPEND)
+    Computation::Ref(APPEND)
 }
 
 #[cfg(test)]
@@ -125,9 +125,9 @@ mod tests {
             Some(&list::reverse_definition())
         );
         assert_eq!(theory.computation(APPEND), Some(&list::append_definition()));
-        assert_eq!(reverse_acc(), Computation::Const(REVERSE_ACC));
-        assert_eq!(reverse(), Computation::Const(REVERSE));
-        assert_eq!(append(), Computation::Const(APPEND));
+        assert_eq!(reverse_acc(), Computation::Ref(REVERSE_ACC));
+        assert_eq!(reverse(), Computation::Ref(REVERSE));
+        assert_eq!(append(), Computation::Ref(APPEND));
         assert_eq!(
             theory.reduce(&reverse_acc()),
             Step::Reduced(list::reverse_acc_definition())

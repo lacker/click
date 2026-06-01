@@ -40,7 +40,7 @@ pub enum Computation {
     Head(Box<Computation>),
     Tail(Box<Computation>),
     ListCase(ListCase),
-    Const(Name),
+    Ref(Name),
     Error(ErrorName),
     Diverge,
     Var(Symbol),
@@ -233,14 +233,14 @@ pub enum Proof {
         argument: Computation,
     },
     Value(Value),
-    ValueCons {
+    ConsIsValue {
         head: Computation,
         tail: Computation,
         head_is_value: Box<Proof>,
         tail_is_value: Box<Proof>,
     },
     ListNil,
-    ListCons {
+    ConsIsList {
         head: Computation,
         tail: Computation,
         head_is_value: Box<Proof>,
@@ -434,7 +434,7 @@ pub fn substitute(
             Computation::ListCase(substitute_list_case(list_case, variable, replacement))
         }
         Computation::Error(error) => Computation::Error(*error),
-        Computation::Const(_)
+        Computation::Ref(_)
         | Computation::Diverge
         | Computation::Var(_)
         | Computation::Quote(_) => {
@@ -520,7 +520,7 @@ pub(super) fn add_free_symbols(computation: &Computation, symbols: &mut HashSet<
             cons_case_symbols.remove(&list_case.cons);
             symbols.extend(cons_case_symbols);
         }
-        Computation::Error(_) | Computation::Const(_) | Computation::Diverge => {}
+        Computation::Error(_) | Computation::Ref(_) | Computation::Diverge => {}
         Computation::Var(symbol) => {
             symbols.insert(*symbol);
         }
@@ -563,7 +563,7 @@ pub(super) fn rename_bound_var(computation: &Computation, old: Symbol, new: Symb
             },
         }),
         Computation::Error(error) => Computation::Error(*error),
-        Computation::Const(_) | Computation::Diverge => computation.clone(),
+        Computation::Ref(_) | Computation::Diverge => computation.clone(),
         Computation::Var(symbol) if *symbol == old => Computation::Var(new),
         Computation::Var(_) | Computation::Quote(_) => computation.clone(),
     }
@@ -610,7 +610,7 @@ pub(super) fn add_all_symbols(computation: &Computation, symbols: &mut HashSet<S
             symbols.insert(list_case.cons);
             add_all_symbols(list_case.cons_case.as_ref(), symbols);
         }
-        Computation::Error(_) | Computation::Const(_) | Computation::Diverge => {}
+        Computation::Error(_) | Computation::Ref(_) | Computation::Diverge => {}
         Computation::Var(symbol) | Computation::Quote(symbol) => {
             symbols.insert(*symbol);
         }

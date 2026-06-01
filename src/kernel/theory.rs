@@ -143,13 +143,13 @@ impl Theorem {
         Self::value(Value::nil())
     }
 
-    pub fn value_cons(
+    pub fn cons_is_value(
         head: Computation,
         tail: Computation,
         head_is_value: &Self,
         tail_is_value: &Self,
     ) -> Option<Self> {
-        Self::from_closed_proof(Proof::ValueCons {
+        Self::from_closed_proof(Proof::ConsIsValue {
             head,
             tail,
             head_is_value: Box::new(head_is_value.proof.clone()),
@@ -161,13 +161,13 @@ impl Theorem {
         Self::from_closed_proof(Proof::ListNil).expect("list nil theorem should be valid")
     }
 
-    pub fn list_cons(
+    pub fn cons_is_list(
         head: Computation,
         tail: Computation,
         head_is_value: &Self,
         tail_is_list: &Self,
     ) -> Option<Self> {
-        Self::from_closed_proof(Proof::ListCons {
+        Self::from_closed_proof(Proof::ConsIsList {
             head,
             tail,
             head_is_value: Box::new(head_is_value.proof.clone()),
@@ -362,14 +362,14 @@ impl Theory {
         self.value(Value::nil())
     }
 
-    pub fn value_cons(
+    pub fn cons_is_value(
         &self,
         head: Computation,
         tail: Computation,
         head_is_value: &Theorem,
         tail_is_value: &Theorem,
     ) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::ValueCons {
+        self.theorem_from_closed_proof(Proof::ConsIsValue {
             head,
             tail,
             head_is_value: Box::new(head_is_value.proof.clone()),
@@ -382,14 +382,14 @@ impl Theory {
             .expect("list nil theorem should be valid in every theory")
     }
 
-    pub fn list_cons(
+    pub fn cons_is_list(
         &self,
         head: Computation,
         tail: Computation,
         head_is_value: &Theorem,
         tail_is_list: &Theorem,
     ) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::ListCons {
+        self.theorem_from_closed_proof(Proof::ConsIsList {
             head,
             tail,
             head_is_value: Box::new(head_is_value.proof.clone()),

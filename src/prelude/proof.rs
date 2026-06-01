@@ -125,12 +125,12 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
         ProofExpr::AndElimRight(proof) => Some(Proof::AndElimRight(Box::new(proof_expr_to_proof(
             proof, theory,
         )?))),
-        ProofExpr::ListCons {
+        ProofExpr::ConsIsList {
             head,
             tail,
             head_is_value,
             tail_is_list,
-        } => Some(Proof::ListCons {
+        } => Some(Proof::ConsIsList {
             head: head.clone(),
             tail: tail.clone(),
             head_is_value: Box::new(proof_expr_to_proof(head_is_value, theory)?),

@@ -512,18 +512,18 @@ fn computation_definitions_unfold_during_evaluation() {
     let id = Name(8);
     let id_computation = lambda(Symbol(1), Computation::Var(Symbol(1)));
     let argument = Computation::Quote(Symbol(2));
-    let call = apply(Computation::Const(id), argument.clone());
+    let call = apply(Computation::Ref(id), argument.clone());
     let mut theory = Theory::new();
 
-    assert_eq!(step(&Computation::Const(id)), Step::Normal);
+    assert_eq!(step(&Computation::Ref(id)), Step::Normal);
     assert_eq!(
-        step(&apply(Computation::Const(Name(9)), argument.clone())),
+        step(&apply(Computation::Ref(Name(9)), argument.clone())),
         Step::Normal
     );
 
     assert!(theory.define_computation(id, &id_computation));
     assert_eq!(
-        theory.reduce(&Computation::Const(id)),
+        theory.reduce(&Computation::Ref(id)),
         Step::Reduced(id_computation.clone())
     );
     assert_eq!(theory.normal_form(&call), argument.clone());
@@ -533,7 +533,7 @@ fn computation_definitions_unfold_during_evaluation() {
 #[test]
 fn step_proofs_use_bindings_computation_definitions() {
     let name = Name(11);
-    let computation = Computation::Const(name);
+    let computation = Computation::Ref(name);
     let value = Computation::Quote(Symbol(7));
     let mut theory = Theory::new();
 
@@ -638,14 +638,14 @@ fn theorem_value_and_list_rules_build_checked_theorems() {
     let tail_value = Theorem::value_nil();
     let tail_list = Theorem::list_nil();
     let list = cons(head.clone(), tail.clone());
-    let value = Theorem::value_cons(head.clone(), tail.clone(), &head_value, &tail_value)
+    let value = Theorem::cons_is_value(head.clone(), tail.clone(), &head_value, &tail_value)
         .expect("cons of values is a value");
-    let list_theorem = Theorem::list_cons(head.clone(), tail.clone(), &head_value, &tail_list)
+    let list_theorem = Theorem::cons_is_list(head.clone(), tail.clone(), &head_value, &tail_list)
         .expect("cons with value head and list tail is a list");
 
     assert_eq!(value.prop(), &is_value(list.clone()));
     assert_eq!(list_theorem.prop(), &is_list(list));
-    assert!(Theorem::list_cons(Computation::Diverge, tail, &head_value, &tail_list).is_none());
+    assert!(Theorem::cons_is_list(Computation::Diverge, tail, &head_value, &tail_list).is_none());
 }
 
 #[test]
@@ -738,7 +738,7 @@ fn value_intro_rules_prove_concrete_values() {
     };
     let list_value = Value::cons(Value::quote(Symbol(1)), Value::nil());
     let list = list_value.clone().into_computation();
-    let proof = Proof::ValueCons {
+    let proof = Proof::ConsIsValue {
         head: Computation::Quote(Symbol(1)),
         tail: Computation::Nil,
         head_is_value: Box::new(value_quote(Symbol(1))),
@@ -759,8 +759,8 @@ fn value_intro_rules_prove_concrete_values() {
 }
 
 #[test]
-fn value_cons_requires_matching_value_proofs() {
-    let proof = Proof::ValueCons {
+fn cons_is_value_requires_matching_value_proofs() {
+    let proof = Proof::ConsIsValue {
         head: Computation::Diverge,
         tail: Computation::Nil,
         head_is_value: Box::new(value_quote(Symbol(1))),
@@ -779,11 +779,11 @@ fn list_intro_rules_prove_concrete_lists() {
         Computation::Quote(Symbol(1)),
         cons(Computation::Quote(Symbol(2)), Computation::Nil),
     );
-    let proof = Proof::ListCons {
+    let proof = Proof::ConsIsList {
         head: Computation::Quote(Symbol(1)),
         tail: cons(Computation::Quote(Symbol(2)), Computation::Nil),
         head_is_value: Box::new(value_quote(Symbol(1))),
-        tail_is_list: Box::new(Proof::ListCons {
+        tail_is_list: Box::new(Proof::ConsIsList {
             head: Computation::Quote(Symbol(2)),
             tail: Computation::Nil,
             head_is_value: Box::new(value_quote(Symbol(2))),
@@ -796,8 +796,8 @@ fn list_intro_rules_prove_concrete_lists() {
 }
 
 #[test]
-fn list_cons_requires_tail_list_proof_for_the_same_tail() {
-    let proof = Proof::ListCons {
+fn cons_is_list_requires_tail_list_proof_for_the_same_tail() {
+    let proof = Proof::ConsIsList {
         head: Computation::Quote(Symbol(1)),
         tail: cons(Computation::Quote(Symbol(2)), Computation::Nil),
         head_is_value: Box::new(value_quote(Symbol(1))),
@@ -814,8 +814,8 @@ fn list_cons_requires_tail_list_proof_for_the_same_tail() {
 }
 
 #[test]
-fn list_cons_requires_head_value_proof_for_the_same_head() {
-    let proof = Proof::ListCons {
+fn cons_is_list_requires_head_value_proof_for_the_same_head() {
+    let proof = Proof::ConsIsList {
         head: Computation::Diverge,
         tail: Computation::Nil,
         head_is_value: Box::new(value_quote(Symbol(1))),
@@ -862,7 +862,7 @@ fn list_induction_proves_every_list_is_a_value() {
         head_is_value_assumption,
         tail_is_list_assumption,
         induction_hypothesis_assumption,
-        step: Box::new(Proof::ValueCons {
+        step: Box::new(Proof::ConsIsValue {
             head: Computation::Var(head),
             tail: Computation::Var(tail),
             head_is_value: Box::new(Proof::Assume(head_is_value_assumption)),

@@ -135,7 +135,7 @@ fn alpha_eq_computation_in_context(
                     alpha_eq_computation_in_context(&left.cons_case, &right.cons_case, bindings)
                 })
         }
-        (Computation::Const(left), Computation::Const(right)) => left == right,
+        (Computation::Ref(left), Computation::Ref(right)) => left == right,
         (Computation::Error(left), Computation::Error(right)) => left == right,
         (Computation::Diverge, Computation::Diverge) => true,
         (Computation::Var(left), Computation::Var(right)) => {
@@ -236,7 +236,7 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
             Some(Prop::Equal(applied, reduced))
         }
         Proof::Value(value) => Some(Prop::IsValue(value.clone().into_computation())),
-        Proof::ValueCons {
+        Proof::ConsIsValue {
             head,
             tail,
             head_is_value,
@@ -257,7 +257,7 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
             _ => None,
         },
         Proof::ListNil => Some(Prop::IsList(Computation::Nil)),
-        Proof::ListCons {
+        Proof::ConsIsList {
             head,
             tail,
             head_is_value,
