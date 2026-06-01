@@ -11,11 +11,11 @@ Even if it is kind of disgusting. Like sushi burrito hors d'oeuvres.
 
 Click aims to do the same thing, for programming languages.
 
-The basic design:
-* LCF-style theorem prover
-* Loose typing
-* Lisp-style lists
-* Should handle divergence and error effects
+Click is designed in three layers:
+
+1. An LCF-style theorem prover over an untyped language with Lisp-style lists.
+2. A model of computations and effects, including errors and divergence.
+3. A structural type system, where a value can belong to many types.
 
 Medium-term goals:
 * Keep code quality high. Clean up when things should be cleaned up.
