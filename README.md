@@ -26,17 +26,20 @@ Medium-term goals:
 
 ## Current architecture
 
-The kernel has a few distinct layers:
+The kernel lives in `src/kernel/`:
 
-- `Term`, `Prop`, and `Proof` are syntax. They represent programs, propositions
-  about programs, and proof scripts.
-- The kernel checker is the fixed trusted core. It implements evaluation,
-  substitution, and the primitive proof rules.
-- `Theory` is the growing collection of named definitions and named theorems.
-  New terms and theorems are added through `Theory`, which checks them against
-  the kernel rules.
-- `Theorem` is a checked proposition. Public code can inspect its proposition,
-  but does not get to pull out the proof object and treat it as unchecked data.
+- `calculus.rs` defines the core calculus entities: `Computation`, `Value`,
+  `Effect`, `Outcome`, `Prop`, and `Proof`. `Term` is currently a compatibility
+  alias for `Computation`.
+- `eval.rs` implements reduction and normalization for computations.
+- `check.rs` implements substitution, alpha-equivalence, and the primitive proof
+  rules.
+- `theory.rs` contains the logistical LCF-style layer: `Theory`, `Theorem`,
+  `Context`, and named bindings.
+
+Surface expressions belong outside the core calculus. The prelude source parser
+uses S-expressions as input and elaborates them into kernel computations,
+propositions, and proofs.
 
 The standard prelude is just a theory built on top of the kernel. It currently
 contains the list definitions for `reverse_acc`, `reverse`, and `append`, plus
