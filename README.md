@@ -46,6 +46,11 @@ variables stand for computations. Rust APIs that require a concrete finalized
 result use `Value`, `Effect`, or `Outcome`. Errors are named effects, not a
 second channel for returning structured values.
 
+The core calculus can contain opaque names. The logistical layer gives those
+names meaning by binding them to computations or theorems. Human-facing spelling,
+scoping, modules, and imports belong to the logistical layer, not to the core
+calculus.
+
 Surface expressions belong outside the core calculus. The prelude source parser
 uses S-expressions as input and elaborates them into kernel computations,
 propositions, and proofs.
