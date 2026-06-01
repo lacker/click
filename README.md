@@ -13,8 +13,10 @@ Click aims to do the same thing, for programming languages.
 
 Click is designed in three layers:
 
-1. An LCF-style theorem prover over an untyped language with Lisp-style lists.
-2. A model of computations and effects, including errors and divergence.
+1. A core calculus with computations, values, effects, outcomes, propositions,
+   and proofs.
+2. An LCF-style logistical layer for naming, scoping, checking, and safely
+   reusing definitions and theorems.
 3. A structural type system, where a value can belong to many types.
 
 Medium-term goals:
