@@ -94,6 +94,25 @@ impl Computation {
 }
 
 impl Value {
+    pub fn lambda(lambda: Lambda) -> Self {
+        Self::Lambda(lambda)
+    }
+
+    pub fn nil() -> Self {
+        Self::Nil
+    }
+
+    pub fn cons(head: Self, tail: Self) -> Self {
+        Self::Cons {
+            head: Box::new(head),
+            tail: Box::new(tail),
+        }
+    }
+
+    pub fn quote(symbol: Symbol) -> Self {
+        Self::Quote(symbol)
+    }
+
     pub fn into_computation(self) -> Computation {
         match self {
             Self::Lambda(lambda) => Computation::Lambda(lambda),
@@ -108,6 +127,14 @@ impl Value {
 }
 
 impl Effect {
+    pub fn error(payload: Computation) -> Self {
+        Self::Error(Box::new(payload))
+    }
+
+    pub fn diverge() -> Self {
+        Self::Diverge
+    }
+
     pub fn into_computation(self) -> Computation {
         match self {
             Self::Error(payload) => Computation::Error(payload),
@@ -117,11 +144,49 @@ impl Effect {
 }
 
 impl Outcome {
+    pub fn value(value: Value) -> Self {
+        Self::Value(value)
+    }
+
+    pub fn effect(effect: Effect) -> Self {
+        Self::Effect(effect)
+    }
+
     pub fn into_computation(self) -> Computation {
         match self {
             Self::Value(value) => value.into_computation(),
             Self::Effect(effect) => effect.into_computation(),
         }
+    }
+}
+
+impl From<Value> for Computation {
+    fn from(value: Value) -> Self {
+        value.into_computation()
+    }
+}
+
+impl From<Effect> for Computation {
+    fn from(effect: Effect) -> Self {
+        effect.into_computation()
+    }
+}
+
+impl From<Outcome> for Computation {
+    fn from(outcome: Outcome) -> Self {
+        outcome.into_computation()
+    }
+}
+
+impl From<Value> for Outcome {
+    fn from(value: Value) -> Self {
+        Self::Value(value)
+    }
+}
+
+impl From<Effect> for Outcome {
+    fn from(effect: Effect) -> Self {
+        Self::Effect(effect)
     }
 }
 
@@ -162,9 +227,7 @@ pub enum Proof {
         lambda: Lambda,
         argument: Computation,
     },
-    ValueLambda(Lambda),
-    ValueQuote(Symbol),
-    ValueNil,
+    Value(Value),
     ValueCons {
         head: Computation,
         tail: Computation,
@@ -280,6 +343,18 @@ pub fn computes_to(computation: Computation, value: Computation) -> Prop {
     equal(computation, value)
 }
 
+pub fn computes_to_value(computation: Computation, value: Value) -> Prop {
+    computes_to(computation, value.into())
+}
+
+pub fn computes_to_effect(computation: Computation, effect: Effect) -> Prop {
+    computes_to(computation, effect.into())
+}
+
+pub fn computes_to_outcome(computation: Computation, outcome: impl Into<Outcome>) -> Prop {
+    computes_to(computation, outcome.into().into())
+}
+
 /// `variable` names the existential result and should be fresh for `computation`.
 pub fn terminates(variable: Symbol, computation: Computation) -> Prop {
     exists(
@@ -306,15 +381,12 @@ pub fn computes_to_list(variable: Symbol, computation: Computation) -> Prop {
 pub fn errors(variable: Symbol, computation: Computation) -> Prop {
     exists(
         variable,
-        computes_to(
-            computation,
-            Computation::Error(Box::new(Computation::Var(variable))),
-        ),
+        computes_to_effect(computation, Effect::error(Computation::Var(variable))),
     )
 }
 
 pub fn diverges(computation: Computation) -> Prop {
-    computes_to(computation, Computation::Diverge)
+    computes_to_effect(computation, Effect::diverge())
 }
 
 pub fn substitute(

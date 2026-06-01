@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::{
     calculus::*,
     check::{check, check_in_bindings, check_in_bindings_and_context, proven_prop},
-    eval::{normal_form_in_bindings, step_in_bindings},
+    eval::{normal_form_in_bindings, normal_outcome_in_bindings, step_in_bindings},
 };
 
 pub type Context = HashMap<Symbol, Prop>;
@@ -127,18 +127,20 @@ impl Theorem {
         Self::from_closed_proof(Proof::Beta { lambda, argument })
     }
 
+    pub fn value(value: Value) -> Self {
+        Self::from_closed_proof(Proof::Value(value)).expect("value theorem should be valid")
+    }
+
     pub fn value_lambda(lambda: Lambda) -> Self {
-        Self::from_closed_proof(Proof::ValueLambda(lambda))
-            .expect("value lambda theorem should be valid")
+        Self::value(Value::lambda(lambda))
     }
 
     pub fn value_quote(symbol: Symbol) -> Self {
-        Self::from_closed_proof(Proof::ValueQuote(symbol))
-            .expect("value quote theorem should be valid")
+        Self::value(Value::quote(symbol))
     }
 
     pub fn value_nil() -> Self {
-        Self::from_closed_proof(Proof::ValueNil).expect("value nil theorem should be valid")
+        Self::value(Value::nil())
     }
 
     pub fn value_cons(
@@ -297,6 +299,10 @@ impl Theory {
         normal_form_in_bindings(computation, &self.bindings)
     }
 
+    pub fn normal_outcome(&self, computation: &Computation) -> Option<Outcome> {
+        normal_outcome_in_bindings(computation, &self.bindings)
+    }
+
     pub fn refl(&self, computation: Computation) -> Theorem {
         Theorem::refl(computation)
     }
@@ -339,19 +345,21 @@ impl Theory {
         self.theorem_from_closed_proof(Proof::Beta { lambda, argument })
     }
 
+    pub fn value(&self, value: Value) -> Theorem {
+        self.theorem_from_closed_proof(Proof::Value(value))
+            .expect("value theorem should be valid in every theory")
+    }
+
     pub fn value_lambda(&self, lambda: Lambda) -> Theorem {
-        self.theorem_from_closed_proof(Proof::ValueLambda(lambda))
-            .expect("value lambda theorem should be valid in every theory")
+        self.value(Value::lambda(lambda))
     }
 
     pub fn value_quote(&self, symbol: Symbol) -> Theorem {
-        self.theorem_from_closed_proof(Proof::ValueQuote(symbol))
-            .expect("value quote theorem should be valid in every theory")
+        self.value(Value::quote(symbol))
     }
 
     pub fn value_nil(&self) -> Theorem {
-        self.theorem_from_closed_proof(Proof::ValueNil)
-            .expect("value nil theorem should be valid in every theory")
+        self.value(Value::nil())
     }
 
     pub fn value_cons(

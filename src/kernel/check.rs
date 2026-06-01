@@ -237,9 +237,7 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
             let reduced = substitute(lambda.body.as_ref(), lambda.parameter, argument);
             Some(Prop::Equal(applied, reduced))
         }
-        Proof::ValueLambda(lambda) => Some(Prop::IsValue(Computation::Lambda(lambda.clone()))),
-        Proof::ValueQuote(symbol) => Some(Prop::IsValue(Computation::Quote(*symbol))),
-        Proof::ValueNil => Some(Prop::IsValue(Computation::Nil)),
+        Proof::Value(value) => Some(Prop::IsValue(value.clone().into_computation())),
         Proof::ValueCons {
             head,
             tail,

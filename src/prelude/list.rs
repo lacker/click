@@ -1,8 +1,8 @@
 //! List definitions and theorems for the standard prelude.
 
 use crate::{
-    Computation, Lambda, ListCase, Name, Proof, Prop, Symbol, Theorem, Theory, computes_to_list,
-    forall, implies, is_list,
+    Computation, Lambda, ListCase, Name, Outcome, Proof, Prop, Symbol, Theorem, Theory,
+    computes_to_list, forall, implies, is_list,
 };
 
 use super::{
@@ -32,7 +32,7 @@ const LOOP_ARGUMENT: Symbol = Symbol(1_007);
 const LEFT: Symbol = Symbol(1_008);
 const RIGHT: Symbol = Symbol(1_009);
 
-const TERM_DEFINITIONS: &[NameBinding] = &[
+const COMPUTATION_DEFINITIONS: &[NameBinding] = &[
     NameBinding {
         spelling: "reverse_acc",
         name: REVERSE_ACC,
@@ -74,7 +74,7 @@ const THEOREM_DEFINITIONS: &[NameBinding] = &[
     },
 ];
 
-const TERM_SYMBOLS: &[SymbolBinding] = &[
+const COMPUTATION_SYMBOLS: &[SymbolBinding] = &[
     SymbolBinding {
         spelling: "unit",
         symbol: UNIT,
@@ -201,7 +201,12 @@ pub fn reverse_acc() -> Computation {
 }
 
 pub(super) fn module() -> Result<ParsedModule, ParseError> {
-    super::source::parse_module(SOURCE, TERM_DEFINITIONS, THEOREM_DEFINITIONS, TERM_SYMBOLS)
+    super::source::parse_module(
+        SOURCE,
+        COMPUTATION_DEFINITIONS,
+        THEOREM_DEFINITIONS,
+        COMPUTATION_SYMBOLS,
+    )
 }
 
 pub fn reverse_acc_definition() -> Computation {
@@ -392,7 +397,7 @@ pub fn evaluation_chain_in_theory(
 /// for a custom theory.
 pub fn proof_by_evaluation(
     computation: Computation,
-    expected: Computation,
+    expected: impl Into<Outcome>,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
     let theory = super::computation_theory();
@@ -401,7 +406,7 @@ pub fn proof_by_evaluation(
 
 pub fn proof_by_evaluation_in_theory(
     computation: Computation,
-    expected: Computation,
+    expected: impl Into<Outcome>,
     theory: &Theory,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
@@ -410,7 +415,7 @@ pub fn proof_by_evaluation_in_theory(
 
 pub fn proof_by_reduction_in_theory(
     computation: Computation,
-    expected: Computation,
+    expected: impl Into<Outcome>,
     theory: &Theory,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
@@ -426,24 +431,28 @@ pub fn proof_by_same_normal_form_in_theory(
     super::proof::proof_by_same_normal_form_in_theory(left, right, theory, limit)
 }
 
-pub fn check_evaluates_to(computation: Computation, value: Computation, proof: &Proof) -> bool {
+pub fn check_evaluates_to(
+    computation: Computation,
+    outcome: impl Into<Outcome>,
+    proof: &Proof,
+) -> bool {
     let theory = super::computation_theory();
-    check_evaluates_to_in_theory(computation, value, proof, &theory)
+    check_evaluates_to_in_theory(computation, outcome, proof, &theory)
 }
 
 pub fn check_evaluates_to_in_theory(
     computation: Computation,
-    value: Computation,
+    outcome: impl Into<Outcome>,
     proof: &Proof,
     theory: &Theory,
 ) -> bool {
-    super::proof::check_evaluates_to_in_theory(computation, value, proof, theory)
+    super::proof::check_evaluates_to_in_theory(computation, outcome, proof, theory)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Proof, and, computes_to, diverges, exists};
+    use crate::{Effect, Proof, Value, and, computes_to, diverges, exists};
 
     const A: Symbol = Symbol(100);
     const B: Symbol = Symbol(101);
@@ -452,13 +461,20 @@ mod tests {
     const ACCUMULATOR: Symbol = Symbol(201);
     const RESULT: Symbol = Symbol(202);
 
-    fn prove_evaluation(computation: Computation, expected: Computation) -> Proof {
+    fn prove_evaluation(computation: Computation, expected: impl Into<Outcome>) -> Proof {
         proof_by_evaluation(computation, expected, 512).expect("example should evaluate")
     }
 
-    fn assert_evaluates(computation: Computation, expected: Computation) {
+    fn assert_evaluates(computation: Computation, expected: impl Into<Outcome>) {
+        let expected = expected.into();
         let proof = prove_evaluation(computation.clone(), expected.clone());
         assert!(check_evaluates_to(computation, expected, &proof));
+    }
+
+    fn value(computation: Computation) -> Value {
+        computation
+            .as_value()
+            .expect("expected a value computation")
     }
 
     #[test]
@@ -634,21 +650,21 @@ mod tests {
 
     #[test]
     fn reverse_nil_terminates_without_error() {
-        assert_evaluates(reverse_call(nil()), nil());
+        assert_evaluates(reverse_call(nil()), Value::nil());
     }
 
     #[test]
     fn reverse_singleton_terminates_without_error() {
         let list = singleton(quote(A));
 
-        assert_evaluates(reverse_call(list.clone()), list);
+        assert_evaluates(reverse_call(list.clone()), value(list));
     }
 
     #[test]
     fn reverse_pair_terminates_without_error() {
         assert_evaluates(
             reverse_call(pair(quote(A), quote(B))),
-            pair(quote(B), quote(A)),
+            value(pair(quote(B), quote(A))),
         );
     }
 
@@ -656,7 +672,7 @@ mod tests {
     fn reverse_triple_terminates_without_error() {
         assert_evaluates(
             reverse_call(triple(quote(A), quote(B), quote(NOT_A_LIST))),
-            triple(quote(NOT_A_LIST), quote(B), quote(A)),
+            value(triple(quote(NOT_A_LIST), quote(B), quote(A))),
         );
     }
 
@@ -664,14 +680,14 @@ mod tests {
     fn append_nil_returns_right_list() {
         let list = pair(quote(A), quote(B));
 
-        assert_evaluates(append_call(nil(), list.clone()), list);
+        assert_evaluates(append_call(nil(), list.clone()), value(list));
     }
 
     #[test]
     fn append_pair_terminates_without_error() {
         assert_evaluates(
             append_call(pair(quote(A), quote(B)), singleton(quote(NOT_A_LIST))),
-            triple(quote(A), quote(B), quote(NOT_A_LIST)),
+            value(triple(quote(A), quote(B), quote(NOT_A_LIST))),
         );
     }
 
@@ -679,28 +695,31 @@ mod tests {
     fn loop_forever_diverges() {
         let theory = crate::prelude::theory();
         let computation = loop_forever_call();
-        let proof = prove_evaluation(computation.clone(), Computation::Diverge);
+        let proof = prove_evaluation(computation.clone(), Effect::diverge());
 
         assert!(theory.check(&proof, &diverges(computation)));
     }
 
     #[test]
     fn reverse_non_list_input_reduces_to_error() {
-        assert_evaluates(reverse_call(quote(NOT_A_LIST)), error(NOT_A_LIST));
+        assert_evaluates(
+            reverse_call(quote(NOT_A_LIST)),
+            Effect::error(quote(NOT_A_LIST)),
+        );
     }
 
     #[test]
     fn reverse_malformed_tail_reduces_to_error() {
         assert_evaluates(
             reverse_call(cons(quote(A), quote(NOT_A_LIST))),
-            error(NOT_A_LIST),
+            Effect::error(quote(NOT_A_LIST)),
         );
     }
 
     #[test]
     fn evaluation_proof_rejects_wrong_expected_value() {
         assert_eq!(
-            proof_by_evaluation(reverse_call(nil()), quote(NOT_A_LIST), 64),
+            proof_by_evaluation(reverse_call(nil()), Value::quote(NOT_A_LIST), 64),
             Err(EvaluationProofError::UnexpectedNormalForm {
                 expected: quote(NOT_A_LIST),
                 actual: nil(),

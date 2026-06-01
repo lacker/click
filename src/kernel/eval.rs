@@ -182,6 +182,10 @@ pub fn normal_form(computation: &Computation) -> Computation {
     normal_form_in_bindings(computation, &Bindings::new())
 }
 
+pub fn normal_outcome(computation: &Computation) -> Option<Outcome> {
+    normal_outcome_in_bindings(computation, &Bindings::new())
+}
+
 pub(super) fn normal_form_in_bindings(
     computation: &Computation,
     bindings: &Bindings,
@@ -193,4 +197,11 @@ pub(super) fn normal_form_in_bindings(
             Step::Normal => return computation,
         }
     }
+}
+
+pub(super) fn normal_outcome_in_bindings(
+    computation: &Computation,
+    bindings: &Bindings,
+) -> Option<Outcome> {
+    normal_form_in_bindings(computation, bindings).as_outcome()
 }

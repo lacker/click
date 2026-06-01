@@ -48,19 +48,29 @@ fn error(error: Computation) -> Computation {
     Computation::Error(Box::new(error))
 }
 
+fn value_lambda(lambda: Lambda) -> Proof {
+    Proof::Value(Value::lambda(lambda))
+}
+
+fn value_quote(symbol: Symbol) -> Proof {
+    Proof::Value(Value::quote(symbol))
+}
+
+fn value_nil() -> Proof {
+    Proof::Value(Value::nil())
+}
+
 #[test]
 fn computations_classify_values_effects_and_outcomes() {
     let value_computation = cons(Computation::Quote(Symbol(1)), Computation::Nil);
+    let value = Value::cons(Value::quote(Symbol(1)), Value::nil());
     let error_computation = error(Computation::Quote(Symbol(2)));
     let pending_computation = apply(
         lambda(Symbol(1), Computation::Var(Symbol(1))),
         Computation::Nil,
     );
 
-    assert_eq!(
-        value_computation.as_value().map(Value::into_computation),
-        Some(value_computation)
-    );
+    assert_eq!(value_computation.as_value(), Some(value.clone()));
     assert_eq!(
         error_computation.as_effect(),
         Some(Effect::Error(Box::new(Computation::Quote(Symbol(2)))))
@@ -70,6 +80,12 @@ fn computations_classify_values_effects_and_outcomes() {
         Some(Outcome::Effect(Effect::Diverge))
     );
     assert_eq!(pending_computation.as_outcome(), None);
+    assert_eq!(
+        normal_outcome(&pending_computation),
+        Some(Outcome::Value(Value::nil()))
+    );
+    assert_eq!(normal_outcome(&Computation::Var(Symbol(3))), None);
+    assert_eq!(value.into_computation(), value_computation);
 }
 
 #[test]
@@ -726,23 +742,25 @@ fn value_intro_rules_prove_concrete_values() {
         parameter: Symbol(1),
         body: Box::new(Computation::Var(Symbol(1))),
     };
-    let list = cons(Computation::Quote(Symbol(1)), Computation::Nil);
+    let list_value = Value::cons(Value::quote(Symbol(1)), Value::nil());
+    let list = list_value.clone().into_computation();
     let proof = Proof::ValueCons {
         head: Computation::Quote(Symbol(1)),
         tail: Computation::Nil,
-        head_is_value: Box::new(Proof::ValueQuote(Symbol(1))),
-        tail_is_value: Box::new(Proof::ValueNil),
+        head_is_value: Box::new(value_quote(Symbol(1))),
+        tail_is_value: Box::new(value_nil()),
     };
 
     assert!(check(
-        &Proof::ValueLambda(lambda.clone()),
+        &value_lambda(lambda.clone()),
         &is_value(Computation::Lambda(lambda))
     ));
     assert!(check(
-        &Proof::ValueQuote(Symbol(1)),
+        &value_quote(Symbol(1)),
         &is_value(Computation::Quote(Symbol(1)))
     ));
-    assert!(check(&Proof::ValueNil, &is_value(Computation::Nil)));
+    assert!(check(&value_nil(), &is_value(Computation::Nil)));
+    assert!(check(&Proof::Value(list_value), &is_value(list.clone())));
     assert!(check(&proof, &is_value(list)));
 }
 
@@ -751,8 +769,8 @@ fn value_cons_requires_matching_value_proofs() {
     let proof = Proof::ValueCons {
         head: Computation::Diverge,
         tail: Computation::Nil,
-        head_is_value: Box::new(Proof::ValueQuote(Symbol(1))),
-        tail_is_value: Box::new(Proof::ValueNil),
+        head_is_value: Box::new(value_quote(Symbol(1))),
+        tail_is_value: Box::new(value_nil()),
     };
 
     assert!(!check(
@@ -770,11 +788,11 @@ fn list_intro_rules_prove_concrete_lists() {
     let proof = Proof::ListCons {
         head: Computation::Quote(Symbol(1)),
         tail: cons(Computation::Quote(Symbol(2)), Computation::Nil),
-        head_is_value: Box::new(Proof::ValueQuote(Symbol(1))),
+        head_is_value: Box::new(value_quote(Symbol(1))),
         tail_is_list: Box::new(Proof::ListCons {
             head: Computation::Quote(Symbol(2)),
             tail: Computation::Nil,
-            head_is_value: Box::new(Proof::ValueQuote(Symbol(2))),
+            head_is_value: Box::new(value_quote(Symbol(2))),
             tail_is_list: Box::new(Proof::ListNil),
         }),
     };
@@ -788,7 +806,7 @@ fn list_cons_requires_tail_list_proof_for_the_same_tail() {
     let proof = Proof::ListCons {
         head: Computation::Quote(Symbol(1)),
         tail: cons(Computation::Quote(Symbol(2)), Computation::Nil),
-        head_is_value: Box::new(Proof::ValueQuote(Symbol(1))),
+        head_is_value: Box::new(value_quote(Symbol(1))),
         tail_is_list: Box::new(Proof::ListNil),
     };
 
@@ -806,7 +824,7 @@ fn list_cons_requires_head_value_proof_for_the_same_head() {
     let proof = Proof::ListCons {
         head: Computation::Diverge,
         tail: Computation::Nil,
-        head_is_value: Box::new(Proof::ValueQuote(Symbol(1))),
+        head_is_value: Box::new(value_quote(Symbol(1))),
         tail_is_list: Box::new(Proof::ListNil),
     };
 
@@ -844,7 +862,7 @@ fn list_induction_proves_every_list_is_a_value() {
     let proof = Proof::ListInduction {
         variable,
         property: property.clone(),
-        base: Box::new(Proof::ValueNil),
+        base: Box::new(value_nil()),
         head,
         tail,
         head_is_value_assumption,
@@ -1053,15 +1071,15 @@ fn prop_helpers_construct_expected_shapes() {
         errors(Symbol(9), computation.clone()),
         exists(
             Symbol(9),
-            computes_to(
+            computes_to_effect(
                 computation.clone(),
-                Computation::Error(Box::new(Computation::Var(Symbol(9))))
+                Effect::error(Computation::Var(Symbol(9)))
             ),
         )
     );
     assert_eq!(
         diverges(computation.clone()),
-        computes_to(computation, Computation::Diverge)
+        computes_to_effect(computation, Effect::diverge())
     );
     assert_eq!(
         or(

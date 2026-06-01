@@ -41,6 +41,10 @@ The kernel lives in `src/kernel/`:
 - `theory.rs` contains the logistical LCF-style layer: `Theory`, `Theorem`,
   `Context`, and named bindings.
 
+Propositions can still talk about arbitrary computations, because quantified
+variables stand for computations. Rust APIs that require a concrete finalized
+result use `Value`, `Effect`, or `Outcome`.
+
 Surface expressions belong outside the core calculus. The prelude source parser
 uses S-expressions as input and elaborates them into kernel computations,
 propositions, and proofs.

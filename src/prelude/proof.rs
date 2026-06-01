@@ -1,6 +1,9 @@
 //! Shared proof-script and evaluation-proof helpers for prelude modules.
 
-use crate::{Computation, Name, Proof, Step, Theorem, Theory, alpha_eq_computation, computes_to};
+use crate::{
+    Computation, Name, Outcome, Proof, Step, Theorem, Theory, alpha_eq_computation,
+    computes_to_outcome,
+};
 
 use super::source::{ParsedModule, ParsedTheorem, ProofExpr, ProofScript};
 
@@ -52,9 +55,13 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
             computation,
             expected,
             limit,
-        } => {
-            proof_by_reduction_in_theory(computation.clone(), expected.clone(), theory, *limit).ok()
-        }
+        } => proof_by_reduction_to_computation_in_theory(
+            computation.clone(),
+            expected.clone(),
+            theory,
+            *limit,
+        )
+        .ok(),
         ProofExpr::EvalSame { left, right, limit } => {
             proof_by_same_normal_form_in_theory(left.clone(), right.clone(), theory, *limit).ok()
         }
@@ -184,6 +191,15 @@ pub(super) fn evaluation_chain_in_theory(
 
 pub(super) fn proof_by_evaluation_in_theory(
     computation: Computation,
+    expected: impl Into<Outcome>,
+    theory: &Theory,
+    limit: usize,
+) -> Result<Proof, EvaluationProofError> {
+    proof_by_evaluation_to_computation_in_theory(computation, expected.into().into(), theory, limit)
+}
+
+pub(super) fn proof_by_evaluation_to_computation_in_theory(
+    computation: Computation,
     expected: Computation,
     theory: &Theory,
     limit: usize,
@@ -202,6 +218,15 @@ pub(super) fn proof_by_evaluation_in_theory(
 }
 
 pub(super) fn proof_by_reduction_in_theory(
+    computation: Computation,
+    expected: impl Into<Outcome>,
+    theory: &Theory,
+    limit: usize,
+) -> Result<Proof, EvaluationProofError> {
+    proof_by_reduction_to_computation_in_theory(computation, expected.into().into(), theory, limit)
+}
+
+pub(super) fn proof_by_reduction_to_computation_in_theory(
     computation: Computation,
     expected: Computation,
     theory: &Theory,
@@ -251,8 +276,10 @@ pub(super) fn proof_by_same_normal_form_in_theory(
         });
     }
 
-    let left_proof = proof_by_evaluation_in_theory(left, left_normal, theory, limit)?;
-    let right_proof = proof_by_evaluation_in_theory(right, right_normal, theory, limit)?;
+    let left_proof =
+        proof_by_evaluation_to_computation_in_theory(left, left_normal, theory, limit)?;
+    let right_proof =
+        proof_by_evaluation_to_computation_in_theory(right, right_normal, theory, limit)?;
 
     Ok(Proof::Trans(
         Box::new(left_proof),
@@ -262,9 +289,9 @@ pub(super) fn proof_by_same_normal_form_in_theory(
 
 pub(super) fn check_evaluates_to_in_theory(
     computation: Computation,
-    value: Computation,
+    outcome: impl Into<Outcome>,
     proof: &Proof,
     theory: &Theory,
 ) -> bool {
-    theory.check(proof, &computes_to(computation, value))
+    theory.check(proof, &computes_to_outcome(computation, outcome))
 }
