@@ -14,23 +14,27 @@ Click aims to do the same thing, for programming languages.
 Click is designed in three layers:
 
 1. A core calculus with computations, values, effects, outcomes, propositions,
-   and proofs.
+   and proofs. Based on a Lisp-like untyped list value.
 2. An LCF-style logistical layer for naming, scoping, checking, and safely
    reusing definitions and theorems.
 3. A structural type system, where a value can belong to many types.
 
-Medium-term goals:
+The medium-term goal is to build out layers 1 and 2.
 * Keep code quality high. Clean up when things should be cleaned up.
-* Make the whole prelude load from `.lisp` files.
-* Build out a “standard library” with lots of definitions and proofs about lists.
+* Make a prelude that loads from `.lisp` files.
+* Build out lots of definitions and proofs about lists, to make sure layers 1 and 2 are well designed.
+* Make sure to prove props about props. Like proving strong induction.
+
+It's better to have n simple things, rather than one thing with n different ways to interpret it.
+The "many simple things" principle.
+So it's okay if the kernel feels like a "pile of different algebraic types".
 
 ## Current architecture
 
 The kernel lives in `src/kernel/`:
 
 - `calculus.rs` defines the core calculus entities: `Computation`, `Value`,
-  `Effect`, `Outcome`, `Prop`, and `Proof`. `Term` is currently a compatibility
-  alias for `Computation`.
+  `Effect`, `Outcome`, `Prop`, and `Proof`.
 - `eval.rs` implements reduction and normalization for computations.
 - `check.rs` implements substitution, alpha-equivalence, and the primitive proof
   rules.

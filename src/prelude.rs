@@ -4,7 +4,7 @@ pub mod list;
 mod proof;
 mod source;
 
-use crate::{Name, Term, Theorem, Theory};
+use crate::{Computation, Name, Theorem, Theory};
 
 pub const REVERSE_ACC: Name = Name(1);
 pub const REVERSE: Name = Name(2);
@@ -22,9 +22,9 @@ pub fn theory() -> Theory {
     theory
 }
 
-pub fn term_theory() -> Theory {
+pub fn computation_theory() -> Theory {
     let mut theory = Theory::new();
-    assert!(define_terms_in_theory(&mut theory));
+    assert!(define_computations_in_theory(&mut theory));
     theory
 }
 
@@ -33,22 +33,22 @@ pub fn define_in_theory(theory: &mut Theory) -> bool {
         return false;
     };
 
-    define_module_terms(theory, &module) && define_module_theorems(theory, &module)
+    define_module_computations(theory, &module) && define_module_theorems(theory, &module)
 }
 
-pub fn define_terms_in_theory(theory: &mut Theory) -> bool {
+pub fn define_computations_in_theory(theory: &mut Theory) -> bool {
     let Ok(module) = list::module() else {
         return false;
     };
 
-    define_module_terms(theory, &module)
+    define_module_computations(theory, &module)
 }
 
-fn define_module_terms(theory: &mut Theory, module: &source::ParsedModule) -> bool {
+fn define_module_computations(theory: &mut Theory, module: &source::ParsedModule) -> bool {
     module
-        .terms
+        .computations
         .iter()
-        .all(|(name, term)| theory.define_term(*name, term))
+        .all(|(name, computation)| theory.define_computation(*name, computation))
 }
 
 pub fn define_theorems_in_theory(theory: &mut Theory) -> bool {
@@ -95,16 +95,16 @@ pub fn append_computes_to_list() -> Option<Theorem> {
     list::checked_source_theorem(APPEND_COMPUTES_TO_LIST)
 }
 
-pub fn reverse_acc() -> Term {
-    Term::Const(REVERSE_ACC)
+pub fn reverse_acc() -> Computation {
+    Computation::Const(REVERSE_ACC)
 }
 
-pub fn reverse() -> Term {
-    Term::Const(REVERSE)
+pub fn reverse() -> Computation {
+    Computation::Const(REVERSE)
 }
 
-pub fn append() -> Term {
-    Term::Const(APPEND)
+pub fn append() -> Computation {
+    Computation::Const(APPEND)
 }
 
 #[cfg(test)]
@@ -117,14 +117,17 @@ mod tests {
         let theory = theory();
 
         assert_eq!(
-            theory.term(REVERSE_ACC),
+            theory.computation(REVERSE_ACC),
             Some(&list::reverse_acc_definition())
         );
-        assert_eq!(theory.term(REVERSE), Some(&list::reverse_definition()));
-        assert_eq!(theory.term(APPEND), Some(&list::append_definition()));
-        assert_eq!(reverse_acc(), Term::Const(REVERSE_ACC));
-        assert_eq!(reverse(), Term::Const(REVERSE));
-        assert_eq!(append(), Term::Const(APPEND));
+        assert_eq!(
+            theory.computation(REVERSE),
+            Some(&list::reverse_definition())
+        );
+        assert_eq!(theory.computation(APPEND), Some(&list::append_definition()));
+        assert_eq!(reverse_acc(), Computation::Const(REVERSE_ACC));
+        assert_eq!(reverse(), Computation::Const(REVERSE));
+        assert_eq!(append(), Computation::Const(APPEND));
         assert_eq!(
             theory.reduce(&reverse_acc()),
             Step::Reduced(list::reverse_acc_definition())
@@ -140,8 +143,8 @@ mod tests {
     }
 
     #[test]
-    fn term_theory_does_not_define_theorems() {
-        let theory = term_theory();
+    fn computation_theory_does_not_define_theorems() {
+        let theory = computation_theory();
 
         assert!(theory.theorem(NIL_IS_LIST).is_none());
         assert!(theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST).is_none());
@@ -152,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn theorem_definitions_require_terms() {
+    fn theorem_definitions_require_computations() {
         let mut theory = Theory::new();
 
         assert!(!define_theorems_in_theory(&mut theory));

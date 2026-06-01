@@ -10,7 +10,7 @@ pub type Context = HashMap<Symbol, Prop>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Bindings {
-    terms: HashMap<Name, Term>,
+    computations: HashMap<Name, Computation>,
     theorems: HashMap<Name, Prop>,
 }
 
@@ -23,24 +23,24 @@ impl Bindings {
         self.theorems.get(&name)
     }
 
-    pub(crate) fn term(&self, name: Name) -> Option<&Term> {
-        self.terms.get(&name)
+    pub(crate) fn computation(&self, name: Name) -> Option<&Computation> {
+        self.computations.get(&name)
     }
 
-    pub(crate) fn define_term(&mut self, name: Name, term: &Term) -> bool {
-        if self.terms.contains_key(&name)
+    pub(crate) fn define_computation(&mut self, name: Name, computation: &Computation) -> bool {
+        if self.computations.contains_key(&name)
             || self.theorems.contains_key(&name)
-            || !free_symbols(term).is_empty()
+            || !free_symbols(computation).is_empty()
         {
             return false;
         }
 
-        self.terms.insert(name, term.clone());
+        self.computations.insert(name, computation.clone());
         true
     }
 
     pub(crate) fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
-        if self.terms.contains_key(&name) || self.theorems.contains_key(&name) {
+        if self.computations.contains_key(&name) || self.theorems.contains_key(&name) {
             return false;
         }
 
@@ -83,10 +83,10 @@ impl Theorem {
         &self.prop
     }
 
-    pub fn refl(term: Term) -> Self {
+    pub fn refl(computation: Computation) -> Self {
         Self {
-            prop: equal(term.clone(), term.clone()),
-            proof: Proof::Refl(term),
+            prop: equal(computation.clone(), computation.clone()),
+            proof: Proof::Refl(computation),
         }
     }
 
@@ -101,12 +101,12 @@ impl Theorem {
         ))
     }
 
-    pub fn step(term: Term) -> Option<Self> {
-        Self::from_closed_proof(Proof::Step(term))
+    pub fn step(computation: Computation) -> Option<Self> {
+        Self::from_closed_proof(Proof::Step(computation))
     }
 
-    pub fn steps(terms: Vec<Term>) -> Option<Self> {
-        Self::from_closed_proof(Proof::Steps(terms))
+    pub fn steps(computations: Vec<Computation>) -> Option<Self> {
+        Self::from_closed_proof(Proof::Steps(computations))
     }
 
     pub fn rewrite(
@@ -123,7 +123,7 @@ impl Theorem {
         })
     }
 
-    pub fn beta(lambda: Lambda, argument: Term) -> Option<Self> {
+    pub fn beta(lambda: Lambda, argument: Computation) -> Option<Self> {
         Self::from_closed_proof(Proof::Beta { lambda, argument })
     }
 
@@ -142,8 +142,8 @@ impl Theorem {
     }
 
     pub fn value_cons(
-        head: Term,
-        tail: Term,
+        head: Computation,
+        tail: Computation,
         head_is_value: &Self,
         tail_is_value: &Self,
     ) -> Option<Self> {
@@ -160,8 +160,8 @@ impl Theorem {
     }
 
     pub fn list_cons(
-        head: Term,
-        tail: Term,
+        head: Computation,
+        tail: Computation,
         head_is_value: &Self,
         tail_is_list: &Self,
     ) -> Option<Self> {
@@ -180,14 +180,19 @@ impl Theorem {
         })
     }
 
-    pub fn forall_elim(forall: &Self, argument: Term) -> Option<Self> {
+    pub fn forall_elim(forall: &Self, argument: Computation) -> Option<Self> {
         Self::from_closed_proof(Proof::ForAllElim {
             forall: Box::new(forall.proof.clone()),
             argument,
         })
     }
 
-    pub fn exists_intro(variable: Symbol, body: Prop, witness: Term, proof: &Self) -> Option<Self> {
+    pub fn exists_intro(
+        variable: Symbol,
+        body: Prop,
+        witness: Computation,
+        proof: &Self,
+    ) -> Option<Self> {
         Self::from_closed_proof(Proof::ExistsIntro {
             variable,
             body,
@@ -238,12 +243,12 @@ impl Theory {
         self.bindings.theorem(name)
     }
 
-    pub fn term(&self, name: Name) -> Option<&Term> {
-        self.bindings.term(name)
+    pub fn computation(&self, name: Name) -> Option<&Computation> {
+        self.bindings.computation(name)
     }
 
-    pub fn define_term(&mut self, name: Name, term: &Term) -> bool {
-        self.bindings.define_term(name, term)
+    pub fn define_computation(&mut self, name: Name, computation: &Computation) -> bool {
+        self.bindings.define_computation(name, computation)
     }
 
     pub fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
@@ -284,16 +289,16 @@ impl Theory {
         self.theorem_from_closed_proof(Proof::Known(name))
     }
 
-    pub fn reduce(&self, term: &Term) -> Step {
-        step_in_bindings(term, &self.bindings)
+    pub fn reduce(&self, computation: &Computation) -> Step {
+        step_in_bindings(computation, &self.bindings)
     }
 
-    pub fn normal_form(&self, term: &Term) -> Term {
-        normal_form_in_bindings(term, &self.bindings)
+    pub fn normal_form(&self, computation: &Computation) -> Computation {
+        normal_form_in_bindings(computation, &self.bindings)
     }
 
-    pub fn refl(&self, term: Term) -> Theorem {
-        Theorem::refl(term)
+    pub fn refl(&self, computation: Computation) -> Theorem {
+        Theorem::refl(computation)
     }
 
     pub fn symm(&self, theorem: &Theorem) -> Option<Theorem> {
@@ -307,12 +312,12 @@ impl Theory {
         ))
     }
 
-    pub fn step(&self, term: Term) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::Step(term))
+    pub fn step(&self, computation: Computation) -> Option<Theorem> {
+        self.theorem_from_closed_proof(Proof::Step(computation))
     }
 
-    pub fn steps(&self, terms: Vec<Term>) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::Steps(terms))
+    pub fn steps(&self, computations: Vec<Computation>) -> Option<Theorem> {
+        self.theorem_from_closed_proof(Proof::Steps(computations))
     }
 
     pub fn rewrite(
@@ -330,7 +335,7 @@ impl Theory {
         })
     }
 
-    pub fn beta(&self, lambda: Lambda, argument: Term) -> Option<Theorem> {
+    pub fn beta(&self, lambda: Lambda, argument: Computation) -> Option<Theorem> {
         self.theorem_from_closed_proof(Proof::Beta { lambda, argument })
     }
 
@@ -351,8 +356,8 @@ impl Theory {
 
     pub fn value_cons(
         &self,
-        head: Term,
-        tail: Term,
+        head: Computation,
+        tail: Computation,
         head_is_value: &Theorem,
         tail_is_value: &Theorem,
     ) -> Option<Theorem> {
@@ -371,8 +376,8 @@ impl Theory {
 
     pub fn list_cons(
         &self,
-        head: Term,
-        tail: Term,
+        head: Computation,
+        tail: Computation,
         head_is_value: &Theorem,
         tail_is_list: &Theorem,
     ) -> Option<Theorem> {
@@ -391,7 +396,7 @@ impl Theory {
         })
     }
 
-    pub fn forall_elim(&self, forall: &Theorem, argument: Term) -> Option<Theorem> {
+    pub fn forall_elim(&self, forall: &Theorem, argument: Computation) -> Option<Theorem> {
         self.theorem_from_closed_proof(Proof::ForAllElim {
             forall: Box::new(forall.proof.clone()),
             argument,
@@ -402,7 +407,7 @@ impl Theory {
         &self,
         variable: Symbol,
         body: Prop,
-        witness: Term,
+        witness: Computation,
         proof: &Theorem,
     ) -> Option<Theorem> {
         self.theorem_from_closed_proof(Proof::ExistsIntro {

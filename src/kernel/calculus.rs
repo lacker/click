@@ -9,40 +9,38 @@ pub struct Symbol(pub u64);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Lambda {
     pub parameter: Symbol,
-    pub body: Box<Term>,
+    pub body: Box<Computation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListCase {
-    pub list: Box<Term>,
-    pub nil: Box<Term>,
+    pub list: Box<Computation>,
+    pub nil: Box<Computation>,
     pub cons: Symbol,
-    pub cons_case: Box<Term>,
+    pub cons_case: Box<Computation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Computation {
     Apply {
-        function: Box<Term>,
-        argument: Box<Term>,
+        function: Box<Computation>,
+        argument: Box<Computation>,
     },
     Lambda(Lambda),
     Nil,
     Cons {
-        head: Box<Term>,
-        tail: Box<Term>,
+        head: Box<Computation>,
+        tail: Box<Computation>,
     },
-    Head(Box<Term>),
-    Tail(Box<Term>),
+    Head(Box<Computation>),
+    Tail(Box<Computation>),
     ListCase(ListCase),
     Const(Name),
-    Error(Box<Term>),
+    Error(Box<Computation>),
     Diverge,
     Var(Symbol),
     Quote(Symbol),
 }
-
-pub use Computation as Term;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Value {
@@ -129,15 +127,15 @@ impl Outcome {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Step {
-    Reduced(Term),
+    Reduced(Computation),
     Normal,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Prop {
-    Equal(Term, Term),
-    IsValue(Term),
-    IsList(Term),
+    Equal(Computation, Computation),
+    IsValue(Computation),
+    IsList(Computation),
     Implies(Box<Prop>, Box<Prop>),
     ForAll { variable: Symbol, body: Box<Prop> },
     Exists { variable: Symbol, body: Box<Prop> },
@@ -149,11 +147,11 @@ pub enum Prop {
 pub enum Proof {
     Known(Name),
     Assume(Symbol),
-    Refl(Term),
+    Refl(Computation),
     Symm(Box<Proof>),
     Trans(Box<Proof>, Box<Proof>),
-    Step(Term),
-    Steps(Vec<Term>),
+    Step(Computation),
+    Steps(Vec<Computation>),
     Rewrite {
         equality: Box<Proof>,
         proof: Box<Proof>,
@@ -162,21 +160,21 @@ pub enum Proof {
     },
     Beta {
         lambda: Lambda,
-        argument: Term,
+        argument: Computation,
     },
     ValueLambda(Lambda),
     ValueQuote(Symbol),
     ValueNil,
     ValueCons {
-        head: Term,
-        tail: Term,
+        head: Computation,
+        tail: Computation,
         head_is_value: Box<Proof>,
         tail_is_value: Box<Proof>,
     },
     ListNil,
     ListCons {
-        head: Term,
-        tail: Term,
+        head: Computation,
+        tail: Computation,
         head_is_value: Box<Proof>,
         tail_is_list: Box<Proof>,
     },
@@ -206,12 +204,12 @@ pub enum Proof {
     },
     ForAllElim {
         forall: Box<Proof>,
-        argument: Term,
+        argument: Computation,
     },
     ExistsIntro {
         variable: Symbol,
         body: Prop,
-        witness: Term,
+        witness: Computation,
         proof: Box<Proof>,
     },
     ExistsElim {
@@ -240,16 +238,16 @@ pub enum Proof {
     },
 }
 
-pub fn equal(left: Term, right: Term) -> Prop {
+pub fn equal(left: Computation, right: Computation) -> Prop {
     Prop::Equal(left, right)
 }
 
-pub fn is_value(term: Term) -> Prop {
-    Prop::IsValue(term)
+pub fn is_value(computation: Computation) -> Prop {
+    Prop::IsValue(computation)
 }
 
-pub fn is_list(term: Term) -> Prop {
-    Prop::IsList(term)
+pub fn is_list(computation: Computation) -> Prop {
+    Prop::IsList(computation)
 }
 
 pub fn implies(premise: Prop, conclusion: Prop) -> Prop {
@@ -278,91 +276,111 @@ pub fn or(left: Prop, right: Prop) -> Prop {
     Prop::Or(Box::new(left), Box::new(right))
 }
 
-pub fn computes_to(term: Term, value: Term) -> Prop {
-    equal(term, value)
+pub fn computes_to(computation: Computation, value: Computation) -> Prop {
+    equal(computation, value)
 }
 
-/// `variable` names the existential result and should be fresh for `term`.
-pub fn terminates(variable: Symbol, term: Term) -> Prop {
+/// `variable` names the existential result and should be fresh for `computation`.
+pub fn terminates(variable: Symbol, computation: Computation) -> Prop {
     exists(
         variable,
         and(
-            computes_to(term, Term::Var(variable)),
-            is_value(Term::Var(variable)),
+            computes_to(computation, Computation::Var(variable)),
+            is_value(Computation::Var(variable)),
         ),
     )
 }
 
-/// `variable` names the existential list value and should be fresh for `term`.
-pub fn computes_to_list(variable: Symbol, term: Term) -> Prop {
+/// `variable` names the existential list value and should be fresh for `computation`.
+pub fn computes_to_list(variable: Symbol, computation: Computation) -> Prop {
     exists(
         variable,
         and(
-            computes_to(term, Term::Var(variable)),
-            is_list(Term::Var(variable)),
+            computes_to(computation, Computation::Var(variable)),
+            is_list(Computation::Var(variable)),
         ),
     )
 }
 
-/// `variable` names the existential error payload and should be fresh for `term`.
-pub fn errors(variable: Symbol, term: Term) -> Prop {
+/// `variable` names the existential error payload and should be fresh for `computation`.
+pub fn errors(variable: Symbol, computation: Computation) -> Prop {
     exists(
         variable,
-        computes_to(term, Term::Error(Box::new(Term::Var(variable)))),
+        computes_to(
+            computation,
+            Computation::Error(Box::new(Computation::Var(variable))),
+        ),
     )
 }
 
-pub fn diverges(term: Term) -> Prop {
-    computes_to(term, Term::Diverge)
+pub fn diverges(computation: Computation) -> Prop {
+    computes_to(computation, Computation::Diverge)
 }
 
-pub fn substitute(term: &Term, variable: Symbol, replacement: &Term) -> Term {
-    match term {
-        Term::Apply { function, argument } => Term::Apply {
+pub fn substitute(
+    computation: &Computation,
+    variable: Symbol,
+    replacement: &Computation,
+) -> Computation {
+    match computation {
+        Computation::Apply { function, argument } => Computation::Apply {
             function: Box::new(substitute(function, variable, replacement)),
             argument: Box::new(substitute(argument, variable, replacement)),
         },
-        Term::Lambda(lambda) => {
+        Computation::Lambda(lambda) => {
             if lambda.parameter == variable {
-                return term.clone();
+                return computation.clone();
             }
 
             if free_symbols(replacement).contains(&lambda.parameter) {
-                let fresh = fresh_symbol(term, replacement, variable);
+                let fresh = fresh_symbol(computation, replacement, variable);
                 let body = rename_bound_var(lambda.body.as_ref(), lambda.parameter, fresh);
-                return Term::Lambda(Lambda {
+                return Computation::Lambda(Lambda {
                     parameter: fresh,
                     body: Box::new(substitute(&body, variable, replacement)),
                 });
             }
 
-            Term::Lambda(Lambda {
+            Computation::Lambda(Lambda {
                 parameter: lambda.parameter,
                 body: Box::new(substitute(lambda.body.as_ref(), variable, replacement)),
             })
         }
-        Term::Nil => Term::Nil,
-        Term::Cons { head, tail } => Term::Cons {
+        Computation::Nil => Computation::Nil,
+        Computation::Cons { head, tail } => Computation::Cons {
             head: Box::new(substitute(head, variable, replacement)),
             tail: Box::new(substitute(tail, variable, replacement)),
         },
-        Term::Head(term) => Term::Head(Box::new(substitute(term, variable, replacement))),
-        Term::Tail(term) => Term::Tail(Box::new(substitute(term, variable, replacement))),
-        Term::ListCase(list_case) => {
-            Term::ListCase(substitute_list_case(list_case, variable, replacement))
+        Computation::Head(computation) => {
+            Computation::Head(Box::new(substitute(computation, variable, replacement)))
         }
-        Term::Error(error) => Term::Error(Box::new(substitute(error, variable, replacement))),
-        Term::Const(_) | Term::Diverge | Term::Var(_) | Term::Quote(_) => {
-            if term == &Term::Var(variable) {
+        Computation::Tail(computation) => {
+            Computation::Tail(Box::new(substitute(computation, variable, replacement)))
+        }
+        Computation::ListCase(list_case) => {
+            Computation::ListCase(substitute_list_case(list_case, variable, replacement))
+        }
+        Computation::Error(error) => {
+            Computation::Error(Box::new(substitute(error, variable, replacement)))
+        }
+        Computation::Const(_)
+        | Computation::Diverge
+        | Computation::Var(_)
+        | Computation::Quote(_) => {
+            if computation == &Computation::Var(variable) {
                 replacement.clone()
             } else {
-                term.clone()
+                computation.clone()
             }
         }
     }
 }
 
-fn substitute_list_case(list_case: &ListCase, variable: Symbol, replacement: &Term) -> ListCase {
+fn substitute_list_case(
+    list_case: &ListCase,
+    variable: Symbol,
+    replacement: &Computation,
+) -> ListCase {
     let list = Box::new(substitute(list_case.list.as_ref(), variable, replacement));
     let nil = Box::new(substitute(list_case.nil.as_ref(), variable, replacement));
 
@@ -379,7 +397,11 @@ fn substitute_list_case(list_case: &ListCase, variable: Symbol, replacement: &Te
     let mut cons_case = list_case.cons_case.as_ref().clone();
 
     if free_symbols(replacement).contains(&cons) {
-        let fresh = fresh_symbol(&Term::ListCase(list_case.clone()), replacement, variable);
+        let fresh = fresh_symbol(
+            &Computation::ListCase(list_case.clone()),
+            replacement,
+            variable,
+        );
         cons_case = rename_bound_var(&cons_case, cons, fresh);
         cons = fresh;
     }
@@ -392,33 +414,33 @@ fn substitute_list_case(list_case: &ListCase, variable: Symbol, replacement: &Te
     }
 }
 
-pub fn free_symbols(term: &Term) -> HashSet<Symbol> {
+pub fn free_symbols(computation: &Computation) -> HashSet<Symbol> {
     let mut symbols = HashSet::new();
-    add_free_symbols(term, &mut symbols);
+    add_free_symbols(computation, &mut symbols);
     symbols
 }
 
-pub(super) fn add_free_symbols(term: &Term, symbols: &mut HashSet<Symbol>) {
-    match term {
-        Term::Apply { function, argument } => {
+pub(super) fn add_free_symbols(computation: &Computation, symbols: &mut HashSet<Symbol>) {
+    match computation {
+        Computation::Apply { function, argument } => {
             add_free_symbols(function, symbols);
             add_free_symbols(argument, symbols);
         }
-        Term::Lambda(lambda) => {
+        Computation::Lambda(lambda) => {
             let mut body_symbols = HashSet::new();
             add_free_symbols(lambda.body.as_ref(), &mut body_symbols);
             body_symbols.remove(&lambda.parameter);
             symbols.extend(body_symbols);
         }
-        Term::Nil => {}
-        Term::Cons { head, tail } => {
+        Computation::Nil => {}
+        Computation::Cons { head, tail } => {
             add_free_symbols(head, symbols);
             add_free_symbols(tail, symbols);
         }
-        Term::Head(term) | Term::Tail(term) => {
-            add_free_symbols(term, symbols);
+        Computation::Head(computation) | Computation::Tail(computation) => {
+            add_free_symbols(computation, symbols);
         }
-        Term::ListCase(list_case) => {
+        Computation::ListCase(list_case) => {
             add_free_symbols(list_case.list.as_ref(), symbols);
             add_free_symbols(list_case.nil.as_ref(), symbols);
 
@@ -427,36 +449,42 @@ pub(super) fn add_free_symbols(term: &Term, symbols: &mut HashSet<Symbol>) {
             cons_case_symbols.remove(&list_case.cons);
             symbols.extend(cons_case_symbols);
         }
-        Term::Error(error) => {
+        Computation::Error(error) => {
             add_free_symbols(error, symbols);
         }
-        Term::Const(_) | Term::Diverge => {}
-        Term::Var(symbol) => {
+        Computation::Const(_) | Computation::Diverge => {}
+        Computation::Var(symbol) => {
             symbols.insert(*symbol);
         }
-        Term::Quote(_) => {}
+        Computation::Quote(_) => {}
     }
 }
 
-pub(super) fn rename_bound_var(term: &Term, old: Symbol, new: Symbol) -> Term {
-    match term {
-        Term::Apply { function, argument } => Term::Apply {
+pub(super) fn rename_bound_var(computation: &Computation, old: Symbol, new: Symbol) -> Computation {
+    match computation {
+        Computation::Apply { function, argument } => Computation::Apply {
             function: Box::new(rename_bound_var(function, old, new)),
             argument: Box::new(rename_bound_var(argument, old, new)),
         },
-        Term::Lambda(lambda) if lambda.parameter == old => Term::Lambda(lambda.clone()),
-        Term::Lambda(lambda) => Term::Lambda(Lambda {
+        Computation::Lambda(lambda) if lambda.parameter == old => {
+            Computation::Lambda(lambda.clone())
+        }
+        Computation::Lambda(lambda) => Computation::Lambda(Lambda {
             parameter: lambda.parameter,
             body: Box::new(rename_bound_var(lambda.body.as_ref(), old, new)),
         }),
-        Term::Nil => Term::Nil,
-        Term::Cons { head, tail } => Term::Cons {
+        Computation::Nil => Computation::Nil,
+        Computation::Cons { head, tail } => Computation::Cons {
             head: Box::new(rename_bound_var(head, old, new)),
             tail: Box::new(rename_bound_var(tail, old, new)),
         },
-        Term::Head(term) => Term::Head(Box::new(rename_bound_var(term, old, new))),
-        Term::Tail(term) => Term::Tail(Box::new(rename_bound_var(term, old, new))),
-        Term::ListCase(list_case) => Term::ListCase(ListCase {
+        Computation::Head(computation) => {
+            Computation::Head(Box::new(rename_bound_var(computation, old, new)))
+        }
+        Computation::Tail(computation) => {
+            Computation::Tail(Box::new(rename_bound_var(computation, old, new)))
+        }
+        Computation::ListCase(list_case) => Computation::ListCase(ListCase {
             list: Box::new(rename_bound_var(list_case.list.as_ref(), old, new)),
             nil: Box::new(rename_bound_var(list_case.nil.as_ref(), old, new)),
             cons: list_case.cons,
@@ -466,16 +494,22 @@ pub(super) fn rename_bound_var(term: &Term, old: Symbol, new: Symbol) -> Term {
                 Box::new(rename_bound_var(list_case.cons_case.as_ref(), old, new))
             },
         }),
-        Term::Error(error) => Term::Error(Box::new(rename_bound_var(error, old, new))),
-        Term::Const(_) | Term::Diverge => term.clone(),
-        Term::Var(symbol) if *symbol == old => Term::Var(new),
-        Term::Var(_) | Term::Quote(_) => term.clone(),
+        Computation::Error(error) => {
+            Computation::Error(Box::new(rename_bound_var(error, old, new)))
+        }
+        Computation::Const(_) | Computation::Diverge => computation.clone(),
+        Computation::Var(symbol) if *symbol == old => Computation::Var(new),
+        Computation::Var(_) | Computation::Quote(_) => computation.clone(),
     }
 }
 
-pub(super) fn fresh_symbol(term: &Term, replacement: &Term, variable: Symbol) -> Symbol {
+pub(super) fn fresh_symbol(
+    computation: &Computation,
+    replacement: &Computation,
+    variable: Symbol,
+) -> Symbol {
     let mut symbols = HashSet::new();
-    add_all_symbols(term, &mut symbols);
+    add_all_symbols(computation, &mut symbols);
     add_all_symbols(replacement, &mut symbols);
     symbols.insert(variable);
 
@@ -486,35 +520,35 @@ pub(super) fn fresh_symbol(term: &Term, replacement: &Term, variable: Symbol) ->
     symbol
 }
 
-pub(super) fn add_all_symbols(term: &Term, symbols: &mut HashSet<Symbol>) {
-    match term {
-        Term::Apply { function, argument } => {
+pub(super) fn add_all_symbols(computation: &Computation, symbols: &mut HashSet<Symbol>) {
+    match computation {
+        Computation::Apply { function, argument } => {
             add_all_symbols(function, symbols);
             add_all_symbols(argument, symbols);
         }
-        Term::Lambda(lambda) => {
+        Computation::Lambda(lambda) => {
             symbols.insert(lambda.parameter);
             add_all_symbols(lambda.body.as_ref(), symbols);
         }
-        Term::Nil => {}
-        Term::Cons { head, tail } => {
+        Computation::Nil => {}
+        Computation::Cons { head, tail } => {
             add_all_symbols(head, symbols);
             add_all_symbols(tail, symbols);
         }
-        Term::Head(term) | Term::Tail(term) => {
-            add_all_symbols(term, symbols);
+        Computation::Head(computation) | Computation::Tail(computation) => {
+            add_all_symbols(computation, symbols);
         }
-        Term::ListCase(list_case) => {
+        Computation::ListCase(list_case) => {
             add_all_symbols(list_case.list.as_ref(), symbols);
             add_all_symbols(list_case.nil.as_ref(), symbols);
             symbols.insert(list_case.cons);
             add_all_symbols(list_case.cons_case.as_ref(), symbols);
         }
-        Term::Error(error) => {
+        Computation::Error(error) => {
             add_all_symbols(error, symbols);
         }
-        Term::Const(_) | Term::Diverge => {}
-        Term::Var(symbol) | Term::Quote(symbol) => {
+        Computation::Const(_) | Computation::Diverge => {}
+        Computation::Var(symbol) | Computation::Quote(symbol) => {
             symbols.insert(*symbol);
         }
     }

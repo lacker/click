@@ -31,8 +31,8 @@ pub fn alpha_eq_prop(left: &Prop, right: &Prop) -> bool {
     alpha_eq_prop_in_context(left, right, &mut Vec::new())
 }
 
-pub fn alpha_eq_term(left: &Term, right: &Term) -> bool {
-    alpha_eq_term_in_context(left, right, &mut Vec::new())
+pub fn alpha_eq_computation(left: &Computation, right: &Computation) -> bool {
+    alpha_eq_computation_in_context(left, right, &mut Vec::new())
 }
 
 fn alpha_eq_prop_in_context(
@@ -42,14 +42,14 @@ fn alpha_eq_prop_in_context(
 ) -> bool {
     match (left, right) {
         (Prop::Equal(left_left, left_right), Prop::Equal(right_left, right_right)) => {
-            alpha_eq_term_in_context(left_left, right_left, bindings)
-                && alpha_eq_term_in_context(left_right, right_right, bindings)
+            alpha_eq_computation_in_context(left_left, right_left, bindings)
+                && alpha_eq_computation_in_context(left_right, right_right, bindings)
         }
         (Prop::IsValue(left), Prop::IsValue(right)) => {
-            alpha_eq_term_in_context(left, right, bindings)
+            alpha_eq_computation_in_context(left, right, bindings)
         }
         (Prop::IsList(left), Prop::IsList(right)) => {
-            alpha_eq_term_in_context(left, right, bindings)
+            alpha_eq_computation_in_context(left, right, bindings)
         }
         (
             Prop::Implies(left_premise, left_conclusion),
@@ -86,59 +86,64 @@ fn alpha_eq_prop_in_context(
     }
 }
 
-fn alpha_eq_term_in_context(
-    left: &Term,
-    right: &Term,
+fn alpha_eq_computation_in_context(
+    left: &Computation,
+    right: &Computation,
     bindings: &mut Vec<(Symbol, Symbol)>,
 ) -> bool {
     match (left, right) {
         (
-            Term::Apply {
+            Computation::Apply {
                 function: left_function,
                 argument: left_argument,
             },
-            Term::Apply {
+            Computation::Apply {
                 function: right_function,
                 argument: right_argument,
             },
         ) => {
-            alpha_eq_term_in_context(left_function, right_function, bindings)
-                && alpha_eq_term_in_context(left_argument, right_argument, bindings)
+            alpha_eq_computation_in_context(left_function, right_function, bindings)
+                && alpha_eq_computation_in_context(left_argument, right_argument, bindings)
         }
-        (Term::Lambda(left), Term::Lambda(right)) => {
+        (Computation::Lambda(left), Computation::Lambda(right)) => {
             alpha_eq_binder(left.parameter, right.parameter, bindings, |bindings| {
-                alpha_eq_term_in_context(&left.body, &right.body, bindings)
+                alpha_eq_computation_in_context(&left.body, &right.body, bindings)
             })
         }
-        (Term::Nil, Term::Nil) => true,
+        (Computation::Nil, Computation::Nil) => true,
         (
-            Term::Cons {
+            Computation::Cons {
                 head: left_head,
                 tail: left_tail,
             },
-            Term::Cons {
+            Computation::Cons {
                 head: right_head,
                 tail: right_tail,
             },
         ) => {
-            alpha_eq_term_in_context(left_head, right_head, bindings)
-                && alpha_eq_term_in_context(left_tail, right_tail, bindings)
+            alpha_eq_computation_in_context(left_head, right_head, bindings)
+                && alpha_eq_computation_in_context(left_tail, right_tail, bindings)
         }
-        (Term::Head(left), Term::Head(right)) | (Term::Tail(left), Term::Tail(right)) => {
-            alpha_eq_term_in_context(left, right, bindings)
+        (Computation::Head(left), Computation::Head(right))
+        | (Computation::Tail(left), Computation::Tail(right)) => {
+            alpha_eq_computation_in_context(left, right, bindings)
         }
-        (Term::ListCase(left), Term::ListCase(right)) => {
-            alpha_eq_term_in_context(&left.list, &right.list, bindings)
-                && alpha_eq_term_in_context(&left.nil, &right.nil, bindings)
+        (Computation::ListCase(left), Computation::ListCase(right)) => {
+            alpha_eq_computation_in_context(&left.list, &right.list, bindings)
+                && alpha_eq_computation_in_context(&left.nil, &right.nil, bindings)
                 && alpha_eq_binder(left.cons, right.cons, bindings, |bindings| {
-                    alpha_eq_term_in_context(&left.cons_case, &right.cons_case, bindings)
+                    alpha_eq_computation_in_context(&left.cons_case, &right.cons_case, bindings)
                 })
         }
-        (Term::Const(left), Term::Const(right)) => left == right,
-        (Term::Error(left), Term::Error(right)) => alpha_eq_term_in_context(left, right, bindings),
-        (Term::Diverge, Term::Diverge) => true,
-        (Term::Var(left), Term::Var(right)) => alpha_eq_symbol(*left, *right, bindings),
-        (Term::Quote(left), Term::Quote(right)) => left == right,
+        (Computation::Const(left), Computation::Const(right)) => left == right,
+        (Computation::Error(left), Computation::Error(right)) => {
+            alpha_eq_computation_in_context(left, right, bindings)
+        }
+        (Computation::Diverge, Computation::Diverge) => true,
+        (Computation::Var(left), Computation::Var(right)) => {
+            alpha_eq_symbol(*left, *right, bindings)
+        }
+        (Computation::Quote(left), Computation::Quote(right)) => left == right,
         _ => false,
     }
 }
@@ -180,7 +185,7 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
     match proof {
         Proof::Known(name) => bindings.theorem(*name).cloned(),
         Proof::Assume(symbol) => context.get(symbol).cloned(),
-        Proof::Refl(term) => Some(Prop::Equal(term.clone(), term.clone())),
+        Proof::Refl(computation) => Some(Prop::Equal(computation.clone(), computation.clone())),
         Proof::Symm(proof) => match proven_prop(proof, bindings, context)? {
             Prop::Equal(left, right) => Some(Prop::Equal(right, left)),
             _ => None,
@@ -191,18 +196,18 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
                 proven_prop(second, bindings, context)?,
             ) {
                 (Prop::Equal(left, middle), Prop::Equal(second_middle, right))
-                    if alpha_eq_term(&middle, &second_middle) =>
+                    if alpha_eq_computation(&middle, &second_middle) =>
                 {
                     Some(Prop::Equal(left, right))
                 }
                 _ => None,
             }
         }
-        Proof::Step(term) => match step_in_bindings(term, bindings) {
-            Step::Reduced(reduced) => Some(Prop::Equal(term.clone(), reduced)),
+        Proof::Step(computation) => match step_in_bindings(computation, bindings) {
+            Step::Reduced(reduced) => Some(Prop::Equal(computation.clone(), reduced)),
             Step::Normal => None,
         },
-        Proof::Steps(terms) => proven_steps(terms, bindings),
+        Proof::Steps(computations) => proven_steps(computations, bindings),
         Proof::Rewrite {
             equality,
             proof,
@@ -225,16 +230,16 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
                 return None;
             }
 
-            let applied = Term::Apply {
-                function: Box::new(Term::Lambda(lambda.clone())),
+            let applied = Computation::Apply {
+                function: Box::new(Computation::Lambda(lambda.clone())),
                 argument: Box::new(argument.clone()),
             };
             let reduced = substitute(lambda.body.as_ref(), lambda.parameter, argument);
             Some(Prop::Equal(applied, reduced))
         }
-        Proof::ValueLambda(lambda) => Some(Prop::IsValue(Term::Lambda(lambda.clone()))),
-        Proof::ValueQuote(symbol) => Some(Prop::IsValue(Term::Quote(*symbol))),
-        Proof::ValueNil => Some(Prop::IsValue(Term::Nil)),
+        Proof::ValueLambda(lambda) => Some(Prop::IsValue(Computation::Lambda(lambda.clone()))),
+        Proof::ValueQuote(symbol) => Some(Prop::IsValue(Computation::Quote(*symbol))),
+        Proof::ValueNil => Some(Prop::IsValue(Computation::Nil)),
         Proof::ValueCons {
             head,
             tail,
@@ -245,16 +250,17 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
             proven_prop(tail_is_value, bindings, context)?,
         ) {
             (Prop::IsValue(proven_head), Prop::IsValue(proven_tail))
-                if alpha_eq_term(&proven_head, head) && alpha_eq_term(&proven_tail, tail) =>
+                if alpha_eq_computation(&proven_head, head)
+                    && alpha_eq_computation(&proven_tail, tail) =>
             {
-                Some(Prop::IsValue(Term::Cons {
+                Some(Prop::IsValue(Computation::Cons {
                     head: Box::new(head.clone()),
                     tail: Box::new(tail.clone()),
                 }))
             }
             _ => None,
         },
-        Proof::ListNil => Some(Prop::IsList(Term::Nil)),
+        Proof::ListNil => Some(Prop::IsList(Computation::Nil)),
         Proof::ListCons {
             head,
             tail,
@@ -265,9 +271,10 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
             proven_prop(tail_is_list, bindings, context)?,
         ) {
             (Prop::IsValue(proven_head), Prop::IsList(proven_tail))
-                if alpha_eq_term(&proven_head, head) && alpha_eq_term(&proven_tail, tail) =>
+                if alpha_eq_computation(&proven_head, head)
+                    && alpha_eq_computation(&proven_tail, tail) =>
             {
-                Some(Prop::IsList(Term::Cons {
+                Some(Prop::IsList(Computation::Cons {
                     head: Box::new(head.clone()),
                     tail: Box::new(tail.clone()),
                 }))
@@ -370,7 +377,7 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
                     return None;
                 }
 
-                let witness_prop = substitute_prop(&body, variable, &Term::Var(*witness));
+                let witness_prop = substitute_prop(&body, variable, &Computation::Var(*witness));
                 let mut context = context.clone();
                 context.insert(*assumption, witness_prop);
                 let conclusion = proven_prop(proof, bindings, &context)?;
@@ -430,13 +437,13 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
     }
 }
 
-fn proven_steps(terms: &[Term], bindings: &Bindings) -> Option<Prop> {
-    let (first, rest) = terms.split_first()?;
+fn proven_steps(computations: &[Computation], bindings: &Bindings) -> Option<Prop> {
+    let (first, rest) = computations.split_first()?;
     let mut previous = first;
 
     for next in rest {
         match step_in_bindings(previous, bindings) {
-            Step::Reduced(reduced) if alpha_eq_term(&reduced, next) => previous = next,
+            Step::Reduced(reduced) if alpha_eq_computation(&reduced, next) => previous = next,
             _ => return None,
         }
     }
@@ -475,22 +482,25 @@ fn prove_list_induction(
         induction_hypothesis_assumption,
     } = symbols;
 
-    let base_prop = substitute_prop(property, variable, &Term::Nil);
+    let base_prop = substitute_prop(property, variable, &Computation::Nil);
     if !alpha_eq_prop(&proven_prop(base, bindings, context)?, &base_prop) {
         return None;
     }
 
-    let tail_var = Term::Var(tail);
+    let tail_var = Computation::Var(tail);
     let step_prop = substitute_prop(
         property,
         variable,
-        &Term::Cons {
-            head: Box::new(Term::Var(head)),
+        &Computation::Cons {
+            head: Box::new(Computation::Var(head)),
             tail: Box::new(tail_var.clone()),
         },
     );
     let mut step_context = context.clone();
-    step_context.insert(head_is_value_assumption, Prop::IsValue(Term::Var(head)));
+    step_context.insert(
+        head_is_value_assumption,
+        Prop::IsValue(Computation::Var(head)),
+    );
     step_context.insert(tail_is_list_assumption, Prop::IsList(tail_var.clone()));
     step_context.insert(
         induction_hypothesis_assumption,
@@ -501,12 +511,12 @@ fn prove_list_induction(
         return None;
     }
 
-    let variable_term = Term::Var(variable);
+    let variable_computation = Computation::Var(variable);
     Some(Prop::ForAll {
         variable,
         body: Box::new(Prop::Implies(
-            Box::new(Prop::IsList(variable_term.clone())),
-            Box::new(substitute_prop(property, variable, &variable_term)),
+            Box::new(Prop::IsList(variable_computation.clone())),
+            Box::new(substitute_prop(property, variable, &variable_computation)),
         )),
     })
 }
@@ -548,14 +558,14 @@ fn list_induction_symbols_are_fresh(
         && !prop_mentions_symbol(property, tail)
 }
 
-pub fn substitute_prop(prop: &Prop, variable: Symbol, replacement: &Term) -> Prop {
+pub fn substitute_prop(prop: &Prop, variable: Symbol, replacement: &Computation) -> Prop {
     match prop {
         Prop::Equal(left, right) => Prop::Equal(
             substitute(left, variable, replacement),
             substitute(right, variable, replacement),
         ),
-        Prop::IsValue(term) => Prop::IsValue(substitute(term, variable, replacement)),
-        Prop::IsList(term) => Prop::IsList(substitute(term, variable, replacement)),
+        Prop::IsValue(computation) => Prop::IsValue(substitute(computation, variable, replacement)),
+        Prop::IsList(computation) => Prop::IsList(substitute(computation, variable, replacement)),
         Prop::Implies(premise, conclusion) => Prop::Implies(
             Box::new(substitute_prop(premise, variable, replacement)),
             Box::new(substitute_prop(conclusion, variable, replacement)),
@@ -584,7 +594,7 @@ fn substitute_quantified_prop(
     binder: Symbol,
     body: &Prop,
     variable: Symbol,
-    replacement: &Term,
+    replacement: &Computation,
 ) -> Prop {
     if binder == variable {
         return quantified_prop(forall, binder, body.clone());
@@ -625,11 +635,11 @@ fn add_free_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
             add_free_symbols(left, symbols);
             add_free_symbols(right, symbols);
         }
-        Prop::IsValue(term) => {
-            add_free_symbols(term, symbols);
+        Prop::IsValue(computation) => {
+            add_free_symbols(computation, symbols);
         }
-        Prop::IsList(term) => {
-            add_free_symbols(term, symbols);
+        Prop::IsList(computation) => {
+            add_free_symbols(computation, symbols);
         }
         Prop::Implies(premise, conclusion)
         | Prop::And(premise, conclusion)
@@ -652,8 +662,8 @@ fn rename_bound_var_prop(prop: &Prop, old: Symbol, new: Symbol) -> Prop {
             rename_bound_var(left, old, new),
             rename_bound_var(right, old, new),
         ),
-        Prop::IsValue(term) => Prop::IsValue(rename_bound_var(term, old, new)),
-        Prop::IsList(term) => Prop::IsList(rename_bound_var(term, old, new)),
+        Prop::IsValue(computation) => Prop::IsValue(rename_bound_var(computation, old, new)),
+        Prop::IsList(computation) => Prop::IsList(rename_bound_var(computation, old, new)),
         Prop::Implies(premise, conclusion) => Prop::Implies(
             Box::new(rename_bound_var_prop(premise, old, new)),
             Box::new(rename_bound_var_prop(conclusion, old, new)),
@@ -679,7 +689,7 @@ fn rename_bound_var_prop(prop: &Prop, old: Symbol, new: Symbol) -> Prop {
     }
 }
 
-fn fresh_symbol_for_prop(prop: &Prop, replacement: &Term, variable: Symbol) -> Symbol {
+fn fresh_symbol_for_prop(prop: &Prop, replacement: &Computation, variable: Symbol) -> Symbol {
     let mut symbols = HashSet::new();
     add_all_symbols_prop(prop, &mut symbols);
     add_all_symbols(replacement, &mut symbols);
@@ -698,11 +708,11 @@ fn add_all_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
             add_all_symbols(left, symbols);
             add_all_symbols(right, symbols);
         }
-        Prop::IsValue(term) => {
-            add_all_symbols(term, symbols);
+        Prop::IsValue(computation) => {
+            add_all_symbols(computation, symbols);
         }
-        Prop::IsList(term) => {
-            add_all_symbols(term, symbols);
+        Prop::IsList(computation) => {
+            add_all_symbols(computation, symbols);
         }
         Prop::Implies(premise, conclusion)
         | Prop::And(premise, conclusion)

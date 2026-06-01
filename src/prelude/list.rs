@@ -1,8 +1,8 @@
 //! List definitions and theorems for the standard prelude.
 
 use crate::{
-    Lambda, ListCase, Name, Proof, Prop, Symbol, Term, Theorem, Theory, computes_to_list, forall,
-    implies, is_list,
+    Computation, Lambda, ListCase, Name, Proof, Prop, Symbol, Theorem, Theory, computes_to_list,
+    forall, implies, is_list,
 };
 
 use super::{
@@ -121,49 +121,54 @@ const TERM_SYMBOLS: &[SymbolBinding] = &[
     },
 ];
 
-pub fn quote(symbol: Symbol) -> Term {
-    Term::Quote(symbol)
+pub fn quote(symbol: Symbol) -> Computation {
+    Computation::Quote(symbol)
 }
 
-pub fn var(symbol: Symbol) -> Term {
-    Term::Var(symbol)
+pub fn var(symbol: Symbol) -> Computation {
+    Computation::Var(symbol)
 }
 
-pub fn lambda(parameter: Symbol, body: Term) -> Term {
-    Term::Lambda(Lambda {
+pub fn lambda(parameter: Symbol, body: Computation) -> Computation {
+    Computation::Lambda(Lambda {
         parameter,
         body: Box::new(body),
     })
 }
 
-pub fn apply(function: Term, argument: Term) -> Term {
-    Term::Apply {
+pub fn apply(function: Computation, argument: Computation) -> Computation {
+    Computation::Apply {
         function: Box::new(function),
         argument: Box::new(argument),
     }
 }
 
-pub fn nil() -> Term {
-    Term::Nil
+pub fn nil() -> Computation {
+    Computation::Nil
 }
 
-pub fn cons(head: Term, tail: Term) -> Term {
-    Term::Cons {
+pub fn cons(head: Computation, tail: Computation) -> Computation {
+    Computation::Cons {
         head: Box::new(head),
         tail: Box::new(tail),
     }
 }
 
-pub fn head(term: Term) -> Term {
-    Term::Head(Box::new(term))
+pub fn head(computation: Computation) -> Computation {
+    Computation::Head(Box::new(computation))
 }
 
-pub fn tail(term: Term) -> Term {
-    Term::Tail(Box::new(term))
+pub fn tail(computation: Computation) -> Computation {
+    Computation::Tail(Box::new(computation))
 }
 
-pub fn list_case(list: Term, nil: Term, cons: Symbol, cons_case: Term) -> Term {
-    Term::ListCase(ListCase {
+pub fn list_case(
+    list: Computation,
+    nil: Computation,
+    cons: Symbol,
+    cons_case: Computation,
+) -> Computation {
+    Computation::ListCase(ListCase {
         list: Box::new(list),
         nil: Box::new(nil),
         cons,
@@ -171,27 +176,27 @@ pub fn list_case(list: Term, nil: Term, cons: Symbol, cons_case: Term) -> Term {
     })
 }
 
-pub fn unit() -> Term {
+pub fn unit() -> Computation {
     quote(UNIT)
 }
 
-pub fn error(symbol: Symbol) -> Term {
-    Term::Error(Box::new(quote(symbol)))
+pub fn error(symbol: Symbol) -> Computation {
+    Computation::Error(Box::new(quote(symbol)))
 }
 
-pub fn singleton(value: Term) -> Term {
+pub fn singleton(value: Computation) -> Computation {
     cons(value, nil())
 }
 
-pub fn pair(first: Term, second: Term) -> Term {
+pub fn pair(first: Computation, second: Computation) -> Computation {
     cons(first, singleton(second))
 }
 
-pub fn triple(first: Term, second: Term, third: Term) -> Term {
+pub fn triple(first: Computation, second: Computation, third: Computation) -> Computation {
     cons(first, pair(second, third))
 }
 
-pub fn reverse_acc() -> Term {
+pub fn reverse_acc() -> Computation {
     super::reverse_acc()
 }
 
@@ -199,32 +204,32 @@ pub(super) fn module() -> Result<ParsedModule, ParseError> {
     super::source::parse_module(SOURCE, TERM_DEFINITIONS, THEOREM_DEFINITIONS, TERM_SYMBOLS)
 }
 
-pub fn reverse_acc_definition() -> Term {
+pub fn reverse_acc_definition() -> Computation {
     definition(REVERSE_ACC)
 }
 
-pub fn reverse() -> Term {
+pub fn reverse() -> Computation {
     super::reverse()
 }
 
-pub fn reverse_definition() -> Term {
+pub fn reverse_definition() -> Computation {
     definition(REVERSE)
 }
 
-pub fn append() -> Term {
+pub fn append() -> Computation {
     super::append()
 }
 
-pub fn append_definition() -> Term {
+pub fn append_definition() -> Computation {
     definition(APPEND)
 }
 
-fn definition(name: Name) -> Term {
+fn definition(name: Name) -> Computation {
     module()
         .expect("prelude list source should parse")
-        .term(name)
+        .computation(name)
         .cloned()
-        .expect("prelude list source should define requested term")
+        .expect("prelude list source should define requested computation")
 }
 
 pub fn reverse_acc_computes_to_list_source_theorem() -> Prop {
@@ -278,18 +283,18 @@ pub(super) fn reverse_computes_to_list_source_result_symbol() -> Symbol {
 pub(super) fn checked_source_theorem(name: Name) -> Option<Theorem> {
     let module = module().ok()?;
 
-    super::proof::source_theorem(module, name, super::term_theory())
+    super::proof::source_theorem(module, name, super::computation_theory())
 }
 
-pub fn reverse_call(value: Term) -> Term {
+pub fn reverse_call(value: Computation) -> Computation {
     apply(reverse(), value)
 }
 
-pub fn reverse_acc_call(list: Term, acc: Term) -> Term {
+pub fn reverse_acc_call(list: Computation, acc: Computation) -> Computation {
     apply(apply(reverse_acc(), list), acc)
 }
 
-pub fn append_call(left: Term, right: Term) -> Term {
+pub fn append_call(left: Computation, right: Computation) -> Computation {
     apply(apply(append(), left), right)
 }
 
@@ -356,80 +361,83 @@ pub fn append_computes_to_list_theorem(left: Symbol, right: Symbol, result: Symb
 }
 
 /// A function whose result is the denotational divergence marker.
-pub fn loop_forever() -> Term {
-    lambda(LOOP_ARGUMENT, Term::Diverge)
+pub fn loop_forever() -> Computation {
+    lambda(LOOP_ARGUMENT, Computation::Diverge)
 }
 
-pub fn loop_forever_call() -> Term {
+pub fn loop_forever_call() -> Computation {
     apply(loop_forever(), unit())
 }
 
 /// Build the concrete evaluator path using the prelude definitions.
-pub fn evaluation_chain(term: Term, limit: usize) -> Result<Vec<Term>, EvaluationProofError> {
-    let theory = super::term_theory();
-    evaluation_chain_in_theory(term, &theory, limit)
+pub fn evaluation_chain(
+    computation: Computation,
+    limit: usize,
+) -> Result<Vec<Computation>, EvaluationProofError> {
+    let theory = super::computation_theory();
+    evaluation_chain_in_theory(computation, &theory, limit)
 }
 
 pub fn evaluation_chain_in_theory(
-    term: Term,
+    computation: Computation,
     theory: &Theory,
     limit: usize,
-) -> Result<Vec<Term>, EvaluationProofError> {
-    super::proof::evaluation_chain_in_theory(term, theory, limit)
+) -> Result<Vec<Computation>, EvaluationProofError> {
+    super::proof::evaluation_chain_in_theory(computation, theory, limit)
 }
 
 /// A small tactic that turns bounded evaluation into a `Proof::Steps` object.
 ///
-/// This uses the prelude term theory. Use `proof_by_evaluation_in_theory`
+/// This uses the prelude computation theory. Use `proof_by_evaluation_in_theory`
 /// for a custom theory.
 pub fn proof_by_evaluation(
-    term: Term,
-    expected: Term,
+    computation: Computation,
+    expected: Computation,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
-    let theory = super::term_theory();
-    proof_by_evaluation_in_theory(term, expected, &theory, limit)
+    let theory = super::computation_theory();
+    proof_by_evaluation_in_theory(computation, expected, &theory, limit)
 }
 
 pub fn proof_by_evaluation_in_theory(
-    term: Term,
-    expected: Term,
+    computation: Computation,
+    expected: Computation,
     theory: &Theory,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
-    super::proof::proof_by_evaluation_in_theory(term, expected, theory, limit)
+    super::proof::proof_by_evaluation_in_theory(computation, expected, theory, limit)
 }
 
 pub fn proof_by_reduction_in_theory(
-    term: Term,
-    expected: Term,
+    computation: Computation,
+    expected: Computation,
     theory: &Theory,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
-    super::proof::proof_by_reduction_in_theory(term, expected, theory, limit)
+    super::proof::proof_by_reduction_in_theory(computation, expected, theory, limit)
 }
 
 pub fn proof_by_same_normal_form_in_theory(
-    left: Term,
-    right: Term,
+    left: Computation,
+    right: Computation,
     theory: &Theory,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
     super::proof::proof_by_same_normal_form_in_theory(left, right, theory, limit)
 }
 
-pub fn check_evaluates_to(term: Term, value: Term, proof: &Proof) -> bool {
-    let theory = super::term_theory();
-    check_evaluates_to_in_theory(term, value, proof, &theory)
+pub fn check_evaluates_to(computation: Computation, value: Computation, proof: &Proof) -> bool {
+    let theory = super::computation_theory();
+    check_evaluates_to_in_theory(computation, value, proof, &theory)
 }
 
 pub fn check_evaluates_to_in_theory(
-    term: Term,
-    value: Term,
+    computation: Computation,
+    value: Computation,
     proof: &Proof,
     theory: &Theory,
 ) -> bool {
-    super::proof::check_evaluates_to_in_theory(term, value, proof, theory)
+    super::proof::check_evaluates_to_in_theory(computation, value, proof, theory)
 }
 
 #[cfg(test)]
@@ -444,13 +452,13 @@ mod tests {
     const ACCUMULATOR: Symbol = Symbol(201);
     const RESULT: Symbol = Symbol(202);
 
-    fn prove_evaluation(term: Term, expected: Term) -> Proof {
-        proof_by_evaluation(term, expected, 512).expect("example should evaluate")
+    fn prove_evaluation(computation: Computation, expected: Computation) -> Proof {
+        proof_by_evaluation(computation, expected, 512).expect("example should evaluate")
     }
 
-    fn assert_evaluates(term: Term, expected: Term) {
-        let proof = prove_evaluation(term.clone(), expected.clone());
-        assert!(check_evaluates_to(term, expected, &proof));
+    fn assert_evaluates(computation: Computation, expected: Computation) {
+        let proof = prove_evaluation(computation.clone(), expected.clone());
+        assert!(check_evaluates_to(computation, expected, &proof));
     }
 
     #[test]
@@ -670,10 +678,10 @@ mod tests {
     #[test]
     fn loop_forever_diverges() {
         let theory = crate::prelude::theory();
-        let term = loop_forever_call();
-        let proof = prove_evaluation(term.clone(), Term::Diverge);
+        let computation = loop_forever_call();
+        let proof = prove_evaluation(computation.clone(), Computation::Diverge);
 
-        assert!(theory.check(&proof, &diverges(term)));
+        assert!(theory.check(&proof, &diverges(computation)));
     }
 
     #[test]

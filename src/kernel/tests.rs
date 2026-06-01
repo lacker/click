@@ -1,37 +1,42 @@
 use super::*;
 use std::collections::HashSet;
 
-fn lambda(parameter: Symbol, body: Term) -> Term {
-    Term::Lambda(Lambda {
+fn lambda(parameter: Symbol, body: Computation) -> Computation {
+    Computation::Lambda(Lambda {
         parameter,
         body: Box::new(body),
     })
 }
 
-fn apply(function: Term, argument: Term) -> Term {
-    Term::Apply {
+fn apply(function: Computation, argument: Computation) -> Computation {
+    Computation::Apply {
         function: Box::new(function),
         argument: Box::new(argument),
     }
 }
 
-fn cons(head: Term, tail: Term) -> Term {
-    Term::Cons {
+fn cons(head: Computation, tail: Computation) -> Computation {
+    Computation::Cons {
         head: Box::new(head),
         tail: Box::new(tail),
     }
 }
 
-fn head(term: Term) -> Term {
-    Term::Head(Box::new(term))
+fn head(computation: Computation) -> Computation {
+    Computation::Head(Box::new(computation))
 }
 
-fn tail(term: Term) -> Term {
-    Term::Tail(Box::new(term))
+fn tail(computation: Computation) -> Computation {
+    Computation::Tail(Box::new(computation))
 }
 
-fn list_case(list: Term, nil: Term, cons_var: Symbol, cons_case: Term) -> Term {
-    Term::ListCase(ListCase {
+fn list_case(
+    list: Computation,
+    nil: Computation,
+    cons_var: Symbol,
+    cons_case: Computation,
+) -> Computation {
+    Computation::ListCase(ListCase {
         list: Box::new(list),
         nil: Box::new(nil),
         cons: cons_var,
@@ -39,15 +44,18 @@ fn list_case(list: Term, nil: Term, cons_var: Symbol, cons_case: Term) -> Term {
     })
 }
 
-fn error(error: Term) -> Term {
-    Term::Error(Box::new(error))
+fn error(error: Computation) -> Computation {
+    Computation::Error(Box::new(error))
 }
 
 #[test]
 fn computations_classify_values_effects_and_outcomes() {
-    let value_computation = cons(Term::Quote(Symbol(1)), Term::Nil);
-    let error_computation = error(Term::Quote(Symbol(2)));
-    let pending_computation = apply(lambda(Symbol(1), Term::Var(Symbol(1))), Term::Nil);
+    let value_computation = cons(Computation::Quote(Symbol(1)), Computation::Nil);
+    let error_computation = error(Computation::Quote(Symbol(2)));
+    let pending_computation = apply(
+        lambda(Symbol(1), Computation::Var(Symbol(1))),
+        Computation::Nil,
+    );
 
     assert_eq!(
         value_computation.as_value().map(Value::into_computation),
@@ -55,10 +63,10 @@ fn computations_classify_values_effects_and_outcomes() {
     );
     assert_eq!(
         error_computation.as_effect(),
-        Some(Effect::Error(Box::new(Term::Quote(Symbol(2)))))
+        Some(Effect::Error(Box::new(Computation::Quote(Symbol(2)))))
     );
     assert_eq!(
-        Term::Diverge.as_outcome(),
+        Computation::Diverge.as_outcome(),
         Some(Outcome::Effect(Effect::Diverge))
     );
     assert_eq!(pending_computation.as_outcome(), None);
@@ -68,58 +76,61 @@ fn computations_classify_values_effects_and_outcomes() {
 fn alpha_eq_prop_renames_bound_variables_only() {
     let left = forall(
         Symbol(1),
-        exists(Symbol(2), equal(Term::Var(Symbol(1)), Term::Var(Symbol(2)))),
+        exists(
+            Symbol(2),
+            equal(Computation::Var(Symbol(1)), Computation::Var(Symbol(2))),
+        ),
     );
     let right = forall(
         Symbol(10),
         exists(
             Symbol(11),
-            equal(Term::Var(Symbol(10)), Term::Var(Symbol(11))),
+            equal(Computation::Var(Symbol(10)), Computation::Var(Symbol(11))),
         ),
     );
 
     assert!(alpha_eq_prop(&left, &right));
     assert!(!alpha_eq_prop(
-        &equal(Term::Var(Symbol(1)), Term::Var(Symbol(2))),
-        &equal(Term::Var(Symbol(1)), Term::Var(Symbol(11))),
+        &equal(Computation::Var(Symbol(1)), Computation::Var(Symbol(2))),
+        &equal(Computation::Var(Symbol(1)), Computation::Var(Symbol(11))),
     ));
 }
 
 #[test]
-fn alpha_eq_term_renames_lambda_and_list_case_binders() {
+fn alpha_eq_computation_renames_lambda_and_list_case_binders() {
     let left = lambda(
         Symbol(1),
         list_case(
-            Term::Var(Symbol(9)),
-            Term::Nil,
+            Computation::Var(Symbol(9)),
+            Computation::Nil,
             Symbol(2),
-            apply(Term::Var(Symbol(1)), Term::Var(Symbol(2))),
+            apply(Computation::Var(Symbol(1)), Computation::Var(Symbol(2))),
         ),
     );
     let right = lambda(
         Symbol(10),
         list_case(
-            Term::Var(Symbol(9)),
-            Term::Nil,
+            Computation::Var(Symbol(9)),
+            Computation::Nil,
             Symbol(20),
-            apply(Term::Var(Symbol(10)), Term::Var(Symbol(20))),
+            apply(Computation::Var(Symbol(10)), Computation::Var(Symbol(20))),
         ),
     );
     let reversed = lambda(
         Symbol(10),
         list_case(
-            Term::Var(Symbol(9)),
-            Term::Nil,
+            Computation::Var(Symbol(9)),
+            Computation::Nil,
             Symbol(20),
-            apply(Term::Var(Symbol(20)), Term::Var(Symbol(10))),
+            apply(Computation::Var(Symbol(20)), Computation::Var(Symbol(10))),
         ),
     );
 
-    assert!(alpha_eq_term(&left, &right));
-    assert!(!alpha_eq_term(&left, &reversed));
-    assert!(!alpha_eq_term(
-        &lambda(Symbol(1), Term::Quote(Symbol(1))),
-        &lambda(Symbol(2), Term::Quote(Symbol(2))),
+    assert!(alpha_eq_computation(&left, &right));
+    assert!(!alpha_eq_computation(&left, &reversed));
+    assert!(!alpha_eq_computation(
+        &lambda(Symbol(1), Computation::Quote(Symbol(1))),
+        &lambda(Symbol(2), Computation::Quote(Symbol(2))),
     ));
 }
 
@@ -127,227 +138,260 @@ fn alpha_eq_term_renames_lambda_and_list_case_binders() {
 fn checker_accepts_alpha_equivalent_goal() {
     let proof = Proof::ForAllIntro {
         variable: Symbol(1),
-        proof: Box::new(Proof::Refl(Term::Var(Symbol(1)))),
+        proof: Box::new(Proof::Refl(Computation::Var(Symbol(1)))),
     };
-    let expected = forall(Symbol(2), equal(Term::Var(Symbol(2)), Term::Var(Symbol(2))));
+    let expected = forall(
+        Symbol(2),
+        equal(Computation::Var(Symbol(2)), Computation::Var(Symbol(2))),
+    );
 
     assert!(check(&proof, &expected));
 }
 
 #[test]
 fn step_beta_reduces_after_argument_is_ready() {
-    let term = apply(
-        lambda(Symbol(1), Term::Var(Symbol(1))),
-        Term::Quote(Symbol(2)),
+    let computation = apply(
+        lambda(Symbol(1), Computation::Var(Symbol(1))),
+        Computation::Quote(Symbol(2)),
     );
 
-    assert_eq!(step(&term), Step::Reduced(Term::Quote(Symbol(2))));
+    assert_eq!(
+        step(&computation),
+        Step::Reduced(Computation::Quote(Symbol(2)))
+    );
 }
 
 #[test]
 fn application_reduces_argument_before_beta() {
-    let term = apply(
-        lambda(Symbol(1), Term::Quote(Symbol(9))),
+    let computation = apply(
+        lambda(Symbol(1), Computation::Quote(Symbol(9))),
         apply(
-            lambda(Symbol(2), Term::Var(Symbol(2))),
-            Term::Quote(Symbol(3)),
+            lambda(Symbol(2), Computation::Var(Symbol(2))),
+            Computation::Quote(Symbol(3)),
         ),
     );
 
     assert_eq!(
-        step(&term),
+        step(&computation),
         Step::Reduced(apply(
-            lambda(Symbol(1), Term::Quote(Symbol(9))),
-            Term::Quote(Symbol(3))
+            lambda(Symbol(1), Computation::Quote(Symbol(9))),
+            Computation::Quote(Symbol(3))
         ))
     );
-    assert_eq!(normal_form(&term), Term::Quote(Symbol(9)));
+    assert_eq!(normal_form(&computation), Computation::Quote(Symbol(9)));
 }
 
 #[test]
 fn lambda_is_a_value_without_evaluating_body() {
-    let term = lambda(
+    let computation = lambda(
         Symbol(1),
         apply(
-            lambda(Symbol(2), Term::Var(Symbol(2))),
-            Term::Var(Symbol(1)),
+            lambda(Symbol(2), Computation::Var(Symbol(2))),
+            Computation::Var(Symbol(1)),
         ),
     );
 
-    assert_eq!(step(&term), Step::Normal);
+    assert_eq!(step(&computation), Step::Normal);
 }
 
 #[test]
 fn is_value_distinguishes_values_from_pending_computations() {
-    assert!(term_is_value(&Term::Nil));
-    assert!(term_is_value(&Term::Quote(Symbol(1))));
-    assert!(term_is_value(&lambda(Symbol(1), Term::Var(Symbol(1)))));
-    assert!(term_is_value(&cons(Term::Quote(Symbol(1)), Term::Nil)));
-
-    assert!(!term_is_value(&apply(
-        Term::Var(Symbol(1)),
-        Term::Quote(Symbol(2))
+    assert!(computation_is_value(&Computation::Nil));
+    assert!(computation_is_value(&Computation::Quote(Symbol(1))));
+    assert!(computation_is_value(&lambda(
+        Symbol(1),
+        Computation::Var(Symbol(1))
     )));
-    assert!(!term_is_value(&Term::Diverge));
-    assert!(!term_is_value(&error(Term::Quote(Symbol(1)))));
-    assert!(!term_is_value(&Term::Var(Symbol(1))));
-    assert_eq!(step(&Term::Var(Symbol(1))), Step::Normal);
+    assert!(computation_is_value(&cons(
+        Computation::Quote(Symbol(1)),
+        Computation::Nil
+    )));
+
+    assert!(!computation_is_value(&apply(
+        Computation::Var(Symbol(1)),
+        Computation::Quote(Symbol(2))
+    )));
+    assert!(!computation_is_value(&Computation::Diverge));
+    assert!(!computation_is_value(&error(Computation::Quote(Symbol(1)))));
+    assert!(!computation_is_value(&Computation::Var(Symbol(1))));
+    assert_eq!(step(&Computation::Var(Symbol(1))), Step::Normal);
 }
 
 #[test]
 fn application_propagates_effects() {
-    let thrown = error(Term::Quote(Symbol(1)));
+    let thrown = error(Computation::Quote(Symbol(1)));
 
     assert_eq!(
-        normal_form(&apply(thrown.clone(), Term::Quote(Symbol(2)))),
+        normal_form(&apply(thrown.clone(), Computation::Quote(Symbol(2)))),
         thrown.clone()
     );
     assert_eq!(
         normal_form(&apply(
-            lambda(Symbol(1), Term::Quote(Symbol(2))),
+            lambda(Symbol(1), Computation::Quote(Symbol(2))),
             thrown.clone()
         )),
         thrown
     );
     assert_eq!(
         normal_form(&apply(
-            lambda(Symbol(1), Term::Quote(Symbol(2))),
-            Term::Diverge
+            lambda(Symbol(1), Computation::Quote(Symbol(2))),
+            Computation::Diverge
         )),
-        Term::Diverge
+        Computation::Diverge
     );
 }
 
 #[test]
 fn apply_known_non_callable_reduces_to_error() {
-    let term = apply(Term::Nil, Term::Quote(Symbol(2)));
+    let computation = apply(Computation::Nil, Computation::Quote(Symbol(2)));
 
-    assert_eq!(step(&term), Step::Reduced(error(Term::Nil)));
+    assert_eq!(step(&computation), Step::Reduced(error(Computation::Nil)));
 }
 
 #[test]
 fn cons_evaluates_head_then_tail_and_propagates_effects() {
-    let term = cons(
+    let computation = cons(
         apply(
-            lambda(Symbol(1), Term::Var(Symbol(1))),
-            Term::Quote(Symbol(2)),
+            lambda(Symbol(1), Computation::Var(Symbol(1))),
+            Computation::Quote(Symbol(2)),
         ),
-        error(Term::Quote(Symbol(3))),
+        error(Computation::Quote(Symbol(3))),
     );
 
     assert_eq!(
-        step(&term),
-        Step::Reduced(cons(Term::Quote(Symbol(2)), error(Term::Quote(Symbol(3)))))
+        step(&computation),
+        Step::Reduced(cons(
+            Computation::Quote(Symbol(2)),
+            error(Computation::Quote(Symbol(3)))
+        ))
     );
-    assert_eq!(normal_form(&term), error(Term::Quote(Symbol(3))));
+    assert_eq!(
+        normal_form(&computation),
+        error(Computation::Quote(Symbol(3)))
+    );
 }
 
 #[test]
 fn head_and_tail_destructure_cons() {
-    let term = cons(Term::Quote(Symbol(1)), Term::Quote(Symbol(2)));
+    let computation = cons(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(2)));
 
     assert_eq!(
-        step(&head(term.clone())),
-        Step::Reduced(Term::Quote(Symbol(1)))
+        step(&head(computation.clone())),
+        Step::Reduced(Computation::Quote(Symbol(1)))
     );
-    assert_eq!(step(&tail(term)), Step::Reduced(Term::Quote(Symbol(2))));
+    assert_eq!(
+        step(&tail(computation)),
+        Step::Reduced(Computation::Quote(Symbol(2)))
+    );
 }
 
 #[test]
-fn head_and_tail_open_terms_are_neutral() {
-    assert_eq!(step(&head(Term::Var(Symbol(1)))), Step::Normal);
-    assert_eq!(step(&tail(Term::Var(Symbol(1)))), Step::Normal);
+fn head_and_tail_open_computations_are_neutral() {
+    assert_eq!(step(&head(Computation::Var(Symbol(1)))), Step::Normal);
+    assert_eq!(step(&tail(Computation::Var(Symbol(1)))), Step::Normal);
 }
 
 #[test]
 fn head_and_tail_known_non_cons_reduce_to_error() {
-    assert_eq!(step(&head(Term::Nil)), Step::Reduced(error(Term::Nil)));
-    assert_eq!(step(&tail(Term::Nil)), Step::Reduced(error(Term::Nil)));
+    assert_eq!(
+        step(&head(Computation::Nil)),
+        Step::Reduced(error(Computation::Nil))
+    );
+    assert_eq!(
+        step(&tail(Computation::Nil)),
+        Step::Reduced(error(Computation::Nil))
+    );
 }
 
 #[test]
 fn list_case_reduces_nil_and_cons() {
-    let cons_value = cons(Term::Quote(Symbol(1)), Term::Nil);
-    let cons_case = head(Term::Var(Symbol(9)));
+    let cons_value = cons(Computation::Quote(Symbol(1)), Computation::Nil);
+    let cons_case = head(Computation::Var(Symbol(9)));
 
     assert_eq!(
         step(&list_case(
-            Term::Nil,
-            Term::Quote(Symbol(0)),
+            Computation::Nil,
+            Computation::Quote(Symbol(0)),
             Symbol(9),
             cons_case.clone(),
         )),
-        Step::Reduced(Term::Quote(Symbol(0)))
+        Step::Reduced(Computation::Quote(Symbol(0)))
     );
     assert_eq!(
         normal_form(&list_case(
             cons_value,
-            Term::Quote(Symbol(0)),
+            Computation::Quote(Symbol(0)),
             Symbol(9),
             cons_case,
         )),
-        Term::Quote(Symbol(1))
+        Computation::Quote(Symbol(1))
     );
 }
 
 #[test]
-fn list_case_open_term_is_neutral_and_known_non_list_reduces_to_error() {
+fn list_case_open_computation_is_neutral_and_known_non_list_reduces_to_error() {
     assert_eq!(
         step(&list_case(
-            Term::Var(Symbol(1)),
-            Term::Quote(Symbol(0)),
+            Computation::Var(Symbol(1)),
+            Computation::Quote(Symbol(0)),
             Symbol(9),
-            Term::Quote(Symbol(1)),
+            Computation::Quote(Symbol(1)),
         )),
         Step::Normal
     );
     assert_eq!(
         step(&list_case(
-            Term::Quote(Symbol(1)),
-            Term::Quote(Symbol(0)),
+            Computation::Quote(Symbol(1)),
+            Computation::Quote(Symbol(0)),
             Symbol(9),
-            Term::Quote(Symbol(1))
+            Computation::Quote(Symbol(1))
         )),
-        Step::Reduced(error(Term::Quote(Symbol(1))))
+        Step::Reduced(error(Computation::Quote(Symbol(1))))
     );
 }
 
 #[test]
 fn substitution_descends_into_cons_and_destructors() {
-    let term = cons(head(Term::Var(Symbol(1))), tail(Term::Var(Symbol(2))));
+    let computation = cons(
+        head(Computation::Var(Symbol(1))),
+        tail(Computation::Var(Symbol(2))),
+    );
 
     assert_eq!(
-        substitute(&term, Symbol(1), &Term::Quote(Symbol(3))),
-        cons(head(Term::Quote(Symbol(3))), tail(Term::Var(Symbol(2))))
+        substitute(&computation, Symbol(1), &Computation::Quote(Symbol(3))),
+        cons(
+            head(Computation::Quote(Symbol(3))),
+            tail(Computation::Var(Symbol(2)))
+        )
     );
 }
 
 #[test]
 fn substitution_avoids_lambda_capture() {
-    let term = lambda(Symbol(2), Term::Var(Symbol(1)));
+    let computation = lambda(Symbol(2), Computation::Var(Symbol(1)));
 
     assert_eq!(
-        substitute(&term, Symbol(1), &Term::Var(Symbol(2))),
-        lambda(Symbol(0), Term::Var(Symbol(2)))
+        substitute(&computation, Symbol(1), &Computation::Var(Symbol(2))),
+        lambda(Symbol(0), Computation::Var(Symbol(2)))
     );
 }
 
 #[test]
 fn substitution_avoids_list_case_capture() {
-    let term = list_case(
-        Term::Var(Symbol(1)),
-        Term::Quote(Symbol(0)),
+    let computation = list_case(
+        Computation::Var(Symbol(1)),
+        Computation::Quote(Symbol(0)),
         Symbol(2),
-        Term::Var(Symbol(3)),
+        Computation::Var(Symbol(3)),
     );
 
     assert_eq!(
-        substitute(&term, Symbol(3), &Term::Var(Symbol(2))),
+        substitute(&computation, Symbol(3), &Computation::Var(Symbol(2))),
         list_case(
-            Term::Var(Symbol(1)),
-            Term::Quote(Symbol(0)),
+            Computation::Var(Symbol(1)),
+            Computation::Quote(Symbol(0)),
             Symbol(4),
-            Term::Var(Symbol(2))
+            Computation::Var(Symbol(2))
         )
     );
 }
@@ -356,10 +400,10 @@ fn substitution_avoids_list_case_capture() {
 fn free_symbols_ignore_list_case_cons_binder() {
     assert_eq!(
         free_symbols(&list_case(
-            Term::Var(Symbol(1)),
-            Term::Var(Symbol(2)),
+            Computation::Var(Symbol(1)),
+            Computation::Var(Symbol(2)),
             Symbol(3),
-            apply(Term::Var(Symbol(3)), Term::Var(Symbol(4)))
+            apply(Computation::Var(Symbol(3)), Computation::Var(Symbol(4)))
         )),
         HashSet::from([Symbol(1), Symbol(2), Symbol(4)])
     );
@@ -367,28 +411,28 @@ fn free_symbols_ignore_list_case_cons_binder() {
 
 #[test]
 fn step_proof_proves_one_step_reduction() {
-    let term = head(cons(Term::Quote(Symbol(1)), Term::Nil));
+    let computation = head(cons(Computation::Quote(Symbol(1)), Computation::Nil));
 
     assert!(check(
-        &Proof::Step(term.clone()),
-        &equal(term, Term::Quote(Symbol(1)))
+        &Proof::Step(computation.clone()),
+        &equal(computation, Computation::Quote(Symbol(1)))
     ));
 }
 
 #[test]
 fn steps_proof_proves_multi_step_reduction() {
     let start = apply(
-        lambda(Symbol(1), Term::Quote(Symbol(9))),
+        lambda(Symbol(1), Computation::Quote(Symbol(9))),
         apply(
-            lambda(Symbol(2), Term::Var(Symbol(2))),
-            Term::Quote(Symbol(3)),
+            lambda(Symbol(2), Computation::Var(Symbol(2))),
+            Computation::Quote(Symbol(3)),
         ),
     );
     let middle = apply(
-        lambda(Symbol(1), Term::Quote(Symbol(9))),
-        Term::Quote(Symbol(3)),
+        lambda(Symbol(1), Computation::Quote(Symbol(9))),
+        Computation::Quote(Symbol(3)),
     );
-    let end = Term::Quote(Symbol(9));
+    let end = Computation::Quote(Symbol(9));
 
     assert!(check(
         &Proof::Steps(vec![start.clone(), middle, end.clone()]),
@@ -399,12 +443,12 @@ fn steps_proof_proves_multi_step_reduction() {
 #[test]
 fn theorem_from_proof_checks_closed_proofs() {
     let valid = Theorem::from_proof(
-        Proof::Refl(Term::Quote(Symbol(1))),
-        equal(Term::Quote(Symbol(1)), Term::Quote(Symbol(1))),
+        Proof::Refl(Computation::Quote(Symbol(1))),
+        equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(1))),
     );
     let invalid = Theorem::from_proof(
-        Proof::Refl(Term::Quote(Symbol(1))),
-        equal(Term::Quote(Symbol(1)), Term::Quote(Symbol(2))),
+        Proof::Refl(Computation::Quote(Symbol(1))),
+        equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(2))),
     );
 
     assert!(valid.is_some());
@@ -412,7 +456,7 @@ fn theorem_from_proof_checks_closed_proofs() {
     assert!(
         Theorem::from_proof(
             Proof::Assume(Symbol(7)),
-            equal(Term::Quote(Symbol(1)), Term::Quote(Symbol(1)))
+            equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(1)))
         )
         .is_none()
     );
@@ -421,8 +465,8 @@ fn theorem_from_proof_checks_closed_proofs() {
 #[test]
 fn theory_known_proofs_cite_named_theorems() {
     let name = Name(42);
-    let theorem = Theorem::refl(Term::Quote(Symbol(1)));
-    let replacement = Theorem::refl(Term::Quote(Symbol(2)));
+    let theorem = Theorem::refl(Computation::Quote(Symbol(1)));
+    let replacement = Theorem::refl(Computation::Quote(Symbol(2)));
     let mut theory = Theory::new();
 
     assert!(theory.define_theorem(name, &theorem));
@@ -436,74 +480,74 @@ fn theory_known_proofs_cite_named_theorems() {
 }
 
 #[test]
-fn theory_defines_closed_terms() {
+fn theory_defines_closed_computations() {
     let name = Name(4);
-    let term = Term::Quote(Symbol(1));
-    let replacement = Term::Quote(Symbol(2));
-    let theorem = Theorem::refl(Term::Nil);
+    let computation = Computation::Quote(Symbol(1));
+    let replacement = Computation::Quote(Symbol(2));
+    let theorem = Theorem::refl(Computation::Nil);
     let mut theory = Theory::new();
 
-    assert!(theory.define_term(name, &term));
-    assert_eq!(theory.term(name), Some(&term));
-    assert!(!theory.define_term(name, &replacement));
+    assert!(theory.define_computation(name, &computation));
+    assert_eq!(theory.computation(name), Some(&computation));
+    assert!(!theory.define_computation(name, &replacement));
     assert!(!theory.define_theorem(name, &theorem));
-    assert!(!theory.define_term(Name(5), &Term::Var(Symbol(1))));
+    assert!(!theory.define_computation(Name(5), &Computation::Var(Symbol(1))));
 
     assert!(theory.define_theorem(Name(6), &theorem));
-    assert!(!theory.define_term(Name(6), &Term::Nil));
+    assert!(!theory.define_computation(Name(6), &Computation::Nil));
 }
 
 #[test]
-fn term_definitions_unfold_during_evaluation() {
+fn computation_definitions_unfold_during_evaluation() {
     let id = Name(8);
-    let id_term = lambda(Symbol(1), Term::Var(Symbol(1)));
-    let argument = Term::Quote(Symbol(2));
-    let call = apply(Term::Const(id), argument.clone());
+    let id_computation = lambda(Symbol(1), Computation::Var(Symbol(1)));
+    let argument = Computation::Quote(Symbol(2));
+    let call = apply(Computation::Const(id), argument.clone());
     let mut theory = Theory::new();
 
-    assert_eq!(step(&Term::Const(id)), Step::Normal);
+    assert_eq!(step(&Computation::Const(id)), Step::Normal);
     assert_eq!(
-        step(&apply(Term::Const(Name(9)), argument.clone())),
+        step(&apply(Computation::Const(Name(9)), argument.clone())),
         Step::Normal
     );
 
-    assert!(theory.define_term(id, &id_term));
+    assert!(theory.define_computation(id, &id_computation));
     assert_eq!(
-        theory.reduce(&Term::Const(id)),
-        Step::Reduced(id_term.clone())
+        theory.reduce(&Computation::Const(id)),
+        Step::Reduced(id_computation.clone())
     );
     assert_eq!(theory.normal_form(&call), argument.clone());
     assert_eq!(normal_form(&call), call);
 }
 
 #[test]
-fn step_proofs_use_bindings_term_definitions() {
+fn step_proofs_use_bindings_computation_definitions() {
     let name = Name(11);
-    let term = Term::Const(name);
-    let value = Term::Quote(Symbol(7));
+    let computation = Computation::Const(name);
+    let value = Computation::Quote(Symbol(7));
     let mut theory = Theory::new();
 
-    assert!(theory.define_term(name, &value));
+    assert!(theory.define_computation(name, &value));
     assert!(theory.check(
-        &Proof::Step(term.clone()),
-        &equal(term.clone(), value.clone())
+        &Proof::Step(computation.clone()),
+        &equal(computation.clone(), value.clone())
     ));
     assert!(!check(
-        &Proof::Step(term.clone()),
-        &equal(term.clone(), value.clone())
+        &Proof::Step(computation.clone()),
+        &equal(computation.clone(), value.clone())
     ));
 
     let theorem = theory
-        .step(term.clone())
+        .step(computation.clone())
         .expect("defined constant should step");
-    assert_eq!(theorem.prop(), &equal(term, value));
+    assert_eq!(theorem.prop(), &equal(computation, value));
 }
 
 #[test]
 fn raw_checker_known_proofs_compose_with_rules() {
-    let start = head(cons(Term::Quote(Symbol(1)), Term::Nil));
-    let end = Term::Quote(Symbol(1));
-    let step = Theorem::step(start.clone()).expect("term should step");
+    let start = head(cons(Computation::Quote(Symbol(1)), Computation::Nil));
+    let end = Computation::Quote(Symbol(1));
+    let step = Theorem::step(start.clone()).expect("computation should step");
     let mut bindings = Bindings::new();
 
     assert!(bindings.define_theorem(Name(7), &step));
@@ -516,9 +560,9 @@ fn raw_checker_known_proofs_compose_with_rules() {
 
 #[test]
 fn theory_combinators_use_their_bindings() {
-    let start = head(cons(Term::Quote(Symbol(1)), Term::Nil));
-    let end = Term::Quote(Symbol(1));
-    let step = Theorem::step(start.clone()).expect("term should step");
+    let start = head(cons(Computation::Quote(Symbol(1)), Computation::Nil));
+    let end = Computation::Quote(Symbol(1));
+    let step = Theorem::step(start.clone()).expect("computation should step");
     let mut theory = Theory::new();
 
     assert!(theory.define_theorem(Name(7), &step));
@@ -537,40 +581,49 @@ fn theory_combinators_use_their_bindings() {
 #[test]
 fn theorem_equality_rules_build_checked_theorems() {
     let start = apply(
-        lambda(Symbol(1), Term::Var(Symbol(1))),
-        Term::Quote(Symbol(2)),
+        lambda(Symbol(1), Computation::Var(Symbol(1))),
+        Computation::Quote(Symbol(2)),
     );
-    let step = Theorem::step(start.clone()).expect("term should step");
-    let refl = Theorem::refl(Term::Quote(Symbol(2)));
+    let step = Theorem::step(start.clone()).expect("computation should step");
+    let refl = Theorem::refl(Computation::Quote(Symbol(2)));
     let trans = Theorem::trans(&step, &refl).expect("equalities should chain");
     let symm = Theorem::symm(&step).expect("step equality should be symmetric");
 
-    assert_eq!(step.prop(), &equal(start.clone(), Term::Quote(Symbol(2))));
-    assert_eq!(trans.prop(), &equal(start.clone(), Term::Quote(Symbol(2))));
-    assert_eq!(symm.prop(), &equal(Term::Quote(Symbol(2)), start));
-    assert!(Theorem::step(Term::Quote(Symbol(2))).is_none());
+    assert_eq!(
+        step.prop(),
+        &equal(start.clone(), Computation::Quote(Symbol(2)))
+    );
+    assert_eq!(
+        trans.prop(),
+        &equal(start.clone(), Computation::Quote(Symbol(2)))
+    );
+    assert_eq!(symm.prop(), &equal(Computation::Quote(Symbol(2)), start));
+    assert!(Theorem::step(Computation::Quote(Symbol(2))).is_none());
 }
 
 #[test]
 fn theorem_rewrite_moves_props_across_equality() {
-    let term = apply(lambda(Symbol(1), Term::Var(Symbol(1))), Term::Nil);
-    let step = Theorem::step(term.clone()).expect("term should step");
-    let nil_to_term = Theorem::symm(&step).expect("step should be symmetric");
+    let computation = apply(
+        lambda(Symbol(1), Computation::Var(Symbol(1))),
+        Computation::Nil,
+    );
+    let step = Theorem::step(computation.clone()).expect("computation should step");
+    let nil_to_computation = Theorem::symm(&step).expect("step should be symmetric");
     let theorem = Theorem::rewrite(
-        &nil_to_term,
+        &nil_to_computation,
         &Theorem::list_nil(),
         Symbol(99),
-        is_list(Term::Var(Symbol(99))),
+        is_list(Computation::Var(Symbol(99))),
     )
     .expect("rewrite should prove listness before evaluation");
 
-    assert_eq!(theorem.prop(), &is_list(term));
+    assert_eq!(theorem.prop(), &is_list(computation));
 }
 
 #[test]
 fn theorem_value_and_list_rules_build_checked_theorems() {
-    let head = Term::Quote(Symbol(1));
-    let tail = Term::Nil;
+    let head = Computation::Quote(Symbol(1));
+    let tail = Computation::Nil;
     let head_value = Theorem::value_quote(Symbol(1));
     let tail_value = Theorem::value_nil();
     let tail_list = Theorem::list_nil();
@@ -582,12 +635,12 @@ fn theorem_value_and_list_rules_build_checked_theorems() {
 
     assert_eq!(value.prop(), &is_value(list.clone()));
     assert_eq!(list_theorem.prop(), &is_list(list));
-    assert!(Theorem::list_cons(Term::Diverge, tail, &head_value, &tail_list).is_none());
+    assert!(Theorem::list_cons(Computation::Diverge, tail, &head_value, &tail_list).is_none());
 }
 
 #[test]
 fn theorem_first_order_rules_build_checked_theorems() {
-    let prop = equal(Term::Quote(Symbol(1)), Term::Quote(Symbol(1)));
+    let prop = equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(1)));
     let implication = Theorem::from_proof(
         Proof::ImpliesIntro {
             assumption: Symbol(7),
@@ -597,33 +650,37 @@ fn theorem_first_order_rules_build_checked_theorems() {
         implies(prop.clone(), prop.clone()),
     )
     .expect("identity implication should check");
-    let conclusion = Theorem::implies_elim(&implication, &Theorem::refl(Term::Quote(Symbol(1))))
-        .expect("modus ponens should apply");
+    let conclusion =
+        Theorem::implies_elim(&implication, &Theorem::refl(Computation::Quote(Symbol(1))))
+            .expect("modus ponens should apply");
     let universal = Theorem::from_proof(
         Proof::ForAllIntro {
             variable: Symbol(1),
-            proof: Box::new(Proof::Refl(Term::Var(Symbol(1)))),
+            proof: Box::new(Proof::Refl(Computation::Var(Symbol(1)))),
         },
-        forall(Symbol(1), equal(Term::Var(Symbol(1)), Term::Var(Symbol(1)))),
+        forall(
+            Symbol(1),
+            equal(Computation::Var(Symbol(1)), Computation::Var(Symbol(1))),
+        ),
     )
     .expect("forall intro should check");
-    let instance = Theorem::forall_elim(&universal, Term::Quote(Symbol(2)))
+    let instance = Theorem::forall_elim(&universal, Computation::Quote(Symbol(2)))
         .expect("forall theorem should instantiate");
 
     assert_eq!(conclusion.prop(), &prop);
     assert_eq!(
         instance.prop(),
-        &equal(Term::Quote(Symbol(2)), Term::Quote(Symbol(2)))
+        &equal(Computation::Quote(Symbol(2)), Computation::Quote(Symbol(2)))
     );
 }
 
 #[test]
 fn rewrite_uses_equality_inside_template() {
-    let start = head(cons(Term::Quote(Symbol(1)), Term::Nil));
-    let end = Term::Quote(Symbol(1));
+    let start = head(cons(Computation::Quote(Symbol(1)), Computation::Nil));
+    let end = Computation::Quote(Symbol(1));
     let template = equal(
-        cons(Term::Var(Symbol(99)), Term::Nil),
-        cons(Term::Var(Symbol(99)), Term::Nil),
+        cons(Computation::Var(Symbol(99)), Computation::Nil),
+        cons(Computation::Var(Symbol(99)), Computation::Nil),
     );
     let left_instance = substitute_prop(&template, Symbol(99), &start);
     let right_instance = substitute_prop(&template, Symbol(99), &end);
@@ -644,11 +701,11 @@ fn rewrite_uses_equality_inside_template() {
 fn beta_proof_rejects_reducible_arguments() {
     let lam = Lambda {
         parameter: Symbol(1),
-        body: Box::new(Term::Quote(Symbol(9))),
+        body: Box::new(Computation::Quote(Symbol(9))),
     };
     let argument = apply(
-        lambda(Symbol(2), Term::Var(Symbol(2))),
-        Term::Quote(Symbol(3)),
+        lambda(Symbol(2), Computation::Var(Symbol(2))),
+        Computation::Quote(Symbol(3)),
     );
 
     assert!(!check(
@@ -656,7 +713,10 @@ fn beta_proof_rejects_reducible_arguments() {
             lambda: lam.clone(),
             argument: argument.clone()
         },
-        &Prop::Equal(apply(Term::Lambda(lam), argument), Term::Quote(Symbol(9)))
+        &Prop::Equal(
+            apply(Computation::Lambda(lam), argument),
+            Computation::Quote(Symbol(9))
+        )
     ));
 }
 
@@ -664,67 +724,70 @@ fn beta_proof_rejects_reducible_arguments() {
 fn value_intro_rules_prove_concrete_values() {
     let lambda = Lambda {
         parameter: Symbol(1),
-        body: Box::new(Term::Var(Symbol(1))),
+        body: Box::new(Computation::Var(Symbol(1))),
     };
-    let list = cons(Term::Quote(Symbol(1)), Term::Nil);
+    let list = cons(Computation::Quote(Symbol(1)), Computation::Nil);
     let proof = Proof::ValueCons {
-        head: Term::Quote(Symbol(1)),
-        tail: Term::Nil,
+        head: Computation::Quote(Symbol(1)),
+        tail: Computation::Nil,
         head_is_value: Box::new(Proof::ValueQuote(Symbol(1))),
         tail_is_value: Box::new(Proof::ValueNil),
     };
 
     assert!(check(
         &Proof::ValueLambda(lambda.clone()),
-        &is_value(Term::Lambda(lambda))
+        &is_value(Computation::Lambda(lambda))
     ));
     assert!(check(
         &Proof::ValueQuote(Symbol(1)),
-        &is_value(Term::Quote(Symbol(1)))
+        &is_value(Computation::Quote(Symbol(1)))
     ));
-    assert!(check(&Proof::ValueNil, &is_value(Term::Nil)));
+    assert!(check(&Proof::ValueNil, &is_value(Computation::Nil)));
     assert!(check(&proof, &is_value(list)));
 }
 
 #[test]
 fn value_cons_requires_matching_value_proofs() {
     let proof = Proof::ValueCons {
-        head: Term::Diverge,
-        tail: Term::Nil,
+        head: Computation::Diverge,
+        tail: Computation::Nil,
         head_is_value: Box::new(Proof::ValueQuote(Symbol(1))),
         tail_is_value: Box::new(Proof::ValueNil),
     };
 
-    assert!(!check(&proof, &is_value(cons(Term::Diverge, Term::Nil))));
+    assert!(!check(
+        &proof,
+        &is_value(cons(Computation::Diverge, Computation::Nil))
+    ));
 }
 
 #[test]
 fn list_intro_rules_prove_concrete_lists() {
     let list = cons(
-        Term::Quote(Symbol(1)),
-        cons(Term::Quote(Symbol(2)), Term::Nil),
+        Computation::Quote(Symbol(1)),
+        cons(Computation::Quote(Symbol(2)), Computation::Nil),
     );
     let proof = Proof::ListCons {
-        head: Term::Quote(Symbol(1)),
-        tail: cons(Term::Quote(Symbol(2)), Term::Nil),
+        head: Computation::Quote(Symbol(1)),
+        tail: cons(Computation::Quote(Symbol(2)), Computation::Nil),
         head_is_value: Box::new(Proof::ValueQuote(Symbol(1))),
         tail_is_list: Box::new(Proof::ListCons {
-            head: Term::Quote(Symbol(2)),
-            tail: Term::Nil,
+            head: Computation::Quote(Symbol(2)),
+            tail: Computation::Nil,
             head_is_value: Box::new(Proof::ValueQuote(Symbol(2))),
             tail_is_list: Box::new(Proof::ListNil),
         }),
     };
 
-    assert!(check(&Proof::ListNil, &is_list(Term::Nil)));
+    assert!(check(&Proof::ListNil, &is_list(Computation::Nil)));
     assert!(check(&proof, &is_list(list)));
 }
 
 #[test]
 fn list_cons_requires_tail_list_proof_for_the_same_tail() {
     let proof = Proof::ListCons {
-        head: Term::Quote(Symbol(1)),
-        tail: cons(Term::Quote(Symbol(2)), Term::Nil),
+        head: Computation::Quote(Symbol(1)),
+        tail: cons(Computation::Quote(Symbol(2)), Computation::Nil),
         head_is_value: Box::new(Proof::ValueQuote(Symbol(1))),
         tail_is_list: Box::new(Proof::ListNil),
     };
@@ -732,8 +795,8 @@ fn list_cons_requires_tail_list_proof_for_the_same_tail() {
     assert!(!check(
         &proof,
         &is_list(cons(
-            Term::Quote(Symbol(1)),
-            cons(Term::Quote(Symbol(2)), Term::Nil)
+            Computation::Quote(Symbol(1)),
+            cons(Computation::Quote(Symbol(2)), Computation::Nil)
         ))
     ));
 }
@@ -741,26 +804,32 @@ fn list_cons_requires_tail_list_proof_for_the_same_tail() {
 #[test]
 fn list_cons_requires_head_value_proof_for_the_same_head() {
     let proof = Proof::ListCons {
-        head: Term::Diverge,
-        tail: Term::Nil,
+        head: Computation::Diverge,
+        tail: Computation::Nil,
         head_is_value: Box::new(Proof::ValueQuote(Symbol(1))),
         tail_is_list: Box::new(Proof::ListNil),
     };
 
-    assert!(!check(&proof, &is_list(cons(Term::Diverge, Term::Nil))));
+    assert!(!check(
+        &proof,
+        &is_list(cons(Computation::Diverge, Computation::Nil))
+    ));
 }
 
 #[test]
 fn is_list_can_be_rewritten_back_across_evaluation() {
-    let term = apply(lambda(Symbol(1), Term::Var(Symbol(1))), Term::Nil);
+    let computation = apply(
+        lambda(Symbol(1), Computation::Var(Symbol(1))),
+        Computation::Nil,
+    );
     let proof = Proof::Rewrite {
-        equality: Box::new(Proof::Symm(Box::new(Proof::Step(term.clone())))),
+        equality: Box::new(Proof::Symm(Box::new(Proof::Step(computation.clone())))),
         proof: Box::new(Proof::ListNil),
         variable: Symbol(99),
-        template: is_list(Term::Var(Symbol(99))),
+        template: is_list(Computation::Var(Symbol(99))),
     };
 
-    assert!(check(&proof, &is_list(term)));
+    assert!(check(&proof, &is_list(computation)));
 }
 
 #[test]
@@ -771,7 +840,7 @@ fn list_induction_proves_every_list_is_a_value() {
     let head_is_value_assumption = Symbol(4);
     let tail_is_list_assumption = Symbol(5);
     let induction_hypothesis_assumption = Symbol(6);
-    let property = is_value(Term::Var(variable));
+    let property = is_value(Computation::Var(variable));
     let proof = Proof::ListInduction {
         variable,
         property: property.clone(),
@@ -782,15 +851,18 @@ fn list_induction_proves_every_list_is_a_value() {
         tail_is_list_assumption,
         induction_hypothesis_assumption,
         step: Box::new(Proof::ValueCons {
-            head: Term::Var(head),
-            tail: Term::Var(tail),
+            head: Computation::Var(head),
+            tail: Computation::Var(tail),
             head_is_value: Box::new(Proof::Assume(head_is_value_assumption)),
             tail_is_value: Box::new(Proof::Assume(induction_hypothesis_assumption)),
         }),
     };
     let expected = forall(
         variable,
-        implies(is_list(Term::Var(variable)), is_value(Term::Var(variable))),
+        implies(
+            is_list(Computation::Var(variable)),
+            is_value(Computation::Var(variable)),
+        ),
     );
 
     assert!(check(&proof, &expected));
@@ -804,7 +876,7 @@ fn list_induction_rejects_stale_step_variables() {
     let head_is_value_assumption = Symbol(4);
     let tail_is_list_assumption = Symbol(5);
     let induction_hypothesis_assumption = Symbol(6);
-    let property = is_list(Term::Var(variable));
+    let property = is_list(Computation::Var(variable));
     let proof = Proof::ListInduction {
         variable,
         property,
@@ -818,7 +890,10 @@ fn list_induction_rejects_stale_step_variables() {
     };
     let expected = forall(
         variable,
-        implies(is_list(Term::Var(variable)), is_list(Term::Var(variable))),
+        implies(
+            is_list(Computation::Var(variable)),
+            is_list(Computation::Var(variable)),
+        ),
     );
 
     assert!(!check(&proof, &expected));
@@ -826,7 +901,7 @@ fn list_induction_rejects_stale_step_variables() {
 
 #[test]
 fn assume_uses_context() {
-    let prop = equal(Term::Quote(Symbol(1)), Term::Quote(Symbol(1)));
+    let prop = equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(1)));
     let mut context = Context::new();
     context.insert(Symbol(7), prop.clone());
 
@@ -836,14 +911,14 @@ fn assume_uses_context() {
 
 #[test]
 fn implies_intro_and_elim_work() {
-    let prop = equal(Term::Quote(Symbol(1)), Term::Quote(Symbol(1)));
+    let prop = equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(1)));
     let proof = Proof::ImpliesElim {
         implication: Box::new(Proof::ImpliesIntro {
             assumption: Symbol(7),
             premise: prop.clone(),
             proof: Box::new(Proof::Assume(Symbol(7))),
         }),
-        premise: Box::new(Proof::Refl(Term::Quote(Symbol(1)))),
+        premise: Box::new(Proof::Refl(Computation::Quote(Symbol(1)))),
     };
 
     assert!(check(&proof, &prop));
@@ -854,31 +929,31 @@ fn forall_intro_and_elim_work() {
     let proof = Proof::ForAllElim {
         forall: Box::new(Proof::ForAllIntro {
             variable: Symbol(1),
-            proof: Box::new(Proof::Refl(Term::Var(Symbol(1)))),
+            proof: Box::new(Proof::Refl(Computation::Var(Symbol(1)))),
         }),
-        argument: Term::Quote(Symbol(2)),
+        argument: Computation::Quote(Symbol(2)),
     };
 
     assert!(check(
         &proof,
-        &equal(Term::Quote(Symbol(2)), Term::Quote(Symbol(2)))
+        &equal(Computation::Quote(Symbol(2)), Computation::Quote(Symbol(2)))
     ));
 }
 
 #[test]
 fn exists_intro_and_elim_work() {
-    let body = equal(Term::Var(Symbol(1)), Term::Var(Symbol(1)));
-    let conclusion = equal(Term::Quote(Symbol(0)), Term::Quote(Symbol(0)));
+    let body = equal(Computation::Var(Symbol(1)), Computation::Var(Symbol(1)));
+    let conclusion = equal(Computation::Quote(Symbol(0)), Computation::Quote(Symbol(0)));
     let proof = Proof::ExistsElim {
         existential: Box::new(Proof::ExistsIntro {
             variable: Symbol(1),
             body,
-            witness: Term::Quote(Symbol(2)),
-            proof: Box::new(Proof::Refl(Term::Quote(Symbol(2)))),
+            witness: Computation::Quote(Symbol(2)),
+            proof: Box::new(Proof::Refl(Computation::Quote(Symbol(2)))),
         }),
         witness: Symbol(9),
         assumption: Symbol(7),
-        proof: Box::new(Proof::Refl(Term::Quote(Symbol(0)))),
+        proof: Box::new(Proof::Refl(Computation::Quote(Symbol(0)))),
     };
 
     assert!(check(&proof, &conclusion));
@@ -886,11 +961,11 @@ fn exists_intro_and_elim_work() {
 
 #[test]
 fn and_or_rules_work() {
-    let left = equal(Term::Quote(Symbol(1)), Term::Quote(Symbol(1)));
-    let right = equal(Term::Quote(Symbol(2)), Term::Quote(Symbol(2)));
+    let left = equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(1)));
+    let right = equal(Computation::Quote(Symbol(2)), Computation::Quote(Symbol(2)));
     let and_proof = Proof::AndIntro(
-        Box::new(Proof::Refl(Term::Quote(Symbol(1)))),
-        Box::new(Proof::Refl(Term::Quote(Symbol(2)))),
+        Box::new(Proof::Refl(Computation::Quote(Symbol(1)))),
+        Box::new(Proof::Refl(Computation::Quote(Symbol(2)))),
     );
 
     assert!(check(
@@ -901,7 +976,7 @@ fn and_or_rules_work() {
 
     let or_proof = Proof::OrElim {
         disjunction: Box::new(Proof::OrIntroLeft {
-            proof: Box::new(Proof::Refl(Term::Quote(Symbol(1)))),
+            proof: Box::new(Proof::Refl(Computation::Quote(Symbol(1)))),
             right: left.clone(),
         }),
         left_assumption: Symbol(7),
@@ -915,22 +990,28 @@ fn and_or_rules_work() {
 
 #[test]
 fn substitute_prop_avoids_quantifier_capture() {
-    let prop = forall(Symbol(2), equal(Term::Var(Symbol(1)), Term::Var(Symbol(2))));
+    let prop = forall(
+        Symbol(2),
+        equal(Computation::Var(Symbol(1)), Computation::Var(Symbol(2))),
+    );
 
     assert_eq!(
-        substitute_prop(&prop, Symbol(1), &Term::Var(Symbol(2))),
-        forall(Symbol(0), equal(Term::Var(Symbol(2)), Term::Var(Symbol(0))))
+        substitute_prop(&prop, Symbol(1), &Computation::Var(Symbol(2))),
+        forall(
+            Symbol(0),
+            equal(Computation::Var(Symbol(2)), Computation::Var(Symbol(0)))
+        )
     );
 }
 
 #[test]
 fn exists_intro_uses_witness() {
-    let body = equal(Term::Var(Symbol(1)), Term::Var(Symbol(1)));
+    let body = equal(Computation::Var(Symbol(1)), Computation::Var(Symbol(1)));
     let proof = Proof::ExistsIntro {
         variable: Symbol(1),
         body: body.clone(),
-        witness: Term::Quote(Symbol(2)),
-        proof: Box::new(Proof::Refl(Term::Quote(Symbol(2)))),
+        witness: Computation::Quote(Symbol(2)),
+        proof: Box::new(Proof::Refl(Computation::Quote(Symbol(2)))),
     };
 
     assert!(check(&proof, &exists(Symbol(1), body)));
@@ -938,10 +1019,10 @@ fn exists_intro_uses_witness() {
 
 #[test]
 fn prop_helpers_construct_expected_shapes() {
-    let prop = equal(Term::Quote(Symbol(1)), Term::Quote(Symbol(1)));
-    let term = apply(
-        lambda(Symbol(1), Term::Var(Symbol(1))),
-        Term::Quote(Symbol(2)),
+    let prop = equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(1)));
+    let computation = apply(
+        lambda(Symbol(1), Computation::Var(Symbol(1))),
+        Computation::Quote(Symbol(2)),
     );
 
     assert_eq!(
@@ -949,38 +1030,47 @@ fn prop_helpers_construct_expected_shapes() {
         Prop::Implies(Box::new(prop.clone()), Box::new(prop))
     );
     assert_eq!(
-        terminates(Symbol(9), term.clone()),
+        terminates(Symbol(9), computation.clone()),
         exists(
             Symbol(9),
             and(
-                computes_to(term.clone(), Term::Var(Symbol(9))),
-                is_value(Term::Var(Symbol(9))),
+                computes_to(computation.clone(), Computation::Var(Symbol(9))),
+                is_value(Computation::Var(Symbol(9))),
             ),
         )
     );
     assert_eq!(
-        computes_to_list(Symbol(9), term.clone()),
+        computes_to_list(Symbol(9), computation.clone()),
         exists(
             Symbol(9),
             and(
-                computes_to(term.clone(), Term::Var(Symbol(9))),
-                is_list(Term::Var(Symbol(9)))
+                computes_to(computation.clone(), Computation::Var(Symbol(9))),
+                is_list(Computation::Var(Symbol(9)))
             ),
         )
     );
     assert_eq!(
-        errors(Symbol(9), term.clone()),
+        errors(Symbol(9), computation.clone()),
         exists(
             Symbol(9),
-            computes_to(term.clone(), Term::Error(Box::new(Term::Var(Symbol(9))))),
+            computes_to(
+                computation.clone(),
+                Computation::Error(Box::new(Computation::Var(Symbol(9))))
+            ),
         )
     );
-    assert_eq!(diverges(term.clone()), computes_to(term, Term::Diverge));
     assert_eq!(
-        or(is_value(Term::Quote(Symbol(1))), is_list(Term::Nil)),
+        diverges(computation.clone()),
+        computes_to(computation, Computation::Diverge)
+    );
+    assert_eq!(
+        or(
+            is_value(Computation::Quote(Symbol(1))),
+            is_list(Computation::Nil)
+        ),
         Prop::Or(
-            Box::new(Prop::IsValue(Term::Quote(Symbol(1)))),
-            Box::new(Prop::IsList(Term::Nil))
+            Box::new(Prop::IsValue(Computation::Quote(Symbol(1)))),
+            Box::new(Prop::IsList(Computation::Nil))
         )
     );
 }

@@ -1,33 +1,33 @@
 use super::{calculus::*, theory::Bindings};
 
-pub fn step(term: &Term) -> Step {
-    step_in_bindings(term, &Bindings::new())
+pub fn step(computation: &Computation) -> Step {
+    step_in_bindings(computation, &Bindings::new())
 }
 
-pub(super) fn step_in_bindings(term: &Term, bindings: &Bindings) -> Step {
-    match term {
-        Term::Apply { function, argument } => step_apply(function, argument, bindings),
-        Term::Lambda(_) => Step::Normal,
-        Term::Nil => Step::Normal,
-        Term::Cons { head, tail } => step_cons(head, tail, bindings),
-        Term::Head(term) => step_head(term, bindings),
-        Term::Tail(term) => step_tail(term, bindings),
-        Term::ListCase(list_case) => step_list_case(list_case, bindings),
-        Term::Const(name) => match bindings.term(*name) {
-            Some(term) => Step::Reduced(term.clone()),
+pub(super) fn step_in_bindings(computation: &Computation, bindings: &Bindings) -> Step {
+    match computation {
+        Computation::Apply { function, argument } => step_apply(function, argument, bindings),
+        Computation::Lambda(_) => Step::Normal,
+        Computation::Nil => Step::Normal,
+        Computation::Cons { head, tail } => step_cons(head, tail, bindings),
+        Computation::Head(computation) => step_head(computation, bindings),
+        Computation::Tail(computation) => step_tail(computation, bindings),
+        Computation::ListCase(list_case) => step_list_case(list_case, bindings),
+        Computation::Const(name) => match bindings.computation(*name) {
+            Some(computation) => Step::Reduced(computation.clone()),
             None => Step::Normal,
         },
-        Term::Error(_) | Term::Diverge => Step::Normal,
-        Term::Var(_) | Term::Quote(_) => Step::Normal,
+        Computation::Error(_) | Computation::Diverge => Step::Normal,
+        Computation::Var(_) | Computation::Quote(_) => Step::Normal,
     }
 }
 
-fn step_apply(function: &Term, argument: &Term, bindings: &Bindings) -> Step {
+fn step_apply(function: &Computation, argument: &Computation, bindings: &Bindings) -> Step {
     match function {
-        Term::Lambda(lambda) => step_lambda_application(lambda, argument, bindings),
-        Term::Error(_) | Term::Diverge => Step::Reduced(function.clone()),
+        Computation::Lambda(lambda) => step_lambda_application(lambda, argument, bindings),
+        Computation::Error(_) | Computation::Diverge => Step::Reduced(function.clone()),
         _ => match step_in_bindings(function, bindings) {
-            Step::Reduced(function) => Step::Reduced(Term::Apply {
+            Step::Reduced(function) => Step::Reduced(Computation::Apply {
                 function: Box::new(function),
                 argument: Box::new(argument.clone()),
             }),
@@ -39,10 +39,10 @@ fn step_apply(function: &Term, argument: &Term, bindings: &Bindings) -> Step {
     }
 }
 
-fn step_lambda_application(lambda: &Lambda, argument: &Term, bindings: &Bindings) -> Step {
+fn step_lambda_application(lambda: &Lambda, argument: &Computation, bindings: &Bindings) -> Step {
     match step_in_bindings(argument, bindings) {
-        Step::Reduced(argument) => Step::Reduced(Term::Apply {
-            function: Box::new(Term::Lambda(lambda.clone())),
+        Step::Reduced(argument) => Step::Reduced(Computation::Apply {
+            function: Box::new(Computation::Lambda(lambda.clone())),
             argument: Box::new(argument),
         }),
         Step::Normal if is_effect(argument) => Step::Reduced(argument.clone()),
@@ -50,9 +50,13 @@ fn step_lambda_application(lambda: &Lambda, argument: &Term, bindings: &Bindings
     }
 }
 
-fn step_neutral_application(function: &Term, argument: &Term, bindings: &Bindings) -> Step {
+fn step_neutral_application(
+    function: &Computation,
+    argument: &Computation,
+    bindings: &Bindings,
+) -> Step {
     match step_in_bindings(argument, bindings) {
-        Step::Reduced(argument) => Step::Reduced(Term::Apply {
+        Step::Reduced(argument) => Step::Reduced(Computation::Apply {
             function: Box::new(function.clone()),
             argument: Box::new(argument),
         }),
@@ -61,38 +65,41 @@ fn step_neutral_application(function: &Term, argument: &Term, bindings: &Binding
     }
 }
 
-pub(super) fn argument_is_ready_for_beta(argument: &Term, bindings: &Bindings) -> bool {
+pub(super) fn argument_is_ready_for_beta(argument: &Computation, bindings: &Bindings) -> bool {
     match step_in_bindings(argument, bindings) {
         Step::Reduced(_) => false,
         Step::Normal => !is_effect(argument),
     }
 }
 
-fn is_effect(term: &Term) -> bool {
-    term.as_effect().is_some()
+fn is_effect(computation: &Computation) -> bool {
+    computation.as_effect().is_some()
 }
 
-pub fn term_is_value(term: &Term) -> bool {
-    term.as_value().is_some()
+pub fn computation_is_value(computation: &Computation) -> bool {
+    computation.as_value().is_some()
 }
 
-fn is_known_non_callable(term: &Term) -> bool {
-    matches!(term, Term::Quote(_) | Term::Nil | Term::Cons { .. })
+fn is_known_non_callable(computation: &Computation) -> bool {
+    matches!(
+        computation,
+        Computation::Quote(_) | Computation::Nil | Computation::Cons { .. }
+    )
 }
 
-fn runtime_error(payload: Term) -> Term {
-    Term::Error(Box::new(payload))
+fn runtime_error(payload: Computation) -> Computation {
+    Computation::Error(Box::new(payload))
 }
 
-fn step_cons(head: &Term, tail: &Term, bindings: &Bindings) -> Step {
+fn step_cons(head: &Computation, tail: &Computation, bindings: &Bindings) -> Step {
     match step_in_bindings(head, bindings) {
-        Step::Reduced(head) => Step::Reduced(Term::Cons {
+        Step::Reduced(head) => Step::Reduced(Computation::Cons {
             head: Box::new(head),
             tail: Box::new(tail.clone()),
         }),
         Step::Normal if is_effect(head) => Step::Reduced(head.clone()),
         Step::Normal => match step_in_bindings(tail, bindings) {
-            Step::Reduced(tail) => Step::Reduced(Term::Cons {
+            Step::Reduced(tail) => Step::Reduced(Computation::Cons {
                 head: Box::new(head.clone()),
                 tail: Box::new(tail),
             }),
@@ -102,39 +109,39 @@ fn step_cons(head: &Term, tail: &Term, bindings: &Bindings) -> Step {
     }
 }
 
-fn step_head(term: &Term, bindings: &Bindings) -> Step {
-    match step_in_bindings(term, bindings) {
-        Step::Reduced(term) => Step::Reduced(Term::Head(Box::new(term))),
-        Step::Normal => match term {
-            Term::Cons { head, .. } => Step::Reduced(head.as_ref().clone()),
-            Term::Error(_) | Term::Diverge => Step::Reduced(term.clone()),
-            Term::Const(_)
-            | Term::Var(_)
-            | Term::Apply { .. }
-            | Term::Head(_)
-            | Term::Tail(_)
-            | Term::ListCase(_) => Step::Normal,
-            Term::Nil | Term::Quote(_) | Term::Lambda(_) => {
-                Step::Reduced(runtime_error(term.clone()))
+fn step_head(computation: &Computation, bindings: &Bindings) -> Step {
+    match step_in_bindings(computation, bindings) {
+        Step::Reduced(computation) => Step::Reduced(Computation::Head(Box::new(computation))),
+        Step::Normal => match computation {
+            Computation::Cons { head, .. } => Step::Reduced(head.as_ref().clone()),
+            Computation::Error(_) | Computation::Diverge => Step::Reduced(computation.clone()),
+            Computation::Const(_)
+            | Computation::Var(_)
+            | Computation::Apply { .. }
+            | Computation::Head(_)
+            | Computation::Tail(_)
+            | Computation::ListCase(_) => Step::Normal,
+            Computation::Nil | Computation::Quote(_) | Computation::Lambda(_) => {
+                Step::Reduced(runtime_error(computation.clone()))
             }
         },
     }
 }
 
-fn step_tail(term: &Term, bindings: &Bindings) -> Step {
-    match step_in_bindings(term, bindings) {
-        Step::Reduced(term) => Step::Reduced(Term::Tail(Box::new(term))),
-        Step::Normal => match term {
-            Term::Cons { tail, .. } => Step::Reduced(tail.as_ref().clone()),
-            Term::Error(_) | Term::Diverge => Step::Reduced(term.clone()),
-            Term::Const(_)
-            | Term::Var(_)
-            | Term::Apply { .. }
-            | Term::Head(_)
-            | Term::Tail(_)
-            | Term::ListCase(_) => Step::Normal,
-            Term::Nil | Term::Quote(_) | Term::Lambda(_) => {
-                Step::Reduced(runtime_error(term.clone()))
+fn step_tail(computation: &Computation, bindings: &Bindings) -> Step {
+    match step_in_bindings(computation, bindings) {
+        Step::Reduced(computation) => Step::Reduced(Computation::Tail(Box::new(computation))),
+        Step::Normal => match computation {
+            Computation::Cons { tail, .. } => Step::Reduced(tail.as_ref().clone()),
+            Computation::Error(_) | Computation::Diverge => Step::Reduced(computation.clone()),
+            Computation::Const(_)
+            | Computation::Var(_)
+            | Computation::Apply { .. }
+            | Computation::Head(_)
+            | Computation::Tail(_)
+            | Computation::ListCase(_) => Step::Normal,
+            Computation::Nil | Computation::Quote(_) | Computation::Lambda(_) => {
+                Step::Reduced(runtime_error(computation.clone()))
             }
         },
     }
@@ -142,43 +149,48 @@ fn step_tail(term: &Term, bindings: &Bindings) -> Step {
 
 fn step_list_case(list_case: &ListCase, bindings: &Bindings) -> Step {
     match step_in_bindings(list_case.list.as_ref(), bindings) {
-        Step::Reduced(list) => Step::Reduced(Term::ListCase(ListCase {
+        Step::Reduced(list) => Step::Reduced(Computation::ListCase(ListCase {
             list: Box::new(list),
             nil: list_case.nil.clone(),
             cons: list_case.cons,
             cons_case: list_case.cons_case.clone(),
         })),
         Step::Normal => match list_case.list.as_ref() {
-            Term::Nil => Step::Reduced(list_case.nil.as_ref().clone()),
-            Term::Cons { .. } => Step::Reduced(substitute(
+            Computation::Nil => Step::Reduced(list_case.nil.as_ref().clone()),
+            Computation::Cons { .. } => Step::Reduced(substitute(
                 list_case.cons_case.as_ref(),
                 list_case.cons,
                 list_case.list.as_ref(),
             )),
-            Term::Error(_) | Term::Diverge => Step::Reduced(list_case.list.as_ref().clone()),
-            Term::Const(_)
-            | Term::Var(_)
-            | Term::Apply { .. }
-            | Term::Head(_)
-            | Term::Tail(_)
-            | Term::ListCase(_) => Step::Normal,
-            Term::Quote(_) | Term::Lambda(_) => {
+            Computation::Error(_) | Computation::Diverge => {
+                Step::Reduced(list_case.list.as_ref().clone())
+            }
+            Computation::Const(_)
+            | Computation::Var(_)
+            | Computation::Apply { .. }
+            | Computation::Head(_)
+            | Computation::Tail(_)
+            | Computation::ListCase(_) => Step::Normal,
+            Computation::Quote(_) | Computation::Lambda(_) => {
                 Step::Reduced(runtime_error(list_case.list.as_ref().clone()))
             }
         },
     }
 }
 
-pub fn normal_form(term: &Term) -> Term {
-    normal_form_in_bindings(term, &Bindings::new())
+pub fn normal_form(computation: &Computation) -> Computation {
+    normal_form_in_bindings(computation, &Bindings::new())
 }
 
-pub(super) fn normal_form_in_bindings(term: &Term, bindings: &Bindings) -> Term {
-    let mut term = term.clone();
+pub(super) fn normal_form_in_bindings(
+    computation: &Computation,
+    bindings: &Bindings,
+) -> Computation {
+    let mut computation = computation.clone();
     loop {
-        match step_in_bindings(&term, bindings) {
-            Step::Reduced(next) => term = next,
-            Step::Normal => return term,
+        match step_in_bindings(&computation, bindings) {
+            Step::Reduced(next) => computation = next,
+            Step::Normal => return computation,
         }
     }
 }

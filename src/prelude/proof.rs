@@ -1,13 +1,18 @@
 //! Shared proof-script and evaluation-proof helpers for prelude modules.
 
-use crate::{Name, Proof, Step, Term, Theorem, Theory, alpha_eq_term, computes_to};
+use crate::{Computation, Name, Proof, Step, Theorem, Theory, alpha_eq_computation, computes_to};
 
 use super::source::{ParsedModule, ParsedTheorem, ProofExpr, ProofScript};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvaluationProofError {
-    StepLimitExceeded { limit: usize },
-    UnexpectedNormalForm { expected: Term, actual: Term },
+    StepLimitExceeded {
+        limit: usize,
+    },
+    UnexpectedNormalForm {
+        expected: Computation,
+        actual: Computation,
+    },
 }
 
 pub(super) fn proof_for_theorem(theorem: &ParsedTheorem, theory: &Theory) -> Option<Proof> {
@@ -44,10 +49,12 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
             Box::new(proof_expr_to_proof(second, theory)?),
         )),
         ProofExpr::EvalTo {
-            term,
+            computation,
             expected,
             limit,
-        } => proof_by_reduction_in_theory(term.clone(), expected.clone(), theory, *limit).ok(),
+        } => {
+            proof_by_reduction_in_theory(computation.clone(), expected.clone(), theory, *limit).ok()
+        }
         ProofExpr::EvalSame { left, right, limit } => {
             proof_by_same_normal_form_in_theory(left.clone(), right.clone(), theory, *limit).ok()
         }
@@ -155,18 +162,18 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
 }
 
 pub(super) fn evaluation_chain_in_theory(
-    term: Term,
+    computation: Computation,
     theory: &Theory,
     limit: usize,
-) -> Result<Vec<Term>, EvaluationProofError> {
-    let mut term = term;
-    let mut chain = vec![term.clone()];
+) -> Result<Vec<Computation>, EvaluationProofError> {
+    let mut computation = computation;
+    let mut chain = vec![computation.clone()];
 
     for _ in 0..limit {
-        match theory.reduce(&term) {
+        match theory.reduce(&computation) {
             Step::Reduced(next) => {
                 chain.push(next.clone());
-                term = next;
+                computation = next;
             }
             Step::Normal => return Ok(chain),
         }
@@ -176,18 +183,18 @@ pub(super) fn evaluation_chain_in_theory(
 }
 
 pub(super) fn proof_by_evaluation_in_theory(
-    term: Term,
-    expected: Term,
+    computation: Computation,
+    expected: Computation,
     theory: &Theory,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
-    let chain = evaluation_chain_in_theory(term, theory, limit)?;
+    let chain = evaluation_chain_in_theory(computation, theory, limit)?;
     let actual = chain
         .last()
         .cloned()
         .expect("evaluation chains are nonempty");
 
-    if !alpha_eq_term(&actual, &expected) {
+    if !alpha_eq_computation(&actual, &expected) {
         return Err(EvaluationProofError::UnexpectedNormalForm { expected, actual });
     }
 
@@ -195,31 +202,31 @@ pub(super) fn proof_by_evaluation_in_theory(
 }
 
 pub(super) fn proof_by_reduction_in_theory(
-    term: Term,
-    expected: Term,
+    computation: Computation,
+    expected: Computation,
     theory: &Theory,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
-    let mut term = term;
-    let mut chain = vec![term.clone()];
+    let mut computation = computation;
+    let mut chain = vec![computation.clone()];
 
-    if alpha_eq_term(&term, &expected) {
+    if alpha_eq_computation(&computation, &expected) {
         return Ok(Proof::Steps(chain));
     }
 
     for _ in 0..limit {
-        match theory.reduce(&term) {
+        match theory.reduce(&computation) {
             Step::Reduced(next) => {
                 chain.push(next.clone());
-                if alpha_eq_term(&next, &expected) {
+                if alpha_eq_computation(&next, &expected) {
                     return Ok(Proof::Steps(chain));
                 }
-                term = next;
+                computation = next;
             }
             Step::Normal => {
                 return Err(EvaluationProofError::UnexpectedNormalForm {
                     expected,
-                    actual: term,
+                    actual: computation,
                 });
             }
         }
@@ -229,15 +236,15 @@ pub(super) fn proof_by_reduction_in_theory(
 }
 
 pub(super) fn proof_by_same_normal_form_in_theory(
-    left: Term,
-    right: Term,
+    left: Computation,
+    right: Computation,
     theory: &Theory,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
     let left_normal = theory.normal_form(&left);
     let right_normal = theory.normal_form(&right);
 
-    if !alpha_eq_term(&left_normal, &right_normal) {
+    if !alpha_eq_computation(&left_normal, &right_normal) {
         return Err(EvaluationProofError::UnexpectedNormalForm {
             expected: left_normal,
             actual: right_normal,
@@ -254,10 +261,10 @@ pub(super) fn proof_by_same_normal_form_in_theory(
 }
 
 pub(super) fn check_evaluates_to_in_theory(
-    term: Term,
-    value: Term,
+    computation: Computation,
+    value: Computation,
     proof: &Proof,
     theory: &Theory,
 ) -> bool {
-    theory.check(proof, &computes_to(term, value))
+    theory.check(proof, &computes_to(computation, value))
 }

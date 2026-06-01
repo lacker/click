@@ -5,9 +5,10 @@ mod theory;
 
 pub use calculus::*;
 pub use check::{
-    alpha_eq_prop, alpha_eq_term, check, check_in_context, free_symbols_prop, substitute_prop,
+    alpha_eq_computation, alpha_eq_prop, check, check_in_context, free_symbols_prop,
+    substitute_prop,
 };
-pub use eval::{normal_form, step, term_is_value};
+pub use eval::{computation_is_value, normal_form, step};
 pub use theory::{Context, Theorem, Theory};
 
 #[cfg(test)]

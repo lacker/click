@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    Lambda, ListCase, Name, Prop, Symbol, Term, and, computes_to, computes_to_list, diverges,
-    equal, errors, exists, forall, implies, is_list, is_value, or,
+    Computation, Lambda, ListCase, Name, Prop, Symbol, and, computes_to, computes_to_list,
+    diverges, equal, errors, exists, forall, implies, is_list, is_value, or,
 };
 
 const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
@@ -58,13 +58,13 @@ pub(super) enum ProofExpr {
     Symm(Box<ProofExpr>),
     Trans(Box<ProofExpr>, Box<ProofExpr>),
     EvalTo {
-        term: Term,
-        expected: Term,
+        computation: Computation,
+        expected: Computation,
         limit: usize,
     },
     EvalSame {
-        left: Term,
-        right: Term,
+        left: Computation,
+        right: Computation,
         limit: usize,
     },
     Rewrite {
@@ -86,7 +86,7 @@ pub(super) enum ProofExpr {
     ExistsIntro {
         variable: Symbol,
         body: Prop,
-        witness: Term,
+        witness: Computation,
         proof: Box<ProofExpr>,
     },
     ExistsElim {
@@ -99,8 +99,8 @@ pub(super) enum ProofExpr {
     AndElimLeft(Box<ProofExpr>),
     AndElimRight(Box<ProofExpr>),
     ListCons {
-        head: Term,
-        tail: Term,
+        head: Computation,
+        tail: Computation,
         head_is_value: Box<ProofExpr>,
         tail_is_list: Box<ProofExpr>,
     },
@@ -121,21 +121,23 @@ pub(super) enum ProofExpr {
     },
     ForAllElim {
         forall: Box<ProofExpr>,
-        argument: Term,
+        argument: Computation,
     },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ParsedModule {
-    pub terms: Vec<(Name, Term)>,
+    pub computations: Vec<(Name, Computation)>,
     pub theorems: Vec<ParsedTheorem>,
 }
 
 impl ParsedModule {
-    pub(super) fn term(&self, name: Name) -> Option<&Term> {
-        self.terms
+    pub(super) fn computation(&self, name: Name) -> Option<&Computation> {
+        self.computations
             .iter()
-            .find_map(|(term_name, term)| (*term_name == name).then_some(term))
+            .find_map(|(computation_name, computation)| {
+                (*computation_name == name).then_some(computation)
+            })
     }
 
     pub(super) fn theorem(&self, name: Name) -> Option<&ParsedTheorem> {
@@ -171,17 +173,17 @@ enum Expr {
 
 pub(super) fn parse_module(
     source: &str,
-    term_definitions: &[NameBinding],
+    computation_definitions: &[NameBinding],
     theorem_definitions: &[NameBinding],
     symbols: &[SymbolBinding],
 ) -> Result<ParsedModule, ParseError> {
     let tokens = tokenize(source);
     let expressions = parse_expressions(&tokens)?;
-    let mut term_parser = TermParser::new(term_definitions, symbols)?;
+    let mut source_parser = SourceParser::new(computation_definitions, symbols)?;
     let theorem_names = name_map(theorem_definitions, "theorem")?;
-    let mut defined_terms = HashSet::new();
+    let mut defined_computations = HashSet::new();
     let mut defined_theorems = HashSet::new();
-    let mut terms = Vec::new();
+    let mut computations = Vec::new();
     let mut theorems = Vec::new();
 
     for expression in expressions {
@@ -189,21 +191,21 @@ pub(super) fn parse_module(
 
         match form.kind {
             "def" => {
-                let Some(name) = term_parser.definition(form.name) else {
+                let Some(name) = source_parser.definition(form.name) else {
                     return Err(ParseError::new(format!(
                         "unknown definition `{}`",
                         form.name
                     )));
                 };
-                if !defined_terms.insert(name) {
+                if !defined_computations.insert(name) {
                     return Err(ParseError::new(format!(
                         "duplicate definition `{}`",
                         form.name
                     )));
                 }
 
-                let term = term_parser.term(form.body)?;
-                terms.push((name, term));
+                let computation = source_parser.computation(form.body)?;
+                computations.push((name, computation));
             }
             "theorem" => {
                 let Some(name) = theorem_names.get(form.name).copied() else {
@@ -223,8 +225,8 @@ pub(super) fn parse_module(
                     )));
                 };
 
-                let mut theorem_parser = TermParser::new_with_local_symbols(
-                    term_definitions,
+                let mut theorem_parser = SourceParser::new_with_local_symbols(
+                    computation_definitions,
                     theorem_definitions,
                     symbols,
                     FIRST_THEOREM_SYMBOL,
@@ -242,8 +244,8 @@ pub(super) fn parse_module(
         }
     }
 
-    for binding in term_definitions {
-        if !defined_terms.contains(&binding.name) {
+    for binding in computation_definitions {
+        if !defined_computations.contains(&binding.name) {
             return Err(ParseError::new(format!(
                 "missing definition `{}`",
                 binding.spelling
@@ -260,7 +262,10 @@ pub(super) fn parse_module(
         }
     }
 
-    Ok(ParsedModule { terms, theorems })
+    Ok(ParsedModule {
+        computations,
+        theorems,
+    })
 }
 
 struct TopLevelForm<'a> {
@@ -289,7 +294,7 @@ fn top_level_form(expression: &Expr) -> Result<TopLevelForm<'_>, ParseError> {
             proof: Some(&items[3]),
         }),
         "def" | "theorem" => Err(ParseError::new(
-            "top-level form must be (def <name> <term>) or (theorem <name> <prop> <proof>)",
+            "top-level form must be (def <name> <computation>) or (theorem <name> <prop> <proof>)",
         )),
         _ => Err(ParseError::new(format!("unknown top-level form `{kind}`"))),
     }
@@ -388,7 +393,7 @@ fn atom(expression: &Expr) -> Result<&str, ParseError> {
     }
 }
 
-struct TermParser<'a> {
+struct SourceParser<'a> {
     definitions: HashMap<&'a str, Name>,
     theorems: HashMap<&'a str, Name>,
     symbols: HashMap<&'a str, Symbol>,
@@ -404,7 +409,7 @@ enum PropSymbolMode {
     Reference,
 }
 
-impl<'a> TermParser<'a> {
+impl<'a> SourceParser<'a> {
     fn new(
         definitions: &'a [NameBinding],
         symbols: &'a [SymbolBinding],
@@ -481,26 +486,26 @@ impl<'a> TermParser<'a> {
         self.theorems.get(spelling).copied()
     }
 
-    fn term(&mut self, expression: &Expr) -> Result<Term, ParseError> {
+    fn computation(&mut self, expression: &Expr) -> Result<Computation, ParseError> {
         match expression {
-            Expr::Atom(atom) => self.atom_term(atom),
-            Expr::List(items) => self.list_term(items),
+            Expr::Atom(atom) => self.atom_computation(atom),
+            Expr::List(items) => self.list_computation(items),
         }
     }
 
-    fn atom_term(&self, spelling: &str) -> Result<Term, ParseError> {
+    fn atom_computation(&self, spelling: &str) -> Result<Computation, ParseError> {
         match spelling {
-            "nil" => Ok(Term::Nil),
-            "diverge" => Ok(Term::Diverge),
+            "nil" => Ok(Computation::Nil),
+            "diverge" => Ok(Computation::Diverge),
             _ => {
                 if let Some(symbol) = self.variable(spelling) {
-                    return Ok(Term::Var(symbol));
+                    return Ok(Computation::Var(symbol));
                 }
                 if let Some(symbol) = self.local_symbol(spelling) {
-                    return Ok(Term::Var(symbol));
+                    return Ok(Computation::Var(symbol));
                 }
                 if let Some(name) = self.definition(spelling) {
-                    return Ok(Term::Const(name));
+                    return Ok(Computation::Const(name));
                 }
 
                 Err(ParseError::new(format!("unknown identifier `{spelling}`")))
@@ -508,7 +513,7 @@ impl<'a> TermParser<'a> {
         }
     }
 
-    fn list_term(&mut self, items: &[Expr]) -> Result<Term, ParseError> {
+    fn list_computation(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
         let Some(head) = items.first() else {
             return Err(ParseError::new("empty application"));
         };
@@ -529,32 +534,32 @@ impl<'a> TermParser<'a> {
         self.application(items)
     }
 
-    fn lambda(&mut self, items: &[Expr]) -> Result<Term, ParseError> {
+    fn lambda(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
         expect_len("lambda", items, 3)?;
         let parameter = atom(&items[1])?;
         let symbol = self.binder_symbol(parameter)?;
         self.push_variable(parameter, symbol);
-        let body = self.term(&items[2])?;
+        let body = self.computation(&items[2])?;
         self.pop_variable();
 
-        Ok(Term::Lambda(Lambda {
+        Ok(Computation::Lambda(Lambda {
             parameter: symbol,
             body: Box::new(body),
         }))
     }
 
-    fn list_case(&mut self, items: &[Expr]) -> Result<Term, ParseError> {
+    fn list_case(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
         expect_len("list-case", items, 5)?;
-        let list = self.term(&items[1])?;
-        let nil = self.term(&items[2])?;
+        let list = self.computation(&items[1])?;
+        let nil = self.computation(&items[2])?;
         let cons = atom(&items[3])?;
         let cons_symbol = self.binder_symbol(cons)?;
 
         self.push_variable(cons, cons_symbol);
-        let cons_case = self.term(&items[4])?;
+        let cons_case = self.computation(&items[4])?;
         self.pop_variable();
 
-        Ok(Term::ListCase(ListCase {
+        Ok(Computation::ListCase(ListCase {
             list: Box::new(list),
             nil: Box::new(nil),
             cons: cons_symbol,
@@ -562,52 +567,52 @@ impl<'a> TermParser<'a> {
         }))
     }
 
-    fn cons(&mut self, items: &[Expr]) -> Result<Term, ParseError> {
+    fn cons(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
         expect_len("cons", items, 3)?;
-        Ok(Term::Cons {
-            head: Box::new(self.term(&items[1])?),
-            tail: Box::new(self.term(&items[2])?),
+        Ok(Computation::Cons {
+            head: Box::new(self.computation(&items[1])?),
+            tail: Box::new(self.computation(&items[2])?),
         })
     }
 
-    fn head(&mut self, items: &[Expr]) -> Result<Term, ParseError> {
+    fn head(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
         expect_len("head", items, 2)?;
-        Ok(Term::Head(Box::new(self.term(&items[1])?)))
+        Ok(Computation::Head(Box::new(self.computation(&items[1])?)))
     }
 
-    fn tail(&mut self, items: &[Expr]) -> Result<Term, ParseError> {
+    fn tail(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
         expect_len("tail", items, 2)?;
-        Ok(Term::Tail(Box::new(self.term(&items[1])?)))
+        Ok(Computation::Tail(Box::new(self.computation(&items[1])?)))
     }
 
-    fn error(&mut self, items: &[Expr]) -> Result<Term, ParseError> {
+    fn error(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
         expect_len("error", items, 2)?;
-        Ok(Term::Error(Box::new(self.term(&items[1])?)))
+        Ok(Computation::Error(Box::new(self.computation(&items[1])?)))
     }
 
-    fn quote(&mut self, items: &[Expr]) -> Result<Term, ParseError> {
+    fn quote(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
         expect_len("quote", items, 2)?;
-        Ok(Term::Quote(self.static_symbol(atom(&items[1])?)?))
+        Ok(Computation::Quote(self.static_symbol(atom(&items[1])?)?))
     }
 
-    fn application(&mut self, items: &[Expr]) -> Result<Term, ParseError> {
-        let mut terms = items
+    fn application(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
+        let mut computations = items
             .iter()
-            .map(|item| self.term(item))
+            .map(|item| self.computation(item))
             .collect::<Result<Vec<_>, _>>()?
             .into_iter();
-        let Some(mut term) = terms.next() else {
+        let Some(mut computation) = computations.next() else {
             return Err(ParseError::new("empty application"));
         };
 
-        for argument in terms {
-            term = Term::Apply {
-                function: Box::new(term),
+        for argument in computations {
+            computation = Computation::Apply {
+                function: Box::new(computation),
                 argument: Box::new(argument),
             };
         }
 
-        Ok(term)
+        Ok(computation)
     }
 
     fn prop(&mut self, expression: &Expr) -> Result<Prop, ParseError> {
@@ -650,22 +655,28 @@ impl<'a> TermParser<'a> {
 
     fn equal(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
         expect_len("equal", items, 3)?;
-        Ok(equal(self.term(&items[1])?, self.term(&items[2])?))
+        Ok(equal(
+            self.computation(&items[1])?,
+            self.computation(&items[2])?,
+        ))
     }
 
     fn computes_to(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
         expect_len("computes-to", items, 3)?;
-        Ok(computes_to(self.term(&items[1])?, self.term(&items[2])?))
+        Ok(computes_to(
+            self.computation(&items[1])?,
+            self.computation(&items[2])?,
+        ))
     }
 
     fn is_value(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
         expect_len("is-value", items, 2)?;
-        Ok(is_value(self.term(&items[1])?))
+        Ok(is_value(self.computation(&items[1])?))
     }
 
     fn is_list(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
         expect_len("is-list", items, 2)?;
-        Ok(is_list(self.term(&items[1])?))
+        Ok(is_list(self.computation(&items[1])?))
     }
 
     fn implies(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
@@ -722,7 +733,7 @@ impl<'a> TermParser<'a> {
         expect_len("computes-to-list", items, 3)?;
         Ok(computes_to_list(
             self.prop_symbol(atom(&items[1])?, symbol_mode)?,
-            self.term(&items[2])?,
+            self.computation(&items[2])?,
         ))
     }
 
@@ -730,13 +741,13 @@ impl<'a> TermParser<'a> {
         expect_len("errors", items, 3)?;
         Ok(errors(
             self.prop_symbol(atom(&items[1])?, symbol_mode)?,
-            self.term(&items[2])?,
+            self.computation(&items[2])?,
         ))
     }
 
     fn diverges(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
         expect_len("diverges", items, 2)?;
-        Ok(diverges(self.term(&items[1])?))
+        Ok(diverges(self.computation(&items[1])?))
     }
 
     fn proof_script(&mut self, expression: &Expr) -> Result<ProofScript, ParseError> {
@@ -825,13 +836,13 @@ impl<'a> TermParser<'a> {
     fn proof_eval_to(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
         match items.len() {
             3 => Ok(ProofExpr::EvalTo {
-                term: self.term(&items[1])?,
-                expected: self.term(&items[2])?,
+                computation: self.computation(&items[1])?,
+                expected: self.computation(&items[2])?,
                 limit: 128,
             }),
             4 => Ok(ProofExpr::EvalTo {
-                term: self.term(&items[1])?,
-                expected: self.term(&items[2])?,
+                computation: self.computation(&items[1])?,
+                expected: self.computation(&items[2])?,
                 limit: parse_usize(atom(&items[3])?)?,
             }),
             _ => Err(ParseError::new(format!(
@@ -844,13 +855,13 @@ impl<'a> TermParser<'a> {
     fn proof_eval_same(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
         match items.len() {
             3 => Ok(ProofExpr::EvalSame {
-                left: self.term(&items[1])?,
-                right: self.term(&items[2])?,
+                left: self.computation(&items[1])?,
+                right: self.computation(&items[2])?,
                 limit: 128,
             }),
             4 => Ok(ProofExpr::EvalSame {
-                left: self.term(&items[1])?,
-                right: self.term(&items[2])?,
+                left: self.computation(&items[1])?,
+                right: self.computation(&items[2])?,
                 limit: parse_usize(atom(&items[3])?)?,
             }),
             _ => Err(ParseError::new(format!(
@@ -878,8 +889,8 @@ impl<'a> TermParser<'a> {
     fn proof_list_cons(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
         expect_len("list-cons", items, 5)?;
         Ok(ProofExpr::ListCons {
-            head: self.term(&items[1])?,
-            tail: self.term(&items[2])?,
+            head: self.computation(&items[1])?,
+            tail: self.computation(&items[2])?,
             head_is_value: Box::new(self.proof_expr(&items[3])?),
             tail_is_list: Box::new(self.proof_expr(&items[4])?),
         })
@@ -922,7 +933,7 @@ impl<'a> TermParser<'a> {
         Ok(ProofExpr::ExistsIntro {
             variable: self.proof_symbol(atom(&items[1])?)?,
             body: self.proof_prop(&items[2])?,
-            witness: self.term(&items[3])?,
+            witness: self.computation(&items[3])?,
             proof: Box::new(self.proof_expr(&items[4])?),
         })
     }
@@ -971,7 +982,7 @@ impl<'a> TermParser<'a> {
         expect_len("forall-elim", items, 3)?;
         Ok(ProofExpr::ForAllElim {
             forall: Box::new(self.proof_expr(&items[1])?),
-            argument: self.term(&items[2])?,
+            argument: self.computation(&items[2])?,
         })
     }
 
@@ -1079,8 +1090,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_module_terms_and_theorems() {
-        let terms = [
+    fn parses_module_computations_and_theorems() {
+        let computations = [
             NameBinding {
                 spelling: "id",
                 name: Name(1),
@@ -1112,24 +1123,24 @@ mod tests {
                     (forall-intro value
                       (eval-to (use_id value) value))))
                 ",
-                &terms,
+                &computations,
                 &theorems,
                 &symbols,
             ),
             Ok(ParsedModule {
-                terms: vec![
+                computations: vec![
                     (
                         Name(1),
-                        Term::Lambda(Lambda {
+                        Computation::Lambda(Lambda {
                             parameter: Symbol(1),
-                            body: Box::new(Term::Var(Symbol(1))),
+                            body: Box::new(Computation::Var(Symbol(1))),
                         }),
                     ),
                     (
                         Name(2),
-                        Term::Apply {
-                            function: Box::new(Term::Const(Name(1))),
-                            argument: Box::new(Term::Nil),
+                        Computation::Apply {
+                            function: Box::new(Computation::Const(Name(1))),
+                            argument: Box::new(Computation::Nil),
                         },
                     ),
                 ],
@@ -1138,21 +1149,21 @@ mod tests {
                     prop: forall(
                         Symbol(2_000),
                         computes_to(
-                            Term::Apply {
-                                function: Box::new(Term::Const(Name(2))),
-                                argument: Box::new(Term::Var(Symbol(2_000))),
+                            Computation::Apply {
+                                function: Box::new(Computation::Const(Name(2))),
+                                argument: Box::new(Computation::Var(Symbol(2_000))),
                             },
-                            Term::Var(Symbol(2_000)),
+                            Computation::Var(Symbol(2_000)),
                         ),
                     ),
                     proof: ProofScript::Proof(ProofExpr::ForAllIntro {
                         variable: Symbol(2_000),
                         proof: Box::new(ProofExpr::EvalTo {
-                            term: Term::Apply {
-                                function: Box::new(Term::Const(Name(2))),
-                                argument: Box::new(Term::Var(Symbol(2_000))),
+                            computation: Computation::Apply {
+                                function: Box::new(Computation::Const(Name(2))),
+                                argument: Box::new(Computation::Var(Symbol(2_000))),
                             },
-                            expected: Term::Var(Symbol(2_000)),
+                            expected: Computation::Var(Symbol(2_000)),
                             limit: 128,
                         }),
                     }),
@@ -1184,7 +1195,7 @@ mod tests {
             spelling: "use_id_computes_to_list",
             name: Name(3),
         }];
-        let terms = [NameBinding {
+        let computations = [NameBinding {
             spelling: "use_id",
             name: Name(2),
         }];
@@ -1200,23 +1211,23 @@ mod tests {
                       (computes-to-list result (use_id x))))
                   (proof (list-nil)))
                 ",
-                &terms,
+                &computations,
                 &theorems,
                 &[],
             ),
             Ok(ParsedModule {
-                terms: vec![(Name(2), Term::Nil)],
+                computations: vec![(Name(2), Computation::Nil)],
                 theorems: vec![ParsedTheorem {
                     name: Name(3),
                     prop: forall(
                         Symbol(2_000),
                         implies(
-                            is_list(Term::Var(Symbol(2_000))),
+                            is_list(Computation::Var(Symbol(2_000))),
                             computes_to_list(
                                 Symbol(2_001),
-                                Term::Apply {
-                                    function: Box::new(Term::Const(Name(2))),
-                                    argument: Box::new(Term::Var(Symbol(2_000))),
+                                Computation::Apply {
+                                    function: Box::new(Computation::Const(Name(2))),
+                                    argument: Box::new(Computation::Var(Symbol(2_000))),
                                 },
                             ),
                         ),
