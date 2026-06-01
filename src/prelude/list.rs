@@ -6,8 +6,9 @@ use crate::{
 };
 
 use super::{
-    APPEND, APPEND_NIL_COMPUTES_TO_LIST, NIL_IS_LIST, REVERSE, REVERSE_ACC,
-    REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST, REVERSE_NIL_COMPUTES_TO_LIST,
+    APPEND, APPEND_COMPUTES_TO_LIST, APPEND_NIL_COMPUTES_TO_LIST, NIL_IS_LIST, REVERSE,
+    REVERSE_ACC, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST,
+    REVERSE_NIL_COMPUTES_TO_LIST,
     source::{NameBinding, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
 
@@ -66,6 +67,10 @@ const THEOREM_DEFINITIONS: &[NameBinding] = &[
     NameBinding {
         spelling: "append_nil_computes_to_list",
         name: APPEND_NIL_COMPUTES_TO_LIST,
+    },
+    NameBinding {
+        spelling: "append_computes_to_list",
+        name: APPEND_COMPUTES_TO_LIST,
     },
 ];
 
@@ -242,6 +247,10 @@ pub fn append_nil_computes_to_list_source_theorem() -> Prop {
     theorem_prop(APPEND_NIL_COMPUTES_TO_LIST)
 }
 
+pub fn append_computes_to_list_source_theorem() -> Prop {
+    theorem_prop(APPEND_COMPUTES_TO_LIST)
+}
+
 fn theorem_prop(name: Name) -> Prop {
     theorem_definition(name).prop
 }
@@ -325,6 +334,23 @@ pub fn append_nil_computes_to_list_theorem(right: Symbol, result: Symbol) -> Pro
         implies(
             is_list(var(right)),
             computes_to_list(result, append_call(nil(), var(right))),
+        ),
+    )
+}
+
+/// If `left` and `right` are lists, then `append(left, right)` computes to a list.
+pub fn append_computes_to_list_theorem(left: Symbol, right: Symbol, result: Symbol) -> Prop {
+    forall(
+        left,
+        implies(
+            is_list(var(left)),
+            forall(
+                right,
+                implies(
+                    is_list(var(right)),
+                    computes_to_list(result, append_call(var(left), var(right))),
+                ),
+            ),
         ),
     )
 }
@@ -546,6 +572,31 @@ mod tests {
     }
 
     #[test]
+    fn append_computes_to_list_theorem_has_expected_shape() {
+        let appended = append_call(var(X), var(ACCUMULATOR));
+        let result_is_list = and(computes_to(appended, var(RESULT)), is_list(var(RESULT)));
+        let right_case = implies(is_list(var(ACCUMULATOR)), exists(RESULT, result_is_list));
+        let left_case = implies(is_list(var(X)), forall(ACCUMULATOR, right_case));
+
+        assert_eq!(
+            append_computes_to_list_theorem(X, ACCUMULATOR, RESULT),
+            forall(X, left_case)
+        );
+    }
+
+    #[test]
+    fn append_source_theorem_has_expected_shape() {
+        let left = theorem_symbol(APPEND_COMPUTES_TO_LIST, "left");
+        let right = theorem_symbol(APPEND_COMPUTES_TO_LIST, "right");
+        let result = theorem_symbol(APPEND_COMPUTES_TO_LIST, "result");
+
+        assert_eq!(
+            append_computes_to_list_source_theorem(),
+            append_computes_to_list_theorem(left, right, result)
+        );
+    }
+
+    #[test]
     fn reverse_source_theorem_uses_source_proof_script() {
         assert!(matches!(
             theorem_definition(NIL_IS_LIST).proof,
@@ -565,6 +616,10 @@ mod tests {
         ));
         assert!(matches!(
             theorem_definition(APPEND_NIL_COMPUTES_TO_LIST).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(APPEND_COMPUTES_TO_LIST).proof,
             ProofScript::Proof(_)
         ));
     }

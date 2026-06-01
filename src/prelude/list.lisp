@@ -150,3 +150,67 @@
           (and-intro
             (eval-to (append nil right) right)
             (assume right_is_list)))))))
+
+(theorem append_computes_to_list
+  (forall left
+    (implies
+      (is-list left)
+      (forall right
+        (implies
+          (is-list right)
+          (computes-to-list result (append left right))))))
+  (proof
+    (list-induction left
+      (forall right
+        (implies
+          (is-list right)
+          (computes-to-list result (append left right))))
+      (forall-intro right
+        (implies-intro right_is_list
+          (is-list right)
+          (exists-intro result
+            (and
+              (computes-to (append nil right) result)
+              (is-list result))
+            right
+            (and-intro
+              (eval-to (append nil right) right)
+              (assume right_is_list)))))
+      head
+      tail
+      head_is_value
+      tail_is_list
+      induction_hypothesis
+      (forall-intro right
+        (implies-intro right_is_list
+          (is-list right)
+          (exists-elim
+            (implies-elim
+              (forall-elim
+                (assume induction_hypothesis)
+                right)
+              (assume right_is_list))
+            tail_result
+            tail_result_proof
+            (exists-intro result
+              (and
+                (computes-to (append (cons head tail) right) result)
+                (is-list result))
+              (cons head tail_result)
+              (and-intro
+                (rewrite
+                  (and-elim-left
+                    (assume tail_result_proof))
+                  (eval-same
+                    (append (cons head tail) right)
+                    (cons head (append tail right)))
+                  rewrite_target
+                  (computes-to
+                    (append (cons head tail) right)
+                    (cons head rewrite_target)))
+                (list-cons
+                  head
+                  tail_result
+                  (assume head_is_value)
+                  (and-elim-right
+                    (assume tail_result_proof)))))))))))

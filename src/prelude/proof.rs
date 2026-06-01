@@ -90,10 +90,27 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
             witness: witness.clone(),
             proof: Box::new(proof_expr_to_proof(proof, theory)?),
         }),
+        ProofExpr::ExistsElim {
+            existential,
+            witness,
+            assumption,
+            proof,
+        } => Some(Proof::ExistsElim {
+            existential: Box::new(proof_expr_to_proof(existential, theory)?),
+            witness: *witness,
+            assumption: *assumption,
+            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+        }),
         ProofExpr::AndIntro(left, right) => Some(Proof::AndIntro(
             Box::new(proof_expr_to_proof(left, theory)?),
             Box::new(proof_expr_to_proof(right, theory)?),
         )),
+        ProofExpr::AndElimLeft(proof) => Some(Proof::AndElimLeft(Box::new(proof_expr_to_proof(
+            proof, theory,
+        )?))),
+        ProofExpr::AndElimRight(proof) => Some(Proof::AndElimRight(Box::new(proof_expr_to_proof(
+            proof, theory,
+        )?))),
         ProofExpr::ListCons {
             head,
             tail,

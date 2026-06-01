@@ -89,7 +89,15 @@ pub(super) enum ProofExpr {
         witness: Term,
         proof: Box<ProofExpr>,
     },
+    ExistsElim {
+        existential: Box<ProofExpr>,
+        witness: Symbol,
+        assumption: Symbol,
+        proof: Box<ProofExpr>,
+    },
     AndIntro(Box<ProofExpr>, Box<ProofExpr>),
+    AndElimLeft(Box<ProofExpr>),
+    AndElimRight(Box<ProofExpr>),
     ListCons {
         head: Term,
         tail: Term,
@@ -772,7 +780,10 @@ impl<'a> TermParser<'a> {
             "implies-intro" => self.proof_implies_intro(items),
             "implies-elim" => self.proof_implies_elim(items),
             "exists-intro" => self.proof_exists_intro(items),
+            "exists-elim" => self.proof_exists_elim(items),
             "and-intro" => self.proof_and_intro(items),
+            "and-elim-left" => self.proof_and_elim_left(items),
+            "and-elim-right" => self.proof_and_elim_right(items),
             "forall-intro" => self.proof_forall_intro(items),
             "forall-elim" => self.proof_forall_elim(items),
             _ => Err(ParseError::new(format!(
@@ -916,12 +927,36 @@ impl<'a> TermParser<'a> {
         })
     }
 
+    fn proof_exists_elim(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("exists-elim", items, 5)?;
+        Ok(ProofExpr::ExistsElim {
+            existential: Box::new(self.proof_expr(&items[1])?),
+            witness: self.proof_symbol(atom(&items[2])?)?,
+            assumption: self.proof_symbol(atom(&items[3])?)?,
+            proof: Box::new(self.proof_expr(&items[4])?),
+        })
+    }
+
     fn proof_and_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
         expect_len("and-intro", items, 3)?;
         Ok(ProofExpr::AndIntro(
             Box::new(self.proof_expr(&items[1])?),
             Box::new(self.proof_expr(&items[2])?),
         ))
+    }
+
+    fn proof_and_elim_left(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("and-elim-left", items, 2)?;
+        Ok(ProofExpr::AndElimLeft(Box::new(
+            self.proof_expr(&items[1])?,
+        )))
+    }
+
+    fn proof_and_elim_right(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("and-elim-right", items, 2)?;
+        Ok(ProofExpr::AndElimRight(Box::new(
+            self.proof_expr(&items[1])?,
+        )))
     }
 
     fn proof_forall_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
@@ -1200,5 +1235,64 @@ mod tests {
                 }],
             })
         );
+    }
+
+    #[test]
+    fn parses_existential_and_conjunction_eliminators() {
+        let theorems = [NameBinding {
+            spelling: "use_elims",
+            name: Name(1),
+        }];
+
+        let module = parse_module(
+            "
+            (theorem use_elims
+              (is-list nil)
+              (proof
+                (exists-elim
+                  (exists-intro witness
+                    (and
+                      (is-list witness)
+                      (is-list nil))
+                    nil
+                    (and-intro
+                      (list-nil)
+                      (list-nil)))
+                  unpacked
+                  unpacked_proof
+                  (and-intro
+                    (and-elim-left
+                      (assume unpacked_proof))
+                    (and-elim-right
+                      (assume unpacked_proof))))))
+            ",
+            &[],
+            &theorems,
+            &[],
+        )
+        .expect("source proof eliminators should parse");
+
+        let ProofScript::Proof(ProofExpr::ExistsElim {
+            existential,
+            witness,
+            assumption,
+            proof,
+        }) = &module.theorems[0].proof
+        else {
+            panic!("expected an exists-elim proof expression");
+        };
+
+        assert_eq!(*witness, Symbol(2_001));
+        assert_eq!(*assumption, Symbol(2_002));
+        assert!(matches!(
+            existential.as_ref(),
+            ProofExpr::ExistsIntro { variable, .. } if *variable == Symbol(2_000)
+        ));
+
+        let ProofExpr::AndIntro(left, right) = proof.as_ref() else {
+            panic!("expected both conjunction eliminators under an and-intro");
+        };
+        assert!(matches!(left.as_ref(), ProofExpr::AndElimLeft(_)));
+        assert!(matches!(right.as_ref(), ProofExpr::AndElimRight(_)));
     }
 }
