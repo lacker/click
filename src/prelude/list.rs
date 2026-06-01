@@ -1,7 +1,7 @@
 //! List definitions and theorems for the standard prelude.
 
 use crate::{
-    Computation, Lambda, ListCase, Name, Outcome, Proof, Prop, Symbol, Theorem, Theory,
+    Computation, ErrorName, Lambda, ListCase, Name, Outcome, Proof, Prop, Symbol, Theorem, Theory,
     computes_to_list, forall, implies, is_list,
 };
 
@@ -180,8 +180,8 @@ pub fn unit() -> Computation {
     quote(UNIT)
 }
 
-pub fn error(symbol: Symbol) -> Computation {
-    Computation::Error(Box::new(quote(symbol)))
+pub fn error(name: ErrorName) -> Computation {
+    Computation::Error(name)
 }
 
 pub fn singleton(value: Computation) -> Computation {
@@ -452,7 +452,7 @@ pub fn check_evaluates_to_in_theory(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Effect, Proof, Value, and, computes_to, diverges, exists};
+    use crate::{Effect, Proof, RUNTIME_ERROR, Value, and, computes_to, diverges, exists};
 
     const A: Symbol = Symbol(100);
     const B: Symbol = Symbol(101);
@@ -704,7 +704,7 @@ mod tests {
     fn reverse_non_list_input_reduces_to_error() {
         assert_evaluates(
             reverse_call(quote(NOT_A_LIST)),
-            Effect::error(quote(NOT_A_LIST)),
+            Effect::error(RUNTIME_ERROR),
         );
     }
 
@@ -712,7 +712,7 @@ mod tests {
     fn reverse_malformed_tail_reduces_to_error() {
         assert_evaluates(
             reverse_call(cons(quote(A), quote(NOT_A_LIST))),
-            Effect::error(quote(NOT_A_LIST)),
+            Effect::error(RUNTIME_ERROR),
         );
     }
 

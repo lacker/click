@@ -34,7 +34,7 @@ So it's okay if the kernel feels like a "pile of different algebraic types".
 The kernel lives in `src/kernel/`:
 
 - `calculus.rs` defines the core calculus entities: `Computation`, `Value`,
-  `Effect`, `Outcome`, `Prop`, and `Proof`.
+  `ErrorName`, `Effect`, `Outcome`, `Prop`, and `Proof`.
 - `eval.rs` implements reduction and normalization for computations.
 - `check.rs` implements substitution, alpha-equivalence, and the primitive proof
   rules.
@@ -43,7 +43,8 @@ The kernel lives in `src/kernel/`:
 
 Propositions can still talk about arbitrary computations, because quantified
 variables stand for computations. Rust APIs that require a concrete finalized
-result use `Value`, `Effect`, or `Outcome`.
+result use `Value`, `Effect`, or `Outcome`. Errors are named effects, not a
+second channel for returning structured values.
 
 Surface expressions belong outside the core calculus. The prelude source parser
 uses S-expressions as input and elaborates them into kernel computations,

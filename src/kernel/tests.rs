@@ -44,8 +44,8 @@ fn list_case(
     })
 }
 
-fn error(error: Computation) -> Computation {
-    Computation::Error(Box::new(error))
+fn error(error: ErrorName) -> Computation {
+    Computation::Error(error)
 }
 
 fn value_lambda(lambda: Lambda) -> Proof {
@@ -64,7 +64,7 @@ fn value_nil() -> Proof {
 fn computations_classify_values_effects_and_outcomes() {
     let value_computation = cons(Computation::Quote(Symbol(1)), Computation::Nil);
     let value = Value::cons(Value::quote(Symbol(1)), Value::nil());
-    let error_computation = error(Computation::Quote(Symbol(2)));
+    let error_computation = error(ErrorName(2));
     let pending_computation = apply(
         lambda(Symbol(1), Computation::Var(Symbol(1))),
         Computation::Nil,
@@ -73,7 +73,7 @@ fn computations_classify_values_effects_and_outcomes() {
     assert_eq!(value_computation.as_value(), Some(value.clone()));
     assert_eq!(
         error_computation.as_effect(),
-        Some(Effect::Error(Box::new(Computation::Quote(Symbol(2)))))
+        Some(Effect::Error(ErrorName(2)))
     );
     assert_eq!(
         Computation::Diverge.as_outcome(),
@@ -228,14 +228,14 @@ fn is_value_distinguishes_values_from_pending_computations() {
         Computation::Quote(Symbol(2))
     )));
     assert!(!computation_is_value(&Computation::Diverge));
-    assert!(!computation_is_value(&error(Computation::Quote(Symbol(1)))));
+    assert!(!computation_is_value(&error(ErrorName(1))));
     assert!(!computation_is_value(&Computation::Var(Symbol(1))));
     assert_eq!(step(&Computation::Var(Symbol(1))), Step::Normal);
 }
 
 #[test]
 fn application_propagates_effects() {
-    let thrown = error(Computation::Quote(Symbol(1)));
+    let thrown = error(ErrorName(1));
 
     assert_eq!(
         normal_form(&apply(thrown.clone(), Computation::Quote(Symbol(2)))),
@@ -261,7 +261,7 @@ fn application_propagates_effects() {
 fn apply_known_non_callable_reduces_to_error() {
     let computation = apply(Computation::Nil, Computation::Quote(Symbol(2)));
 
-    assert_eq!(step(&computation), Step::Reduced(error(Computation::Nil)));
+    assert_eq!(step(&computation), Step::Reduced(error(RUNTIME_ERROR)));
 }
 
 #[test]
@@ -271,20 +271,14 @@ fn cons_evaluates_head_then_tail_and_propagates_effects() {
             lambda(Symbol(1), Computation::Var(Symbol(1))),
             Computation::Quote(Symbol(2)),
         ),
-        error(Computation::Quote(Symbol(3))),
+        error(ErrorName(3)),
     );
 
     assert_eq!(
         step(&computation),
-        Step::Reduced(cons(
-            Computation::Quote(Symbol(2)),
-            error(Computation::Quote(Symbol(3)))
-        ))
+        Step::Reduced(cons(Computation::Quote(Symbol(2)), error(ErrorName(3))))
     );
-    assert_eq!(
-        normal_form(&computation),
-        error(Computation::Quote(Symbol(3)))
-    );
+    assert_eq!(normal_form(&computation), error(ErrorName(3)));
 }
 
 #[test]
@@ -311,11 +305,11 @@ fn head_and_tail_open_computations_are_neutral() {
 fn head_and_tail_known_non_cons_reduce_to_error() {
     assert_eq!(
         step(&head(Computation::Nil)),
-        Step::Reduced(error(Computation::Nil))
+        Step::Reduced(error(RUNTIME_ERROR))
     );
     assert_eq!(
         step(&tail(Computation::Nil)),
-        Step::Reduced(error(Computation::Nil))
+        Step::Reduced(error(RUNTIME_ERROR))
     );
 }
 
@@ -362,7 +356,7 @@ fn list_case_open_computation_is_neutral_and_known_non_list_reduces_to_error() {
             Symbol(9),
             Computation::Quote(Symbol(1))
         )),
-        Step::Reduced(error(Computation::Quote(Symbol(1))))
+        Step::Reduced(error(RUNTIME_ERROR))
     );
 }
 
@@ -1068,14 +1062,8 @@ fn prop_helpers_construct_expected_shapes() {
         )
     );
     assert_eq!(
-        errors(Symbol(9), computation.clone()),
-        exists(
-            Symbol(9),
-            computes_to_effect(
-                computation.clone(),
-                Effect::error(Computation::Var(Symbol(9)))
-            ),
-        )
+        errors_with(computation.clone(), ErrorName(9)),
+        computes_to_effect(computation.clone(), Effect::error(ErrorName(9)))
     );
     assert_eq!(
         diverges(computation.clone()),

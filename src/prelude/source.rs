@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    Computation, Lambda, ListCase, Name, Prop, Symbol, and, computes_to, computes_to_list,
-    diverges, equal, errors, exists, forall, implies, is_list, is_value, or,
+    Computation, ErrorName, Lambda, ListCase, Name, Prop, Symbol, and, computes_to,
+    computes_to_list, diverges, equal, errors_with, exists, forall, implies, is_list, is_value, or,
 };
 
 const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
@@ -393,6 +393,10 @@ fn atom(expression: &Expr) -> Result<&str, ParseError> {
     }
 }
 
+fn error_name(expression: &Expr) -> Result<ErrorName, ParseError> {
+    Ok(ErrorName(parse_u64(atom(expression)?)?))
+}
+
 struct SourceParser<'a> {
     definitions: HashMap<&'a str, Name>,
     theorems: HashMap<&'a str, Name>,
@@ -587,7 +591,7 @@ impl<'a> SourceParser<'a> {
 
     fn error(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
         expect_len("error", items, 2)?;
-        Ok(Computation::Error(Box::new(self.computation(&items[1])?)))
+        Ok(Computation::Error(error_name(&items[1])?))
     }
 
     fn quote(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
@@ -647,7 +651,7 @@ impl<'a> SourceParser<'a> {
             "and" => self.and(items, symbol_mode),
             "or" => self.or(items, symbol_mode),
             "computes-to-list" => self.computes_to_list(items, symbol_mode),
-            "errors" => self.errors(items, symbol_mode),
+            "errors-with" => self.errors_with(items),
             "diverges" => self.diverges(items),
             _ => Err(ParseError::new(format!("unknown proposition `{form}`"))),
         }
@@ -737,11 +741,11 @@ impl<'a> SourceParser<'a> {
         ))
     }
 
-    fn errors(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
-        expect_len("errors", items, 3)?;
-        Ok(errors(
-            self.prop_symbol(atom(&items[1])?, symbol_mode)?,
-            self.computation(&items[2])?,
+    fn errors_with(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("errors-with", items, 3)?;
+        Ok(errors_with(
+            self.computation(&items[1])?,
+            error_name(&items[2])?,
         ))
     }
 
@@ -1085,6 +1089,11 @@ fn parse_usize(atom: &str) -> Result<usize, ParseError> {
         .map_err(|_| ParseError::new(format!("expected natural number, got `{atom}`")))
 }
 
+fn parse_u64(atom: &str) -> Result<u64, ParseError> {
+    atom.parse()
+        .map_err(|_| ParseError::new(format!("expected natural number, got `{atom}`")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1187,6 +1196,45 @@ mod tests {
             .expect_err("free identifier should fail");
 
         assert_eq!(error.message, "unknown identifier `x`");
+    }
+
+    #[test]
+    fn parses_named_errors() {
+        let computations = [NameBinding {
+            spelling: "bad",
+            name: Name(1),
+        }];
+        let theorems = [NameBinding {
+            spelling: "bad_errors",
+            name: Name(2),
+        }];
+
+        assert_eq!(
+            parse_module(
+                "
+                (def bad (error 7))
+                (theorem bad_errors
+                  (errors-with bad 7)
+                  (proof (eval-to bad (error 7))))
+                ",
+                &computations,
+                &theorems,
+                &[],
+            ),
+            Ok(ParsedModule {
+                computations: vec![(Name(1), Computation::Error(ErrorName(7)))],
+                theorems: vec![ParsedTheorem {
+                    name: Name(2),
+                    prop: errors_with(Computation::Const(Name(1)), ErrorName(7)),
+                    proof: ProofScript::Proof(ProofExpr::EvalTo {
+                        computation: Computation::Const(Name(1)),
+                        expected: Computation::Error(ErrorName(7)),
+                        limit: 128,
+                    }),
+                    local_symbols: vec![],
+                }],
+            })
+        );
     }
 
     #[test]

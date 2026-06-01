@@ -31,9 +31,7 @@ fn step_apply(function: &Computation, argument: &Computation, bindings: &Binding
                 function: Box::new(function),
                 argument: Box::new(argument.clone()),
             }),
-            Step::Normal if is_known_non_callable(function) => {
-                Step::Reduced(runtime_error(function.clone()))
-            }
+            Step::Normal if is_known_non_callable(function) => Step::Reduced(runtime_error()),
             Step::Normal => step_neutral_application(function, argument, bindings),
         },
     }
@@ -87,8 +85,8 @@ fn is_known_non_callable(computation: &Computation) -> bool {
     )
 }
 
-fn runtime_error(payload: Computation) -> Computation {
-    Computation::Error(Box::new(payload))
+fn runtime_error() -> Computation {
+    Computation::Error(RUNTIME_ERROR)
 }
 
 fn step_cons(head: &Computation, tail: &Computation, bindings: &Bindings) -> Step {
@@ -122,7 +120,7 @@ fn step_head(computation: &Computation, bindings: &Bindings) -> Step {
             | Computation::Tail(_)
             | Computation::ListCase(_) => Step::Normal,
             Computation::Nil | Computation::Quote(_) | Computation::Lambda(_) => {
-                Step::Reduced(runtime_error(computation.clone()))
+                Step::Reduced(runtime_error())
             }
         },
     }
@@ -141,7 +139,7 @@ fn step_tail(computation: &Computation, bindings: &Bindings) -> Step {
             | Computation::Tail(_)
             | Computation::ListCase(_) => Step::Normal,
             Computation::Nil | Computation::Quote(_) | Computation::Lambda(_) => {
-                Step::Reduced(runtime_error(computation.clone()))
+                Step::Reduced(runtime_error())
             }
         },
     }
@@ -171,9 +169,7 @@ fn step_list_case(list_case: &ListCase, bindings: &Bindings) -> Step {
             | Computation::Head(_)
             | Computation::Tail(_)
             | Computation::ListCase(_) => Step::Normal,
-            Computation::Quote(_) | Computation::Lambda(_) => {
-                Step::Reduced(runtime_error(list_case.list.as_ref().clone()))
-            }
+            Computation::Quote(_) | Computation::Lambda(_) => Step::Reduced(runtime_error()),
         },
     }
 }

@@ -136,9 +136,7 @@ fn alpha_eq_computation_in_context(
                 })
         }
         (Computation::Const(left), Computation::Const(right)) => left == right,
-        (Computation::Error(left), Computation::Error(right)) => {
-            alpha_eq_computation_in_context(left, right, bindings)
-        }
+        (Computation::Error(left), Computation::Error(right)) => left == right,
         (Computation::Diverge, Computation::Diverge) => true,
         (Computation::Var(left), Computation::Var(right)) => {
             alpha_eq_symbol(*left, *right, bindings)

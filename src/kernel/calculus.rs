@@ -6,6 +6,11 @@ pub struct Name(pub u64);
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Symbol(pub u64);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct ErrorName(pub u64);
+
+pub const RUNTIME_ERROR: ErrorName = ErrorName(0);
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Lambda {
     pub parameter: Symbol,
@@ -36,7 +41,7 @@ pub enum Computation {
     Tail(Box<Computation>),
     ListCase(ListCase),
     Const(Name),
-    Error(Box<Computation>),
+    Error(ErrorName),
     Diverge,
     Var(Symbol),
     Quote(Symbol),
@@ -52,7 +57,7 @@ pub enum Value {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Effect {
-    Error(Box<Computation>),
+    Error(ErrorName),
     Diverge,
 }
 
@@ -78,7 +83,7 @@ impl Computation {
 
     pub fn as_effect(&self) -> Option<Effect> {
         match self {
-            Self::Error(payload) => Some(Effect::Error(payload.clone())),
+            Self::Error(name) => Some(Effect::Error(*name)),
             Self::Diverge => Some(Effect::Diverge),
             _ => None,
         }
@@ -127,8 +132,8 @@ impl Value {
 }
 
 impl Effect {
-    pub fn error(payload: Computation) -> Self {
-        Self::Error(Box::new(payload))
+    pub fn error(name: ErrorName) -> Self {
+        Self::Error(name)
     }
 
     pub fn diverge() -> Self {
@@ -137,7 +142,7 @@ impl Effect {
 
     pub fn into_computation(self) -> Computation {
         match self {
-            Self::Error(payload) => Computation::Error(payload),
+            Self::Error(name) => Computation::Error(name),
             Self::Diverge => Computation::Diverge,
         }
     }
@@ -339,8 +344,8 @@ pub fn or(left: Prop, right: Prop) -> Prop {
     Prop::Or(Box::new(left), Box::new(right))
 }
 
-pub fn computes_to(computation: Computation, value: Computation) -> Prop {
-    equal(computation, value)
+pub fn computes_to(computation: Computation, target: Computation) -> Prop {
+    equal(computation, target)
 }
 
 pub fn computes_to_value(computation: Computation, value: Value) -> Prop {
@@ -377,12 +382,8 @@ pub fn computes_to_list(variable: Symbol, computation: Computation) -> Prop {
     )
 }
 
-/// `variable` names the existential error payload and should be fresh for `computation`.
-pub fn errors(variable: Symbol, computation: Computation) -> Prop {
-    exists(
-        variable,
-        computes_to_effect(computation, Effect::error(Computation::Var(variable))),
-    )
+pub fn errors_with(computation: Computation, error: ErrorName) -> Prop {
+    computes_to_effect(computation, Effect::error(error))
 }
 
 pub fn diverges(computation: Computation) -> Prop {
@@ -432,9 +433,7 @@ pub fn substitute(
         Computation::ListCase(list_case) => {
             Computation::ListCase(substitute_list_case(list_case, variable, replacement))
         }
-        Computation::Error(error) => {
-            Computation::Error(Box::new(substitute(error, variable, replacement)))
-        }
+        Computation::Error(error) => Computation::Error(*error),
         Computation::Const(_)
         | Computation::Diverge
         | Computation::Var(_)
@@ -521,10 +520,7 @@ pub(super) fn add_free_symbols(computation: &Computation, symbols: &mut HashSet<
             cons_case_symbols.remove(&list_case.cons);
             symbols.extend(cons_case_symbols);
         }
-        Computation::Error(error) => {
-            add_free_symbols(error, symbols);
-        }
-        Computation::Const(_) | Computation::Diverge => {}
+        Computation::Error(_) | Computation::Const(_) | Computation::Diverge => {}
         Computation::Var(symbol) => {
             symbols.insert(*symbol);
         }
@@ -566,9 +562,7 @@ pub(super) fn rename_bound_var(computation: &Computation, old: Symbol, new: Symb
                 Box::new(rename_bound_var(list_case.cons_case.as_ref(), old, new))
             },
         }),
-        Computation::Error(error) => {
-            Computation::Error(Box::new(rename_bound_var(error, old, new)))
-        }
+        Computation::Error(error) => Computation::Error(*error),
         Computation::Const(_) | Computation::Diverge => computation.clone(),
         Computation::Var(symbol) if *symbol == old => Computation::Var(new),
         Computation::Var(_) | Computation::Quote(_) => computation.clone(),
@@ -616,10 +610,7 @@ pub(super) fn add_all_symbols(computation: &Computation, symbols: &mut HashSet<S
             symbols.insert(list_case.cons);
             add_all_symbols(list_case.cons_case.as_ref(), symbols);
         }
-        Computation::Error(error) => {
-            add_all_symbols(error, symbols);
-        }
-        Computation::Const(_) | Computation::Diverge => {}
+        Computation::Error(_) | Computation::Const(_) | Computation::Diverge => {}
         Computation::Var(symbol) | Computation::Quote(symbol) => {
             symbols.insert(*symbol);
         }
