@@ -11,12 +11,14 @@ use crate::{
 const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
 
 #[derive(Clone, Copy)]
+#[cfg(test)]
 pub(crate) struct NameBinding {
     pub spelling: &'static str,
     pub name: Name,
 }
 
 #[derive(Clone, Copy)]
+#[cfg(test)]
 pub(crate) struct SymbolBinding {
     pub spelling: &'static str,
     pub symbol: Symbol,
@@ -25,19 +27,129 @@ pub(crate) struct SymbolBinding {
 #[derive(Clone, Copy)]
 pub(crate) struct ModuleSpec {
     pub source: &'static str,
-    pub computation_definitions: &'static [NameBinding],
-    pub theorem_definitions: &'static [NameBinding],
-    pub symbols: &'static [SymbolBinding],
 }
 
 impl ModuleSpec {
-    pub(crate) fn parse(&self) -> Result<ParsedModule, ParseError> {
-        parse_module(
-            self.source,
-            self.computation_definitions,
-            self.theorem_definitions,
-            self.symbols,
-        )
+    pub(crate) fn parse(&self, env: &mut ElabEnv) -> Result<ParsedModule, ParseError> {
+        env.parse_module(self.source)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ElabEnv {
+    computations: HashMap<String, Name>,
+    theorems: HashMap<String, Name>,
+    symbols: HashMap<String, Symbol>,
+    next_name: u64,
+    next_symbol: u64,
+}
+
+impl Default for ElabEnv {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ElabEnv {
+    pub fn new() -> Self {
+        Self {
+            computations: HashMap::new(),
+            theorems: HashMap::new(),
+            symbols: HashMap::new(),
+            next_name: 1,
+            next_symbol: 1,
+        }
+    }
+
+    pub(crate) fn parse_module(&mut self, source: &str) -> Result<ParsedModule, ParseError> {
+        let tokens = tokenize(source);
+        let expressions = parse_expressions(&tokens)?;
+        self.register_top_level_names(&expressions)?;
+
+        let mut symbols = SymbolTable::allocating(self.symbols.clone(), self.next_symbol);
+        let module = parse_module_expressions(
+            &expressions,
+            &self.computations,
+            &self.theorems,
+            &mut symbols,
+        )?;
+        let (symbol_map, next_symbol) = symbols.into_parts();
+        self.symbols = symbol_map;
+        self.next_symbol = next_symbol.expect("allocating symbol tables track the next symbol");
+
+        Ok(module)
+    }
+
+    #[allow(dead_code)]
+    pub fn computation(&self, spelling: &str) -> Option<Name> {
+        self.computations.get(spelling).copied()
+    }
+
+    #[allow(dead_code)]
+    pub fn theorem(&self, spelling: &str) -> Option<Name> {
+        self.theorems.get(spelling).copied()
+    }
+
+    pub fn symbol(&self, spelling: &str) -> Option<Symbol> {
+        self.symbols.get(spelling).copied()
+    }
+
+    pub fn intern_symbol(&mut self, spelling: &str) -> Symbol {
+        if let Some(symbol) = self.symbol(spelling) {
+            return symbol;
+        }
+
+        let symbol = loop {
+            let symbol = Symbol(self.next_symbol);
+            self.next_symbol += 1;
+            if !self.symbols.values().any(|used| *used == symbol) {
+                break symbol;
+            }
+        };
+        self.symbols.insert(spelling.to_owned(), symbol);
+
+        symbol
+    }
+
+    fn register_top_level_names(&mut self, expressions: &[Expr]) -> Result<(), ParseError> {
+        for expression in expressions {
+            let form = top_level_form(expression)?;
+            match form.kind {
+                "def" => {
+                    if self.computations.contains_key(form.name)
+                        || self.theorems.contains_key(form.name)
+                    {
+                        return Err(ParseError::new(format!(
+                            "duplicate top-level name `{}`",
+                            form.name
+                        )));
+                    }
+                    let name = self.allocate_name();
+                    self.computations.insert(form.name.to_owned(), name);
+                }
+                "theorem" => {
+                    if self.computations.contains_key(form.name)
+                        || self.theorems.contains_key(form.name)
+                    {
+                        return Err(ParseError::new(format!(
+                            "duplicate top-level name `{}`",
+                            form.name
+                        )));
+                    }
+                    let name = self.allocate_name();
+                    self.theorems.insert(form.name.to_owned(), name);
+                }
+                _ => unreachable!("top_level_form only returns known form kinds"),
+            }
+        }
+
+        Ok(())
+    }
+
+    fn allocate_name(&mut self) -> Name {
+        let name = Name(self.next_name);
+        self.next_name += 1;
+        name
     }
 }
 
@@ -190,6 +302,7 @@ enum Expr {
     List(Vec<Expr>),
 }
 
+#[cfg(test)]
 pub(crate) fn parse_module(
     source: &str,
     computation_definitions: &[NameBinding],
@@ -198,8 +311,45 @@ pub(crate) fn parse_module(
 ) -> Result<ParsedModule, ParseError> {
     let tokens = tokenize(source);
     let expressions = parse_expressions(&tokens)?;
-    let mut source_parser = SourceParser::new(computation_definitions, symbols)?;
+
+    let computation_names = name_map(computation_definitions, "definition")?;
     let theorem_names = name_map(theorem_definitions, "theorem")?;
+    let mut symbols = SymbolTable::fixed(symbols)?;
+
+    let module = parse_module_expressions(
+        &expressions,
+        &computation_names,
+        &theorem_names,
+        &mut symbols,
+    )?;
+
+    for binding in computation_definitions {
+        if module.computation(binding.name).is_none() {
+            return Err(ParseError::new(format!(
+                "missing definition `{}`",
+                binding.spelling
+            )));
+        }
+    }
+
+    for binding in theorem_definitions {
+        if module.theorem(binding.name).is_none() {
+            return Err(ParseError::new(format!(
+                "missing theorem `{}`",
+                binding.spelling
+            )));
+        }
+    }
+
+    Ok(module)
+}
+
+fn parse_module_expressions(
+    expressions: &[Expr],
+    computation_names: &HashMap<String, Name>,
+    theorem_names: &HashMap<String, Name>,
+    symbols: &mut SymbolTable,
+) -> Result<ParsedModule, ParseError> {
     let mut defined_computations = HashSet::new();
     let mut defined_theorems = HashSet::new();
     let mut computations = Vec::new();
@@ -210,7 +360,7 @@ pub(crate) fn parse_module(
 
         match form.kind {
             "def" => {
-                let Some(name) = source_parser.definition(form.name) else {
+                let Some(name) = computation_names.get(form.name).copied() else {
                     return Err(ParseError::new(format!(
                         "unknown definition `{}`",
                         form.name
@@ -223,6 +373,8 @@ pub(crate) fn parse_module(
                     )));
                 }
 
+                let mut source_parser =
+                    SourceParser::new(computation_names, theorem_names, symbols);
                 let computation = source_parser.computation(form.body)?;
                 computations.push((name, computation));
             }
@@ -245,11 +397,11 @@ pub(crate) fn parse_module(
                 };
 
                 let mut theorem_parser = SourceParser::new_with_local_symbols(
-                    computation_definitions,
-                    theorem_definitions,
                     symbols,
+                    computation_names,
+                    theorem_names,
                     FIRST_THEOREM_SYMBOL,
-                )?;
+                );
                 let prop = theorem_parser.prop(form.body)?;
                 let proof = theorem_parser.proof_script(proof_expr)?;
                 theorems.push(ParsedTheorem {
@@ -260,24 +412,6 @@ pub(crate) fn parse_module(
                 });
             }
             _ => unreachable!("top_level_form only returns known form kinds"),
-        }
-    }
-
-    for binding in computation_definitions {
-        if !defined_computations.contains(&binding.name) {
-            return Err(ParseError::new(format!(
-                "missing definition `{}`",
-                binding.spelling
-            )));
-        }
-    }
-
-    for binding in theorem_definitions {
-        if !defined_theorems.contains(&binding.name) {
-            return Err(ParseError::new(format!(
-                "missing theorem `{}`",
-                binding.spelling
-            )));
         }
     }
 
@@ -319,13 +453,14 @@ fn top_level_form(expression: &Expr) -> Result<TopLevelForm<'_>, ParseError> {
     }
 }
 
-fn name_map<'a>(
-    bindings: &'a [NameBinding],
-    kind: &str,
-) -> Result<HashMap<&'a str, Name>, ParseError> {
+#[cfg(test)]
+fn name_map(bindings: &[NameBinding], kind: &str) -> Result<HashMap<String, Name>, ParseError> {
     let mut names = HashMap::new();
     for binding in bindings {
-        if names.insert(binding.spelling, binding.name).is_some() {
+        if names
+            .insert(binding.spelling.to_owned(), binding.name)
+            .is_some()
+        {
             return Err(ParseError::new(format!(
                 "duplicate {kind} binding `{}`",
                 binding.spelling
@@ -416,14 +551,92 @@ fn error_name(expression: &Expr) -> Result<ErrorName, ParseError> {
     Ok(ErrorName(parse_u64(atom(expression)?)?))
 }
 
+struct SymbolTable {
+    symbols: HashMap<String, Symbol>,
+    used_symbols: HashSet<Symbol>,
+    next_static_symbol: Option<u64>,
+}
+
+impl SymbolTable {
+    #[cfg(test)]
+    fn fixed(bindings: &[SymbolBinding]) -> Result<Self, ParseError> {
+        let mut symbols = HashMap::new();
+        for binding in bindings {
+            if symbols
+                .insert(binding.spelling.to_owned(), binding.symbol)
+                .is_some()
+            {
+                return Err(ParseError::new(format!(
+                    "duplicate symbol binding `{}`",
+                    binding.spelling
+                )));
+            }
+        }
+
+        let used_symbols = symbols.values().copied().collect();
+
+        Ok(Self {
+            symbols,
+            used_symbols,
+            next_static_symbol: None,
+        })
+    }
+
+    fn allocating(symbols: HashMap<String, Symbol>, next_static_symbol: u64) -> Self {
+        let used_symbols = symbols.values().copied().collect();
+
+        Self {
+            symbols,
+            used_symbols,
+            next_static_symbol: Some(next_static_symbol),
+        }
+    }
+
+    fn into_parts(self) -> (HashMap<String, Symbol>, Option<u64>) {
+        (self.symbols, self.next_static_symbol)
+    }
+
+    fn static_symbol(&mut self, spelling: &str) -> Result<Symbol, ParseError> {
+        if let Some(symbol) = self.symbols.get(spelling).copied() {
+            return Ok(symbol);
+        }
+
+        let Some(mut next) = self.next_static_symbol else {
+            return Err(ParseError::new(format!("unknown symbol `{spelling}`")));
+        };
+
+        let symbol = loop {
+            let symbol = Symbol(next);
+            next += 1;
+            if self.used_symbols.insert(symbol) {
+                break symbol;
+            }
+        };
+        self.next_static_symbol = Some(next);
+        self.symbols.insert(spelling.to_owned(), symbol);
+
+        Ok(symbol)
+    }
+
+    fn allocate_local_symbol(&mut self, next_local: &mut u64) -> Symbol {
+        loop {
+            let symbol = Symbol(*next_local);
+            *next_local += 1;
+
+            if self.used_symbols.insert(symbol) {
+                return symbol;
+            }
+        }
+    }
+}
+
 struct SourceParser<'a> {
-    definitions: HashMap<&'a str, Name>,
-    theorems: HashMap<&'a str, Name>,
-    symbols: HashMap<&'a str, Symbol>,
+    definitions: &'a HashMap<String, Name>,
+    theorems: &'a HashMap<String, Name>,
+    symbols: &'a mut SymbolTable,
     scopes: Vec<HashMap<String, Symbol>>,
     local_symbols: Vec<LocalSymbol>,
     next_local_symbol: Option<u64>,
-    used_symbols: HashSet<Symbol>,
 }
 
 #[derive(Clone, Copy)]
@@ -434,67 +647,29 @@ enum PropSymbolMode {
 
 impl<'a> SourceParser<'a> {
     fn new(
-        definitions: &'a [NameBinding],
-        symbols: &'a [SymbolBinding],
-    ) -> Result<Self, ParseError> {
-        Self::new_with_theorems(definitions, &[], symbols)
-    }
-
-    fn new_with_theorems(
-        definitions: &'a [NameBinding],
-        theorems: &'a [NameBinding],
-        symbols: &'a [SymbolBinding],
-    ) -> Result<Self, ParseError> {
-        let mut definition_map = HashMap::new();
-        for binding in definitions {
-            if definition_map
-                .insert(binding.spelling, binding.name)
-                .is_some()
-            {
-                return Err(ParseError::new(format!(
-                    "duplicate definition binding `{}`",
-                    binding.spelling
-                )));
-            }
-        }
-
-        let theorem_map = name_map(theorems, "theorem")?;
-
-        let mut symbol_map = HashMap::new();
-        for binding in symbols {
-            if symbol_map
-                .insert(binding.spelling, binding.symbol)
-                .is_some()
-            {
-                return Err(ParseError::new(format!(
-                    "duplicate symbol binding `{}`",
-                    binding.spelling
-                )));
-            }
-        }
-
-        let used_symbols = symbol_map.values().copied().collect();
-
-        Ok(Self {
-            definitions: definition_map,
-            theorems: theorem_map,
-            symbols: symbol_map,
+        definitions: &'a HashMap<String, Name>,
+        theorems: &'a HashMap<String, Name>,
+        symbols: &'a mut SymbolTable,
+    ) -> Self {
+        Self {
+            definitions,
+            theorems,
+            symbols,
             scopes: Vec::new(),
             local_symbols: Vec::new(),
             next_local_symbol: None,
-            used_symbols,
-        })
+        }
     }
 
     fn new_with_local_symbols(
-        definitions: &'a [NameBinding],
-        theorems: &'a [NameBinding],
-        symbols: &'a [SymbolBinding],
+        symbols: &'a mut SymbolTable,
+        definitions: &'a HashMap<String, Name>,
+        theorems: &'a HashMap<String, Name>,
         first_local_symbol: Symbol,
-    ) -> Result<Self, ParseError> {
-        let mut parser = Self::new_with_theorems(definitions, theorems, symbols)?;
+    ) -> Self {
+        let mut parser = Self::new(definitions, theorems, symbols);
         parser.next_local_symbol = Some(first_local_symbol.0);
-        Ok(parser)
+        parser
     }
 
     fn into_local_symbols(self) -> Vec<LocalSymbol> {
@@ -1059,11 +1234,8 @@ impl<'a> SourceParser<'a> {
         })
     }
 
-    fn static_symbol(&self, spelling: &str) -> Result<Symbol, ParseError> {
-        self.symbols
-            .get(spelling)
-            .copied()
-            .ok_or_else(|| ParseError::new(format!("unknown symbol `{spelling}`")))
+    fn static_symbol(&mut self, spelling: &str) -> Result<Symbol, ParseError> {
+        self.symbols.static_symbol(spelling)
     }
 
     fn binder_symbol(&mut self, spelling: &str) -> Result<Symbol, ParseError> {
@@ -1095,23 +1267,18 @@ impl<'a> SourceParser<'a> {
     }
 
     fn allocate_local_symbol(&mut self, spelling: &str) -> Result<Symbol, ParseError> {
-        let Some(mut next) = self.next_local_symbol else {
+        let Some(mut next) = self.next_local_symbol.take() else {
             return Err(ParseError::new(format!("unknown symbol `{spelling}`")));
         };
 
-        loop {
-            let symbol = Symbol(next);
-            next += 1;
-            self.next_local_symbol = Some(next);
+        let symbol = self.symbols.allocate_local_symbol(&mut next);
+        self.next_local_symbol = Some(next);
+        self.local_symbols.push(LocalSymbol {
+            spelling: spelling.to_owned(),
+            symbol,
+        });
 
-            if self.used_symbols.insert(symbol) {
-                self.local_symbols.push(LocalSymbol {
-                    spelling: spelling.to_owned(),
-                    symbol,
-                });
-                return Ok(symbol);
-            }
-        }
+        Ok(symbol)
     }
 
     fn local_symbol(&self, spelling: &str) -> Option<Symbol> {
@@ -1166,6 +1333,30 @@ fn parse_u64(atom: &str) -> Result<u64, ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn elab_env_allocates_names_and_symbols_from_source() {
+        let mut env = ElabEnv::new();
+        assert_eq!(env.intern_symbol(":true"), Symbol(1));
+
+        let module = env
+            .parse_module(
+                "
+                (def id (lambda x (quote :true)))
+                (theorem id_computes
+                  (computes-to (id nil) (quote :true))
+                  (proof (eval-to (id nil) (quote :true))))
+                ",
+            )
+            .expect("source should parse through environment");
+
+        assert_eq!(env.computation("id"), Some(Name(1)));
+        assert_eq!(env.theorem("id_computes"), Some(Name(2)));
+        assert_eq!(env.symbol(":true"), Some(Symbol(1)));
+        assert_eq!(env.symbol("x"), Some(Symbol(2)));
+        assert!(module.computation(Name(1)).is_some());
+        assert!(module.theorem(Name(2)).is_some());
+    }
 
     #[test]
     fn parses_module_computations_and_theorems() {

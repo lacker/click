@@ -14,46 +14,46 @@ pub const FALSE: Symbol = Symbol(2);
 
 pub const REVERSE_ACC: Name = Name(1);
 pub const REVERSE: Name = Name(2);
-pub const REVERSE_ACC_COMPUTES_TO_LIST: Name = Name(3);
-pub const REVERSE_COMPUTES_TO_LIST: Name = Name(4);
-pub const REVERSE_NIL_COMPUTES_TO_LIST: Name = Name(6);
-pub const APPEND: Name = Name(7);
-pub const APPEND_NIL_COMPUTES_TO_LIST: Name = Name(8);
-pub const APPEND_COMPUTES_TO_LIST: Name = Name(9);
-pub const APPEND_NIL_RETURNS_RIGHT: Name = Name(10);
-pub const APPEND_RIGHT_NIL: Name = Name(11);
-pub const APPEND_CONS: Name = Name(12);
-pub const APPEND_SINGLETON: Name = Name(13);
-pub const APPEND_ASSOC: Name = Name(14);
-pub const REVERSE_NIL: Name = Name(15);
-pub const REVERSE_SINGLETON: Name = Name(16);
-pub const REVERSE_ACC_APPEND: Name = Name(17);
-pub const REVERSE_CONS: Name = Name(18);
-pub const REVERSE_ACC_REVERSE: Name = Name(19);
-pub const REVERSE_DOUBLE: Name = Name(20);
-pub const REVERSE_ACC_OF_APPEND: Name = Name(21);
-pub const REVERSE_APPEND: Name = Name(22);
-pub const SNOC: Name = Name(23);
-pub const SNOC_COMPUTES_TO_LIST: Name = Name(24);
-pub const SNOC_NIL: Name = Name(25);
-pub const SNOC_CONS: Name = Name(26);
-pub const CONCAT: Name = Name(27);
-pub const CONCAT_NIL: Name = Name(28);
-pub const LAST: Name = Name(30);
-pub const LAST_NIL_ERRORS: Name = Name(31);
-pub const LAST_SINGLETON: Name = Name(32);
-pub const LAST_CONS: Name = Name(33);
-pub const INIT: Name = Name(34);
+pub const APPEND: Name = Name(3);
+pub const SNOC: Name = Name(4);
+pub const CONCAT: Name = Name(5);
+pub const LAST: Name = Name(6);
+pub const INIT: Name = Name(7);
+pub const NULL: Name = Name(8);
+pub const IS_SINGLETON: Name = Name(9);
+pub const REVERSE_ACC_COMPUTES_TO_LIST: Name = Name(10);
+pub const REVERSE_COMPUTES_TO_LIST: Name = Name(11);
+pub const REVERSE_NIL_COMPUTES_TO_LIST: Name = Name(12);
+pub const REVERSE_NIL: Name = Name(13);
+pub const REVERSE_SINGLETON: Name = Name(14);
+pub const APPEND_NIL_COMPUTES_TO_LIST: Name = Name(15);
+pub const APPEND_COMPUTES_TO_LIST: Name = Name(16);
+pub const APPEND_NIL_RETURNS_RIGHT: Name = Name(17);
+pub const APPEND_RIGHT_NIL: Name = Name(18);
+pub const APPEND_CONS: Name = Name(19);
+pub const APPEND_SINGLETON: Name = Name(20);
+pub const APPEND_ASSOC: Name = Name(21);
+pub const REVERSE_ACC_APPEND: Name = Name(22);
+pub const REVERSE_CONS: Name = Name(23);
+pub const REVERSE_ACC_REVERSE: Name = Name(24);
+pub const REVERSE_DOUBLE: Name = Name(25);
+pub const REVERSE_ACC_OF_APPEND: Name = Name(26);
+pub const REVERSE_APPEND: Name = Name(27);
+pub const SNOC_COMPUTES_TO_LIST: Name = Name(28);
+pub const SNOC_NIL: Name = Name(29);
+pub const SNOC_CONS: Name = Name(30);
+pub const CONCAT_NIL: Name = Name(31);
+pub const LAST_NIL_ERRORS: Name = Name(32);
+pub const LAST_SINGLETON: Name = Name(33);
+pub const LAST_CONS: Name = Name(34);
 pub const INIT_NIL_ERRORS: Name = Name(35);
 pub const INIT_SINGLETON: Name = Name(36);
 pub const INIT_CONS: Name = Name(37);
-pub const NULL: Name = Name(38);
-pub const NULL_NIL: Name = Name(39);
-pub const NULL_CONS: Name = Name(40);
-pub const IS_SINGLETON: Name = Name(41);
-pub const IS_SINGLETON_NIL: Name = Name(42);
-pub const IS_SINGLETON_SINGLETON: Name = Name(43);
-pub const IS_SINGLETON_CONS: Name = Name(44);
+pub const NULL_NIL: Name = Name(38);
+pub const NULL_CONS: Name = Name(39);
+pub const IS_SINGLETON_NIL: Name = Name(40);
+pub const IS_SINGLETON_SINGLETON: Name = Name(41);
+pub const IS_SINGLETON_CONS: Name = Name(42);
 
 const MODULES: &[source::ModuleSpec] = &[list::MODULE];
 
@@ -104,7 +104,21 @@ pub fn try_define_in_theory(theory: &mut Theory) -> Result<(), SourceLoadError> 
 }
 
 fn parse_modules() -> Result<Vec<source::ParsedModule>, ParseError> {
-    MODULES.iter().map(source::ModuleSpec::parse).collect()
+    let mut env = prelude_env();
+    MODULES
+        .iter()
+        .map(|module| module.parse(&mut env))
+        .collect()
+}
+
+pub(crate) fn prelude_env() -> source::ElabEnv {
+    let mut env = source::ElabEnv::new();
+
+    debug_assert_eq!(env.intern_symbol(":true"), TRUE);
+    debug_assert_eq!(env.intern_symbol(":false"), FALSE);
+    debug_assert_eq!(env.intern_symbol("unit"), list::UNIT);
+
+    env
 }
 
 fn define_modules_in_theory_result(

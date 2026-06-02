@@ -43,7 +43,9 @@ The kernel lives in `src/kernel/`:
 
 The source elaborator lives in `src/elab/`. It parses S-expression source and
 proof scripts, then elaborates them into kernel computations, propositions, and
-proofs. The prelude uses this layer to load source files into a `Theory`.
+proofs. `ElabEnv` owns the mapping from source spellings to opaque kernel
+`Name` and `Symbol` IDs. The prelude uses this layer to load source files into a
+`Theory`.
 
 Propositions can talk about arbitrary computations. Quantifiers may be
 unguarded, or guarded by propositions such as `is-value`, `is-list`,
