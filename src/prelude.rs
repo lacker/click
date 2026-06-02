@@ -22,6 +22,8 @@ pub const APPEND_RIGHT_NIL: Name = Name(11);
 pub const APPEND_CONS: Name = Name(12);
 pub const APPEND_SINGLETON: Name = Name(13);
 pub const APPEND_ASSOC: Name = Name(14);
+pub const REVERSE_NIL: Name = Name(15);
+pub const REVERSE_SINGLETON: Name = Name(16);
 
 const MODULES: &[source::ModuleSpec] = &[list::MODULE];
 
@@ -167,6 +169,14 @@ pub fn reverse_nil_computes_to_list() -> Option<Theorem> {
     list::checked_source_theorem(REVERSE_NIL_COMPUTES_TO_LIST)
 }
 
+pub fn reverse_nil_exact() -> Option<Theorem> {
+    list::checked_source_theorem(REVERSE_NIL)
+}
+
+pub fn reverse_singleton() -> Option<Theorem> {
+    list::checked_source_theorem(REVERSE_SINGLETON)
+}
+
 pub fn append_nil_computes_to_list() -> Option<Theorem> {
     list::checked_source_theorem(APPEND_NIL_COMPUTES_TO_LIST)
 }
@@ -263,6 +273,8 @@ mod tests {
         assert!(theory.theorem(APPEND_CONS).is_none());
         assert!(theory.theorem(APPEND_SINGLETON).is_none());
         assert!(theory.theorem(APPEND_ASSOC).is_none());
+        assert!(theory.theorem(REVERSE_NIL).is_none());
+        assert!(theory.theorem(REVERSE_SINGLETON).is_none());
     }
 
     #[test]
@@ -319,6 +331,8 @@ mod tests {
         assert!(theory.theorem(APPEND_CONS).is_none());
         assert!(theory.theorem(APPEND_SINGLETON).is_none());
         assert!(theory.theorem(APPEND_ASSOC).is_none());
+        assert!(theory.theorem(REVERSE_NIL).is_none());
+        assert!(theory.theorem(REVERSE_SINGLETON).is_none());
     }
 
     #[test]
@@ -433,6 +447,8 @@ mod tests {
         let reverse_acc_prop = list::reverse_acc_computes_to_list_source_theorem();
         let reverse_prop = list::reverse_computes_to_list_source_theorem();
         let reverse_nil_prop = list::reverse_nil_computes_to_list_source_theorem();
+        let reverse_nil_exact_prop = list::reverse_nil_source_theorem();
+        let reverse_singleton_prop = list::reverse_singleton_source_theorem();
         let append_nil_prop = list::append_nil_computes_to_list_source_theorem();
         let append_prop = list::append_computes_to_list_source_theorem();
         let append_nil_returns_right_prop = list::append_nil_returns_right_source_theorem();
@@ -452,6 +468,11 @@ mod tests {
         assert_eq!(
             theory.theorem(REVERSE_NIL_COMPUTES_TO_LIST),
             Some(&reverse_nil_prop)
+        );
+        assert_eq!(theory.theorem(REVERSE_NIL), Some(&reverse_nil_exact_prop));
+        assert_eq!(
+            theory.theorem(REVERSE_SINGLETON),
+            Some(&reverse_singleton_prop)
         );
         assert_eq!(
             theory.theorem(APPEND_NIL_COMPUTES_TO_LIST),
@@ -490,6 +511,18 @@ mod tests {
                 .expect("reverse nil theorem source proof should check with dependencies")
                 .prop(),
             &reverse_nil_prop,
+        );
+        assert_eq!(
+            reverse_nil_exact()
+                .expect("reverse nil exact theorem source proof should check with dependencies")
+                .prop(),
+            &reverse_nil_exact_prop,
+        );
+        assert_eq!(
+            reverse_singleton()
+                .expect("reverse singleton theorem source proof should check with dependencies")
+                .prop(),
+            &reverse_singleton_prop,
         );
         assert_eq!(
             append_nil_computes_to_list()

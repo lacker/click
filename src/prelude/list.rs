@@ -8,8 +8,8 @@ use crate::{
 use super::{
     APPEND, APPEND_ASSOC, APPEND_COMPUTES_TO_LIST, APPEND_CONS, APPEND_NIL_COMPUTES_TO_LIST,
     APPEND_NIL_RETURNS_RIGHT, APPEND_RIGHT_NIL, APPEND_SINGLETON, REVERSE, REVERSE_ACC,
-    REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST, REVERSE_NIL_COMPUTES_TO_LIST,
-    SourceTheoremError,
+    REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST, REVERSE_NIL,
+    REVERSE_NIL_COMPUTES_TO_LIST, REVERSE_SINGLETON, SourceTheoremError,
     source::{ModuleSpec, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
 
@@ -61,6 +61,14 @@ pub(super) const MODULE: ModuleSpec = ModuleSpec {
         super::source::NameBinding {
             spelling: "reverse_nil_computes_to_list",
             name: REVERSE_NIL_COMPUTES_TO_LIST,
+        },
+        super::source::NameBinding {
+            spelling: "reverse_nil",
+            name: REVERSE_NIL,
+        },
+        super::source::NameBinding {
+            spelling: "reverse_singleton",
+            name: REVERSE_SINGLETON,
         },
         super::source::NameBinding {
             spelling: "append_nil_computes_to_list",
@@ -262,6 +270,14 @@ pub fn reverse_nil_computes_to_list_source_theorem() -> Prop {
     theorem_prop(REVERSE_NIL_COMPUTES_TO_LIST)
 }
 
+pub fn reverse_nil_source_theorem() -> Prop {
+    theorem_prop(REVERSE_NIL)
+}
+
+pub fn reverse_singleton_source_theorem() -> Prop {
+    theorem_prop(REVERSE_SINGLETON)
+}
+
 pub fn append_nil_computes_to_list_source_theorem() -> Prop {
     theorem_prop(APPEND_NIL_COMPUTES_TO_LIST)
 }
@@ -361,6 +377,20 @@ pub fn reverse_computes_to_list_theorem(list: Symbol, result: Symbol) -> Prop {
         list,
         is_list(var(list)),
         computes_to_list(result, reverse_call(var(list))),
+    )
+}
+
+/// Reversing `nil` returns `nil`.
+pub fn reverse_nil_theorem() -> Prop {
+    computes_to(reverse_call(nil()), nil())
+}
+
+/// Reversing a singleton list returns the same singleton list.
+pub fn reverse_singleton_theorem(head: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        computes_to(reverse_call(singleton(var(head))), singleton(var(head))),
     )
 }
 
@@ -645,6 +675,33 @@ mod tests {
     }
 
     #[test]
+    fn reverse_nil_exact_source_theorem_has_expected_shape() {
+        assert_eq!(reverse_nil_source_theorem(), reverse_nil_theorem());
+    }
+
+    #[test]
+    fn reverse_singleton_theorem_has_expected_shape() {
+        assert_eq!(
+            reverse_singleton_theorem(HEAD),
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                computes_to(reverse_call(singleton(var(HEAD))), singleton(var(HEAD))),
+            )
+        );
+    }
+
+    #[test]
+    fn reverse_singleton_source_theorem_has_expected_shape() {
+        let head = theorem_symbol(REVERSE_SINGLETON, "head");
+
+        assert_eq!(
+            reverse_singleton_source_theorem(),
+            reverse_singleton_theorem(head)
+        );
+    }
+
+    #[test]
     fn append_nil_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             append_nil_computes_to_list_theorem(X, RESULT),
@@ -831,6 +888,14 @@ mod tests {
         ));
         assert!(matches!(
             theorem_definition(REVERSE_NIL_COMPUTES_TO_LIST).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(REVERSE_NIL).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(REVERSE_SINGLETON).proof,
             ProofScript::Proof(_)
         ));
         assert!(matches!(

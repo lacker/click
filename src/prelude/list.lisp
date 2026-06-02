@@ -96,6 +96,22 @@
       (known reverse_computes_to_list)
       nil)))
 
+(theorem reverse_nil
+  (computes-to (reverse nil) nil)
+  (proof
+    (eval-to (reverse nil) nil)))
+
+(theorem reverse_singleton
+  (forall head (is-value head)
+    (computes-to
+      (reverse (cons head nil))
+      (cons head nil)))
+  (proof
+    (forall-intro head (is-value head)
+      (eval-same
+        (reverse (cons head nil))
+        (cons head nil)))))
+
 (theorem append_nil_computes_to_list
   (forall right (is-list right)
     (computes-to-list result (append nil right)))
