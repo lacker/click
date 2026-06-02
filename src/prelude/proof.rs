@@ -5,7 +5,7 @@ use crate::{
     computes_to_outcome,
 };
 
-use super::source::{ParsedModule, ParsedTheorem, ProofExpr, ProofScript};
+use super::source::{ParseError, ParsedModule, ParsedTheorem, ProofExpr, ProofScript};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvaluationProofError {
@@ -19,11 +19,29 @@ pub enum EvaluationProofError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProofElaborationError {
+    EvaluationFailed(EvaluationProofError),
+    UnknownTheorem(Name),
+    InSubproof {
+        form: &'static str,
+        error: Box<ProofElaborationError>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceTheoremError {
-    ModuleParseFailed,
-    ProofElaborationFailed { theorem: Name },
-    RequestedTheoremMissing { theorem: Name },
-    TheoremRejected { theorem: Name, error: TheoremError },
+    ModuleParseFailed(ParseError),
+    ProofElaborationFailed {
+        theorem: Name,
+        error: ProofElaborationError,
+    },
+    RequestedTheoremMissing {
+        theorem: Name,
+    },
+    TheoremRejected {
+        theorem: Name,
+        error: TheoremError,
+    },
 }
 
 pub(super) fn define_source_theorem(
@@ -44,11 +62,12 @@ pub(super) fn proof_for_theorem_result(
     theory: &Theory,
 ) -> Result<Proof, SourceTheoremError> {
     match &theorem.proof {
-        ProofScript::Proof(proof) => {
-            proof_expr_to_proof(proof, theory).ok_or(SourceTheoremError::ProofElaborationFailed {
+        ProofScript::Proof(proof) => proof_expr_to_proof(proof, theory).map_err(|error| {
+            SourceTheoremError::ProofElaborationFailed {
                 theorem: theorem.name,
-            })
-        }
+                error,
+            }
+        }),
     }
 }
 
@@ -69,14 +88,20 @@ pub(super) fn source_theorem_result(
     Err(SourceTheoremError::RequestedTheoremMissing { theorem: name })
 }
 
-fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
+fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Result<Proof, ProofElaborationError> {
     match proof {
-        ProofExpr::Known(name) => Some(Proof::Known(*name)),
-        ProofExpr::Assume(symbol) => Some(Proof::Assume(*symbol)),
-        ProofExpr::Symm(proof) => Some(Proof::Symm(Box::new(proof_expr_to_proof(proof, theory)?))),
-        ProofExpr::Trans(first, second) => Some(Proof::Trans(
-            Box::new(proof_expr_to_proof(first, theory)?),
-            Box::new(proof_expr_to_proof(second, theory)?),
+        ProofExpr::Known(name) => {
+            if theory.theorem(*name).is_some() {
+                Ok(Proof::Known(*name))
+            } else {
+                Err(ProofElaborationError::UnknownTheorem(*name))
+            }
+        }
+        ProofExpr::Assume(symbol) => Ok(Proof::Assume(*symbol)),
+        ProofExpr::Symm(proof) => Ok(Proof::Symm(Box::new(subproof("symm", proof, theory)?))),
+        ProofExpr::Trans(first, second) => Ok(Proof::Trans(
+            Box::new(subproof("trans first", first, theory)?),
+            Box::new(subproof("trans second", second, theory)?),
         )),
         ProofExpr::EvalTo {
             computation,
@@ -88,18 +113,19 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
             theory,
             *limit,
         )
-        .ok(),
+        .map_err(ProofElaborationError::EvaluationFailed),
         ProofExpr::EvalSame { left, right, limit } => {
-            proof_by_same_normal_form_in_theory(left.clone(), right.clone(), theory, *limit).ok()
+            proof_by_same_normal_form_in_theory(left.clone(), right.clone(), theory, *limit)
+                .map_err(ProofElaborationError::EvaluationFailed)
         }
         ProofExpr::Rewrite {
             equality,
             proof,
             variable,
             template,
-        } => Some(Proof::Rewrite {
-            equality: Box::new(proof_expr_to_proof(equality, theory)?),
-            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+        } => Ok(Proof::Rewrite {
+            equality: Box::new(subproof("rewrite equality", equality, theory)?),
+            proof: Box::new(subproof("rewrite proof", proof, theory)?),
             variable: *variable,
             template: template.clone(),
         }),
@@ -107,17 +133,17 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
             assumption,
             premise,
             proof,
-        } => Some(Proof::ImpliesIntro {
+        } => Ok(Proof::ImpliesIntro {
             assumption: *assumption,
             premise: premise.clone(),
-            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+            proof: Box::new(subproof("implies-intro proof", proof, theory)?),
         }),
         ProofExpr::ImpliesElim {
             implication,
             premise,
-        } => Some(Proof::ImpliesElim {
-            implication: Box::new(proof_expr_to_proof(implication, theory)?),
-            premise: Box::new(proof_expr_to_proof(premise, theory)?),
+        } => Ok(Proof::ImpliesElim {
+            implication: Box::new(subproof("implies-elim implication", implication, theory)?),
+            premise: Box::new(subproof("implies-elim premise", premise, theory)?),
         }),
         ProofExpr::ExistsIntro {
             variable,
@@ -125,33 +151,37 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
             body,
             witness,
             proof,
-        } => Some(Proof::ExistsIntro {
+        } => Ok(Proof::ExistsIntro {
             variable: *variable,
             sort: *sort,
             body: body.clone(),
             witness: witness.clone(),
-            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+            proof: Box::new(subproof("exists-intro proof", proof, theory)?),
         }),
         ProofExpr::ExistsElim {
             existential,
             witness,
             assumption,
             proof,
-        } => Some(Proof::ExistsElim {
-            existential: Box::new(proof_expr_to_proof(existential, theory)?),
+        } => Ok(Proof::ExistsElim {
+            existential: Box::new(subproof("exists-elim existential", existential, theory)?),
             witness: *witness,
             assumption: *assumption,
-            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+            proof: Box::new(subproof("exists-elim proof", proof, theory)?),
         }),
-        ProofExpr::AndIntro(left, right) => Some(Proof::AndIntro(
-            Box::new(proof_expr_to_proof(left, theory)?),
-            Box::new(proof_expr_to_proof(right, theory)?),
+        ProofExpr::AndIntro(left, right) => Ok(Proof::AndIntro(
+            Box::new(subproof("and-intro left", left, theory)?),
+            Box::new(subproof("and-intro right", right, theory)?),
         )),
-        ProofExpr::AndElimLeft(proof) => Some(Proof::AndElimLeft(Box::new(proof_expr_to_proof(
-            proof, theory,
+        ProofExpr::AndElimLeft(proof) => Ok(Proof::AndElimLeft(Box::new(subproof(
+            "and-elim-left",
+            proof,
+            theory,
         )?))),
-        ProofExpr::AndElimRight(proof) => Some(Proof::AndElimRight(Box::new(proof_expr_to_proof(
-            proof, theory,
+        ProofExpr::AndElimRight(proof) => Ok(Proof::AndElimRight(Box::new(subproof(
+            "and-elim-right",
+            proof,
+            theory,
         )?))),
         ProofExpr::ListInduction {
             variable,
@@ -161,29 +191,40 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
             tail,
             induction_hypothesis_assumption,
             step,
-        } => Some(Proof::ListInduction {
+        } => Ok(Proof::ListInduction {
             variable: *variable,
             property: property.clone(),
-            base: Box::new(proof_expr_to_proof(base, theory)?),
+            base: Box::new(subproof("list-induction base", base, theory)?),
             head: *head,
             tail: *tail,
             induction_hypothesis_assumption: *induction_hypothesis_assumption,
-            step: Box::new(proof_expr_to_proof(step, theory)?),
+            step: Box::new(subproof("list-induction step", step, theory)?),
         }),
         ProofExpr::ForAllIntro {
             variable,
             sort,
             proof,
-        } => Some(Proof::ForAllIntro {
+        } => Ok(Proof::ForAllIntro {
             variable: *variable,
             sort: *sort,
-            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+            proof: Box::new(subproof("forall-intro proof", proof, theory)?),
         }),
-        ProofExpr::ForAllElim { forall, argument } => Some(Proof::ForAllElim {
-            forall: Box::new(proof_expr_to_proof(forall, theory)?),
+        ProofExpr::ForAllElim { forall, argument } => Ok(Proof::ForAllElim {
+            forall: Box::new(subproof("forall-elim forall", forall, theory)?),
             argument: argument.clone(),
         }),
     }
+}
+
+fn subproof(
+    form: &'static str,
+    proof: &ProofExpr,
+    theory: &Theory,
+) -> Result<Proof, ProofElaborationError> {
+    proof_expr_to_proof(proof, theory).map_err(|error| ProofElaborationError::InSubproof {
+        form,
+        error: Box::new(error),
+    })
 }
 
 pub(super) fn evaluation_chain_in_theory(

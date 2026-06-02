@@ -6,7 +6,8 @@ mod source;
 
 use crate::{Computation, ComputationDefinitionError, Name, Theorem, Theory};
 
-pub use proof::SourceTheoremError;
+pub use proof::{ProofElaborationError, SourceTheoremError};
+pub use source::ParseError;
 
 pub const REVERSE_ACC: Name = Name(1);
 pub const REVERSE: Name = Name(2);
@@ -19,7 +20,7 @@ pub const APPEND_COMPUTES_TO_LIST: Name = Name(9);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceComputationError {
-    ModuleParseFailed,
+    ModuleParseFailed(ParseError),
     ComputationRejected {
         computation: Name,
         error: ComputationDefinitionError,
@@ -53,9 +54,7 @@ pub fn define_computations_in_theory(theory: &mut Theory) -> bool {
 pub fn try_define_computations_in_theory(
     theory: &mut Theory,
 ) -> Result<(), SourceComputationError> {
-    let Ok(module) = list::module() else {
-        return Err(SourceComputationError::ModuleParseFailed);
-    };
+    let module = list::module().map_err(SourceComputationError::ModuleParseFailed)?;
 
     define_module_computations_result(theory, &module)
 }
@@ -85,9 +84,7 @@ pub fn define_theorems_in_theory(theory: &mut Theory) -> bool {
 }
 
 pub fn try_define_theorems_in_theory(theory: &mut Theory) -> Result<(), SourceTheoremError> {
-    let Ok(module) = list::module() else {
-        return Err(SourceTheoremError::ModuleParseFailed);
-    };
+    let module = list::module().map_err(SourceTheoremError::ModuleParseFailed)?;
 
     define_module_theorems_result(theory, &module)
 }
@@ -205,17 +202,28 @@ mod tests {
         let mut theory = Theory::new();
 
         assert!(!define_theorems_in_theory(&mut theory));
-        assert_eq!(
-            try_define_theorems_in_theory(&mut theory),
-            Err(SourceTheoremError::ProofElaborationFailed {
-                theorem: REVERSE_ACC_COMPUTES_TO_LIST,
-            })
-        );
+        let Err(SourceTheoremError::ProofElaborationFailed { theorem, error }) =
+            try_define_theorems_in_theory(&mut theory)
+        else {
+            panic!("theorem loading should report proof elaboration failure");
+        };
+        assert_eq!(theorem, REVERSE_ACC_COMPUTES_TO_LIST);
+        assert!(proof_error_contains_evaluation_failure(&error));
         assert!(theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(REVERSE_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(REVERSE_NIL_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(APPEND_NIL_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(APPEND_COMPUTES_TO_LIST).is_none());
+    }
+
+    fn proof_error_contains_evaluation_failure(error: &ProofElaborationError) -> bool {
+        match error {
+            ProofElaborationError::EvaluationFailed(_) => true,
+            ProofElaborationError::InSubproof { error, .. } => {
+                proof_error_contains_evaluation_failure(error)
+            }
+            ProofElaborationError::UnknownTheorem(_) => false,
+        }
     }
 
     #[test]
@@ -243,6 +251,41 @@ mod tests {
             Err(SourceTheoremError::TheoremRejected {
                 theorem: Name(99),
                 error: TheoremError::InvalidProof,
+            })
+        );
+    }
+
+    #[test]
+    fn source_theorem_diagnostics_report_unknown_known_theorem() {
+        let module = source::parse_module(
+            "
+            (theorem bad
+              (equal nil nil)
+              (proof (known later)))
+            (theorem later
+              (equal nil nil)
+              (proof (eval-to nil nil)))
+            ",
+            &[],
+            &[
+                source::NameBinding {
+                    spelling: "bad",
+                    name: Name(99),
+                },
+                source::NameBinding {
+                    spelling: "later",
+                    name: Name(100),
+                },
+            ],
+            &[],
+        )
+        .expect("synthetic module should parse");
+
+        assert_eq!(
+            proof::source_theorem_result(module, Name(99), Theory::new()),
+            Err(SourceTheoremError::ProofElaborationFailed {
+                theorem: Name(99),
+                error: ProofElaborationError::UnknownTheorem(Name(100)),
             })
         );
     }

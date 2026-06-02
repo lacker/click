@@ -282,7 +282,7 @@ pub(super) fn checked_source_theorem(name: Name) -> Option<Theorem> {
 }
 
 pub(super) fn checked_source_theorem_result(name: Name) -> Result<Theorem, SourceTheoremError> {
-    let module = module().map_err(|_| SourceTheoremError::ModuleParseFailed)?;
+    let module = module().map_err(SourceTheoremError::ModuleParseFailed)?;
 
     super::proof::source_theorem_result(module, name, super::computation_theory())
 }

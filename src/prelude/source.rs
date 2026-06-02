@@ -139,7 +139,7 @@ impl ParsedModule {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct ParseError {
+pub struct ParseError {
     message: String,
 }
 
@@ -148,6 +148,10 @@ impl ParseError {
         Self {
             message: message.into(),
         }
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 
@@ -1218,7 +1222,7 @@ mod tests {
         let error = parse_module("(def bad x)", &definitions, &[], &[])
             .expect_err("free identifier should fail");
 
-        assert_eq!(error.message, "unknown identifier `x`");
+        assert_eq!(error.message(), "unknown identifier `x`");
     }
 
     #[test]
