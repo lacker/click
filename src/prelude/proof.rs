@@ -147,13 +147,13 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Result<Proof, Proo
         }),
         ProofExpr::ExistsIntro {
             variable,
-            sort,
+            guard,
             body,
             witness,
             proof,
         } => Ok(Proof::ExistsIntro {
             variable: *variable,
-            sort: *sort,
+            guard: guard.clone(),
             body: body.clone(),
             witness: witness.clone(),
             proof: Box::new(subproof("exists-intro proof", proof, theory)?),
@@ -202,11 +202,11 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Result<Proof, Proo
         }),
         ProofExpr::ForAllIntro {
             variable,
-            sort,
+            guard,
             proof,
         } => Ok(Proof::ForAllIntro {
             variable: *variable,
-            sort: *sort,
+            guard: guard.clone(),
             proof: Box::new(subproof("forall-intro proof", proof, theory)?),
         }),
         ProofExpr::ForAllElim { forall, argument } => Ok(Proof::ForAllElim {

@@ -44,22 +44,22 @@
              ((self (tail cell)) right))))))))
 
 (theorem reverse_acc_computes_to_list
-  (forall list list
-    (forall list acc
+  (forall list (is-list list)
+    (forall acc (is-list acc)
       (computes-to-list result (reverse_acc list acc))))
   (proof
     (list-induction list
-      (forall list acc
+      (forall acc (is-list acc)
         (computes-to-list result (reverse_acc list acc)))
-      (forall-intro list acc
-        (exists-intro list result
+      (forall-intro acc (is-list acc)
+        (exists-intro result (is-list result)
           (computes-to (reverse_acc nil acc) result)
           acc
           (eval-to (reverse_acc nil acc) acc)))
       head
       tail
       induction_hypothesis
-      (forall-intro list acc
+      (forall-intro acc (is-list acc)
         (rewrite
           (symm
             (eval-same
@@ -72,10 +72,10 @@
           (computes-to-list result rewrite_target))))))
 
 (theorem reverse_computes_to_list
-  (forall list list
+  (forall list (is-list list)
     (computes-to-list result (reverse list)))
   (proof
-    (forall-intro list list
+    (forall-intro list (is-list list)
       (rewrite
         (symm
           (eval-to
@@ -97,39 +97,39 @@
       nil)))
 
 (theorem append_nil_computes_to_list
-  (forall list right
+  (forall right (is-list right)
     (computes-to-list result (append nil right)))
   (proof
-    (forall-intro list right
-      (exists-intro list result
+    (forall-intro right (is-list right)
+      (exists-intro result (is-list result)
         (computes-to (append nil right) result)
         right
         (eval-to (append nil right) right)))))
 
 (theorem append_computes_to_list
-  (forall list left
-    (forall list right
+  (forall left (is-list left)
+    (forall right (is-list right)
       (computes-to-list result (append left right))))
   (proof
     (list-induction left
-      (forall list right
+      (forall right (is-list right)
         (computes-to-list result (append left right)))
-      (forall-intro list right
-        (exists-intro list result
+      (forall-intro right (is-list right)
+        (exists-intro result (is-list result)
           (computes-to (append nil right) result)
           right
           (eval-to (append nil right) right)))
       head
       tail
       induction_hypothesis
-      (forall-intro list right
+      (forall-intro right (is-list right)
         (exists-elim
           (forall-elim
             (assume induction_hypothesis)
             right)
           tail_result
           tail_result_proof
-          (exists-intro list result
+          (exists-intro result (is-list result)
             (computes-to (append (cons head tail) right) result)
             (cons head tail_result)
             (rewrite
@@ -143,14 +143,14 @@
                 (cons head rewrite_target)))))))))
 
 (theorem append_nil_returns_right
-  (forall list right
+  (forall right (is-list right)
     (computes-to (append nil right) right))
   (proof
-    (forall-intro list right
+    (forall-intro right (is-list right)
       (eval-to (append nil right) right))))
 
 (theorem append_right_nil
-  (forall list left
+  (forall left (is-list left)
     (computes-to (append left nil) left))
   (proof
     (list-induction left

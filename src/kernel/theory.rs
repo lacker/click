@@ -207,19 +207,25 @@ impl Theorem {
         witness: Computation,
         proof: &Self,
     ) -> Option<Self> {
-        Self::exists_intro_sort(variable, Sort::Computation, body, witness, proof)
+        Self::from_proof_without_assumptions(Proof::ExistsIntro {
+            variable,
+            guard: None,
+            body,
+            witness,
+            proof: Box::new(proof.proof.clone()),
+        })
     }
 
-    pub fn exists_intro_sort(
+    pub fn exists_intro_where(
         variable: Symbol,
-        sort: Sort,
+        guard: Prop,
         body: Prop,
         witness: Computation,
         proof: &Self,
     ) -> Option<Self> {
         Self::from_proof_without_assumptions(Proof::ExistsIntro {
             variable,
-            sort,
+            guard: Some(guard),
             body,
             witness,
             proof: Box::new(proof.proof.clone()),
@@ -416,20 +422,26 @@ impl Theory {
         witness: Computation,
         proof: &Theorem,
     ) -> Option<Theorem> {
-        self.exists_intro_sort(variable, Sort::Computation, body, witness, proof)
+        self.theorem_from_proof_without_assumptions(Proof::ExistsIntro {
+            variable,
+            guard: None,
+            body,
+            witness,
+            proof: Box::new(proof.proof.clone()),
+        })
     }
 
-    pub fn exists_intro_sort(
+    pub fn exists_intro_where(
         &self,
         variable: Symbol,
-        sort: Sort,
+        guard: Prop,
         body: Prop,
         witness: Computation,
         proof: &Theorem,
     ) -> Option<Theorem> {
         self.theorem_from_proof_without_assumptions(Proof::ExistsIntro {
             variable,
-            sort,
+            guard: Some(guard),
             body,
             witness,
             proof: Box::new(proof.proof.clone()),

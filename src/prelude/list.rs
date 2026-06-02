@@ -1,8 +1,8 @@
 //! List definitions and theorems for the standard prelude.
 
 use crate::{
-    Computation, ErrorName, Lambda, ListCase, Name, Outcome, Proof, Prop, Sort, Symbol, Theorem,
-    Theory, computes_to, computes_to_list, forall_sort,
+    Computation, ErrorName, Lambda, ListCase, Name, Outcome, Proof, Prop, Symbol, Theorem, Theory,
+    computes_to, computes_to_list, forall_where, is_list,
 };
 
 use super::{
@@ -316,12 +316,12 @@ pub fn append_call(left: Computation, right: Computation) -> Computation {
 /// `result` names the existential result in `computes_to_list` and should be
 /// distinct from `list` and `acc`.
 pub fn reverse_acc_computes_to_list_theorem(list: Symbol, acc: Symbol, result: Symbol) -> Prop {
-    forall_sort(
+    forall_where(
         list,
-        Sort::List,
-        forall_sort(
+        is_list(var(list)),
+        forall_where(
             acc,
-            Sort::List,
+            is_list(var(acc)),
             computes_to_list(result, reverse_acc_call(var(list), var(acc))),
         ),
     )
@@ -332,30 +332,30 @@ pub fn reverse_acc_computes_to_list_theorem(list: Symbol, acc: Symbol, result: S
 /// `result` names the existential result in `computes_to_list` and should be
 /// distinct from `list`.
 pub fn reverse_computes_to_list_theorem(list: Symbol, result: Symbol) -> Prop {
-    forall_sort(
+    forall_where(
         list,
-        Sort::List,
+        is_list(var(list)),
         computes_to_list(result, reverse_call(var(list))),
     )
 }
 
 /// If `right` is a list, then `append(nil, right)` computes to a list.
 pub fn append_nil_computes_to_list_theorem(right: Symbol, result: Symbol) -> Prop {
-    forall_sort(
+    forall_where(
         right,
-        Sort::List,
+        is_list(var(right)),
         computes_to_list(result, append_call(nil(), var(right))),
     )
 }
 
 /// If `left` and `right` are lists, then `append(left, right)` computes to a list.
 pub fn append_computes_to_list_theorem(left: Symbol, right: Symbol, result: Symbol) -> Prop {
-    forall_sort(
+    forall_where(
         left,
-        Sort::List,
-        forall_sort(
+        is_list(var(left)),
+        forall_where(
             right,
-            Sort::List,
+            is_list(var(right)),
             computes_to_list(result, append_call(var(left), var(right))),
         ),
     )
@@ -363,18 +363,18 @@ pub fn append_computes_to_list_theorem(left: Symbol, right: Symbol, result: Symb
 
 /// Appending to `nil` on the left returns the right list exactly.
 pub fn append_nil_returns_right_theorem(right: Symbol) -> Prop {
-    forall_sort(
+    forall_where(
         right,
-        Sort::List,
+        is_list(var(right)),
         computes_to(append_call(nil(), var(right)), var(right)),
     )
 }
 
 /// Appending `nil` on the right returns the left list exactly.
 pub fn append_right_nil_theorem(left: Symbol) -> Prop {
-    forall_sort(
+    forall_where(
         left,
-        Sort::List,
+        is_list(var(left)),
         computes_to(append_call(var(left), nil()), var(left)),
     )
 }
@@ -466,7 +466,7 @@ pub fn check_evaluates_to_in_theory(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Effect, Proof, RUNTIME_ERROR, Value, computes_to, diverges, exists_sort};
+    use crate::{Effect, Proof, RUNTIME_ERROR, Value, computes_to, diverges, exists_where};
 
     const A: Symbol = Symbol(100);
     const B: Symbol = Symbol(101);
@@ -495,15 +495,15 @@ mod tests {
     fn reverse_acc_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             reverse_acc_computes_to_list_theorem(X, ACCUMULATOR, RESULT),
-            forall_sort(
+            forall_where(
                 X,
-                Sort::List,
-                forall_sort(
+                is_list(var(X)),
+                forall_where(
                     ACCUMULATOR,
-                    Sort::List,
-                    exists_sort(
+                    is_list(var(ACCUMULATOR)),
+                    exists_where(
                         RESULT,
-                        Sort::List,
+                        is_list(var(RESULT)),
                         computes_to(reverse_acc_call(var(X), var(ACCUMULATOR)), var(RESULT)),
                     ),
                 ),
@@ -527,12 +527,12 @@ mod tests {
     fn reverse_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             reverse_computes_to_list_theorem(X, RESULT),
-            forall_sort(
+            forall_where(
                 X,
-                Sort::List,
-                exists_sort(
+                is_list(var(X)),
+                exists_where(
                     RESULT,
-                    Sort::List,
+                    is_list(var(RESULT)),
                     computes_to(reverse_call(var(X)), var(RESULT)),
                 ),
             )
@@ -564,12 +564,12 @@ mod tests {
     fn append_nil_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             append_nil_computes_to_list_theorem(X, RESULT),
-            forall_sort(
+            forall_where(
                 X,
-                Sort::List,
-                exists_sort(
+                is_list(var(X)),
+                exists_where(
                     RESULT,
-                    Sort::List,
+                    is_list(var(RESULT)),
                     computes_to(append_call(nil(), var(X)), var(RESULT)),
                 ),
             )
@@ -590,12 +590,16 @@ mod tests {
     #[test]
     fn append_computes_to_list_theorem_has_expected_shape() {
         let appended = append_call(var(X), var(ACCUMULATOR));
-        let right_case = exists_sort(RESULT, Sort::List, computes_to(appended, var(RESULT)));
-        let left_case = forall_sort(ACCUMULATOR, Sort::List, right_case);
+        let right_case = exists_where(
+            RESULT,
+            is_list(var(RESULT)),
+            computes_to(appended, var(RESULT)),
+        );
+        let left_case = forall_where(ACCUMULATOR, is_list(var(ACCUMULATOR)), right_case);
 
         assert_eq!(
             append_computes_to_list_theorem(X, ACCUMULATOR, RESULT),
-            forall_sort(X, Sort::List, left_case)
+            forall_where(X, is_list(var(X)), left_case)
         );
     }
 

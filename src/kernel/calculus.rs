@@ -75,15 +75,6 @@ pub enum Outcome {
     Effect(Effect),
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum Sort {
-    Computation,
-    Value,
-    List,
-    Effect,
-    Outcome,
-}
-
 impl Computation {
     pub fn as_list_value(&self) -> Option<ListValue> {
         match self {
@@ -260,15 +251,19 @@ pub enum Step {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Prop {
     Equal(Computation, Computation),
+    IsValue(Computation),
+    IsList(Computation),
+    IsEffect(Computation),
+    IsOutcome(Computation),
     Implies(Box<Prop>, Box<Prop>),
     ForAll {
         variable: Symbol,
-        sort: Sort,
+        guard: Option<Box<Prop>>,
         body: Box<Prop>,
     },
     Exists {
         variable: Symbol,
-        sort: Sort,
+        guard: Option<Box<Prop>>,
         body: Box<Prop>,
     },
     And(Box<Prop>, Box<Prop>),
@@ -310,7 +305,7 @@ pub enum Proof {
     },
     ForAllIntro {
         variable: Symbol,
-        sort: Sort,
+        guard: Option<Prop>,
         proof: Box<Proof>,
     },
     ForAllElim {
@@ -319,7 +314,7 @@ pub enum Proof {
     },
     ExistsIntro {
         variable: Symbol,
-        sort: Sort,
+        guard: Option<Prop>,
         body: Prop,
         witness: Computation,
         proof: Box<Proof>,
@@ -354,36 +349,60 @@ pub fn equal(left: Computation, right: Computation) -> Prop {
     Prop::Equal(left, right)
 }
 
+pub fn is_value(computation: Computation) -> Prop {
+    Prop::IsValue(computation)
+}
+
+pub fn is_list(computation: Computation) -> Prop {
+    Prop::IsList(computation)
+}
+
+pub fn is_effect(computation: Computation) -> Prop {
+    Prop::IsEffect(computation)
+}
+
+pub fn is_outcome(computation: Computation) -> Prop {
+    Prop::IsOutcome(computation)
+}
+
 pub fn implies(premise: Prop, conclusion: Prop) -> Prop {
     Prop::Implies(Box::new(premise), Box::new(conclusion))
 }
 
 pub fn forall(variable: Symbol, body: Prop) -> Prop {
-    forall_sort(variable, Sort::Computation, body)
-}
-
-pub fn forall_sort(variable: Symbol, sort: Sort, body: Prop) -> Prop {
     Prop::ForAll {
         variable,
-        sort,
+        guard: None,
+        body: Box::new(body),
+    }
+}
+
+pub fn forall_where(variable: Symbol, guard: Prop, body: Prop) -> Prop {
+    Prop::ForAll {
+        variable,
+        guard: Some(Box::new(guard)),
         body: Box::new(body),
     }
 }
 
 pub fn exists(variable: Symbol, body: Prop) -> Prop {
-    exists_sort(variable, Sort::Computation, body)
-}
-
-pub fn exists_sort(variable: Symbol, sort: Sort, body: Prop) -> Prop {
     Prop::Exists {
         variable,
-        sort,
+        guard: None,
+        body: Box::new(body),
+    }
+}
+
+pub fn exists_where(variable: Symbol, guard: Prop, body: Prop) -> Prop {
+    Prop::Exists {
+        variable,
+        guard: Some(Box::new(guard)),
         body: Box::new(body),
     }
 }
 
 pub fn exists_value(variable: Symbol, body: Prop) -> Prop {
-    exists_sort(variable, Sort::Value, body)
+    exists_where(variable, is_value(Computation::Var(variable)), body)
 }
 
 pub fn and(left: Prop, right: Prop) -> Prop {
@@ -420,9 +439,9 @@ pub fn terminates(variable: Symbol, computation: Computation) -> Prop {
 
 /// `variable` names the existential list value and should be fresh for `computation`.
 pub fn computes_to_list(variable: Symbol, computation: Computation) -> Prop {
-    exists_sort(
+    exists_where(
         variable,
-        Sort::List,
+        is_list(Computation::Var(variable)),
         computes_to(computation, Computation::Var(variable)),
     )
 }

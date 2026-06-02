@@ -142,7 +142,7 @@ fn alpha_eq_computation_renames_lambda_and_list_case_binders() {
 fn checker_accepts_alpha_equivalent_goal() {
     let proof = Proof::ForAllIntro {
         variable: Symbol(1),
-        sort: Sort::Computation,
+        guard: None,
         proof: Box::new(Proof::Refl(Computation::Var(Symbol(1)))),
     };
     let expected = forall(
@@ -666,7 +666,7 @@ fn theorem_first_order_rules_build_checked_theorems() {
     let universal = Theorem::from_proof(
         Proof::ForAllIntro {
             variable: Symbol(1),
-            sort: Sort::Computation,
+            guard: None,
             proof: Box::new(Proof::Refl(Computation::Var(Symbol(1)))),
         },
         forall(
@@ -687,19 +687,25 @@ fn theorem_first_order_rules_build_checked_theorems() {
 }
 
 #[test]
-fn theorem_exists_intro_supports_explicit_sorts() {
+fn theorem_exists_intro_supports_guarded_witnesses() {
     let variable = Symbol(1);
     let body = equal(Computation::Var(variable), Computation::Nil);
     let proof = Theorem::refl(Computation::Nil).expect("closed refl should check");
-    let theorem =
-        Theorem::exists_intro_sort(variable, Sort::List, body.clone(), Computation::Nil, &proof)
-            .expect("nil is a list witness");
+    let guard = is_list(Computation::Var(variable));
+    let theorem = Theorem::exists_intro_where(
+        variable,
+        guard.clone(),
+        body.clone(),
+        Computation::Nil,
+        &proof,
+    )
+    .expect("nil is a list witness");
 
-    assert_eq!(theorem.prop(), &exists_sort(variable, Sort::List, body));
+    assert_eq!(theorem.prop(), &exists_where(variable, guard.clone(), body));
     assert!(
-        Theorem::exists_intro_sort(
+        Theorem::exists_intro_where(
             variable,
-            Sort::List,
+            guard,
             equal(Computation::Var(variable), Computation::Quote(Symbol(2))),
             Computation::Quote(Symbol(2)),
             &Theorem::refl(Computation::Quote(Symbol(2))).expect("closed refl should check"),
@@ -752,7 +758,7 @@ fn step_proof_reduces_arguments_before_beta() {
 }
 
 #[test]
-fn sorted_beta_requires_value_arguments() {
+fn guarded_beta_requires_value_arguments() {
     let variable = Symbol(1);
     let lambda_value = Lambda {
         parameter: Symbol(2),
@@ -764,17 +770,17 @@ fn sorted_beta_requires_value_arguments() {
     );
     let proof = Proof::ForAllIntro {
         variable,
-        sort: Sort::Value,
+        guard: Some(is_value(Computation::Var(variable))),
         proof: Box::new(Proof::Step(application.clone())),
     };
-    let expected = forall_sort(
+    let expected = forall_where(
         variable,
-        Sort::Value,
+        is_value(Computation::Var(variable)),
         equal(application, Computation::Var(variable)),
     );
-    let computation_sorted_proof = Proof::ForAllIntro {
+    let unguarded_proof = Proof::ForAllIntro {
         variable,
-        sort: Sort::Computation,
+        guard: None,
         proof: Box::new(Proof::Step(apply(
             Computation::Lambda(lambda_value),
             Computation::Var(variable),
@@ -783,7 +789,7 @@ fn sorted_beta_requires_value_arguments() {
 
     assert!(check(&proof, &expected));
     assert!(!check(
-        &computation_sorted_proof,
+        &unguarded_proof,
         &forall(
             variable,
             equal(
@@ -798,7 +804,7 @@ fn sorted_beta_requires_value_arguments() {
 }
 
 #[test]
-fn sorted_list_reductions_require_list_arguments() {
+fn guarded_list_reductions_require_list_arguments() {
     let head_symbol = Symbol(1);
     let tail_symbol = Symbol(2);
     let list = cons(Computation::Var(head_symbol), Computation::Var(tail_symbol));
@@ -812,10 +818,10 @@ fn sorted_list_reductions_require_list_arguments() {
     let destructured_head = head(list.clone());
     let proof = Proof::ForAllIntro {
         variable: head_symbol,
-        sort: Sort::Value,
+        guard: Some(is_value(Computation::Var(head_symbol))),
         proof: Box::new(Proof::ForAllIntro {
             variable: tail_symbol,
-            sort: Sort::List,
+            guard: Some(is_list(Computation::Var(tail_symbol))),
             proof: Box::new(Proof::Steps(vec![
                 destructure.clone(),
                 destructured_head,
@@ -823,21 +829,21 @@ fn sorted_list_reductions_require_list_arguments() {
             ])),
         }),
     };
-    let expected = forall_sort(
+    let expected = forall_where(
         head_symbol,
-        Sort::Value,
-        forall_sort(
+        is_value(Computation::Var(head_symbol)),
+        forall_where(
             tail_symbol,
-            Sort::List,
+            is_list(Computation::Var(tail_symbol)),
             equal(destructure, Computation::Var(head_symbol)),
         ),
     );
-    let unsorted_tail_proof = Proof::ForAllIntro {
+    let unguarded_tail_proof = Proof::ForAllIntro {
         variable: head_symbol,
-        sort: Sort::Value,
+        guard: Some(is_value(Computation::Var(head_symbol))),
         proof: Box::new(Proof::ForAllIntro {
             variable: tail_symbol,
-            sort: Sort::Computation,
+            guard: None,
             proof: Box::new(Proof::Step(list_case(
                 list,
                 Computation::Quote(Symbol(0)),
@@ -849,10 +855,10 @@ fn sorted_list_reductions_require_list_arguments() {
 
     assert!(check(&proof, &expected));
     assert!(!check(
-        &unsorted_tail_proof,
-        &forall_sort(
+        &unguarded_tail_proof,
+        &forall_where(
             head_symbol,
-            Sort::Value,
+            is_value(Computation::Var(head_symbol)),
             forall(
                 tail_symbol,
                 equal(
@@ -888,7 +894,7 @@ fn list_induction_proves_reflexivity_for_lists() {
             Computation::Var(tail),
         ))),
     };
-    let expected = forall_sort(variable, Sort::List, property);
+    let expected = forall_where(variable, is_list(Computation::Var(variable)), property);
 
     assert!(check(&proof, &expected));
 }
@@ -909,7 +915,7 @@ fn list_induction_rejects_stale_step_variables() {
         induction_hypothesis_assumption,
         step: Box::new(Proof::Assume(induction_hypothesis_assumption)),
     };
-    let expected = forall_sort(variable, Sort::List, property);
+    let expected = forall_where(variable, is_list(Computation::Var(variable)), property);
 
     assert!(!check(&proof, &expected));
 }
@@ -944,7 +950,7 @@ fn forall_intro_and_elim_work() {
     let proof = Proof::ForAllElim {
         forall: Box::new(Proof::ForAllIntro {
             variable: Symbol(1),
-            sort: Sort::Computation,
+            guard: None,
             proof: Box::new(Proof::Refl(Computation::Var(Symbol(1)))),
         }),
         argument: Computation::Quote(Symbol(2)),
@@ -963,7 +969,7 @@ fn exists_intro_and_elim_work() {
     let proof = Proof::ExistsElim {
         existential: Box::new(Proof::ExistsIntro {
             variable: Symbol(1),
-            sort: Sort::Computation,
+            guard: None,
             body,
             witness: Computation::Quote(Symbol(2)),
             proof: Box::new(Proof::Refl(Computation::Quote(Symbol(2)))),
@@ -1026,7 +1032,7 @@ fn exists_intro_uses_witness() {
     let body = equal(Computation::Var(Symbol(1)), Computation::Var(Symbol(1)));
     let proof = Proof::ExistsIntro {
         variable: Symbol(1),
-        sort: Sort::Computation,
+        guard: None,
         body: body.clone(),
         witness: Computation::Quote(Symbol(2)),
         proof: Box::new(Proof::Refl(Computation::Quote(Symbol(2)))),
@@ -1056,9 +1062,9 @@ fn prop_helpers_construct_expected_shapes() {
     );
     assert_eq!(
         computes_to_list(Symbol(9), computation.clone()),
-        exists_sort(
+        exists_where(
             Symbol(9),
-            Sort::List,
+            is_list(Computation::Var(Symbol(9))),
             computes_to(computation.clone(), Computation::Var(Symbol(9))),
         )
     );

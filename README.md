@@ -34,28 +34,29 @@ So it's okay if the kernel feels like a "pile of different algebraic types".
 The kernel lives in `src/kernel/`:
 
 - `calculus.rs` defines the core calculus entities: `Computation`, `Value`,
-  `ErrorName`, `Effect`, `Outcome`, `Sort`, `Prop`, and `Proof`.
+  `ErrorName`, `Effect`, `Outcome`, `Prop`, and `Proof`.
 - `eval.rs` implements reduction and normalization for computations.
 - `check.rs` implements substitution, alpha-equivalence, and the primitive proof
   rules.
 - `theory.rs` contains the logistical LCF-style layer: `Theory`, `Theorem`,
   `Context`, and named bindings.
 
-Propositions can still talk about arbitrary computations, because quantified
-variables can be sorted as computations. Rust APIs that require a concrete
-finalized result use `Value`, `Effect`, or `Outcome`. Errors are named effects,
-not a second channel for returning structured values.
+Propositions can talk about arbitrary computations. Quantifiers may be
+unguarded, or guarded by propositions such as `is-value`, `is-list`,
+`is-effect`, and `is-outcome`. Rust APIs that require a concrete finalized
+result use `Value`, `Effect`, or `Outcome`. Errors are named effects, not a
+second channel for returning structured values.
 
-Kernel variables are sorted. A sort is the range of a bound variable:
-`Computation`, `Value`, `List`, `Effect`, or `Outcome`. Sorts are not Click's
-structural types; they are kernel-level categories needed by primitive proof
-rules and substitution.
+Kernel variables are computation variables. Facts about those variables live in
+propositions, including quantifier guards and local proof assumptions. This
+keeps the kernel from having a second built-in "type-ish" bookkeeping layer
+beside ordinary propositions.
 
 List values are proper by construction: `nil` and `cons` build list values, and
 a finalized cons tail must itself be a list. Raw computations can still contain
-open or malformed cons-shaped expressions until evaluation and sort reasoning
-settle them. The kernel uses list-sorted quantification and list induction to
-reason over list values, rather than a separate `IsList` proposition.
+open or malformed cons-shaped expressions until evaluation and proof reasoning
+settle them. The kernel uses `is-list` guards and list induction to reason over
+list values.
 
 The core calculus can contain opaque names. The logistical layer gives those
 names meaning by binding them to computations or theorems. Human-facing spelling,
@@ -71,7 +72,7 @@ quantifier bodies, and proof checking under local assumptions. Kernel theorems
 are closed: a `Theorem` can only be constructed when its proposition has no
 free variables. Named computation definitions are also closed. Concrete
 `Value`, `Effect`, and `Outcome` values have no variable form; an open value is
-represented as a computation variable bound with `Sort::Value`.
+represented as a computation variable plus a proposition such as `is-value`.
 
 The standard prelude is just a theory built on top of the kernel. It currently
 contains the list definitions for `reverse_acc`, `reverse`, and `append`, plus

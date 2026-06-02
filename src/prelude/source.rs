@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    Computation, ErrorName, Lambda, ListCase, Name, Prop, Sort, Symbol, and, computes_to,
-    computes_to_list, diverges, equal, errors_with, exists_sort, forall_sort, implies, or,
+    Computation, ErrorName, Lambda, ListCase, Name, Prop, Symbol, and, computes_to,
+    computes_to_list, diverges, equal, errors_with, exists, exists_where, forall, forall_where,
+    implies, is_effect, is_list, is_outcome, is_value, or,
 };
 
 const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
@@ -103,7 +104,7 @@ pub(super) enum ProofExpr {
     },
     ExistsIntro {
         variable: Symbol,
-        sort: Sort,
+        guard: Option<Prop>,
         body: Prop,
         witness: Computation,
         proof: Box<ProofExpr>,
@@ -128,7 +129,7 @@ pub(super) enum ProofExpr {
     },
     ForAllIntro {
         variable: Symbol,
-        sort: Sort,
+        guard: Option<Prop>,
         proof: Box<ProofExpr>,
     },
     ForAllElim {
@@ -413,14 +414,22 @@ fn error_name(expression: &Expr) -> Result<ErrorName, ParseError> {
     Ok(ErrorName(parse_u64(atom(expression)?)?))
 }
 
-fn sort(atom: &str) -> Result<Sort, ParseError> {
+#[derive(Clone, Copy)]
+enum GuardSyntax<'a> {
+    None,
+    Shorthand(&'a str),
+    Prop(&'a Expr),
+}
+
+fn primitive_guard(atom: &str, variable: Symbol) -> Result<Option<Prop>, ParseError> {
+    let variable = Computation::Var(variable);
     match atom {
-        "computation" => Ok(Sort::Computation),
-        "value" => Ok(Sort::Value),
-        "list" => Ok(Sort::List),
-        "effect" => Ok(Sort::Effect),
-        "outcome" => Ok(Sort::Outcome),
-        _ => Err(ParseError::new(format!("unknown sort `{atom}`"))),
+        "computation" => Ok(None),
+        "value" => Ok(Some(is_value(variable))),
+        "list" => Ok(Some(is_list(variable))),
+        "effect" => Ok(Some(is_effect(variable))),
+        "outcome" => Ok(Some(is_outcome(variable))),
+        _ => Err(ParseError::new(format!("unknown predicate guard `{atom}`"))),
     }
 }
 
@@ -678,6 +687,10 @@ impl<'a> SourceParser<'a> {
             "computes-to-list" => self.computes_to_list(items, symbol_mode),
             "errors-with" => self.errors_with(items),
             "diverges" => self.diverges(items),
+            "is-value" => self.is_value(items),
+            "is-list" => self.is_list(items),
+            "is-effect" => self.is_effect(items),
+            "is-outcome" => self.is_outcome(items),
             _ => Err(ParseError::new(format!("unknown proposition `{form}`"))),
         }
     }
@@ -707,9 +720,16 @@ impl<'a> SourceParser<'a> {
     }
 
     fn forall(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
-        let (sort, variable, body) = match items.len() {
-            3 => (Sort::Computation, atom(&items[1])?, &items[2]),
-            4 => (sort(atom(&items[1])?)?, atom(&items[2])?, &items[3]),
+        let (variable, guard, body) = match items.len() {
+            3 => (atom(&items[1])?, GuardSyntax::None, &items[2]),
+            4 => match &items[2] {
+                Expr::List(_) => (atom(&items[1])?, GuardSyntax::Prop(&items[2]), &items[3]),
+                Expr::Atom(_) => (
+                    atom(&items[2])?,
+                    GuardSyntax::Shorthand(atom(&items[1])?),
+                    &items[3],
+                ),
+            },
             _ => {
                 return Err(ParseError::new(format!(
                     "`forall` expects 2 or 3 arguments, got {}",
@@ -719,16 +739,27 @@ impl<'a> SourceParser<'a> {
         };
         let symbol = self.prop_symbol(variable, symbol_mode)?;
         self.push_variable(variable, symbol);
+        let guard = self.quantifier_guard(guard, symbol, symbol_mode)?;
         let body = self.prop_with_symbols(body, symbol_mode)?;
         self.pop_variable();
 
-        Ok(forall_sort(symbol, sort, body))
+        match guard {
+            Some(guard) => Ok(forall_where(symbol, guard, body)),
+            None => Ok(forall(symbol, body)),
+        }
     }
 
     fn exists(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
-        let (sort, variable, body) = match items.len() {
-            3 => (Sort::Computation, atom(&items[1])?, &items[2]),
-            4 => (sort(atom(&items[1])?)?, atom(&items[2])?, &items[3]),
+        let (variable, guard, body) = match items.len() {
+            3 => (atom(&items[1])?, GuardSyntax::None, &items[2]),
+            4 => match &items[2] {
+                Expr::List(_) => (atom(&items[1])?, GuardSyntax::Prop(&items[2]), &items[3]),
+                Expr::Atom(_) => (
+                    atom(&items[2])?,
+                    GuardSyntax::Shorthand(atom(&items[1])?),
+                    &items[3],
+                ),
+            },
             _ => {
                 return Err(ParseError::new(format!(
                     "`exists` expects 2 or 3 arguments, got {}",
@@ -738,10 +769,14 @@ impl<'a> SourceParser<'a> {
         };
         let symbol = self.prop_symbol(variable, symbol_mode)?;
         self.push_variable(variable, symbol);
+        let guard = self.quantifier_guard(guard, symbol, symbol_mode)?;
         let body = self.prop_with_symbols(body, symbol_mode)?;
         self.pop_variable();
 
-        Ok(exists_sort(symbol, sort, body))
+        match guard {
+            Some(guard) => Ok(exists_where(symbol, guard, body)),
+            None => Ok(exists(symbol, body)),
+        }
     }
 
     fn and(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
@@ -783,6 +818,39 @@ impl<'a> SourceParser<'a> {
     fn diverges(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
         expect_len("diverges", items, 2)?;
         Ok(diverges(self.computation(&items[1])?))
+    }
+
+    fn is_value(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("is-value", items, 2)?;
+        Ok(is_value(self.computation(&items[1])?))
+    }
+
+    fn is_list(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("is-list", items, 2)?;
+        Ok(is_list(self.computation(&items[1])?))
+    }
+
+    fn is_effect(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("is-effect", items, 2)?;
+        Ok(is_effect(self.computation(&items[1])?))
+    }
+
+    fn is_outcome(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("is-outcome", items, 2)?;
+        Ok(is_outcome(self.computation(&items[1])?))
+    }
+
+    fn quantifier_guard(
+        &mut self,
+        guard: GuardSyntax<'_>,
+        variable: Symbol,
+        symbol_mode: PropSymbolMode,
+    ) -> Result<Option<Prop>, ParseError> {
+        match guard {
+            GuardSyntax::None => Ok(None),
+            GuardSyntax::Shorthand(atom) => primitive_guard(atom, variable),
+            GuardSyntax::Prop(prop) => Ok(Some(self.prop_with_symbols(prop, symbol_mode)?)),
+        }
     }
 
     fn proof_script(&mut self, expression: &Expr) -> Result<ProofScript, ParseError> {
@@ -945,21 +1013,30 @@ impl<'a> SourceParser<'a> {
     }
 
     fn proof_exists_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        let (sort, variable, body, witness, proof) = match items.len() {
+        let (variable, guard, body, witness, proof) = match items.len() {
             5 => (
-                Sort::Computation,
                 &items[1],
+                GuardSyntax::None,
                 &items[2],
                 &items[3],
                 &items[4],
             ),
-            6 => (
-                sort(atom(&items[1])?)?,
-                &items[2],
-                &items[3],
-                &items[4],
-                &items[5],
-            ),
+            6 => match &items[2] {
+                Expr::List(_) => (
+                    &items[1],
+                    GuardSyntax::Prop(&items[2]),
+                    &items[3],
+                    &items[4],
+                    &items[5],
+                ),
+                Expr::Atom(_) => (
+                    &items[2],
+                    GuardSyntax::Shorthand(atom(&items[1])?),
+                    &items[3],
+                    &items[4],
+                    &items[5],
+                ),
+            },
             _ => {
                 return Err(ParseError::new(format!(
                     "`exists-intro` expects 4 or 5 arguments, got {}",
@@ -967,9 +1044,10 @@ impl<'a> SourceParser<'a> {
                 )));
             }
         };
+        let variable = self.proof_symbol(atom(variable)?)?;
         Ok(ProofExpr::ExistsIntro {
-            variable: self.proof_symbol(atom(variable)?)?,
-            sort,
+            variable,
+            guard: self.quantifier_guard(guard, variable, PropSymbolMode::Reference)?,
             body: self.proof_prop(body)?,
             witness: self.computation(witness)?,
             proof: Box::new(self.proof_expr(proof)?),
@@ -1009,9 +1087,16 @@ impl<'a> SourceParser<'a> {
     }
 
     fn proof_forall_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        let (sort, variable, proof) = match items.len() {
-            3 => (Sort::Computation, &items[1], &items[2]),
-            4 => (sort(atom(&items[1])?)?, &items[2], &items[3]),
+        let (variable, guard, proof) = match items.len() {
+            3 => (&items[1], GuardSyntax::None, &items[2]),
+            4 => match &items[2] {
+                Expr::List(_) => (&items[1], GuardSyntax::Prop(&items[2]), &items[3]),
+                Expr::Atom(_) => (
+                    &items[2],
+                    GuardSyntax::Shorthand(atom(&items[1])?),
+                    &items[3],
+                ),
+            },
             _ => {
                 return Err(ParseError::new(format!(
                     "`forall-intro` expects 2 or 3 arguments, got {}",
@@ -1019,9 +1104,10 @@ impl<'a> SourceParser<'a> {
                 )));
             }
         };
+        let variable = self.proof_symbol(atom(variable)?)?;
         Ok(ProofExpr::ForAllIntro {
-            variable: self.proof_symbol(atom(variable)?)?,
-            sort,
+            variable,
+            guard: self.quantifier_guard(guard, variable, PropSymbolMode::Reference)?,
             proof: Box::new(self.proof_expr(proof)?),
         })
     }
@@ -1199,9 +1285,8 @@ mod tests {
                 ],
                 theorems: vec![ParsedTheorem {
                     name: Name(3),
-                    prop: forall_sort(
+                    prop: forall(
                         Symbol(2_000),
-                        Sort::Computation,
                         computes_to(
                             Computation::Apply {
                                 function: Box::new(Computation::Ref(Name(2))),
@@ -1212,7 +1297,7 @@ mod tests {
                     ),
                     proof: ProofScript::Proof(ProofExpr::ForAllIntro {
                         variable: Symbol(2_000),
-                        sort: Sort::Computation,
+                        guard: None,
                         proof: Box::new(ProofExpr::EvalTo {
                             computation: Computation::Apply {
                                 function: Box::new(Computation::Ref(Name(2))),
@@ -1299,11 +1384,11 @@ mod tests {
                 "
                 (def use_id nil)
                 (theorem use_id_computes_to_list
-                  (forall list x
+                  (forall x (is-list x)
                     (computes-to-list result (use_id x)))
                   (proof
-                    (forall-intro list x
-                      (exists-intro list result
+                    (forall-intro x (is-list x)
+                      (exists-intro result (is-list result)
                         (computes-to (use_id x) result)
                         x
                         (eval-to (use_id x) x)))))
@@ -1316,9 +1401,9 @@ mod tests {
                 computations: vec![(Name(2), Computation::Nil)],
                 theorems: vec![ParsedTheorem {
                     name: Name(3),
-                    prop: forall_sort(
+                    prop: forall_where(
                         Symbol(2_000),
-                        Sort::List,
+                        is_list(Computation::Var(Symbol(2_000))),
                         computes_to_list(
                             Symbol(2_001),
                             Computation::Apply {
@@ -1329,10 +1414,10 @@ mod tests {
                     ),
                     proof: ProofScript::Proof(ProofExpr::ForAllIntro {
                         variable: Symbol(2_000),
-                        sort: Sort::List,
+                        guard: Some(is_list(Computation::Var(Symbol(2_000)))),
                         proof: Box::new(ProofExpr::ExistsIntro {
                             variable: Symbol(2_001),
-                            sort: Sort::List,
+                            guard: Some(is_list(Computation::Var(Symbol(2_001)))),
                             body: computes_to(
                                 Computation::Apply {
                                     function: Box::new(Computation::Ref(Name(2))),
