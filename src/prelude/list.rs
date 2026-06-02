@@ -6,7 +6,7 @@ use crate::{
 };
 
 use super::{
-    APPEND, APPEND_COMPUTES_TO_LIST, APPEND_CONS, APPEND_NIL_COMPUTES_TO_LIST,
+    APPEND, APPEND_ASSOC, APPEND_COMPUTES_TO_LIST, APPEND_CONS, APPEND_NIL_COMPUTES_TO_LIST,
     APPEND_NIL_RETURNS_RIGHT, APPEND_RIGHT_NIL, APPEND_SINGLETON, REVERSE, REVERSE_ACC,
     REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST, REVERSE_NIL_COMPUTES_TO_LIST,
     SourceTheoremError,
@@ -85,6 +85,10 @@ pub(super) const MODULE: ModuleSpec = ModuleSpec {
         super::source::NameBinding {
             spelling: "append_singleton",
             name: APPEND_SINGLETON,
+        },
+        super::source::NameBinding {
+            spelling: "append_assoc",
+            name: APPEND_ASSOC,
         },
     ],
     symbols: &[
@@ -282,6 +286,10 @@ pub fn append_singleton_source_theorem() -> Prop {
     theorem_prop(APPEND_SINGLETON)
 }
 
+pub fn append_assoc_source_theorem() -> Prop {
+    theorem_prop(APPEND_ASSOC)
+}
+
 fn theorem_prop(name: Name) -> Prop {
     theorem_definition(name).prop
 }
@@ -427,6 +435,26 @@ pub fn append_singleton_theorem(head: Symbol, right: Symbol) -> Prop {
             computes_to(
                 append_call(singleton(var(head)), var(right)),
                 cons(var(head), var(right)),
+            ),
+        ),
+    )
+}
+
+/// Appending lists is associative.
+pub fn append_assoc_theorem(left: Symbol, middle: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_list(var(left)),
+        forall_where(
+            middle,
+            is_list(var(middle)),
+            forall_where(
+                right,
+                is_list(var(right)),
+                computes_to(
+                    append_call(append_call(var(left), var(middle)), var(right)),
+                    append_call(var(left), append_call(var(middle), var(right))),
+                ),
             ),
         ),
     )
@@ -757,6 +785,41 @@ mod tests {
     }
 
     #[test]
+    fn append_assoc_theorem_has_expected_shape() {
+        assert_eq!(
+            append_assoc_theorem(X, ACCUMULATOR, RIGHT_LIST),
+            forall_where(
+                X,
+                is_list(var(X)),
+                forall_where(
+                    ACCUMULATOR,
+                    is_list(var(ACCUMULATOR)),
+                    forall_where(
+                        RIGHT_LIST,
+                        is_list(var(RIGHT_LIST)),
+                        computes_to(
+                            append_call(append_call(var(X), var(ACCUMULATOR)), var(RIGHT_LIST)),
+                            append_call(var(X), append_call(var(ACCUMULATOR), var(RIGHT_LIST))),
+                        ),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn append_assoc_source_theorem_has_expected_shape() {
+        let left = theorem_symbol(APPEND_ASSOC, "left");
+        let middle = theorem_symbol(APPEND_ASSOC, "middle");
+        let right = theorem_symbol(APPEND_ASSOC, "right");
+
+        assert_eq!(
+            append_assoc_source_theorem(),
+            append_assoc_theorem(left, middle, right)
+        );
+    }
+
+    #[test]
     fn reverse_source_theorem_uses_source_proof_script() {
         assert!(matches!(
             theorem_definition(REVERSE_ACC_COMPUTES_TO_LIST).proof,
@@ -792,6 +855,10 @@ mod tests {
         ));
         assert!(matches!(
             theorem_definition(APPEND_SINGLETON).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(APPEND_ASSOC).proof,
             ProofScript::Proof(_)
         ));
     }
@@ -844,6 +911,19 @@ mod tests {
         assert_evaluates(
             append_call(singleton(quote(A)), pair(quote(B), quote(NOT_A_LIST))),
             value(triple(quote(A), quote(B), quote(NOT_A_LIST))),
+        );
+    }
+
+    #[test]
+    fn append_assoc_theorem_example() {
+        let left = singleton(quote(A));
+        let middle = singleton(quote(B));
+        let right = singleton(quote(NOT_A_LIST));
+        let expected = triple(quote(A), quote(B), quote(NOT_A_LIST));
+
+        assert_evaluates(
+            append_call(append_call(left, middle), right),
+            value(expected),
         );
     }
 

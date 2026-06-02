@@ -21,6 +21,7 @@ pub const APPEND_NIL_RETURNS_RIGHT: Name = Name(10);
 pub const APPEND_RIGHT_NIL: Name = Name(11);
 pub const APPEND_CONS: Name = Name(12);
 pub const APPEND_SINGLETON: Name = Name(13);
+pub const APPEND_ASSOC: Name = Name(14);
 
 const MODULES: &[source::ModuleSpec] = &[list::MODULE];
 
@@ -190,6 +191,10 @@ pub fn append_singleton() -> Option<Theorem> {
     list::checked_source_theorem(APPEND_SINGLETON)
 }
 
+pub fn append_assoc() -> Option<Theorem> {
+    list::checked_source_theorem(APPEND_ASSOC)
+}
+
 pub fn reverse_acc() -> Computation {
     Computation::Ref(REVERSE_ACC)
 }
@@ -257,6 +262,7 @@ mod tests {
         assert!(theory.theorem(APPEND_RIGHT_NIL).is_none());
         assert!(theory.theorem(APPEND_CONS).is_none());
         assert!(theory.theorem(APPEND_SINGLETON).is_none());
+        assert!(theory.theorem(APPEND_ASSOC).is_none());
     }
 
     #[test]
@@ -312,6 +318,7 @@ mod tests {
         assert!(theory.theorem(APPEND_RIGHT_NIL).is_none());
         assert!(theory.theorem(APPEND_CONS).is_none());
         assert!(theory.theorem(APPEND_SINGLETON).is_none());
+        assert!(theory.theorem(APPEND_ASSOC).is_none());
     }
 
     #[test]
@@ -432,6 +439,7 @@ mod tests {
         let append_right_nil_prop = list::append_right_nil_source_theorem();
         let append_cons_prop = list::append_cons_source_theorem();
         let append_singleton_prop = list::append_singleton_source_theorem();
+        let append_assoc_prop = list::append_assoc_source_theorem();
 
         assert_eq!(
             theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST),
@@ -463,6 +471,7 @@ mod tests {
             theory.theorem(APPEND_SINGLETON),
             Some(&append_singleton_prop)
         );
+        assert_eq!(theory.theorem(APPEND_ASSOC), Some(&append_assoc_prop));
         assert_eq!(
             theory
                 .known(REVERSE_COMPUTES_TO_LIST)
@@ -517,6 +526,12 @@ mod tests {
                 .expect("append singleton theorem source proof should check with dependencies")
                 .prop(),
             &append_singleton_prop,
+        );
+        assert_eq!(
+            append_assoc()
+                .expect("append associativity theorem source proof should check with dependencies")
+                .prop(),
+            &append_assoc_prop,
         );
     }
 
