@@ -8,8 +8,8 @@ use crate::{
 use super::{
     APPEND, APPEND_ASSOC, APPEND_COMPUTES_TO_LIST, APPEND_CONS, APPEND_NIL_COMPUTES_TO_LIST,
     APPEND_NIL_RETURNS_RIGHT, APPEND_RIGHT_NIL, APPEND_SINGLETON, REVERSE, REVERSE_ACC,
-    REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST, REVERSE_NIL,
-    REVERSE_NIL_COMPUTES_TO_LIST, REVERSE_SINGLETON, SourceTheoremError,
+    REVERSE_ACC_APPEND, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST, REVERSE_CONS,
+    REVERSE_NIL, REVERSE_NIL_COMPUTES_TO_LIST, REVERSE_SINGLETON, SourceTheoremError,
     source::{ModuleSpec, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
 
@@ -69,6 +69,14 @@ pub(super) const MODULE: ModuleSpec = ModuleSpec {
         super::source::NameBinding {
             spelling: "reverse_singleton",
             name: REVERSE_SINGLETON,
+        },
+        super::source::NameBinding {
+            spelling: "reverse_acc_append",
+            name: REVERSE_ACC_APPEND,
+        },
+        super::source::NameBinding {
+            spelling: "reverse_cons",
+            name: REVERSE_CONS,
         },
         super::source::NameBinding {
             spelling: "append_nil_computes_to_list",
@@ -278,6 +286,14 @@ pub fn reverse_singleton_source_theorem() -> Prop {
     theorem_prop(REVERSE_SINGLETON)
 }
 
+pub fn reverse_acc_append_source_theorem() -> Prop {
+    theorem_prop(REVERSE_ACC_APPEND)
+}
+
+pub fn reverse_cons_source_theorem() -> Prop {
+    theorem_prop(REVERSE_CONS)
+}
+
 pub fn append_nil_computes_to_list_source_theorem() -> Prop {
     theorem_prop(APPEND_NIL_COMPUTES_TO_LIST)
 }
@@ -391,6 +407,39 @@ pub fn reverse_singleton_theorem(head: Symbol) -> Prop {
         head,
         is_value(var(head)),
         computes_to(reverse_call(singleton(var(head))), singleton(var(head))),
+    )
+}
+
+/// Reversal with an accumulator is equivalent to appending the accumulator to the
+/// ordinary reverse.
+pub fn reverse_acc_append_theorem(list: Symbol, acc: Symbol) -> Prop {
+    forall_where(
+        list,
+        is_list(var(list)),
+        forall_where(
+            acc,
+            is_list(var(acc)),
+            computes_to(
+                reverse_acc_call(var(list), var(acc)),
+                append_call(reverse_call(var(list)), var(acc)),
+            ),
+        ),
+    )
+}
+
+/// Reversing a cons appends the head onto the reversed tail.
+pub fn reverse_cons_theorem(head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            tail,
+            is_list(var(tail)),
+            computes_to(
+                reverse_call(cons(var(head), var(tail))),
+                append_call(reverse_call(var(tail)), singleton(var(head))),
+            ),
+        ),
     )
 }
 
@@ -702,6 +751,66 @@ mod tests {
     }
 
     #[test]
+    fn reverse_acc_append_theorem_has_expected_shape() {
+        assert_eq!(
+            reverse_acc_append_theorem(X, ACCUMULATOR),
+            forall_where(
+                X,
+                is_list(var(X)),
+                forall_where(
+                    ACCUMULATOR,
+                    is_list(var(ACCUMULATOR)),
+                    computes_to(
+                        reverse_acc_call(var(X), var(ACCUMULATOR)),
+                        append_call(reverse_call(var(X)), var(ACCUMULATOR)),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn reverse_acc_append_source_theorem_has_expected_shape() {
+        let list = theorem_symbol(REVERSE_ACC_APPEND, "list");
+        let acc = theorem_symbol(REVERSE_ACC_APPEND, "acc");
+
+        assert_eq!(
+            reverse_acc_append_source_theorem(),
+            reverse_acc_append_theorem(list, acc)
+        );
+    }
+
+    #[test]
+    fn reverse_cons_theorem_has_expected_shape() {
+        assert_eq!(
+            reverse_cons_theorem(HEAD, TAIL),
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                forall_where(
+                    TAIL,
+                    is_list(var(TAIL)),
+                    computes_to(
+                        reverse_call(cons(var(HEAD), var(TAIL))),
+                        append_call(reverse_call(var(TAIL)), singleton(var(HEAD))),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn reverse_cons_source_theorem_has_expected_shape() {
+        let head = theorem_symbol(REVERSE_CONS, "head");
+        let tail = theorem_symbol(REVERSE_CONS, "tail");
+
+        assert_eq!(
+            reverse_cons_source_theorem(),
+            reverse_cons_theorem(head, tail)
+        );
+    }
+
+    #[test]
     fn append_nil_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             append_nil_computes_to_list_theorem(X, RESULT),
@@ -896,6 +1005,14 @@ mod tests {
         ));
         assert!(matches!(
             theorem_definition(REVERSE_SINGLETON).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(REVERSE_ACC_APPEND).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(REVERSE_CONS).proof,
             ProofScript::Proof(_)
         ));
         assert!(matches!(
