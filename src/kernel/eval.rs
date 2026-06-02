@@ -63,13 +63,6 @@ fn step_neutral_application(
     }
 }
 
-pub(super) fn argument_is_ready_for_beta(argument: &Computation, bindings: &Bindings) -> bool {
-    match step_in_bindings(argument, bindings) {
-        Step::Reduced(_) => false,
-        Step::Normal => !is_effect(argument),
-    }
-}
-
 fn is_effect(computation: &Computation) -> bool {
     computation.as_effect().is_some()
 }

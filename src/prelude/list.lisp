@@ -58,7 +58,6 @@
           (eval-to (reverse_acc nil acc) acc)))
       head
       tail
-      head_is_value
       induction_hypothesis
       (forall-list-intro acc
         (rewrite
@@ -122,7 +121,6 @@
           (eval-to (append nil right) right)))
       head
       tail
-      head_is_value
       induction_hypothesis
       (forall-list-intro right
         (exists-list-elim

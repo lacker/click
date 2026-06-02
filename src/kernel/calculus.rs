@@ -248,7 +248,6 @@ pub enum Step {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Prop {
     Equal(Computation, Computation),
-    IsValue(Computation),
     Implies(Box<Prop>, Box<Prop>),
     ForAll {
         variable: Symbol,
@@ -283,19 +282,12 @@ pub enum Proof {
         lambda: Lambda,
         argument: Computation,
     },
-    Value(Value),
-    ConsIsValue {
-        head: Computation,
-        tail: Computation,
-        head_is_value: Box<Proof>,
-    },
     ListInduction {
         variable: Symbol,
         property: Prop,
         base: Box<Proof>,
         head: Symbol,
         tail: Symbol,
-        head_is_value_assumption: Symbol,
         induction_hypothesis_assumption: Symbol,
         step: Box<Proof>,
     },
@@ -352,10 +344,6 @@ pub enum Proof {
 
 pub fn equal(left: Computation, right: Computation) -> Prop {
     Prop::Equal(left, right)
-}
-
-pub fn is_value(computation: Computation) -> Prop {
-    Prop::IsValue(computation)
 }
 
 pub fn implies(premise: Prop, conclusion: Prop) -> Prop {

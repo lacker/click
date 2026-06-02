@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 
 use super::{
     calculus::*,
-    eval::{argument_is_ready_for_beta, step_in_bindings},
     theory::{Bindings, Context},
 };
 
@@ -46,9 +45,6 @@ fn alpha_eq_prop_in_context(
         (Prop::Equal(left_left, left_right), Prop::Equal(right_left, right_right)) => {
             alpha_eq_computation_in_context(left_left, right_left, bindings)
                 && alpha_eq_computation_in_context(left_right, right_right, bindings)
-        }
-        (Prop::IsValue(left), Prop::IsValue(right)) => {
-            alpha_eq_computation_in_context(left, right, bindings)
         }
         (
             Prop::Implies(left_premise, left_conclusion),
@@ -217,11 +213,13 @@ fn proven_prop_in_sort_context(
                 _ => None,
             }
         }
-        Proof::Step(computation) => match step_in_bindings(computation, bindings) {
-            Step::Reduced(reduced) => Some(Prop::Equal(computation.clone(), reduced)),
-            Step::Normal => None,
-        },
-        Proof::Steps(computations) => proven_steps(computations, bindings),
+        Proof::Step(computation) => {
+            match step_for_proof(computation, bindings, context, sort_context) {
+                Step::Reduced(reduced) => Some(Prop::Equal(computation.clone(), reduced)),
+                Step::Normal => None,
+            }
+        }
+        Proof::Steps(computations) => proven_steps(computations, bindings, context, sort_context),
         Proof::Rewrite {
             equality,
             proof,
@@ -245,9 +243,7 @@ fn proven_prop_in_sort_context(
             Some(substitute_prop(template, *variable, &right))
         }
         Proof::Beta { lambda, argument } => {
-            if !argument_is_ready_for_beta(argument, bindings)
-                || !computation_has_sort(argument, Sort::Value, context, sort_context)
-            {
+            if !computation_has_sort(argument, Sort::Value, context, sort_context) {
                 return None;
             }
 
@@ -258,30 +254,12 @@ fn proven_prop_in_sort_context(
             let reduced = substitute(lambda.body.as_ref(), lambda.parameter, argument);
             Some(Prop::Equal(applied, reduced))
         }
-        Proof::Value(value) => Some(Prop::IsValue(value.clone().into_computation())),
-        Proof::ConsIsValue {
-            head,
-            tail,
-            head_is_value,
-        } => match proven_prop_in_sort_context(head_is_value, bindings, context, sort_context)? {
-            Prop::IsValue(proven_head)
-                if alpha_eq_computation(&proven_head, head)
-                    && computation_is_list(tail, context, sort_context) =>
-            {
-                Some(Prop::IsValue(Computation::Cons {
-                    head: Box::new(head.clone()),
-                    tail: Box::new(tail.clone()),
-                }))
-            }
-            _ => None,
-        },
         Proof::ListInduction {
             variable,
             property,
             base,
             head,
             tail,
-            head_is_value_assumption,
             induction_hypothesis_assumption,
             step,
         } => {
@@ -289,7 +267,6 @@ fn proven_prop_in_sort_context(
                 variable: *variable,
                 head: *head,
                 tail: *tail,
-                head_is_value_assumption: *head_is_value_assumption,
                 induction_hypothesis_assumption: *induction_hypothesis_assumption,
             };
 
@@ -501,12 +478,290 @@ fn proven_prop_in_sort_context(
     }
 }
 
-fn proven_steps(computations: &[Computation], bindings: &Bindings) -> Option<Prop> {
+fn step_for_proof(
+    computation: &Computation,
+    bindings: &Bindings,
+    context: &Context,
+    sort_context: &SortContext,
+) -> Step {
+    match computation {
+        Computation::Apply { function, argument } => {
+            step_apply_for_proof(function, argument, bindings, context, sort_context)
+        }
+        Computation::Lambda(_) => Step::Normal,
+        Computation::Nil => Step::Normal,
+        Computation::Cons { head, tail } => {
+            step_cons_for_proof(head, tail, bindings, context, sort_context)
+        }
+        Computation::Head(computation) => {
+            step_head_for_proof(computation, bindings, context, sort_context)
+        }
+        Computation::Tail(computation) => {
+            step_tail_for_proof(computation, bindings, context, sort_context)
+        }
+        Computation::ListCase(list_case) => {
+            step_list_case_for_proof(list_case, bindings, context, sort_context)
+        }
+        Computation::Ref(name) => match bindings.computation(*name) {
+            Some(computation) => Step::Reduced(computation.clone()),
+            None => Step::Normal,
+        },
+        Computation::Error(_) | Computation::Diverge => Step::Normal,
+        Computation::Var(_) | Computation::Quote(_) => Step::Normal,
+    }
+}
+
+fn step_apply_for_proof(
+    function: &Computation,
+    argument: &Computation,
+    bindings: &Bindings,
+    context: &Context,
+    sort_context: &SortContext,
+) -> Step {
+    match function {
+        Computation::Lambda(lambda) => {
+            step_lambda_application_for_proof(lambda, argument, bindings, context, sort_context)
+        }
+        _ if computation_has_sort(function, Sort::Effect, context, sort_context) => {
+            Step::Reduced(function.clone())
+        }
+        _ => match step_for_proof(function, bindings, context, sort_context) {
+            Step::Reduced(function) => Step::Reduced(Computation::Apply {
+                function: Box::new(function),
+                argument: Box::new(argument.clone()),
+            }),
+            Step::Normal if computation_is_known_non_callable(function, context, sort_context) => {
+                Step::Reduced(runtime_error())
+            }
+            Step::Normal => step_neutral_application_for_proof(
+                function,
+                argument,
+                bindings,
+                context,
+                sort_context,
+            ),
+        },
+    }
+}
+
+fn step_lambda_application_for_proof(
+    lambda: &Lambda,
+    argument: &Computation,
+    bindings: &Bindings,
+    context: &Context,
+    sort_context: &SortContext,
+) -> Step {
+    match step_for_proof(argument, bindings, context, sort_context) {
+        Step::Reduced(argument) => Step::Reduced(Computation::Apply {
+            function: Box::new(Computation::Lambda(lambda.clone())),
+            argument: Box::new(argument),
+        }),
+        Step::Normal if computation_has_sort(argument, Sort::Effect, context, sort_context) => {
+            Step::Reduced(argument.clone())
+        }
+        Step::Normal if computation_has_sort(argument, Sort::Value, context, sort_context) => {
+            Step::Reduced(substitute(lambda.body.as_ref(), lambda.parameter, argument))
+        }
+        Step::Normal => Step::Normal,
+    }
+}
+
+fn step_neutral_application_for_proof(
+    function: &Computation,
+    argument: &Computation,
+    bindings: &Bindings,
+    context: &Context,
+    sort_context: &SortContext,
+) -> Step {
+    match step_for_proof(argument, bindings, context, sort_context) {
+        Step::Reduced(argument) => Step::Reduced(Computation::Apply {
+            function: Box::new(function.clone()),
+            argument: Box::new(argument),
+        }),
+        Step::Normal if computation_has_sort(argument, Sort::Effect, context, sort_context) => {
+            Step::Reduced(argument.clone())
+        }
+        Step::Normal => Step::Normal,
+    }
+}
+
+fn step_cons_for_proof(
+    head: &Computation,
+    tail: &Computation,
+    bindings: &Bindings,
+    context: &Context,
+    sort_context: &SortContext,
+) -> Step {
+    match step_for_proof(head, bindings, context, sort_context) {
+        Step::Reduced(head) => Step::Reduced(Computation::Cons {
+            head: Box::new(head),
+            tail: Box::new(tail.clone()),
+        }),
+        Step::Normal if computation_has_sort(head, Sort::Effect, context, sort_context) => {
+            Step::Reduced(head.clone())
+        }
+        Step::Normal => match step_for_proof(tail, bindings, context, sort_context) {
+            Step::Reduced(tail) => Step::Reduced(Computation::Cons {
+                head: Box::new(head.clone()),
+                tail: Box::new(tail),
+            }),
+            Step::Normal if computation_has_sort(tail, Sort::Effect, context, sort_context) => {
+                Step::Reduced(tail.clone())
+            }
+            Step::Normal if computation_is_known_non_list(tail) => Step::Reduced(runtime_error()),
+            Step::Normal => Step::Normal,
+        },
+    }
+}
+
+fn step_head_for_proof(
+    computation: &Computation,
+    bindings: &Bindings,
+    context: &Context,
+    sort_context: &SortContext,
+) -> Step {
+    match step_for_proof(computation, bindings, context, sort_context) {
+        Step::Reduced(computation) => Step::Reduced(Computation::Head(Box::new(computation))),
+        Step::Normal if computation_has_sort(computation, Sort::Effect, context, sort_context) => {
+            Step::Reduced(computation.clone())
+        }
+        Step::Normal => match computation {
+            Computation::Cons { head, .. }
+                if computation_is_list(computation, context, sort_context) =>
+            {
+                Step::Reduced(head.as_ref().clone())
+            }
+            Computation::Nil | Computation::Quote(_) | Computation::Lambda(_) => {
+                Step::Reduced(runtime_error())
+            }
+            Computation::Ref(_)
+            | Computation::Var(_)
+            | Computation::Apply { .. }
+            | Computation::Head(_)
+            | Computation::Tail(_)
+            | Computation::ListCase(_)
+            | Computation::Cons { .. }
+            | Computation::Error(_)
+            | Computation::Diverge => Step::Normal,
+        },
+    }
+}
+
+fn step_tail_for_proof(
+    computation: &Computation,
+    bindings: &Bindings,
+    context: &Context,
+    sort_context: &SortContext,
+) -> Step {
+    match step_for_proof(computation, bindings, context, sort_context) {
+        Step::Reduced(computation) => Step::Reduced(Computation::Tail(Box::new(computation))),
+        Step::Normal if computation_has_sort(computation, Sort::Effect, context, sort_context) => {
+            Step::Reduced(computation.clone())
+        }
+        Step::Normal => match computation {
+            Computation::Cons { tail, .. }
+                if computation_is_list(computation, context, sort_context) =>
+            {
+                Step::Reduced(tail.as_ref().clone())
+            }
+            Computation::Nil | Computation::Quote(_) | Computation::Lambda(_) => {
+                Step::Reduced(runtime_error())
+            }
+            Computation::Ref(_)
+            | Computation::Var(_)
+            | Computation::Apply { .. }
+            | Computation::Head(_)
+            | Computation::Tail(_)
+            | Computation::ListCase(_)
+            | Computation::Cons { .. }
+            | Computation::Error(_)
+            | Computation::Diverge => Step::Normal,
+        },
+    }
+}
+
+fn step_list_case_for_proof(
+    list_case: &ListCase,
+    bindings: &Bindings,
+    context: &Context,
+    sort_context: &SortContext,
+) -> Step {
+    match step_for_proof(list_case.list.as_ref(), bindings, context, sort_context) {
+        Step::Reduced(list) => Step::Reduced(Computation::ListCase(ListCase {
+            list: Box::new(list),
+            nil: list_case.nil.clone(),
+            cons: list_case.cons,
+            cons_case: list_case.cons_case.clone(),
+        })),
+        Step::Normal
+            if computation_has_sort(
+                list_case.list.as_ref(),
+                Sort::Effect,
+                context,
+                sort_context,
+            ) =>
+        {
+            Step::Reduced(list_case.list.as_ref().clone())
+        }
+        Step::Normal => match list_case.list.as_ref() {
+            Computation::Nil => Step::Reduced(list_case.nil.as_ref().clone()),
+            Computation::Cons { .. }
+                if computation_is_list(list_case.list.as_ref(), context, sort_context) =>
+            {
+                Step::Reduced(substitute(
+                    list_case.cons_case.as_ref(),
+                    list_case.cons,
+                    list_case.list.as_ref(),
+                ))
+            }
+            Computation::Quote(_) | Computation::Lambda(_) => Step::Reduced(runtime_error()),
+            Computation::Ref(_)
+            | Computation::Var(_)
+            | Computation::Apply { .. }
+            | Computation::Head(_)
+            | Computation::Tail(_)
+            | Computation::ListCase(_)
+            | Computation::Cons { .. }
+            | Computation::Error(_)
+            | Computation::Diverge => Step::Normal,
+        },
+    }
+}
+
+fn runtime_error() -> Computation {
+    Computation::Error(RUNTIME_ERROR)
+}
+
+fn computation_is_known_non_callable(
+    computation: &Computation,
+    context: &Context,
+    sort_context: &SortContext,
+) -> bool {
+    match computation {
+        Computation::Quote(_) | Computation::Nil => true,
+        Computation::Cons { .. } => computation_is_list(computation, context, sort_context),
+        Computation::Var(symbol) => sort_context
+            .get(symbol)
+            .is_some_and(|actual| sort_satisfies(*actual, Sort::List)),
+        _ => false,
+    }
+}
+
+fn computation_is_known_non_list(computation: &Computation) -> bool {
+    matches!(computation, Computation::Quote(_) | Computation::Lambda(_))
+}
+
+fn proven_steps(
+    computations: &[Computation],
+    bindings: &Bindings,
+    context: &Context,
+    sort_context: &SortContext,
+) -> Option<Prop> {
     let (first, rest) = computations.split_first()?;
     let mut previous = first;
 
     for next in rest {
-        match step_in_bindings(previous, bindings) {
+        match step_for_proof(previous, bindings, context, sort_context) {
             Step::Reduced(reduced) if alpha_eq_computation(&reduced, next) => previous = next,
             _ => return None,
         }
@@ -520,7 +775,6 @@ struct ListInductionSymbols {
     variable: Symbol,
     head: Symbol,
     tail: Symbol,
-    head_is_value_assumption: Symbol,
     induction_hypothesis_assumption: Symbol,
 }
 
@@ -541,7 +795,6 @@ fn prove_list_induction(
         variable,
         head,
         tail,
-        head_is_value_assumption,
         induction_hypothesis_assumption,
     } = symbols;
 
@@ -563,10 +816,6 @@ fn prove_list_induction(
         },
     );
     let mut step_context = context.clone();
-    step_context.insert(
-        head_is_value_assumption,
-        Prop::IsValue(Computation::Var(head)),
-    );
     step_context.insert(
         induction_hypothesis_assumption,
         substitute_prop(property, variable, &tail_var),
@@ -599,7 +848,6 @@ fn list_induction_symbols_are_fresh(
         variable,
         head,
         tail,
-        head_is_value_assumption,
         induction_hypothesis_assumption,
     } = symbols;
 
@@ -607,7 +855,7 @@ fn list_induction_symbols_are_fresh(
         return false;
     }
 
-    let assumption_symbols = [head_is_value_assumption, induction_hypothesis_assumption];
+    let assumption_symbols = [induction_hypothesis_assumption];
     let mut seen_assumption_symbols = HashSet::new();
     if assumption_symbols.into_iter().any(|assumption| {
         !seen_assumption_symbols.insert(assumption) || context.contains_key(&assumption)
@@ -658,9 +906,7 @@ fn computation_is_known_value(
         }
     }
 
-    context.values().any(
-        |prop| matches!(prop, Prop::IsValue(value) if alpha_eq_computation(value, computation)),
-    )
+    false
 }
 
 fn computation_has_sort(
@@ -711,7 +957,6 @@ pub fn substitute_prop(prop: &Prop, variable: Symbol, replacement: &Computation)
             substitute(left, variable, replacement),
             substitute(right, variable, replacement),
         ),
-        Prop::IsValue(computation) => Prop::IsValue(substitute(computation, variable, replacement)),
         Prop::Implies(premise, conclusion) => Prop::Implies(
             Box::new(substitute_prop(premise, variable, replacement)),
             Box::new(substitute_prop(conclusion, variable, replacement)),
@@ -815,9 +1060,6 @@ fn add_free_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
             add_free_symbols(left, symbols);
             add_free_symbols(right, symbols);
         }
-        Prop::IsValue(computation) => {
-            add_free_symbols(computation, symbols);
-        }
         Prop::Implies(premise, conclusion)
         | Prop::And(premise, conclusion)
         | Prop::Or(premise, conclusion) => {
@@ -839,7 +1081,6 @@ fn rename_bound_var_prop(prop: &Prop, old: Symbol, new: Symbol) -> Prop {
             rename_bound_var(left, old, new),
             rename_bound_var(right, old, new),
         ),
-        Prop::IsValue(computation) => Prop::IsValue(rename_bound_var(computation, old, new)),
         Prop::Implies(premise, conclusion) => Prop::Implies(
             Box::new(rename_bound_var_prop(premise, old, new)),
             Box::new(rename_bound_var_prop(conclusion, old, new)),
@@ -893,9 +1134,6 @@ fn add_all_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
         Prop::Equal(left, right) => {
             add_all_symbols(left, symbols);
             add_all_symbols(right, symbols);
-        }
-        Prop::IsValue(computation) => {
-            add_all_symbols(computation, symbols);
         }
         Prop::Implies(premise, conclusion)
         | Prop::And(premise, conclusion)

@@ -132,7 +132,6 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
             base,
             head,
             tail,
-            head_is_value_assumption,
             induction_hypothesis_assumption,
             step,
         } => Some(Proof::ListInduction {
@@ -141,7 +140,6 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
             base: Box::new(proof_expr_to_proof(base, theory)?),
             head: *head,
             tail: *tail,
-            head_is_value_assumption: *head_is_value_assumption,
             induction_hypothesis_assumption: *induction_hypothesis_assumption,
             step: Box::new(proof_expr_to_proof(step, theory)?),
         }),

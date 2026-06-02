@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     Computation, ErrorName, Lambda, ListCase, Name, Prop, Sort, Symbol, and, computes_to,
     computes_to_list, diverges, equal, errors_with, exists_list, exists_sort, forall_list,
-    forall_sort, implies, is_value, or,
+    forall_sort, implies, or,
 };
 
 const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
@@ -105,7 +105,6 @@ pub(super) enum ProofExpr {
         base: Box<ProofExpr>,
         head: Symbol,
         tail: Symbol,
-        head_is_value_assumption: Symbol,
         induction_hypothesis_assumption: Symbol,
         step: Box<ProofExpr>,
     },
@@ -669,7 +668,6 @@ impl<'a> SourceParser<'a> {
         match form {
             "equal" => self.equal(items),
             "computes-to" => self.computes_to(items),
-            "is-value" => self.is_value(items),
             "implies" => self.implies(items, symbol_mode),
             "forall" => self.forall(items, symbol_mode),
             "forall-list" => self.forall_list(items, symbol_mode),
@@ -698,11 +696,6 @@ impl<'a> SourceParser<'a> {
             self.computation(&items[1])?,
             self.computation(&items[2])?,
         ))
-    }
-
-    fn is_value(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
-        expect_len("is-value", items, 2)?;
-        Ok(is_value(self.computation(&items[1])?))
     }
 
     fn implies(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
@@ -956,16 +949,15 @@ impl<'a> SourceParser<'a> {
     }
 
     fn proof_list_induction(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        expect_len("list-induction", items, 9)?;
+        expect_len("list-induction", items, 8)?;
         Ok(ProofExpr::ListInduction {
             variable: self.proof_symbol(atom(&items[1])?)?,
             property: self.proof_prop(&items[2])?,
             base: Box::new(self.proof_expr(&items[3])?),
             head: self.proof_symbol(atom(&items[4])?)?,
             tail: self.proof_symbol(atom(&items[5])?)?,
-            head_is_value_assumption: self.proof_symbol(atom(&items[6])?)?,
-            induction_hypothesis_assumption: self.proof_symbol(atom(&items[7])?)?,
-            step: Box::new(self.proof_expr(&items[8])?),
+            induction_hypothesis_assumption: self.proof_symbol(atom(&items[6])?)?,
+            step: Box::new(self.proof_expr(&items[7])?),
         })
     }
 

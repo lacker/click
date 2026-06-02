@@ -48,18 +48,6 @@ fn error(error: ErrorName) -> Computation {
     Computation::Error(error)
 }
 
-fn value_lambda(lambda: Lambda) -> Proof {
-    Proof::Value(Value::lambda(lambda))
-}
-
-fn value_quote(symbol: Symbol) -> Proof {
-    Proof::Value(Value::quote(symbol))
-}
-
-fn value_nil() -> Proof {
-    Proof::Value(Value::nil())
-}
-
 #[test]
 fn computations_classify_values_effects_and_outcomes() {
     let value_computation = cons(Computation::Quote(Symbol(1)), Computation::Nil);
@@ -618,35 +606,16 @@ fn theorem_rewrite_moves_props_across_equality() {
     );
     let step = Theorem::step(computation.clone()).expect("computation should step");
     let nil_to_computation = Theorem::symm(&step).expect("step should be symmetric");
+    let template = equal(Computation::Var(Symbol(99)), Computation::Var(Symbol(99)));
     let theorem = Theorem::rewrite(
         &nil_to_computation,
-        &Theorem::value_nil(),
+        &Theorem::refl(Computation::Nil),
         Symbol(99),
-        is_value(Computation::Var(Symbol(99))),
+        template,
     )
-    .expect("rewrite should prove valuehood before evaluation");
+    .expect("rewrite should move equality through a template");
 
-    assert_eq!(theorem.prop(), &is_value(computation));
-}
-
-#[test]
-fn theorem_value_rules_build_checked_theorems() {
-    let head = Computation::Quote(Symbol(1));
-    let tail = Computation::Nil;
-    let head_value = Theorem::value_quote(Symbol(1));
-    let list = cons(head.clone(), tail.clone());
-    let value = Theorem::cons_is_value(head, tail, &head_value)
-        .expect("cons with value head and list tail is a value");
-
-    assert_eq!(value.prop(), &is_value(list));
-    assert!(
-        Theorem::cons_is_value(
-            Computation::Quote(Symbol(1)),
-            Computation::Quote(Symbol(2)),
-            &head_value
-        )
-        .is_none()
-    );
+    assert_eq!(theorem.prop(), &equal(computation.clone(), computation));
 }
 
 #[test]
@@ -733,69 +702,142 @@ fn beta_proof_rejects_reducible_arguments() {
 }
 
 #[test]
-fn value_intro_rules_prove_concrete_values() {
-    let lambda = Lambda {
-        parameter: Symbol(1),
-        body: Box::new(Computation::Var(Symbol(1))),
+fn sorted_beta_requires_value_arguments() {
+    let variable = Symbol(1);
+    let lambda_value = Lambda {
+        parameter: Symbol(2),
+        body: Box::new(Computation::Var(Symbol(2))),
     };
-    let list_value = Value::cons(Value::quote(Symbol(1)), Value::nil());
-    let list = list_value.clone().into_computation();
-    let proof = Proof::ConsIsValue {
-        head: Computation::Quote(Symbol(1)),
-        tail: Computation::Nil,
-        head_is_value: Box::new(value_quote(Symbol(1))),
+    let application = apply(
+        Computation::Lambda(lambda_value.clone()),
+        Computation::Var(variable),
+    );
+    let proof = Proof::ForAllIntro {
+        variable,
+        sort: Sort::Value,
+        proof: Box::new(Proof::Step(application.clone())),
     };
-
-    assert!(check(
-        &value_lambda(lambda.clone()),
-        &is_value(Computation::Lambda(lambda))
-    ));
-    assert!(check(
-        &value_quote(Symbol(1)),
-        &is_value(Computation::Quote(Symbol(1)))
-    ));
-    assert!(check(&value_nil(), &is_value(Computation::Nil)));
-    assert!(check(&Proof::Value(list_value), &is_value(list.clone())));
-    assert!(check(&proof, &is_value(list)));
-}
-
-#[test]
-fn cons_is_value_requires_matching_value_proofs() {
-    let proof = Proof::ConsIsValue {
-        head: Computation::Diverge,
-        tail: Computation::Nil,
-        head_is_value: Box::new(value_quote(Symbol(1))),
+    let expected = forall_sort(
+        variable,
+        Sort::Value,
+        equal(application, Computation::Var(variable)),
+    );
+    let computation_sorted_proof = Proof::ForAllIntro {
+        variable,
+        sort: Sort::Computation,
+        proof: Box::new(Proof::Step(apply(
+            Computation::Lambda(lambda_value),
+            Computation::Var(variable),
+        ))),
     };
 
+    assert!(check(&proof, &expected));
     assert!(!check(
-        &proof,
-        &is_value(cons(Computation::Diverge, Computation::Nil))
+        &computation_sorted_proof,
+        &forall(
+            variable,
+            equal(
+                apply(
+                    lambda(Symbol(2), Computation::Var(Symbol(2))),
+                    Computation::Var(variable),
+                ),
+                Computation::Var(variable),
+            ),
+        )
     ));
 }
 
 #[test]
-fn list_induction_proves_every_list_is_a_value() {
+fn sorted_list_reductions_require_list_arguments() {
+    let head_symbol = Symbol(1);
+    let tail_symbol = Symbol(2);
+    let list = cons(Computation::Var(head_symbol), Computation::Var(tail_symbol));
+    let cons_case = head(Computation::Var(Symbol(9)));
+    let destructure = list_case(
+        list.clone(),
+        Computation::Quote(Symbol(0)),
+        Symbol(9),
+        cons_case,
+    );
+    let destructured_head = head(list.clone());
+    let proof = Proof::ForAllIntro {
+        variable: head_symbol,
+        sort: Sort::Value,
+        proof: Box::new(Proof::ForAllIntro {
+            variable: tail_symbol,
+            sort: Sort::List,
+            proof: Box::new(Proof::Steps(vec![
+                destructure.clone(),
+                destructured_head,
+                Computation::Var(head_symbol),
+            ])),
+        }),
+    };
+    let expected = forall_sort(
+        head_symbol,
+        Sort::Value,
+        forall_list(
+            tail_symbol,
+            equal(destructure, Computation::Var(head_symbol)),
+        ),
+    );
+    let unsorted_tail_proof = Proof::ForAllIntro {
+        variable: head_symbol,
+        sort: Sort::Value,
+        proof: Box::new(Proof::ForAllIntro {
+            variable: tail_symbol,
+            sort: Sort::Computation,
+            proof: Box::new(Proof::Step(list_case(
+                list,
+                Computation::Quote(Symbol(0)),
+                Symbol(9),
+                head(Computation::Var(Symbol(9))),
+            ))),
+        }),
+    };
+
+    assert!(check(&proof, &expected));
+    assert!(!check(
+        &unsorted_tail_proof,
+        &forall_sort(
+            head_symbol,
+            Sort::Value,
+            forall(
+                tail_symbol,
+                equal(
+                    list_case(
+                        cons(Computation::Var(head_symbol), Computation::Var(tail_symbol),),
+                        Computation::Quote(Symbol(0)),
+                        Symbol(9),
+                        head(Computation::Var(Symbol(9))),
+                    ),
+                    Computation::Var(head_symbol),
+                ),
+            ),
+        )
+    ));
+}
+
+#[test]
+fn list_induction_proves_reflexivity_for_lists() {
     let variable = Symbol(1);
     let head = Symbol(2);
     let tail = Symbol(3);
-    let head_is_value_assumption = Symbol(4);
     let induction_hypothesis_assumption = Symbol(6);
-    let property = is_value(Computation::Var(variable));
+    let property = equal(Computation::Var(variable), Computation::Var(variable));
     let proof = Proof::ListInduction {
         variable,
         property: property.clone(),
-        base: Box::new(value_nil()),
+        base: Box::new(Proof::Refl(Computation::Nil)),
         head,
         tail,
-        head_is_value_assumption,
         induction_hypothesis_assumption,
-        step: Box::new(Proof::ConsIsValue {
-            head: Computation::Var(head),
-            tail: Computation::Var(tail),
-            head_is_value: Box::new(Proof::Assume(head_is_value_assumption)),
-        }),
+        step: Box::new(Proof::Refl(cons(
+            Computation::Var(head),
+            Computation::Var(tail),
+        ))),
     };
-    let expected = forall_list(variable, is_value(Computation::Var(variable)));
+    let expected = forall_list(variable, property);
 
     assert!(check(&proof, &expected));
 }
@@ -805,18 +847,16 @@ fn list_induction_rejects_stale_step_variables() {
     let variable = Symbol(1);
     let head = variable;
     let tail = Symbol(3);
-    let head_is_value_assumption = Symbol(4);
     let induction_hypothesis_assumption = Symbol(6);
-    let property = is_value(Computation::Var(variable));
+    let property = equal(Computation::Var(variable), Computation::Var(variable));
     let proof = Proof::ListInduction {
         variable,
         property: property.clone(),
-        base: Box::new(value_nil()),
+        base: Box::new(Proof::Refl(Computation::Nil)),
         head,
         tail,
-        head_is_value_assumption,
         induction_hypothesis_assumption,
-        step: Box::new(Proof::Assume(head_is_value_assumption)),
+        step: Box::new(Proof::Assume(induction_hypothesis_assumption)),
     };
     let expected = forall_list(variable, property);
 
@@ -954,7 +994,7 @@ fn prop_helpers_construct_expected_shapes() {
 
     assert_eq!(
         implies(prop.clone(), prop.clone()),
-        Prop::Implies(Box::new(prop.clone()), Box::new(prop))
+        Prop::Implies(Box::new(prop.clone()), Box::new(prop.clone()))
     );
     assert_eq!(
         terminates(Symbol(9), computation.clone()),
@@ -979,13 +1019,7 @@ fn prop_helpers_construct_expected_shapes() {
         computes_to_effect(computation, Effect::diverge())
     );
     assert_eq!(
-        or(
-            is_value(Computation::Quote(Symbol(1))),
-            is_value(Computation::Nil)
-        ),
-        Prop::Or(
-            Box::new(Prop::IsValue(Computation::Quote(Symbol(1)))),
-            Box::new(Prop::IsValue(Computation::Nil))
-        )
+        or(prop.clone(), prop.clone()),
+        Prop::Or(Box::new(prop.clone()), Box::new(prop))
     );
 }

@@ -127,34 +127,6 @@ impl Theorem {
         Self::from_closed_proof(Proof::Beta { lambda, argument })
     }
 
-    pub fn value(value: Value) -> Self {
-        Self::from_closed_proof(Proof::Value(value)).expect("value theorem should be valid")
-    }
-
-    pub fn value_lambda(lambda: Lambda) -> Self {
-        Self::value(Value::lambda(lambda))
-    }
-
-    pub fn value_quote(symbol: Symbol) -> Self {
-        Self::value(Value::quote(symbol))
-    }
-
-    pub fn value_nil() -> Self {
-        Self::value(Value::nil())
-    }
-
-    pub fn cons_is_value(
-        head: Computation,
-        tail: Computation,
-        head_is_value: &Self,
-    ) -> Option<Self> {
-        Self::from_closed_proof(Proof::ConsIsValue {
-            head,
-            tail,
-            head_is_value: Box::new(head_is_value.proof.clone()),
-        })
-    }
-
     pub fn implies_elim(implication: &Self, premise: &Self) -> Option<Self> {
         Self::from_closed_proof(Proof::ImpliesElim {
             implication: Box::new(implication.proof.clone()),
@@ -331,36 +303,6 @@ impl Theory {
 
     pub fn beta(&self, lambda: Lambda, argument: Computation) -> Option<Theorem> {
         self.theorem_from_closed_proof(Proof::Beta { lambda, argument })
-    }
-
-    pub fn value(&self, value: Value) -> Theorem {
-        self.theorem_from_closed_proof(Proof::Value(value))
-            .expect("value theorem should be valid in every theory")
-    }
-
-    pub fn value_lambda(&self, lambda: Lambda) -> Theorem {
-        self.value(Value::lambda(lambda))
-    }
-
-    pub fn value_quote(&self, symbol: Symbol) -> Theorem {
-        self.value(Value::quote(symbol))
-    }
-
-    pub fn value_nil(&self) -> Theorem {
-        self.value(Value::nil())
-    }
-
-    pub fn cons_is_value(
-        &self,
-        head: Computation,
-        tail: Computation,
-        head_is_value: &Theorem,
-    ) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::ConsIsValue {
-            head,
-            tail,
-            head_is_value: Box::new(head_is_value.proof.clone()),
-        })
     }
 
     pub fn implies_elim(&self, implication: &Theorem, premise: &Theorem) -> Option<Theorem> {
