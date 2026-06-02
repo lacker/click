@@ -2,7 +2,12 @@
 
 use crate::{
     Computation, ErrorName, Lambda, ListCase, Name, Outcome, Proof, Prop, RUNTIME_ERROR, Symbol,
-    Theorem, Theory, computes_to, computes_to_list, errors_with, forall_where, is_list, is_value,
+    Theorem, Theory, computes_to, computes_to_list,
+    elab::{
+        proof,
+        source::{self, ModuleSpec, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
+    },
+    errors_with, forall_where, is_list, is_value,
 };
 
 use super::{
@@ -14,13 +19,12 @@ use super::{
     REVERSE_ACC_OF_APPEND, REVERSE_ACC_REVERSE, REVERSE_APPEND, REVERSE_COMPUTES_TO_LIST,
     REVERSE_CONS, REVERSE_DOUBLE, REVERSE_NIL, REVERSE_NIL_COMPUTES_TO_LIST, REVERSE_SINGLETON,
     SNOC, SNOC_COMPUTES_TO_LIST, SNOC_CONS, SNOC_NIL, SourceTheoremError, TRUE,
-    source::{ModuleSpec, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
 
-pub use super::proof::EvaluationProofError;
+pub use crate::elab::EvaluationProofError;
 
 #[cfg(test)]
-use super::source::ProofScript;
+use crate::elab::source::ProofScript;
 
 pub const UNIT: Symbol = Symbol(3);
 
@@ -43,173 +47,173 @@ const REST_CELL: Symbol = Symbol(1_012);
 pub(super) const MODULE: ModuleSpec = ModuleSpec {
     source: SOURCE,
     computation_definitions: &[
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "reverse_acc",
             name: REVERSE_ACC,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "reverse",
             name: REVERSE,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "append",
             name: APPEND,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "snoc",
             name: SNOC,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "concat",
             name: CONCAT,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "last",
             name: LAST,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "init",
             name: INIT,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "null",
             name: NULL,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "is-singleton",
             name: IS_SINGLETON,
         },
     ],
     theorem_definitions: &[
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "reverse_acc_computes_to_list",
             name: REVERSE_ACC_COMPUTES_TO_LIST,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "reverse_computes_to_list",
             name: REVERSE_COMPUTES_TO_LIST,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "reverse_nil_computes_to_list",
             name: REVERSE_NIL_COMPUTES_TO_LIST,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "reverse_nil",
             name: REVERSE_NIL,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "reverse_singleton",
             name: REVERSE_SINGLETON,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "reverse_acc_append",
             name: REVERSE_ACC_APPEND,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "reverse_cons",
             name: REVERSE_CONS,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "reverse_acc_reverse",
             name: REVERSE_ACC_REVERSE,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "reverse_double",
             name: REVERSE_DOUBLE,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "reverse_acc_of_append",
             name: REVERSE_ACC_OF_APPEND,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "reverse_append",
             name: REVERSE_APPEND,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "snoc_computes_to_list",
             name: SNOC_COMPUTES_TO_LIST,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "snoc_nil",
             name: SNOC_NIL,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "snoc_cons",
             name: SNOC_CONS,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "concat_nil",
             name: CONCAT_NIL,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "last_nil_errors",
             name: LAST_NIL_ERRORS,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "last_singleton",
             name: LAST_SINGLETON,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "last_cons",
             name: LAST_CONS,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "init_nil_errors",
             name: INIT_NIL_ERRORS,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "init_singleton",
             name: INIT_SINGLETON,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "init_cons",
             name: INIT_CONS,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "null_nil",
             name: NULL_NIL,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "null_cons",
             name: NULL_CONS,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "is_singleton_nil",
             name: IS_SINGLETON_NIL,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "is_singleton_singleton",
             name: IS_SINGLETON_SINGLETON,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "is_singleton_cons",
             name: IS_SINGLETON_CONS,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "append_nil_computes_to_list",
             name: APPEND_NIL_COMPUTES_TO_LIST,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "append_computes_to_list",
             name: APPEND_COMPUTES_TO_LIST,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "append_nil_returns_right",
             name: APPEND_NIL_RETURNS_RIGHT,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "append_right_nil",
             name: APPEND_RIGHT_NIL,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "append_cons",
             name: APPEND_CONS,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "append_singleton",
             name: APPEND_SINGLETON,
         },
-        super::source::NameBinding {
+        source::NameBinding {
             spelling: "append_assoc",
             name: APPEND_ASSOC,
         },
@@ -612,7 +616,7 @@ pub(super) fn checked_source_theorem(name: Name) -> Option<Theorem> {
 pub(super) fn checked_source_theorem_result(name: Name) -> Result<Theorem, SourceTheoremError> {
     let module = module().map_err(SourceTheoremError::ModuleParseFailed)?;
 
-    super::proof::source_theorem_result(module, name, super::computation_theory())
+    proof::source_theorem_result(module, name, super::computation_theory())
 }
 
 pub fn reverse_call(value: Computation) -> Computation {
@@ -1076,7 +1080,7 @@ pub fn evaluation_chain_in_theory(
     theory: &Theory,
     limit: usize,
 ) -> Result<Vec<Computation>, EvaluationProofError> {
-    super::proof::evaluation_chain_in_theory(computation, theory, limit)
+    proof::evaluation_chain_in_theory(computation, theory, limit)
 }
 
 /// A small tactic that turns bounded evaluation into a `Proof::Steps` object.
@@ -1098,7 +1102,7 @@ pub fn proof_by_evaluation_in_theory(
     theory: &Theory,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
-    super::proof::proof_by_evaluation_in_theory(computation, expected, theory, limit)
+    proof::proof_by_evaluation_in_theory(computation, expected, theory, limit)
 }
 
 pub fn proof_by_reduction_in_theory(
@@ -1107,7 +1111,7 @@ pub fn proof_by_reduction_in_theory(
     theory: &Theory,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
-    super::proof::proof_by_reduction_in_theory(computation, expected, theory, limit)
+    proof::proof_by_reduction_in_theory(computation, expected, theory, limit)
 }
 
 pub fn proof_by_same_normal_form_in_theory(
@@ -1116,7 +1120,7 @@ pub fn proof_by_same_normal_form_in_theory(
     theory: &Theory,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
-    super::proof::proof_by_same_normal_form_in_theory(left, right, theory, limit)
+    proof::proof_by_same_normal_form_in_theory(left, right, theory, limit)
 }
 
 pub fn check_evaluates_to(
@@ -1134,7 +1138,7 @@ pub fn check_evaluates_to_in_theory(
     proof: &Proof,
     theory: &Theory,
 ) -> bool {
-    super::proof::check_evaluates_to_in_theory(computation, outcome, proof, theory)
+    proof::check_evaluates_to_in_theory(computation, outcome, proof, theory)
 }
 
 #[cfg(test)]

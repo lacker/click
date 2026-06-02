@@ -1,4 +1,4 @@
-//! Shared proof-script and evaluation-proof helpers for prelude modules.
+//! Proof-script elaboration and evaluation-proof helpers.
 
 use crate::{
     Computation, Name, Outcome, Proof, Step, Theorem, TheoremError, Theory, alpha_eq_computation,
@@ -44,7 +44,7 @@ pub enum SourceTheoremError {
     },
 }
 
-pub(super) fn define_source_theorem(
+pub(crate) fn define_source_theorem(
     theorem: &ParsedTheorem,
     theory: &mut Theory,
 ) -> Result<Theorem, SourceTheoremError> {
@@ -57,7 +57,7 @@ pub(super) fn define_source_theorem(
         })
 }
 
-pub(super) fn proof_for_theorem_result(
+pub(crate) fn proof_for_theorem_result(
     theorem: &ParsedTheorem,
     theory: &Theory,
 ) -> Result<Proof, SourceTheoremError> {
@@ -71,7 +71,7 @@ pub(super) fn proof_for_theorem_result(
     }
 }
 
-pub(super) fn source_theorem_result(
+pub(crate) fn source_theorem_result(
     module: ParsedModule,
     name: Name,
     mut theory: Theory,
@@ -227,7 +227,7 @@ fn subproof(
     })
 }
 
-pub(super) fn evaluation_chain_in_theory(
+pub(crate) fn evaluation_chain_in_theory(
     computation: Computation,
     theory: &Theory,
     limit: usize,
@@ -248,7 +248,7 @@ pub(super) fn evaluation_chain_in_theory(
     Err(EvaluationProofError::StepLimitExceeded { limit })
 }
 
-pub(super) fn proof_by_evaluation_in_theory(
+pub(crate) fn proof_by_evaluation_in_theory(
     computation: Computation,
     expected: impl Into<Outcome>,
     theory: &Theory,
@@ -257,7 +257,7 @@ pub(super) fn proof_by_evaluation_in_theory(
     proof_by_evaluation_to_computation_in_theory(computation, expected.into().into(), theory, limit)
 }
 
-pub(super) fn proof_by_evaluation_to_computation_in_theory(
+pub(crate) fn proof_by_evaluation_to_computation_in_theory(
     computation: Computation,
     expected: Computation,
     theory: &Theory,
@@ -276,7 +276,7 @@ pub(super) fn proof_by_evaluation_to_computation_in_theory(
     Ok(Proof::Steps(chain))
 }
 
-pub(super) fn proof_by_reduction_in_theory(
+pub(crate) fn proof_by_reduction_in_theory(
     computation: Computation,
     expected: impl Into<Outcome>,
     theory: &Theory,
@@ -285,7 +285,7 @@ pub(super) fn proof_by_reduction_in_theory(
     proof_by_reduction_to_computation_in_theory(computation, expected.into().into(), theory, limit)
 }
 
-pub(super) fn proof_by_reduction_to_computation_in_theory(
+pub(crate) fn proof_by_reduction_to_computation_in_theory(
     computation: Computation,
     expected: Computation,
     theory: &Theory,
@@ -319,7 +319,7 @@ pub(super) fn proof_by_reduction_to_computation_in_theory(
     Err(EvaluationProofError::StepLimitExceeded { limit })
 }
 
-pub(super) fn proof_by_same_normal_form_in_theory(
+pub(crate) fn proof_by_same_normal_form_in_theory(
     left: Computation,
     right: Computation,
     theory: &Theory,
@@ -346,7 +346,7 @@ pub(super) fn proof_by_same_normal_form_in_theory(
     ))
 }
 
-pub(super) fn check_evaluates_to_in_theory(
+pub(crate) fn check_evaluates_to_in_theory(
     computation: Computation,
     outcome: impl Into<Outcome>,
     proof: &Proof,

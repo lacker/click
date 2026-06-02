@@ -1,3 +1,5 @@
+//! S-expression source parsing and elaboration into kernel syntax.
+
 use std::collections::{HashMap, HashSet};
 
 use crate::{
@@ -9,19 +11,19 @@ use crate::{
 const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
 
 #[derive(Clone, Copy)]
-pub(super) struct NameBinding {
+pub(crate) struct NameBinding {
     pub spelling: &'static str,
     pub name: Name,
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct SymbolBinding {
+pub(crate) struct SymbolBinding {
     pub spelling: &'static str,
     pub symbol: Symbol,
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct ModuleSpec {
+pub(crate) struct ModuleSpec {
     pub source: &'static str,
     pub computation_definitions: &'static [NameBinding],
     pub theorem_definitions: &'static [NameBinding],
@@ -29,7 +31,7 @@ pub(super) struct ModuleSpec {
 }
 
 impl ModuleSpec {
-    pub(super) fn parse(&self) -> Result<ParsedModule, ParseError> {
+    pub(crate) fn parse(&self) -> Result<ParsedModule, ParseError> {
         parse_module(
             self.source,
             self.computation_definitions,
@@ -40,13 +42,13 @@ impl ModuleSpec {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct LocalSymbol {
+pub(crate) struct LocalSymbol {
     spelling: String,
     symbol: Symbol,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct ParsedTheorem {
+pub(crate) struct ParsedTheorem {
     pub name: Name,
     pub prop: Prop,
     pub proof: ProofScript,
@@ -55,7 +57,7 @@ pub(super) struct ParsedTheorem {
 
 impl ParsedTheorem {
     #[cfg(test)]
-    pub(super) fn symbol(&self, spelling: &str) -> Option<Symbol> {
+    pub(crate) fn symbol(&self, spelling: &str) -> Option<Symbol> {
         let mut matches = self
             .local_symbols
             .iter()
@@ -67,12 +69,12 @@ impl ParsedTheorem {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum ProofScript {
+pub(crate) enum ProofScript {
     Proof(ProofExpr),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum ProofExpr {
+pub(crate) enum ProofExpr {
     Known(Name),
     Assume(Symbol),
     Symm(Box<ProofExpr>),
@@ -139,13 +141,13 @@ pub(super) enum ProofExpr {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct ParsedModule {
+pub(crate) struct ParsedModule {
     pub computations: Vec<(Name, Computation)>,
     pub theorems: Vec<ParsedTheorem>,
 }
 
 impl ParsedModule {
-    pub(super) fn computation(&self, name: Name) -> Option<&Computation> {
+    pub(crate) fn computation(&self, name: Name) -> Option<&Computation> {
         self.computations
             .iter()
             .find_map(|(computation_name, computation)| {
@@ -153,7 +155,7 @@ impl ParsedModule {
             })
     }
 
-    pub(super) fn theorem(&self, name: Name) -> Option<&ParsedTheorem> {
+    pub(crate) fn theorem(&self, name: Name) -> Option<&ParsedTheorem> {
         self.theorems.iter().find(|theorem| theorem.name == name)
     }
 }
@@ -188,7 +190,7 @@ enum Expr {
     List(Vec<Expr>),
 }
 
-pub(super) fn parse_module(
+pub(crate) fn parse_module(
     source: &str,
     computation_definitions: &[NameBinding],
     theorem_definitions: &[NameBinding],

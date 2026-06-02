@@ -1,13 +1,13 @@
 //! Standard definitions layered on top of the kernel.
 
 pub mod list;
-mod proof;
-mod source;
 
-use crate::{Computation, ComputationDefinitionError, Name, Symbol, Theorem, Theory};
+use crate::{
+    Computation, ComputationDefinitionError, Name, Symbol, Theorem, Theory,
+    elab::{proof, source},
+};
 
-pub use proof::{ProofElaborationError, SourceTheoremError};
-pub use source::ParseError;
+pub use crate::elab::{ParseError, ProofElaborationError, SourceTheoremError};
 
 pub const TRUE: Symbol = Symbol(1);
 pub const FALSE: Symbol = Symbol(2);

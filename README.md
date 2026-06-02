@@ -41,6 +41,10 @@ The kernel lives in `src/kernel/`:
 - `theory.rs` contains the logistical LCF-style layer: `Theory`, `Theorem`,
   `Context`, and named bindings.
 
+The source elaborator lives in `src/elab/`. It parses S-expression source and
+proof scripts, then elaborates them into kernel computations, propositions, and
+proofs. The prelude uses this layer to load source files into a `Theory`.
+
 Propositions can talk about arbitrary computations. Quantifiers may be
 unguarded, or guarded by propositions such as `is-value`, `is-list`,
 `is-effect`, and `is-outcome`. Rust APIs that require a concrete finalized
@@ -63,8 +67,8 @@ names meaning by binding them to computations or theorems. Human-facing spelling
 scoping, modules, and imports belong to the logistical layer, not to the core
 calculus.
 
-Surface expressions belong outside the core calculus. The prelude source parser
-uses S-expressions as input and elaborates them into kernel computations,
+Surface expressions belong outside the core calculus. The elaborator uses
+S-expressions as input and elaborates them into kernel computations,
 propositions, and proofs.
 
 Raw computations and propositions may be open. This is useful for templates,
