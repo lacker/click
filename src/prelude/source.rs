@@ -414,25 +414,6 @@ fn error_name(expression: &Expr) -> Result<ErrorName, ParseError> {
     Ok(ErrorName(parse_u64(atom(expression)?)?))
 }
 
-#[derive(Clone, Copy)]
-enum GuardSyntax<'a> {
-    None,
-    Shorthand(&'a str),
-    Prop(&'a Expr),
-}
-
-fn primitive_guard(atom: &str, variable: Symbol) -> Result<Option<Prop>, ParseError> {
-    let variable = Computation::Var(variable);
-    match atom {
-        "computation" => Ok(None),
-        "value" => Ok(Some(is_value(variable))),
-        "list" => Ok(Some(is_list(variable))),
-        "effect" => Ok(Some(is_effect(variable))),
-        "outcome" => Ok(Some(is_outcome(variable))),
-        _ => Err(ParseError::new(format!("unknown predicate guard `{atom}`"))),
-    }
-}
-
 struct SourceParser<'a> {
     definitions: HashMap<&'a str, Name>,
     theorems: HashMap<&'a str, Name>,
@@ -721,15 +702,8 @@ impl<'a> SourceParser<'a> {
 
     fn forall(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
         let (variable, guard, body) = match items.len() {
-            3 => (atom(&items[1])?, GuardSyntax::None, &items[2]),
-            4 => match &items[2] {
-                Expr::List(_) => (atom(&items[1])?, GuardSyntax::Prop(&items[2]), &items[3]),
-                Expr::Atom(_) => (
-                    atom(&items[2])?,
-                    GuardSyntax::Shorthand(atom(&items[1])?),
-                    &items[3],
-                ),
-            },
+            3 => (atom(&items[1])?, None, &items[2]),
+            4 => (atom(&items[1])?, Some(&items[2]), &items[3]),
             _ => {
                 return Err(ParseError::new(format!(
                     "`forall` expects 2 or 3 arguments, got {}",
@@ -739,7 +713,7 @@ impl<'a> SourceParser<'a> {
         };
         let symbol = self.prop_symbol(variable, symbol_mode)?;
         self.push_variable(variable, symbol);
-        let guard = self.quantifier_guard(guard, symbol, symbol_mode)?;
+        let guard = self.quantifier_guard(guard, symbol_mode)?;
         let body = self.prop_with_symbols(body, symbol_mode)?;
         self.pop_variable();
 
@@ -751,15 +725,8 @@ impl<'a> SourceParser<'a> {
 
     fn exists(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
         let (variable, guard, body) = match items.len() {
-            3 => (atom(&items[1])?, GuardSyntax::None, &items[2]),
-            4 => match &items[2] {
-                Expr::List(_) => (atom(&items[1])?, GuardSyntax::Prop(&items[2]), &items[3]),
-                Expr::Atom(_) => (
-                    atom(&items[2])?,
-                    GuardSyntax::Shorthand(atom(&items[1])?),
-                    &items[3],
-                ),
-            },
+            3 => (atom(&items[1])?, None, &items[2]),
+            4 => (atom(&items[1])?, Some(&items[2]), &items[3]),
             _ => {
                 return Err(ParseError::new(format!(
                     "`exists` expects 2 or 3 arguments, got {}",
@@ -769,7 +736,7 @@ impl<'a> SourceParser<'a> {
         };
         let symbol = self.prop_symbol(variable, symbol_mode)?;
         self.push_variable(variable, symbol);
-        let guard = self.quantifier_guard(guard, symbol, symbol_mode)?;
+        let guard = self.quantifier_guard(guard, symbol_mode)?;
         let body = self.prop_with_symbols(body, symbol_mode)?;
         self.pop_variable();
 
@@ -842,14 +809,12 @@ impl<'a> SourceParser<'a> {
 
     fn quantifier_guard(
         &mut self,
-        guard: GuardSyntax<'_>,
-        variable: Symbol,
+        guard: Option<&Expr>,
         symbol_mode: PropSymbolMode,
     ) -> Result<Option<Prop>, ParseError> {
         match guard {
-            GuardSyntax::None => Ok(None),
-            GuardSyntax::Shorthand(atom) => primitive_guard(atom, variable),
-            GuardSyntax::Prop(prop) => Ok(Some(self.prop_with_symbols(prop, symbol_mode)?)),
+            Some(prop) => Ok(Some(self.prop_with_symbols(prop, symbol_mode)?)),
+            None => Ok(None),
         }
     }
 
@@ -1014,29 +979,8 @@ impl<'a> SourceParser<'a> {
 
     fn proof_exists_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
         let (variable, guard, body, witness, proof) = match items.len() {
-            5 => (
-                &items[1],
-                GuardSyntax::None,
-                &items[2],
-                &items[3],
-                &items[4],
-            ),
-            6 => match &items[2] {
-                Expr::List(_) => (
-                    &items[1],
-                    GuardSyntax::Prop(&items[2]),
-                    &items[3],
-                    &items[4],
-                    &items[5],
-                ),
-                Expr::Atom(_) => (
-                    &items[2],
-                    GuardSyntax::Shorthand(atom(&items[1])?),
-                    &items[3],
-                    &items[4],
-                    &items[5],
-                ),
-            },
+            5 => (&items[1], None, &items[2], &items[3], &items[4]),
+            6 => (&items[1], Some(&items[2]), &items[3], &items[4], &items[5]),
             _ => {
                 return Err(ParseError::new(format!(
                     "`exists-intro` expects 4 or 5 arguments, got {}",
@@ -1047,7 +991,7 @@ impl<'a> SourceParser<'a> {
         let variable = self.proof_symbol(atom(variable)?)?;
         Ok(ProofExpr::ExistsIntro {
             variable,
-            guard: self.quantifier_guard(guard, variable, PropSymbolMode::Reference)?,
+            guard: self.quantifier_guard(guard, PropSymbolMode::Reference)?,
             body: self.proof_prop(body)?,
             witness: self.computation(witness)?,
             proof: Box::new(self.proof_expr(proof)?),
@@ -1088,15 +1032,8 @@ impl<'a> SourceParser<'a> {
 
     fn proof_forall_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
         let (variable, guard, proof) = match items.len() {
-            3 => (&items[1], GuardSyntax::None, &items[2]),
-            4 => match &items[2] {
-                Expr::List(_) => (&items[1], GuardSyntax::Prop(&items[2]), &items[3]),
-                Expr::Atom(_) => (
-                    &items[2],
-                    GuardSyntax::Shorthand(atom(&items[1])?),
-                    &items[3],
-                ),
-            },
+            3 => (&items[1], None, &items[2]),
+            4 => (&items[1], Some(&items[2]), &items[3]),
             _ => {
                 return Err(ParseError::new(format!(
                     "`forall-intro` expects 2 or 3 arguments, got {}",
@@ -1107,7 +1044,7 @@ impl<'a> SourceParser<'a> {
         let variable = self.proof_symbol(atom(variable)?)?;
         Ok(ProofExpr::ForAllIntro {
             variable,
-            guard: self.quantifier_guard(guard, variable, PropSymbolMode::Reference)?,
+            guard: self.quantifier_guard(guard, PropSymbolMode::Reference)?,
             proof: Box::new(self.proof_expr(proof)?),
         })
     }
@@ -1449,6 +1386,31 @@ mod tests {
                 }],
             })
         );
+    }
+
+    #[test]
+    fn rejects_legacy_guard_form() {
+        let theorems = [NameBinding {
+            spelling: "old_guard",
+            name: Name(1),
+        }];
+
+        let error = parse_module(
+            "
+            (theorem old_guard
+              (forall list x
+                (equal x x))
+              (proof
+                (forall-intro list x
+                  (eval-to x x))))
+            ",
+            &[],
+            &theorems,
+            &[],
+        )
+        .expect_err("legacy guard form should not parse");
+
+        assert_eq!(error.message(), "expected proposition");
     }
 
     #[test]
