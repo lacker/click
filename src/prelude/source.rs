@@ -2,8 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     Computation, ErrorName, Lambda, ListCase, Name, Prop, Sort, Symbol, and, computes_to,
-    computes_to_list, diverges, equal, errors_with, exists_list, exists_sort, forall_list,
-    forall_sort, implies, or,
+    computes_to_list, diverges, equal, errors_with, exists_sort, forall_sort, implies, or,
 };
 
 const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
@@ -116,26 +115,6 @@ pub(super) enum ProofExpr {
     ForAllElim {
         forall: Box<ProofExpr>,
         argument: Computation,
-    },
-    ForAllListIntro {
-        variable: Symbol,
-        proof: Box<ProofExpr>,
-    },
-    ForAllListElim {
-        forall: Box<ProofExpr>,
-        argument: Computation,
-    },
-    ExistsListIntro {
-        variable: Symbol,
-        body: Prop,
-        witness: Computation,
-        proof: Box<ProofExpr>,
-    },
-    ExistsListElim {
-        existential: Box<ProofExpr>,
-        witness: Symbol,
-        assumption: Symbol,
-        proof: Box<ProofExpr>,
     },
 }
 
@@ -670,9 +649,7 @@ impl<'a> SourceParser<'a> {
             "computes-to" => self.computes_to(items),
             "implies" => self.implies(items, symbol_mode),
             "forall" => self.forall(items, symbol_mode),
-            "forall-list" => self.forall_list(items, symbol_mode),
             "exists" => self.exists(items, symbol_mode),
-            "exists-list" => self.exists_list(items, symbol_mode),
             "and" => self.and(items, symbol_mode),
             "or" => self.or(items, symbol_mode),
             "computes-to-list" => self.computes_to_list(items, symbol_mode),
@@ -725,21 +702,6 @@ impl<'a> SourceParser<'a> {
         Ok(forall_sort(symbol, sort, body))
     }
 
-    fn forall_list(
-        &mut self,
-        items: &[Expr],
-        symbol_mode: PropSymbolMode,
-    ) -> Result<Prop, ParseError> {
-        expect_len("forall-list", items, 3)?;
-        let variable = atom(&items[1])?;
-        let symbol = self.prop_symbol(variable, symbol_mode)?;
-        self.push_variable(variable, symbol);
-        let body = self.prop_with_symbols(&items[2], symbol_mode)?;
-        self.pop_variable();
-
-        Ok(forall_list(symbol, body))
-    }
-
     fn exists(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
         let (sort, variable, body) = match items.len() {
             3 => (Sort::Computation, atom(&items[1])?, &items[2]),
@@ -757,21 +719,6 @@ impl<'a> SourceParser<'a> {
         self.pop_variable();
 
         Ok(exists_sort(symbol, sort, body))
-    }
-
-    fn exists_list(
-        &mut self,
-        items: &[Expr],
-        symbol_mode: PropSymbolMode,
-    ) -> Result<Prop, ParseError> {
-        expect_len("exists-list", items, 3)?;
-        let variable = atom(&items[1])?;
-        let symbol = self.prop_symbol(variable, symbol_mode)?;
-        self.push_variable(variable, symbol);
-        let body = self.prop_with_symbols(&items[2], symbol_mode)?;
-        self.pop_variable();
-
-        Ok(exists_list(symbol, body))
     }
 
     fn and(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
@@ -860,10 +807,6 @@ impl<'a> SourceParser<'a> {
             "and-elim-right" => self.proof_and_elim_right(items),
             "forall-intro" => self.proof_forall_intro(items),
             "forall-elim" => self.proof_forall_elim(items),
-            "forall-list-intro" => self.proof_forall_list_intro(items),
-            "forall-list-elim" => self.proof_forall_list_elim(items),
-            "exists-list-intro" => self.proof_exists_list_intro(items),
-            "exists-list-elim" => self.proof_exists_list_elim(items),
             _ => Err(ParseError::new(format!(
                 "unknown proof expression `{form}`"
             ))),
@@ -1065,42 +1008,6 @@ impl<'a> SourceParser<'a> {
         Ok(ProofExpr::ForAllElim {
             forall: Box::new(self.proof_expr(&items[1])?),
             argument: self.computation(&items[2])?,
-        })
-    }
-
-    fn proof_forall_list_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        expect_len("forall-list-intro", items, 3)?;
-        Ok(ProofExpr::ForAllListIntro {
-            variable: self.proof_symbol(atom(&items[1])?)?,
-            proof: Box::new(self.proof_expr(&items[2])?),
-        })
-    }
-
-    fn proof_forall_list_elim(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        expect_len("forall-list-elim", items, 3)?;
-        Ok(ProofExpr::ForAllListElim {
-            forall: Box::new(self.proof_expr(&items[1])?),
-            argument: self.computation(&items[2])?,
-        })
-    }
-
-    fn proof_exists_list_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        expect_len("exists-list-intro", items, 5)?;
-        Ok(ProofExpr::ExistsListIntro {
-            variable: self.proof_symbol(atom(&items[1])?)?,
-            body: self.proof_prop(&items[2])?,
-            witness: self.computation(&items[3])?,
-            proof: Box::new(self.proof_expr(&items[4])?),
-        })
-    }
-
-    fn proof_exists_list_elim(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        expect_len("exists-list-elim", items, 5)?;
-        Ok(ProofExpr::ExistsListElim {
-            existential: Box::new(self.proof_expr(&items[1])?),
-            witness: self.proof_symbol(atom(&items[2])?)?,
-            assumption: self.proof_symbol(atom(&items[3])?)?,
-            proof: Box::new(self.proof_expr(&items[4])?),
         })
     }
 
@@ -1369,11 +1276,11 @@ mod tests {
                 "
                 (def use_id nil)
                 (theorem use_id_computes_to_list
-                  (forall-list x
+                  (forall list x
                     (computes-to-list result (use_id x)))
                   (proof
-                    (forall-list-intro x
-                      (exists-list-intro result
+                    (forall-intro list x
+                      (exists-intro list result
                         (computes-to (use_id x) result)
                         x
                         (eval-to (use_id x) x)))))
@@ -1386,8 +1293,9 @@ mod tests {
                 computations: vec![(Name(2), Computation::Nil)],
                 theorems: vec![ParsedTheorem {
                     name: Name(3),
-                    prop: forall_list(
+                    prop: forall_sort(
                         Symbol(2_000),
+                        Sort::List,
                         computes_to_list(
                             Symbol(2_001),
                             Computation::Apply {
@@ -1396,10 +1304,12 @@ mod tests {
                             },
                         ),
                     ),
-                    proof: ProofScript::Proof(ProofExpr::ForAllListIntro {
+                    proof: ProofScript::Proof(ProofExpr::ForAllIntro {
                         variable: Symbol(2_000),
-                        proof: Box::new(ProofExpr::ExistsListIntro {
+                        sort: Sort::List,
+                        proof: Box::new(ProofExpr::ExistsIntro {
                             variable: Symbol(2_001),
+                            sort: Sort::List,
                             body: computes_to(
                                 Computation::Apply {
                                     function: Box::new(Computation::Ref(Name(2))),

@@ -1,7 +1,7 @@
 //! Shared proof-script and evaluation-proof helpers for prelude modules.
 
 use crate::{
-    Computation, Name, Outcome, Proof, Sort, Step, Theorem, Theory, alpha_eq_computation,
+    Computation, Name, Outcome, Proof, Step, Theorem, Theory, alpha_eq_computation,
     computes_to_outcome,
 };
 
@@ -155,38 +155,6 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
         ProofExpr::ForAllElim { forall, argument } => Some(Proof::ForAllElim {
             forall: Box::new(proof_expr_to_proof(forall, theory)?),
             argument: argument.clone(),
-        }),
-        ProofExpr::ForAllListIntro { variable, proof } => Some(Proof::ForAllIntro {
-            variable: *variable,
-            sort: Sort::List,
-            proof: Box::new(proof_expr_to_proof(proof, theory)?),
-        }),
-        ProofExpr::ForAllListElim { forall, argument } => Some(Proof::ForAllElim {
-            forall: Box::new(proof_expr_to_proof(forall, theory)?),
-            argument: argument.clone(),
-        }),
-        ProofExpr::ExistsListIntro {
-            variable,
-            body,
-            witness,
-            proof,
-        } => Some(Proof::ExistsIntro {
-            variable: *variable,
-            sort: Sort::List,
-            body: body.clone(),
-            witness: witness.clone(),
-            proof: Box::new(proof_expr_to_proof(proof, theory)?),
-        }),
-        ProofExpr::ExistsListElim {
-            existential,
-            witness,
-            assumption,
-            proof,
-        } => Some(Proof::ExistsElim {
-            existential: Box::new(proof_expr_to_proof(existential, theory)?),
-            witness: *witness,
-            assumption: *assumption,
-            proof: Box::new(proof_expr_to_proof(proof, theory)?),
         }),
     }
 }

@@ -278,10 +278,6 @@ pub enum Proof {
         variable: Symbol,
         template: Prop,
     },
-    Beta {
-        lambda: Lambda,
-        argument: Computation,
-    },
     ListInduction {
         variable: Symbol,
         property: Prop,
@@ -362,10 +358,6 @@ pub fn forall_sort(variable: Symbol, sort: Sort, body: Prop) -> Prop {
     }
 }
 
-pub fn forall_list(variable: Symbol, body: Prop) -> Prop {
-    forall_sort(variable, Sort::List, body)
-}
-
 pub fn exists(variable: Symbol, body: Prop) -> Prop {
     exists_sort(variable, Sort::Computation, body)
 }
@@ -380,10 +372,6 @@ pub fn exists_sort(variable: Symbol, sort: Sort, body: Prop) -> Prop {
 
 pub fn exists_value(variable: Symbol, body: Prop) -> Prop {
     exists_sort(variable, Sort::Value, body)
-}
-
-pub fn exists_list(variable: Symbol, body: Prop) -> Prop {
-    exists_sort(variable, Sort::List, body)
 }
 
 pub fn and(left: Prop, right: Prop) -> Prop {
@@ -420,8 +408,9 @@ pub fn terminates(variable: Symbol, computation: Computation) -> Prop {
 
 /// `variable` names the existential list value and should be fresh for `computation`.
 pub fn computes_to_list(variable: Symbol, computation: Computation) -> Prop {
-    exists_list(
+    exists_sort(
         variable,
+        Sort::List,
         computes_to(computation, Computation::Var(variable)),
     )
 }

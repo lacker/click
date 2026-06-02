@@ -1,8 +1,8 @@
 //! List definitions and theorems for the standard prelude.
 
 use crate::{
-    Computation, ErrorName, Lambda, ListCase, Name, Outcome, Proof, Prop, Symbol, Theorem, Theory,
-    computes_to_list, forall_list,
+    Computation, ErrorName, Lambda, ListCase, Name, Outcome, Proof, Prop, Sort, Symbol, Theorem,
+    Theory, computes_to_list, forall_sort,
 };
 
 use super::{
@@ -299,10 +299,12 @@ pub fn append_call(left: Computation, right: Computation) -> Computation {
 /// `result` names the existential result in `computes_to_list` and should be
 /// distinct from `list` and `acc`.
 pub fn reverse_acc_computes_to_list_theorem(list: Symbol, acc: Symbol, result: Symbol) -> Prop {
-    forall_list(
+    forall_sort(
         list,
-        forall_list(
+        Sort::List,
+        forall_sort(
             acc,
+            Sort::List,
             computes_to_list(result, reverse_acc_call(var(list), var(acc))),
         ),
     )
@@ -313,23 +315,30 @@ pub fn reverse_acc_computes_to_list_theorem(list: Symbol, acc: Symbol, result: S
 /// `result` names the existential result in `computes_to_list` and should be
 /// distinct from `list`.
 pub fn reverse_computes_to_list_theorem(list: Symbol, result: Symbol) -> Prop {
-    forall_list(list, computes_to_list(result, reverse_call(var(list))))
+    forall_sort(
+        list,
+        Sort::List,
+        computes_to_list(result, reverse_call(var(list))),
+    )
 }
 
 /// If `right` is a list, then `append(nil, right)` computes to a list.
 pub fn append_nil_computes_to_list_theorem(right: Symbol, result: Symbol) -> Prop {
-    forall_list(
+    forall_sort(
         right,
+        Sort::List,
         computes_to_list(result, append_call(nil(), var(right))),
     )
 }
 
 /// If `left` and `right` are lists, then `append(left, right)` computes to a list.
 pub fn append_computes_to_list_theorem(left: Symbol, right: Symbol, result: Symbol) -> Prop {
-    forall_list(
+    forall_sort(
         left,
-        forall_list(
+        Sort::List,
+        forall_sort(
             right,
+            Sort::List,
             computes_to_list(result, append_call(var(left), var(right))),
         ),
     )
@@ -422,7 +431,7 @@ pub fn check_evaluates_to_in_theory(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Effect, Proof, RUNTIME_ERROR, Value, computes_to, diverges, exists_list};
+    use crate::{Effect, Proof, RUNTIME_ERROR, Value, computes_to, diverges, exists_sort};
 
     const A: Symbol = Symbol(100);
     const B: Symbol = Symbol(101);
@@ -451,12 +460,15 @@ mod tests {
     fn reverse_acc_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             reverse_acc_computes_to_list_theorem(X, ACCUMULATOR, RESULT),
-            forall_list(
+            forall_sort(
                 X,
-                forall_list(
+                Sort::List,
+                forall_sort(
                     ACCUMULATOR,
-                    exists_list(
+                    Sort::List,
+                    exists_sort(
                         RESULT,
+                        Sort::List,
                         computes_to(reverse_acc_call(var(X), var(ACCUMULATOR)), var(RESULT)),
                     ),
                 ),
@@ -480,9 +492,14 @@ mod tests {
     fn reverse_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             reverse_computes_to_list_theorem(X, RESULT),
-            forall_list(
+            forall_sort(
                 X,
-                exists_list(RESULT, computes_to(reverse_call(var(X)), var(RESULT))),
+                Sort::List,
+                exists_sort(
+                    RESULT,
+                    Sort::List,
+                    computes_to(reverse_call(var(X)), var(RESULT)),
+                ),
             )
         );
     }
@@ -512,9 +529,14 @@ mod tests {
     fn append_nil_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             append_nil_computes_to_list_theorem(X, RESULT),
-            forall_list(
+            forall_sort(
                 X,
-                exists_list(RESULT, computes_to(append_call(nil(), var(X)), var(RESULT))),
+                Sort::List,
+                exists_sort(
+                    RESULT,
+                    Sort::List,
+                    computes_to(append_call(nil(), var(X)), var(RESULT)),
+                ),
             )
         );
     }
@@ -533,12 +555,12 @@ mod tests {
     #[test]
     fn append_computes_to_list_theorem_has_expected_shape() {
         let appended = append_call(var(X), var(ACCUMULATOR));
-        let right_case = exists_list(RESULT, computes_to(appended, var(RESULT)));
-        let left_case = forall_list(ACCUMULATOR, right_case);
+        let right_case = exists_sort(RESULT, Sort::List, computes_to(appended, var(RESULT)));
+        let left_case = forall_sort(ACCUMULATOR, Sort::List, right_case);
 
         assert_eq!(
             append_computes_to_list_theorem(X, ACCUMULATOR, RESULT),
-            forall_list(X, left_case)
+            forall_sort(X, Sort::List, left_case)
         );
     }
 

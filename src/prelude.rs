@@ -226,7 +226,7 @@ mod tests {
             .known(REVERSE_COMPUTES_TO_LIST)
             .expect("reverse theorem should be defined");
         let instantiated = theory
-            .forall_list_elim(&reverse, list::nil())
+            .forall_elim(&reverse, list::nil())
             .expect("known theorem should instantiate in its theory");
 
         assert_eq!(

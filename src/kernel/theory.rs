@@ -123,10 +123,6 @@ impl Theorem {
         })
     }
 
-    pub fn beta(lambda: Lambda, argument: Computation) -> Option<Self> {
-        Self::from_closed_proof(Proof::Beta { lambda, argument })
-    }
-
     pub fn implies_elim(implication: &Self, premise: &Self) -> Option<Self> {
         Self::from_closed_proof(Proof::ImpliesElim {
             implication: Box::new(implication.proof.clone()),
@@ -135,13 +131,6 @@ impl Theorem {
     }
 
     pub fn forall_elim(forall: &Self, argument: Computation) -> Option<Self> {
-        Self::from_closed_proof(Proof::ForAllElim {
-            forall: Box::new(forall.proof.clone()),
-            argument,
-        })
-    }
-
-    pub fn forall_list_elim(forall: &Self, argument: Computation) -> Option<Self> {
         Self::from_closed_proof(Proof::ForAllElim {
             forall: Box::new(forall.proof.clone()),
             argument,
@@ -301,10 +290,6 @@ impl Theory {
         })
     }
 
-    pub fn beta(&self, lambda: Lambda, argument: Computation) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::Beta { lambda, argument })
-    }
-
     pub fn implies_elim(&self, implication: &Theorem, premise: &Theorem) -> Option<Theorem> {
         self.theorem_from_closed_proof(Proof::ImpliesElim {
             implication: Box::new(implication.proof.clone()),
@@ -313,13 +298,6 @@ impl Theory {
     }
 
     pub fn forall_elim(&self, forall: &Theorem, argument: Computation) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::ForAllElim {
-            forall: Box::new(forall.proof.clone()),
-            argument,
-        })
-    }
-
-    pub fn forall_list_elim(&self, forall: &Theorem, argument: Computation) -> Option<Theorem> {
         self.theorem_from_closed_proof(Proof::ForAllElim {
             forall: Box::new(forall.proof.clone()),
             argument,

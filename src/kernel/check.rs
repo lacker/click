@@ -242,18 +242,6 @@ fn proven_prop_in_sort_context(
 
             Some(substitute_prop(template, *variable, &right))
         }
-        Proof::Beta { lambda, argument } => {
-            if !computation_has_sort(argument, Sort::Value, context, sort_context) {
-                return None;
-            }
-
-            let applied = Computation::Apply {
-                function: Box::new(Computation::Lambda(lambda.clone())),
-                argument: Box::new(argument.clone()),
-            };
-            let reduced = substitute(lambda.body.as_ref(), lambda.parameter, argument);
-            Some(Prop::Equal(applied, reduced))
-        }
         Proof::ListInduction {
             variable,
             property,

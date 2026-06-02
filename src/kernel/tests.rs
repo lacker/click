@@ -679,7 +679,7 @@ fn rewrite_uses_equality_inside_template() {
 }
 
 #[test]
-fn beta_proof_rejects_reducible_arguments() {
+fn step_proof_reduces_arguments_before_beta() {
     let lam = Lambda {
         parameter: Symbol(1),
         body: Box::new(Computation::Quote(Symbol(9))),
@@ -690,10 +690,7 @@ fn beta_proof_rejects_reducible_arguments() {
     );
 
     assert!(!check(
-        &Proof::Beta {
-            lambda: lam.clone(),
-            argument: argument.clone()
-        },
+        &Proof::Step(apply(Computation::Lambda(lam.clone()), argument.clone())),
         &Prop::Equal(
             apply(Computation::Lambda(lam), argument),
             Computation::Quote(Symbol(9))
@@ -776,8 +773,9 @@ fn sorted_list_reductions_require_list_arguments() {
     let expected = forall_sort(
         head_symbol,
         Sort::Value,
-        forall_list(
+        forall_sort(
             tail_symbol,
+            Sort::List,
             equal(destructure, Computation::Var(head_symbol)),
         ),
     );
@@ -837,7 +835,7 @@ fn list_induction_proves_reflexivity_for_lists() {
             Computation::Var(tail),
         ))),
     };
-    let expected = forall_list(variable, property);
+    let expected = forall_sort(variable, Sort::List, property);
 
     assert!(check(&proof, &expected));
 }
@@ -858,7 +856,7 @@ fn list_induction_rejects_stale_step_variables() {
         induction_hypothesis_assumption,
         step: Box::new(Proof::Assume(induction_hypothesis_assumption)),
     };
-    let expected = forall_list(variable, property);
+    let expected = forall_sort(variable, Sort::List, property);
 
     assert!(!check(&proof, &expected));
 }
@@ -1005,8 +1003,9 @@ fn prop_helpers_construct_expected_shapes() {
     );
     assert_eq!(
         computes_to_list(Symbol(9), computation.clone()),
-        exists_list(
+        exists_sort(
             Symbol(9),
+            Sort::List,
             computes_to(computation.clone(), Computation::Var(Symbol(9))),
         )
     );
