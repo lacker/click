@@ -141,3 +141,30 @@
               (computes-to
                 (append (cons head tail) right)
                 (cons head rewrite_target)))))))))
+
+(theorem append_nil_returns_right
+  (forall list right
+    (computes-to (append nil right) right))
+  (proof
+    (forall-intro list right
+      (eval-to (append nil right) right))))
+
+(theorem append_right_nil
+  (forall list left
+    (computes-to (append left nil) left))
+  (proof
+    (list-induction left
+      (computes-to (append left nil) left)
+      (eval-to (append nil nil) nil)
+      head
+      tail
+      induction_hypothesis
+      (rewrite
+        (assume induction_hypothesis)
+        (eval-same
+          (append (cons head tail) nil)
+          (cons head (append tail nil)))
+        rewrite_target
+        (computes-to
+          (append (cons head tail) nil)
+          (cons head rewrite_target))))))

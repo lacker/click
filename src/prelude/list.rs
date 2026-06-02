@@ -2,13 +2,13 @@
 
 use crate::{
     Computation, ErrorName, Lambda, ListCase, Name, Outcome, Proof, Prop, Sort, Symbol, Theorem,
-    Theory, computes_to_list, forall_sort,
+    Theory, computes_to, computes_to_list, forall_sort,
 };
 
 use super::{
-    APPEND, APPEND_COMPUTES_TO_LIST, APPEND_NIL_COMPUTES_TO_LIST, REVERSE, REVERSE_ACC,
-    REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST, REVERSE_NIL_COMPUTES_TO_LIST,
-    SourceTheoremError,
+    APPEND, APPEND_COMPUTES_TO_LIST, APPEND_NIL_COMPUTES_TO_LIST, APPEND_NIL_RETURNS_RIGHT,
+    APPEND_RIGHT_NIL, REVERSE, REVERSE_ACC, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST,
+    REVERSE_NIL_COMPUTES_TO_LIST, SourceTheoremError,
     source::{ModuleSpec, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
 
@@ -68,6 +68,14 @@ pub(super) const MODULE: ModuleSpec = ModuleSpec {
         super::source::NameBinding {
             spelling: "append_computes_to_list",
             name: APPEND_COMPUTES_TO_LIST,
+        },
+        super::source::NameBinding {
+            spelling: "append_nil_returns_right",
+            name: APPEND_NIL_RETURNS_RIGHT,
+        },
+        super::source::NameBinding {
+            spelling: "append_right_nil",
+            name: APPEND_RIGHT_NIL,
         },
     ],
     symbols: &[
@@ -249,6 +257,14 @@ pub fn append_computes_to_list_source_theorem() -> Prop {
     theorem_prop(APPEND_COMPUTES_TO_LIST)
 }
 
+pub fn append_nil_returns_right_source_theorem() -> Prop {
+    theorem_prop(APPEND_NIL_RETURNS_RIGHT)
+}
+
+pub fn append_right_nil_source_theorem() -> Prop {
+    theorem_prop(APPEND_RIGHT_NIL)
+}
+
 fn theorem_prop(name: Name) -> Prop {
     theorem_definition(name).prop
 }
@@ -342,6 +358,24 @@ pub fn append_computes_to_list_theorem(left: Symbol, right: Symbol, result: Symb
             Sort::List,
             computes_to_list(result, append_call(var(left), var(right))),
         ),
+    )
+}
+
+/// Appending to `nil` on the left returns the right list exactly.
+pub fn append_nil_returns_right_theorem(right: Symbol) -> Prop {
+    forall_sort(
+        right,
+        Sort::List,
+        computes_to(append_call(nil(), var(right)), var(right)),
+    )
+}
+
+/// Appending `nil` on the right returns the left list exactly.
+pub fn append_right_nil_theorem(left: Symbol) -> Prop {
+    forall_sort(
+        left,
+        Sort::List,
+        computes_to(append_call(var(left), nil()), var(left)),
     )
 }
 
@@ -578,6 +612,26 @@ mod tests {
     }
 
     #[test]
+    fn append_nil_returns_right_source_theorem_has_expected_shape() {
+        let right = theorem_symbol(APPEND_NIL_RETURNS_RIGHT, "right");
+
+        assert_eq!(
+            append_nil_returns_right_source_theorem(),
+            append_nil_returns_right_theorem(right)
+        );
+    }
+
+    #[test]
+    fn append_right_nil_source_theorem_has_expected_shape() {
+        let left = theorem_symbol(APPEND_RIGHT_NIL, "left");
+
+        assert_eq!(
+            append_right_nil_source_theorem(),
+            append_right_nil_theorem(left)
+        );
+    }
+
+    #[test]
     fn reverse_source_theorem_uses_source_proof_script() {
         assert!(matches!(
             theorem_definition(REVERSE_ACC_COMPUTES_TO_LIST).proof,
@@ -597,6 +651,14 @@ mod tests {
         ));
         assert!(matches!(
             theorem_definition(APPEND_COMPUTES_TO_LIST).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(APPEND_NIL_RETURNS_RIGHT).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(APPEND_RIGHT_NIL).proof,
             ProofScript::Proof(_)
         ));
     }
