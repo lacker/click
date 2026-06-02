@@ -8,8 +8,9 @@ use crate::{
 use super::{
     APPEND, APPEND_ASSOC, APPEND_COMPUTES_TO_LIST, APPEND_CONS, APPEND_NIL_COMPUTES_TO_LIST,
     APPEND_NIL_RETURNS_RIGHT, APPEND_RIGHT_NIL, APPEND_SINGLETON, REVERSE, REVERSE_ACC,
-    REVERSE_ACC_APPEND, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST, REVERSE_CONS,
-    REVERSE_NIL, REVERSE_NIL_COMPUTES_TO_LIST, REVERSE_SINGLETON, SourceTheoremError,
+    REVERSE_ACC_APPEND, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_ACC_REVERSE,
+    REVERSE_COMPUTES_TO_LIST, REVERSE_CONS, REVERSE_DOUBLE, REVERSE_NIL,
+    REVERSE_NIL_COMPUTES_TO_LIST, REVERSE_SINGLETON, SourceTheoremError,
     source::{ModuleSpec, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
 
@@ -77,6 +78,14 @@ pub(super) const MODULE: ModuleSpec = ModuleSpec {
         super::source::NameBinding {
             spelling: "reverse_cons",
             name: REVERSE_CONS,
+        },
+        super::source::NameBinding {
+            spelling: "reverse_acc_reverse",
+            name: REVERSE_ACC_REVERSE,
+        },
+        super::source::NameBinding {
+            spelling: "reverse_double",
+            name: REVERSE_DOUBLE,
         },
         super::source::NameBinding {
             spelling: "append_nil_computes_to_list",
@@ -294,6 +303,14 @@ pub fn reverse_cons_source_theorem() -> Prop {
     theorem_prop(REVERSE_CONS)
 }
 
+pub fn reverse_acc_reverse_source_theorem() -> Prop {
+    theorem_prop(REVERSE_ACC_REVERSE)
+}
+
+pub fn reverse_double_source_theorem() -> Prop {
+    theorem_prop(REVERSE_DOUBLE)
+}
+
 pub fn append_nil_computes_to_list_source_theorem() -> Prop {
     theorem_prop(APPEND_NIL_COMPUTES_TO_LIST)
 }
@@ -440,6 +457,32 @@ pub fn reverse_cons_theorem(head: Symbol, tail: Symbol) -> Prop {
                 append_call(reverse_call(var(tail)), singleton(var(head))),
             ),
         ),
+    )
+}
+
+/// Reversing an accumulated reverse appends the original list after the reversed
+/// accumulator.
+pub fn reverse_acc_reverse_theorem(list: Symbol, acc: Symbol) -> Prop {
+    forall_where(
+        list,
+        is_list(var(list)),
+        forall_where(
+            acc,
+            is_list(var(acc)),
+            computes_to(
+                reverse_call(reverse_acc_call(var(list), var(acc))),
+                append_call(reverse_call(var(acc)), var(list)),
+            ),
+        ),
+    )
+}
+
+/// Reversing a list twice returns the original list.
+pub fn reverse_double_theorem(list: Symbol) -> Prop {
+    forall_where(
+        list,
+        is_list(var(list)),
+        computes_to(reverse_call(reverse_call(var(list))), var(list)),
     )
 }
 
@@ -811,6 +854,58 @@ mod tests {
     }
 
     #[test]
+    fn reverse_acc_reverse_theorem_has_expected_shape() {
+        assert_eq!(
+            reverse_acc_reverse_theorem(X, ACCUMULATOR),
+            forall_where(
+                X,
+                is_list(var(X)),
+                forall_where(
+                    ACCUMULATOR,
+                    is_list(var(ACCUMULATOR)),
+                    computes_to(
+                        reverse_call(reverse_acc_call(var(X), var(ACCUMULATOR))),
+                        append_call(reverse_call(var(ACCUMULATOR)), var(X)),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn reverse_acc_reverse_source_theorem_has_expected_shape() {
+        let list = theorem_symbol(REVERSE_ACC_REVERSE, "list");
+        let acc = theorem_symbol(REVERSE_ACC_REVERSE, "acc");
+
+        assert_eq!(
+            reverse_acc_reverse_source_theorem(),
+            reverse_acc_reverse_theorem(list, acc)
+        );
+    }
+
+    #[test]
+    fn reverse_double_theorem_has_expected_shape() {
+        assert_eq!(
+            reverse_double_theorem(X),
+            forall_where(
+                X,
+                is_list(var(X)),
+                computes_to(reverse_call(reverse_call(var(X))), var(X)),
+            )
+        );
+    }
+
+    #[test]
+    fn reverse_double_source_theorem_has_expected_shape() {
+        let list = theorem_symbol(REVERSE_DOUBLE, "list");
+
+        assert_eq!(
+            reverse_double_source_theorem(),
+            reverse_double_theorem(list)
+        );
+    }
+
+    #[test]
     fn append_nil_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             append_nil_computes_to_list_theorem(X, RESULT),
@@ -1013,6 +1108,14 @@ mod tests {
         ));
         assert!(matches!(
             theorem_definition(REVERSE_CONS).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(REVERSE_ACC_REVERSE).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(REVERSE_DOUBLE).proof,
             ProofScript::Proof(_)
         ));
         assert!(matches!(
