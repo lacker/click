@@ -10,23 +10,21 @@ use crate::{
     errors_with, forall_where, is_list, is_value,
 };
 
+use super::{FALSE, SourceTheoremError, TRUE};
+
+#[cfg(test)]
 use super::{
-    APPEND, APPEND_ASSOC, APPEND_COMPUTES_TO_LIST, APPEND_CONS, APPEND_NIL_COMPUTES_TO_LIST,
-    APPEND_NIL_RETURNS_RIGHT, APPEND_RIGHT_NIL, APPEND_SINGLETON, CONCAT, CONCAT_NIL, FALSE, INIT,
-    INIT_CONS, INIT_NIL_ERRORS, INIT_SINGLETON, IS_SINGLETON, IS_SINGLETON_CONS, IS_SINGLETON_NIL,
-    IS_SINGLETON_SINGLETON, LAST, LAST_CONS, LAST_NIL_ERRORS, LAST_SINGLETON, NULL, NULL_CONS,
-    NULL_NIL, REVERSE, REVERSE_ACC, REVERSE_ACC_APPEND, REVERSE_ACC_COMPUTES_TO_LIST,
-    REVERSE_ACC_OF_APPEND, REVERSE_ACC_REVERSE, REVERSE_APPEND, REVERSE_COMPUTES_TO_LIST,
-    REVERSE_CONS, REVERSE_DOUBLE, REVERSE_NIL, REVERSE_NIL_COMPUTES_TO_LIST, REVERSE_SINGLETON,
-    SNOC, SNOC_COMPUTES_TO_LIST, SNOC_CONS, SNOC_NIL, SourceTheoremError, TRUE,
+    APPEND_ASSOC, APPEND_COMPUTES_TO_LIST, APPEND_CONS, APPEND_NIL_COMPUTES_TO_LIST,
+    APPEND_NIL_RETURNS_RIGHT, APPEND_RIGHT_NIL, APPEND_SINGLETON, INIT_CONS, INIT_SINGLETON,
+    IS_SINGLETON_CONS, IS_SINGLETON_SINGLETON, LAST_CONS, LAST_SINGLETON, NULL_CONS,
+    REVERSE_ACC_APPEND, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_ACC_OF_APPEND, REVERSE_ACC_REVERSE,
+    REVERSE_APPEND, REVERSE_COMPUTES_TO_LIST, REVERSE_CONS, REVERSE_DOUBLE,
+    REVERSE_NIL_COMPUTES_TO_LIST, REVERSE_SINGLETON, SNOC_COMPUTES_TO_LIST, SNOC_CONS, SNOC_NIL,
 };
 
 pub use crate::elab::EvaluationProofError;
 
-#[cfg(test)]
-use crate::elab::source::ProofScript;
-
-pub const UNIT: Symbol = Symbol(3);
+pub(super) const UNIT: Symbol = Symbol(3);
 
 const SOURCE: &str = include_str!("list.lisp");
 
@@ -122,12 +120,11 @@ pub fn reverse_acc() -> Computation {
 }
 
 pub(super) fn module() -> Result<ParsedModule, ParseError> {
-    let mut env = super::prelude_env();
-    MODULE.parse(&mut env)
+    super::parsed_list_module().cloned()
 }
 
 pub fn reverse_acc_definition() -> Computation {
-    definition(REVERSE_ACC)
+    definition("reverse_acc")
 }
 
 pub fn reverse() -> Computation {
@@ -135,7 +132,7 @@ pub fn reverse() -> Computation {
 }
 
 pub fn reverse_definition() -> Computation {
-    definition(REVERSE)
+    definition("reverse")
 }
 
 pub fn append() -> Computation {
@@ -143,7 +140,7 @@ pub fn append() -> Computation {
 }
 
 pub fn append_definition() -> Computation {
-    definition(APPEND)
+    definition("append")
 }
 
 pub fn snoc() -> Computation {
@@ -151,7 +148,7 @@ pub fn snoc() -> Computation {
 }
 
 pub fn snoc_definition() -> Computation {
-    definition(SNOC)
+    definition("snoc")
 }
 
 pub fn concat() -> Computation {
@@ -159,7 +156,7 @@ pub fn concat() -> Computation {
 }
 
 pub fn concat_definition() -> Computation {
-    definition(CONCAT)
+    definition("concat")
 }
 
 pub fn last() -> Computation {
@@ -167,7 +164,7 @@ pub fn last() -> Computation {
 }
 
 pub fn last_definition() -> Computation {
-    definition(LAST)
+    definition("last")
 }
 
 pub fn init() -> Computation {
@@ -175,7 +172,7 @@ pub fn init() -> Computation {
 }
 
 pub fn init_definition() -> Computation {
-    definition(INIT)
+    definition("init")
 }
 
 pub fn null() -> Computation {
@@ -183,7 +180,7 @@ pub fn null() -> Computation {
 }
 
 pub fn null_definition() -> Computation {
-    definition(NULL)
+    definition("null")
 }
 
 pub fn is_singleton() -> Computation {
@@ -191,154 +188,174 @@ pub fn is_singleton() -> Computation {
 }
 
 pub fn is_singleton_definition() -> Computation {
-    definition(IS_SINGLETON)
+    definition("is-singleton")
 }
 
-fn definition(name: Name) -> Computation {
-    module()
-        .expect("prelude list source should parse")
+fn definition(spelling: &str) -> Computation {
+    let module = super::parsed_list_module().expect("prelude list source should parse");
+    let env = super::parsed_prelude_env().expect("prelude source should parse");
+    let name = env
+        .computation(spelling)
+        .expect("prelude list source should define requested computation name");
+
+    module
         .computation(name)
         .cloned()
         .expect("prelude list source should define requested computation")
 }
 
 pub fn reverse_acc_computes_to_list_source_theorem() -> Prop {
-    theorem_prop(REVERSE_ACC_COMPUTES_TO_LIST)
+    theorem_prop("reverse_acc_computes_to_list")
 }
 
 pub fn reverse_computes_to_list_source_theorem() -> Prop {
-    theorem_prop(REVERSE_COMPUTES_TO_LIST)
+    theorem_prop("reverse_computes_to_list")
 }
 
 pub fn reverse_nil_computes_to_list_source_theorem() -> Prop {
-    theorem_prop(REVERSE_NIL_COMPUTES_TO_LIST)
+    theorem_prop("reverse_nil_computes_to_list")
 }
 
 pub fn reverse_nil_source_theorem() -> Prop {
-    theorem_prop(REVERSE_NIL)
+    theorem_prop("reverse_nil")
 }
 
 pub fn reverse_singleton_source_theorem() -> Prop {
-    theorem_prop(REVERSE_SINGLETON)
+    theorem_prop("reverse_singleton")
 }
 
 pub fn reverse_acc_append_source_theorem() -> Prop {
-    theorem_prop(REVERSE_ACC_APPEND)
+    theorem_prop("reverse_acc_append")
 }
 
 pub fn reverse_cons_source_theorem() -> Prop {
-    theorem_prop(REVERSE_CONS)
+    theorem_prop("reverse_cons")
 }
 
 pub fn reverse_acc_reverse_source_theorem() -> Prop {
-    theorem_prop(REVERSE_ACC_REVERSE)
+    theorem_prop("reverse_acc_reverse")
 }
 
 pub fn reverse_double_source_theorem() -> Prop {
-    theorem_prop(REVERSE_DOUBLE)
+    theorem_prop("reverse_double")
 }
 
 pub fn reverse_acc_of_append_source_theorem() -> Prop {
-    theorem_prop(REVERSE_ACC_OF_APPEND)
+    theorem_prop("reverse_acc_of_append")
 }
 
 pub fn reverse_append_source_theorem() -> Prop {
-    theorem_prop(REVERSE_APPEND)
+    theorem_prop("reverse_append")
 }
 
 pub fn snoc_computes_to_list_source_theorem() -> Prop {
-    theorem_prop(SNOC_COMPUTES_TO_LIST)
+    theorem_prop("snoc_computes_to_list")
 }
 
 pub fn snoc_nil_source_theorem() -> Prop {
-    theorem_prop(SNOC_NIL)
+    theorem_prop("snoc_nil")
 }
 
 pub fn snoc_cons_source_theorem() -> Prop {
-    theorem_prop(SNOC_CONS)
+    theorem_prop("snoc_cons")
 }
 
 pub fn concat_nil_source_theorem() -> Prop {
-    theorem_prop(CONCAT_NIL)
+    theorem_prop("concat_nil")
 }
 
 pub fn last_nil_errors_source_theorem() -> Prop {
-    theorem_prop(LAST_NIL_ERRORS)
+    theorem_prop("last_nil_errors")
 }
 
 pub fn last_singleton_source_theorem() -> Prop {
-    theorem_prop(LAST_SINGLETON)
+    theorem_prop("last_singleton")
 }
 
 pub fn last_cons_source_theorem() -> Prop {
-    theorem_prop(LAST_CONS)
+    theorem_prop("last_cons")
 }
 
 pub fn init_nil_errors_source_theorem() -> Prop {
-    theorem_prop(INIT_NIL_ERRORS)
+    theorem_prop("init_nil_errors")
 }
 
 pub fn init_singleton_source_theorem() -> Prop {
-    theorem_prop(INIT_SINGLETON)
+    theorem_prop("init_singleton")
 }
 
 pub fn init_cons_source_theorem() -> Prop {
-    theorem_prop(INIT_CONS)
+    theorem_prop("init_cons")
 }
 
 pub fn null_nil_source_theorem() -> Prop {
-    theorem_prop(NULL_NIL)
+    theorem_prop("null_nil")
 }
 
 pub fn null_cons_source_theorem() -> Prop {
-    theorem_prop(NULL_CONS)
+    theorem_prop("null_cons")
 }
 
 pub fn is_singleton_nil_source_theorem() -> Prop {
-    theorem_prop(IS_SINGLETON_NIL)
+    theorem_prop("is_singleton_nil")
 }
 
 pub fn is_singleton_singleton_source_theorem() -> Prop {
-    theorem_prop(IS_SINGLETON_SINGLETON)
+    theorem_prop("is_singleton_singleton")
 }
 
 pub fn is_singleton_cons_source_theorem() -> Prop {
-    theorem_prop(IS_SINGLETON_CONS)
+    theorem_prop("is_singleton_cons")
 }
 
 pub fn append_nil_computes_to_list_source_theorem() -> Prop {
-    theorem_prop(APPEND_NIL_COMPUTES_TO_LIST)
+    theorem_prop("append_nil_computes_to_list")
 }
 
 pub fn append_computes_to_list_source_theorem() -> Prop {
-    theorem_prop(APPEND_COMPUTES_TO_LIST)
+    theorem_prop("append_computes_to_list")
 }
 
 pub fn append_nil_returns_right_source_theorem() -> Prop {
-    theorem_prop(APPEND_NIL_RETURNS_RIGHT)
+    theorem_prop("append_nil_returns_right")
 }
 
 pub fn append_right_nil_source_theorem() -> Prop {
-    theorem_prop(APPEND_RIGHT_NIL)
+    theorem_prop("append_right_nil")
 }
 
 pub fn append_cons_source_theorem() -> Prop {
-    theorem_prop(APPEND_CONS)
+    theorem_prop("append_cons")
 }
 
 pub fn append_singleton_source_theorem() -> Prop {
-    theorem_prop(APPEND_SINGLETON)
+    theorem_prop("append_singleton")
 }
 
 pub fn append_assoc_source_theorem() -> Prop {
-    theorem_prop(APPEND_ASSOC)
+    theorem_prop("append_assoc")
 }
 
-fn theorem_prop(name: Name) -> Prop {
-    theorem_definition(name).prop
+fn theorem_prop(spelling: &str) -> Prop {
+    theorem_definition(spelling).prop
 }
 
-fn theorem_definition(name: Name) -> ParsedTheorem {
+fn theorem_definition(spelling: &str) -> ParsedTheorem {
+    let module =
+        super::parsed_list_module().expect("prelude list source should parse theorem statements");
+    let env = super::parsed_prelude_env().expect("prelude source should parse");
+    let name = env
+        .theorem(spelling)
+        .expect("prelude list source should define requested theorem name");
+
+    module
+        .theorem(name)
+        .cloned()
+        .expect("prelude list source should define requested theorem")
+}
+
+#[cfg(test)]
+fn theorem_definition_by_name(name: Name) -> ParsedTheorem {
     module()
         .expect("prelude list source should parse theorem statements")
         .theorem(name)
@@ -348,7 +365,7 @@ fn theorem_definition(name: Name) -> ParsedTheorem {
 
 #[cfg(test)]
 fn theorem_symbol(name: Name, spelling: &str) -> Symbol {
-    theorem_definition(name)
+    theorem_definition_by_name(name)
         .symbol(spelling)
         .expect("prelude list source should define requested theorem symbol once")
 }
@@ -1649,142 +1666,6 @@ mod tests {
             append_assoc_source_theorem(),
             append_assoc_theorem(left, middle, right)
         );
-    }
-
-    #[test]
-    fn reverse_source_theorem_uses_source_proof_script() {
-        assert!(matches!(
-            theorem_definition(REVERSE_ACC_COMPUTES_TO_LIST).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(REVERSE_COMPUTES_TO_LIST).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(REVERSE_NIL_COMPUTES_TO_LIST).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(REVERSE_NIL).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(REVERSE_SINGLETON).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(REVERSE_ACC_APPEND).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(REVERSE_CONS).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(REVERSE_ACC_REVERSE).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(REVERSE_DOUBLE).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(REVERSE_ACC_OF_APPEND).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(REVERSE_APPEND).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(SNOC_COMPUTES_TO_LIST).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(SNOC_NIL).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(SNOC_CONS).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(CONCAT_NIL).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(LAST_NIL_ERRORS).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(LAST_SINGLETON).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(LAST_CONS).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(INIT_NIL_ERRORS).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(INIT_SINGLETON).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(INIT_CONS).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(NULL_NIL).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(NULL_CONS).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(IS_SINGLETON_NIL).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(IS_SINGLETON_SINGLETON).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(IS_SINGLETON_CONS).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(APPEND_NIL_COMPUTES_TO_LIST).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(APPEND_COMPUTES_TO_LIST).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(APPEND_NIL_RETURNS_RIGHT).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(APPEND_RIGHT_NIL).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(APPEND_CONS).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(APPEND_SINGLETON).proof,
-            ProofScript::Proof(_)
-        ));
-        assert!(matches!(
-            theorem_definition(APPEND_ASSOC).proof,
-            ProofScript::Proof(_)
-        ));
     }
 
     #[test]

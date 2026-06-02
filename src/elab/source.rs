@@ -80,12 +80,10 @@ impl ElabEnv {
         Ok(module)
     }
 
-    #[allow(dead_code)]
     pub fn computation(&self, spelling: &str) -> Option<Name> {
         self.computations.get(spelling).copied()
     }
 
-    #[allow(dead_code)]
     pub fn theorem(&self, spelling: &str) -> Option<Name> {
         self.theorems.get(spelling).copied()
     }

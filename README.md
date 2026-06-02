@@ -45,7 +45,9 @@ The source elaborator lives in `src/elab/`. It parses S-expression source and
 proof scripts, then elaborates them into kernel computations, propositions, and
 proofs. `ElabEnv` owns the mapping from source spellings to opaque kernel
 `Name` and `Symbol` IDs. The prelude uses this layer to load source files into a
-`Theory`.
+`Theory`; when source names matter, the loaded prelude carries both the checked
+`Theory` and its `ElabEnv`. Concrete numeric IDs are not part of the prelude's
+public API; callers resolve source spellings through the elaborator environment.
 
 Propositions can talk about arbitrary computations. Quantifiers may be
 unguarded, or guarded by propositions such as `is-value`, `is-list`,
