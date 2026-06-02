@@ -102,9 +102,14 @@ fn step_cons(head: &Computation, tail: &Computation, bindings: &Bindings) -> Ste
                 tail: Box::new(tail),
             }),
             Step::Normal if is_effect(tail) => Step::Reduced(tail.clone()),
+            Step::Normal if is_known_non_list(tail) => Step::Reduced(runtime_error()),
             Step::Normal => Step::Normal,
         },
     }
+}
+
+fn is_known_non_list(computation: &Computation) -> bool {
+    matches!(computation, Computation::Quote(_) | Computation::Lambda(_))
 }
 
 fn step_head(computation: &Computation, bindings: &Bindings) -> Step {

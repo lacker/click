@@ -1,10 +1,12 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::{
     calculus::*,
     eval::{argument_is_ready_for_beta, step_in_bindings},
     theory::{Bindings, Context},
 };
+
+type SortContext = HashMap<Symbol, Sort>;
 
 pub fn check(proof: &Proof, prop: &Prop) -> bool {
     check_in_context(proof, prop, &Context::new())
@@ -48,9 +50,6 @@ fn alpha_eq_prop_in_context(
         (Prop::IsValue(left), Prop::IsValue(right)) => {
             alpha_eq_computation_in_context(left, right, bindings)
         }
-        (Prop::IsList(left), Prop::IsList(right)) => {
-            alpha_eq_computation_in_context(left, right, bindings)
-        }
         (
             Prop::Implies(left_premise, left_conclusion),
             Prop::Implies(right_premise, right_conclusion),
@@ -63,25 +62,31 @@ fn alpha_eq_prop_in_context(
         (
             Prop::ForAll {
                 variable: left_variable,
+                sort: left_sort,
                 body: left_body,
             },
             Prop::ForAll {
                 variable: right_variable,
+                sort: right_sort,
                 body: right_body,
             },
         )
         | (
             Prop::Exists {
                 variable: left_variable,
+                sort: left_sort,
                 body: left_body,
             },
             Prop::Exists {
                 variable: right_variable,
+                sort: right_sort,
                 body: right_body,
             },
-        ) => alpha_eq_binder(*left_variable, *right_variable, bindings, |bindings| {
-            alpha_eq_prop_in_context(left_body, right_body, bindings)
-        }),
+        ) if left_sort == right_sort => {
+            alpha_eq_binder(*left_variable, *right_variable, bindings, |bindings| {
+                alpha_eq_prop_in_context(left_body, right_body, bindings)
+            })
+        }
         _ => false,
     }
 }
@@ -180,18 +185,29 @@ fn alpha_bound_position(
 }
 
 pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context) -> Option<Prop> {
+    proven_prop_in_sort_context(proof, bindings, context, &SortContext::new())
+}
+
+fn proven_prop_in_sort_context(
+    proof: &Proof,
+    bindings: &Bindings,
+    context: &Context,
+    sort_context: &SortContext,
+) -> Option<Prop> {
     match proof {
         Proof::Known(name) => bindings.theorem(*name).cloned(),
         Proof::Assume(symbol) => context.get(symbol).cloned(),
         Proof::Refl(computation) => Some(Prop::Equal(computation.clone(), computation.clone())),
-        Proof::Symm(proof) => match proven_prop(proof, bindings, context)? {
-            Prop::Equal(left, right) => Some(Prop::Equal(right, left)),
-            _ => None,
-        },
+        Proof::Symm(proof) => {
+            match proven_prop_in_sort_context(proof, bindings, context, sort_context)? {
+                Prop::Equal(left, right) => Some(Prop::Equal(right, left)),
+                _ => None,
+            }
+        }
         Proof::Trans(first, second) => {
             match (
-                proven_prop(first, bindings, context)?,
-                proven_prop(second, bindings, context)?,
+                proven_prop_in_sort_context(first, bindings, context, sort_context)?,
+                proven_prop_in_sort_context(second, bindings, context, sort_context)?,
             ) {
                 (Prop::Equal(left, middle), Prop::Equal(second_middle, right))
                     if alpha_eq_computation(&middle, &second_middle) =>
@@ -212,19 +228,26 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
             variable,
             template,
         } => {
-            let Prop::Equal(left, right) = proven_prop(equality, bindings, context)? else {
+            let Prop::Equal(left, right) =
+                proven_prop_in_sort_context(equality, bindings, context, sort_context)?
+            else {
                 return None;
             };
 
             let left_instance = substitute_prop(template, *variable, &left);
-            if !alpha_eq_prop(&proven_prop(proof, bindings, context)?, &left_instance) {
+            if !alpha_eq_prop(
+                &proven_prop_in_sort_context(proof, bindings, context, sort_context)?,
+                &left_instance,
+            ) {
                 return None;
             }
 
             Some(substitute_prop(template, *variable, &right))
         }
         Proof::Beta { lambda, argument } => {
-            if !argument_is_ready_for_beta(argument, bindings) {
+            if !argument_is_ready_for_beta(argument, bindings)
+                || !computation_has_sort(argument, Sort::Value, context, sort_context)
+            {
                 return None;
             }
 
@@ -240,37 +263,12 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
             head,
             tail,
             head_is_value,
-            tail_is_value,
-        } => match (
-            proven_prop(head_is_value, bindings, context)?,
-            proven_prop(tail_is_value, bindings, context)?,
-        ) {
-            (Prop::IsValue(proven_head), Prop::IsValue(proven_tail))
+        } => match proven_prop_in_sort_context(head_is_value, bindings, context, sort_context)? {
+            Prop::IsValue(proven_head)
                 if alpha_eq_computation(&proven_head, head)
-                    && alpha_eq_computation(&proven_tail, tail) =>
+                    && computation_is_list(tail, context, sort_context) =>
             {
                 Some(Prop::IsValue(Computation::Cons {
-                    head: Box::new(head.clone()),
-                    tail: Box::new(tail.clone()),
-                }))
-            }
-            _ => None,
-        },
-        Proof::ListNil => Some(Prop::IsList(Computation::Nil)),
-        Proof::ConsIsList {
-            head,
-            tail,
-            head_is_value,
-            tail_is_list,
-        } => match (
-            proven_prop(head_is_value, bindings, context)?,
-            proven_prop(tail_is_list, bindings, context)?,
-        ) {
-            (Prop::IsValue(proven_head), Prop::IsList(proven_tail))
-                if alpha_eq_computation(&proven_head, head)
-                    && alpha_eq_computation(&proven_tail, tail) =>
-            {
-                Some(Prop::IsList(Computation::Cons {
                     head: Box::new(head.clone()),
                     tail: Box::new(tail.clone()),
                 }))
@@ -284,7 +282,6 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
             head,
             tail,
             head_is_value_assumption,
-            tail_is_list_assumption,
             induction_hypothesis_assumption,
             step,
         } => {
@@ -293,11 +290,18 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
                 head: *head,
                 tail: *tail,
                 head_is_value_assumption: *head_is_value_assumption,
-                tail_is_list_assumption: *tail_is_list_assumption,
                 induction_hypothesis_assumption: *induction_hypothesis_assumption,
             };
 
-            prove_list_induction(bindings, context, symbols, property, base, step)
+            prove_list_induction(
+                bindings,
+                context,
+                sort_context,
+                symbols,
+                property,
+                base,
+                step,
+            )
         }
         Proof::ImpliesIntro {
             assumption,
@@ -306,7 +310,7 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
         } => {
             let mut context = context.clone();
             context.insert(*assumption, premise.clone());
-            let conclusion = proven_prop(proof, bindings, &context)?;
+            let conclusion = proven_prop_in_sort_context(proof, bindings, &context, sort_context)?;
             Some(Prop::Implies(
                 Box::new(premise.clone()),
                 Box::new(conclusion),
@@ -316,8 +320,8 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
             implication,
             premise,
         } => {
-            let premise = proven_prop(premise, bindings, context)?;
-            match proven_prop(implication, bindings, context)? {
+            let premise = proven_prop_in_sort_context(premise, bindings, context, sort_context)?;
+            match proven_prop_in_sort_context(implication, bindings, context, sort_context)? {
                 Prop::Implies(expected_premise, conclusion)
                     if alpha_eq_prop(&expected_premise, &premise) =>
                 {
@@ -326,30 +330,55 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
                 _ => None,
             }
         }
-        Proof::ForAllIntro { variable, proof } => {
-            if context_mentions_symbol(context, *variable) {
+        Proof::ForAllIntro {
+            variable,
+            sort,
+            proof,
+        } => {
+            if context_mentions_symbol(context, *variable) || sort_context.contains_key(variable) {
                 return None;
             }
-            let body = proven_prop(proof, bindings, context)?;
+
+            let mut sort_context = sort_context.clone();
+            sort_context.insert(*variable, *sort);
+            let body = proven_prop_in_sort_context(proof, bindings, context, &sort_context)?;
             Some(Prop::ForAll {
                 variable: *variable,
+                sort: *sort,
                 body: Box::new(body),
             })
         }
-        Proof::ForAllElim { forall, argument } => match proven_prop(forall, bindings, context)? {
-            Prop::ForAll { variable, body } => Some(substitute_prop(&body, variable, argument)),
-            _ => None,
-        },
+        Proof::ForAllElim { forall, argument } => {
+            match proven_prop_in_sort_context(forall, bindings, context, sort_context)? {
+                Prop::ForAll {
+                    variable,
+                    sort,
+                    body,
+                } if computation_has_sort(argument, sort, context, sort_context) => {
+                    Some(substitute_prop(&body, variable, argument))
+                }
+                _ => None,
+            }
+        }
         Proof::ExistsIntro {
             variable,
+            sort,
             body,
             witness,
             proof,
         } => {
+            if !computation_has_sort(witness, *sort, context, sort_context) {
+                return None;
+            }
+
             let witness_body = substitute_prop(body, *variable, witness);
-            if alpha_eq_prop(&proven_prop(proof, bindings, context)?, &witness_body) {
+            if alpha_eq_prop(
+                &proven_prop_in_sort_context(proof, bindings, context, sort_context)?,
+                &witness_body,
+            ) {
                 Some(Prop::Exists {
                     variable: *variable,
+                    sort: *sort,
                     body: Box::new(body.clone()),
                 })
             } else {
@@ -361,14 +390,20 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
             witness,
             assumption,
             proof,
-        } => match proven_prop(existential, bindings, context)? {
-            Prop::Exists { variable, body } => {
+        } => match proven_prop_in_sort_context(existential, bindings, context, sort_context)? {
+            Prop::Exists {
+                variable,
+                sort,
+                body,
+            } => {
                 let existential = Prop::Exists {
                     variable,
+                    sort,
                     body: body.clone(),
                 };
                 if prop_mentions_symbol(&existential, *witness)
                     || context_mentions_symbol(context, *witness)
+                    || sort_context.contains_key(witness)
                 {
                     return None;
                 }
@@ -376,7 +411,10 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
                 let witness_prop = substitute_prop(&body, variable, &Computation::Var(*witness));
                 let mut context = context.clone();
                 context.insert(*assumption, witness_prop);
-                let conclusion = proven_prop(proof, bindings, &context)?;
+                let mut sort_context = sort_context.clone();
+                sort_context.insert(*witness, sort);
+                let conclusion =
+                    proven_prop_in_sort_context(proof, bindings, &context, &sort_context)?;
 
                 if prop_mentions_symbol(&conclusion, *witness) {
                     None
@@ -387,24 +425,48 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
             _ => None,
         },
         Proof::AndIntro(left, right) => Some(Prop::And(
-            Box::new(proven_prop(left, bindings, context)?),
-            Box::new(proven_prop(right, bindings, context)?),
+            Box::new(proven_prop_in_sort_context(
+                left,
+                bindings,
+                context,
+                sort_context,
+            )?),
+            Box::new(proven_prop_in_sort_context(
+                right,
+                bindings,
+                context,
+                sort_context,
+            )?),
         )),
-        Proof::AndElimLeft(proof) => match proven_prop(proof, bindings, context)? {
-            Prop::And(left, _) => Some(*left),
-            _ => None,
-        },
-        Proof::AndElimRight(proof) => match proven_prop(proof, bindings, context)? {
-            Prop::And(_, right) => Some(*right),
-            _ => None,
-        },
+        Proof::AndElimLeft(proof) => {
+            match proven_prop_in_sort_context(proof, bindings, context, sort_context)? {
+                Prop::And(left, _) => Some(*left),
+                _ => None,
+            }
+        }
+        Proof::AndElimRight(proof) => {
+            match proven_prop_in_sort_context(proof, bindings, context, sort_context)? {
+                Prop::And(_, right) => Some(*right),
+                _ => None,
+            }
+        }
         Proof::OrIntroLeft { proof, right } => Some(Prop::Or(
-            Box::new(proven_prop(proof, bindings, context)?),
+            Box::new(proven_prop_in_sort_context(
+                proof,
+                bindings,
+                context,
+                sort_context,
+            )?),
             Box::new(right.clone()),
         )),
         Proof::OrIntroRight { left, proof } => Some(Prop::Or(
             Box::new(left.clone()),
-            Box::new(proven_prop(proof, bindings, context)?),
+            Box::new(proven_prop_in_sort_context(
+                proof,
+                bindings,
+                context,
+                sort_context,
+            )?),
         )),
         Proof::OrElim {
             disjunction,
@@ -412,15 +474,21 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
             left_proof,
             right_assumption,
             right_proof,
-        } => match proven_prop(disjunction, bindings, context)? {
+        } => match proven_prop_in_sort_context(disjunction, bindings, context, sort_context)? {
             Prop::Or(left, right) => {
                 let mut left_context = context.clone();
                 left_context.insert(*left_assumption, *left);
-                let left_conclusion = proven_prop(left_proof, bindings, &left_context)?;
+                let left_conclusion =
+                    proven_prop_in_sort_context(left_proof, bindings, &left_context, sort_context)?;
 
                 let mut right_context = context.clone();
                 right_context.insert(*right_assumption, *right);
-                let right_conclusion = proven_prop(right_proof, bindings, &right_context)?;
+                let right_conclusion = proven_prop_in_sort_context(
+                    right_proof,
+                    bindings,
+                    &right_context,
+                    sort_context,
+                )?;
 
                 if alpha_eq_prop(&left_conclusion, &right_conclusion) {
                     Some(left_conclusion)
@@ -453,13 +521,13 @@ struct ListInductionSymbols {
     head: Symbol,
     tail: Symbol,
     head_is_value_assumption: Symbol,
-    tail_is_list_assumption: Symbol,
     induction_hypothesis_assumption: Symbol,
 }
 
 fn prove_list_induction(
     bindings: &Bindings,
     context: &Context,
+    sort_context: &SortContext,
     symbols: ListInductionSymbols,
     property: &Prop,
     base: &Proof,
@@ -474,12 +542,14 @@ fn prove_list_induction(
         head,
         tail,
         head_is_value_assumption,
-        tail_is_list_assumption,
         induction_hypothesis_assumption,
     } = symbols;
 
     let base_prop = substitute_prop(property, variable, &Computation::Nil);
-    if !alpha_eq_prop(&proven_prop(base, bindings, context)?, &base_prop) {
+    if !alpha_eq_prop(
+        &proven_prop_in_sort_context(base, bindings, context, sort_context)?,
+        &base_prop,
+    ) {
         return None;
     }
 
@@ -497,23 +567,26 @@ fn prove_list_induction(
         head_is_value_assumption,
         Prop::IsValue(Computation::Var(head)),
     );
-    step_context.insert(tail_is_list_assumption, Prop::IsList(tail_var.clone()));
     step_context.insert(
         induction_hypothesis_assumption,
         substitute_prop(property, variable, &tail_var),
     );
+    let mut step_sort_context = sort_context.clone();
+    step_sort_context.insert(head, Sort::Value);
+    step_sort_context.insert(tail, Sort::List);
 
-    if !alpha_eq_prop(&proven_prop(step, bindings, &step_context)?, &step_prop) {
+    if !alpha_eq_prop(
+        &proven_prop_in_sort_context(step, bindings, &step_context, &step_sort_context)?,
+        &step_prop,
+    ) {
         return None;
     }
 
     let variable_computation = Computation::Var(variable);
     Some(Prop::ForAll {
         variable,
-        body: Box::new(Prop::Implies(
-            Box::new(Prop::IsList(variable_computation.clone())),
-            Box::new(substitute_prop(property, variable, &variable_computation)),
-        )),
+        sort: Sort::List,
+        body: Box::new(substitute_prop(property, variable, &variable_computation)),
     })
 }
 
@@ -527,7 +600,6 @@ fn list_induction_symbols_are_fresh(
         head,
         tail,
         head_is_value_assumption,
-        tail_is_list_assumption,
         induction_hypothesis_assumption,
     } = symbols;
 
@@ -535,11 +607,7 @@ fn list_induction_symbols_are_fresh(
         return false;
     }
 
-    let assumption_symbols = [
-        head_is_value_assumption,
-        tail_is_list_assumption,
-        induction_hypothesis_assumption,
-    ];
+    let assumption_symbols = [head_is_value_assumption, induction_hypothesis_assumption];
     let mut seen_assumption_symbols = HashSet::new();
     if assumption_symbols.into_iter().any(|assumption| {
         !seen_assumption_symbols.insert(assumption) || context.contains_key(&assumption)
@@ -554,6 +622,89 @@ fn list_induction_symbols_are_fresh(
         && !prop_mentions_symbol(property, tail)
 }
 
+fn computation_is_list(
+    computation: &Computation,
+    context: &Context,
+    sort_context: &SortContext,
+) -> bool {
+    match computation {
+        Computation::Nil => true,
+        Computation::Cons { head, tail } => {
+            computation_is_known_value(head, context, sort_context)
+                && computation_is_list(tail, context, sort_context)
+        }
+        Computation::Var(symbol) => sort_context
+            .get(symbol)
+            .is_some_and(|actual| sort_satisfies(*actual, Sort::List)),
+        _ => false,
+    }
+}
+
+fn computation_is_known_value(
+    computation: &Computation,
+    context: &Context,
+    sort_context: &SortContext,
+) -> bool {
+    if computation.as_value().is_some() || computation_is_list(computation, context, sort_context) {
+        return true;
+    }
+
+    if let Computation::Var(symbol) = computation {
+        if sort_context
+            .get(symbol)
+            .is_some_and(|actual| sort_satisfies(*actual, Sort::Value))
+        {
+            return true;
+        }
+    }
+
+    context.values().any(
+        |prop| matches!(prop, Prop::IsValue(value) if alpha_eq_computation(value, computation)),
+    )
+}
+
+fn computation_has_sort(
+    computation: &Computation,
+    required: Sort,
+    context: &Context,
+    sort_context: &SortContext,
+) -> bool {
+    if required == Sort::Computation {
+        return true;
+    }
+
+    if let Computation::Var(symbol) = computation {
+        if sort_context
+            .get(symbol)
+            .is_some_and(|actual| sort_satisfies(*actual, required))
+        {
+            return true;
+        }
+    }
+
+    match required {
+        Sort::Computation => true,
+        Sort::Value => computation_is_known_value(computation, context, sort_context),
+        Sort::List => computation_is_list(computation, context, sort_context),
+        Sort::Effect => computation.as_effect().is_some(),
+        Sort::Outcome => {
+            computation_is_known_value(computation, context, sort_context)
+                || computation.as_effect().is_some()
+        }
+    }
+}
+
+fn sort_satisfies(actual: Sort, required: Sort) -> bool {
+    actual == required
+        || required == Sort::Computation
+        || matches!(
+            (actual, required),
+            (Sort::List, Sort::Value | Sort::Outcome)
+                | (Sort::Value, Sort::Outcome)
+                | (Sort::Effect, Sort::Outcome)
+        )
+}
+
 pub fn substitute_prop(prop: &Prop, variable: Symbol, replacement: &Computation) -> Prop {
     match prop {
         Prop::Equal(left, right) => Prop::Equal(
@@ -561,19 +712,34 @@ pub fn substitute_prop(prop: &Prop, variable: Symbol, replacement: &Computation)
             substitute(right, variable, replacement),
         ),
         Prop::IsValue(computation) => Prop::IsValue(substitute(computation, variable, replacement)),
-        Prop::IsList(computation) => Prop::IsList(substitute(computation, variable, replacement)),
         Prop::Implies(premise, conclusion) => Prop::Implies(
             Box::new(substitute_prop(premise, variable, replacement)),
             Box::new(substitute_prop(conclusion, variable, replacement)),
         ),
         Prop::ForAll {
             variable: binder,
+            sort,
             body,
-        } => substitute_quantified_prop(true, *binder, body, variable, replacement),
+        } => substitute_quantified_prop(
+            Quantifier::ForAll,
+            *binder,
+            *sort,
+            body,
+            variable,
+            replacement,
+        ),
         Prop::Exists {
             variable: binder,
+            sort,
             body,
-        } => substitute_quantified_prop(false, *binder, body, variable, replacement),
+        } => substitute_quantified_prop(
+            Quantifier::Exists,
+            *binder,
+            *sort,
+            body,
+            variable,
+            replacement,
+        ),
         Prop::And(left, right) => Prop::And(
             Box::new(substitute_prop(left, variable, replacement)),
             Box::new(substitute_prop(right, variable, replacement)),
@@ -585,37 +751,55 @@ pub fn substitute_prop(prop: &Prop, variable: Symbol, replacement: &Computation)
     }
 }
 
+#[derive(Clone, Copy)]
+enum Quantifier {
+    ForAll,
+    Exists,
+}
+
 fn substitute_quantified_prop(
-    forall: bool,
+    quantifier: Quantifier,
     binder: Symbol,
+    sort: Sort,
     body: &Prop,
     variable: Symbol,
     replacement: &Computation,
 ) -> Prop {
     if binder == variable {
-        return quantified_prop(forall, binder, body.clone());
+        return quantified_prop(quantifier, binder, sort, body.clone());
     }
 
     if free_symbols(replacement).contains(&binder) {
         let fresh = fresh_symbol_for_prop(body, replacement, variable);
         let body = rename_bound_var_prop(body, binder, fresh);
-        return quantified_prop(forall, fresh, substitute_prop(&body, variable, replacement));
+        return quantified_prop(
+            quantifier,
+            fresh,
+            sort,
+            substitute_prop(&body, variable, replacement),
+        );
     }
 
-    quantified_prop(forall, binder, substitute_prop(body, variable, replacement))
+    quantified_prop(
+        quantifier,
+        binder,
+        sort,
+        substitute_prop(body, variable, replacement),
+    )
 }
 
-fn quantified_prop(forall: bool, variable: Symbol, body: Prop) -> Prop {
-    if forall {
-        Prop::ForAll {
+fn quantified_prop(quantifier: Quantifier, variable: Symbol, sort: Sort, body: Prop) -> Prop {
+    match quantifier {
+        Quantifier::ForAll => Prop::ForAll {
             variable,
+            sort,
             body: Box::new(body),
-        }
-    } else {
-        Prop::Exists {
+        },
+        Quantifier::Exists => Prop::Exists {
             variable,
+            sort,
             body: Box::new(body),
-        }
+        },
     }
 }
 
@@ -634,16 +818,13 @@ fn add_free_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
         Prop::IsValue(computation) => {
             add_free_symbols(computation, symbols);
         }
-        Prop::IsList(computation) => {
-            add_free_symbols(computation, symbols);
-        }
         Prop::Implies(premise, conclusion)
         | Prop::And(premise, conclusion)
         | Prop::Or(premise, conclusion) => {
             add_free_symbols_prop(premise, symbols);
             add_free_symbols_prop(conclusion, symbols);
         }
-        Prop::ForAll { variable, body } | Prop::Exists { variable, body } => {
+        Prop::ForAll { variable, body, .. } | Prop::Exists { variable, body, .. } => {
             let mut body_symbols = HashSet::new();
             add_free_symbols_prop(body, &mut body_symbols);
             body_symbols.remove(variable);
@@ -659,19 +840,28 @@ fn rename_bound_var_prop(prop: &Prop, old: Symbol, new: Symbol) -> Prop {
             rename_bound_var(right, old, new),
         ),
         Prop::IsValue(computation) => Prop::IsValue(rename_bound_var(computation, old, new)),
-        Prop::IsList(computation) => Prop::IsList(rename_bound_var(computation, old, new)),
         Prop::Implies(premise, conclusion) => Prop::Implies(
             Box::new(rename_bound_var_prop(premise, old, new)),
             Box::new(rename_bound_var_prop(conclusion, old, new)),
         ),
         Prop::ForAll { variable, .. } if *variable == old => prop.clone(),
-        Prop::ForAll { variable, body } => Prop::ForAll {
+        Prop::ForAll {
+            variable,
+            sort,
+            body,
+        } => Prop::ForAll {
             variable: *variable,
+            sort: *sort,
             body: Box::new(rename_bound_var_prop(body, old, new)),
         },
         Prop::Exists { variable, .. } if *variable == old => prop.clone(),
-        Prop::Exists { variable, body } => Prop::Exists {
+        Prop::Exists {
+            variable,
+            sort,
+            body,
+        } => Prop::Exists {
             variable: *variable,
+            sort: *sort,
             body: Box::new(rename_bound_var_prop(body, old, new)),
         },
         Prop::And(left, right) => Prop::And(
@@ -707,16 +897,13 @@ fn add_all_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
         Prop::IsValue(computation) => {
             add_all_symbols(computation, symbols);
         }
-        Prop::IsList(computation) => {
-            add_all_symbols(computation, symbols);
-        }
         Prop::Implies(premise, conclusion)
         | Prop::And(premise, conclusion)
         | Prop::Or(premise, conclusion) => {
             add_all_symbols_prop(premise, symbols);
             add_all_symbols_prop(conclusion, symbols);
         }
-        Prop::ForAll { variable, body } | Prop::Exists { variable, body } => {
+        Prop::ForAll { variable, body, .. } | Prop::Exists { variable, body, .. } => {
             symbols.insert(*variable);
             add_all_symbols_prop(body, symbols);
         }

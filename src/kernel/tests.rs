@@ -154,6 +154,7 @@ fn alpha_eq_computation_renames_lambda_and_list_case_binders() {
 fn checker_accepts_alpha_equivalent_goal() {
     let proof = Proof::ForAllIntro {
         variable: Symbol(1),
+        sort: Sort::Computation,
         proof: Box::new(Proof::Refl(Computation::Var(Symbol(1)))),
     };
     let expected = forall(
@@ -283,16 +284,14 @@ fn cons_evaluates_head_then_tail_and_propagates_effects() {
 
 #[test]
 fn head_and_tail_destructure_cons() {
-    let computation = cons(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(2)));
+    let tail_list = cons(Computation::Quote(Symbol(2)), Computation::Nil);
+    let computation = cons(Computation::Quote(Symbol(1)), tail_list.clone());
 
     assert_eq!(
         step(&head(computation.clone())),
         Step::Reduced(Computation::Quote(Symbol(1)))
     );
-    assert_eq!(
-        step(&tail(computation)),
-        Step::Reduced(Computation::Quote(Symbol(2)))
-    );
+    assert_eq!(step(&tail(computation)), Step::Reduced(tail_list));
 }
 
 #[test]
@@ -621,31 +620,33 @@ fn theorem_rewrite_moves_props_across_equality() {
     let nil_to_computation = Theorem::symm(&step).expect("step should be symmetric");
     let theorem = Theorem::rewrite(
         &nil_to_computation,
-        &Theorem::list_nil(),
+        &Theorem::value_nil(),
         Symbol(99),
-        is_list(Computation::Var(Symbol(99))),
+        is_value(Computation::Var(Symbol(99))),
     )
-    .expect("rewrite should prove listness before evaluation");
+    .expect("rewrite should prove valuehood before evaluation");
 
-    assert_eq!(theorem.prop(), &is_list(computation));
+    assert_eq!(theorem.prop(), &is_value(computation));
 }
 
 #[test]
-fn theorem_value_and_list_rules_build_checked_theorems() {
+fn theorem_value_rules_build_checked_theorems() {
     let head = Computation::Quote(Symbol(1));
     let tail = Computation::Nil;
     let head_value = Theorem::value_quote(Symbol(1));
-    let tail_value = Theorem::value_nil();
-    let tail_list = Theorem::list_nil();
     let list = cons(head.clone(), tail.clone());
-    let value = Theorem::cons_is_value(head.clone(), tail.clone(), &head_value, &tail_value)
-        .expect("cons of values is a value");
-    let list_theorem = Theorem::cons_is_list(head.clone(), tail.clone(), &head_value, &tail_list)
-        .expect("cons with value head and list tail is a list");
+    let value = Theorem::cons_is_value(head, tail, &head_value)
+        .expect("cons with value head and list tail is a value");
 
-    assert_eq!(value.prop(), &is_value(list.clone()));
-    assert_eq!(list_theorem.prop(), &is_list(list));
-    assert!(Theorem::cons_is_list(Computation::Diverge, tail, &head_value, &tail_list).is_none());
+    assert_eq!(value.prop(), &is_value(list));
+    assert!(
+        Theorem::cons_is_value(
+            Computation::Quote(Symbol(1)),
+            Computation::Quote(Symbol(2)),
+            &head_value
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -666,6 +667,7 @@ fn theorem_first_order_rules_build_checked_theorems() {
     let universal = Theorem::from_proof(
         Proof::ForAllIntro {
             variable: Symbol(1),
+            sort: Sort::Computation,
             proof: Box::new(Proof::Refl(Computation::Var(Symbol(1)))),
         },
         forall(
@@ -742,7 +744,6 @@ fn value_intro_rules_prove_concrete_values() {
         head: Computation::Quote(Symbol(1)),
         tail: Computation::Nil,
         head_is_value: Box::new(value_quote(Symbol(1))),
-        tail_is_value: Box::new(value_nil()),
     };
 
     assert!(check(
@@ -764,7 +765,6 @@ fn cons_is_value_requires_matching_value_proofs() {
         head: Computation::Diverge,
         tail: Computation::Nil,
         head_is_value: Box::new(value_quote(Symbol(1))),
-        tail_is_value: Box::new(value_nil()),
     };
 
     assert!(!check(
@@ -774,83 +774,11 @@ fn cons_is_value_requires_matching_value_proofs() {
 }
 
 #[test]
-fn list_intro_rules_prove_concrete_lists() {
-    let list = cons(
-        Computation::Quote(Symbol(1)),
-        cons(Computation::Quote(Symbol(2)), Computation::Nil),
-    );
-    let proof = Proof::ConsIsList {
-        head: Computation::Quote(Symbol(1)),
-        tail: cons(Computation::Quote(Symbol(2)), Computation::Nil),
-        head_is_value: Box::new(value_quote(Symbol(1))),
-        tail_is_list: Box::new(Proof::ConsIsList {
-            head: Computation::Quote(Symbol(2)),
-            tail: Computation::Nil,
-            head_is_value: Box::new(value_quote(Symbol(2))),
-            tail_is_list: Box::new(Proof::ListNil),
-        }),
-    };
-
-    assert!(check(&Proof::ListNil, &is_list(Computation::Nil)));
-    assert!(check(&proof, &is_list(list)));
-}
-
-#[test]
-fn cons_is_list_requires_tail_list_proof_for_the_same_tail() {
-    let proof = Proof::ConsIsList {
-        head: Computation::Quote(Symbol(1)),
-        tail: cons(Computation::Quote(Symbol(2)), Computation::Nil),
-        head_is_value: Box::new(value_quote(Symbol(1))),
-        tail_is_list: Box::new(Proof::ListNil),
-    };
-
-    assert!(!check(
-        &proof,
-        &is_list(cons(
-            Computation::Quote(Symbol(1)),
-            cons(Computation::Quote(Symbol(2)), Computation::Nil)
-        ))
-    ));
-}
-
-#[test]
-fn cons_is_list_requires_head_value_proof_for_the_same_head() {
-    let proof = Proof::ConsIsList {
-        head: Computation::Diverge,
-        tail: Computation::Nil,
-        head_is_value: Box::new(value_quote(Symbol(1))),
-        tail_is_list: Box::new(Proof::ListNil),
-    };
-
-    assert!(!check(
-        &proof,
-        &is_list(cons(Computation::Diverge, Computation::Nil))
-    ));
-}
-
-#[test]
-fn is_list_can_be_rewritten_back_across_evaluation() {
-    let computation = apply(
-        lambda(Symbol(1), Computation::Var(Symbol(1))),
-        Computation::Nil,
-    );
-    let proof = Proof::Rewrite {
-        equality: Box::new(Proof::Symm(Box::new(Proof::Step(computation.clone())))),
-        proof: Box::new(Proof::ListNil),
-        variable: Symbol(99),
-        template: is_list(Computation::Var(Symbol(99))),
-    };
-
-    assert!(check(&proof, &is_list(computation)));
-}
-
-#[test]
 fn list_induction_proves_every_list_is_a_value() {
     let variable = Symbol(1);
     let head = Symbol(2);
     let tail = Symbol(3);
     let head_is_value_assumption = Symbol(4);
-    let tail_is_list_assumption = Symbol(5);
     let induction_hypothesis_assumption = Symbol(6);
     let property = is_value(Computation::Var(variable));
     let proof = Proof::ListInduction {
@@ -860,22 +788,14 @@ fn list_induction_proves_every_list_is_a_value() {
         head,
         tail,
         head_is_value_assumption,
-        tail_is_list_assumption,
         induction_hypothesis_assumption,
         step: Box::new(Proof::ConsIsValue {
             head: Computation::Var(head),
             tail: Computation::Var(tail),
             head_is_value: Box::new(Proof::Assume(head_is_value_assumption)),
-            tail_is_value: Box::new(Proof::Assume(induction_hypothesis_assumption)),
         }),
     };
-    let expected = forall(
-        variable,
-        implies(
-            is_list(Computation::Var(variable)),
-            is_value(Computation::Var(variable)),
-        ),
-    );
+    let expected = forall_list(variable, is_value(Computation::Var(variable)));
 
     assert!(check(&proof, &expected));
 }
@@ -883,30 +803,22 @@ fn list_induction_proves_every_list_is_a_value() {
 #[test]
 fn list_induction_rejects_stale_step_variables() {
     let variable = Symbol(1);
-    let head = Symbol(2);
+    let head = variable;
     let tail = Symbol(3);
     let head_is_value_assumption = Symbol(4);
-    let tail_is_list_assumption = Symbol(5);
     let induction_hypothesis_assumption = Symbol(6);
-    let property = is_list(Computation::Var(variable));
+    let property = is_value(Computation::Var(variable));
     let proof = Proof::ListInduction {
         variable,
-        property,
-        base: Box::new(Proof::ListNil),
+        property: property.clone(),
+        base: Box::new(value_nil()),
         head,
         tail,
         head_is_value_assumption,
-        tail_is_list_assumption,
         induction_hypothesis_assumption,
-        step: Box::new(Proof::Assume(tail_is_list_assumption)),
+        step: Box::new(Proof::Assume(head_is_value_assumption)),
     };
-    let expected = forall(
-        variable,
-        implies(
-            is_list(Computation::Var(variable)),
-            is_list(Computation::Var(variable)),
-        ),
-    );
+    let expected = forall_list(variable, property);
 
     assert!(!check(&proof, &expected));
 }
@@ -941,6 +853,7 @@ fn forall_intro_and_elim_work() {
     let proof = Proof::ForAllElim {
         forall: Box::new(Proof::ForAllIntro {
             variable: Symbol(1),
+            sort: Sort::Computation,
             proof: Box::new(Proof::Refl(Computation::Var(Symbol(1)))),
         }),
         argument: Computation::Quote(Symbol(2)),
@@ -959,6 +872,7 @@ fn exists_intro_and_elim_work() {
     let proof = Proof::ExistsElim {
         existential: Box::new(Proof::ExistsIntro {
             variable: Symbol(1),
+            sort: Sort::Computation,
             body,
             witness: Computation::Quote(Symbol(2)),
             proof: Box::new(Proof::Refl(Computation::Quote(Symbol(2)))),
@@ -1021,6 +935,7 @@ fn exists_intro_uses_witness() {
     let body = equal(Computation::Var(Symbol(1)), Computation::Var(Symbol(1)));
     let proof = Proof::ExistsIntro {
         variable: Symbol(1),
+        sort: Sort::Computation,
         body: body.clone(),
         witness: Computation::Quote(Symbol(2)),
         proof: Box::new(Proof::Refl(Computation::Quote(Symbol(2)))),
@@ -1043,22 +958,16 @@ fn prop_helpers_construct_expected_shapes() {
     );
     assert_eq!(
         terminates(Symbol(9), computation.clone()),
-        exists(
+        exists_value(
             Symbol(9),
-            and(
-                computes_to(computation.clone(), Computation::Var(Symbol(9))),
-                is_value(Computation::Var(Symbol(9))),
-            ),
+            computes_to(computation.clone(), Computation::Var(Symbol(9))),
         )
     );
     assert_eq!(
         computes_to_list(Symbol(9), computation.clone()),
-        exists(
+        exists_list(
             Symbol(9),
-            and(
-                computes_to(computation.clone(), Computation::Var(Symbol(9))),
-                is_list(Computation::Var(Symbol(9)))
-            ),
+            computes_to(computation.clone(), Computation::Var(Symbol(9))),
         )
     );
     assert_eq!(
@@ -1072,11 +981,11 @@ fn prop_helpers_construct_expected_shapes() {
     assert_eq!(
         or(
             is_value(Computation::Quote(Symbol(1))),
-            is_list(Computation::Nil)
+            is_value(Computation::Nil)
         ),
         Prop::Or(
             Box::new(Prop::IsValue(Computation::Quote(Symbol(1)))),
-            Box::new(Prop::IsList(Computation::Nil))
+            Box::new(Prop::IsValue(Computation::Nil))
         )
     );
 }

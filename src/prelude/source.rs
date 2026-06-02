@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    Computation, ErrorName, Lambda, ListCase, Name, Prop, Symbol, and, computes_to,
-    computes_to_list, diverges, equal, errors_with, exists, forall, implies, is_list, is_value, or,
+    Computation, ErrorName, Lambda, ListCase, Name, Prop, Sort, Symbol, and, computes_to,
+    computes_to_list, diverges, equal, errors_with, exists_list, exists_sort, forall_list,
+    forall_sort, implies, is_value, or,
 };
 
 const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
@@ -73,7 +74,6 @@ pub(super) enum ProofExpr {
         variable: Symbol,
         template: Prop,
     },
-    ListNil,
     ImpliesIntro {
         assumption: Symbol,
         premise: Prop,
@@ -85,6 +85,7 @@ pub(super) enum ProofExpr {
     },
     ExistsIntro {
         variable: Symbol,
+        sort: Sort,
         body: Prop,
         witness: Computation,
         proof: Box<ProofExpr>,
@@ -98,12 +99,6 @@ pub(super) enum ProofExpr {
     AndIntro(Box<ProofExpr>, Box<ProofExpr>),
     AndElimLeft(Box<ProofExpr>),
     AndElimRight(Box<ProofExpr>),
-    ConsIsList {
-        head: Computation,
-        tail: Computation,
-        head_is_value: Box<ProofExpr>,
-        tail_is_list: Box<ProofExpr>,
-    },
     ListInduction {
         variable: Symbol,
         property: Prop,
@@ -111,17 +106,37 @@ pub(super) enum ProofExpr {
         head: Symbol,
         tail: Symbol,
         head_is_value_assumption: Symbol,
-        tail_is_list_assumption: Symbol,
         induction_hypothesis_assumption: Symbol,
         step: Box<ProofExpr>,
     },
     ForAllIntro {
         variable: Symbol,
+        sort: Sort,
         proof: Box<ProofExpr>,
     },
     ForAllElim {
         forall: Box<ProofExpr>,
         argument: Computation,
+    },
+    ForAllListIntro {
+        variable: Symbol,
+        proof: Box<ProofExpr>,
+    },
+    ForAllListElim {
+        forall: Box<ProofExpr>,
+        argument: Computation,
+    },
+    ExistsListIntro {
+        variable: Symbol,
+        body: Prop,
+        witness: Computation,
+        proof: Box<ProofExpr>,
+    },
+    ExistsListElim {
+        existential: Box<ProofExpr>,
+        witness: Symbol,
+        assumption: Symbol,
+        proof: Box<ProofExpr>,
     },
 }
 
@@ -397,6 +412,17 @@ fn error_name(expression: &Expr) -> Result<ErrorName, ParseError> {
     Ok(ErrorName(parse_u64(atom(expression)?)?))
 }
 
+fn sort(atom: &str) -> Result<Sort, ParseError> {
+    match atom {
+        "computation" => Ok(Sort::Computation),
+        "value" => Ok(Sort::Value),
+        "list" => Ok(Sort::List),
+        "effect" => Ok(Sort::Effect),
+        "outcome" => Ok(Sort::Outcome),
+        _ => Err(ParseError::new(format!("unknown sort `{atom}`"))),
+    }
+}
+
 struct SourceParser<'a> {
     definitions: HashMap<&'a str, Name>,
     theorems: HashMap<&'a str, Name>,
@@ -644,10 +670,11 @@ impl<'a> SourceParser<'a> {
             "equal" => self.equal(items),
             "computes-to" => self.computes_to(items),
             "is-value" => self.is_value(items),
-            "is-list" => self.is_list(items),
             "implies" => self.implies(items, symbol_mode),
             "forall" => self.forall(items, symbol_mode),
+            "forall-list" => self.forall_list(items, symbol_mode),
             "exists" => self.exists(items, symbol_mode),
+            "exists-list" => self.exists_list(items, symbol_mode),
             "and" => self.and(items, symbol_mode),
             "or" => self.or(items, symbol_mode),
             "computes-to-list" => self.computes_to_list(items, symbol_mode),
@@ -678,11 +705,6 @@ impl<'a> SourceParser<'a> {
         Ok(is_value(self.computation(&items[1])?))
     }
 
-    fn is_list(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
-        expect_len("is-list", items, 2)?;
-        Ok(is_list(self.computation(&items[1])?))
-    }
-
     fn implies(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
         expect_len("implies", items, 3)?;
         Ok(implies(
@@ -692,25 +714,71 @@ impl<'a> SourceParser<'a> {
     }
 
     fn forall(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
-        expect_len("forall", items, 3)?;
+        let (sort, variable, body) = match items.len() {
+            3 => (Sort::Computation, atom(&items[1])?, &items[2]),
+            4 => (sort(atom(&items[1])?)?, atom(&items[2])?, &items[3]),
+            _ => {
+                return Err(ParseError::new(format!(
+                    "`forall` expects 2 or 3 arguments, got {}",
+                    items.len().saturating_sub(1)
+                )));
+            }
+        };
+        let symbol = self.prop_symbol(variable, symbol_mode)?;
+        self.push_variable(variable, symbol);
+        let body = self.prop_with_symbols(body, symbol_mode)?;
+        self.pop_variable();
+
+        Ok(forall_sort(symbol, sort, body))
+    }
+
+    fn forall_list(
+        &mut self,
+        items: &[Expr],
+        symbol_mode: PropSymbolMode,
+    ) -> Result<Prop, ParseError> {
+        expect_len("forall-list", items, 3)?;
         let variable = atom(&items[1])?;
         let symbol = self.prop_symbol(variable, symbol_mode)?;
         self.push_variable(variable, symbol);
         let body = self.prop_with_symbols(&items[2], symbol_mode)?;
         self.pop_variable();
 
-        Ok(forall(symbol, body))
+        Ok(forall_list(symbol, body))
     }
 
     fn exists(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
-        expect_len("exists", items, 3)?;
+        let (sort, variable, body) = match items.len() {
+            3 => (Sort::Computation, atom(&items[1])?, &items[2]),
+            4 => (sort(atom(&items[1])?)?, atom(&items[2])?, &items[3]),
+            _ => {
+                return Err(ParseError::new(format!(
+                    "`exists` expects 2 or 3 arguments, got {}",
+                    items.len().saturating_sub(1)
+                )));
+            }
+        };
+        let symbol = self.prop_symbol(variable, symbol_mode)?;
+        self.push_variable(variable, symbol);
+        let body = self.prop_with_symbols(body, symbol_mode)?;
+        self.pop_variable();
+
+        Ok(exists_sort(symbol, sort, body))
+    }
+
+    fn exists_list(
+        &mut self,
+        items: &[Expr],
+        symbol_mode: PropSymbolMode,
+    ) -> Result<Prop, ParseError> {
+        expect_len("exists-list", items, 3)?;
         let variable = atom(&items[1])?;
         let symbol = self.prop_symbol(variable, symbol_mode)?;
         self.push_variable(variable, symbol);
         let body = self.prop_with_symbols(&items[2], symbol_mode)?;
         self.pop_variable();
 
-        Ok(exists(symbol, body))
+        Ok(exists_list(symbol, body))
     }
 
     fn and(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
@@ -789,8 +857,6 @@ impl<'a> SourceParser<'a> {
             "eval-to" => self.proof_eval_to(items),
             "eval-same" => self.proof_eval_same(items),
             "rewrite" => self.proof_rewrite(items),
-            "list-nil" => self.proof_list_nil(items),
-            "cons-is-list" => self.proof_cons_is_list(items),
             "list-induction" => self.proof_list_induction(items),
             "implies-intro" => self.proof_implies_intro(items),
             "implies-elim" => self.proof_implies_elim(items),
@@ -801,6 +867,10 @@ impl<'a> SourceParser<'a> {
             "and-elim-right" => self.proof_and_elim_right(items),
             "forall-intro" => self.proof_forall_intro(items),
             "forall-elim" => self.proof_forall_elim(items),
+            "forall-list-intro" => self.proof_forall_list_intro(items),
+            "forall-list-elim" => self.proof_forall_list_elim(items),
+            "exists-list-intro" => self.proof_exists_list_intro(items),
+            "exists-list-elim" => self.proof_exists_list_elim(items),
             _ => Err(ParseError::new(format!(
                 "unknown proof expression `{form}`"
             ))),
@@ -885,23 +955,8 @@ impl<'a> SourceParser<'a> {
         })
     }
 
-    fn proof_list_nil(&self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        expect_len("list-nil", items, 1)?;
-        Ok(ProofExpr::ListNil)
-    }
-
-    fn proof_cons_is_list(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        expect_len("cons-is-list", items, 5)?;
-        Ok(ProofExpr::ConsIsList {
-            head: self.computation(&items[1])?,
-            tail: self.computation(&items[2])?,
-            head_is_value: Box::new(self.proof_expr(&items[3])?),
-            tail_is_list: Box::new(self.proof_expr(&items[4])?),
-        })
-    }
-
     fn proof_list_induction(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        expect_len("list-induction", items, 10)?;
+        expect_len("list-induction", items, 9)?;
         Ok(ProofExpr::ListInduction {
             variable: self.proof_symbol(atom(&items[1])?)?,
             property: self.proof_prop(&items[2])?,
@@ -909,9 +964,8 @@ impl<'a> SourceParser<'a> {
             head: self.proof_symbol(atom(&items[4])?)?,
             tail: self.proof_symbol(atom(&items[5])?)?,
             head_is_value_assumption: self.proof_symbol(atom(&items[6])?)?,
-            tail_is_list_assumption: self.proof_symbol(atom(&items[7])?)?,
-            induction_hypothesis_assumption: self.proof_symbol(atom(&items[8])?)?,
-            step: Box::new(self.proof_expr(&items[9])?),
+            induction_hypothesis_assumption: self.proof_symbol(atom(&items[7])?)?,
+            step: Box::new(self.proof_expr(&items[8])?),
         })
     }
 
@@ -933,12 +987,34 @@ impl<'a> SourceParser<'a> {
     }
 
     fn proof_exists_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        expect_len("exists-intro", items, 5)?;
+        let (sort, variable, body, witness, proof) = match items.len() {
+            5 => (
+                Sort::Computation,
+                &items[1],
+                &items[2],
+                &items[3],
+                &items[4],
+            ),
+            6 => (
+                sort(atom(&items[1])?)?,
+                &items[2],
+                &items[3],
+                &items[4],
+                &items[5],
+            ),
+            _ => {
+                return Err(ParseError::new(format!(
+                    "`exists-intro` expects 4 or 5 arguments, got {}",
+                    items.len().saturating_sub(1)
+                )));
+            }
+        };
         Ok(ProofExpr::ExistsIntro {
-            variable: self.proof_symbol(atom(&items[1])?)?,
-            body: self.proof_prop(&items[2])?,
-            witness: self.computation(&items[3])?,
-            proof: Box::new(self.proof_expr(&items[4])?),
+            variable: self.proof_symbol(atom(variable)?)?,
+            sort,
+            body: self.proof_prop(body)?,
+            witness: self.computation(witness)?,
+            proof: Box::new(self.proof_expr(proof)?),
         })
     }
 
@@ -975,10 +1051,20 @@ impl<'a> SourceParser<'a> {
     }
 
     fn proof_forall_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        expect_len("forall-intro", items, 3)?;
+        let (sort, variable, proof) = match items.len() {
+            3 => (Sort::Computation, &items[1], &items[2]),
+            4 => (sort(atom(&items[1])?)?, &items[2], &items[3]),
+            _ => {
+                return Err(ParseError::new(format!(
+                    "`forall-intro` expects 2 or 3 arguments, got {}",
+                    items.len().saturating_sub(1)
+                )));
+            }
+        };
         Ok(ProofExpr::ForAllIntro {
-            variable: self.proof_symbol(atom(&items[1])?)?,
-            proof: Box::new(self.proof_expr(&items[2])?),
+            variable: self.proof_symbol(atom(variable)?)?,
+            sort,
+            proof: Box::new(self.proof_expr(proof)?),
         })
     }
 
@@ -987,6 +1073,42 @@ impl<'a> SourceParser<'a> {
         Ok(ProofExpr::ForAllElim {
             forall: Box::new(self.proof_expr(&items[1])?),
             argument: self.computation(&items[2])?,
+        })
+    }
+
+    fn proof_forall_list_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("forall-list-intro", items, 3)?;
+        Ok(ProofExpr::ForAllListIntro {
+            variable: self.proof_symbol(atom(&items[1])?)?,
+            proof: Box::new(self.proof_expr(&items[2])?),
+        })
+    }
+
+    fn proof_forall_list_elim(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("forall-list-elim", items, 3)?;
+        Ok(ProofExpr::ForAllListElim {
+            forall: Box::new(self.proof_expr(&items[1])?),
+            argument: self.computation(&items[2])?,
+        })
+    }
+
+    fn proof_exists_list_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("exists-list-intro", items, 5)?;
+        Ok(ProofExpr::ExistsListIntro {
+            variable: self.proof_symbol(atom(&items[1])?)?,
+            body: self.proof_prop(&items[2])?,
+            witness: self.computation(&items[3])?,
+            proof: Box::new(self.proof_expr(&items[4])?),
+        })
+    }
+
+    fn proof_exists_list_elim(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("exists-list-elim", items, 5)?;
+        Ok(ProofExpr::ExistsListElim {
+            existential: Box::new(self.proof_expr(&items[1])?),
+            witness: self.proof_symbol(atom(&items[2])?)?,
+            assumption: self.proof_symbol(atom(&items[3])?)?,
+            proof: Box::new(self.proof_expr(&items[4])?),
         })
     }
 
@@ -1155,8 +1277,9 @@ mod tests {
                 ],
                 theorems: vec![ParsedTheorem {
                     name: Name(3),
-                    prop: forall(
+                    prop: forall_sort(
                         Symbol(2_000),
+                        Sort::Computation,
                         computes_to(
                             Computation::Apply {
                                 function: Box::new(Computation::Ref(Name(2))),
@@ -1167,6 +1290,7 @@ mod tests {
                     ),
                     proof: ProofScript::Proof(ProofExpr::ForAllIntro {
                         variable: Symbol(2_000),
+                        sort: Sort::Computation,
                         proof: Box::new(ProofExpr::EvalTo {
                             computation: Computation::Apply {
                                 function: Box::new(Computation::Ref(Name(2))),
@@ -1253,11 +1377,14 @@ mod tests {
                 "
                 (def use_id nil)
                 (theorem use_id_computes_to_list
-                  (forall x
-                    (implies
-                      (is-list x)
-                      (computes-to-list result (use_id x))))
-                  (proof (list-nil)))
+                  (forall-list x
+                    (computes-to-list result (use_id x)))
+                  (proof
+                    (forall-list-intro x
+                      (exists-list-intro result
+                        (computes-to (use_id x) result)
+                        x
+                        (eval-to (use_id x) x)))))
                 ",
                 &computations,
                 &theorems,
@@ -1267,20 +1394,38 @@ mod tests {
                 computations: vec![(Name(2), Computation::Nil)],
                 theorems: vec![ParsedTheorem {
                     name: Name(3),
-                    prop: forall(
+                    prop: forall_list(
                         Symbol(2_000),
-                        implies(
-                            is_list(Computation::Var(Symbol(2_000))),
-                            computes_to_list(
-                                Symbol(2_001),
+                        computes_to_list(
+                            Symbol(2_001),
+                            Computation::Apply {
+                                function: Box::new(Computation::Ref(Name(2))),
+                                argument: Box::new(Computation::Var(Symbol(2_000))),
+                            },
+                        ),
+                    ),
+                    proof: ProofScript::Proof(ProofExpr::ForAllListIntro {
+                        variable: Symbol(2_000),
+                        proof: Box::new(ProofExpr::ExistsListIntro {
+                            variable: Symbol(2_001),
+                            body: computes_to(
                                 Computation::Apply {
                                     function: Box::new(Computation::Ref(Name(2))),
                                     argument: Box::new(Computation::Var(Symbol(2_000))),
                                 },
+                                Computation::Var(Symbol(2_001)),
                             ),
-                        ),
-                    ),
-                    proof: ProofScript::Proof(ProofExpr::ListNil),
+                            witness: Computation::Var(Symbol(2_000)),
+                            proof: Box::new(ProofExpr::EvalTo {
+                                computation: Computation::Apply {
+                                    function: Box::new(Computation::Ref(Name(2))),
+                                    argument: Box::new(Computation::Var(Symbol(2_000))),
+                                },
+                                expected: Computation::Var(Symbol(2_000)),
+                                limit: 128,
+                            }),
+                        }),
+                    }),
                     local_symbols: vec![
                         LocalSymbol {
                             spelling: "x".to_owned(),
@@ -1306,17 +1451,17 @@ mod tests {
         let module = parse_module(
             "
             (theorem use_elims
-              (is-list nil)
+              (equal nil nil)
               (proof
                 (exists-elim
                   (exists-intro witness
                     (and
-                      (is-list witness)
-                      (is-list nil))
+                      (equal witness witness)
+                      (equal nil nil))
                     nil
                     (and-intro
-                      (list-nil)
-                      (list-nil)))
+                      (eval-to nil nil)
+                      (eval-to nil nil)))
                   unpacked
                   unpacked_proof
                   (and-intro

@@ -2,13 +2,12 @@
 
 use crate::{
     Computation, ErrorName, Lambda, ListCase, Name, Outcome, Proof, Prop, Symbol, Theorem, Theory,
-    computes_to_list, forall, implies, is_list,
+    computes_to_list, forall_list,
 };
 
 use super::{
-    APPEND, APPEND_COMPUTES_TO_LIST, APPEND_NIL_COMPUTES_TO_LIST, NIL_IS_LIST, REVERSE,
-    REVERSE_ACC, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST,
-    REVERSE_NIL_COMPUTES_TO_LIST,
+    APPEND, APPEND_COMPUTES_TO_LIST, APPEND_NIL_COMPUTES_TO_LIST, REVERSE, REVERSE_ACC,
+    REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST, REVERSE_NIL_COMPUTES_TO_LIST,
     source::{NameBinding, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
 
@@ -48,10 +47,6 @@ const COMPUTATION_DEFINITIONS: &[NameBinding] = &[
 ];
 
 const THEOREM_DEFINITIONS: &[NameBinding] = &[
-    NameBinding {
-        spelling: "nil_is_list",
-        name: NIL_IS_LIST,
-    },
     NameBinding {
         spelling: "reverse_acc_computes_to_list",
         name: REVERSE_ACC_COMPUTES_TO_LIST,
@@ -241,10 +236,6 @@ pub fn reverse_acc_computes_to_list_source_theorem() -> Prop {
     theorem_prop(REVERSE_ACC_COMPUTES_TO_LIST)
 }
 
-pub fn nil_is_list_source_theorem() -> Prop {
-    theorem_prop(NIL_IS_LIST)
-}
-
 pub fn reverse_computes_to_list_source_theorem() -> Prop {
     theorem_prop(REVERSE_COMPUTES_TO_LIST)
 }
@@ -308,17 +299,11 @@ pub fn append_call(left: Computation, right: Computation) -> Computation {
 /// `result` names the existential result in `computes_to_list` and should be
 /// distinct from `list` and `acc`.
 pub fn reverse_acc_computes_to_list_theorem(list: Symbol, acc: Symbol, result: Symbol) -> Prop {
-    forall(
+    forall_list(
         list,
-        implies(
-            is_list(var(list)),
-            forall(
-                acc,
-                implies(
-                    is_list(var(acc)),
-                    computes_to_list(result, reverse_acc_call(var(list), var(acc))),
-                ),
-            ),
+        forall_list(
+            acc,
+            computes_to_list(result, reverse_acc_call(var(list), var(acc))),
         ),
     )
 }
@@ -328,39 +313,24 @@ pub fn reverse_acc_computes_to_list_theorem(list: Symbol, acc: Symbol, result: S
 /// `result` names the existential result in `computes_to_list` and should be
 /// distinct from `list`.
 pub fn reverse_computes_to_list_theorem(list: Symbol, result: Symbol) -> Prop {
-    forall(
-        list,
-        implies(
-            is_list(var(list)),
-            computes_to_list(result, reverse_call(var(list))),
-        ),
-    )
+    forall_list(list, computes_to_list(result, reverse_call(var(list))))
 }
 
 /// If `right` is a list, then `append(nil, right)` computes to a list.
 pub fn append_nil_computes_to_list_theorem(right: Symbol, result: Symbol) -> Prop {
-    forall(
+    forall_list(
         right,
-        implies(
-            is_list(var(right)),
-            computes_to_list(result, append_call(nil(), var(right))),
-        ),
+        computes_to_list(result, append_call(nil(), var(right))),
     )
 }
 
 /// If `left` and `right` are lists, then `append(left, right)` computes to a list.
 pub fn append_computes_to_list_theorem(left: Symbol, right: Symbol, result: Symbol) -> Prop {
-    forall(
+    forall_list(
         left,
-        implies(
-            is_list(var(left)),
-            forall(
-                right,
-                implies(
-                    is_list(var(right)),
-                    computes_to_list(result, append_call(var(left), var(right))),
-                ),
-            ),
+        forall_list(
+            right,
+            computes_to_list(result, append_call(var(left), var(right))),
         ),
     )
 }
@@ -452,7 +422,7 @@ pub fn check_evaluates_to_in_theory(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Effect, Proof, RUNTIME_ERROR, Value, and, computes_to, diverges, exists};
+    use crate::{Effect, Proof, RUNTIME_ERROR, Value, computes_to, diverges, exists_list};
 
     const A: Symbol = Symbol(100);
     const B: Symbol = Symbol(101);
@@ -478,33 +448,16 @@ mod tests {
     }
 
     #[test]
-    fn nil_source_theorem_has_expected_shape() {
-        assert_eq!(nil_is_list_source_theorem(), is_list(nil()));
-    }
-
-    #[test]
     fn reverse_acc_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             reverse_acc_computes_to_list_theorem(X, ACCUMULATOR, RESULT),
-            forall(
+            forall_list(
                 X,
-                implies(
-                    is_list(var(X)),
-                    forall(
-                        ACCUMULATOR,
-                        implies(
-                            is_list(var(ACCUMULATOR)),
-                            exists(
-                                RESULT,
-                                and(
-                                    computes_to(
-                                        reverse_acc_call(var(X), var(ACCUMULATOR)),
-                                        var(RESULT),
-                                    ),
-                                    is_list(var(RESULT)),
-                                ),
-                            ),
-                        ),
+                forall_list(
+                    ACCUMULATOR,
+                    exists_list(
+                        RESULT,
+                        computes_to(reverse_acc_call(var(X), var(ACCUMULATOR)), var(RESULT)),
                     ),
                 ),
             )
@@ -527,18 +480,9 @@ mod tests {
     fn reverse_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             reverse_computes_to_list_theorem(X, RESULT),
-            forall(
+            forall_list(
                 X,
-                implies(
-                    is_list(var(X)),
-                    exists(
-                        RESULT,
-                        and(
-                            computes_to(reverse_call(var(X)), var(RESULT)),
-                            is_list(var(RESULT)),
-                        ),
-                    ),
-                ),
+                exists_list(RESULT, computes_to(reverse_call(var(X)), var(RESULT))),
             )
         );
     }
@@ -568,18 +512,9 @@ mod tests {
     fn append_nil_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             append_nil_computes_to_list_theorem(X, RESULT),
-            forall(
+            forall_list(
                 X,
-                implies(
-                    is_list(var(X)),
-                    exists(
-                        RESULT,
-                        and(
-                            computes_to(append_call(nil(), var(X)), var(RESULT)),
-                            is_list(var(RESULT)),
-                        ),
-                    ),
-                ),
+                exists_list(RESULT, computes_to(append_call(nil(), var(X)), var(RESULT))),
             )
         );
     }
@@ -598,13 +533,12 @@ mod tests {
     #[test]
     fn append_computes_to_list_theorem_has_expected_shape() {
         let appended = append_call(var(X), var(ACCUMULATOR));
-        let result_is_list = and(computes_to(appended, var(RESULT)), is_list(var(RESULT)));
-        let right_case = implies(is_list(var(ACCUMULATOR)), exists(RESULT, result_is_list));
-        let left_case = implies(is_list(var(X)), forall(ACCUMULATOR, right_case));
+        let right_case = exists_list(RESULT, computes_to(appended, var(RESULT)));
+        let left_case = forall_list(ACCUMULATOR, right_case);
 
         assert_eq!(
             append_computes_to_list_theorem(X, ACCUMULATOR, RESULT),
-            forall(X, left_case)
+            forall_list(X, left_case)
         );
     }
 
@@ -622,10 +556,6 @@ mod tests {
 
     #[test]
     fn reverse_source_theorem_uses_source_proof_script() {
-        assert!(matches!(
-            theorem_definition(NIL_IS_LIST).proof,
-            ProofScript::Proof(_)
-        ));
         assert!(matches!(
             theorem_definition(REVERSE_ACC_COMPUTES_TO_LIST).proof,
             ProofScript::Proof(_)

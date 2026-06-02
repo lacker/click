@@ -34,7 +34,7 @@ So it's okay if the kernel feels like a "pile of different algebraic types".
 The kernel lives in `src/kernel/`:
 
 - `calculus.rs` defines the core calculus entities: `Computation`, `Value`,
-  `ErrorName`, `Effect`, `Outcome`, `Prop`, and `Proof`.
+  `ErrorName`, `Effect`, `Outcome`, `Sort`, `Prop`, and `Proof`.
 - `eval.rs` implements reduction and normalization for computations.
 - `check.rs` implements substitution, alpha-equivalence, and the primitive proof
   rules.
@@ -42,9 +42,19 @@ The kernel lives in `src/kernel/`:
   `Context`, and named bindings.
 
 Propositions can still talk about arbitrary computations, because quantified
-variables stand for computations. Rust APIs that require a concrete finalized
-result use `Value`, `Effect`, or `Outcome`. Errors are named effects, not a
-second channel for returning structured values.
+variables can be sorted as computations. Rust APIs that require a concrete
+finalized result use `Value`, `Effect`, or `Outcome`. Errors are named effects,
+not a second channel for returning structured values.
+
+Kernel variables are sorted. A sort is the range of a bound variable:
+`Computation`, `Value`, `List`, `Effect`, or `Outcome`. Sorts are not Click's
+structural types; they are kernel-level categories needed by primitive proof
+rules and substitution.
+
+Lists are proper by construction: `nil` and `cons` build list values, and a
+`cons` tail must itself be a list. The kernel uses list-sorted quantification
+and list induction to reason over list values, rather than a separate `IsList`
+proposition.
 
 The core calculus can contain opaque names. The logistical layer gives those
 names meaning by binding them to computations or theorems. Human-facing spelling,

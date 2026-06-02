@@ -147,31 +147,11 @@ impl Theorem {
         head: Computation,
         tail: Computation,
         head_is_value: &Self,
-        tail_is_value: &Self,
     ) -> Option<Self> {
         Self::from_closed_proof(Proof::ConsIsValue {
             head,
             tail,
             head_is_value: Box::new(head_is_value.proof.clone()),
-            tail_is_value: Box::new(tail_is_value.proof.clone()),
-        })
-    }
-
-    pub fn list_nil() -> Self {
-        Self::from_closed_proof(Proof::ListNil).expect("list nil theorem should be valid")
-    }
-
-    pub fn cons_is_list(
-        head: Computation,
-        tail: Computation,
-        head_is_value: &Self,
-        tail_is_list: &Self,
-    ) -> Option<Self> {
-        Self::from_closed_proof(Proof::ConsIsList {
-            head,
-            tail,
-            head_is_value: Box::new(head_is_value.proof.clone()),
-            tail_is_list: Box::new(tail_is_list.proof.clone()),
         })
     }
 
@@ -189,6 +169,13 @@ impl Theorem {
         })
     }
 
+    pub fn forall_list_elim(forall: &Self, argument: Computation) -> Option<Self> {
+        Self::from_closed_proof(Proof::ForAllElim {
+            forall: Box::new(forall.proof.clone()),
+            argument,
+        })
+    }
+
     pub fn exists_intro(
         variable: Symbol,
         body: Prop,
@@ -197,6 +184,7 @@ impl Theorem {
     ) -> Option<Self> {
         Self::from_closed_proof(Proof::ExistsIntro {
             variable,
+            sort: Sort::Computation,
             body,
             witness,
             proof: Box::new(proof.proof.clone()),
@@ -367,33 +355,11 @@ impl Theory {
         head: Computation,
         tail: Computation,
         head_is_value: &Theorem,
-        tail_is_value: &Theorem,
     ) -> Option<Theorem> {
         self.theorem_from_closed_proof(Proof::ConsIsValue {
             head,
             tail,
             head_is_value: Box::new(head_is_value.proof.clone()),
-            tail_is_value: Box::new(tail_is_value.proof.clone()),
-        })
-    }
-
-    pub fn list_nil(&self) -> Theorem {
-        self.theorem_from_closed_proof(Proof::ListNil)
-            .expect("list nil theorem should be valid in every theory")
-    }
-
-    pub fn cons_is_list(
-        &self,
-        head: Computation,
-        tail: Computation,
-        head_is_value: &Theorem,
-        tail_is_list: &Theorem,
-    ) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::ConsIsList {
-            head,
-            tail,
-            head_is_value: Box::new(head_is_value.proof.clone()),
-            tail_is_list: Box::new(tail_is_list.proof.clone()),
         })
     }
 
@@ -411,6 +377,13 @@ impl Theory {
         })
     }
 
+    pub fn forall_list_elim(&self, forall: &Theorem, argument: Computation) -> Option<Theorem> {
+        self.theorem_from_closed_proof(Proof::ForAllElim {
+            forall: Box::new(forall.proof.clone()),
+            argument,
+        })
+    }
+
     pub fn exists_intro(
         &self,
         variable: Symbol,
@@ -420,6 +393,7 @@ impl Theory {
     ) -> Option<Theorem> {
         self.theorem_from_closed_proof(Proof::ExistsIntro {
             variable,
+            sort: Sort::Computation,
             body,
             witness,
             proof: Box::new(proof.proof.clone()),

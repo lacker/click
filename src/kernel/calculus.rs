@@ -50,9 +50,17 @@ pub enum Computation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Value {
     Lambda(Lambda),
-    Nil,
-    Cons { head: Box<Value>, tail: Box<Value> },
+    List(ListValue),
     Quote(Symbol),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ListValue {
+    Nil,
+    Cons {
+        head: Box<Value>,
+        tail: Box<ListValue>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -67,15 +75,31 @@ pub enum Outcome {
     Effect(Effect),
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Sort {
+    Computation,
+    Value,
+    List,
+    Effect,
+    Outcome,
+}
+
 impl Computation {
+    pub fn as_list_value(&self) -> Option<ListValue> {
+        match self {
+            Self::Nil => Some(ListValue::Nil),
+            Self::Cons { head, tail } => Some(ListValue::Cons {
+                head: Box::new(head.as_value()?),
+                tail: Box::new(tail.as_list_value()?),
+            }),
+            _ => None,
+        }
+    }
+
     pub fn as_value(&self) -> Option<Value> {
         match self {
             Self::Lambda(lambda) => Some(Value::Lambda(lambda.clone())),
-            Self::Nil => Some(Value::Nil),
-            Self::Cons { head, tail } => Some(Value::Cons {
-                head: Box::new(head.as_value()?),
-                tail: Box::new(tail.as_value()?),
-            }),
+            Self::Nil | Self::Cons { .. } => self.as_list_value().map(Value::List),
             Self::Quote(symbol) => Some(Value::Quote(*symbol)),
             _ => None,
         }
@@ -104,14 +128,15 @@ impl Value {
     }
 
     pub fn nil() -> Self {
-        Self::Nil
+        Self::List(ListValue::Nil)
     }
 
     pub fn cons(head: Self, tail: Self) -> Self {
-        Self::Cons {
-            head: Box::new(head),
-            tail: Box::new(tail),
-        }
+        let Self::List(tail) = tail else {
+            panic!("list value tails must be lists");
+        };
+
+        Self::List(ListValue::cons(head, tail))
     }
 
     pub fn quote(symbol: Symbol) -> Self {
@@ -121,12 +146,31 @@ impl Value {
     pub fn into_computation(self) -> Computation {
         match self {
             Self::Lambda(lambda) => Computation::Lambda(lambda),
+            Self::List(list) => list.into_computation(),
+            Self::Quote(symbol) => Computation::Quote(symbol),
+        }
+    }
+}
+
+impl ListValue {
+    pub fn nil() -> Self {
+        Self::Nil
+    }
+
+    pub fn cons(head: Value, tail: Self) -> Self {
+        Self::Cons {
+            head: Box::new(head),
+            tail: Box::new(tail),
+        }
+    }
+
+    pub fn into_computation(self) -> Computation {
+        match self {
             Self::Nil => Computation::Nil,
             Self::Cons { head, tail } => Computation::Cons {
                 head: Box::new(head.into_computation()),
                 tail: Box::new(tail.into_computation()),
             },
-            Self::Quote(symbol) => Computation::Quote(symbol),
         }
     }
 }
@@ -205,10 +249,17 @@ pub enum Step {
 pub enum Prop {
     Equal(Computation, Computation),
     IsValue(Computation),
-    IsList(Computation),
     Implies(Box<Prop>, Box<Prop>),
-    ForAll { variable: Symbol, body: Box<Prop> },
-    Exists { variable: Symbol, body: Box<Prop> },
+    ForAll {
+        variable: Symbol,
+        sort: Sort,
+        body: Box<Prop>,
+    },
+    Exists {
+        variable: Symbol,
+        sort: Sort,
+        body: Box<Prop>,
+    },
     And(Box<Prop>, Box<Prop>),
     Or(Box<Prop>, Box<Prop>),
 }
@@ -237,14 +288,6 @@ pub enum Proof {
         head: Computation,
         tail: Computation,
         head_is_value: Box<Proof>,
-        tail_is_value: Box<Proof>,
-    },
-    ListNil,
-    ConsIsList {
-        head: Computation,
-        tail: Computation,
-        head_is_value: Box<Proof>,
-        tail_is_list: Box<Proof>,
     },
     ListInduction {
         variable: Symbol,
@@ -253,7 +296,6 @@ pub enum Proof {
         head: Symbol,
         tail: Symbol,
         head_is_value_assumption: Symbol,
-        tail_is_list_assumption: Symbol,
         induction_hypothesis_assumption: Symbol,
         step: Box<Proof>,
     },
@@ -268,6 +310,7 @@ pub enum Proof {
     },
     ForAllIntro {
         variable: Symbol,
+        sort: Sort,
         proof: Box<Proof>,
     },
     ForAllElim {
@@ -276,6 +319,7 @@ pub enum Proof {
     },
     ExistsIntro {
         variable: Symbol,
+        sort: Sort,
         body: Prop,
         witness: Computation,
         proof: Box<Proof>,
@@ -314,26 +358,44 @@ pub fn is_value(computation: Computation) -> Prop {
     Prop::IsValue(computation)
 }
 
-pub fn is_list(computation: Computation) -> Prop {
-    Prop::IsList(computation)
-}
-
 pub fn implies(premise: Prop, conclusion: Prop) -> Prop {
     Prop::Implies(Box::new(premise), Box::new(conclusion))
 }
 
 pub fn forall(variable: Symbol, body: Prop) -> Prop {
+    forall_sort(variable, Sort::Computation, body)
+}
+
+pub fn forall_sort(variable: Symbol, sort: Sort, body: Prop) -> Prop {
     Prop::ForAll {
         variable,
+        sort,
         body: Box::new(body),
     }
 }
 
+pub fn forall_list(variable: Symbol, body: Prop) -> Prop {
+    forall_sort(variable, Sort::List, body)
+}
+
 pub fn exists(variable: Symbol, body: Prop) -> Prop {
+    exists_sort(variable, Sort::Computation, body)
+}
+
+pub fn exists_sort(variable: Symbol, sort: Sort, body: Prop) -> Prop {
     Prop::Exists {
         variable,
+        sort,
         body: Box::new(body),
     }
+}
+
+pub fn exists_value(variable: Symbol, body: Prop) -> Prop {
+    exists_sort(variable, Sort::Value, body)
+}
+
+pub fn exists_list(variable: Symbol, body: Prop) -> Prop {
+    exists_sort(variable, Sort::List, body)
 }
 
 pub fn and(left: Prop, right: Prop) -> Prop {
@@ -362,23 +424,17 @@ pub fn computes_to_outcome(computation: Computation, outcome: impl Into<Outcome>
 
 /// `variable` names the existential result and should be fresh for `computation`.
 pub fn terminates(variable: Symbol, computation: Computation) -> Prop {
-    exists(
+    exists_value(
         variable,
-        and(
-            computes_to(computation, Computation::Var(variable)),
-            is_value(Computation::Var(variable)),
-        ),
+        computes_to(computation, Computation::Var(variable)),
     )
 }
 
 /// `variable` names the existential list value and should be fresh for `computation`.
 pub fn computes_to_list(variable: Symbol, computation: Computation) -> Prop {
-    exists(
+    exists_list(
         variable,
-        and(
-            computes_to(computation, Computation::Var(variable)),
-            is_list(Computation::Var(variable)),
-        ),
+        computes_to(computation, Computation::Var(variable)),
     )
 }
 

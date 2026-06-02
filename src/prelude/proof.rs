@@ -1,7 +1,7 @@
 //! Shared proof-script and evaluation-proof helpers for prelude modules.
 
 use crate::{
-    Computation, Name, Outcome, Proof, Step, Theorem, Theory, alpha_eq_computation,
+    Computation, Name, Outcome, Proof, Sort, Step, Theorem, Theory, alpha_eq_computation,
     computes_to_outcome,
 };
 
@@ -76,7 +76,6 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
             variable: *variable,
             template: template.clone(),
         }),
-        ProofExpr::ListNil => Some(Proof::ListNil),
         ProofExpr::ImpliesIntro {
             assumption,
             premise,
@@ -95,11 +94,13 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
         }),
         ProofExpr::ExistsIntro {
             variable,
+            sort,
             body,
             witness,
             proof,
         } => Some(Proof::ExistsIntro {
             variable: *variable,
+            sort: *sort,
             body: body.clone(),
             witness: witness.clone(),
             proof: Box::new(proof_expr_to_proof(proof, theory)?),
@@ -125,17 +126,6 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
         ProofExpr::AndElimRight(proof) => Some(Proof::AndElimRight(Box::new(proof_expr_to_proof(
             proof, theory,
         )?))),
-        ProofExpr::ConsIsList {
-            head,
-            tail,
-            head_is_value,
-            tail_is_list,
-        } => Some(Proof::ConsIsList {
-            head: head.clone(),
-            tail: tail.clone(),
-            head_is_value: Box::new(proof_expr_to_proof(head_is_value, theory)?),
-            tail_is_list: Box::new(proof_expr_to_proof(tail_is_list, theory)?),
-        }),
         ProofExpr::ListInduction {
             variable,
             property,
@@ -143,7 +133,6 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
             head,
             tail,
             head_is_value_assumption,
-            tail_is_list_assumption,
             induction_hypothesis_assumption,
             step,
         } => Some(Proof::ListInduction {
@@ -153,17 +142,53 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
             head: *head,
             tail: *tail,
             head_is_value_assumption: *head_is_value_assumption,
-            tail_is_list_assumption: *tail_is_list_assumption,
             induction_hypothesis_assumption: *induction_hypothesis_assumption,
             step: Box::new(proof_expr_to_proof(step, theory)?),
         }),
-        ProofExpr::ForAllIntro { variable, proof } => Some(Proof::ForAllIntro {
+        ProofExpr::ForAllIntro {
+            variable,
+            sort,
+            proof,
+        } => Some(Proof::ForAllIntro {
             variable: *variable,
+            sort: *sort,
             proof: Box::new(proof_expr_to_proof(proof, theory)?),
         }),
         ProofExpr::ForAllElim { forall, argument } => Some(Proof::ForAllElim {
             forall: Box::new(proof_expr_to_proof(forall, theory)?),
             argument: argument.clone(),
+        }),
+        ProofExpr::ForAllListIntro { variable, proof } => Some(Proof::ForAllIntro {
+            variable: *variable,
+            sort: Sort::List,
+            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+        }),
+        ProofExpr::ForAllListElim { forall, argument } => Some(Proof::ForAllElim {
+            forall: Box::new(proof_expr_to_proof(forall, theory)?),
+            argument: argument.clone(),
+        }),
+        ProofExpr::ExistsListIntro {
+            variable,
+            body,
+            witness,
+            proof,
+        } => Some(Proof::ExistsIntro {
+            variable: *variable,
+            sort: Sort::List,
+            body: body.clone(),
+            witness: witness.clone(),
+            proof: Box::new(proof_expr_to_proof(proof, theory)?),
+        }),
+        ProofExpr::ExistsListElim {
+            existential,
+            witness,
+            assumption,
+            proof,
+        } => Some(Proof::ExistsElim {
+            existential: Box::new(proof_expr_to_proof(existential, theory)?),
+            witness: *witness,
+            assumption: *assumption,
+            proof: Box::new(proof_expr_to_proof(proof, theory)?),
         }),
     }
 }
