@@ -8,6 +8,7 @@ use crate::{
 use super::{
     APPEND, APPEND_COMPUTES_TO_LIST, APPEND_NIL_COMPUTES_TO_LIST, REVERSE, REVERSE_ACC,
     REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST, REVERSE_NIL_COMPUTES_TO_LIST,
+    SourceTheoremError,
     source::{NameBinding, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
 
@@ -277,9 +278,13 @@ pub(super) fn reverse_computes_to_list_source_result_symbol() -> Symbol {
 }
 
 pub(super) fn checked_source_theorem(name: Name) -> Option<Theorem> {
-    let module = module().ok()?;
+    checked_source_theorem_result(name).ok()
+}
 
-    super::proof::source_theorem(module, name, super::computation_theory())
+pub(super) fn checked_source_theorem_result(name: Name) -> Result<Theorem, SourceTheoremError> {
+    let module = module().map_err(|_| SourceTheoremError::ModuleParseFailed)?;
+
+    super::proof::source_theorem_result(module, name, super::computation_theory())
 }
 
 pub fn reverse_call(value: Computation) -> Computation {

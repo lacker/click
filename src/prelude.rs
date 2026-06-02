@@ -6,6 +6,8 @@ mod source;
 
 use crate::{Computation, Name, Theorem, Theory};
 
+pub use proof::SourceTheoremError;
+
 pub const REVERSE_ACC: Name = Name(1);
 pub const REVERSE: Name = Name(2);
 pub const REVERSE_ACC_COMPUTES_TO_LIST: Name = Name(3);
@@ -51,23 +53,30 @@ fn define_module_computations(theory: &mut Theory, module: &source::ParsedModule
 }
 
 pub fn define_theorems_in_theory(theory: &mut Theory) -> bool {
+    try_define_theorems_in_theory(theory).is_ok()
+}
+
+pub fn try_define_theorems_in_theory(theory: &mut Theory) -> Result<(), SourceTheoremError> {
     let Ok(module) = list::module() else {
-        return false;
+        return Err(SourceTheoremError::ModuleParseFailed);
     };
 
-    define_module_theorems(theory, &module)
+    define_module_theorems_result(theory, &module)
 }
 
 fn define_module_theorems(theory: &mut Theory, module: &source::ParsedModule) -> bool {
-    module.theorems.iter().all(|theorem| {
-        let Some(proof) = proof::proof_for_theorem(theorem, theory) else {
-            return false;
-        };
+    define_module_theorems_result(theory, module).is_ok()
+}
 
-        theory
-            .define_theorem_from_proof(theorem.name, proof, theorem.prop.clone())
-            .is_some()
-    })
+fn define_module_theorems_result(
+    theory: &mut Theory,
+    module: &source::ParsedModule,
+) -> Result<(), SourceTheoremError> {
+    for theorem in &module.theorems {
+        proof::define_source_theorem(theorem, theory)?;
+    }
+
+    Ok(())
 }
 
 pub fn reverse_acc_computes_to_list() -> Option<Theorem> {
@@ -105,7 +114,7 @@ pub fn append() -> Computation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Step, computes_to_list};
+    use crate::{Step, TheoremError, computes_to_list};
 
     #[test]
     fn theory_defines_reverse() {
@@ -153,11 +162,46 @@ mod tests {
         let mut theory = Theory::new();
 
         assert!(!define_theorems_in_theory(&mut theory));
+        assert_eq!(
+            try_define_theorems_in_theory(&mut theory),
+            Err(SourceTheoremError::ProofElaborationFailed {
+                theorem: REVERSE_ACC_COMPUTES_TO_LIST,
+            })
+        );
         assert!(theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(REVERSE_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(REVERSE_NIL_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(APPEND_NIL_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(APPEND_COMPUTES_TO_LIST).is_none());
+    }
+
+    #[test]
+    fn source_theorem_diagnostics_report_kernel_rejection() {
+        let module = source::parse_module(
+            "
+            (theorem bad
+              (equal nil (quote unit))
+              (proof (eval-to nil nil)))
+            ",
+            &[],
+            &[source::NameBinding {
+                spelling: "bad",
+                name: Name(99),
+            }],
+            &[source::SymbolBinding {
+                spelling: "unit",
+                symbol: list::UNIT,
+            }],
+        )
+        .expect("synthetic module should parse");
+
+        assert_eq!(
+            proof::source_theorem_result(module, Name(99), Theory::new()),
+            Err(SourceTheoremError::TheoremRejected {
+                theorem: Name(99),
+                error: TheoremError::InvalidProof,
+            })
+        );
     }
 
     #[test]

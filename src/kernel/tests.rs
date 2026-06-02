@@ -451,8 +451,21 @@ fn theorem_from_proof_checks_closed_proofs() {
 
     assert!(valid.is_some());
     assert!(invalid.is_none());
+    assert_eq!(
+        Theorem::from_proof_result(
+            Proof::Refl(Computation::Quote(Symbol(1))),
+            equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(2))),
+        ),
+        Err(TheoremError::InvalidProof)
+    );
     assert!(check(&Proof::Refl(Computation::Var(Symbol(1))), &open_prop));
-    assert!(Theorem::from_proof(Proof::Refl(Computation::Var(Symbol(1))), open_prop).is_none());
+    assert!(
+        Theorem::from_proof(Proof::Refl(Computation::Var(Symbol(1))), open_prop.clone()).is_none()
+    );
+    assert_eq!(
+        Theorem::from_proof_result(Proof::Refl(Computation::Var(Symbol(1))), open_prop),
+        Err(TheoremError::OpenProp(vec![Symbol(1)]))
+    );
     assert!(Theorem::refl(Computation::Var(Symbol(1))).is_none());
     assert!(
         Theorem::from_proof(
@@ -552,7 +565,7 @@ fn raw_checker_known_proofs_compose_with_rules() {
     let step = Theorem::step(start.clone()).expect("computation should step");
     let mut bindings = Bindings::new();
 
-    assert!(bindings.define_theorem(Name(7), &step));
+    assert!(bindings.define_theorem_result(Name(7), &step).is_ok());
     assert!(check_in_bindings(
         &Proof::Symm(Box::new(Proof::Known(Name(7)))),
         &equal(end, start),

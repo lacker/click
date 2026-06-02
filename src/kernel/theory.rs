@@ -2,9 +2,7 @@ use std::collections::HashMap;
 
 use super::{
     calculus::*,
-    check::{
-        check, check_in_bindings, check_in_bindings_and_context, free_symbols_prop, proven_prop,
-    },
+    check::{check_in_bindings, check_in_bindings_and_context, free_symbols_prop, proven_prop},
     eval::{normal_form_in_bindings, normal_outcome_in_bindings, step_in_bindings},
 };
 
@@ -41,16 +39,18 @@ impl Bindings {
         true
     }
 
-    pub(crate) fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
-        if self.computations.contains_key(&name)
-            || self.theorems.contains_key(&name)
-            || !free_symbols_prop(theorem.prop()).is_empty()
-        {
-            return false;
+    pub(crate) fn define_theorem_result(
+        &mut self,
+        name: Name,
+        theorem: &Theorem,
+    ) -> Result<(), TheoremError> {
+        if self.computations.contains_key(&name) || self.theorems.contains_key(&name) {
+            return Err(TheoremError::NameAlreadyDefined(name));
         }
 
+        closed_prop(theorem.prop())?;
         self.theorems.insert(name, theorem.prop().clone());
-        true
+        Ok(())
     }
 }
 
@@ -65,39 +65,60 @@ pub struct Theorem {
     proof: Proof,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TheoremError {
+    InvalidProof,
+    NameAlreadyDefined(Name),
+    OpenProp(Vec<Symbol>),
+}
+
+fn closed_prop(prop: &Prop) -> Result<(), TheoremError> {
+    let mut symbols = free_symbols_prop(prop).into_iter().collect::<Vec<_>>();
+    symbols.sort();
+
+    if symbols.is_empty() {
+        Ok(())
+    } else {
+        Err(TheoremError::OpenProp(symbols))
+    }
+}
+
 impl Theorem {
+    pub fn from_proof_result(proof: Proof, prop: Prop) -> Result<Self, TheoremError> {
+        Self::from_proof_in_bindings_result(proof, prop, &Bindings::new())
+    }
+
     pub fn from_proof(proof: Proof, prop: Prop) -> Option<Self> {
-        if !check(&proof, &prop) || !free_symbols_prop(&prop).is_empty() {
-            return None;
-        }
-
-        Some(Self { prop, proof })
+        Self::from_proof_result(proof, prop).ok()
     }
 
-    fn from_proof_in_bindings(proof: Proof, prop: Prop, bindings: &Bindings) -> Option<Self> {
-        if !check_in_bindings(&proof, &prop, bindings) || !free_symbols_prop(&prop).is_empty() {
-            return None;
-        }
+    fn from_proof_in_bindings_result(
+        proof: Proof,
+        prop: Prop,
+        bindings: &Bindings,
+    ) -> Result<Self, TheoremError> {
+        closed_prop(&prop)?;
 
-        Some(Self { prop, proof })
+        if check_in_bindings(&proof, &prop, bindings) {
+            Ok(Self { prop, proof })
+        } else {
+            Err(TheoremError::InvalidProof)
+        }
     }
 
-    fn from_closed_proof(proof: Proof) -> Option<Self> {
-        let prop = proven_prop(&proof, &Bindings::new(), &Context::new())?;
-        if !free_symbols_prop(&prop).is_empty() {
-            return None;
-        }
-
-        Some(Self { prop, proof })
+    fn from_proof_without_assumptions(proof: Proof) -> Option<Self> {
+        Self::from_proof_without_assumptions_result(proof, &Bindings::new()).ok()
     }
 
-    fn from_closed_proof_in_bindings(proof: Proof, bindings: &Bindings) -> Option<Self> {
-        let prop = proven_prop(&proof, bindings, &Context::new())?;
-        if !free_symbols_prop(&prop).is_empty() {
-            return None;
-        }
+    fn from_proof_without_assumptions_result(
+        proof: Proof,
+        bindings: &Bindings,
+    ) -> Result<Self, TheoremError> {
+        let prop =
+            proven_prop(&proof, bindings, &Context::new()).ok_or(TheoremError::InvalidProof)?;
+        closed_prop(&prop)?;
 
-        Some(Self { prop, proof })
+        Ok(Self { prop, proof })
     }
 
     pub fn prop(&self) -> &Prop {
@@ -105,26 +126,26 @@ impl Theorem {
     }
 
     pub fn refl(computation: Computation) -> Option<Self> {
-        Self::from_closed_proof(Proof::Refl(computation))
+        Self::from_proof_without_assumptions(Proof::Refl(computation))
     }
 
     pub fn symm(theorem: &Self) -> Option<Self> {
-        Self::from_closed_proof(Proof::Symm(Box::new(theorem.proof.clone())))
+        Self::from_proof_without_assumptions(Proof::Symm(Box::new(theorem.proof.clone())))
     }
 
     pub fn trans(first: &Self, second: &Self) -> Option<Self> {
-        Self::from_closed_proof(Proof::Trans(
+        Self::from_proof_without_assumptions(Proof::Trans(
             Box::new(first.proof.clone()),
             Box::new(second.proof.clone()),
         ))
     }
 
     pub fn step(computation: Computation) -> Option<Self> {
-        Self::from_closed_proof(Proof::Step(computation))
+        Self::from_proof_without_assumptions(Proof::Step(computation))
     }
 
     pub fn steps(computations: Vec<Computation>) -> Option<Self> {
-        Self::from_closed_proof(Proof::Steps(computations))
+        Self::from_proof_without_assumptions(Proof::Steps(computations))
     }
 
     pub fn rewrite(
@@ -133,7 +154,7 @@ impl Theorem {
         variable: Symbol,
         template: Prop,
     ) -> Option<Self> {
-        Self::from_closed_proof(Proof::Rewrite {
+        Self::from_proof_without_assumptions(Proof::Rewrite {
             equality: Box::new(equality.proof.clone()),
             proof: Box::new(theorem.proof.clone()),
             variable,
@@ -142,14 +163,14 @@ impl Theorem {
     }
 
     pub fn implies_elim(implication: &Self, premise: &Self) -> Option<Self> {
-        Self::from_closed_proof(Proof::ImpliesElim {
+        Self::from_proof_without_assumptions(Proof::ImpliesElim {
             implication: Box::new(implication.proof.clone()),
             premise: Box::new(premise.proof.clone()),
         })
     }
 
     pub fn forall_elim(forall: &Self, argument: Computation) -> Option<Self> {
-        Self::from_closed_proof(Proof::ForAllElim {
+        Self::from_proof_without_assumptions(Proof::ForAllElim {
             forall: Box::new(forall.proof.clone()),
             argument,
         })
@@ -161,7 +182,7 @@ impl Theorem {
         witness: Computation,
         proof: &Self,
     ) -> Option<Self> {
-        Self::from_closed_proof(Proof::ExistsIntro {
+        Self::from_proof_without_assumptions(Proof::ExistsIntro {
             variable,
             sort: Sort::Computation,
             body,
@@ -171,7 +192,7 @@ impl Theorem {
     }
 
     pub fn and_intro(left: &Self, right: &Self) -> Self {
-        Self::from_closed_proof(Proof::AndIntro(
+        Self::from_proof_without_assumptions(Proof::AndIntro(
             Box::new(left.proof.clone()),
             Box::new(right.proof.clone()),
         ))
@@ -179,22 +200,22 @@ impl Theorem {
     }
 
     pub fn and_elim_left(theorem: &Self) -> Option<Self> {
-        Self::from_closed_proof(Proof::AndElimLeft(Box::new(theorem.proof.clone())))
+        Self::from_proof_without_assumptions(Proof::AndElimLeft(Box::new(theorem.proof.clone())))
     }
 
     pub fn and_elim_right(theorem: &Self) -> Option<Self> {
-        Self::from_closed_proof(Proof::AndElimRight(Box::new(theorem.proof.clone())))
+        Self::from_proof_without_assumptions(Proof::AndElimRight(Box::new(theorem.proof.clone())))
     }
 
     pub fn or_intro_left(theorem: &Self, right: Prop) -> Option<Self> {
-        Self::from_closed_proof(Proof::OrIntroLeft {
+        Self::from_proof_without_assumptions(Proof::OrIntroLeft {
             proof: Box::new(theorem.proof.clone()),
             right,
         })
     }
 
     pub fn or_intro_right(left: Prop, theorem: &Self) -> Option<Self> {
-        Self::from_closed_proof(Proof::OrIntroRight {
+        Self::from_proof_without_assumptions(Proof::OrIntroRight {
             left,
             proof: Box::new(theorem.proof.clone()),
         })
@@ -219,11 +240,21 @@ impl Theory {
     }
 
     pub fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
+        self.define_theorem_result(name, theorem).is_ok()
+    }
+
+    pub fn define_theorem_result(
+        &mut self,
+        name: Name,
+        theorem: &Theorem,
+    ) -> Result<(), TheoremError> {
+        closed_prop(theorem.prop())?;
+
         if !self.check(&theorem.proof, theorem.prop()) {
-            return false;
+            return Err(TheoremError::InvalidProof);
         }
 
-        self.bindings.define_theorem(name, theorem)
+        self.bindings.define_theorem_result(name, theorem)
     }
 
     pub fn define_theorem_from_proof(
@@ -232,8 +263,19 @@ impl Theory {
         proof: Proof,
         prop: Prop,
     ) -> Option<Theorem> {
-        let theorem = self.from_proof(proof, prop)?;
-        self.define_theorem(name, &theorem).then_some(theorem)
+        self.define_theorem_from_proof_result(name, proof, prop)
+            .ok()
+    }
+
+    pub fn define_theorem_from_proof_result(
+        &mut self,
+        name: Name,
+        proof: Proof,
+        prop: Prop,
+    ) -> Result<Theorem, TheoremError> {
+        let theorem = self.from_proof_result(proof, prop)?;
+        self.define_theorem_result(name, &theorem)?;
+        Ok(theorem)
     }
 
     pub fn check(&self, proof: &Proof, prop: &Prop) -> bool {
@@ -245,15 +287,19 @@ impl Theory {
     }
 
     pub fn from_proof(&self, proof: Proof, prop: Prop) -> Option<Theorem> {
-        Theorem::from_proof_in_bindings(proof, prop, &self.bindings)
+        self.from_proof_result(proof, prop).ok()
     }
 
-    fn theorem_from_closed_proof(&self, proof: Proof) -> Option<Theorem> {
-        Theorem::from_closed_proof_in_bindings(proof, &self.bindings)
+    pub fn from_proof_result(&self, proof: Proof, prop: Prop) -> Result<Theorem, TheoremError> {
+        Theorem::from_proof_in_bindings_result(proof, prop, &self.bindings)
+    }
+
+    fn theorem_from_proof_without_assumptions(&self, proof: Proof) -> Option<Theorem> {
+        Theorem::from_proof_without_assumptions_result(proof, &self.bindings).ok()
     }
 
     pub fn known(&self, name: Name) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::Known(name))
+        self.theorem_from_proof_without_assumptions(Proof::Known(name))
     }
 
     pub fn reduce(&self, computation: &Computation) -> Step {
@@ -273,22 +319,22 @@ impl Theory {
     }
 
     pub fn symm(&self, theorem: &Theorem) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::Symm(Box::new(theorem.proof.clone())))
+        self.theorem_from_proof_without_assumptions(Proof::Symm(Box::new(theorem.proof.clone())))
     }
 
     pub fn trans(&self, first: &Theorem, second: &Theorem) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::Trans(
+        self.theorem_from_proof_without_assumptions(Proof::Trans(
             Box::new(first.proof.clone()),
             Box::new(second.proof.clone()),
         ))
     }
 
     pub fn step(&self, computation: Computation) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::Step(computation))
+        self.theorem_from_proof_without_assumptions(Proof::Step(computation))
     }
 
     pub fn steps(&self, computations: Vec<Computation>) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::Steps(computations))
+        self.theorem_from_proof_without_assumptions(Proof::Steps(computations))
     }
 
     pub fn rewrite(
@@ -298,7 +344,7 @@ impl Theory {
         variable: Symbol,
         template: Prop,
     ) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::Rewrite {
+        self.theorem_from_proof_without_assumptions(Proof::Rewrite {
             equality: Box::new(equality.proof.clone()),
             proof: Box::new(theorem.proof.clone()),
             variable,
@@ -307,14 +353,14 @@ impl Theory {
     }
 
     pub fn implies_elim(&self, implication: &Theorem, premise: &Theorem) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::ImpliesElim {
+        self.theorem_from_proof_without_assumptions(Proof::ImpliesElim {
             implication: Box::new(implication.proof.clone()),
             premise: Box::new(premise.proof.clone()),
         })
     }
 
     pub fn forall_elim(&self, forall: &Theorem, argument: Computation) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::ForAllElim {
+        self.theorem_from_proof_without_assumptions(Proof::ForAllElim {
             forall: Box::new(forall.proof.clone()),
             argument,
         })
@@ -327,7 +373,7 @@ impl Theory {
         witness: Computation,
         proof: &Theorem,
     ) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::ExistsIntro {
+        self.theorem_from_proof_without_assumptions(Proof::ExistsIntro {
             variable,
             sort: Sort::Computation,
             body,
@@ -337,29 +383,33 @@ impl Theory {
     }
 
     pub fn and_intro(&self, left: &Theorem, right: &Theorem) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::AndIntro(
+        self.theorem_from_proof_without_assumptions(Proof::AndIntro(
             Box::new(left.proof.clone()),
             Box::new(right.proof.clone()),
         ))
     }
 
     pub fn and_elim_left(&self, theorem: &Theorem) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::AndElimLeft(Box::new(theorem.proof.clone())))
+        self.theorem_from_proof_without_assumptions(Proof::AndElimLeft(Box::new(
+            theorem.proof.clone(),
+        )))
     }
 
     pub fn and_elim_right(&self, theorem: &Theorem) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::AndElimRight(Box::new(theorem.proof.clone())))
+        self.theorem_from_proof_without_assumptions(Proof::AndElimRight(Box::new(
+            theorem.proof.clone(),
+        )))
     }
 
     pub fn or_intro_left(&self, theorem: &Theorem, right: Prop) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::OrIntroLeft {
+        self.theorem_from_proof_without_assumptions(Proof::OrIntroLeft {
             proof: Box::new(theorem.proof.clone()),
             right,
         })
     }
 
     pub fn or_intro_right(&self, left: Prop, theorem: &Theorem) -> Option<Theorem> {
-        self.theorem_from_closed_proof(Proof::OrIntroRight {
+        self.theorem_from_proof_without_assumptions(Proof::OrIntroRight {
             left,
             proof: Box::new(theorem.proof.clone()),
         })

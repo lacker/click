@@ -1,7 +1,7 @@
 //! Shared proof-script and evaluation-proof helpers for prelude modules.
 
 use crate::{
-    Computation, Name, Outcome, Proof, Step, Theorem, Theory, alpha_eq_computation,
+    Computation, Name, Outcome, Proof, Step, Theorem, TheoremError, Theory, alpha_eq_computation,
     computes_to_outcome,
 };
 
@@ -18,28 +18,55 @@ pub enum EvaluationProofError {
     },
 }
 
-pub(super) fn proof_for_theorem(theorem: &ParsedTheorem, theory: &Theory) -> Option<Proof> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SourceTheoremError {
+    ModuleParseFailed,
+    ProofElaborationFailed { theorem: Name },
+    RequestedTheoremMissing { theorem: Name },
+    TheoremRejected { theorem: Name, error: TheoremError },
+}
+
+pub(super) fn define_source_theorem(
+    theorem: &ParsedTheorem,
+    theory: &mut Theory,
+) -> Result<Theorem, SourceTheoremError> {
+    let proof = proof_for_theorem_result(theorem, theory)?;
+    theory
+        .define_theorem_from_proof_result(theorem.name, proof, theorem.prop.clone())
+        .map_err(|error| SourceTheoremError::TheoremRejected {
+            theorem: theorem.name,
+            error,
+        })
+}
+
+pub(super) fn proof_for_theorem_result(
+    theorem: &ParsedTheorem,
+    theory: &Theory,
+) -> Result<Proof, SourceTheoremError> {
     match &theorem.proof {
-        ProofScript::Proof(proof) => proof_expr_to_proof(proof, theory),
+        ProofScript::Proof(proof) => {
+            proof_expr_to_proof(proof, theory).ok_or(SourceTheoremError::ProofElaborationFailed {
+                theorem: theorem.name,
+            })
+        }
     }
 }
 
-pub(super) fn source_theorem(
+pub(super) fn source_theorem_result(
     module: ParsedModule,
     name: Name,
     mut theory: Theory,
-) -> Option<Theorem> {
+) -> Result<Theorem, SourceTheoremError> {
     for theorem in module.theorems {
         let requested = theorem.name == name;
-        let proof = proof_for_theorem(&theorem, &theory)?;
-        let theorem = theory.define_theorem_from_proof(theorem.name, proof, theorem.prop)?;
+        let theorem = define_source_theorem(&theorem, &mut theory)?;
 
         if requested {
-            return Some(theorem);
+            return Ok(theorem);
         }
     }
 
-    None
+    Err(SourceTheoremError::RequestedTheoremMissing { theorem: name })
 }
 
 fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Option<Proof> {
