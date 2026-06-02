@@ -75,5 +75,7 @@ free variables. Named computation definitions are also closed. Concrete
 represented as a computation variable plus a proposition such as `is-value`.
 
 The standard prelude is just a theory built on top of the kernel. It currently
-contains the list definitions for `reverse_acc`, `reverse`, and `append`, plus
-theorems about those definitions.
+contains list definitions such as `reverse_acc`, `reverse`, `append`, `snoc`,
+`concat`, `last`, `init`, `null`, and `is-singleton`, plus theorems about those
+definitions. Prelude booleans are conventional quoted symbols: `:true` and
+`:false`. They are not special kernel values.

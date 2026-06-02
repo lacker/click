@@ -1,16 +1,19 @@
 //! List definitions and theorems for the standard prelude.
 
 use crate::{
-    Computation, ErrorName, Lambda, ListCase, Name, Outcome, Proof, Prop, Symbol, Theorem, Theory,
-    computes_to, computes_to_list, forall_where, is_list, is_value,
+    Computation, ErrorName, Lambda, ListCase, Name, Outcome, Proof, Prop, RUNTIME_ERROR, Symbol,
+    Theorem, Theory, computes_to, computes_to_list, errors_with, forall_where, is_list, is_value,
 };
 
 use super::{
     APPEND, APPEND_ASSOC, APPEND_COMPUTES_TO_LIST, APPEND_CONS, APPEND_NIL_COMPUTES_TO_LIST,
-    APPEND_NIL_RETURNS_RIGHT, APPEND_RIGHT_NIL, APPEND_SINGLETON, REVERSE, REVERSE_ACC,
-    REVERSE_ACC_APPEND, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_ACC_OF_APPEND, REVERSE_ACC_REVERSE,
-    REVERSE_APPEND, REVERSE_COMPUTES_TO_LIST, REVERSE_CONS, REVERSE_DOUBLE, REVERSE_NIL,
-    REVERSE_NIL_COMPUTES_TO_LIST, REVERSE_SINGLETON, SourceTheoremError,
+    APPEND_NIL_RETURNS_RIGHT, APPEND_RIGHT_NIL, APPEND_SINGLETON, CONCAT, CONCAT_NIL, FALSE, INIT,
+    INIT_CONS, INIT_NIL_ERRORS, INIT_SINGLETON, IS_SINGLETON, IS_SINGLETON_CONS, IS_SINGLETON_NIL,
+    IS_SINGLETON_SINGLETON, LAST, LAST_CONS, LAST_NIL_ERRORS, LAST_SINGLETON, NULL, NULL_CONS,
+    NULL_NIL, REVERSE, REVERSE_ACC, REVERSE_ACC_APPEND, REVERSE_ACC_COMPUTES_TO_LIST,
+    REVERSE_ACC_OF_APPEND, REVERSE_ACC_REVERSE, REVERSE_APPEND, REVERSE_COMPUTES_TO_LIST,
+    REVERSE_CONS, REVERSE_DOUBLE, REVERSE_NIL, REVERSE_NIL_COMPUTES_TO_LIST, REVERSE_SINGLETON,
+    SNOC, SNOC_COMPUTES_TO_LIST, SNOC_CONS, SNOC_NIL, SourceTheoremError, TRUE,
     source::{ModuleSpec, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
 
@@ -33,6 +36,9 @@ const FIXED_POINT_VALUE: Symbol = Symbol(1_006);
 const LOOP_ARGUMENT: Symbol = Symbol(1_007);
 const LEFT: Symbol = Symbol(1_008);
 const RIGHT: Symbol = Symbol(1_009);
+const VALUE: Symbol = Symbol(1_010);
+const LISTS: Symbol = Symbol(1_011);
+const REST_CELL: Symbol = Symbol(1_012);
 
 pub(super) const MODULE: ModuleSpec = ModuleSpec {
     source: SOURCE,
@@ -48,6 +54,30 @@ pub(super) const MODULE: ModuleSpec = ModuleSpec {
         super::source::NameBinding {
             spelling: "append",
             name: APPEND,
+        },
+        super::source::NameBinding {
+            spelling: "snoc",
+            name: SNOC,
+        },
+        super::source::NameBinding {
+            spelling: "concat",
+            name: CONCAT,
+        },
+        super::source::NameBinding {
+            spelling: "last",
+            name: LAST,
+        },
+        super::source::NameBinding {
+            spelling: "init",
+            name: INIT,
+        },
+        super::source::NameBinding {
+            spelling: "null",
+            name: NULL,
+        },
+        super::source::NameBinding {
+            spelling: "is-singleton",
+            name: IS_SINGLETON,
         },
     ],
     theorem_definitions: &[
@@ -96,6 +126,66 @@ pub(super) const MODULE: ModuleSpec = ModuleSpec {
             name: REVERSE_APPEND,
         },
         super::source::NameBinding {
+            spelling: "snoc_computes_to_list",
+            name: SNOC_COMPUTES_TO_LIST,
+        },
+        super::source::NameBinding {
+            spelling: "snoc_nil",
+            name: SNOC_NIL,
+        },
+        super::source::NameBinding {
+            spelling: "snoc_cons",
+            name: SNOC_CONS,
+        },
+        super::source::NameBinding {
+            spelling: "concat_nil",
+            name: CONCAT_NIL,
+        },
+        super::source::NameBinding {
+            spelling: "last_nil_errors",
+            name: LAST_NIL_ERRORS,
+        },
+        super::source::NameBinding {
+            spelling: "last_singleton",
+            name: LAST_SINGLETON,
+        },
+        super::source::NameBinding {
+            spelling: "last_cons",
+            name: LAST_CONS,
+        },
+        super::source::NameBinding {
+            spelling: "init_nil_errors",
+            name: INIT_NIL_ERRORS,
+        },
+        super::source::NameBinding {
+            spelling: "init_singleton",
+            name: INIT_SINGLETON,
+        },
+        super::source::NameBinding {
+            spelling: "init_cons",
+            name: INIT_CONS,
+        },
+        super::source::NameBinding {
+            spelling: "null_nil",
+            name: NULL_NIL,
+        },
+        super::source::NameBinding {
+            spelling: "null_cons",
+            name: NULL_CONS,
+        },
+        super::source::NameBinding {
+            spelling: "is_singleton_nil",
+            name: IS_SINGLETON_NIL,
+        },
+        super::source::NameBinding {
+            spelling: "is_singleton_singleton",
+            name: IS_SINGLETON_SINGLETON,
+        },
+        super::source::NameBinding {
+            spelling: "is_singleton_cons",
+            name: IS_SINGLETON_CONS,
+        },
+        super::source::NameBinding {
             spelling: "append_nil_computes_to_list",
             name: APPEND_NIL_COMPUTES_TO_LIST,
         },
@@ -128,6 +218,14 @@ pub(super) const MODULE: ModuleSpec = ModuleSpec {
         SymbolBinding {
             spelling: "unit",
             symbol: UNIT,
+        },
+        SymbolBinding {
+            spelling: ":true",
+            symbol: TRUE,
+        },
+        SymbolBinding {
+            spelling: ":false",
+            symbol: FALSE,
         },
         SymbolBinding {
             spelling: "list",
@@ -168,6 +266,18 @@ pub(super) const MODULE: ModuleSpec = ModuleSpec {
         SymbolBinding {
             spelling: "right",
             symbol: RIGHT,
+        },
+        SymbolBinding {
+            spelling: "value",
+            symbol: VALUE,
+        },
+        SymbolBinding {
+            spelling: "lists",
+            symbol: LISTS,
+        },
+        SymbolBinding {
+            spelling: "rest_cell",
+            symbol: REST_CELL,
         },
     ],
 };
@@ -231,6 +341,14 @@ pub fn unit() -> Computation {
     quote(UNIT)
 }
 
+pub fn true_value() -> Computation {
+    quote(TRUE)
+}
+
+pub fn false_value() -> Computation {
+    quote(FALSE)
+}
+
 pub fn error(name: ErrorName) -> Computation {
     Computation::Error(name)
 }
@@ -273,6 +391,54 @@ pub fn append() -> Computation {
 
 pub fn append_definition() -> Computation {
     definition(APPEND)
+}
+
+pub fn snoc() -> Computation {
+    super::snoc()
+}
+
+pub fn snoc_definition() -> Computation {
+    definition(SNOC)
+}
+
+pub fn concat() -> Computation {
+    super::concat()
+}
+
+pub fn concat_definition() -> Computation {
+    definition(CONCAT)
+}
+
+pub fn last() -> Computation {
+    super::last()
+}
+
+pub fn last_definition() -> Computation {
+    definition(LAST)
+}
+
+pub fn init() -> Computation {
+    super::init()
+}
+
+pub fn init_definition() -> Computation {
+    definition(INIT)
+}
+
+pub fn null() -> Computation {
+    super::null()
+}
+
+pub fn null_definition() -> Computation {
+    definition(NULL)
+}
+
+pub fn is_singleton() -> Computation {
+    super::is_singleton()
+}
+
+pub fn is_singleton_definition() -> Computation {
+    definition(IS_SINGLETON)
 }
 
 fn definition(name: Name) -> Computation {
@@ -325,6 +491,66 @@ pub fn reverse_acc_of_append_source_theorem() -> Prop {
 
 pub fn reverse_append_source_theorem() -> Prop {
     theorem_prop(REVERSE_APPEND)
+}
+
+pub fn snoc_computes_to_list_source_theorem() -> Prop {
+    theorem_prop(SNOC_COMPUTES_TO_LIST)
+}
+
+pub fn snoc_nil_source_theorem() -> Prop {
+    theorem_prop(SNOC_NIL)
+}
+
+pub fn snoc_cons_source_theorem() -> Prop {
+    theorem_prop(SNOC_CONS)
+}
+
+pub fn concat_nil_source_theorem() -> Prop {
+    theorem_prop(CONCAT_NIL)
+}
+
+pub fn last_nil_errors_source_theorem() -> Prop {
+    theorem_prop(LAST_NIL_ERRORS)
+}
+
+pub fn last_singleton_source_theorem() -> Prop {
+    theorem_prop(LAST_SINGLETON)
+}
+
+pub fn last_cons_source_theorem() -> Prop {
+    theorem_prop(LAST_CONS)
+}
+
+pub fn init_nil_errors_source_theorem() -> Prop {
+    theorem_prop(INIT_NIL_ERRORS)
+}
+
+pub fn init_singleton_source_theorem() -> Prop {
+    theorem_prop(INIT_SINGLETON)
+}
+
+pub fn init_cons_source_theorem() -> Prop {
+    theorem_prop(INIT_CONS)
+}
+
+pub fn null_nil_source_theorem() -> Prop {
+    theorem_prop(NULL_NIL)
+}
+
+pub fn null_cons_source_theorem() -> Prop {
+    theorem_prop(NULL_CONS)
+}
+
+pub fn is_singleton_nil_source_theorem() -> Prop {
+    theorem_prop(IS_SINGLETON_NIL)
+}
+
+pub fn is_singleton_singleton_source_theorem() -> Prop {
+    theorem_prop(IS_SINGLETON_SINGLETON)
+}
+
+pub fn is_singleton_cons_source_theorem() -> Prop {
+    theorem_prop(IS_SINGLETON_CONS)
 }
 
 pub fn append_nil_computes_to_list_source_theorem() -> Prop {
@@ -399,6 +625,30 @@ pub fn reverse_acc_call(list: Computation, acc: Computation) -> Computation {
 
 pub fn append_call(left: Computation, right: Computation) -> Computation {
     apply(apply(append(), left), right)
+}
+
+pub fn snoc_call(list: Computation, value: Computation) -> Computation {
+    apply(apply(snoc(), list), value)
+}
+
+pub fn concat_call(lists: Computation) -> Computation {
+    apply(concat(), lists)
+}
+
+pub fn last_call(list: Computation) -> Computation {
+    apply(last(), list)
+}
+
+pub fn init_call(list: Computation) -> Computation {
+    apply(init(), list)
+}
+
+pub fn null_call(list: Computation) -> Computation {
+    apply(null(), list)
+}
+
+pub fn is_singleton_call(list: Computation) -> Computation {
+    apply(is_singleton(), list)
 }
 
 /// If `list` and `acc` are lists, then `reverse_acc(list, acc)` computes to a list.
@@ -533,6 +783,175 @@ pub fn reverse_append_theorem(left: Symbol, right: Symbol) -> Prop {
             computes_to(
                 reverse_call(append_call(var(left), var(right))),
                 append_call(reverse_call(var(right)), reverse_call(var(left))),
+            ),
+        ),
+    )
+}
+
+/// Adding one value to the end of a list returns a list.
+pub fn snoc_computes_to_list_theorem(list: Symbol, value: Symbol, result: Symbol) -> Prop {
+    forall_where(
+        list,
+        is_list(var(list)),
+        forall_where(
+            value,
+            is_value(var(value)),
+            computes_to_list(result, snoc_call(var(list), var(value))),
+        ),
+    )
+}
+
+/// Adding a value to the end of `nil` returns a singleton.
+pub fn snoc_nil_theorem(value: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        computes_to(snoc_call(nil(), var(value)), singleton(var(value))),
+    )
+}
+
+/// Adding a value to the end of a cons preserves the head.
+pub fn snoc_cons_theorem(head: Symbol, tail: Symbol, value: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            tail,
+            is_list(var(tail)),
+            forall_where(
+                value,
+                is_value(var(value)),
+                computes_to(
+                    snoc_call(cons(var(head), var(tail)), var(value)),
+                    cons(var(head), snoc_call(var(tail), var(value))),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Concatenating no lists returns `nil`.
+pub fn concat_nil_theorem() -> Prop {
+    computes_to(concat_call(nil()), nil())
+}
+
+/// `last(nil)` errors.
+pub fn last_nil_errors_theorem() -> Prop {
+    errors_with(last_call(nil()), RUNTIME_ERROR)
+}
+
+/// The last element of a singleton is its only element.
+pub fn last_singleton_theorem(head: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        computes_to(last_call(singleton(var(head))), var(head)),
+    )
+}
+
+/// The last element of a list with at least two elements is the last element of
+/// its tail.
+pub fn last_cons_theorem(head: Symbol, next: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            next,
+            is_value(var(next)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                computes_to(
+                    last_call(cons(var(head), cons(var(next), var(tail)))),
+                    last_call(cons(var(next), var(tail))),
+                ),
+            ),
+        ),
+    )
+}
+
+/// `init(nil)` errors.
+pub fn init_nil_errors_theorem() -> Prop {
+    errors_with(init_call(nil()), RUNTIME_ERROR)
+}
+
+/// The init of a singleton is `nil`.
+pub fn init_singleton_theorem(head: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        computes_to(init_call(singleton(var(head))), nil()),
+    )
+}
+
+/// The init of a list with at least two elements preserves the head and recurs
+/// into the tail.
+pub fn init_cons_theorem(head: Symbol, next: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            next,
+            is_value(var(next)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                computes_to(
+                    init_call(cons(var(head), cons(var(next), var(tail)))),
+                    cons(var(head), init_call(cons(var(next), var(tail)))),
+                ),
+            ),
+        ),
+    )
+}
+
+/// `null(nil)` returns `:true`.
+pub fn null_nil_theorem() -> Prop {
+    computes_to(null_call(nil()), true_value())
+}
+
+/// `null` returns `:false` for every cons.
+pub fn null_cons_theorem(head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            tail,
+            is_list(var(tail)),
+            computes_to(null_call(cons(var(head), var(tail))), false_value()),
+        ),
+    )
+}
+
+/// `is-singleton(nil)` returns `:false`.
+pub fn is_singleton_nil_theorem() -> Prop {
+    computes_to(is_singleton_call(nil()), false_value())
+}
+
+/// `is-singleton` returns `:true` for a one-element list.
+pub fn is_singleton_singleton_theorem(head: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        computes_to(is_singleton_call(singleton(var(head))), true_value()),
+    )
+}
+
+/// `is-singleton` returns `:false` for lists with at least two elements.
+pub fn is_singleton_cons_theorem(head: Symbol, next: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            next,
+            is_value(var(next)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                computes_to(
+                    is_singleton_call(cons(var(head), cons(var(next), var(tail)))),
+                    false_value(),
+                ),
             ),
         ),
     )
@@ -732,6 +1151,7 @@ mod tests {
     const HEAD: Symbol = Symbol(203);
     const TAIL: Symbol = Symbol(204);
     const RIGHT_LIST: Symbol = Symbol(205);
+    const NEXT: Symbol = Symbol(206);
 
     fn prove_evaluation(computation: Computation, expected: impl Into<Outcome>) -> Proof {
         proof_by_evaluation(computation, expected, 512).expect("example should evaluate")
@@ -1029,6 +1449,281 @@ mod tests {
     }
 
     #[test]
+    fn snoc_computes_to_list_theorem_has_expected_shape() {
+        assert_eq!(
+            snoc_computes_to_list_theorem(X, HEAD, RESULT),
+            forall_where(
+                X,
+                is_list(var(X)),
+                forall_where(
+                    HEAD,
+                    is_value(var(HEAD)),
+                    exists_where(
+                        RESULT,
+                        is_list(var(RESULT)),
+                        computes_to(snoc_call(var(X), var(HEAD)), var(RESULT)),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn snoc_source_theorem_has_expected_shape() {
+        let list = theorem_symbol(SNOC_COMPUTES_TO_LIST, "list");
+        let value = theorem_symbol(SNOC_COMPUTES_TO_LIST, "value");
+        let result = theorem_symbol(SNOC_COMPUTES_TO_LIST, "result");
+
+        assert_eq!(
+            snoc_computes_to_list_source_theorem(),
+            snoc_computes_to_list_theorem(list, value, result)
+        );
+    }
+
+    #[test]
+    fn snoc_exact_theorems_have_expected_shape() {
+        assert_eq!(snoc_nil_theorem(HEAD), {
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                computes_to(snoc_call(nil(), var(HEAD)), singleton(var(HEAD))),
+            )
+        });
+        assert_eq!(
+            snoc_cons_theorem(HEAD, TAIL, NEXT),
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                forall_where(
+                    TAIL,
+                    is_list(var(TAIL)),
+                    forall_where(
+                        NEXT,
+                        is_value(var(NEXT)),
+                        computes_to(
+                            snoc_call(cons(var(HEAD), var(TAIL)), var(NEXT)),
+                            cons(var(HEAD), snoc_call(var(TAIL), var(NEXT))),
+                        ),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn snoc_exact_source_theorems_have_expected_shape() {
+        let nil_value = theorem_symbol(SNOC_NIL, "value");
+        let cons_head = theorem_symbol(SNOC_CONS, "head");
+        let cons_tail = theorem_symbol(SNOC_CONS, "tail");
+        let cons_value = theorem_symbol(SNOC_CONS, "value");
+
+        assert_eq!(snoc_nil_source_theorem(), snoc_nil_theorem(nil_value));
+        assert_eq!(
+            snoc_cons_source_theorem(),
+            snoc_cons_theorem(cons_head, cons_tail, cons_value)
+        );
+    }
+
+    #[test]
+    fn concat_nil_source_theorem_has_expected_shape() {
+        assert_eq!(concat_nil_source_theorem(), concat_nil_theorem());
+    }
+
+    #[test]
+    fn last_theorems_have_expected_shape() {
+        assert_eq!(
+            last_nil_errors_theorem(),
+            errors_with(last_call(nil()), RUNTIME_ERROR)
+        );
+        assert_eq!(
+            last_singleton_theorem(HEAD),
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                computes_to(last_call(singleton(var(HEAD))), var(HEAD)),
+            )
+        );
+        assert_eq!(
+            last_cons_theorem(HEAD, NEXT, TAIL),
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                forall_where(
+                    NEXT,
+                    is_value(var(NEXT)),
+                    forall_where(
+                        TAIL,
+                        is_list(var(TAIL)),
+                        computes_to(
+                            last_call(cons(var(HEAD), cons(var(NEXT), var(TAIL)))),
+                            last_call(cons(var(NEXT), var(TAIL))),
+                        ),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn last_source_theorems_have_expected_shape() {
+        let singleton_head = theorem_symbol(LAST_SINGLETON, "head");
+        let cons_head = theorem_symbol(LAST_CONS, "head");
+        let cons_next = theorem_symbol(LAST_CONS, "next");
+        let cons_tail = theorem_symbol(LAST_CONS, "tail");
+
+        assert_eq!(last_nil_errors_source_theorem(), last_nil_errors_theorem());
+        assert_eq!(
+            last_singleton_source_theorem(),
+            last_singleton_theorem(singleton_head)
+        );
+        assert_eq!(
+            last_cons_source_theorem(),
+            last_cons_theorem(cons_head, cons_next, cons_tail)
+        );
+    }
+
+    #[test]
+    fn init_theorems_have_expected_shape() {
+        assert_eq!(
+            init_nil_errors_theorem(),
+            errors_with(init_call(nil()), RUNTIME_ERROR)
+        );
+        assert_eq!(
+            init_singleton_theorem(HEAD),
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                computes_to(init_call(singleton(var(HEAD))), nil()),
+            )
+        );
+        assert_eq!(
+            init_cons_theorem(HEAD, NEXT, TAIL),
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                forall_where(
+                    NEXT,
+                    is_value(var(NEXT)),
+                    forall_where(
+                        TAIL,
+                        is_list(var(TAIL)),
+                        computes_to(
+                            init_call(cons(var(HEAD), cons(var(NEXT), var(TAIL)))),
+                            cons(var(HEAD), init_call(cons(var(NEXT), var(TAIL)))),
+                        ),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn init_source_theorems_have_expected_shape() {
+        let singleton_head = theorem_symbol(INIT_SINGLETON, "head");
+        let cons_head = theorem_symbol(INIT_CONS, "head");
+        let cons_next = theorem_symbol(INIT_CONS, "next");
+        let cons_tail = theorem_symbol(INIT_CONS, "tail");
+
+        assert_eq!(init_nil_errors_source_theorem(), init_nil_errors_theorem());
+        assert_eq!(
+            init_singleton_source_theorem(),
+            init_singleton_theorem(singleton_head)
+        );
+        assert_eq!(
+            init_cons_source_theorem(),
+            init_cons_theorem(cons_head, cons_next, cons_tail)
+        );
+    }
+
+    #[test]
+    fn null_theorems_have_expected_shape() {
+        assert_eq!(
+            null_nil_theorem(),
+            computes_to(null_call(nil()), true_value())
+        );
+        assert_eq!(
+            null_cons_theorem(HEAD, TAIL),
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                forall_where(
+                    TAIL,
+                    is_list(var(TAIL)),
+                    computes_to(null_call(cons(var(HEAD), var(TAIL))), false_value()),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn null_source_theorems_have_expected_shape() {
+        let cons_head = theorem_symbol(NULL_CONS, "head");
+        let cons_tail = theorem_symbol(NULL_CONS, "tail");
+
+        assert_eq!(null_nil_source_theorem(), null_nil_theorem());
+        assert_eq!(
+            null_cons_source_theorem(),
+            null_cons_theorem(cons_head, cons_tail)
+        );
+    }
+
+    #[test]
+    fn is_singleton_theorems_have_expected_shape() {
+        assert_eq!(
+            is_singleton_nil_theorem(),
+            computes_to(is_singleton_call(nil()), false_value())
+        );
+        assert_eq!(
+            is_singleton_singleton_theorem(HEAD),
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                computes_to(is_singleton_call(singleton(var(HEAD))), true_value()),
+            )
+        );
+        assert_eq!(
+            is_singleton_cons_theorem(HEAD, NEXT, TAIL),
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                forall_where(
+                    NEXT,
+                    is_value(var(NEXT)),
+                    forall_where(
+                        TAIL,
+                        is_list(var(TAIL)),
+                        computes_to(
+                            is_singleton_call(cons(var(HEAD), cons(var(NEXT), var(TAIL)))),
+                            false_value(),
+                        ),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn is_singleton_source_theorems_have_expected_shape() {
+        let singleton_head = theorem_symbol(IS_SINGLETON_SINGLETON, "head");
+        let cons_head = theorem_symbol(IS_SINGLETON_CONS, "head");
+        let cons_next = theorem_symbol(IS_SINGLETON_CONS, "next");
+        let cons_tail = theorem_symbol(IS_SINGLETON_CONS, "tail");
+
+        assert_eq!(
+            is_singleton_nil_source_theorem(),
+            is_singleton_nil_theorem()
+        );
+        assert_eq!(
+            is_singleton_singleton_source_theorem(),
+            is_singleton_singleton_theorem(singleton_head)
+        );
+        assert_eq!(
+            is_singleton_cons_source_theorem(),
+            is_singleton_cons_theorem(cons_head, cons_next, cons_tail)
+        );
+    }
+
+    #[test]
     fn append_nil_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             append_nil_computes_to_list_theorem(X, RESULT),
@@ -1250,6 +1945,66 @@ mod tests {
             ProofScript::Proof(_)
         ));
         assert!(matches!(
+            theorem_definition(SNOC_COMPUTES_TO_LIST).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(SNOC_NIL).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(SNOC_CONS).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(CONCAT_NIL).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(LAST_NIL_ERRORS).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(LAST_SINGLETON).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(LAST_CONS).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(INIT_NIL_ERRORS).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(INIT_SINGLETON).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(INIT_CONS).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(NULL_NIL).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(NULL_CONS).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(IS_SINGLETON_NIL).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(IS_SINGLETON_SINGLETON).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(IS_SINGLETON_CONS).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
             theorem_definition(APPEND_NIL_COMPUTES_TO_LIST).proof,
             ProofScript::Proof(_)
         ));
@@ -1340,6 +2095,88 @@ mod tests {
         assert_evaluates(
             append_call(append_call(left, middle), right),
             value(expected),
+        );
+    }
+
+    #[test]
+    fn snoc_pair_terminates_without_error() {
+        assert_evaluates(
+            snoc_call(pair(quote(A), quote(B)), quote(NOT_A_LIST)),
+            value(triple(quote(A), quote(B), quote(NOT_A_LIST))),
+        );
+    }
+
+    #[test]
+    fn concat_list_of_lists_terminates_without_error() {
+        let lists = pair(singleton(quote(A)), pair(quote(B), quote(NOT_A_LIST)));
+
+        assert_evaluates(
+            concat_call(lists),
+            value(triple(quote(A), quote(B), quote(NOT_A_LIST))),
+        );
+    }
+
+    #[test]
+    fn last_nil_reduces_to_error() {
+        assert_evaluates(last_call(nil()), Effect::error(RUNTIME_ERROR));
+    }
+
+    #[test]
+    fn last_singleton_returns_value() {
+        assert_evaluates(last_call(singleton(quote(A))), Value::quote(A));
+    }
+
+    #[test]
+    fn last_triple_returns_final_value() {
+        assert_evaluates(
+            last_call(triple(quote(A), quote(B), quote(NOT_A_LIST))),
+            Value::quote(NOT_A_LIST),
+        );
+    }
+
+    #[test]
+    fn init_nil_reduces_to_error() {
+        assert_evaluates(init_call(nil()), Effect::error(RUNTIME_ERROR));
+    }
+
+    #[test]
+    fn init_singleton_returns_nil() {
+        assert_evaluates(init_call(singleton(quote(A))), Value::nil());
+    }
+
+    #[test]
+    fn init_triple_returns_prefix() {
+        assert_evaluates(
+            init_call(triple(quote(A), quote(B), quote(NOT_A_LIST))),
+            value(pair(quote(A), quote(B))),
+        );
+    }
+
+    #[test]
+    fn null_nil_returns_true() {
+        assert_evaluates(null_call(nil()), Value::quote(TRUE));
+    }
+
+    #[test]
+    fn null_cons_returns_false() {
+        assert_evaluates(null_call(singleton(quote(A))), Value::quote(FALSE));
+    }
+
+    #[test]
+    fn is_singleton_nil_returns_false() {
+        assert_evaluates(is_singleton_call(nil()), Value::quote(FALSE));
+    }
+
+    #[test]
+    fn is_singleton_singleton_returns_true() {
+        assert_evaluates(is_singleton_call(singleton(quote(A))), Value::quote(TRUE));
+    }
+
+    #[test]
+    fn is_singleton_pair_returns_false() {
+        assert_evaluates(
+            is_singleton_call(pair(quote(A), quote(B))),
+            Value::quote(FALSE),
         );
     }
 

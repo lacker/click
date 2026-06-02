@@ -43,6 +43,103 @@
              (head cell)
              ((self (tail cell)) right))))))))
 
+(def snoc
+  ((lambda fixed_point_function
+     ((lambda fixed_point_self
+        (fixed_point_function
+          (lambda fixed_point_value
+            ((fixed_point_self fixed_point_self) fixed_point_value))))
+      (lambda fixed_point_self
+        (fixed_point_function
+          (lambda fixed_point_value
+            ((fixed_point_self fixed_point_self) fixed_point_value))))))
+   (lambda self
+     (lambda list
+       (lambda value
+         (list-case list
+           (cons value nil)
+           cell
+           (cons
+             (head cell)
+             ((self (tail cell)) value))))))))
+
+(def concat
+  ((lambda fixed_point_function
+     ((lambda fixed_point_self
+        (fixed_point_function
+          (lambda fixed_point_value
+            ((fixed_point_self fixed_point_self) fixed_point_value))))
+      (lambda fixed_point_self
+        (fixed_point_function
+          (lambda fixed_point_value
+            ((fixed_point_self fixed_point_self) fixed_point_value))))))
+   (lambda self
+     (lambda lists
+       (list-case lists
+         nil
+         cell
+         ((append (head cell))
+          (self (tail cell))))))))
+
+(def last
+  ((lambda fixed_point_function
+     ((lambda fixed_point_self
+        (fixed_point_function
+          (lambda fixed_point_value
+            ((fixed_point_self fixed_point_self) fixed_point_value))))
+      (lambda fixed_point_self
+        (fixed_point_function
+          (lambda fixed_point_value
+            ((fixed_point_self fixed_point_self) fixed_point_value))))))
+   (lambda self
+     (lambda list
+       (list-case list
+         (error 0)
+         cell
+         (list-case (tail cell)
+           (head cell)
+           rest_cell
+           (self (tail cell))))))))
+
+(def init
+  ((lambda fixed_point_function
+     ((lambda fixed_point_self
+        (fixed_point_function
+          (lambda fixed_point_value
+            ((fixed_point_self fixed_point_self) fixed_point_value))))
+      (lambda fixed_point_self
+        (fixed_point_function
+          (lambda fixed_point_value
+            ((fixed_point_self fixed_point_self) fixed_point_value))))))
+   (lambda self
+     (lambda list
+       (list-case list
+         (error 0)
+         cell
+         (list-case (tail cell)
+           nil
+           rest_cell
+           (cons
+             (head cell)
+             (self (tail cell)))))))))
+
+(def null
+  (lambda list
+    (list-case list
+      (quote :true)
+      cell
+      (quote :false))))
+
+(def is-singleton
+  (lambda list
+    (list-case list
+      (quote :false)
+      cell
+      (list-case (tail cell)
+        (quote :true)
+        rest_cell
+        (quote :false)))))
+
 (theorem reverse_acc_computes_to_list
   (forall list (is-list list)
     (forall acc (is-list acc)
@@ -795,3 +892,191 @@
                           (computes-to
                             (append (reverse right) left_reversed_acc)
                             (append (reverse right) rewrite_target)))))))))))))))
+
+(theorem snoc_computes_to_list
+  (forall list (is-list list)
+    (forall value (is-value value)
+      (computes-to-list result (snoc list value))))
+  (proof
+    (list-induction list
+      (forall value (is-value value)
+        (computes-to-list result (snoc list value)))
+      (forall-intro value (is-value value)
+        (exists-intro result (is-list result)
+          (computes-to (snoc nil value) result)
+          (cons value nil)
+          (eval-to
+            (snoc nil value)
+            (cons value nil))))
+      head
+      tail
+      induction_hypothesis
+      (forall-intro value (is-value value)
+        (exists-elim
+          (forall-elim
+            (assume induction_hypothesis)
+            value)
+          tail_result
+          tail_result_proof
+          (exists-intro result (is-list result)
+            (computes-to (snoc (cons head tail) value) result)
+            (cons head tail_result)
+            (rewrite
+              (assume tail_result_proof)
+              (eval-same
+                (snoc (cons head tail) value)
+                (cons head (snoc tail value)))
+              rewrite_target
+              (computes-to
+                (snoc (cons head tail) value)
+                (cons head rewrite_target)))))))))
+
+(theorem snoc_nil
+  (forall value (is-value value)
+    (computes-to
+      (snoc nil value)
+      (cons value nil)))
+  (proof
+    (forall-intro value (is-value value)
+      (eval-to
+        (snoc nil value)
+        (cons value nil)))))
+
+(theorem snoc_cons
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (forall value (is-value value)
+        (computes-to
+          (snoc (cons head tail) value)
+          (cons head (snoc tail value))))))
+  (proof
+    (forall-intro head (is-value head)
+      (forall-intro tail (is-list tail)
+        (forall-intro value (is-value value)
+          (eval-same
+            (snoc (cons head tail) value)
+            (cons head (snoc tail value))))))))
+
+(theorem concat_nil
+  (computes-to (concat nil) nil)
+  (proof
+    (eval-to (concat nil) nil)))
+
+(theorem last_nil_errors
+  (errors-with (last nil) 0)
+  (proof
+    (eval-to (last nil) (error 0))))
+
+(theorem last_singleton
+  (forall head (is-value head)
+    (computes-to
+      (last (cons head nil))
+      head))
+  (proof
+    (forall-intro head (is-value head)
+      (eval-to
+        (last (cons head nil))
+        head))))
+
+(theorem last_cons
+  (forall head (is-value head)
+    (forall next (is-value next)
+      (forall tail (is-list tail)
+        (computes-to
+          (last (cons head (cons next tail)))
+          (last (cons next tail))))))
+  (proof
+    (forall-intro head (is-value head)
+        (forall-intro next (is-value next)
+          (forall-intro tail (is-list tail)
+          (eval-same
+            (last (cons head (cons next tail)))
+            (last (cons next tail))))))))
+
+(theorem init_nil_errors
+  (errors-with (init nil) 0)
+  (proof
+    (eval-to (init nil) (error 0))))
+
+(theorem init_singleton
+  (forall head (is-value head)
+    (computes-to
+      (init (cons head nil))
+      nil))
+  (proof
+    (forall-intro head (is-value head)
+      (eval-to
+        (init (cons head nil))
+        nil))))
+
+(theorem init_cons
+  (forall head (is-value head)
+    (forall next (is-value next)
+      (forall tail (is-list tail)
+        (computes-to
+          (init (cons head (cons next tail)))
+          (cons head (init (cons next tail)))))))
+  (proof
+    (forall-intro head (is-value head)
+        (forall-intro next (is-value next)
+          (forall-intro tail (is-list tail)
+          (eval-same
+            (init (cons head (cons next tail)))
+            (cons head (init (cons next tail)))))))))
+
+(theorem null_nil
+  (computes-to
+    (null nil)
+    (quote :true))
+  (proof
+    (eval-to
+      (null nil)
+      (quote :true))))
+
+(theorem null_cons
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (computes-to
+        (null (cons head tail))
+        (quote :false))))
+  (proof
+    (forall-intro head (is-value head)
+      (forall-intro tail (is-list tail)
+        (eval-to
+          (null (cons head tail))
+          (quote :false))))))
+
+(theorem is_singleton_nil
+  (computes-to
+    (is-singleton nil)
+    (quote :false))
+  (proof
+    (eval-to
+      (is-singleton nil)
+      (quote :false))))
+
+(theorem is_singleton_singleton
+  (forall head (is-value head)
+    (computes-to
+      (is-singleton (cons head nil))
+      (quote :true)))
+  (proof
+    (forall-intro head (is-value head)
+      (eval-to
+        (is-singleton (cons head nil))
+        (quote :true)))))
+
+(theorem is_singleton_cons
+  (forall head (is-value head)
+    (forall next (is-value next)
+      (forall tail (is-list tail)
+        (computes-to
+          (is-singleton (cons head (cons next tail)))
+          (quote :false)))))
+  (proof
+    (forall-intro head (is-value head)
+      (forall-intro next (is-value next)
+        (forall-intro tail (is-list tail)
+          (eval-to
+            (is-singleton (cons head (cons next tail)))
+            (quote :false)))))))

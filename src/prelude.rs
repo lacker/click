@@ -4,10 +4,13 @@ pub mod list;
 mod proof;
 mod source;
 
-use crate::{Computation, ComputationDefinitionError, Name, Theorem, Theory};
+use crate::{Computation, ComputationDefinitionError, Name, Symbol, Theorem, Theory};
 
 pub use proof::{ProofElaborationError, SourceTheoremError};
 pub use source::ParseError;
+
+pub const TRUE: Symbol = Symbol(1);
+pub const FALSE: Symbol = Symbol(2);
 
 pub const REVERSE_ACC: Name = Name(1);
 pub const REVERSE: Name = Name(2);
@@ -30,6 +33,27 @@ pub const REVERSE_ACC_REVERSE: Name = Name(19);
 pub const REVERSE_DOUBLE: Name = Name(20);
 pub const REVERSE_ACC_OF_APPEND: Name = Name(21);
 pub const REVERSE_APPEND: Name = Name(22);
+pub const SNOC: Name = Name(23);
+pub const SNOC_COMPUTES_TO_LIST: Name = Name(24);
+pub const SNOC_NIL: Name = Name(25);
+pub const SNOC_CONS: Name = Name(26);
+pub const CONCAT: Name = Name(27);
+pub const CONCAT_NIL: Name = Name(28);
+pub const LAST: Name = Name(30);
+pub const LAST_NIL_ERRORS: Name = Name(31);
+pub const LAST_SINGLETON: Name = Name(32);
+pub const LAST_CONS: Name = Name(33);
+pub const INIT: Name = Name(34);
+pub const INIT_NIL_ERRORS: Name = Name(35);
+pub const INIT_SINGLETON: Name = Name(36);
+pub const INIT_CONS: Name = Name(37);
+pub const NULL: Name = Name(38);
+pub const NULL_NIL: Name = Name(39);
+pub const NULL_CONS: Name = Name(40);
+pub const IS_SINGLETON: Name = Name(41);
+pub const IS_SINGLETON_NIL: Name = Name(42);
+pub const IS_SINGLETON_SINGLETON: Name = Name(43);
+pub const IS_SINGLETON_CONS: Name = Name(44);
 
 const MODULES: &[source::ModuleSpec] = &[list::MODULE];
 
@@ -207,6 +231,66 @@ pub fn reverse_append() -> Option<Theorem> {
     list::checked_source_theorem(REVERSE_APPEND)
 }
 
+pub fn snoc_computes_to_list() -> Option<Theorem> {
+    list::checked_source_theorem(SNOC_COMPUTES_TO_LIST)
+}
+
+pub fn snoc_nil() -> Option<Theorem> {
+    list::checked_source_theorem(SNOC_NIL)
+}
+
+pub fn snoc_cons() -> Option<Theorem> {
+    list::checked_source_theorem(SNOC_CONS)
+}
+
+pub fn concat_nil() -> Option<Theorem> {
+    list::checked_source_theorem(CONCAT_NIL)
+}
+
+pub fn last_nil_errors() -> Option<Theorem> {
+    list::checked_source_theorem(LAST_NIL_ERRORS)
+}
+
+pub fn last_singleton() -> Option<Theorem> {
+    list::checked_source_theorem(LAST_SINGLETON)
+}
+
+pub fn last_cons() -> Option<Theorem> {
+    list::checked_source_theorem(LAST_CONS)
+}
+
+pub fn init_nil_errors() -> Option<Theorem> {
+    list::checked_source_theorem(INIT_NIL_ERRORS)
+}
+
+pub fn init_singleton() -> Option<Theorem> {
+    list::checked_source_theorem(INIT_SINGLETON)
+}
+
+pub fn init_cons() -> Option<Theorem> {
+    list::checked_source_theorem(INIT_CONS)
+}
+
+pub fn null_nil() -> Option<Theorem> {
+    list::checked_source_theorem(NULL_NIL)
+}
+
+pub fn null_cons() -> Option<Theorem> {
+    list::checked_source_theorem(NULL_CONS)
+}
+
+pub fn is_singleton_nil() -> Option<Theorem> {
+    list::checked_source_theorem(IS_SINGLETON_NIL)
+}
+
+pub fn is_singleton_singleton() -> Option<Theorem> {
+    list::checked_source_theorem(IS_SINGLETON_SINGLETON)
+}
+
+pub fn is_singleton_cons() -> Option<Theorem> {
+    list::checked_source_theorem(IS_SINGLETON_CONS)
+}
+
 pub fn append_nil_computes_to_list() -> Option<Theorem> {
     list::checked_source_theorem(APPEND_NIL_COMPUTES_TO_LIST)
 }
@@ -247,6 +331,30 @@ pub fn append() -> Computation {
     Computation::Ref(APPEND)
 }
 
+pub fn snoc() -> Computation {
+    Computation::Ref(SNOC)
+}
+
+pub fn concat() -> Computation {
+    Computation::Ref(CONCAT)
+}
+
+pub fn last() -> Computation {
+    Computation::Ref(LAST)
+}
+
+pub fn init() -> Computation {
+    Computation::Ref(INIT)
+}
+
+pub fn null() -> Computation {
+    Computation::Ref(NULL)
+}
+
+pub fn is_singleton() -> Computation {
+    Computation::Ref(IS_SINGLETON)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,9 +378,24 @@ mod tests {
             Some(&list::reverse_definition())
         );
         assert_eq!(theory.computation(APPEND), Some(&list::append_definition()));
+        assert_eq!(theory.computation(SNOC), Some(&list::snoc_definition()));
+        assert_eq!(theory.computation(CONCAT), Some(&list::concat_definition()));
+        assert_eq!(theory.computation(LAST), Some(&list::last_definition()));
+        assert_eq!(theory.computation(INIT), Some(&list::init_definition()));
+        assert_eq!(theory.computation(NULL), Some(&list::null_definition()));
+        assert_eq!(
+            theory.computation(IS_SINGLETON),
+            Some(&list::is_singleton_definition())
+        );
         assert_eq!(reverse_acc(), Computation::Ref(REVERSE_ACC));
         assert_eq!(reverse(), Computation::Ref(REVERSE));
         assert_eq!(append(), Computation::Ref(APPEND));
+        assert_eq!(snoc(), Computation::Ref(SNOC));
+        assert_eq!(concat(), Computation::Ref(CONCAT));
+        assert_eq!(last(), Computation::Ref(LAST));
+        assert_eq!(init(), Computation::Ref(INIT));
+        assert_eq!(null(), Computation::Ref(NULL));
+        assert_eq!(is_singleton(), Computation::Ref(IS_SINGLETON));
         assert_eq!(
             theory.reduce(&reverse_acc()),
             Step::Reduced(list::reverse_acc_definition())
@@ -284,6 +407,30 @@ mod tests {
         assert_eq!(
             theory.reduce(&append()),
             Step::Reduced(list::append_definition())
+        );
+        assert_eq!(
+            theory.reduce(&snoc()),
+            Step::Reduced(list::snoc_definition())
+        );
+        assert_eq!(
+            theory.reduce(&concat()),
+            Step::Reduced(list::concat_definition())
+        );
+        assert_eq!(
+            theory.reduce(&last()),
+            Step::Reduced(list::last_definition())
+        );
+        assert_eq!(
+            theory.reduce(&init()),
+            Step::Reduced(list::init_definition())
+        );
+        assert_eq!(
+            theory.reduce(&null()),
+            Step::Reduced(list::null_definition())
+        );
+        assert_eq!(
+            theory.reduce(&is_singleton()),
+            Step::Reduced(list::is_singleton_definition())
         );
     }
 
@@ -311,6 +458,21 @@ mod tests {
         assert!(theory.theorem(REVERSE_DOUBLE).is_none());
         assert!(theory.theorem(REVERSE_ACC_OF_APPEND).is_none());
         assert!(theory.theorem(REVERSE_APPEND).is_none());
+        assert!(theory.theorem(SNOC_COMPUTES_TO_LIST).is_none());
+        assert!(theory.theorem(SNOC_NIL).is_none());
+        assert!(theory.theorem(SNOC_CONS).is_none());
+        assert!(theory.theorem(CONCAT_NIL).is_none());
+        assert!(theory.theorem(LAST_NIL_ERRORS).is_none());
+        assert!(theory.theorem(LAST_SINGLETON).is_none());
+        assert!(theory.theorem(LAST_CONS).is_none());
+        assert!(theory.theorem(INIT_NIL_ERRORS).is_none());
+        assert!(theory.theorem(INIT_SINGLETON).is_none());
+        assert!(theory.theorem(INIT_CONS).is_none());
+        assert!(theory.theorem(NULL_NIL).is_none());
+        assert!(theory.theorem(NULL_CONS).is_none());
+        assert!(theory.theorem(IS_SINGLETON_NIL).is_none());
+        assert!(theory.theorem(IS_SINGLETON_SINGLETON).is_none());
+        assert!(theory.theorem(IS_SINGLETON_CONS).is_none());
     }
 
     #[test]
@@ -375,6 +537,21 @@ mod tests {
         assert!(theory.theorem(REVERSE_DOUBLE).is_none());
         assert!(theory.theorem(REVERSE_ACC_OF_APPEND).is_none());
         assert!(theory.theorem(REVERSE_APPEND).is_none());
+        assert!(theory.theorem(SNOC_COMPUTES_TO_LIST).is_none());
+        assert!(theory.theorem(SNOC_NIL).is_none());
+        assert!(theory.theorem(SNOC_CONS).is_none());
+        assert!(theory.theorem(CONCAT_NIL).is_none());
+        assert!(theory.theorem(LAST_NIL_ERRORS).is_none());
+        assert!(theory.theorem(LAST_SINGLETON).is_none());
+        assert!(theory.theorem(LAST_CONS).is_none());
+        assert!(theory.theorem(INIT_NIL_ERRORS).is_none());
+        assert!(theory.theorem(INIT_SINGLETON).is_none());
+        assert!(theory.theorem(INIT_CONS).is_none());
+        assert!(theory.theorem(NULL_NIL).is_none());
+        assert!(theory.theorem(NULL_CONS).is_none());
+        assert!(theory.theorem(IS_SINGLETON_NIL).is_none());
+        assert!(theory.theorem(IS_SINGLETON_SINGLETON).is_none());
+        assert!(theory.theorem(IS_SINGLETON_CONS).is_none());
     }
 
     #[test]
@@ -497,6 +674,21 @@ mod tests {
         let reverse_double_prop = list::reverse_double_source_theorem();
         let reverse_acc_of_append_prop = list::reverse_acc_of_append_source_theorem();
         let reverse_append_prop = list::reverse_append_source_theorem();
+        let snoc_prop = list::snoc_computes_to_list_source_theorem();
+        let snoc_nil_prop = list::snoc_nil_source_theorem();
+        let snoc_cons_prop = list::snoc_cons_source_theorem();
+        let concat_nil_prop = list::concat_nil_source_theorem();
+        let last_nil_errors_prop = list::last_nil_errors_source_theorem();
+        let last_singleton_prop = list::last_singleton_source_theorem();
+        let last_cons_prop = list::last_cons_source_theorem();
+        let init_nil_errors_prop = list::init_nil_errors_source_theorem();
+        let init_singleton_prop = list::init_singleton_source_theorem();
+        let init_cons_prop = list::init_cons_source_theorem();
+        let null_nil_prop = list::null_nil_source_theorem();
+        let null_cons_prop = list::null_cons_source_theorem();
+        let is_singleton_nil_prop = list::is_singleton_nil_source_theorem();
+        let is_singleton_singleton_prop = list::is_singleton_singleton_source_theorem();
+        let is_singleton_cons_prop = list::is_singleton_cons_source_theorem();
         let append_nil_prop = list::append_nil_computes_to_list_source_theorem();
         let append_prop = list::append_computes_to_list_source_theorem();
         let append_nil_returns_right_prop = list::append_nil_returns_right_source_theorem();
@@ -537,6 +729,30 @@ mod tests {
             Some(&reverse_acc_of_append_prop)
         );
         assert_eq!(theory.theorem(REVERSE_APPEND), Some(&reverse_append_prop));
+        assert_eq!(theory.theorem(SNOC_COMPUTES_TO_LIST), Some(&snoc_prop));
+        assert_eq!(theory.theorem(SNOC_NIL), Some(&snoc_nil_prop));
+        assert_eq!(theory.theorem(SNOC_CONS), Some(&snoc_cons_prop));
+        assert_eq!(theory.theorem(CONCAT_NIL), Some(&concat_nil_prop));
+        assert_eq!(theory.theorem(LAST_NIL_ERRORS), Some(&last_nil_errors_prop));
+        assert_eq!(theory.theorem(LAST_SINGLETON), Some(&last_singleton_prop));
+        assert_eq!(theory.theorem(LAST_CONS), Some(&last_cons_prop));
+        assert_eq!(theory.theorem(INIT_NIL_ERRORS), Some(&init_nil_errors_prop));
+        assert_eq!(theory.theorem(INIT_SINGLETON), Some(&init_singleton_prop));
+        assert_eq!(theory.theorem(INIT_CONS), Some(&init_cons_prop));
+        assert_eq!(theory.theorem(NULL_NIL), Some(&null_nil_prop));
+        assert_eq!(theory.theorem(NULL_CONS), Some(&null_cons_prop));
+        assert_eq!(
+            theory.theorem(IS_SINGLETON_NIL),
+            Some(&is_singleton_nil_prop)
+        );
+        assert_eq!(
+            theory.theorem(IS_SINGLETON_SINGLETON),
+            Some(&is_singleton_singleton_prop)
+        );
+        assert_eq!(
+            theory.theorem(IS_SINGLETON_CONS),
+            Some(&is_singleton_cons_prop)
+        );
         assert_eq!(
             theory.theorem(APPEND_NIL_COMPUTES_TO_LIST),
             Some(&append_nil_prop)
@@ -624,6 +840,98 @@ mod tests {
                 .expect("reverse append theorem source proof should check with dependencies")
                 .prop(),
             &reverse_append_prop,
+        );
+        assert_eq!(
+            snoc_computes_to_list()
+                .expect("snoc theorem source proof should check with dependencies")
+                .prop(),
+            &snoc_prop,
+        );
+        assert_eq!(
+            snoc_nil()
+                .expect("snoc nil theorem source proof should check with dependencies")
+                .prop(),
+            &snoc_nil_prop,
+        );
+        assert_eq!(
+            snoc_cons()
+                .expect("snoc cons theorem source proof should check with dependencies")
+                .prop(),
+            &snoc_cons_prop,
+        );
+        assert_eq!(
+            concat_nil()
+                .expect("concat nil theorem source proof should check with dependencies")
+                .prop(),
+            &concat_nil_prop,
+        );
+        assert_eq!(
+            last_nil_errors()
+                .expect("last nil theorem source proof should check with dependencies")
+                .prop(),
+            &last_nil_errors_prop,
+        );
+        assert_eq!(
+            last_singleton()
+                .expect("last singleton theorem source proof should check with dependencies")
+                .prop(),
+            &last_singleton_prop,
+        );
+        assert_eq!(
+            last_cons()
+                .expect("last cons theorem source proof should check with dependencies")
+                .prop(),
+            &last_cons_prop,
+        );
+        assert_eq!(
+            init_nil_errors()
+                .expect("init nil theorem source proof should check with dependencies")
+                .prop(),
+            &init_nil_errors_prop,
+        );
+        assert_eq!(
+            init_singleton()
+                .expect("init singleton theorem source proof should check with dependencies")
+                .prop(),
+            &init_singleton_prop,
+        );
+        assert_eq!(
+            init_cons()
+                .expect("init cons theorem source proof should check with dependencies")
+                .prop(),
+            &init_cons_prop,
+        );
+        assert_eq!(
+            null_nil()
+                .expect("null nil theorem source proof should check with dependencies")
+                .prop(),
+            &null_nil_prop,
+        );
+        assert_eq!(
+            null_cons()
+                .expect("null cons theorem source proof should check with dependencies")
+                .prop(),
+            &null_cons_prop,
+        );
+        assert_eq!(
+            is_singleton_nil()
+                .expect("is-singleton nil theorem source proof should check with dependencies")
+                .prop(),
+            &is_singleton_nil_prop,
+        );
+        assert_eq!(
+            is_singleton_singleton()
+                .expect(
+                    "is-singleton singleton theorem source proof should check with dependencies"
+                )
+                .prop(),
+            &is_singleton_singleton_prop,
+        );
+        assert_eq!(
+            is_singleton_cons()
+                .expect("is-singleton cons theorem source proof should check with dependencies")
+                .prop(),
+            &is_singleton_cons_prop,
         );
         assert_eq!(
             append_nil_computes_to_list()
