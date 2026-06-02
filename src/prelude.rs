@@ -4,7 +4,7 @@ pub mod list;
 mod proof;
 mod source;
 
-use crate::{Computation, Name, Theorem, Theory};
+use crate::{Computation, ComputationDefinitionError, Name, Theorem, Theory};
 
 pub use proof::SourceTheoremError;
 
@@ -16,6 +16,15 @@ pub const REVERSE_NIL_COMPUTES_TO_LIST: Name = Name(6);
 pub const APPEND: Name = Name(7);
 pub const APPEND_NIL_COMPUTES_TO_LIST: Name = Name(8);
 pub const APPEND_COMPUTES_TO_LIST: Name = Name(9);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SourceComputationError {
+    ModuleParseFailed,
+    ComputationRejected {
+        computation: Name,
+        error: ComputationDefinitionError,
+    },
+}
 
 pub fn theory() -> Theory {
     let mut theory = Theory::new();
@@ -38,18 +47,37 @@ pub fn define_in_theory(theory: &mut Theory) -> bool {
 }
 
 pub fn define_computations_in_theory(theory: &mut Theory) -> bool {
+    try_define_computations_in_theory(theory).is_ok()
+}
+
+pub fn try_define_computations_in_theory(
+    theory: &mut Theory,
+) -> Result<(), SourceComputationError> {
     let Ok(module) = list::module() else {
-        return false;
+        return Err(SourceComputationError::ModuleParseFailed);
     };
 
-    define_module_computations(theory, &module)
+    define_module_computations_result(theory, &module)
 }
 
 fn define_module_computations(theory: &mut Theory, module: &source::ParsedModule) -> bool {
-    module
-        .computations
-        .iter()
-        .all(|(name, computation)| theory.define_computation(*name, computation))
+    define_module_computations_result(theory, module).is_ok()
+}
+
+fn define_module_computations_result(
+    theory: &mut Theory,
+    module: &source::ParsedModule,
+) -> Result<(), SourceComputationError> {
+    for (name, computation) in &module.computations {
+        theory
+            .define_computation_result(*name, computation)
+            .map_err(|error| SourceComputationError::ComputationRejected {
+                computation: *name,
+                error,
+            })?;
+    }
+
+    Ok(())
 }
 
 pub fn define_theorems_in_theory(theory: &mut Theory) -> bool {
@@ -114,7 +142,7 @@ pub fn append() -> Computation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Step, TheoremError, computes_to_list};
+    use crate::{ComputationDefinitionError, Step, TheoremError, computes_to_list};
 
     #[test]
     fn theory_defines_reverse() {
@@ -155,6 +183,21 @@ mod tests {
         assert!(theory.theorem(REVERSE_NIL_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(APPEND_NIL_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(APPEND_COMPUTES_TO_LIST).is_none());
+    }
+
+    #[test]
+    fn computation_definition_diagnostics_report_kernel_rejection() {
+        let mut theory = Theory::new();
+
+        assert!(theory.define_computation(REVERSE_ACC, &Computation::Nil));
+        assert!(!define_computations_in_theory(&mut theory));
+        assert_eq!(
+            try_define_computations_in_theory(&mut theory),
+            Err(SourceComputationError::ComputationRejected {
+                computation: REVERSE_ACC,
+                error: ComputationDefinitionError::ComputationNameAlreadyDefined(REVERSE_ACC),
+            })
+        );
     }
 
     #[test]

@@ -27,16 +27,23 @@ impl Bindings {
         self.computations.get(&name)
     }
 
-    pub(crate) fn define_computation(&mut self, name: Name, computation: &Computation) -> bool {
-        if self.computations.contains_key(&name)
-            || self.theorems.contains_key(&name)
-            || !free_symbols(computation).is_empty()
-        {
-            return false;
+    pub(crate) fn define_computation_result(
+        &mut self,
+        name: Name,
+        computation: &Computation,
+    ) -> Result<(), ComputationDefinitionError> {
+        if self.computations.contains_key(&name) {
+            return Err(ComputationDefinitionError::ComputationNameAlreadyDefined(
+                name,
+            ));
+        }
+        if self.theorems.contains_key(&name) {
+            return Err(ComputationDefinitionError::TheoremNameAlreadyDefined(name));
         }
 
+        closed_computation(computation)?;
         self.computations.insert(name, computation.clone());
-        true
+        Ok(())
     }
 
     pub(crate) fn define_theorem_result(
@@ -66,10 +73,28 @@ pub struct Theorem {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ComputationDefinitionError {
+    ComputationNameAlreadyDefined(Name),
+    TheoremNameAlreadyDefined(Name),
+    OpenComputation(Vec<Symbol>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TheoremError {
     InvalidProof,
     NameAlreadyDefined(Name),
     OpenProp(Vec<Symbol>),
+}
+
+fn closed_computation(computation: &Computation) -> Result<(), ComputationDefinitionError> {
+    let mut symbols = free_symbols(computation).into_iter().collect::<Vec<_>>();
+    symbols.sort();
+
+    if symbols.is_empty() {
+        Ok(())
+    } else {
+        Err(ComputationDefinitionError::OpenComputation(symbols))
+    }
 }
 
 fn closed_prop(prop: &Prop) -> Result<(), TheoremError> {
@@ -182,9 +207,19 @@ impl Theorem {
         witness: Computation,
         proof: &Self,
     ) -> Option<Self> {
+        Self::exists_intro_sort(variable, Sort::Computation, body, witness, proof)
+    }
+
+    pub fn exists_intro_sort(
+        variable: Symbol,
+        sort: Sort,
+        body: Prop,
+        witness: Computation,
+        proof: &Self,
+    ) -> Option<Self> {
         Self::from_proof_without_assumptions(Proof::ExistsIntro {
             variable,
-            sort: Sort::Computation,
+            sort,
             body,
             witness,
             proof: Box::new(proof.proof.clone()),
@@ -236,7 +271,15 @@ impl Theory {
     }
 
     pub fn define_computation(&mut self, name: Name, computation: &Computation) -> bool {
-        self.bindings.define_computation(name, computation)
+        self.define_computation_result(name, computation).is_ok()
+    }
+
+    pub fn define_computation_result(
+        &mut self,
+        name: Name,
+        computation: &Computation,
+    ) -> Result<(), ComputationDefinitionError> {
+        self.bindings.define_computation_result(name, computation)
     }
 
     pub fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
@@ -373,9 +416,20 @@ impl Theory {
         witness: Computation,
         proof: &Theorem,
     ) -> Option<Theorem> {
+        self.exists_intro_sort(variable, Sort::Computation, body, witness, proof)
+    }
+
+    pub fn exists_intro_sort(
+        &self,
+        variable: Symbol,
+        sort: Sort,
+        body: Prop,
+        witness: Computation,
+        proof: &Theorem,
+    ) -> Option<Theorem> {
         self.theorem_from_proof_without_assumptions(Proof::ExistsIntro {
             variable,
-            sort: Sort::Computation,
+            sort,
             body,
             witness,
             proof: Box::new(proof.proof.clone()),

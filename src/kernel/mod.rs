@@ -9,7 +9,7 @@ pub use check::{
     substitute_prop,
 };
 pub use eval::{computation_is_value, normal_form, normal_outcome, step};
-pub use theory::{Context, Theorem, TheoremError, Theory};
+pub use theory::{ComputationDefinitionError, Context, Theorem, TheoremError, Theory};
 
 #[cfg(test)]
 pub(crate) use check::check_in_bindings;

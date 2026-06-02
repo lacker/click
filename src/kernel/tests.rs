@@ -505,11 +505,27 @@ fn theory_defines_closed_computations() {
     assert!(theory.define_computation(name, &computation));
     assert_eq!(theory.computation(name), Some(&computation));
     assert!(!theory.define_computation(name, &replacement));
+    assert_eq!(
+        theory.define_computation_result(name, &replacement),
+        Err(ComputationDefinitionError::ComputationNameAlreadyDefined(
+            name
+        ))
+    );
     assert!(!theory.define_theorem(name, &theorem));
     assert!(!theory.define_computation(Name(5), &Computation::Var(Symbol(1))));
+    assert_eq!(
+        theory.define_computation_result(Name(5), &Computation::Var(Symbol(1))),
+        Err(ComputationDefinitionError::OpenComputation(vec![Symbol(1)]))
+    );
 
     assert!(theory.define_theorem(Name(6), &theorem));
     assert!(!theory.define_computation(Name(6), &Computation::Nil));
+    assert_eq!(
+        theory.define_computation_result(Name(6), &Computation::Nil),
+        Err(ComputationDefinitionError::TheoremNameAlreadyDefined(Name(
+            6
+        )))
+    );
 }
 
 #[test]
@@ -667,6 +683,28 @@ fn theorem_first_order_rules_build_checked_theorems() {
     assert_eq!(
         instance.prop(),
         &equal(Computation::Quote(Symbol(2)), Computation::Quote(Symbol(2)))
+    );
+}
+
+#[test]
+fn theorem_exists_intro_supports_explicit_sorts() {
+    let variable = Symbol(1);
+    let body = equal(Computation::Var(variable), Computation::Nil);
+    let proof = Theorem::refl(Computation::Nil).expect("closed refl should check");
+    let theorem =
+        Theorem::exists_intro_sort(variable, Sort::List, body.clone(), Computation::Nil, &proof)
+            .expect("nil is a list witness");
+
+    assert_eq!(theorem.prop(), &exists_sort(variable, Sort::List, body));
+    assert!(
+        Theorem::exists_intro_sort(
+            variable,
+            Sort::List,
+            equal(Computation::Var(variable), Computation::Quote(Symbol(2))),
+            Computation::Quote(Symbol(2)),
+            &Theorem::refl(Computation::Quote(Symbol(2))).expect("closed refl should check"),
+        )
+        .is_none()
     );
 }
 
