@@ -28,6 +28,8 @@ pub const REVERSE_ACC_APPEND: Name = Name(17);
 pub const REVERSE_CONS: Name = Name(18);
 pub const REVERSE_ACC_REVERSE: Name = Name(19);
 pub const REVERSE_DOUBLE: Name = Name(20);
+pub const REVERSE_ACC_OF_APPEND: Name = Name(21);
+pub const REVERSE_APPEND: Name = Name(22);
 
 const MODULES: &[source::ModuleSpec] = &[list::MODULE];
 
@@ -197,6 +199,14 @@ pub fn reverse_double() -> Option<Theorem> {
     list::checked_source_theorem(REVERSE_DOUBLE)
 }
 
+pub fn reverse_acc_of_append() -> Option<Theorem> {
+    list::checked_source_theorem(REVERSE_ACC_OF_APPEND)
+}
+
+pub fn reverse_append() -> Option<Theorem> {
+    list::checked_source_theorem(REVERSE_APPEND)
+}
+
 pub fn append_nil_computes_to_list() -> Option<Theorem> {
     list::checked_source_theorem(APPEND_NIL_COMPUTES_TO_LIST)
 }
@@ -299,6 +309,8 @@ mod tests {
         assert!(theory.theorem(REVERSE_CONS).is_none());
         assert!(theory.theorem(REVERSE_ACC_REVERSE).is_none());
         assert!(theory.theorem(REVERSE_DOUBLE).is_none());
+        assert!(theory.theorem(REVERSE_ACC_OF_APPEND).is_none());
+        assert!(theory.theorem(REVERSE_APPEND).is_none());
     }
 
     #[test]
@@ -361,6 +373,8 @@ mod tests {
         assert!(theory.theorem(REVERSE_CONS).is_none());
         assert!(theory.theorem(REVERSE_ACC_REVERSE).is_none());
         assert!(theory.theorem(REVERSE_DOUBLE).is_none());
+        assert!(theory.theorem(REVERSE_ACC_OF_APPEND).is_none());
+        assert!(theory.theorem(REVERSE_APPEND).is_none());
     }
 
     #[test]
@@ -481,6 +495,8 @@ mod tests {
         let reverse_cons_prop = list::reverse_cons_source_theorem();
         let reverse_acc_reverse_prop = list::reverse_acc_reverse_source_theorem();
         let reverse_double_prop = list::reverse_double_source_theorem();
+        let reverse_acc_of_append_prop = list::reverse_acc_of_append_source_theorem();
+        let reverse_append_prop = list::reverse_append_source_theorem();
         let append_nil_prop = list::append_nil_computes_to_list_source_theorem();
         let append_prop = list::append_computes_to_list_source_theorem();
         let append_nil_returns_right_prop = list::append_nil_returns_right_source_theorem();
@@ -516,6 +532,11 @@ mod tests {
             Some(&reverse_acc_reverse_prop)
         );
         assert_eq!(theory.theorem(REVERSE_DOUBLE), Some(&reverse_double_prop));
+        assert_eq!(
+            theory.theorem(REVERSE_ACC_OF_APPEND),
+            Some(&reverse_acc_of_append_prop)
+        );
+        assert_eq!(theory.theorem(REVERSE_APPEND), Some(&reverse_append_prop));
         assert_eq!(
             theory.theorem(APPEND_NIL_COMPUTES_TO_LIST),
             Some(&append_nil_prop)
@@ -589,6 +610,20 @@ mod tests {
                 .expect("reverse double theorem source proof should check with dependencies")
                 .prop(),
             &reverse_double_prop,
+        );
+        assert_eq!(
+            reverse_acc_of_append()
+                .expect(
+                    "reverse accumulator append theorem source proof should check with dependencies"
+                )
+                .prop(),
+            &reverse_acc_of_append_prop,
+        );
+        assert_eq!(
+            reverse_append()
+                .expect("reverse append theorem source proof should check with dependencies")
+                .prop(),
+            &reverse_append_prop,
         );
         assert_eq!(
             append_nil_computes_to_list()

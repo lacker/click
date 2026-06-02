@@ -8,8 +8,8 @@ use crate::{
 use super::{
     APPEND, APPEND_ASSOC, APPEND_COMPUTES_TO_LIST, APPEND_CONS, APPEND_NIL_COMPUTES_TO_LIST,
     APPEND_NIL_RETURNS_RIGHT, APPEND_RIGHT_NIL, APPEND_SINGLETON, REVERSE, REVERSE_ACC,
-    REVERSE_ACC_APPEND, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_ACC_REVERSE,
-    REVERSE_COMPUTES_TO_LIST, REVERSE_CONS, REVERSE_DOUBLE, REVERSE_NIL,
+    REVERSE_ACC_APPEND, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_ACC_OF_APPEND, REVERSE_ACC_REVERSE,
+    REVERSE_APPEND, REVERSE_COMPUTES_TO_LIST, REVERSE_CONS, REVERSE_DOUBLE, REVERSE_NIL,
     REVERSE_NIL_COMPUTES_TO_LIST, REVERSE_SINGLETON, SourceTheoremError,
     source::{ModuleSpec, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
@@ -86,6 +86,14 @@ pub(super) const MODULE: ModuleSpec = ModuleSpec {
         super::source::NameBinding {
             spelling: "reverse_double",
             name: REVERSE_DOUBLE,
+        },
+        super::source::NameBinding {
+            spelling: "reverse_acc_of_append",
+            name: REVERSE_ACC_OF_APPEND,
+        },
+        super::source::NameBinding {
+            spelling: "reverse_append",
+            name: REVERSE_APPEND,
         },
         super::source::NameBinding {
             spelling: "append_nil_computes_to_list",
@@ -311,6 +319,14 @@ pub fn reverse_double_source_theorem() -> Prop {
     theorem_prop(REVERSE_DOUBLE)
 }
 
+pub fn reverse_acc_of_append_source_theorem() -> Prop {
+    theorem_prop(REVERSE_ACC_OF_APPEND)
+}
+
+pub fn reverse_append_source_theorem() -> Prop {
+    theorem_prop(REVERSE_APPEND)
+}
+
 pub fn append_nil_computes_to_list_source_theorem() -> Prop {
     theorem_prop(APPEND_NIL_COMPUTES_TO_LIST)
 }
@@ -483,6 +499,42 @@ pub fn reverse_double_theorem(list: Symbol) -> Prop {
         list,
         is_list(var(list)),
         computes_to(reverse_call(reverse_call(var(list))), var(list)),
+    )
+}
+
+/// Reversing over an appended input moves the left side into the accumulator.
+pub fn reverse_acc_of_append_theorem(left: Symbol, right: Symbol, acc: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_list(var(left)),
+        forall_where(
+            right,
+            is_list(var(right)),
+            forall_where(
+                acc,
+                is_list(var(acc)),
+                computes_to(
+                    reverse_acc_call(append_call(var(left), var(right)), var(acc)),
+                    reverse_acc_call(var(right), reverse_acc_call(var(left), var(acc))),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Reversing an append swaps the sides and reverses both.
+pub fn reverse_append_theorem(left: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_list(var(left)),
+        forall_where(
+            right,
+            is_list(var(right)),
+            computes_to(
+                reverse_call(append_call(var(left), var(right))),
+                append_call(reverse_call(var(right)), reverse_call(var(left))),
+            ),
+        ),
     )
 }
 
@@ -906,6 +958,77 @@ mod tests {
     }
 
     #[test]
+    fn reverse_acc_of_append_theorem_has_expected_shape() {
+        assert_eq!(
+            reverse_acc_of_append_theorem(X, RIGHT_LIST, ACCUMULATOR),
+            forall_where(
+                X,
+                is_list(var(X)),
+                forall_where(
+                    RIGHT_LIST,
+                    is_list(var(RIGHT_LIST)),
+                    forall_where(
+                        ACCUMULATOR,
+                        is_list(var(ACCUMULATOR)),
+                        computes_to(
+                            reverse_acc_call(
+                                append_call(var(X), var(RIGHT_LIST)),
+                                var(ACCUMULATOR),
+                            ),
+                            reverse_acc_call(
+                                var(RIGHT_LIST),
+                                reverse_acc_call(var(X), var(ACCUMULATOR)),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn reverse_acc_of_append_source_theorem_has_expected_shape() {
+        let left = theorem_symbol(REVERSE_ACC_OF_APPEND, "left");
+        let right = theorem_symbol(REVERSE_ACC_OF_APPEND, "right");
+        let acc = theorem_symbol(REVERSE_ACC_OF_APPEND, "acc");
+
+        assert_eq!(
+            reverse_acc_of_append_source_theorem(),
+            reverse_acc_of_append_theorem(left, right, acc)
+        );
+    }
+
+    #[test]
+    fn reverse_append_theorem_has_expected_shape() {
+        assert_eq!(
+            reverse_append_theorem(X, RIGHT_LIST),
+            forall_where(
+                X,
+                is_list(var(X)),
+                forall_where(
+                    RIGHT_LIST,
+                    is_list(var(RIGHT_LIST)),
+                    computes_to(
+                        reverse_call(append_call(var(X), var(RIGHT_LIST))),
+                        append_call(reverse_call(var(RIGHT_LIST)), reverse_call(var(X))),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn reverse_append_source_theorem_has_expected_shape() {
+        let left = theorem_symbol(REVERSE_APPEND, "left");
+        let right = theorem_symbol(REVERSE_APPEND, "right");
+
+        assert_eq!(
+            reverse_append_source_theorem(),
+            reverse_append_theorem(left, right)
+        );
+    }
+
+    #[test]
     fn append_nil_computes_to_list_theorem_has_expected_shape() {
         assert_eq!(
             append_nil_computes_to_list_theorem(X, RESULT),
@@ -1116,6 +1239,14 @@ mod tests {
         ));
         assert!(matches!(
             theorem_definition(REVERSE_DOUBLE).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(REVERSE_ACC_OF_APPEND).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(REVERSE_APPEND).proof,
             ProofScript::Proof(_)
         ));
         assert!(matches!(

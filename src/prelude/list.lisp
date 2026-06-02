@@ -614,3 +614,184 @@
             (forall-elim
               (known append_nil_returns_right)
               list)))))))
+
+(theorem reverse_acc_of_append
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall acc (is-list acc)
+        (computes-to
+          (reverse_acc (append left right) acc)
+          (reverse_acc right (reverse_acc left acc))))))
+  (proof
+    (list-induction left
+      (forall right (is-list right)
+        (forall acc (is-list acc)
+          (computes-to
+            (reverse_acc (append left right) acc)
+            (reverse_acc right (reverse_acc left acc)))))
+      (forall-intro right (is-list right)
+        (forall-intro acc (is-list acc)
+          (eval-same
+            (reverse_acc (append nil right) acc)
+            (reverse_acc right (reverse_acc nil acc)))))
+      head
+      tail
+      induction_hypothesis
+      (forall-intro right (is-list right)
+        (forall-intro acc (is-list acc)
+          (exists-elim
+            (forall-elim
+              (forall-elim
+                (known append_computes_to_list)
+                tail)
+              right)
+            tail_right
+            tail_right_proof
+            (trans
+              (rewrite
+                (forall-elim
+                  (forall-elim
+                    (forall-elim
+                      (known append_cons)
+                      head)
+                    tail)
+                  right)
+                (eval-to
+                  (reverse_acc (append (cons head tail) right) acc)
+                  (reverse_acc (append (cons head tail) right) acc))
+                rewrite_target
+                (computes-to
+                  (reverse_acc (append (cons head tail) right) acc)
+                  (reverse_acc rewrite_target acc)))
+              (trans
+                (rewrite
+                  (assume tail_right_proof)
+                  (eval-to
+                    (reverse_acc (cons head (append tail right)) acc)
+                    (reverse_acc (cons head (append tail right)) acc))
+                  rewrite_target
+                  (computes-to
+                    (reverse_acc (cons head (append tail right)) acc)
+                    (reverse_acc (cons head rewrite_target) acc)))
+                (trans
+                  (eval-same
+                    (reverse_acc (cons head tail_right) acc)
+                    (reverse_acc tail_right (cons head acc)))
+                  (trans
+                    (rewrite
+                      (symm
+                        (assume tail_right_proof))
+                      (eval-to
+                        (reverse_acc tail_right (cons head acc))
+                        (reverse_acc tail_right (cons head acc)))
+                      rewrite_target
+                      (computes-to
+                        (reverse_acc tail_right (cons head acc))
+                        (reverse_acc rewrite_target (cons head acc))))
+                    (trans
+                      (forall-elim
+                        (forall-elim
+                          (assume induction_hypothesis)
+                          right)
+                        (cons head acc))
+                      (rewrite
+                        (symm
+                          (eval-same
+                            (reverse_acc (cons head tail) acc)
+                            (reverse_acc tail (cons head acc))))
+                        (eval-to
+                          (reverse_acc right (reverse_acc tail (cons head acc)))
+                          (reverse_acc right (reverse_acc tail (cons head acc))))
+                        rewrite_target
+                        (computes-to
+                          (reverse_acc right (reverse_acc tail (cons head acc)))
+                          (reverse_acc right rewrite_target))))))))))))))
+
+(theorem reverse_append
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (computes-to
+        (reverse (append left right))
+        (append (reverse right) (reverse left)))))
+  (proof
+    (forall-intro left (is-list left)
+      (forall-intro right (is-list right)
+        (exists-elim
+          (forall-elim
+            (forall-elim
+              (known append_computes_to_list)
+              left)
+            right)
+          appended
+          appended_proof
+          (exists-elim
+            (forall-elim
+              (forall-elim
+                (known reverse_acc_computes_to_list)
+                left)
+              nil)
+            left_reversed_acc
+            left_reversed_acc_proof
+            (trans
+              (rewrite
+                (assume appended_proof)
+                (eval-to
+                  (reverse (append left right))
+                  (reverse (append left right)))
+                rewrite_target
+                (computes-to
+                  (reverse (append left right))
+                  (reverse rewrite_target)))
+              (trans
+                (eval-to
+                  (reverse appended)
+                  (reverse_acc appended nil))
+                (trans
+                  (rewrite
+                    (symm
+                      (assume appended_proof))
+                    (eval-to
+                      (reverse_acc appended nil)
+                      (reverse_acc appended nil))
+                    rewrite_target
+                    (computes-to
+                      (reverse_acc appended nil)
+                      (reverse_acc rewrite_target nil)))
+                  (trans
+                    (forall-elim
+                      (forall-elim
+                        (forall-elim
+                          (known reverse_acc_of_append)
+                          left)
+                        right)
+                      nil)
+                    (trans
+                      (rewrite
+                        (assume left_reversed_acc_proof)
+                        (eval-to
+                          (reverse_acc right (reverse_acc left nil))
+                          (reverse_acc right (reverse_acc left nil)))
+                        rewrite_target
+                        (computes-to
+                          (reverse_acc right (reverse_acc left nil))
+                          (reverse_acc right rewrite_target)))
+                      (trans
+                        (forall-elim
+                          (forall-elim
+                            (known reverse_acc_append)
+                            right)
+                          left_reversed_acc)
+                        (rewrite
+                          (symm
+                            (trans
+                              (eval-to
+                                (reverse left)
+                                (reverse_acc left nil))
+                              (assume left_reversed_acc_proof)))
+                          (eval-to
+                            (append (reverse right) left_reversed_acc)
+                            (append (reverse right) left_reversed_acc))
+                          rewrite_target
+                          (computes-to
+                            (append (reverse right) left_reversed_acc)
+                            (append (reverse right) rewrite_target)))))))))))))))
