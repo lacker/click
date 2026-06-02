@@ -168,3 +168,31 @@
         (computes-to
           (append (cons head tail) nil)
           (cons head rewrite_target))))))
+
+(theorem append_cons
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (forall right (is-list right)
+        (computes-to
+          (append (cons head tail) right)
+          (cons head (append tail right))))))
+  (proof
+    (forall-intro head (is-value head)
+      (forall-intro tail (is-list tail)
+        (forall-intro right (is-list right)
+          (eval-same
+            (append (cons head tail) right)
+            (cons head (append tail right))))))))
+
+(theorem append_singleton
+  (forall head (is-value head)
+    (forall right (is-list right)
+      (computes-to
+        (append (cons head nil) right)
+        (cons head right))))
+  (proof
+    (forall-intro head (is-value head)
+      (forall-intro right (is-list right)
+        (eval-same
+          (append (cons head nil) right)
+          (cons head right))))))

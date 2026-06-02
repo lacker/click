@@ -19,6 +19,8 @@ pub const APPEND_NIL_COMPUTES_TO_LIST: Name = Name(8);
 pub const APPEND_COMPUTES_TO_LIST: Name = Name(9);
 pub const APPEND_NIL_RETURNS_RIGHT: Name = Name(10);
 pub const APPEND_RIGHT_NIL: Name = Name(11);
+pub const APPEND_CONS: Name = Name(12);
+pub const APPEND_SINGLETON: Name = Name(13);
 
 const MODULES: &[source::ModuleSpec] = &[list::MODULE];
 
@@ -180,6 +182,14 @@ pub fn append_right_nil() -> Option<Theorem> {
     list::checked_source_theorem(APPEND_RIGHT_NIL)
 }
 
+pub fn append_cons() -> Option<Theorem> {
+    list::checked_source_theorem(APPEND_CONS)
+}
+
+pub fn append_singleton() -> Option<Theorem> {
+    list::checked_source_theorem(APPEND_SINGLETON)
+}
+
 pub fn reverse_acc() -> Computation {
     Computation::Ref(REVERSE_ACC)
 }
@@ -245,6 +255,8 @@ mod tests {
         assert!(theory.theorem(APPEND_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(APPEND_NIL_RETURNS_RIGHT).is_none());
         assert!(theory.theorem(APPEND_RIGHT_NIL).is_none());
+        assert!(theory.theorem(APPEND_CONS).is_none());
+        assert!(theory.theorem(APPEND_SINGLETON).is_none());
     }
 
     #[test]
@@ -298,6 +310,8 @@ mod tests {
         assert!(theory.theorem(APPEND_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(APPEND_NIL_RETURNS_RIGHT).is_none());
         assert!(theory.theorem(APPEND_RIGHT_NIL).is_none());
+        assert!(theory.theorem(APPEND_CONS).is_none());
+        assert!(theory.theorem(APPEND_SINGLETON).is_none());
     }
 
     #[test]
@@ -416,6 +430,8 @@ mod tests {
         let append_prop = list::append_computes_to_list_source_theorem();
         let append_nil_returns_right_prop = list::append_nil_returns_right_source_theorem();
         let append_right_nil_prop = list::append_right_nil_source_theorem();
+        let append_cons_prop = list::append_cons_source_theorem();
+        let append_singleton_prop = list::append_singleton_source_theorem();
 
         assert_eq!(
             theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST),
@@ -441,6 +457,11 @@ mod tests {
         assert_eq!(
             theory.theorem(APPEND_RIGHT_NIL),
             Some(&append_right_nil_prop)
+        );
+        assert_eq!(theory.theorem(APPEND_CONS), Some(&append_cons_prop));
+        assert_eq!(
+            theory.theorem(APPEND_SINGLETON),
+            Some(&append_singleton_prop)
         );
         assert_eq!(
             theory
@@ -484,6 +505,18 @@ mod tests {
                 .expect("append right nil theorem source proof should check with dependencies")
                 .prop(),
             &append_right_nil_prop,
+        );
+        assert_eq!(
+            append_cons()
+                .expect("append cons theorem source proof should check with dependencies")
+                .prop(),
+            &append_cons_prop,
+        );
+        assert_eq!(
+            append_singleton()
+                .expect("append singleton theorem source proof should check with dependencies")
+                .prop(),
+            &append_singleton_prop,
         );
     }
 

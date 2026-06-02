@@ -2,13 +2,14 @@
 
 use crate::{
     Computation, ErrorName, Lambda, ListCase, Name, Outcome, Proof, Prop, Symbol, Theorem, Theory,
-    computes_to, computes_to_list, forall_where, is_list,
+    computes_to, computes_to_list, forall_where, is_list, is_value,
 };
 
 use super::{
-    APPEND, APPEND_COMPUTES_TO_LIST, APPEND_NIL_COMPUTES_TO_LIST, APPEND_NIL_RETURNS_RIGHT,
-    APPEND_RIGHT_NIL, REVERSE, REVERSE_ACC, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST,
-    REVERSE_NIL_COMPUTES_TO_LIST, SourceTheoremError,
+    APPEND, APPEND_COMPUTES_TO_LIST, APPEND_CONS, APPEND_NIL_COMPUTES_TO_LIST,
+    APPEND_NIL_RETURNS_RIGHT, APPEND_RIGHT_NIL, APPEND_SINGLETON, REVERSE, REVERSE_ACC,
+    REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST, REVERSE_NIL_COMPUTES_TO_LIST,
+    SourceTheoremError,
     source::{ModuleSpec, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
 
@@ -76,6 +77,14 @@ pub(super) const MODULE: ModuleSpec = ModuleSpec {
         super::source::NameBinding {
             spelling: "append_right_nil",
             name: APPEND_RIGHT_NIL,
+        },
+        super::source::NameBinding {
+            spelling: "append_cons",
+            name: APPEND_CONS,
+        },
+        super::source::NameBinding {
+            spelling: "append_singleton",
+            name: APPEND_SINGLETON,
         },
     ],
     symbols: &[
@@ -265,6 +274,14 @@ pub fn append_right_nil_source_theorem() -> Prop {
     theorem_prop(APPEND_RIGHT_NIL)
 }
 
+pub fn append_cons_source_theorem() -> Prop {
+    theorem_prop(APPEND_CONS)
+}
+
+pub fn append_singleton_source_theorem() -> Prop {
+    theorem_prop(APPEND_SINGLETON)
+}
+
 fn theorem_prop(name: Name) -> Prop {
     theorem_definition(name).prop
 }
@@ -379,6 +396,42 @@ pub fn append_right_nil_theorem(left: Symbol) -> Prop {
     )
 }
 
+/// Appending a cons list peels one element from the left.
+pub fn append_cons_theorem(head: Symbol, tail: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            tail,
+            is_list(var(tail)),
+            forall_where(
+                right,
+                is_list(var(right)),
+                computes_to(
+                    append_call(cons(var(head), var(tail)), var(right)),
+                    cons(var(head), append_call(var(tail), var(right))),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Appending a singleton list conses its only element onto the right list.
+pub fn append_singleton_theorem(head: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            right,
+            is_list(var(right)),
+            computes_to(
+                append_call(singleton(var(head)), var(right)),
+                cons(var(head), var(right)),
+            ),
+        ),
+    )
+}
+
 /// A function whose result is the denotational divergence marker.
 pub fn loop_forever() -> Computation {
     lambda(LOOP_ARGUMENT, Computation::Diverge)
@@ -474,6 +527,9 @@ mod tests {
     const X: Symbol = Symbol(200);
     const ACCUMULATOR: Symbol = Symbol(201);
     const RESULT: Symbol = Symbol(202);
+    const HEAD: Symbol = Symbol(203);
+    const TAIL: Symbol = Symbol(204);
+    const RIGHT_LIST: Symbol = Symbol(205);
 
     fn prove_evaluation(computation: Computation, expected: impl Into<Outcome>) -> Proof {
         proof_by_evaluation(computation, expected, 512).expect("example should evaluate")
@@ -636,6 +692,71 @@ mod tests {
     }
 
     #[test]
+    fn append_cons_theorem_has_expected_shape() {
+        assert_eq!(
+            append_cons_theorem(HEAD, TAIL, RIGHT_LIST),
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                forall_where(
+                    TAIL,
+                    is_list(var(TAIL)),
+                    forall_where(
+                        RIGHT_LIST,
+                        is_list(var(RIGHT_LIST)),
+                        computes_to(
+                            append_call(cons(var(HEAD), var(TAIL)), var(RIGHT_LIST)),
+                            cons(var(HEAD), append_call(var(TAIL), var(RIGHT_LIST))),
+                        ),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn append_cons_source_theorem_has_expected_shape() {
+        let head = theorem_symbol(APPEND_CONS, "head");
+        let tail = theorem_symbol(APPEND_CONS, "tail");
+        let right = theorem_symbol(APPEND_CONS, "right");
+
+        assert_eq!(
+            append_cons_source_theorem(),
+            append_cons_theorem(head, tail, right)
+        );
+    }
+
+    #[test]
+    fn append_singleton_theorem_has_expected_shape() {
+        assert_eq!(
+            append_singleton_theorem(HEAD, RIGHT_LIST),
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                forall_where(
+                    RIGHT_LIST,
+                    is_list(var(RIGHT_LIST)),
+                    computes_to(
+                        append_call(singleton(var(HEAD)), var(RIGHT_LIST)),
+                        cons(var(HEAD), var(RIGHT_LIST)),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn append_singleton_source_theorem_has_expected_shape() {
+        let head = theorem_symbol(APPEND_SINGLETON, "head");
+        let right = theorem_symbol(APPEND_SINGLETON, "right");
+
+        assert_eq!(
+            append_singleton_source_theorem(),
+            append_singleton_theorem(head, right)
+        );
+    }
+
+    #[test]
     fn reverse_source_theorem_uses_source_proof_script() {
         assert!(matches!(
             theorem_definition(REVERSE_ACC_COMPUTES_TO_LIST).proof,
@@ -663,6 +784,14 @@ mod tests {
         ));
         assert!(matches!(
             theorem_definition(APPEND_RIGHT_NIL).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(APPEND_CONS).proof,
+            ProofScript::Proof(_)
+        ));
+        assert!(matches!(
+            theorem_definition(APPEND_SINGLETON).proof,
             ProofScript::Proof(_)
         ));
     }
@@ -706,6 +835,14 @@ mod tests {
     fn append_pair_terminates_without_error() {
         assert_evaluates(
             append_call(pair(quote(A), quote(B)), singleton(quote(NOT_A_LIST))),
+            value(triple(quote(A), quote(B), quote(NOT_A_LIST))),
+        );
+    }
+
+    #[test]
+    fn append_singleton_cons_theorem_example() {
+        assert_evaluates(
+            append_call(singleton(quote(A)), pair(quote(B), quote(NOT_A_LIST))),
             value(triple(quote(A), quote(B), quote(NOT_A_LIST))),
         );
     }
