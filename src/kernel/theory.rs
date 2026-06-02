@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use super::{
     calculus::*,
-    check::{check, check_in_bindings, check_in_bindings_and_context, proven_prop},
+    check::{
+        check, check_in_bindings, check_in_bindings_and_context, free_symbols_prop, proven_prop,
+    },
     eval::{normal_form_in_bindings, normal_outcome_in_bindings, step_in_bindings},
 };
 
@@ -40,7 +42,10 @@ impl Bindings {
     }
 
     pub(crate) fn define_theorem(&mut self, name: Name, theorem: &Theorem) -> bool {
-        if self.computations.contains_key(&name) || self.theorems.contains_key(&name) {
+        if self.computations.contains_key(&name)
+            || self.theorems.contains_key(&name)
+            || !free_symbols_prop(theorem.prop()).is_empty()
+        {
             return false;
         }
 
@@ -62,20 +67,36 @@ pub struct Theorem {
 
 impl Theorem {
     pub fn from_proof(proof: Proof, prop: Prop) -> Option<Self> {
-        check(&proof, &prop).then_some(Self { prop, proof })
+        if !check(&proof, &prop) || !free_symbols_prop(&prop).is_empty() {
+            return None;
+        }
+
+        Some(Self { prop, proof })
     }
 
     fn from_proof_in_bindings(proof: Proof, prop: Prop, bindings: &Bindings) -> Option<Self> {
-        check_in_bindings(&proof, &prop, bindings).then_some(Self { prop, proof })
+        if !check_in_bindings(&proof, &prop, bindings) || !free_symbols_prop(&prop).is_empty() {
+            return None;
+        }
+
+        Some(Self { prop, proof })
     }
 
     fn from_closed_proof(proof: Proof) -> Option<Self> {
         let prop = proven_prop(&proof, &Bindings::new(), &Context::new())?;
+        if !free_symbols_prop(&prop).is_empty() {
+            return None;
+        }
+
         Some(Self { prop, proof })
     }
 
     fn from_closed_proof_in_bindings(proof: Proof, bindings: &Bindings) -> Option<Self> {
         let prop = proven_prop(&proof, bindings, &Context::new())?;
+        if !free_symbols_prop(&prop).is_empty() {
+            return None;
+        }
+
         Some(Self { prop, proof })
     }
 
@@ -83,11 +104,8 @@ impl Theorem {
         &self.prop
     }
 
-    pub fn refl(computation: Computation) -> Self {
-        Self {
-            prop: equal(computation.clone(), computation.clone()),
-            proof: Proof::Refl(computation),
-        }
+    pub fn refl(computation: Computation) -> Option<Self> {
+        Self::from_closed_proof(Proof::Refl(computation))
     }
 
     pub fn symm(theorem: &Self) -> Option<Self> {
@@ -168,20 +186,18 @@ impl Theorem {
         Self::from_closed_proof(Proof::AndElimRight(Box::new(theorem.proof.clone())))
     }
 
-    pub fn or_intro_left(theorem: &Self, right: Prop) -> Self {
+    pub fn or_intro_left(theorem: &Self, right: Prop) -> Option<Self> {
         Self::from_closed_proof(Proof::OrIntroLeft {
             proof: Box::new(theorem.proof.clone()),
             right,
         })
-        .expect("or intro left over a closed theorem should be valid")
     }
 
-    pub fn or_intro_right(left: Prop, theorem: &Self) -> Self {
+    pub fn or_intro_right(left: Prop, theorem: &Self) -> Option<Self> {
         Self::from_closed_proof(Proof::OrIntroRight {
             left,
             proof: Box::new(theorem.proof.clone()),
         })
-        .expect("or intro right over a closed theorem should be valid")
     }
 }
 
@@ -252,7 +268,7 @@ impl Theory {
         normal_outcome_in_bindings(computation, &self.bindings)
     }
 
-    pub fn refl(&self, computation: Computation) -> Theorem {
+    pub fn refl(&self, computation: Computation) -> Option<Theorem> {
         Theorem::refl(computation)
     }
 

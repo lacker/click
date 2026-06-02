@@ -65,6 +65,13 @@ Surface expressions belong outside the core calculus. The prelude source parser
 uses S-expressions as input and elaborates them into kernel computations,
 propositions, and proofs.
 
+Raw computations and propositions may be open. This is useful for templates,
+quantifier bodies, and proof checking under local assumptions. Kernel theorems
+are closed: a `Theorem` can only be constructed when its proposition has no
+free variables. Named computation definitions are also closed. Concrete
+`Value`, `Effect`, and `Outcome` values have no variable form; an open value is
+represented as a computation variable bound with `Sort::Value`.
+
 The standard prelude is just a theory built on top of the kernel. It currently
 contains the list definitions for `reverse_acc`, `reverse`, and `append`, plus
 theorems about those definitions.

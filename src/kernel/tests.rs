@@ -439,6 +439,7 @@ fn steps_proof_proves_multi_step_reduction() {
 
 #[test]
 fn theorem_from_proof_checks_closed_proofs() {
+    let open_prop = equal(Computation::Var(Symbol(1)), Computation::Var(Symbol(1)));
     let valid = Theorem::from_proof(
         Proof::Refl(Computation::Quote(Symbol(1))),
         equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(1))),
@@ -450,6 +451,9 @@ fn theorem_from_proof_checks_closed_proofs() {
 
     assert!(valid.is_some());
     assert!(invalid.is_none());
+    assert!(check(&Proof::Refl(Computation::Var(Symbol(1))), &open_prop));
+    assert!(Theorem::from_proof(Proof::Refl(Computation::Var(Symbol(1))), open_prop).is_none());
+    assert!(Theorem::refl(Computation::Var(Symbol(1))).is_none());
     assert!(
         Theorem::from_proof(
             Proof::Assume(Symbol(7)),
@@ -462,8 +466,9 @@ fn theorem_from_proof_checks_closed_proofs() {
 #[test]
 fn theory_known_proofs_cite_named_theorems() {
     let name = Name(42);
-    let theorem = Theorem::refl(Computation::Quote(Symbol(1)));
-    let replacement = Theorem::refl(Computation::Quote(Symbol(2)));
+    let theorem = Theorem::refl(Computation::Quote(Symbol(1))).expect("closed refl should check");
+    let replacement =
+        Theorem::refl(Computation::Quote(Symbol(2))).expect("closed refl should check");
     let mut theory = Theory::new();
 
     assert!(theory.define_theorem(name, &theorem));
@@ -481,7 +486,7 @@ fn theory_defines_closed_computations() {
     let name = Name(4);
     let computation = Computation::Quote(Symbol(1));
     let replacement = Computation::Quote(Symbol(2));
-    let theorem = Theorem::refl(Computation::Nil);
+    let theorem = Theorem::refl(Computation::Nil).expect("closed refl should check");
     let mut theory = Theory::new();
 
     assert!(theory.define_computation(name, &computation));
@@ -582,7 +587,7 @@ fn theorem_equality_rules_build_checked_theorems() {
         Computation::Quote(Symbol(2)),
     );
     let step = Theorem::step(start.clone()).expect("computation should step");
-    let refl = Theorem::refl(Computation::Quote(Symbol(2)));
+    let refl = Theorem::refl(Computation::Quote(Symbol(2))).expect("closed refl should check");
     let trans = Theorem::trans(&step, &refl).expect("equalities should chain");
     let symm = Theorem::symm(&step).expect("step equality should be symmetric");
 
@@ -606,14 +611,10 @@ fn theorem_rewrite_moves_props_across_equality() {
     );
     let step = Theorem::step(computation.clone()).expect("computation should step");
     let nil_to_computation = Theorem::symm(&step).expect("step should be symmetric");
+    let nil_refl = Theorem::refl(Computation::Nil).expect("closed refl should check");
     let template = equal(Computation::Var(Symbol(99)), Computation::Var(Symbol(99)));
-    let theorem = Theorem::rewrite(
-        &nil_to_computation,
-        &Theorem::refl(Computation::Nil),
-        Symbol(99),
-        template,
-    )
-    .expect("rewrite should move equality through a template");
+    let theorem = Theorem::rewrite(&nil_to_computation, &nil_refl, Symbol(99), template)
+        .expect("rewrite should move equality through a template");
 
     assert_eq!(theorem.prop(), &equal(computation.clone(), computation));
 }
@@ -630,9 +631,9 @@ fn theorem_first_order_rules_build_checked_theorems() {
         implies(prop.clone(), prop.clone()),
     )
     .expect("identity implication should check");
+    let premise = Theorem::refl(Computation::Quote(Symbol(1))).expect("closed refl should check");
     let conclusion =
-        Theorem::implies_elim(&implication, &Theorem::refl(Computation::Quote(Symbol(1))))
-            .expect("modus ponens should apply");
+        Theorem::implies_elim(&implication, &premise).expect("modus ponens should apply");
     let universal = Theorem::from_proof(
         Proof::ForAllIntro {
             variable: Symbol(1),
@@ -649,6 +650,7 @@ fn theorem_first_order_rules_build_checked_theorems() {
         .expect("forall theorem should instantiate");
 
     assert_eq!(conclusion.prop(), &prop);
+    assert!(Theorem::forall_elim(&universal, Computation::Var(Symbol(2))).is_none());
     assert_eq!(
         instance.prop(),
         &equal(Computation::Quote(Symbol(2)), Computation::Quote(Symbol(2)))
