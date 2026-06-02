@@ -27,24 +27,49 @@ pub enum SourceComputationError {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SourceLoadError {
+    ModuleParseFailed(ParseError),
+    Computation(SourceComputationError),
+    Theorem(SourceTheoremError),
+}
+
 pub fn theory() -> Theory {
+    try_theory().expect("prelude source should define a valid theory")
+}
+
+pub fn try_theory() -> Result<Theory, SourceLoadError> {
     let mut theory = Theory::new();
-    assert!(define_in_theory(&mut theory));
-    theory
+    try_define_in_theory(&mut theory)?;
+    Ok(theory)
 }
 
 pub fn computation_theory() -> Theory {
+    try_computation_theory().expect("prelude source should define valid computations")
+}
+
+pub fn try_computation_theory() -> Result<Theory, SourceComputationError> {
     let mut theory = Theory::new();
-    assert!(define_computations_in_theory(&mut theory));
-    theory
+    try_define_computations_in_theory(&mut theory)?;
+    Ok(theory)
 }
 
 pub fn define_in_theory(theory: &mut Theory) -> bool {
-    let Ok(module) = list::module() else {
-        return false;
-    };
+    try_define_in_theory(theory).is_ok()
+}
 
-    define_module_computations(theory, &module) && define_module_theorems(theory, &module)
+pub fn try_define_in_theory(theory: &mut Theory) -> Result<(), SourceLoadError> {
+    let module = list::module().map_err(SourceLoadError::ModuleParseFailed)?;
+
+    define_module_in_theory_result(theory, &module)
+}
+
+fn define_module_in_theory_result(
+    theory: &mut Theory,
+    module: &source::ParsedModule,
+) -> Result<(), SourceLoadError> {
+    define_module_computations_result(theory, &module).map_err(SourceLoadError::Computation)?;
+    define_module_theorems_result(theory, &module).map_err(SourceLoadError::Theorem)
 }
 
 pub fn define_computations_in_theory(theory: &mut Theory) -> bool {
@@ -57,10 +82,6 @@ pub fn try_define_computations_in_theory(
     let module = list::module().map_err(SourceComputationError::ModuleParseFailed)?;
 
     define_module_computations_result(theory, &module)
-}
-
-fn define_module_computations(theory: &mut Theory, module: &source::ParsedModule) -> bool {
-    define_module_computations_result(theory, module).is_ok()
 }
 
 fn define_module_computations_result(
@@ -87,10 +108,6 @@ pub fn try_define_theorems_in_theory(theory: &mut Theory) -> Result<(), SourceTh
     let module = list::module().map_err(SourceTheoremError::ModuleParseFailed)?;
 
     define_module_theorems_result(theory, &module)
-}
-
-fn define_module_theorems(theory: &mut Theory, module: &source::ParsedModule) -> bool {
-    define_module_theorems_result(theory, module).is_ok()
 }
 
 fn define_module_theorems_result(
@@ -144,9 +161,14 @@ mod tests {
     #[test]
     fn theory_defines_reverse() {
         let theory = theory();
+        let try_theory = try_theory().expect("prelude should load");
 
         assert_eq!(
             theory.computation(REVERSE_ACC),
+            Some(&list::reverse_acc_definition())
+        );
+        assert_eq!(
+            try_theory.computation(REVERSE_ACC),
             Some(&list::reverse_acc_definition())
         );
         assert_eq!(
@@ -174,8 +196,10 @@ mod tests {
     #[test]
     fn computation_theory_does_not_define_theorems() {
         let theory = computation_theory();
+        let try_theory = try_computation_theory().expect("prelude computations should load");
 
         assert!(theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST).is_none());
+        assert!(try_theory.theorem(REVERSE_ACC_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(REVERSE_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(REVERSE_NIL_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(APPEND_NIL_COMPUTES_TO_LIST).is_none());
@@ -198,6 +222,23 @@ mod tests {
     }
 
     #[test]
+    fn full_source_load_diagnostics_report_computation_failures() {
+        let mut theory = Theory::new();
+
+        assert!(theory.define_computation(REVERSE_ACC, &Computation::Nil));
+        assert!(!define_in_theory(&mut theory));
+        assert_eq!(
+            try_define_in_theory(&mut theory),
+            Err(SourceLoadError::Computation(
+                SourceComputationError::ComputationRejected {
+                    computation: REVERSE_ACC,
+                    error: ComputationDefinitionError::ComputationNameAlreadyDefined(REVERSE_ACC),
+                }
+            ))
+        );
+    }
+
+    #[test]
     fn theorem_definitions_require_computations() {
         let mut theory = Theory::new();
 
@@ -214,6 +255,38 @@ mod tests {
         assert!(theory.theorem(REVERSE_NIL_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(APPEND_NIL_COMPUTES_TO_LIST).is_none());
         assert!(theory.theorem(APPEND_COMPUTES_TO_LIST).is_none());
+    }
+
+    #[test]
+    fn full_source_load_diagnostics_report_theorem_failures() {
+        let module = source::parse_module(
+            "
+            (theorem bad
+              (equal nil (quote unit))
+              (proof (eval-to nil nil)))
+            ",
+            &[],
+            &[source::NameBinding {
+                spelling: "bad",
+                name: Name(99),
+            }],
+            &[source::SymbolBinding {
+                spelling: "unit",
+                symbol: list::UNIT,
+            }],
+        )
+        .expect("synthetic module should parse");
+        let mut theory = Theory::new();
+
+        assert_eq!(
+            define_module_in_theory_result(&mut theory, &module),
+            Err(SourceLoadError::Theorem(
+                SourceTheoremError::TheoremRejected {
+                    theorem: Name(99),
+                    error: TheoremError::InvalidProof,
+                }
+            ))
+        );
     }
 
     fn proof_error_contains_evaluation_failure(error: &ProofElaborationError) -> bool {
