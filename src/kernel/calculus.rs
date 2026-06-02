@@ -127,16 +127,16 @@ impl Value {
         Self::Lambda(lambda)
     }
 
-    pub fn nil() -> Self {
-        Self::List(ListValue::Nil)
+    pub fn list(list: ListValue) -> Self {
+        Self::List(list)
     }
 
-    pub fn cons(head: Self, tail: Self) -> Self {
-        let Self::List(tail) = tail else {
-            panic!("list value tails must be lists");
-        };
+    pub fn nil() -> Self {
+        Self::list(ListValue::Nil)
+    }
 
-        Self::List(ListValue::cons(head, tail))
+    pub fn cons(head: Self, tail: ListValue) -> Self {
+        Self::list(ListValue::cons(head, tail))
     }
 
     pub fn quote(symbol: Symbol) -> Self {
@@ -212,6 +212,18 @@ impl Outcome {
 impl From<Value> for Computation {
     fn from(value: Value) -> Self {
         value.into_computation()
+    }
+}
+
+impl From<ListValue> for Computation {
+    fn from(list: ListValue) -> Self {
+        list.into_computation()
+    }
+}
+
+impl From<ListValue> for Value {
+    fn from(list: ListValue) -> Self {
+        Self::List(list)
     }
 }
 

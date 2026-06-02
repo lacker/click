@@ -18,6 +18,8 @@ pub const APPEND: Name = Name(7);
 pub const APPEND_NIL_COMPUTES_TO_LIST: Name = Name(8);
 pub const APPEND_COMPUTES_TO_LIST: Name = Name(9);
 
+const MODULES: &[source::ModuleSpec] = &[list::MODULE];
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceComputationError {
     ModuleParseFailed(ParseError),
@@ -59,17 +61,36 @@ pub fn define_in_theory(theory: &mut Theory) -> bool {
 }
 
 pub fn try_define_in_theory(theory: &mut Theory) -> Result<(), SourceLoadError> {
-    let module = list::module().map_err(SourceLoadError::ModuleParseFailed)?;
+    let modules = parse_modules().map_err(SourceLoadError::ModuleParseFailed)?;
 
-    define_module_in_theory_result(theory, &module)
+    define_modules_in_theory_result(theory, &modules)
 }
 
+fn parse_modules() -> Result<Vec<source::ParsedModule>, ParseError> {
+    MODULES.iter().map(source::ModuleSpec::parse).collect()
+}
+
+fn define_modules_in_theory_result(
+    theory: &mut Theory,
+    modules: &[source::ParsedModule],
+) -> Result<(), SourceLoadError> {
+    for module in modules {
+        define_module_computations_result(theory, module).map_err(SourceLoadError::Computation)?;
+    }
+
+    for module in modules {
+        define_module_theorems_result(theory, module).map_err(SourceLoadError::Theorem)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
 fn define_module_in_theory_result(
     theory: &mut Theory,
     module: &source::ParsedModule,
 ) -> Result<(), SourceLoadError> {
-    define_module_computations_result(theory, &module).map_err(SourceLoadError::Computation)?;
-    define_module_theorems_result(theory, &module).map_err(SourceLoadError::Theorem)
+    define_modules_in_theory_result(theory, std::slice::from_ref(module))
 }
 
 pub fn define_computations_in_theory(theory: &mut Theory) -> bool {
@@ -79,9 +100,13 @@ pub fn define_computations_in_theory(theory: &mut Theory) -> bool {
 pub fn try_define_computations_in_theory(
     theory: &mut Theory,
 ) -> Result<(), SourceComputationError> {
-    let module = list::module().map_err(SourceComputationError::ModuleParseFailed)?;
+    let modules = parse_modules().map_err(SourceComputationError::ModuleParseFailed)?;
 
-    define_module_computations_result(theory, &module)
+    for module in &modules {
+        define_module_computations_result(theory, module)?;
+    }
+
+    Ok(())
 }
 
 fn define_module_computations_result(
@@ -105,9 +130,13 @@ pub fn define_theorems_in_theory(theory: &mut Theory) -> bool {
 }
 
 pub fn try_define_theorems_in_theory(theory: &mut Theory) -> Result<(), SourceTheoremError> {
-    let module = list::module().map_err(SourceTheoremError::ModuleParseFailed)?;
+    let modules = parse_modules().map_err(SourceTheoremError::ModuleParseFailed)?;
 
-    define_module_theorems_result(theory, &module)
+    for module in &modules {
+        define_module_theorems_result(theory, module)?;
+    }
+
+    Ok(())
 }
 
 fn define_module_theorems_result(

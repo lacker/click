@@ -19,6 +19,25 @@ pub(super) struct SymbolBinding {
     pub symbol: Symbol,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct ModuleSpec {
+    pub source: &'static str,
+    pub computation_definitions: &'static [NameBinding],
+    pub theorem_definitions: &'static [NameBinding],
+    pub symbols: &'static [SymbolBinding],
+}
+
+impl ModuleSpec {
+    pub(super) fn parse(&self) -> Result<ParsedModule, ParseError> {
+        parse_module(
+            self.source,
+            self.computation_definitions,
+            self.theorem_definitions,
+            self.symbols,
+        )
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct LocalSymbol {
     spelling: String,

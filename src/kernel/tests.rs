@@ -51,7 +51,7 @@ fn error(error: ErrorName) -> Computation {
 #[test]
 fn computations_classify_values_effects_and_outcomes() {
     let value_computation = cons(Computation::Quote(Symbol(1)), Computation::Nil);
-    let value = Value::cons(Value::quote(Symbol(1)), Value::nil());
+    let value = Value::cons(Value::quote(Symbol(1)), ListValue::nil());
     let error_computation = error(ErrorName(2));
     let pending_computation = apply(
         lambda(Symbol(1), Computation::Var(Symbol(1))),

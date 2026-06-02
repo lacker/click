@@ -9,7 +9,7 @@ use super::{
     APPEND, APPEND_COMPUTES_TO_LIST, APPEND_NIL_COMPUTES_TO_LIST, REVERSE, REVERSE_ACC,
     REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_COMPUTES_TO_LIST, REVERSE_NIL_COMPUTES_TO_LIST,
     SourceTheoremError,
-    source::{NameBinding, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
+    source::{ModuleSpec, ParseError, ParsedModule, ParsedTheorem, SymbolBinding},
 };
 
 pub use super::proof::EvaluationProofError;
@@ -32,90 +32,91 @@ const LOOP_ARGUMENT: Symbol = Symbol(1_007);
 const LEFT: Symbol = Symbol(1_008);
 const RIGHT: Symbol = Symbol(1_009);
 
-const COMPUTATION_DEFINITIONS: &[NameBinding] = &[
-    NameBinding {
-        spelling: "reverse_acc",
-        name: REVERSE_ACC,
-    },
-    NameBinding {
-        spelling: "reverse",
-        name: REVERSE,
-    },
-    NameBinding {
-        spelling: "append",
-        name: APPEND,
-    },
-];
-
-const THEOREM_DEFINITIONS: &[NameBinding] = &[
-    NameBinding {
-        spelling: "reverse_acc_computes_to_list",
-        name: REVERSE_ACC_COMPUTES_TO_LIST,
-    },
-    NameBinding {
-        spelling: "reverse_computes_to_list",
-        name: REVERSE_COMPUTES_TO_LIST,
-    },
-    NameBinding {
-        spelling: "reverse_nil_computes_to_list",
-        name: REVERSE_NIL_COMPUTES_TO_LIST,
-    },
-    NameBinding {
-        spelling: "append_nil_computes_to_list",
-        name: APPEND_NIL_COMPUTES_TO_LIST,
-    },
-    NameBinding {
-        spelling: "append_computes_to_list",
-        name: APPEND_COMPUTES_TO_LIST,
-    },
-];
-
-const COMPUTATION_SYMBOLS: &[SymbolBinding] = &[
-    SymbolBinding {
-        spelling: "unit",
-        symbol: UNIT,
-    },
-    SymbolBinding {
-        spelling: "list",
-        symbol: LIST,
-    },
-    SymbolBinding {
-        spelling: "cell",
-        symbol: CELL,
-    },
-    SymbolBinding {
-        spelling: "self",
-        symbol: SELF,
-    },
-    SymbolBinding {
-        spelling: "acc",
-        symbol: ACC,
-    },
-    SymbolBinding {
-        spelling: "fixed_point_function",
-        symbol: FIXED_POINT_FUNCTION,
-    },
-    SymbolBinding {
-        spelling: "fixed_point_self",
-        symbol: FIXED_POINT_SELF,
-    },
-    SymbolBinding {
-        spelling: "fixed_point_value",
-        symbol: FIXED_POINT_VALUE,
-    },
-    SymbolBinding {
-        spelling: "loop_argument",
-        symbol: LOOP_ARGUMENT,
-    },
-    SymbolBinding {
-        spelling: "left",
-        symbol: LEFT,
-    },
-    SymbolBinding {
-        spelling: "right",
-        symbol: RIGHT,
-    },
-];
+pub(super) const MODULE: ModuleSpec = ModuleSpec {
+    source: SOURCE,
+    computation_definitions: &[
+        super::source::NameBinding {
+            spelling: "reverse_acc",
+            name: REVERSE_ACC,
+        },
+        super::source::NameBinding {
+            spelling: "reverse",
+            name: REVERSE,
+        },
+        super::source::NameBinding {
+            spelling: "append",
+            name: APPEND,
+        },
+    ],
+    theorem_definitions: &[
+        super::source::NameBinding {
+            spelling: "reverse_acc_computes_to_list",
+            name: REVERSE_ACC_COMPUTES_TO_LIST,
+        },
+        super::source::NameBinding {
+            spelling: "reverse_computes_to_list",
+            name: REVERSE_COMPUTES_TO_LIST,
+        },
+        super::source::NameBinding {
+            spelling: "reverse_nil_computes_to_list",
+            name: REVERSE_NIL_COMPUTES_TO_LIST,
+        },
+        super::source::NameBinding {
+            spelling: "append_nil_computes_to_list",
+            name: APPEND_NIL_COMPUTES_TO_LIST,
+        },
+        super::source::NameBinding {
+            spelling: "append_computes_to_list",
+            name: APPEND_COMPUTES_TO_LIST,
+        },
+    ],
+    symbols: &[
+        SymbolBinding {
+            spelling: "unit",
+            symbol: UNIT,
+        },
+        SymbolBinding {
+            spelling: "list",
+            symbol: LIST,
+        },
+        SymbolBinding {
+            spelling: "cell",
+            symbol: CELL,
+        },
+        SymbolBinding {
+            spelling: "self",
+            symbol: SELF,
+        },
+        SymbolBinding {
+            spelling: "acc",
+            symbol: ACC,
+        },
+        SymbolBinding {
+            spelling: "fixed_point_function",
+            symbol: FIXED_POINT_FUNCTION,
+        },
+        SymbolBinding {
+            spelling: "fixed_point_self",
+            symbol: FIXED_POINT_SELF,
+        },
+        SymbolBinding {
+            spelling: "fixed_point_value",
+            symbol: FIXED_POINT_VALUE,
+        },
+        SymbolBinding {
+            spelling: "loop_argument",
+            symbol: LOOP_ARGUMENT,
+        },
+        SymbolBinding {
+            spelling: "left",
+            symbol: LEFT,
+        },
+        SymbolBinding {
+            spelling: "right",
+            symbol: RIGHT,
+        },
+    ],
+};
 
 pub fn quote(symbol: Symbol) -> Computation {
     Computation::Quote(symbol)
@@ -197,12 +198,7 @@ pub fn reverse_acc() -> Computation {
 }
 
 pub(super) fn module() -> Result<ParsedModule, ParseError> {
-    super::source::parse_module(
-        SOURCE,
-        COMPUTATION_DEFINITIONS,
-        THEOREM_DEFINITIONS,
-        COMPUTATION_SYMBOLS,
-    )
+    MODULE.parse()
 }
 
 pub fn reverse_acc_definition() -> Computation {

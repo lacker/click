@@ -51,10 +51,11 @@ Kernel variables are sorted. A sort is the range of a bound variable:
 structural types; they are kernel-level categories needed by primitive proof
 rules and substitution.
 
-Lists are proper by construction: `nil` and `cons` build list values, and a
-`cons` tail must itself be a list. The kernel uses list-sorted quantification
-and list induction to reason over list values, rather than a separate `IsList`
-proposition.
+List values are proper by construction: `nil` and `cons` build list values, and
+a finalized cons tail must itself be a list. Raw computations can still contain
+open or malformed cons-shaped expressions until evaluation and sort reasoning
+settle them. The kernel uses list-sorted quantification and list induction to
+reason over list values, rather than a separate `IsList` proposition.
 
 The core calculus can contain opaque names. The logistical layer gives those
 names meaning by binding them to computations or theorems. Human-facing spelling,
