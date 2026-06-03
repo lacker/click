@@ -77,9 +77,29 @@
      (lambda lists
        (list-case lists
          nil
-         cell
-         ((append (head cell))
-          (self (tail cell))))))))
+        cell
+        ((append (head cell))
+         (self (tail cell))))))))
+
+(def map
+  ((lambda fixed_point_function
+     ((lambda fixed_point_self
+        (fixed_point_function
+          (lambda fixed_point_value
+            ((fixed_point_self fixed_point_self) fixed_point_value))))
+      (lambda fixed_point_self
+        (fixed_point_function
+          (lambda fixed_point_value
+            ((fixed_point_self fixed_point_self) fixed_point_value))))))
+   (lambda self
+     (lambda function
+       (lambda list
+         (list-case list
+           nil
+           cell
+           (cons
+             (function (head cell))
+             ((self function) (tail cell)))))))))
 
 (def last
   ((lambda fixed_point_function
@@ -309,6 +329,84 @@
         (eval-same
           (append (cons head nil) right)
           (cons head right))))))
+
+(theorem map_nil
+  (forall function (is-value function)
+    (computes-to (map function nil) nil))
+  (proof
+    (forall-intro function (is-value function)
+      (eval-to (map function nil) nil))))
+
+(theorem map_cons
+  (forall function (is-value function)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (computes-to
+          (map function (cons head tail))
+          (cons (function head) (map function tail))))))
+  (proof
+    (forall-intro function (is-value function)
+      (forall-intro head (is-value head)
+        (forall-intro tail (is-list tail)
+          (eval-same
+            (map function (cons head tail))
+            (cons (function head) (map function tail))))))))
+
+(theorem map_computes_to_list
+  (forall function (is-value function)
+    (implies
+      (forall value (is-value value)
+        (exists mapped_value (is-value mapped_value)
+          (computes-to (function value) mapped_value)))
+      (forall list (is-list list)
+        (computes-to-list result (map function list)))))
+  (proof
+    (forall-intro function (is-value function)
+      (implies-intro maps_values
+        (forall value (is-value value)
+          (exists mapped_value (is-value mapped_value)
+            (computes-to (function value) mapped_value)))
+        (list-induction list
+          (computes-to-list result (map function list))
+          (exists-intro result (is-list result)
+            (computes-to (map function nil) result)
+            nil
+            (eval-to (map function nil) nil))
+          head
+          tail
+          induction_hypothesis
+          (exists-elim
+            (forall-elim
+              (assume maps_values)
+              head)
+            mapped_head
+            mapped_head_proof
+            (exists-elim
+              (assume induction_hypothesis)
+              mapped_tail
+              mapped_tail_proof
+              (exists-intro result (is-list result)
+                (computes-to (map function (cons head tail)) result)
+                (cons mapped_head mapped_tail)
+                (rewrite
+                  (assume mapped_tail_proof)
+                  (rewrite
+                    (assume mapped_head_proof)
+                    (forall-elim
+                      (forall-elim
+                        (forall-elim
+                          (known map_cons)
+                          function)
+                        head)
+                      tail)
+                    mapped_head_rewrite_target
+                    (computes-to
+                      (map function (cons head tail))
+                      (cons mapped_head_rewrite_target (map function tail))))
+                  mapped_tail_rewrite_target
+                  (computes-to
+                    (map function (cons head tail))
+                    (cons mapped_head mapped_tail_rewrite_target)))))))))))
 
 (theorem append_assoc
   (forall left (is-list left)

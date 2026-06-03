@@ -4,7 +4,7 @@ use crate::{
     Computation, Lambda, Outcome, Proof, Prop, RUNTIME_ERROR, Symbol, Theory, computes_to,
     computes_to_list,
     elab::{proof, source::ParsedTheorem},
-    errors_with, forall_where, is_list, is_value,
+    errors_with, exists_where, forall_where, implies, is_list, is_value,
 };
 
 pub use crate::elab::EvaluationProofError;
@@ -110,6 +110,14 @@ pub fn concat() -> Computation {
 
 pub fn concat_definition() -> Computation {
     definition("concat")
+}
+
+pub fn map() -> Computation {
+    computation_ref("map")
+}
+
+pub fn map_definition() -> Computation {
+    definition("map")
 }
 
 pub fn last() -> Computation {
@@ -293,6 +301,18 @@ pub fn append_assoc_source_theorem() -> Prop {
     theorem_prop("append_assoc")
 }
 
+pub fn map_nil_source_theorem() -> Prop {
+    theorem_prop("map_nil")
+}
+
+pub fn map_cons_source_theorem() -> Prop {
+    theorem_prop("map_cons")
+}
+
+pub fn map_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("map_computes_to_list")
+}
+
 fn theorem_prop(spelling: &str) -> Prop {
     theorem_definition(spelling).prop
 }
@@ -341,6 +361,10 @@ pub fn snoc_call(list: Computation, value: Computation) -> Computation {
 
 pub fn concat_call(lists: Computation) -> Computation {
     apply(concat(), lists)
+}
+
+pub fn map_call(function: Computation, list: Computation) -> Computation {
+    apply(apply(map(), function), list)
 }
 
 pub fn last_call(list: Computation) -> Computation {
@@ -761,6 +785,68 @@ pub fn append_assoc_theorem(left: Symbol, middle: Symbol, right: Symbol) -> Prop
     )
 }
 
+/// Mapping over `nil` returns `nil`.
+pub fn map_nil_theorem(function: Symbol) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        computes_to(map_call(var(function), nil()), nil()),
+    )
+}
+
+/// Mapping over a cons applies the function to the head and recurs on the tail.
+pub fn map_cons_theorem(function: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                computes_to(
+                    map_call(var(function), cons(var(head), var(tail))),
+                    cons(
+                        apply(var(function), var(head)),
+                        map_call(var(function), var(tail)),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If a function maps every value to a value, mapping it over a list returns a list.
+pub fn map_computes_to_list_theorem(
+    function: Symbol,
+    value: Symbol,
+    mapped_value: Symbol,
+    list: Symbol,
+    result: Symbol,
+) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        implies(
+            forall_where(
+                value,
+                is_value(var(value)),
+                exists_where(
+                    mapped_value,
+                    is_value(var(mapped_value)),
+                    computes_to(apply(var(function), var(value)), var(mapped_value)),
+                ),
+            ),
+            forall_where(
+                list,
+                is_list(var(list)),
+                computes_to_list(result, map_call(var(function), var(list))),
+            ),
+        ),
+    )
+}
+
 /// A function whose result is the denotational divergence marker.
 pub fn loop_forever() -> Computation {
     lambda(LOOP_ARGUMENT, Computation::Diverge)
@@ -825,6 +911,9 @@ mod tests {
     const TAIL: Symbol = Symbol(204);
     const RIGHT_LIST: Symbol = Symbol(205);
     const NEXT: Symbol = Symbol(206);
+    const FUNCTION: Symbol = Symbol(207);
+    const VALUE: Symbol = Symbol(208);
+    const MAPPED_VALUE: Symbol = Symbol(209);
 
     fn prove_evaluation(computation: Computation, expected: impl Into<Outcome>) -> Proof {
         proof_by_evaluation(computation, expected, 512).expect("example should evaluate")
@@ -1200,6 +1289,92 @@ mod tests {
     #[test]
     fn concat_nil_source_theorem_has_expected_shape() {
         assert_eq!(concat_nil_source_theorem(), concat_nil_theorem());
+    }
+
+    #[test]
+    fn map_theorems_have_expected_shape() {
+        assert_eq!(
+            map_nil_theorem(FUNCTION),
+            forall_where(
+                FUNCTION,
+                is_value(var(FUNCTION)),
+                computes_to(map_call(var(FUNCTION), nil()), nil()),
+            )
+        );
+        assert_eq!(
+            map_cons_theorem(FUNCTION, HEAD, TAIL),
+            forall_where(
+                FUNCTION,
+                is_value(var(FUNCTION)),
+                forall_where(
+                    HEAD,
+                    is_value(var(HEAD)),
+                    forall_where(
+                        TAIL,
+                        is_list(var(TAIL)),
+                        computes_to(
+                            map_call(var(FUNCTION), cons(var(HEAD), var(TAIL))),
+                            cons(
+                                apply(var(FUNCTION), var(HEAD)),
+                                map_call(var(FUNCTION), var(TAIL)),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        );
+        assert_eq!(
+            map_computes_to_list_theorem(FUNCTION, VALUE, MAPPED_VALUE, X, RESULT),
+            forall_where(
+                FUNCTION,
+                is_value(var(FUNCTION)),
+                implies(
+                    forall_where(
+                        VALUE,
+                        is_value(var(VALUE)),
+                        exists_where(
+                            MAPPED_VALUE,
+                            is_value(var(MAPPED_VALUE)),
+                            computes_to(apply(var(FUNCTION), var(VALUE)), var(MAPPED_VALUE),),
+                        ),
+                    ),
+                    forall_where(
+                        X,
+                        is_list(var(X)),
+                        computes_to_list(RESULT, map_call(var(FUNCTION), var(X))),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn map_source_theorems_have_expected_shape() {
+        let nil_function = theorem_symbol("map_nil", "function");
+        let cons_function = theorem_symbol("map_cons", "function");
+        let cons_head = theorem_symbol("map_cons", "head");
+        let cons_tail = theorem_symbol("map_cons", "tail");
+        let computes_function = theorem_symbol("map_computes_to_list", "function");
+        let computes_value = theorem_symbol("map_computes_to_list", "value");
+        let computes_mapped_value = theorem_symbol("map_computes_to_list", "mapped_value");
+        let computes_list = theorem_symbol("map_computes_to_list", "list");
+        let computes_result = theorem_symbol("map_computes_to_list", "result");
+
+        assert_eq!(map_nil_source_theorem(), map_nil_theorem(nil_function));
+        assert_eq!(
+            map_cons_source_theorem(),
+            map_cons_theorem(cons_function, cons_head, cons_tail)
+        );
+        assert_eq!(
+            map_computes_to_list_source_theorem(),
+            map_computes_to_list_theorem(
+                computes_function,
+                computes_value,
+                computes_mapped_value,
+                computes_list,
+                computes_result,
+            )
+        );
     }
 
     #[test]
@@ -1650,6 +1825,33 @@ mod tests {
         assert_evaluates(
             concat_call(lists),
             value(triple(quote(A), quote(B), quote(NOT_A_LIST))),
+        );
+    }
+
+    #[test]
+    fn map_nil_returns_nil() {
+        let identity = lambda(X, var(X));
+
+        assert_evaluates(map_call(identity, nil()), Value::nil());
+    }
+
+    #[test]
+    fn map_identity_returns_same_list() {
+        let identity = lambda(X, var(X));
+
+        assert_evaluates(
+            map_call(identity, triple(quote(A), quote(B), quote(NOT_A_LIST))),
+            value(triple(quote(A), quote(B), quote(NOT_A_LIST))),
+        );
+    }
+
+    #[test]
+    fn map_constant_returns_constant_list() {
+        let constant_unit = lambda(X, unit());
+
+        assert_evaluates(
+            map_call(constant_unit, pair(quote(A), quote(B))),
+            value(pair(unit(), unit())),
         );
     }
 

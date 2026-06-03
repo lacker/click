@@ -34,18 +34,17 @@ These need a natural-number representation and basic arithmetic theorems.
 These need a clear convention for applying function values and propagating
 errors/divergence.
 
-15. `map` - apply a function to each element.
-16. `fold-left` - strict accumulator fold from the left.
-17. `fold-right` - fold from the right.
-18. `concat-map` - map each element to a list, then concatenate.
-19. `zip-with` - combine two lists elementwise with a function.
+15. `fold-left` - strict accumulator fold from the left.
+16. `fold-right` - fold from the right.
+17. `concat-map` - map each element to a list, then concatenate.
+18. `zip-with` - combine two lists elementwise with a function.
 
 ## Pair/List Shape Utilities
 
 These use Lisp-style pairs encoded as two-element lists or cons cells. We should
 pick the representation before adding them.
 
-20. `zip` - combine two lists into a list of pairs.
-21. `unzip` - split a list of pairs into a pair of lists.
-22. `intersperse` - place a separator between list elements.
-23. `intercalate` - concatenate a list of lists with a separator list.
+19. `zip` - combine two lists into a list of pairs.
+20. `unzip` - split a list of pairs into a pair of lists.
+21. `intersperse` - place a separator between list elements.
+22. `intercalate` - concatenate a list of lists with a separator list.
