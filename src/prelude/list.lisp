@@ -1756,85 +1756,73 @@
       (computes-to
         (reverse_acc list acc)
         (append (reverse list) acc))))
-  (proof
+  (by
     (list-induction list
-      (forall acc (is-list acc)
-        (computes-to
-          (reverse_acc list acc)
-          (append (reverse list) acc)))
-      (forall-intro acc (is-list acc)
-        (eval-same
-          (reverse_acc nil acc)
-          (append (reverse nil) acc)))
+      (by
+        (intro acc)
+        (eval))
       head
       tail
       induction_hypothesis
-      (forall-intro acc (is-list acc)
+      (by
+        (intro acc)
         (exists-elim
-          (forall-elim
-            (known reverse_computes_to_list)
-            tail)
+          (reverse_computes_to_list tail)
           tail_reversed
-          tail_reversed_proof
-          (trans
-            (trans
-              (eval-same
-                (reverse_acc (cons head tail) acc)
-                (reverse_acc tail (cons head acc)))
-              (rewrite
-                (assume tail_reversed_proof)
-                (forall-elim
-                  (assume induction_hypothesis)
-                  (cons head acc))
-                rewrite_target
-                (computes-to
-                  (reverse_acc tail (cons head acc))
-                  (append rewrite_target (cons head acc)))))
-            (trans
-              (symm
-                (rewrite
-                  (forall-elim
-                    (forall-elim
-                      (known append_singleton)
-                      head)
-                    acc)
-                  (forall-elim
-                    (forall-elim
-                      (forall-elim
-                        (known append_assoc)
-                        tail_reversed)
-                      (cons head nil))
-                    acc)
-                  rewrite_target
-                  (computes-to
-                    (append (append tail_reversed (cons head nil)) acc)
-                    (append tail_reversed rewrite_target))))
-              (rewrite
+          tail_reversed_proof)
+        (have reverse_cons_step
+          (computes-to
+            (reverse (cons head tail))
+            (append tail_reversed (cons head nil)))
+          (by
+            (calc
+              (reverse (cons head tail))
+              (==
+                (reverse_acc tail (cons head nil))
+                (by
+                  (eval)))
+              (==
+                (append (reverse tail) (cons head nil))
+                (by
+                  (exact induction_hypothesis (cons head nil))))
+              (==
+                (append tail_reversed (cons head nil))
+                (by
+                  (rewrite tail_reversed_proof)
+                  (eval))))))
+        (calc
+          (reverse_acc (cons head tail) acc)
+          (==
+            (reverse_acc tail (cons head acc))
+            (by
+              (eval)))
+          (==
+            (append (reverse tail) (cons head acc))
+            (by
+              (exact induction_hypothesis (cons head acc))))
+          (==
+            (append tail_reversed (cons head acc))
+            (by
+              (rewrite tail_reversed_proof)
+              (eval)))
+          (==
+            (append
+              tail_reversed
+              (append (cons head nil) acc))
+            (by
+              (rewrite (symm (append_singleton head acc)))
+              (eval)))
+          (==
+            (append (append tail_reversed (cons head nil)) acc)
+            (by
+              (exact
                 (symm
-                  (trans
-                    (trans
-                      (eval-to
-                        (reverse (cons head tail))
-                        (reverse_acc (cons head tail) nil))
-                      (eval-same
-                        (reverse_acc (cons head tail) nil)
-                        (reverse_acc tail (cons head nil))))
-                    (rewrite
-                      (assume tail_reversed_proof)
-                      (forall-elim
-                        (assume induction_hypothesis)
-                        (cons head nil))
-                      rewrite_target
-                      (computes-to
-                        (reverse_acc tail (cons head nil))
-                        (append rewrite_target (cons head nil))))))
-                (eval-to
-                  (append (append tail_reversed (cons head nil)) acc)
-                  (append (append tail_reversed (cons head nil)) acc))
-                rewrite_target
-                (computes-to
-                  (append (append tail_reversed (cons head nil)) acc)
-                  (append rewrite_target acc))))))))))
+                  (append_assoc tail_reversed (cons head nil) acc)))))
+          (==
+            (append (reverse (cons head tail)) acc)
+            (by
+              (rewrite (symm reverse_cons_step))
+              (eval))))))))
 
 (theorem reverse_cons
   (forall head (is-value head)
