@@ -1667,129 +1667,88 @@
         (computes-to
           (append (append left middle) right)
           (append left (append middle right))))))
-  (proof
+  (by
     (list-induction left
-      (forall middle (is-list middle)
-        (forall right (is-list right)
-          (computes-to
-            (append (append left middle) right)
-            (append left (append middle right)))))
-      (forall-intro middle (is-list middle)
-        (forall-intro right (is-list right)
-          (trans
-            (symm
-              (rewrite
-                (forall-elim
-                  (known append_nil_returns_right)
-                  middle)
-                (eval-to
-                  (append (append nil middle) right)
-                  (append (append nil middle) right))
-                rewrite_target
-                (computes-to
-                  (append rewrite_target right)
-                  (append (append nil middle) right))))
-            (symm
-              (exists-elim
-                (forall-elim
-                  (forall-elim
-                    (known append_computes_to_list)
-                    middle)
-                  right)
-                middle_right
-                middle_right_proof
-                (rewrite
-                  (symm
-                    (assume middle_right_proof))
-                  (forall-elim
-                    (known append_nil_returns_right)
-                    middle_right)
-                  rewrite_target
-                  (computes-to
-                    (append nil rewrite_target)
-                    rewrite_target)))))))
+      (by
+        (intro middle)
+        (intro right)
+        (exists-elim
+          (append_computes_to_list middle right)
+          middle_right
+          middle_right_proof)
+        (calc
+          (append (append nil middle) right)
+          (==
+            (append middle right)
+            (by
+              (eval)))
+          (==
+            middle_right
+            (by
+              (exact middle_right_proof)))
+          (==
+            (append nil middle_right)
+            (by
+              (exact (symm (append_nil_returns_right middle_right)))))
+          (==
+            (append nil (append middle right))
+            (by
+              (rewrite (symm middle_right_proof))
+              (eval)))))
       head
       tail
       induction_hypothesis
-      (forall-intro middle (is-list middle)
-        (forall-intro right (is-list right)
-          (exists-elim
-            (forall-elim
-              (forall-elim
-                (known append_computes_to_list)
-                tail)
-              middle)
-            tail_middle
-            tail_middle_proof
-            (exists-elim
-              (forall-elim
-                (forall-elim
-                  (known append_computes_to_list)
-                  middle)
-                right)
-              middle_right
-              middle_right_proof
-              (trans
-                (symm
-                  (rewrite
-                    (forall-elim
-                      (forall-elim
-                        (forall-elim
-                          (known append_cons)
-                          head)
-                        tail)
-                      middle)
-                    (eval-to
-                      (append (append (cons head tail) middle) right)
-                      (append (append (cons head tail) middle) right))
-                    rewrite_target
-                    (computes-to
-                      (append rewrite_target right)
-                      (append (append (cons head tail) middle) right))))
-                (trans
-                  (rewrite
-                    (symm
-                      (assume tail_middle_proof))
-                    (forall-elim
-                      (forall-elim
-                        (forall-elim
-                          (known append_cons)
-                          head)
-                        tail_middle)
-                      right)
-                    rewrite_target
-                    (computes-to
-                      (append (cons head rewrite_target) right)
-                      (cons head (append rewrite_target right))))
-                  (trans
-                    (rewrite
-                      (forall-elim
-                        (forall-elim
-                          (assume induction_hypothesis)
-                          middle)
-                        right)
-                      (eval-to
-                        (cons head (append (append tail middle) right))
-                        (cons head (append (append tail middle) right)))
-                      rewrite_target
-                      (computes-to
-                        (cons head (append (append tail middle) right))
-                        (cons head rewrite_target)))
-                    (symm
-                      (rewrite
-                        (symm
-                          (assume middle_right_proof))
-                        (forall-elim
-                          (forall-elim
-                            (forall-elim
-                              (known append_cons)
-                              head)
-                            tail)
-                          middle_right)
-                        rewrite_target
-                        (computes-to
-                          (append (cons head tail) rewrite_target)
-                          (cons head (append tail rewrite_target)))))))))))))))
+      (by
+        (intro middle)
+        (intro right)
+        (exists-elim
+          (append_computes_to_list tail middle)
+          tail_middle
+          tail_middle_proof)
+        (exists-elim
+          (append_computes_to_list middle right)
+          middle_right
+          middle_right_proof)
+        (calc
+          (append (append (cons head tail) middle) right)
+          (==
+            (append (cons head (append tail middle)) right)
+            (by
+              (rewrite (append_cons head tail middle))
+              (eval)))
+          (==
+            (append (cons head tail_middle) right)
+            (by
+              (rewrite tail_middle_proof)
+              (eval)))
+          (==
+            (cons head (append tail_middle right))
+            (by
+              (exact append_cons head tail_middle right)))
+          (==
+            (cons head (append (append tail middle) right))
+            (by
+              (rewrite (symm tail_middle_proof))
+              (eval)))
+          (==
+            (cons head (append tail (append middle right)))
+            (by
+              (rewrite (induction_hypothesis middle right))
+              (eval)))
+          (==
+            (cons head (append tail middle_right))
+            (by
+              (rewrite middle_right_proof)
+              (eval)))
+          (==
+            (append (cons head tail) middle_right)
+            (by
+              (exact (symm (append_cons head tail middle_right)))))
+          (==
+            (append (cons head tail) (append middle right))
+            (by
+              (rewrite (symm middle_right_proof))
+              (eval))))))))
 
 (theorem reverse_acc_append
   (forall list (is-list list)

@@ -1489,7 +1489,9 @@ impl<'a> SourceParser<'a> {
 
     fn proof_symm(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
         expect_len("symm", items, 2)?;
-        Ok(ProofExpr::Symm(Box::new(self.proof_expr(&items[1])?)))
+        Ok(ProofExpr::Symm(Box::new(
+            self.proof_expr_or_ref(&items[1])?,
+        )))
     }
 
     fn proof_trans(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
