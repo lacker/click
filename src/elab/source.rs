@@ -311,6 +311,13 @@ pub(crate) enum TacticExpr {
         witness: Symbol,
         assumption: Symbol,
     },
+    OrElim {
+        disjunction: Box<ProofExpr>,
+        left_assumption: Symbol,
+        left: TacticScript,
+        right_assumption: Symbol,
+        right: TacticScript,
+    },
     ForAllElim {
         forall: Box<ProofExpr>,
         arguments: Vec<Computation>,
@@ -1174,6 +1181,7 @@ impl<'a> SourceParser<'a> {
             "split" | "constructor" => self.tactic_split(form, items),
             "exists" => self.tactic_exists(items),
             "exists-elim" => self.tactic_exists_elim(items),
+            "or-elim" => self.tactic_or_elim(items),
             "forall-elim" => self.tactic_forall_elim(items),
             "left" => self.tactic_left(items),
             "right" => self.tactic_right(items),
@@ -1273,6 +1281,17 @@ impl<'a> SourceParser<'a> {
             existential: Box::new(self.proof_expr_or_ref(&items[1])?),
             witness: self.proof_symbol(atom(&items[2])?)?,
             assumption: self.proof_symbol(atom(&items[3])?)?,
+        })
+    }
+
+    fn tactic_or_elim(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        expect_len("or-elim", items, 6)?;
+        Ok(TacticExpr::OrElim {
+            disjunction: Box::new(self.proof_expr_or_ref(&items[1])?),
+            left_assumption: self.proof_symbol(atom(&items[2])?)?,
+            left: self.nested_tactic_script(&items[3])?,
+            right_assumption: self.proof_symbol(atom(&items[4])?)?,
+            right: self.nested_tactic_script(&items[5])?,
         })
     }
 
@@ -2161,6 +2180,14 @@ mod tests {
                 spelling: "elim_example",
                 name: Name(3),
             },
+            NameBinding {
+                spelling: "or_source",
+                name: Name(4),
+            },
+            NameBinding {
+                spelling: "or_example",
+                name: Name(5),
+            },
         ];
 
         let module = parse_module(
@@ -2183,6 +2210,25 @@ mod tests {
               (by
                 (exists-elim list_exists witness witness_proof)
                 (forall-elim value_self nil)))
+            (theorem or_source
+              (or
+                (computes-to nil nil)
+                (computes-to diverge diverge))
+              (by
+                (left
+                  (by
+                    (eval)))))
+            (theorem or_example
+              (computes-to nil nil)
+              (by
+                (or-elim
+                  or_source
+                  left_case
+                  (by
+                    (eval))
+                  right_case
+                  (by
+                    (eval)))))
             ",
             &[],
             &theorems,
@@ -2208,6 +2254,19 @@ mod tests {
             ] if **existential == ProofExpr::Known(Name(1))
                 && **forall == ProofExpr::Known(Name(2))
                 && arguments.as_slice() == [Computation::Nil]
+        ));
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[4].proof else {
+            panic!("expected a tactic proof script");
+        };
+        assert!(matches!(
+            tactics.as_slice(),
+            [TacticExpr::OrElim {
+                disjunction,
+                left_assumption: Symbol(2_004),
+                right_assumption: Symbol(2_005),
+                ..
+            }] if **disjunction == ProofExpr::Known(Name(4))
         ));
     }
 

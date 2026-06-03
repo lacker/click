@@ -474,53 +474,41 @@
           (computes-to (function value) mapped_value)))
       (forall list (is-list list)
         (computes-to-list result (map function list)))))
-  (proof
-    (forall-intro function (is-value function)
-      (implies-intro maps_values
-        (forall value (is-value value)
-          (exists mapped_value (is-value mapped_value)
-            (computes-to (function value) mapped_value)))
-        (list-induction list
-          (computes-to-list result (map function list))
-          (exists-intro result (is-list result)
-            (computes-to (map function nil) result)
-            nil
-            (eval-to (map function nil) nil))
-          head
-          tail
-          induction_hypothesis
-          (exists-elim
-            (forall-elim
-              (assume maps_values)
-              head)
-            mapped_head
-            mapped_head_proof
-            (exists-elim
-              (assume induction_hypothesis)
-              mapped_tail
-              mapped_tail_proof
-              (exists-intro result (is-list result)
-                (computes-to (map function (cons head tail)) result)
+  (by
+    (intro function)
+    (intro maps_values)
+    (list-induction list
+      (by
+        (exists nil
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (exists-elim
+          (maps_values head)
+          mapped_head
+          mapped_head_proof)
+        (exists-elim induction_hypothesis mapped_tail mapped_tail_proof)
+        (exists (cons mapped_head mapped_tail)
+          (by
+            (calc
+              (map function (cons head tail))
+              (==
+                (cons (function head) (map function tail))
+                (by
+                  (exact map_cons function head tail)))
+              (==
+                (cons mapped_head (map function tail))
+                (by
+                  (rewrite mapped_head_proof)
+                  (eval)))
+              (==
                 (cons mapped_head mapped_tail)
-                (rewrite
-                  (assume mapped_tail_proof)
-                  (rewrite
-                    (assume mapped_head_proof)
-                    (forall-elim
-                      (forall-elim
-                        (forall-elim
-                          (known map_cons)
-                          function)
-                        head)
-                      tail)
-                    mapped_head_rewrite_target
-                    (computes-to
-                      (map function (cons head tail))
-                      (cons mapped_head_rewrite_target (map function tail))))
-                  mapped_tail_rewrite_target
-                  (computes-to
-                    (map function (cons head tail))
-                    (cons mapped_head mapped_tail_rewrite_target)))))))))))
+                (by
+                  (rewrite mapped_tail_proof)
+                  (eval))))))))))
 
 (theorem concat_map_nil
   (forall function (is-value function)
@@ -538,47 +526,11 @@
           (append
             (function head)
             (concat-map function tail))))))
-  (proof
-    (forall-intro function (is-value function)
-      (forall-intro head (is-value head)
-        (forall-intro tail (is-list tail)
-          (trans
-            (eval-to
-              (concat-map function (cons head tail))
-              (append
-                (function (head (cons head tail)))
-                (concat-map function (tail (cons head tail)))))
-            (rewrite
-              (eval-to
-                (tail (cons head tail))
-                tail)
-              (rewrite
-                (eval-to
-                  (head (cons head tail))
-                  head)
-                (eval-to
-                  (append
-                    (function (head (cons head tail)))
-                    (concat-map function (tail (cons head tail))))
-                  (append
-                    (function (head (cons head tail)))
-                    (concat-map function (tail (cons head tail)))))
-                head_rewrite_target
-                (computes-to
-                  (append
-                    (function (head (cons head tail)))
-                    (concat-map function (tail (cons head tail))))
-                  (append
-                    (function head_rewrite_target)
-                    (concat-map function (tail (cons head tail))))))
-              tail_rewrite_target
-              (computes-to
-                (append
-                  (function (head (cons head tail)))
-                  (concat-map function (tail (cons head tail))))
-                (append
-                  (function head)
-                  (concat-map function tail_rewrite_target))))))))))
+  (by
+    (intro function)
+    (intro head)
+    (intro tail)
+    (eval)))
 
 (theorem concat_map_computes_to_list
   (forall function (is-value function)
@@ -587,66 +539,49 @@
         (computes-to-list mapped_list (function value)))
       (forall list (is-list list)
         (computes-to-list result (concat-map function list)))))
-  (proof
-    (forall-intro function (is-value function)
-      (implies-intro maps_values_to_lists
-        (forall value (is-value value)
-          (computes-to-list mapped_list (function value)))
-        (list-induction list
-          (computes-to-list result (concat-map function list))
-          (exists-intro result (is-list result)
-            (computes-to (concat-map function nil) result)
-            nil
-            (eval-to (concat-map function nil) nil))
-          head
-          tail
-          induction_hypothesis
-          (exists-elim
-            (forall-elim
-              (assume maps_values_to_lists)
-              head)
-            mapped_head
-            mapped_head_proof
-            (exists-elim
-              (assume induction_hypothesis)
-              mapped_tail
-              mapped_tail_proof
-              (exists-elim
-                (forall-elim
-                  (forall-elim
-                    (known append_computes_to_list)
-                    mapped_head)
-                  mapped_tail)
+  (by
+    (intro function)
+    (intro maps_values_to_lists)
+    (list-induction list
+      (by
+        (exists nil
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (exists-elim
+          (maps_values_to_lists head)
+          mapped_head
+          mapped_head_proof)
+        (exists-elim induction_hypothesis mapped_tail mapped_tail_proof)
+        (exists-elim
+          (append_computes_to_list mapped_head mapped_tail)
+          appended
+          appended_proof)
+        (exists appended
+          (by
+            (calc
+              (concat-map function (cons head tail))
+              (==
+                (append (function head) (concat-map function tail))
+                (by
+                  (exact concat_map_cons function head tail)))
+              (==
+                (append mapped_head (concat-map function tail))
+                (by
+                  (rewrite mapped_head_proof)
+                  (eval)))
+              (==
+                (append mapped_head mapped_tail)
+                (by
+                  (rewrite mapped_tail_proof)
+                  (eval)))
+              (==
                 appended
-                appended_proof
-                (exists-intro result (is-list result)
-                  (computes-to (concat-map function (cons head tail)) result)
-                  appended
-                  (trans
-                    (rewrite
-                      (assume mapped_tail_proof)
-                      (rewrite
-                        (assume mapped_head_proof)
-                        (forall-elim
-                          (forall-elim
-                            (forall-elim
-                              (known concat_map_cons)
-                              function)
-                            head)
-                          tail)
-                        mapped_head_rewrite_target
-                        (computes-to
-                          (concat-map function (cons head tail))
-                          (append
-                            mapped_head_rewrite_target
-                            (concat-map function tail))))
-                      mapped_tail_rewrite_target
-                      (computes-to
-                        (concat-map function (cons head tail))
-                        (append
-                          mapped_head
-                          mapped_tail_rewrite_target)))
-                    (assume appended_proof)))))))))))
+                (by
+                  (exact appended_proof))))))))))
 
 (theorem fold_right_nil
   (forall function (is-value function)
@@ -667,69 +602,12 @@
             (function
               head
               (fold-right function initial tail)))))))
-  (proof
-    (forall-intro function (is-value function)
-      (forall-intro initial (is-value initial)
-        (forall-intro head (is-value head)
-          (forall-intro tail (is-list tail)
-            (trans
-              (eval-to
-                (fold-right function initial (cons head tail))
-                (function
-                  (head (cons head tail))
-                  (fold-right
-                    function
-                    initial
-                    (tail (cons head tail)))))
-              (rewrite
-                (eval-to
-                  (tail (cons head tail))
-                  tail)
-                (rewrite
-                  (eval-to
-                    (head (cons head tail))
-                    head)
-                  (eval-to
-                    (function
-                      (head (cons head tail))
-                      (fold-right
-                        function
-                        initial
-                        (tail (cons head tail))))
-                    (function
-                      (head (cons head tail))
-                      (fold-right
-                        function
-                        initial
-                        (tail (cons head tail)))))
-                  head_rewrite_target
-                  (computes-to
-                    (function
-                      (head (cons head tail))
-                      (fold-right
-                        function
-                        initial
-                        (tail (cons head tail))))
-                    (function
-                      head_rewrite_target
-                      (fold-right
-                        function
-                        initial
-                        (tail (cons head tail))))))
-                tail_rewrite_target
-                (computes-to
-                  (function
-                    (head (cons head tail))
-                    (fold-right
-                      function
-                      initial
-                      (tail (cons head tail))))
-                  (function
-                    head
-                    (fold-right
-                      function
-                      initial
-                      tail_rewrite_target)))))))))))
+  (by
+    (intro function)
+    (intro initial)
+    (intro head)
+    (intro tail)
+    (eval)))
 
 (theorem fold_right_computes_to_value
   (forall function (is-value function)
@@ -746,63 +624,43 @@
             (computes-to
               (fold-right function initial list)
               result))))))
-  (proof
-    (forall-intro function (is-value function)
-      (forall-intro initial (is-value initial)
-        (implies-intro combines_values
-          (forall value (is-value value)
-            (forall accumulator (is-value accumulator)
-              (exists folded_value (is-value folded_value)
-                (computes-to
-                  (function value accumulator)
-                  folded_value))))
-          (list-induction list
-            (exists result (is-value result)
-              (computes-to
-                (fold-right function initial list)
-                result))
-            (exists-intro result (is-value result)
-              (computes-to (fold-right function initial nil) result)
-              initial
-              (eval-to (fold-right function initial nil) initial))
-            head
-            tail
-            induction_hypothesis
-            (exists-elim
-              (assume induction_hypothesis)
-              tail_result
-              tail_result_proof
-              (exists-elim
-                (forall-elim
-                  (forall-elim
-                    (assume combines_values)
-                    head)
-                  tail_result)
+  (by
+    (intro function)
+    (intro initial)
+    (intro combines_values)
+    (list-induction list
+      (by
+        (exists initial
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (exists-elim induction_hypothesis tail_result tail_result_proof)
+        (exists-elim
+          (combines_values head tail_result)
+          folded_result
+          folded_result_proof)
+        (exists folded_result
+          (by
+            (calc
+              (fold-right function initial (cons head tail))
+              (==
+                (function
+                  head
+                  (fold-right function initial tail))
+                (by
+                  (exact fold_right_cons function initial head tail)))
+              (==
+                (function head tail_result)
+                (by
+                  (rewrite tail_result_proof)
+                  (eval)))
+              (==
                 folded_result
-                folded_result_proof
-                (exists-intro result (is-value result)
-                  (computes-to
-                    (fold-right function initial (cons head tail))
-                    result)
-                  folded_result
-                  (trans
-                    (forall-elim
-                      (forall-elim
-                        (forall-elim
-                          (forall-elim
-                            (known fold_right_cons)
-                            function)
-                          initial)
-                        head)
-                      tail)
-                    (rewrite
-                      (symm
-                        (assume tail_result_proof))
-                      (assume folded_result_proof)
-                      tail_result_rewrite_target
-                      (computes-to
-                        (function head tail_result_rewrite_target)
-                        folded_result))))))))))))
+                (by
+                  (exact folded_result_proof))))))))))
 
 (theorem fold_left_nil
   (forall function (is-value function)
@@ -824,55 +682,12 @@
               function
               (function initial head)
               tail))))))
-  (proof
-    (forall-intro function (is-value function)
-      (forall-intro initial (is-value initial)
-        (forall-intro head (is-value head)
-          (forall-intro tail (is-list tail)
-            (trans
-              (eval-to
-                (fold-left function initial (cons head tail))
-                (fold-left
-                  function
-                  (function initial (head (cons head tail)))
-                  (tail (cons head tail))))
-              (rewrite
-                (eval-to
-                  (tail (cons head tail))
-                  tail)
-                (rewrite
-                  (eval-to
-                    (head (cons head tail))
-                    head)
-                  (eval-to
-                    (fold-left
-                      function
-                      (function initial (head (cons head tail)))
-                      (tail (cons head tail)))
-                    (fold-left
-                      function
-                      (function initial (head (cons head tail)))
-                      (tail (cons head tail))))
-                  head_rewrite_target
-                  (computes-to
-                    (fold-left
-                      function
-                      (function initial (head (cons head tail)))
-                      (tail (cons head tail)))
-                    (fold-left
-                      function
-                      (function initial head_rewrite_target)
-                      (tail (cons head tail)))))
-                tail_rewrite_target
-                (computes-to
-                  (fold-left
-                    function
-                    (function initial (head (cons head tail)))
-                    (tail (cons head tail)))
-                  (fold-left
-                    function
-                    (function initial head)
-                    tail_rewrite_target))))))))))
+  (by
+    (intro function)
+    (intro initial)
+    (intro head)
+    (intro tail)
+    (eval)))
 
 (theorem fold_left_computes_to_value
   (forall function (is-value function)
@@ -889,67 +704,48 @@
             (computes-to
               (fold-left function initial list)
               result))))))
-  (proof
-    (forall-intro function (is-value function)
-      (implies-intro combines_values
-        (forall accumulator (is-value accumulator)
-          (forall value (is-value value)
-            (exists folded_value (is-value folded_value)
-              (computes-to
-                (function accumulator value)
-                folded_value))))
-        (list-induction list
-          (forall initial (is-value initial)
-            (exists result (is-value result)
-              (computes-to
-                (fold-left function initial list)
-                result)))
-          (forall-intro initial (is-value initial)
-            (exists-intro result (is-value result)
-              (computes-to (fold-left function initial nil) result)
-              initial
-              (eval-to (fold-left function initial nil) initial)))
-          head
-          tail
-          induction_hypothesis
-          (forall-intro initial (is-value initial)
-            (exists-elim
-              (forall-elim
-                (forall-elim
-                  (assume combines_values)
-                  initial)
-                head)
-              folded_initial
-              folded_initial_proof
-              (exists-elim
-                (forall-elim
-                  (assume induction_hypothesis)
-                  folded_initial)
+  (by
+    (intro function)
+    (intro combines_values)
+    (list-induction list
+      (by
+        (intro initial)
+        (exists initial
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro initial)
+        (exists-elim
+          (combines_values initial head)
+          folded_initial
+          folded_initial_proof)
+        (exists-elim
+          (induction_hypothesis folded_initial)
+          result
+          result_proof)
+        (exists result
+          (by
+            (calc
+              (fold-left function initial (cons head tail))
+              (==
+                (fold-left
+                  function
+                  (function initial head)
+                  tail)
+                (by
+                  (exact fold_left_cons function initial head tail)))
+              (==
+                (fold-left function folded_initial tail)
+                (by
+                  (rewrite folded_initial_proof)
+                  (eval)))
+              (==
                 result
-                result_proof
-                (exists-intro result (is-value result)
-                  (computes-to
-                    (fold-left function initial (cons head tail))
-                    result)
-                  result
-                  (trans
-                    (forall-elim
-                      (forall-elim
-                        (forall-elim
-                          (forall-elim
-                            (known fold_left_cons)
-                            function)
-                          initial)
-                        head)
-                      tail)
-                    (rewrite
-                      (symm
-                        (assume folded_initial_proof))
-                      (assume result_proof)
-                      folded_initial_rewrite_target
-                      (computes-to
-                        (fold-left function folded_initial_rewrite_target tail)
-                        result))))))))))))
+                (by
+                  (exact result_proof))))))))))
 
 (theorem zip_with_left_nil
   (forall function (is-value function)
@@ -964,15 +760,16 @@
   (forall function (is-value function)
     (forall left (is-list left)
       (computes-to (zip-with function left nil) nil)))
-  (proof
-    (forall-intro function (is-value function)
-      (list-induction left
-        (computes-to (zip-with function left nil) nil)
-        (eval-to (zip-with function nil nil) nil)
-        head
-        tail
-        induction_hypothesis
-        (eval-to (zip-with function (cons head tail) nil) nil)))))
+  (by
+    (intro function)
+    (list-induction left
+      (by
+        (eval))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (eval)))))
 
 (theorem zip_with_cons
   (forall function (is-value function)
@@ -1008,96 +805,67 @@
       (forall left (is-list left)
         (forall right (is-list right)
           (computes-to-list result (zip-with function left right))))))
-  (proof
-    (forall-intro function (is-value function)
-      (implies-intro combines_values
-        (forall left_value (is-value left_value)
-          (forall right_value (is-value right_value)
-            (exists zipped_value (is-value zipped_value)
-              (computes-to
-                (function left_value right_value)
-                zipped_value))))
-        (list-induction left
-          (forall right (is-list right)
-            (computes-to-list result (zip-with function left right)))
-          (forall-intro right (is-list right)
-            (exists-intro result (is-list result)
-              (computes-to (zip-with function nil right) result)
-              nil
-              (eval-to (zip-with function nil right) nil)))
-          left_head
-          left_tail
-          left_induction_hypothesis
-          (list-induction right
-            (computes-to-list
-              result
-              (zip-with function (cons left_head left_tail) right))
-            (exists-intro result (is-list result)
-              (computes-to
-                (zip-with function (cons left_head left_tail) nil)
-                result)
-              nil
-              (eval-to
-                (zip-with function (cons left_head left_tail) nil)
-                nil))
-            right_head
-            right_tail
-            right_induction_hypothesis
+  (by
+    (intro function)
+    (intro combines_values)
+    (list-induction left
+      (by
+        (intro right)
+        (exists nil
+          (by
+            (eval))))
+      left_head
+      left_tail
+      left_induction_hypothesis
+      (by
+        (list-induction right
+          (by
+            (exists nil
+              (by
+                (eval))))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
             (exists-elim
-              (forall-elim
-                (forall-elim
-                  (assume combines_values)
-                  left_head)
-                right_head)
+              (combines_values left_head right_head)
               zipped_head
-              zipped_head_proof
-              (exists-elim
-                (forall-elim
-                  (assume left_induction_hypothesis)
-                  right_tail)
-                zipped_tail
-                zipped_tail_proof
-                (exists-intro result (is-list result)
-                  (computes-to
-                    (zip-with
-                      function
-                      (cons left_head left_tail)
-                      (cons right_head right_tail))
-                    result)
-                  (cons zipped_head zipped_tail)
-                  (rewrite
-                    (assume zipped_tail_proof)
-                    (rewrite
-                      (assume zipped_head_proof)
-                      (forall-elim
-                        (forall-elim
-                          (forall-elim
-                            (forall-elim
-                              (forall-elim
-                                (known zip_with_cons)
-                                function)
-                              left_head)
-                            left_tail)
-                          right_head)
-                        right_tail)
-                      zipped_head_rewrite_target
-                      (computes-to
-                        (zip-with
-                          function
-                          (cons left_head left_tail)
-                          (cons right_head right_tail))
-                        (cons
-                          zipped_head_rewrite_target
-                          (zip-with function left_tail right_tail))))
-                    zipped_tail_rewrite_target
-                    (computes-to
-                      (zip-with
+              zipped_head_proof)
+            (exists-elim
+              (left_induction_hypothesis right_tail)
+              zipped_tail
+              zipped_tail_proof)
+            (exists (cons zipped_head zipped_tail)
+              (by
+                (calc
+                  (zip-with
+                    function
+                    (cons left_head left_tail)
+                    (cons right_head right_tail))
+                  (==
+                    (cons
+                      (function left_head right_head)
+                      (zip-with function left_tail right_tail))
+                    (by
+                      (exact
+                        zip_with_cons
                         function
-                        (cons left_head left_tail)
-                        (cons right_head right_tail))
-                      (cons
-                        zipped_head
-                        zipped_tail_rewrite_target))))))))))))
+                        left_head
+                        left_tail
+                        right_head
+                        right_tail)))
+                  (==
+                    (cons
+                      zipped_head
+                      (zip-with function left_tail right_tail))
+                    (by
+                      (rewrite zipped_head_proof)
+                      (eval)))
+                  (==
+                    (cons zipped_head zipped_tail)
+                    (by
+                      (rewrite zipped_tail_proof)
+                      (eval))))))))))))
 
 (theorem filter_nil
   (forall predicate (is-value predicate)
@@ -1351,70 +1119,51 @@
         (is-bool (predicate value)))
       (forall list (is-list list)
         (computes-to-list result (filter predicate list)))))
-  (proof
-    (forall-intro predicate (is-value predicate)
-      (implies-intro predicate_returns_bool
-        (forall value (is-value value)
-          (is-bool (predicate value)))
-        (list-induction list
-          (computes-to-list result (filter predicate list))
-          (exists-intro result (is-list result)
-            (computes-to (filter predicate nil) result)
-            nil
-            (eval-to (filter predicate nil) nil))
-          head
-          tail
-          induction_hypothesis
-          (or-elim
-            (forall-elim
-              (assume predicate_returns_bool)
-              head)
-            predicate_true
-            (exists-elim
-              (assume induction_hypothesis)
-              filtered_tail
-              filtered_tail_proof
-              (exists-intro result (is-list result)
-                (computes-to
+  (by
+    (intro predicate)
+    (intro predicate_returns_bool)
+    (list-induction list
+      (by
+        (exists nil
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (or-elim
+          (predicate_returns_bool head)
+          predicate_true
+          (by
+            (exists-elim induction_hypothesis filtered_tail filtered_tail_proof)
+            (exists (cons head filtered_tail)
+              (by
+                (calc
                   (filter predicate (cons head tail))
-                  result)
-                (cons head filtered_tail)
-                (rewrite
-                  (assume filtered_tail_proof)
-                  (implies-elim
-                    (forall-elim
-                      (forall-elim
-                        (forall-elim
-                          (known filter_cons_true)
-                          predicate)
-                        head)
-                      tail)
-                    (assume predicate_true))
-                  filtered_tail_rewrite_target
-                  (computes-to
-                    (filter predicate (cons head tail))
-                    (cons head filtered_tail_rewrite_target)))))
-            predicate_false
-            (exists-elim
-              (assume induction_hypothesis)
-              filtered_tail
-              filtered_tail_proof
-              (exists-intro result (is-list result)
-                (computes-to
+                  (==
+                    (cons head (filter predicate tail))
+                    (by
+                      (apply filter_cons_true predicate head tail)))
+                  (==
+                    (cons head filtered_tail)
+                    (by
+                      (rewrite filtered_tail_proof)
+                      (eval)))))))
+          predicate_false
+          (by
+            (exists-elim induction_hypothesis filtered_tail filtered_tail_proof)
+            (exists filtered_tail
+              (by
+                (calc
                   (filter predicate (cons head tail))
-                  result)
-                filtered_tail
-                (trans
-                  (implies-elim
-                    (forall-elim
-                      (forall-elim
-                        (forall-elim
-                          (known filter_cons_false)
-                          predicate)
-                        head)
-                      tail)
-                    (assume predicate_false))
-                  (assume filtered_tail_proof))))))))))
+                  (==
+                    (filter predicate tail)
+                    (by
+                      (apply filter_cons_false predicate head tail)))
+                  (==
+                    filtered_tail
+                    (by
+                      (exact filtered_tail_proof))))))))))))
 
 (theorem any_computes_to_bool
   (forall predicate (is-value predicate)
@@ -1423,72 +1172,57 @@
         (is-bool (predicate value)))
       (forall list (is-list list)
         (is-bool (any predicate list)))))
-  (proof
-    (forall-intro predicate (is-value predicate)
-      (implies-intro predicate_returns_bool
-        (forall value (is-value value)
-          (is-bool (predicate value)))
-        (list-induction list
-          (is-bool (any predicate list))
-          (or-intro-right
-            (computes-to (any predicate nil) (quote :true))
-            (eval-to (any predicate nil) (quote :false)))
-          head
-          tail
-          induction_hypothesis
-          (or-elim
-            (forall-elim
-              (assume predicate_returns_bool)
-              head)
-            predicate_true
-            (or-intro-left
-              (implies-elim
-                (forall-elim
-                  (forall-elim
-                    (forall-elim
-                      (known any_cons_true)
-                      predicate)
-                    head)
-                  tail)
-                (assume predicate_true))
-              (computes-to
-                (any predicate (cons head tail))
-                (quote :false)))
-            predicate_false
+  (by
+    (intro predicate)
+    (intro predicate_returns_bool)
+    (list-induction list
+      (by
+        (right
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (or-elim
+          (predicate_returns_bool head)
+          predicate_true
+          (by
+            (left
+              (by
+                (apply any_cons_true predicate head tail))))
+          predicate_false
+          (by
             (or-elim
-              (assume induction_hypothesis)
+              induction_hypothesis
               tail_true
-              (or-intro-left
-                (trans
-                  (implies-elim
-                    (forall-elim
-                      (forall-elim
-                        (forall-elim
-                          (known any_cons_false)
-                          predicate)
-                        head)
-                      tail)
-                    (assume predicate_false))
-                  (assume tail_true))
-                (computes-to
-                  (any predicate (cons head tail))
-                  (quote :false)))
+              (by
+                (left
+                  (by
+                    (calc
+                      (any predicate (cons head tail))
+                      (==
+                        (any predicate tail)
+                        (by
+                          (apply any_cons_false predicate head tail)))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact tail_true)))))))
               tail_false
-              (or-intro-right
-                (computes-to
-                  (any predicate (cons head tail))
-                  (quote :true))
-                (trans
-                  (implies-elim
-                    (forall-elim
-                      (forall-elim
-                        (forall-elim
-                          (known any_cons_false)
-                          predicate)
-                        head)
-                      tail)
-                    (assume predicate_false))
-                  (assume tail_false))))))))))
+              (by
+                (right
+                  (by
+                    (calc
+                      (any predicate (cons head tail))
+                      (==
+                        (any predicate tail)
+                        (by
+                          (apply any_cons_false predicate head tail)))
+                      (==
+                        (quote :false)
+                        (by
+                          (exact tail_false))))))))))))))
 
 (theorem all_computes_to_bool
   (forall predicate (is-value predicate)
@@ -1497,72 +1231,57 @@
         (is-bool (predicate value)))
       (forall list (is-list list)
         (is-bool (all predicate list)))))
-  (proof
-    (forall-intro predicate (is-value predicate)
-      (implies-intro predicate_returns_bool
-        (forall value (is-value value)
-          (is-bool (predicate value)))
-        (list-induction list
-          (is-bool (all predicate list))
-          (or-intro-left
-            (eval-to (all predicate nil) (quote :true))
-            (computes-to (all predicate nil) (quote :false)))
-          head
-          tail
-          induction_hypothesis
-          (or-elim
-            (forall-elim
-              (assume predicate_returns_bool)
-              head)
-            predicate_true
+  (by
+    (intro predicate)
+    (intro predicate_returns_bool)
+    (list-induction list
+      (by
+        (left
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (or-elim
+          (predicate_returns_bool head)
+          predicate_true
+          (by
             (or-elim
-              (assume induction_hypothesis)
+              induction_hypothesis
               tail_true
-              (or-intro-left
-                (trans
-                  (implies-elim
-                    (forall-elim
-                      (forall-elim
-                        (forall-elim
-                          (known all_cons_true)
-                          predicate)
-                        head)
-                      tail)
-                    (assume predicate_true))
-                  (assume tail_true))
-                (computes-to
-                  (all predicate (cons head tail))
-                  (quote :false)))
+              (by
+                (left
+                  (by
+                    (calc
+                      (all predicate (cons head tail))
+                      (==
+                        (all predicate tail)
+                        (by
+                          (apply all_cons_true predicate head tail)))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact tail_true)))))))
               tail_false
-              (or-intro-right
-                (computes-to
-                  (all predicate (cons head tail))
-                  (quote :true))
-                (trans
-                  (implies-elim
-                    (forall-elim
-                      (forall-elim
-                        (forall-elim
-                          (known all_cons_true)
-                          predicate)
-                        head)
-                      tail)
-                    (assume predicate_true))
-                  (assume tail_false))))
-            predicate_false
-            (or-intro-right
-              (computes-to
-                (all predicate (cons head tail))
-                (quote :true))
-              (implies-elim
-                (forall-elim
-                  (forall-elim
-                    (forall-elim
-                      (known all_cons_false)
-                      predicate)
-                    head)
-                  tail)
-                (assume predicate_false)))))))))
+              (by
+                (right
+                  (by
+                    (calc
+                      (all predicate (cons head tail))
+                      (==
+                        (all predicate tail)
+                        (by
+                          (apply all_cons_true predicate head tail)))
+                      (==
+                        (quote :false)
+                        (by
+                          (exact tail_false)))))))))
+          predicate_false
+          (by
+            (right
+              (by
+                (apply all_cons_false predicate head tail)))))))))
 
 (theorem value_eq_true_true
   (computes-to
@@ -1923,18 +1642,23 @@
         nil
         list)
       (reverse list)))
-  (proof
-    (forall-intro list (is-list list)
-      (trans
-        (forall-elim
-          (forall-elim
-            (known fold_left_reverse_acc)
-            list)
-          nil)
-        (symm
-          (eval-to
-            (reverse list)
-            (reverse_acc list nil)))))))
+  (by
+    (intro list)
+    (calc
+      (fold-left
+        (lambda accumulator
+          (lambda value
+            (cons value accumulator)))
+        nil
+        list)
+      (==
+        (reverse_acc list nil)
+        (by
+          (exact fold_left_reverse_acc list nil)))
+      (==
+        (reverse list)
+        (by
+          (eval))))))
 
 (theorem append_assoc
   (forall left (is-list left)
@@ -2159,22 +1883,19 @@
       (computes-to
         (reverse (cons head tail))
         (append (reverse tail) (cons head nil)))))
-  (proof
-    (forall-intro head (is-value head)
-      (forall-intro tail (is-list tail)
-        (trans
-          (trans
-            (eval-to
-              (reverse (cons head tail))
-              (reverse_acc (cons head tail) nil))
-            (eval-same
-              (reverse_acc (cons head tail) nil)
-              (reverse_acc tail (cons head nil))))
-          (forall-elim
-            (forall-elim
-              (known reverse_acc_append)
-              tail)
-            (cons head nil)))))))
+  (by
+    (intro head)
+    (intro tail)
+    (calc
+      (reverse (cons head tail))
+      (==
+        (reverse_acc tail (cons head nil))
+        (by
+          (eval)))
+      (==
+        (append (reverse tail) (cons head nil))
+        (by
+          (exact reverse_acc_append tail (cons head nil)))))))
 
 (theorem reverse_acc_reverse
   (forall list (is-list list)
@@ -2304,39 +2025,31 @@
     (computes-to
       (reverse (reverse list))
       list))
-  (proof
-    (forall-intro list (is-list list)
-      (trans
-        (rewrite
-          (eval-to
-            (reverse list)
-            (reverse_acc list nil))
-          (eval-to
-            (reverse (reverse list))
-            (reverse (reverse list)))
-          rewrite_target
-          (computes-to
-            (reverse (reverse list))
-            (reverse rewrite_target)))
-        (trans
-          (forall-elim
-            (forall-elim
-              (known reverse_acc_reverse)
-              list)
-            nil)
-          (trans
-            (rewrite
-              (known reverse_nil)
-              (eval-to
-                (append (reverse nil) list)
-                (append (reverse nil) list))
-              rewrite_target
-              (computes-to
-                (append (reverse nil) list)
-                (append rewrite_target list)))
-            (forall-elim
-              (known append_nil_returns_right)
-              list)))))))
+  (by
+    (intro list)
+    (calc
+      (reverse (reverse list))
+      (==
+        (reverse (reverse_acc list nil))
+        (by
+          (rewrite
+            (eval-to
+              (reverse list)
+              (reverse_acc list nil)))
+          (eval)))
+      (==
+        (append (reverse nil) list)
+        (by
+          (exact reverse_acc_reverse list nil)))
+      (==
+        (append nil list)
+        (by
+          (rewrite reverse_nil)
+          (eval)))
+      (==
+        list
+        (by
+          (exact append_nil_returns_right list))))))
 
 (theorem reverse_acc_of_append
   (forall left (is-list left)
@@ -2523,39 +2236,35 @@
   (forall list (is-list list)
     (forall value (is-value value)
       (computes-to-list result (snoc list value))))
-  (proof
+  (by
     (list-induction list
-      (forall value (is-value value)
-        (computes-to-list result (snoc list value)))
-      (forall-intro value (is-value value)
-        (exists-intro result (is-list result)
-          (computes-to (snoc nil value) result)
-          (cons value nil)
-          (eval-to
-            (snoc nil value)
-            (cons value nil))))
+      (by
+        (intro value)
+        (exists (cons value nil)
+          (by
+            (eval))))
       head
       tail
       induction_hypothesis
-      (forall-intro value (is-value value)
+      (by
+        (intro value)
         (exists-elim
-          (forall-elim
-            (assume induction_hypothesis)
-            value)
+          (induction_hypothesis value)
           tail_result
-          tail_result_proof
-          (exists-intro result (is-list result)
-            (computes-to (snoc (cons head tail) value) result)
-            (cons head tail_result)
-            (rewrite
-              (assume tail_result_proof)
-              (eval-same
-                (snoc (cons head tail) value)
-                (cons head (snoc tail value)))
-              rewrite_target
-              (computes-to
-                (snoc (cons head tail) value)
-                (cons head rewrite_target)))))))))
+          tail_result_proof)
+        (exists (cons head tail_result)
+          (by
+            (calc
+              (snoc (cons head tail) value)
+              (==
+                (cons head (snoc tail value))
+                (by
+                  (eval)))
+              (==
+                (cons head tail_result)
+                (by
+                  (rewrite tail_result_proof)
+                  (eval))))))))))
 
 (theorem snoc_nil
   (forall value (is-value value)

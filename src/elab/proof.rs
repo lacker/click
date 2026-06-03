@@ -391,6 +391,24 @@ fn tactic_steps_to_proof(
             witness,
             assumption,
         } => tactic_exists_elim(existential, *witness, *assumption, rest, theory, goal),
+        TacticExpr::OrElim {
+            disjunction,
+            left_assumption,
+            left,
+            right_assumption,
+            right,
+        } => {
+            ensure_no_more_tactics(rest, "or-elim")?;
+            tactic_or_elim(
+                disjunction,
+                *left_assumption,
+                left,
+                *right_assumption,
+                right,
+                theory,
+                goal,
+            )
+        }
         TacticExpr::ForAllElim { forall, arguments } => {
             ensure_no_more_tactics(rest, "forall-elim")?;
             tactic_forall_elim(forall, arguments, theory, goal)
@@ -746,6 +764,62 @@ fn tactic_exists_elim(
             theory,
             &Goal {
                 context,
+                target: goal.target.clone(),
+            },
+        )?),
+    })
+}
+
+fn tactic_or_elim(
+    disjunction_expr: &ProofExpr,
+    left_assumption: Symbol,
+    left_script: &TacticScript,
+    right_assumption: Symbol,
+    right_script: &TacticScript,
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    if left_assumption == right_assumption {
+        return Err(tactic_failed(
+            "or-elim",
+            "branch assumption symbols must be distinct",
+        ));
+    }
+    if goal.context.contains_key(&left_assumption) || goal.context.contains_key(&right_assumption) {
+        return Err(tactic_failed(
+            "or-elim",
+            "branch assumption symbol is already in scope",
+        ));
+    }
+
+    let disjunction = proof_expr_to_proof_in_context(disjunction_expr, theory, &goal.context)?;
+    let Some(Prop::Or(left, right)) = theory.proven_prop_in_context(&disjunction, &goal.context)
+    else {
+        return Err(tactic_failed("or-elim", "proof is not a disjunction"));
+    };
+
+    let mut left_context = goal.context.clone();
+    left_context.insert(left_assumption, left.as_ref().clone());
+    let mut right_context = goal.context.clone();
+    right_context.insert(right_assumption, right.as_ref().clone());
+
+    Ok(Proof::OrElim {
+        disjunction: Box::new(disjunction),
+        left_assumption,
+        left_proof: Box::new(tactic_script_to_proof(
+            left_script,
+            theory,
+            &Goal {
+                context: left_context,
+                target: goal.target.clone(),
+            },
+        )?),
+        right_assumption,
+        right_proof: Box::new(tactic_script_to_proof(
+            right_script,
+            theory,
+            &Goal {
+                context: right_context,
                 target: goal.target.clone(),
             },
         )?),

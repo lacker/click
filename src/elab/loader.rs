@@ -448,6 +448,25 @@ mod tests {
                         (right
                           (by
                             (eval)))))))
+                (theorem nil_or_diverge
+                  (or
+                    (computes-to nil nil)
+                    (computes-to diverge diverge))
+                  (by
+                    (left
+                      (by
+                        (eval)))))
+                (theorem nil_from_or
+                  (computes-to nil nil)
+                  (by
+                    (or-elim
+                      nil_or_diverge
+                      nil_case
+                      (by
+                        (exact nil_case))
+                      diverge_case
+                      (by
+                        (eval)))))
                 ",
             )
             .expect("structured tactic theorems should load");
@@ -455,6 +474,8 @@ mod tests {
         assert!(loaded.theorem("nil_result").is_some());
         assert!(loaded.theorem("split_or").is_some());
         assert!(loaded.theorem("constructor_right").is_some());
+        assert!(loaded.theorem("nil_or_diverge").is_some());
+        assert!(loaded.theorem("nil_from_or").is_some());
     }
 
     #[test]
