@@ -249,6 +249,76 @@ mod tests {
     }
 
     #[test]
+    fn load_str_checks_symbol_eq_is_bool_theorems() {
+        let mut loaded = LoadedSource::new();
+
+        loaded
+            .load_str(
+                "
+                (def same (symbol-eq (quote :true) (quote :false)))
+                (theorem same_is_bool
+                  (is-bool same)
+                  (proof
+                    (or-intro-right
+                      (computes-to same (quote :true))
+                      (eval-to same (quote :false)))))
+                ",
+            )
+            .expect("source symbol-eq bool theorem should load");
+
+        let same = loaded
+            .computation("same")
+            .expect("loader should record symbol-eq computation spelling");
+        let same_is_bool = loaded
+            .theorem("same_is_bool")
+            .expect("loader should record is-bool theorem spelling");
+
+        assert_eq!(
+            loaded.theory().computation(same),
+            Some(&crate::symbol_eq(
+                Computation::Quote(crate::TRUE_SYMBOL),
+                Computation::Quote(crate::FALSE_SYMBOL),
+            ))
+        );
+        assert_eq!(
+            loaded.theory().theorem(same_is_bool),
+            Some(&crate::is_bool(Computation::Ref(same)))
+        );
+    }
+
+    #[test]
+    fn load_str_checks_source_or_proof_forms() {
+        let mut loaded = LoadedSource::new();
+
+        loaded
+            .load_str(
+                "
+                (theorem or_elim_example
+                  (equal nil nil)
+                  (proof
+                    (or-elim
+                      (or-intro-left
+                        (eval-to nil nil)
+                        (equal nil nil))
+                      left_case
+                      (assume left_case)
+                      right_case
+                      (assume right_case))))
+                ",
+            )
+            .expect("source or proof forms should load");
+
+        let theorem = loaded
+            .theorem("or_elim_example")
+            .expect("loader should record or theorem spelling");
+
+        assert_eq!(
+            loaded.theory().theorem(theorem),
+            Some(&crate::equal(Computation::Nil, Computation::Nil))
+        );
+    }
+
+    #[test]
     fn load_str_does_not_commit_failed_modules() {
         let mut loaded = LoadedSource::new();
 

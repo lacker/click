@@ -47,6 +47,10 @@ pub enum Computation {
         then_branch: Box<Computation>,
         else_branch: Box<Computation>,
     },
+    SymbolEq {
+        left: Box<Computation>,
+        right: Box<Computation>,
+    },
     Ref(Name),
     Error(ErrorName),
     Diverge,
@@ -432,6 +436,20 @@ pub fn if_then_else(
     }
 }
 
+pub fn symbol_eq(left: Computation, right: Computation) -> Computation {
+    Computation::SymbolEq {
+        left: Box::new(left),
+        right: Box::new(right),
+    }
+}
+
+pub fn is_bool(computation: Computation) -> Prop {
+    or(
+        computes_to(computation.clone(), Computation::Quote(TRUE_SYMBOL)),
+        computes_to(computation, Computation::Quote(FALSE_SYMBOL)),
+    )
+}
+
 pub fn computes_to(computation: Computation, target: Computation) -> Prop {
     equal(computation, target)
 }
@@ -524,6 +542,10 @@ pub fn substitute(
             condition: Box::new(substitute(condition, variable, replacement)),
             then_branch: Box::new(substitute(then_branch, variable, replacement)),
             else_branch: Box::new(substitute(else_branch, variable, replacement)),
+        },
+        Computation::SymbolEq { left, right } => Computation::SymbolEq {
+            left: Box::new(substitute(left, variable, replacement)),
+            right: Box::new(substitute(right, variable, replacement)),
         },
         Computation::Error(error) => Computation::Error(*error),
         Computation::Ref(_)
@@ -621,6 +643,10 @@ pub(super) fn add_free_symbols(computation: &Computation, symbols: &mut HashSet<
             add_free_symbols(then_branch, symbols);
             add_free_symbols(else_branch, symbols);
         }
+        Computation::SymbolEq { left, right } => {
+            add_free_symbols(left, symbols);
+            add_free_symbols(right, symbols);
+        }
         Computation::Error(_) | Computation::Ref(_) | Computation::Diverge => {}
         Computation::Var(symbol) => {
             symbols.insert(*symbol);
@@ -671,6 +697,10 @@ pub(super) fn rename_bound_var(computation: &Computation, old: Symbol, new: Symb
             condition: Box::new(rename_bound_var(condition, old, new)),
             then_branch: Box::new(rename_bound_var(then_branch, old, new)),
             else_branch: Box::new(rename_bound_var(else_branch, old, new)),
+        },
+        Computation::SymbolEq { left, right } => Computation::SymbolEq {
+            left: Box::new(rename_bound_var(left, old, new)),
+            right: Box::new(rename_bound_var(right, old, new)),
         },
         Computation::Error(error) => Computation::Error(*error),
         Computation::Ref(_) | Computation::Diverge => computation.clone(),
@@ -728,6 +758,10 @@ pub(super) fn add_all_symbols(computation: &Computation, symbols: &mut HashSet<S
             add_all_symbols(condition, symbols);
             add_all_symbols(then_branch, symbols);
             add_all_symbols(else_branch, symbols);
+        }
+        Computation::SymbolEq { left, right } => {
+            add_all_symbols(left, symbols);
+            add_all_symbols(right, symbols);
         }
         Computation::Error(_) | Computation::Ref(_) | Computation::Diverge => {}
         Computation::Var(symbol) | Computation::Quote(symbol) => {

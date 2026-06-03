@@ -186,6 +186,27 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Result<Proof, Proo
             proof,
             theory,
         )?))),
+        ProofExpr::OrIntroLeft { proof, right } => Ok(Proof::OrIntroLeft {
+            proof: Box::new(subproof("or-intro-left", proof, theory)?),
+            right: right.clone(),
+        }),
+        ProofExpr::OrIntroRight { left, proof } => Ok(Proof::OrIntroRight {
+            left: left.clone(),
+            proof: Box::new(subproof("or-intro-right", proof, theory)?),
+        }),
+        ProofExpr::OrElim {
+            disjunction,
+            left_assumption,
+            left_proof,
+            right_assumption,
+            right_proof,
+        } => Ok(Proof::OrElim {
+            disjunction: Box::new(subproof("or-elim disjunction", disjunction, theory)?),
+            left_assumption: *left_assumption,
+            left_proof: Box::new(subproof("or-elim left", left_proof, theory)?),
+            right_assumption: *right_assumption,
+            right_proof: Box::new(subproof("or-elim right", right_proof, theory)?),
+        }),
         ProofExpr::ListInduction {
             variable,
             property,

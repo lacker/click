@@ -52,6 +52,10 @@ fn if_computation(
     if_then_else(condition, then_branch, else_branch)
 }
 
+fn symbol_eq_computation(left: Computation, right: Computation) -> Computation {
+    symbol_eq(left, right)
+}
+
 fn error(error: ErrorName) -> Computation {
     Computation::Error(error)
 }
@@ -455,6 +459,74 @@ fn if_propagates_condition_effects() {
 }
 
 #[test]
+fn symbol_eq_reduces_after_evaluating_operands_left_to_right() {
+    let left = apply(
+        lambda(Symbol(1), Computation::Var(Symbol(1))),
+        Computation::Quote(Symbol(9)),
+    );
+    let computation = symbol_eq_computation(left, Computation::Quote(Symbol(9)));
+
+    assert_eq!(
+        step(&computation),
+        Step::Reduced(symbol_eq_computation(
+            Computation::Quote(Symbol(9)),
+            Computation::Quote(Symbol(9)),
+        ))
+    );
+    assert_eq!(normal_form(&computation), Computation::Quote(TRUE_SYMBOL));
+}
+
+#[test]
+fn symbol_eq_returns_false_for_distinct_or_non_symbol_values() {
+    assert_eq!(
+        normal_form(&symbol_eq_computation(
+            Computation::Quote(Symbol(9)),
+            Computation::Quote(Symbol(10)),
+        )),
+        Computation::Quote(FALSE_SYMBOL)
+    );
+    assert_eq!(
+        normal_form(&symbol_eq_computation(
+            Computation::Nil,
+            Computation::Quote(Symbol(10)),
+        )),
+        Computation::Quote(FALSE_SYMBOL)
+    );
+    assert_eq!(
+        normal_form(&symbol_eq_computation(
+            Computation::Quote(Symbol(10)),
+            lambda(Symbol(1), Computation::Var(Symbol(1))),
+        )),
+        Computation::Quote(FALSE_SYMBOL)
+    );
+}
+
+#[test]
+fn symbol_eq_open_operands_are_neutral_and_effects_propagate() {
+    assert_eq!(
+        step(&symbol_eq_computation(
+            Computation::Var(Symbol(1)),
+            Computation::Quote(Symbol(9)),
+        )),
+        Step::Normal
+    );
+    assert_eq!(
+        normal_form(&symbol_eq_computation(
+            error(ErrorName(7)),
+            Computation::Quote(Symbol(9)),
+        )),
+        error(ErrorName(7))
+    );
+    assert_eq!(
+        normal_form(&symbol_eq_computation(
+            Computation::Quote(Symbol(9)),
+            Computation::Diverge,
+        )),
+        Computation::Diverge
+    );
+}
+
+#[test]
 fn step_proof_proves_if_reduction() {
     let computation = if_computation(
         Computation::Quote(TRUE_SYMBOL),
@@ -465,6 +537,17 @@ fn step_proof_proves_if_reduction() {
     assert!(check(
         &Proof::Step(computation.clone()),
         &equal(computation, Computation::Quote(Symbol(9))),
+    ));
+}
+
+#[test]
+fn step_proof_proves_symbol_eq_reduction() {
+    let computation =
+        symbol_eq_computation(Computation::Quote(Symbol(9)), Computation::Quote(Symbol(9)));
+
+    assert!(check(
+        &Proof::Step(computation.clone()),
+        &equal(computation, Computation::Quote(TRUE_SYMBOL)),
     ));
 }
 
@@ -503,6 +586,21 @@ fn substitution_and_free_symbols_descend_into_if() {
             Computation::Var(Symbol(2)),
             Computation::Quote(Symbol(3)),
         )
+    );
+}
+
+#[test]
+fn substitution_and_free_symbols_descend_into_symbol_eq() {
+    let computation =
+        symbol_eq_computation(Computation::Var(Symbol(1)), Computation::Var(Symbol(2)));
+
+    assert_eq!(
+        free_symbols(&computation),
+        HashSet::from([Symbol(1), Symbol(2)])
+    );
+    assert_eq!(
+        substitute(&computation, Symbol(1), &Computation::Quote(Symbol(9))),
+        symbol_eq_computation(Computation::Quote(Symbol(9)), Computation::Var(Symbol(2)))
     );
 }
 

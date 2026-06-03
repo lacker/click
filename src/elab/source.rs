@@ -5,7 +5,8 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     Computation, ErrorName, FALSE_SYMBOL, Lambda, ListCase, Name, Prop, Symbol, TRUE_SYMBOL, and,
     computes_to, computes_to_list, diverges, equal, errors_with, exists, exists_where, forall,
-    forall_where, if_then_else, implies, is_effect, is_list, is_outcome, is_value, or,
+    forall_where, if_then_else, implies, is_bool, is_effect, is_list, is_outcome, is_value, or,
+    symbol_eq,
 };
 
 const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
@@ -225,6 +226,21 @@ pub(crate) enum ProofExpr {
     AndIntro(Box<ProofExpr>, Box<ProofExpr>),
     AndElimLeft(Box<ProofExpr>),
     AndElimRight(Box<ProofExpr>),
+    OrIntroLeft {
+        proof: Box<ProofExpr>,
+        right: Prop,
+    },
+    OrIntroRight {
+        left: Prop,
+        proof: Box<ProofExpr>,
+    },
+    OrElim {
+        disjunction: Box<ProofExpr>,
+        left_assumption: Symbol,
+        left_proof: Box<ProofExpr>,
+        right_assumption: Symbol,
+        right_proof: Box<ProofExpr>,
+    },
     ListInduction {
         variable: Symbol,
         property: Prop,
@@ -719,6 +735,7 @@ impl<'a> SourceParser<'a> {
                 "head" => return self.head(items),
                 "tail" => return self.tail(items),
                 "if" => return self.if_computation(items),
+                "symbol-eq" => return self.symbol_eq(items),
                 "error" => return self.error(items),
                 "quote" => return self.quote(items),
                 _ => {}
@@ -788,6 +805,14 @@ impl<'a> SourceParser<'a> {
         ))
     }
 
+    fn symbol_eq(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
+        expect_len("symbol-eq", items, 3)?;
+        Ok(symbol_eq(
+            self.computation(&items[1])?,
+            self.computation(&items[2])?,
+        ))
+    }
+
     fn error(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
         expect_len("error", items, 2)?;
         Ok(Computation::Error(error_name(&items[1])?))
@@ -854,6 +879,7 @@ impl<'a> SourceParser<'a> {
             "is-list" => self.is_list(items),
             "is-effect" => self.is_effect(items),
             "is-outcome" => self.is_outcome(items),
+            "is-bool" => self.is_bool(items),
             _ => Err(ParseError::new(format!("unknown proposition `{form}`"))),
         }
     }
@@ -989,6 +1015,11 @@ impl<'a> SourceParser<'a> {
         Ok(is_outcome(self.computation(&items[1])?))
     }
 
+    fn is_bool(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("is-bool", items, 2)?;
+        Ok(is_bool(self.computation(&items[1])?))
+    }
+
     fn quantifier_guard(
         &mut self,
         guard: Option<&Expr>,
@@ -1043,6 +1074,9 @@ impl<'a> SourceParser<'a> {
             "and-intro" => self.proof_and_intro(items),
             "and-elim-left" => self.proof_and_elim_left(items),
             "and-elim-right" => self.proof_and_elim_right(items),
+            "or-intro-left" => self.proof_or_intro_left(items),
+            "or-intro-right" => self.proof_or_intro_right(items),
+            "or-elim" => self.proof_or_elim(items),
             "forall-intro" => self.proof_forall_intro(items),
             "forall-elim" => self.proof_forall_elim(items),
             _ => Err(ParseError::new(format!(
@@ -1210,6 +1244,33 @@ impl<'a> SourceParser<'a> {
         Ok(ProofExpr::AndElimRight(Box::new(
             self.proof_expr(&items[1])?,
         )))
+    }
+
+    fn proof_or_intro_left(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("or-intro-left", items, 3)?;
+        Ok(ProofExpr::OrIntroLeft {
+            proof: Box::new(self.proof_expr(&items[1])?),
+            right: self.proof_prop(&items[2])?,
+        })
+    }
+
+    fn proof_or_intro_right(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("or-intro-right", items, 3)?;
+        Ok(ProofExpr::OrIntroRight {
+            left: self.proof_prop(&items[1])?,
+            proof: Box::new(self.proof_expr(&items[2])?),
+        })
+    }
+
+    fn proof_or_elim(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("or-elim", items, 6)?;
+        Ok(ProofExpr::OrElim {
+            disjunction: Box::new(self.proof_expr(&items[1])?),
+            left_assumption: self.proof_symbol(atom(&items[2])?)?,
+            left_proof: Box::new(self.proof_expr(&items[3])?),
+            right_assumption: self.proof_symbol(atom(&items[4])?)?,
+            right_proof: Box::new(self.proof_expr(&items[5])?),
+        })
     }
 
     fn proof_forall_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
@@ -1382,6 +1443,37 @@ mod tests {
         );
         assert_eq!(env.symbol(":true"), Some(TRUE_SYMBOL));
         assert_eq!(env.symbol(":false"), Some(FALSE_SYMBOL));
+    }
+
+    #[test]
+    fn parses_symbol_eq_computation_and_is_bool_prop() {
+        let mut env = ElabEnv::new();
+
+        let module = env
+            .parse_module(
+                "
+                (def same (symbol-eq (quote :true) (quote :false)))
+                (theorem same_is_bool
+                  (is-bool same)
+                  (proof
+                    (or-intro-right
+                      (computes-to same (quote :true))
+                      (eval-to same (quote :false)))))
+                ",
+            )
+            .expect("symbol-eq and is-bool source should parse");
+
+        assert_eq!(
+            module.computation(Name(1)),
+            Some(&symbol_eq(
+                Computation::Quote(TRUE_SYMBOL),
+                Computation::Quote(FALSE_SYMBOL),
+            ))
+        );
+        assert_eq!(
+            module.theorem(Name(2)).map(|theorem| &theorem.prop),
+            Some(&is_bool(Computation::Ref(Name(1))))
+        );
     }
 
     #[test]

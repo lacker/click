@@ -61,7 +61,14 @@ Boolean values are reserved quoted symbols: `:true` and `:false`. They are not
 a separate kernel value variant, but the kernel has an `if` computation form
 that branches on exactly those two quoted symbols. A non-boolean condition
 reduces to a runtime error; condition errors and divergence propagate, and only
-the selected branch is evaluated.
+the selected branch is evaluated. The kernel also has a `symbol-eq` computation
+form for comparing finalized quoted symbols. It returns `:true` only when both
+operands are the same quoted symbol, returns `:false` for other finalized
+values, and propagates effects.
+
+At the source level, `(is-bool x)` is proposition shorthand for saying that `x`
+computes to either `(quote :true)` or `(quote :false)`. It elaborates to an
+ordinary disjunction, not to a separate primitive proposition.
 
 Kernel variables are computation variables. Facts about those variables live in
 propositions, including quantifier guards and local proof assumptions. This
