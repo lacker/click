@@ -122,6 +122,18 @@
             (head cell)
             (fold-right function initial (tail cell))))))))
 
+(def fold-left
+  (lambda function
+    (lambda initial
+      (lambda list
+        (list-case list
+          initial
+          cell
+          (fold-left
+            function
+            (function initial (head cell))
+            (tail cell)))))))
+
 (def last
   ((lambda fixed_point_function
      ((lambda fixed_point_self
@@ -710,6 +722,424 @@
                       (computes-to
                         (function head tail_result_rewrite_target)
                         folded_result))))))))))))
+
+(theorem fold_left_nil
+  (forall function (is-value function)
+    (forall initial (is-value initial)
+      (computes-to (fold-left function initial nil) initial)))
+  (proof
+    (forall-intro function (is-value function)
+      (forall-intro initial (is-value initial)
+        (eval-to (fold-left function initial nil) initial)))))
+
+(theorem fold_left_cons
+  (forall function (is-value function)
+    (forall initial (is-value initial)
+      (forall head (is-value head)
+        (forall tail (is-list tail)
+          (computes-to
+            (fold-left function initial (cons head tail))
+            (fold-left
+              function
+              (function initial head)
+              tail))))))
+  (proof
+    (forall-intro function (is-value function)
+      (forall-intro initial (is-value initial)
+        (forall-intro head (is-value head)
+          (forall-intro tail (is-list tail)
+            (trans
+              (eval-to
+                (fold-left function initial (cons head tail))
+                (fold-left
+                  function
+                  (function initial (head (cons head tail)))
+                  (tail (cons head tail))))
+              (rewrite
+                (eval-to
+                  (tail (cons head tail))
+                  tail)
+                (rewrite
+                  (eval-to
+                    (head (cons head tail))
+                    head)
+                  (eval-to
+                    (fold-left
+                      function
+                      (function initial (head (cons head tail)))
+                      (tail (cons head tail)))
+                    (fold-left
+                      function
+                      (function initial (head (cons head tail)))
+                      (tail (cons head tail))))
+                  head_rewrite_target
+                  (computes-to
+                    (fold-left
+                      function
+                      (function initial (head (cons head tail)))
+                      (tail (cons head tail)))
+                    (fold-left
+                      function
+                      (function initial head_rewrite_target)
+                      (tail (cons head tail)))))
+                tail_rewrite_target
+                (computes-to
+                  (fold-left
+                    function
+                    (function initial (head (cons head tail)))
+                    (tail (cons head tail)))
+                  (fold-left
+                    function
+                    (function initial head)
+                    tail_rewrite_target))))))))))
+
+(theorem fold_left_computes_to_value
+  (forall function (is-value function)
+    (implies
+      (forall accumulator (is-value accumulator)
+        (forall value (is-value value)
+          (exists folded_value (is-value folded_value)
+            (computes-to
+              (function accumulator value)
+              folded_value))))
+      (forall list (is-list list)
+        (forall initial (is-value initial)
+          (exists result (is-value result)
+            (computes-to
+              (fold-left function initial list)
+              result))))))
+  (proof
+    (forall-intro function (is-value function)
+      (implies-intro combines_values
+        (forall accumulator (is-value accumulator)
+          (forall value (is-value value)
+            (exists folded_value (is-value folded_value)
+              (computes-to
+                (function accumulator value)
+                folded_value))))
+        (list-induction list
+          (forall initial (is-value initial)
+            (exists result (is-value result)
+              (computes-to
+                (fold-left function initial list)
+                result)))
+          (forall-intro initial (is-value initial)
+            (exists-intro result (is-value result)
+              (computes-to (fold-left function initial nil) result)
+              initial
+              (eval-to (fold-left function initial nil) initial)))
+          head
+          tail
+          induction_hypothesis
+          (forall-intro initial (is-value initial)
+            (exists-elim
+              (forall-elim
+                (forall-elim
+                  (assume combines_values)
+                  initial)
+                head)
+              folded_initial
+              folded_initial_proof
+              (exists-elim
+                (forall-elim
+                  (assume induction_hypothesis)
+                  folded_initial)
+                result
+                result_proof
+                (exists-intro result (is-value result)
+                  (computes-to
+                    (fold-left function initial (cons head tail))
+                    result)
+                  result
+                  (trans
+                    (forall-elim
+                      (forall-elim
+                        (forall-elim
+                          (forall-elim
+                            (known fold_left_cons)
+                            function)
+                          initial)
+                        head)
+                      tail)
+                    (rewrite
+                      (symm
+                        (assume folded_initial_proof))
+                      (assume result_proof)
+                      folded_initial_rewrite_target
+                      (computes-to
+                        (fold-left function folded_initial_rewrite_target tail)
+                        result))))))))))))
+
+(theorem map_identity
+  (forall list (is-list list)
+    (computes-to
+      (map (lambda value value) list)
+      list))
+  (proof
+    (list-induction list
+      (computes-to
+        (map (lambda value value) list)
+        list)
+      (eval-to
+        (map (lambda value value) nil)
+        nil)
+      head
+      tail
+      induction_hypothesis
+      (trans
+        (forall-elim
+          (forall-elim
+            (forall-elim
+              (known map_cons)
+              (lambda value value))
+            head)
+          tail)
+        (rewrite
+          (assume induction_hypothesis)
+          (rewrite
+            (eval-to
+              ((lambda value value) head)
+              head)
+            (eval-to
+              (cons
+                ((lambda value value) head)
+                (map (lambda value value) tail))
+              (cons
+                ((lambda value value) head)
+                (map (lambda value value) tail)))
+            head_rewrite_target
+            (computes-to
+              (cons
+                ((lambda value value) head)
+                (map (lambda value value) tail))
+              (cons
+                head_rewrite_target
+                (map (lambda value value) tail))))
+          tail_rewrite_target
+          (computes-to
+            (cons
+              ((lambda value value) head)
+              (map (lambda value value) tail))
+            (cons head tail_rewrite_target)))))))
+
+(theorem concat_map_singleton
+  (forall list (is-list list)
+    (computes-to
+      (concat-map (lambda value (cons value nil)) list)
+      list))
+  (proof
+    (list-induction list
+      (computes-to
+        (concat-map (lambda value (cons value nil)) list)
+        list)
+      (eval-to
+        (concat-map (lambda value (cons value nil)) nil)
+        nil)
+      head
+      tail
+      induction_hypothesis
+      (trans
+        (rewrite
+          (assume induction_hypothesis)
+          (rewrite
+            (eval-to
+              ((lambda value (cons value nil)) head)
+              (cons head nil))
+            (forall-elim
+              (forall-elim
+                (forall-elim
+                  (known concat_map_cons)
+                  (lambda value (cons value nil)))
+                head)
+              tail)
+            mapped_head_rewrite_target
+            (computes-to
+              (concat-map
+                (lambda value (cons value nil))
+                (cons head tail))
+              (append
+                mapped_head_rewrite_target
+                (concat-map (lambda value (cons value nil)) tail))))
+          tail_rewrite_target
+          (computes-to
+            (concat-map
+              (lambda value (cons value nil))
+              (cons head tail))
+            (append
+              (cons head nil)
+              tail_rewrite_target)))
+        (forall-elim
+          (forall-elim
+            (known append_singleton)
+            head)
+          tail)))))
+
+(theorem fold_right_cons_nil
+  (forall list (is-list list)
+    (computes-to
+      (fold-right
+        (lambda value
+          (lambda accumulator
+            (cons value accumulator)))
+        nil
+        list)
+      list))
+  (proof
+    (list-induction list
+      (computes-to
+        (fold-right
+          (lambda value
+            (lambda accumulator
+              (cons value accumulator)))
+          nil
+          list)
+        list)
+      (eval-to
+        (fold-right
+          (lambda value
+            (lambda accumulator
+              (cons value accumulator)))
+          nil
+          nil)
+        nil)
+      head
+      tail
+      induction_hypothesis
+      (trans
+        (rewrite
+          (assume induction_hypothesis)
+          (forall-elim
+            (forall-elim
+              (forall-elim
+                (forall-elim
+                  (known fold_right_cons)
+                  (lambda value
+                    (lambda accumulator
+                      (cons value accumulator))))
+                nil)
+              head)
+            tail)
+          tail_rewrite_target
+          (computes-to
+            (fold-right
+              (lambda value
+                (lambda accumulator
+                  (cons value accumulator)))
+              nil
+              (cons head tail))
+            ((lambda value
+               (lambda accumulator
+                 (cons value accumulator)))
+             head
+             tail_rewrite_target)))
+        (eval-to
+          ((lambda value
+             (lambda accumulator
+               (cons value accumulator)))
+           head
+           tail)
+          (cons head tail))))))
+
+(theorem fold_left_reverse_acc
+  (forall list (is-list list)
+    (forall acc (is-list acc)
+      (computes-to
+        (fold-left
+          (lambda accumulator
+            (lambda value
+              (cons value accumulator)))
+          acc
+          list)
+        (reverse_acc list acc))))
+  (proof
+    (list-induction list
+      (forall acc (is-list acc)
+        (computes-to
+          (fold-left
+            (lambda accumulator
+              (lambda value
+                (cons value accumulator)))
+            acc
+            list)
+          (reverse_acc list acc)))
+      (forall-intro acc (is-list acc)
+        (eval-same
+          (fold-left
+            (lambda accumulator
+              (lambda value
+                (cons value accumulator)))
+            acc
+            nil)
+          (reverse_acc nil acc)))
+      head
+      tail
+      induction_hypothesis
+      (forall-intro acc (is-list acc)
+        (trans
+          (rewrite
+            (eval-to
+              ((lambda accumulator
+                 (lambda value
+                   (cons value accumulator)))
+               acc
+               head)
+              (cons head acc))
+            (forall-elim
+              (forall-elim
+                (forall-elim
+                  (forall-elim
+                    (known fold_left_cons)
+                    (lambda accumulator
+                      (lambda value
+                        (cons value accumulator))))
+                  acc)
+                head)
+              tail)
+            next_accumulator_rewrite_target
+            (computes-to
+              (fold-left
+                (lambda accumulator
+                  (lambda value
+                    (cons value accumulator)))
+                acc
+                (cons head tail))
+              (fold-left
+                (lambda accumulator
+                  (lambda value
+                    (cons value accumulator)))
+                next_accumulator_rewrite_target
+                tail)))
+          (trans
+            (forall-elim
+              (assume induction_hypothesis)
+              (cons head acc))
+            (symm
+              (eval-same
+                (reverse_acc (cons head tail) acc)
+                (reverse_acc tail (cons head acc))))))))))
+
+(theorem fold_left_reverse
+  (forall list (is-list list)
+    (computes-to
+      (fold-left
+        (lambda accumulator
+          (lambda value
+            (cons value accumulator)))
+        nil
+        list)
+      (reverse list)))
+  (proof
+    (forall-intro list (is-list list)
+      (trans
+        (forall-elim
+          (forall-elim
+            (known fold_left_reverse_acc)
+            list)
+          nil)
+        (symm
+          (eval-to
+            (reverse list)
+            (reverse_acc list nil)))))))
 
 (theorem append_assoc
   (forall left (is-list left)

@@ -73,6 +73,12 @@ names meaning by binding them to computations or theorems. Human-facing spelling
 scoping, modules, and imports belong to the logistical layer, not to the core
 calculus.
 
+Prelude source definitions may use direct named recursion: a definition can
+refer to its own source name, and the logistical layer resolves that name to the
+opaque kernel computation name. Since divergence is already part of the
+computation model, recursive definitions are allowed; proofs still justify any
+claimed equality by finite unfolding and reduction.
+
 Surface expressions belong outside the core calculus. The elaborator uses
 S-expressions as input and elaborates them into kernel computations,
 propositions, and proofs.
@@ -86,10 +92,10 @@ represented as a computation variable plus a proposition such as `is-value`.
 
 The standard prelude is just a theory built on top of the kernel. It currently
 contains list definitions such as `reverse_acc`, `reverse`, `append`, `snoc`,
-`concat`, `map`, `concat-map`, `fold-right`, `last`, `init`, `null`, and
-`is-singleton`, plus theorems about those definitions. Prelude booleans are
-conventional quoted symbols: `:true` and `:false`. They are not special kernel
-values.
+`concat`, `map`, `concat-map`, `fold-right`, `fold-left`, `last`, `init`,
+`null`, and `is-singleton`, plus theorems about those definitions. Prelude
+booleans are conventional quoted symbols: `:true` and `:false`. They are not
+special kernel values.
 The list prelude itself lives in `src/prelude/list.lisp`; the corresponding
 Rust module only includes that source file, with list-specific Rust helpers kept
 as test support.

@@ -136,6 +136,14 @@ pub fn fold_right_definition() -> Computation {
     definition("fold-right")
 }
 
+pub fn fold_left() -> Computation {
+    computation_ref("fold-left")
+}
+
+pub fn fold_left_definition() -> Computation {
+    definition("fold-left")
+}
+
 pub fn last() -> Computation {
     computation_ref("last")
 }
@@ -353,6 +361,38 @@ pub fn fold_right_computes_to_value_source_theorem() -> Prop {
     theorem_prop("fold_right_computes_to_value")
 }
 
+pub fn fold_left_nil_source_theorem() -> Prop {
+    theorem_prop("fold_left_nil")
+}
+
+pub fn fold_left_cons_source_theorem() -> Prop {
+    theorem_prop("fold_left_cons")
+}
+
+pub fn fold_left_computes_to_value_source_theorem() -> Prop {
+    theorem_prop("fold_left_computes_to_value")
+}
+
+pub fn map_identity_source_theorem() -> Prop {
+    theorem_prop("map_identity")
+}
+
+pub fn concat_map_singleton_source_theorem() -> Prop {
+    theorem_prop("concat_map_singleton")
+}
+
+pub fn fold_right_cons_nil_source_theorem() -> Prop {
+    theorem_prop("fold_right_cons_nil")
+}
+
+pub fn fold_left_reverse_acc_source_theorem() -> Prop {
+    theorem_prop("fold_left_reverse_acc")
+}
+
+pub fn fold_left_reverse_source_theorem() -> Prop {
+    theorem_prop("fold_left_reverse")
+}
+
 fn theorem_prop(spelling: &str) -> Prop {
     theorem_definition(spelling).prop
 }
@@ -417,6 +457,14 @@ pub fn fold_right_call(
     list: Computation,
 ) -> Computation {
     apply(apply(apply(fold_right(), function), initial), list)
+}
+
+pub fn fold_left_call(
+    function: Computation,
+    initial: Computation,
+    list: Computation,
+) -> Computation {
+    apply(apply(apply(fold_left(), function), initial), list)
 }
 
 pub fn last_call(list: Computation) -> Computation {
@@ -1056,6 +1104,207 @@ pub fn fold_right_computes_to_value_theorem(
     )
 }
 
+/// Folding left over `nil` returns the initial value.
+pub fn fold_left_nil_theorem(function: Symbol, initial: Symbol) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        forall_where(
+            initial,
+            is_value(var(initial)),
+            computes_to(
+                fold_left_call(var(function), var(initial), nil()),
+                var(initial),
+            ),
+        ),
+    )
+}
+
+/// Folding left over a cons combines the current accumulator with the head and
+/// recurs on the tail.
+pub fn fold_left_cons_theorem(
+    function: Symbol,
+    initial: Symbol,
+    head: Symbol,
+    tail: Symbol,
+) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        forall_where(
+            initial,
+            is_value(var(initial)),
+            forall_where(
+                head,
+                is_value(var(head)),
+                forall_where(
+                    tail,
+                    is_list(var(tail)),
+                    computes_to(
+                        fold_left_call(var(function), var(initial), cons(var(head), var(tail))),
+                        fold_left_call(
+                            var(function),
+                            apply(apply(var(function), var(initial)), var(head)),
+                            var(tail),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the combining function maps an accumulator value and element value to a
+/// value, `fold-left` returns a value.
+pub fn fold_left_computes_to_value_theorem(
+    function: Symbol,
+    accumulator: Symbol,
+    value: Symbol,
+    folded_value: Symbol,
+    list: Symbol,
+    initial: Symbol,
+    result: Symbol,
+) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        implies(
+            forall_where(
+                accumulator,
+                is_value(var(accumulator)),
+                forall_where(
+                    value,
+                    is_value(var(value)),
+                    exists_where(
+                        folded_value,
+                        is_value(var(folded_value)),
+                        computes_to(
+                            apply(apply(var(function), var(accumulator)), var(value)),
+                            var(folded_value),
+                        ),
+                    ),
+                ),
+            ),
+            forall_where(
+                list,
+                is_list(var(list)),
+                forall_where(
+                    initial,
+                    is_value(var(initial)),
+                    exists_where(
+                        result,
+                        is_value(var(result)),
+                        computes_to(
+                            fold_left_call(var(function), var(initial), var(list)),
+                            var(result),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+pub fn identity_function(value: Symbol) -> Computation {
+    lambda(value, var(value))
+}
+
+pub fn singleton_function(value: Symbol) -> Computation {
+    lambda(value, singleton(var(value)))
+}
+
+pub fn fold_right_cons_function(value: Symbol, accumulator: Symbol) -> Computation {
+    lambda(
+        value,
+        lambda(accumulator, cons(var(value), var(accumulator))),
+    )
+}
+
+pub fn fold_left_reverse_function(accumulator: Symbol, value: Symbol) -> Computation {
+    lambda(
+        accumulator,
+        lambda(value, cons(var(value), var(accumulator))),
+    )
+}
+
+/// Mapping identity over a list returns the list.
+pub fn map_identity_theorem(list: Symbol, value: Symbol) -> Prop {
+    forall_where(
+        list,
+        is_list(var(list)),
+        computes_to(map_call(identity_function(value), var(list)), var(list)),
+    )
+}
+
+/// Flat-mapping singleton over a list returns the list.
+pub fn concat_map_singleton_theorem(list: Symbol, value: Symbol) -> Prop {
+    forall_where(
+        list,
+        is_list(var(list)),
+        computes_to(
+            concat_map_call(singleton_function(value), var(list)),
+            var(list),
+        ),
+    )
+}
+
+/// Folding right with `cons` and `nil` rebuilds the input list.
+pub fn fold_right_cons_nil_theorem(list: Symbol, value: Symbol, accumulator: Symbol) -> Prop {
+    forall_where(
+        list,
+        is_list(var(list)),
+        computes_to(
+            fold_right_call(
+                fold_right_cons_function(value, accumulator),
+                nil(),
+                var(list),
+            ),
+            var(list),
+        ),
+    )
+}
+
+/// Folding left with a front-consing function is `reverse_acc`.
+pub fn fold_left_reverse_acc_theorem(
+    list: Symbol,
+    acc: Symbol,
+    accumulator: Symbol,
+    value: Symbol,
+) -> Prop {
+    forall_where(
+        list,
+        is_list(var(list)),
+        forall_where(
+            acc,
+            is_list(var(acc)),
+            computes_to(
+                fold_left_call(
+                    fold_left_reverse_function(accumulator, value),
+                    var(acc),
+                    var(list),
+                ),
+                reverse_acc_call(var(list), var(acc)),
+            ),
+        ),
+    )
+}
+
+/// Folding left with a front-consing function and `nil` reverses the input list.
+pub fn fold_left_reverse_theorem(list: Symbol, accumulator: Symbol, value: Symbol) -> Prop {
+    forall_where(
+        list,
+        is_list(var(list)),
+        computes_to(
+            fold_left_call(
+                fold_left_reverse_function(accumulator, value),
+                nil(),
+                var(list),
+            ),
+            reverse_call(var(list)),
+        ),
+    )
+}
+
 /// A function whose result is the denotational divergence marker.
 pub fn loop_forever() -> Computation {
     lambda(LOOP_ARGUMENT, Computation::Diverge)
@@ -1108,7 +1357,9 @@ pub fn check_evaluates_to_in_theory(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Effect, Proof, RUNTIME_ERROR, Value, computes_to, diverges, exists_where};
+    use crate::{
+        Effect, Proof, RUNTIME_ERROR, Value, alpha_eq_prop, computes_to, diverges, exists_where,
+    };
 
     const A: Symbol = Symbol(100);
     const B: Symbol = Symbol(101);
@@ -1135,6 +1386,13 @@ mod tests {
         let expected = expected.into();
         let proof = prove_evaluation(computation.clone(), expected.clone());
         assert!(check_evaluates_to(computation, expected, &proof));
+    }
+
+    fn assert_alpha_eq(left: &Prop, right: &Prop) {
+        assert!(
+            alpha_eq_prop(left, right),
+            "expected alpha-equivalent propositions\nleft: {left:?}\nright: {right:?}"
+        );
     }
 
     fn value(computation: Computation) -> Value {
@@ -1811,6 +2069,167 @@ mod tests {
     }
 
     #[test]
+    fn fold_left_theorems_have_expected_shape() {
+        assert_eq!(
+            fold_left_nil_theorem(FUNCTION, INITIAL),
+            forall_where(
+                FUNCTION,
+                is_value(var(FUNCTION)),
+                forall_where(
+                    INITIAL,
+                    is_value(var(INITIAL)),
+                    computes_to(
+                        fold_left_call(var(FUNCTION), var(INITIAL), nil()),
+                        var(INITIAL),
+                    ),
+                ),
+            )
+        );
+        assert_eq!(
+            fold_left_cons_theorem(FUNCTION, INITIAL, HEAD, TAIL),
+            forall_where(
+                FUNCTION,
+                is_value(var(FUNCTION)),
+                forall_where(
+                    INITIAL,
+                    is_value(var(INITIAL)),
+                    forall_where(
+                        HEAD,
+                        is_value(var(HEAD)),
+                        forall_where(
+                            TAIL,
+                            is_list(var(TAIL)),
+                            computes_to(
+                                fold_left_call(
+                                    var(FUNCTION),
+                                    var(INITIAL),
+                                    cons(var(HEAD), var(TAIL)),
+                                ),
+                                fold_left_call(
+                                    var(FUNCTION),
+                                    apply(apply(var(FUNCTION), var(INITIAL)), var(HEAD)),
+                                    var(TAIL),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        );
+        assert_eq!(
+            fold_left_computes_to_value_theorem(
+                FUNCTION,
+                ACCUMULATOR,
+                VALUE,
+                FOLDED_VALUE,
+                X,
+                INITIAL,
+                RESULT,
+            ),
+            forall_where(
+                FUNCTION,
+                is_value(var(FUNCTION)),
+                implies(
+                    forall_where(
+                        ACCUMULATOR,
+                        is_value(var(ACCUMULATOR)),
+                        forall_where(
+                            VALUE,
+                            is_value(var(VALUE)),
+                            exists_where(
+                                FOLDED_VALUE,
+                                is_value(var(FOLDED_VALUE)),
+                                computes_to(
+                                    apply(apply(var(FUNCTION), var(ACCUMULATOR)), var(VALUE),),
+                                    var(FOLDED_VALUE),
+                                ),
+                            ),
+                        ),
+                    ),
+                    forall_where(
+                        X,
+                        is_list(var(X)),
+                        forall_where(
+                            INITIAL,
+                            is_value(var(INITIAL)),
+                            exists_where(
+                                RESULT,
+                                is_value(var(RESULT)),
+                                computes_to(
+                                    fold_left_call(var(FUNCTION), var(INITIAL), var(X)),
+                                    var(RESULT),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn fold_left_source_theorems_have_expected_shape() {
+        let nil_function = theorem_symbol("fold_left_nil", "function");
+        let nil_initial = theorem_symbol("fold_left_nil", "initial");
+        let cons_function = theorem_symbol("fold_left_cons", "function");
+        let cons_initial = theorem_symbol("fold_left_cons", "initial");
+        let cons_head = theorem_symbol("fold_left_cons", "head");
+        let cons_tail = theorem_symbol("fold_left_cons", "tail");
+        let computes_function = theorem_symbol("fold_left_computes_to_value", "function");
+        let computes_accumulator = theorem_symbol("fold_left_computes_to_value", "accumulator");
+        let computes_value = theorem_symbol("fold_left_computes_to_value", "value");
+        let computes_folded_value = theorem_symbol("fold_left_computes_to_value", "folded_value");
+        let computes_list = theorem_symbol("fold_left_computes_to_value", "list");
+        let computes_initial = theorem_symbol("fold_left_computes_to_value", "initial");
+        let computes_result = theorem_symbol("fold_left_computes_to_value", "result");
+
+        assert_eq!(
+            fold_left_nil_source_theorem(),
+            fold_left_nil_theorem(nil_function, nil_initial)
+        );
+        assert_eq!(
+            fold_left_cons_source_theorem(),
+            fold_left_cons_theorem(cons_function, cons_initial, cons_head, cons_tail)
+        );
+        assert_eq!(
+            fold_left_computes_to_value_source_theorem(),
+            fold_left_computes_to_value_theorem(
+                computes_function,
+                computes_accumulator,
+                computes_value,
+                computes_folded_value,
+                computes_list,
+                computes_initial,
+                computes_result,
+            )
+        );
+    }
+
+    #[test]
+    fn higher_order_relation_source_theorems_have_expected_shape() {
+        assert_alpha_eq(
+            &map_identity_source_theorem(),
+            &map_identity_theorem(X, VALUE),
+        );
+        assert_alpha_eq(
+            &concat_map_singleton_source_theorem(),
+            &concat_map_singleton_theorem(X, VALUE),
+        );
+        assert_alpha_eq(
+            &fold_right_cons_nil_source_theorem(),
+            &fold_right_cons_nil_theorem(X, VALUE, ACCUMULATOR),
+        );
+        assert_alpha_eq(
+            &fold_left_reverse_acc_source_theorem(),
+            &fold_left_reverse_acc_theorem(X, ACCUMULATOR, INITIAL, VALUE),
+        );
+        assert_alpha_eq(
+            &fold_left_reverse_source_theorem(),
+            &fold_left_reverse_theorem(X, ACCUMULATOR, VALUE),
+        );
+    }
+
+    #[test]
     fn last_theorems_have_expected_shape() {
         assert_eq!(
             last_nil_errors_theorem(),
@@ -2340,6 +2759,36 @@ mod tests {
         assert_evaluates(
             fold_right_call(accumulator_function, unit(), pair(quote(A), quote(B))),
             Value::quote(prelude_symbol("unit")),
+        );
+    }
+
+    #[test]
+    fn fold_left_nil_returns_initial() {
+        let accumulator_function = lambda(ACCUMULATOR, lambda(X, var(ACCUMULATOR)));
+
+        assert_evaluates(
+            fold_left_call(accumulator_function, unit(), nil()),
+            Value::quote(prelude_symbol("unit")),
+        );
+    }
+
+    #[test]
+    fn fold_left_front_cons_reverses_list() {
+        let front_cons = fold_left_reverse_function(ACCUMULATOR, X);
+
+        assert_evaluates(
+            fold_left_call(front_cons, nil(), triple(quote(A), quote(B), unit())),
+            value(triple(unit(), quote(B), quote(A))),
+        );
+    }
+
+    #[test]
+    fn fold_left_front_cons_with_accumulates_prefix() {
+        let front_cons = fold_left_reverse_function(ACCUMULATOR, X);
+
+        assert_evaluates(
+            fold_left_call(front_cons, singleton(unit()), pair(quote(A), quote(B))),
+            value(triple(quote(B), quote(A), unit())),
         );
     }
 

@@ -58,6 +58,10 @@ fn fold_right() -> Computation {
     computation_ref("fold-right")
 }
 
+fn fold_left() -> Computation {
+    computation_ref("fold-left")
+}
+
 fn last() -> Computation {
     computation_ref("last")
 }
@@ -115,6 +119,14 @@ fn prelude_theorem_names() -> Vec<Name> {
         "fold_right_nil",
         "fold_right_cons",
         "fold_right_computes_to_value",
+        "fold_left_nil",
+        "fold_left_cons",
+        "fold_left_computes_to_value",
+        "map_identity",
+        "concat_map_singleton",
+        "fold_right_cons_nil",
+        "fold_left_reverse_acc",
+        "fold_left_reverse",
         "last_nil_errors",
         "last_singleton",
         "last_cons",
@@ -228,6 +240,10 @@ fn theory_defines_reverse() {
         Some(&list_tests::fold_right_definition())
     );
     assert_eq!(
+        theory.computation(computation("fold-left")),
+        Some(&list_tests::fold_left_definition())
+    );
+    assert_eq!(
         theory.computation(computation("last")),
         Some(&list_tests::last_definition())
     );
@@ -251,6 +267,7 @@ fn theory_defines_reverse() {
     assert_eq!(map(), Computation::Ref(computation("map")));
     assert_eq!(concat_map(), Computation::Ref(computation("concat-map")));
     assert_eq!(fold_right(), Computation::Ref(computation("fold-right")));
+    assert_eq!(fold_left(), Computation::Ref(computation("fold-left")));
     assert_eq!(last(), Computation::Ref(computation("last")));
     assert_eq!(init(), Computation::Ref(computation("init")));
     assert_eq!(null(), Computation::Ref(computation("null")));
@@ -289,6 +306,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&fold_right()),
         Step::Reduced(list_tests::fold_right_definition())
+    );
+    assert_eq!(
+        theory.reduce(&fold_left()),
+        Step::Reduced(list_tests::fold_left_definition())
     );
     assert_eq!(
         theory.reduce(&last()),
@@ -488,6 +509,14 @@ fn theory_defines_reverse_theorems() {
     let fold_right_cons_prop = list_tests::fold_right_cons_source_theorem();
     let fold_right_computes_to_value_prop =
         list_tests::fold_right_computes_to_value_source_theorem();
+    let fold_left_nil_prop = list_tests::fold_left_nil_source_theorem();
+    let fold_left_cons_prop = list_tests::fold_left_cons_source_theorem();
+    let fold_left_computes_to_value_prop = list_tests::fold_left_computes_to_value_source_theorem();
+    let map_identity_prop = list_tests::map_identity_source_theorem();
+    let concat_map_singleton_prop = list_tests::concat_map_singleton_source_theorem();
+    let fold_right_cons_nil_prop = list_tests::fold_right_cons_nil_source_theorem();
+    let fold_left_reverse_acc_prop = list_tests::fold_left_reverse_acc_source_theorem();
+    let fold_left_reverse_prop = list_tests::fold_left_reverse_source_theorem();
     let last_nil_errors_prop = list_tests::last_nil_errors_source_theorem();
     let last_singleton_prop = list_tests::last_singleton_source_theorem();
     let last_cons_prop = list_tests::last_cons_source_theorem();
@@ -590,6 +619,38 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("fold_right_computes_to_value")),
         Some(&fold_right_computes_to_value_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("fold_left_nil")),
+        Some(&fold_left_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("fold_left_cons")),
+        Some(&fold_left_cons_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("fold_left_computes_to_value")),
+        Some(&fold_left_computes_to_value_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("map_identity")),
+        Some(&map_identity_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("concat_map_singleton")),
+        Some(&concat_map_singleton_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("fold_right_cons_nil")),
+        Some(&fold_right_cons_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("fold_left_reverse_acc")),
+        Some(&fold_left_reverse_acc_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("fold_left_reverse")),
+        Some(&fold_left_reverse_prop)
     );
     assert_eq!(
         theory.theorem(theorem("last_nil_errors")),
@@ -907,6 +968,56 @@ fn theory_defines_reverse_theorems() {
             .expect("fold-right computes theorem source proof should check with dependencies")
             .prop(),
         &fold_right_computes_to_value_prop,
+    );
+    assert_eq!(
+        checked_theorem("fold_left_nil")
+            .expect("fold-left nil theorem source proof should check with dependencies")
+            .prop(),
+        &fold_left_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("fold_left_cons")
+            .expect("fold-left cons theorem source proof should check with dependencies")
+            .prop(),
+        &fold_left_cons_prop,
+    );
+    assert_eq!(
+        checked_theorem("fold_left_computes_to_value")
+            .expect("fold-left computes theorem source proof should check with dependencies")
+            .prop(),
+        &fold_left_computes_to_value_prop,
+    );
+    assert_eq!(
+        checked_theorem("map_identity")
+            .expect("map identity theorem source proof should check with dependencies")
+            .prop(),
+        &map_identity_prop,
+    );
+    assert_eq!(
+        checked_theorem("concat_map_singleton")
+            .expect("concat-map singleton theorem source proof should check with dependencies")
+            .prop(),
+        &concat_map_singleton_prop,
+    );
+    assert_eq!(
+        checked_theorem("fold_right_cons_nil")
+            .expect("fold-right cons theorem source proof should check with dependencies")
+            .prop(),
+        &fold_right_cons_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("fold_left_reverse_acc")
+            .expect(
+                "fold-left reverse accumulator theorem source proof should check with dependencies"
+            )
+            .prop(),
+        &fold_left_reverse_acc_prop,
+    );
+    assert_eq!(
+        checked_theorem("fold_left_reverse")
+            .expect("fold-left reverse theorem source proof should check with dependencies")
+            .prop(),
+        &fold_left_reverse_prop,
     );
 }
 
