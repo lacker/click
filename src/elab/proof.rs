@@ -369,7 +369,11 @@ fn tactic_steps_to_proof(
             assumption,
             prop,
             proof,
-        } => tactic_have(*assumption, prop, proof, rest, theory, goal),
+            body,
+        } => {
+            let rest = explicit_body_or_rest(body.as_ref(), rest, "have")?;
+            tactic_have(*assumption, prop, proof, rest, theory, goal)
+        }
         TacticExpr::Eval { limit } => {
             ensure_no_more_tactics(rest, "eval")?;
             tactic_eval(*limit, theory, goal)
@@ -390,7 +394,11 @@ fn tactic_steps_to_proof(
             existential,
             witness,
             assumption,
-        } => tactic_exists_elim(existential, *witness, *assumption, rest, theory, goal),
+            body,
+        } => {
+            let rest = explicit_body_or_rest(body.as_ref(), rest, "exists-elim")?;
+            tactic_exists_elim(existential, *witness, *assumption, rest, theory, goal)
+        }
         TacticExpr::OrElim {
             disjunction,
             left_assumption,
@@ -1076,6 +1084,20 @@ fn ensure_no_more_tactics(
             tactic,
             "tactic solved the current goal before the script ended",
         ))
+    }
+}
+
+fn explicit_body_or_rest<'a>(
+    body: Option<&'a TacticScript>,
+    rest: &'a [TacticExpr],
+    tactic: &'static str,
+) -> Result<&'a [TacticExpr], ProofElaborationError> {
+    match body {
+        Some(body) => {
+            ensure_no_more_tactics(rest, tactic)?;
+            Ok(&body.tactics)
+        }
+        None => Ok(rest),
     }
 }
 

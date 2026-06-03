@@ -290,6 +290,7 @@ pub(crate) enum TacticExpr {
         assumption: Symbol,
         prop: Prop,
         proof: ProofScript,
+        body: Option<TacticScript>,
     },
     Eval {
         limit: usize,
@@ -310,6 +311,7 @@ pub(crate) enum TacticExpr {
         existential: Box<ProofExpr>,
         witness: Symbol,
         assumption: Symbol,
+        body: Option<TacticScript>,
     },
     OrElim {
         disjunction: Box<ProofExpr>,
@@ -1216,11 +1218,37 @@ impl<'a> SourceParser<'a> {
     }
 
     fn tactic_have(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
-        expect_len("have", items, 4)?;
+        if !(4..=5).contains(&items.len()) {
+            return Err(ParseError::new(format!(
+                "`have` expects a name, proposition, proof script, and optional `(by ...)` body; got {} arguments",
+                items.len().saturating_sub(1)
+            )));
+        }
+
+        let assumption = self.proof_symbol(atom(&items[1])?)?;
+        let prop = self.proof_prop(&items[2])?;
+        let proof = self.proof_script(&items[3])?;
+        let body = if items.len() == 5 {
+            let Expr::List(body_items) = &items[4] else {
+                return Err(ParseError::new(
+                    "`have` body must be a `(by ...)` tactic script",
+                ));
+            };
+            if body_items.first().and_then(|head| atom(head).ok()) != Some("by") {
+                return Err(ParseError::new(
+                    "`have` got an extra argument that is not a `(by ...)` body; if this is the next tactic, close the `(have ...)` form before it",
+                ));
+            }
+            Some(self.tactic_script(body_items)?)
+        } else {
+            None
+        };
+
         Ok(TacticExpr::Have {
-            assumption: self.proof_symbol(atom(&items[1])?)?,
-            prop: self.proof_prop(&items[2])?,
-            proof: self.proof_script(&items[3])?,
+            assumption,
+            prop,
+            proof,
+            body,
         })
     }
 
@@ -1276,11 +1304,37 @@ impl<'a> SourceParser<'a> {
     }
 
     fn tactic_exists_elim(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
-        expect_len("exists-elim", items, 4)?;
+        if !(4..=5).contains(&items.len()) {
+            return Err(ParseError::new(format!(
+                "`exists-elim` expects an existential proof, witness name, proof name, and optional `(by ...)` body; got {} arguments",
+                items.len().saturating_sub(1)
+            )));
+        }
+
+        let existential = Box::new(self.proof_expr_or_ref(&items[1])?);
+        let witness = self.proof_symbol(atom(&items[2])?)?;
+        let assumption = self.proof_symbol(atom(&items[3])?)?;
+        let body = if items.len() == 5 {
+            let Expr::List(body_items) = &items[4] else {
+                return Err(ParseError::new(
+                    "`exists-elim` body must be a `(by ...)` tactic script",
+                ));
+            };
+            if body_items.first().and_then(|head| atom(head).ok()) != Some("by") {
+                return Err(ParseError::new(
+                    "`exists-elim` got an extra argument that is not a `(by ...)` body; if this is the next tactic, close the `(exists-elim ...)` form before it",
+                ));
+            }
+            Some(self.tactic_script(body_items)?)
+        } else {
+            None
+        };
+
         Ok(TacticExpr::ExistsElim {
-            existential: Box::new(self.proof_expr_or_ref(&items[1])?),
-            witness: self.proof_symbol(atom(&items[2])?)?,
-            assumption: self.proof_symbol(atom(&items[3])?)?,
+            existential,
+            witness,
+            assumption,
+            body,
         })
     }
 
@@ -2248,6 +2302,7 @@ mod tests {
                     existential,
                     witness: Symbol(2_002),
                     assumption: Symbol(2_003),
+                    body: None,
                 },
                 TacticExpr::ForAllElim {
                     forall,
@@ -2270,6 +2325,125 @@ mod tests {
                 ..
             }] if **disjunction == ProofExpr::Known(Name(4))
         ));
+    }
+
+    #[test]
+    fn parses_explicit_tactic_continuation_bodies() {
+        let theorems = [
+            NameBinding {
+                spelling: "list_exists",
+                name: Name(1),
+            },
+            NameBinding {
+                spelling: "explicit_exists",
+                name: Name(2),
+            },
+            NameBinding {
+                spelling: "explicit_have",
+                name: Name(3),
+            },
+        ];
+
+        let module = parse_module(
+            "
+            (theorem list_exists
+              (exists result (is-list result)
+                (computes-to nil result))
+              (by
+                (exists nil
+                  (by
+                    (eval)))))
+            (theorem explicit_exists
+              (computes-to nil nil)
+              (by
+                (exists-elim list_exists witness witness_proof
+                  (by
+                    (exact witness_proof)))))
+            (theorem explicit_have
+              (computes-to nil nil)
+              (by
+                (have nil_self
+                  (computes-to nil nil)
+                  (by
+                    (eval))
+                  (by
+                    (exact nil_self)))))
+            ",
+            &[],
+            &theorems,
+            &[],
+        )
+        .expect("explicit tactic body source should parse");
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[1].proof else {
+            panic!("expected a tactic proof script");
+        };
+        let [
+            TacticExpr::ExistsElim {
+                assumption,
+                body:
+                    Some(TacticScript {
+                        tactics: body_tactics,
+                    }),
+                ..
+            },
+        ] = tactics.as_slice()
+        else {
+            panic!("expected an exists-elim tactic with an explicit body");
+        };
+        let [TacticExpr::Exact(proof)] = body_tactics.as_slice() else {
+            panic!("expected the exists-elim body to contain an exact tactic");
+        };
+        assert_eq!(**proof, ProofExpr::Assume(*assumption));
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[2].proof else {
+            panic!("expected a tactic proof script");
+        };
+        let [
+            TacticExpr::Have {
+                assumption,
+                body:
+                    Some(TacticScript {
+                        tactics: body_tactics,
+                    }),
+                ..
+            },
+        ] = tactics.as_slice()
+        else {
+            panic!("expected a have tactic with an explicit body");
+        };
+        let [TacticExpr::Exact(proof)] = body_tactics.as_slice() else {
+            panic!("expected the have body to contain an exact tactic");
+        };
+        assert_eq!(**proof, ProofExpr::Assume(*assumption));
+    }
+
+    #[test]
+    fn reports_likely_missing_close_paren_after_have() {
+        let error = parse_module(
+            "
+            (theorem bad_have
+              (computes-to nil nil)
+              (by
+                (have nil_self
+                  (computes-to nil nil)
+                  (by
+                    (eval))
+                  (exact nil_self))))
+            ",
+            &[],
+            &[NameBinding {
+                spelling: "bad_have",
+                name: Name(1),
+            }],
+            &[],
+        )
+        .expect_err("extra non-body tactic inside have should not parse");
+
+        assert_eq!(
+            error.message(),
+            "`have` got an extra argument that is not a `(by ...)` body; if this is the next tactic, close the `(have ...)` form before it"
+        );
     }
 
     #[test]

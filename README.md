@@ -59,6 +59,9 @@ small and deterministic: `intro`, `assumption`, `exact`, `eval`, `apply`,
 `have`, `rewrite`, `forall-elim`, `exists-elim`, `or-elim`,
 `list-induction`, `calc`, `split`/`constructor`, `exists`, `left`, and
 `right`.
+Continuation tactics such as `have` and `exists-elim` can either scope over the
+remaining tactic script or take an explicit final `(by ...)` body to make the
+scope boundary visible in source.
 
 Propositions can talk about arbitrary computations. Quantifiers may be
 unguarded, or guarded by propositions such as `is-value`, `is-list`,
