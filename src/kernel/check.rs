@@ -151,6 +151,22 @@ fn alpha_eq_computation_in_context(
                     alpha_eq_computation_in_context(&left.cons_case, &right.cons_case, bindings)
                 })
         }
+        (
+            Computation::If {
+                condition: left_condition,
+                then_branch: left_then_branch,
+                else_branch: left_else_branch,
+            },
+            Computation::If {
+                condition: right_condition,
+                then_branch: right_then_branch,
+                else_branch: right_else_branch,
+            },
+        ) => {
+            alpha_eq_computation_in_context(left_condition, right_condition, bindings)
+                && alpha_eq_computation_in_context(left_then_branch, right_then_branch, bindings)
+                && alpha_eq_computation_in_context(left_else_branch, right_else_branch, bindings)
+        }
         (Computation::Ref(left), Computation::Ref(right)) => left == right,
         (Computation::Error(left), Computation::Error(right)) => left == right,
         (Computation::Diverge, Computation::Diverge) => true,
@@ -457,6 +473,11 @@ fn step_for_proof(computation: &Computation, bindings: &Bindings, context: &Cont
         Computation::Head(computation) => step_head_for_proof(computation, bindings, context),
         Computation::Tail(computation) => step_tail_for_proof(computation, bindings, context),
         Computation::ListCase(list_case) => step_list_case_for_proof(list_case, bindings, context),
+        Computation::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => step_if_for_proof(condition, then_branch, else_branch, bindings, context),
         Computation::Ref(name) => match bindings.computation(*name) {
             Some(computation) => Step::Reduced(computation.clone()),
             None => Step::Normal,
@@ -570,6 +591,7 @@ fn step_head_for_proof(computation: &Computation, bindings: &Bindings, context: 
             | Computation::Head(_)
             | Computation::Tail(_)
             | Computation::ListCase(_)
+            | Computation::If { .. }
             | Computation::Cons { .. }
             | Computation::Error(_)
             | Computation::Diverge => Step::Normal,
@@ -596,6 +618,7 @@ fn step_tail_for_proof(computation: &Computation, bindings: &Bindings, context: 
             | Computation::Head(_)
             | Computation::Tail(_)
             | Computation::ListCase(_)
+            | Computation::If { .. }
             | Computation::Cons { .. }
             | Computation::Error(_)
             | Computation::Diverge => Step::Normal,
@@ -630,9 +653,37 @@ fn step_list_case_for_proof(list_case: &ListCase, bindings: &Bindings, context: 
             | Computation::Head(_)
             | Computation::Tail(_)
             | Computation::ListCase(_)
+            | Computation::If { .. }
             | Computation::Cons { .. }
             | Computation::Error(_)
             | Computation::Diverge => Step::Normal,
+        },
+    }
+}
+
+fn step_if_for_proof(
+    condition: &Computation,
+    then_branch: &Computation,
+    else_branch: &Computation,
+    bindings: &Bindings,
+    context: &Context,
+) -> Step {
+    match step_for_proof(condition, bindings, context) {
+        Step::Reduced(condition) => Step::Reduced(Computation::If {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch.clone()),
+            else_branch: Box::new(else_branch.clone()),
+        }),
+        Step::Normal if computation_is_effect(condition, context) => {
+            Step::Reduced(condition.clone())
+        }
+        Step::Normal => match condition {
+            Computation::Quote(TRUE_SYMBOL) => Step::Reduced(then_branch.clone()),
+            Computation::Quote(FALSE_SYMBOL) => Step::Reduced(else_branch.clone()),
+            _ if computation_is_known_non_bool(condition, context) => {
+                Step::Reduced(runtime_error())
+            }
+            _ => Step::Normal,
         },
     }
 }
@@ -652,6 +703,15 @@ fn computation_is_known_non_callable(computation: &Computation, context: &Contex
 
 fn computation_is_known_non_list(computation: &Computation) -> bool {
     matches!(computation, Computation::Quote(_) | Computation::Lambda(_))
+}
+
+fn computation_is_known_non_bool(computation: &Computation, context: &Context) -> bool {
+    match computation {
+        Computation::Quote(symbol) => !matches!(*symbol, TRUE_SYMBOL | FALSE_SYMBOL),
+        Computation::Nil | Computation::Lambda(_) => true,
+        Computation::Cons { .. } | Computation::Var(_) => computation_is_list(computation, context),
+        _ => false,
+    }
 }
 
 fn proven_steps(

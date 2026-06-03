@@ -10,6 +10,8 @@ pub struct Symbol(pub u64);
 pub struct ErrorName(pub u64);
 
 pub const RUNTIME_ERROR: ErrorName = ErrorName(0);
+pub const TRUE_SYMBOL: Symbol = Symbol(1);
+pub const FALSE_SYMBOL: Symbol = Symbol(2);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Lambda {
@@ -40,6 +42,11 @@ pub enum Computation {
     Head(Box<Computation>),
     Tail(Box<Computation>),
     ListCase(ListCase),
+    If {
+        condition: Box<Computation>,
+        then_branch: Box<Computation>,
+        else_branch: Box<Computation>,
+    },
     Ref(Name),
     Error(ErrorName),
     Diverge,
@@ -413,6 +420,18 @@ pub fn or(left: Prop, right: Prop) -> Prop {
     Prop::Or(Box::new(left), Box::new(right))
 }
 
+pub fn if_then_else(
+    condition: Computation,
+    then_branch: Computation,
+    else_branch: Computation,
+) -> Computation {
+    Computation::If {
+        condition: Box::new(condition),
+        then_branch: Box::new(then_branch),
+        else_branch: Box::new(else_branch),
+    }
+}
+
 pub fn computes_to(computation: Computation, target: Computation) -> Prop {
     equal(computation, target)
 }
@@ -497,6 +516,15 @@ pub fn substitute(
         Computation::ListCase(list_case) => {
             Computation::ListCase(substitute_list_case(list_case, variable, replacement))
         }
+        Computation::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => Computation::If {
+            condition: Box::new(substitute(condition, variable, replacement)),
+            then_branch: Box::new(substitute(then_branch, variable, replacement)),
+            else_branch: Box::new(substitute(else_branch, variable, replacement)),
+        },
         Computation::Error(error) => Computation::Error(*error),
         Computation::Ref(_)
         | Computation::Diverge
@@ -584,6 +612,15 @@ pub(super) fn add_free_symbols(computation: &Computation, symbols: &mut HashSet<
             cons_case_symbols.remove(&list_case.cons);
             symbols.extend(cons_case_symbols);
         }
+        Computation::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            add_free_symbols(condition, symbols);
+            add_free_symbols(then_branch, symbols);
+            add_free_symbols(else_branch, symbols);
+        }
         Computation::Error(_) | Computation::Ref(_) | Computation::Diverge => {}
         Computation::Var(symbol) => {
             symbols.insert(*symbol);
@@ -626,6 +663,15 @@ pub(super) fn rename_bound_var(computation: &Computation, old: Symbol, new: Symb
                 Box::new(rename_bound_var(list_case.cons_case.as_ref(), old, new))
             },
         }),
+        Computation::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => Computation::If {
+            condition: Box::new(rename_bound_var(condition, old, new)),
+            then_branch: Box::new(rename_bound_var(then_branch, old, new)),
+            else_branch: Box::new(rename_bound_var(else_branch, old, new)),
+        },
         Computation::Error(error) => Computation::Error(*error),
         Computation::Ref(_) | Computation::Diverge => computation.clone(),
         Computation::Var(symbol) if *symbol == old => Computation::Var(new),
@@ -673,6 +719,15 @@ pub(super) fn add_all_symbols(computation: &Computation, symbols: &mut HashSet<S
             add_all_symbols(list_case.nil.as_ref(), symbols);
             symbols.insert(list_case.cons);
             add_all_symbols(list_case.cons_case.as_ref(), symbols);
+        }
+        Computation::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            add_all_symbols(condition, symbols);
+            add_all_symbols(then_branch, symbols);
+            add_all_symbols(else_branch, symbols);
         }
         Computation::Error(_) | Computation::Ref(_) | Computation::Diverge => {}
         Computation::Var(symbol) | Computation::Quote(symbol) => {

@@ -44,6 +44,14 @@ fn list_case(
     })
 }
 
+fn if_computation(
+    condition: Computation,
+    then_branch: Computation,
+    else_branch: Computation,
+) -> Computation {
+    if_then_else(condition, then_branch, else_branch)
+}
+
 fn error(error: ErrorName) -> Computation {
     Computation::Error(error)
 }
@@ -348,6 +356,119 @@ fn list_case_open_computation_is_neutral_and_known_non_list_reduces_to_error() {
 }
 
 #[test]
+fn if_reduces_true_false_and_condition_first() {
+    let condition = apply(
+        lambda(Symbol(1), Computation::Var(Symbol(1))),
+        Computation::Quote(TRUE_SYMBOL),
+    );
+    let computation = if_computation(
+        condition,
+        Computation::Quote(Symbol(9)),
+        Computation::Quote(Symbol(10)),
+    );
+
+    assert_eq!(
+        step(&computation),
+        Step::Reduced(if_computation(
+            Computation::Quote(TRUE_SYMBOL),
+            Computation::Quote(Symbol(9)),
+            Computation::Quote(Symbol(10)),
+        ))
+    );
+    assert_eq!(normal_form(&computation), Computation::Quote(Symbol(9)));
+    assert_eq!(
+        normal_form(&if_computation(
+            Computation::Quote(FALSE_SYMBOL),
+            Computation::Quote(Symbol(9)),
+            Computation::Quote(Symbol(10)),
+        )),
+        Computation::Quote(Symbol(10))
+    );
+}
+
+#[test]
+fn if_does_not_evaluate_unchosen_branch() {
+    assert_eq!(
+        normal_form(&if_computation(
+            Computation::Quote(TRUE_SYMBOL),
+            Computation::Quote(Symbol(9)),
+            Computation::Diverge,
+        )),
+        Computation::Quote(Symbol(9))
+    );
+    assert_eq!(
+        normal_form(&if_computation(
+            Computation::Quote(FALSE_SYMBOL),
+            Computation::Diverge,
+            Computation::Quote(Symbol(10)),
+        )),
+        Computation::Quote(Symbol(10))
+    );
+}
+
+#[test]
+fn if_open_condition_is_neutral_and_non_bool_values_error() {
+    assert_eq!(
+        step(&if_computation(
+            Computation::Var(Symbol(1)),
+            Computation::Quote(Symbol(9)),
+            Computation::Quote(Symbol(10)),
+        )),
+        Step::Normal
+    );
+    assert_eq!(
+        step(&if_computation(
+            Computation::Quote(Symbol(11)),
+            Computation::Quote(Symbol(9)),
+            Computation::Quote(Symbol(10)),
+        )),
+        Step::Reduced(error(RUNTIME_ERROR))
+    );
+    assert_eq!(
+        step(&if_computation(
+            Computation::Nil,
+            Computation::Quote(Symbol(9)),
+            Computation::Quote(Symbol(10)),
+        )),
+        Step::Reduced(error(RUNTIME_ERROR))
+    );
+}
+
+#[test]
+fn if_propagates_condition_effects() {
+    assert_eq!(
+        normal_form(&if_computation(
+            error(ErrorName(7)),
+            Computation::Quote(Symbol(9)),
+            Computation::Quote(Symbol(10)),
+        )),
+        error(ErrorName(7))
+    );
+    assert_eq!(
+        normal_form(&if_computation(
+            Computation::Diverge,
+            Computation::Quote(Symbol(9)),
+            Computation::Quote(Symbol(10)),
+        )),
+        Computation::Diverge
+    );
+}
+
+#[test]
+fn step_proof_proves_if_reduction() {
+    let computation = if_computation(
+        Computation::Quote(TRUE_SYMBOL),
+        Computation::Quote(Symbol(9)),
+        Computation::Diverge,
+    );
+
+    assert!(check(
+        &Proof::Step(computation.clone()),
+        &equal(computation, Computation::Quote(Symbol(9))),
+    ));
+}
+
+#[test]
 fn substitution_descends_into_cons_and_destructors() {
     let computation = cons(
         head(Computation::Var(Symbol(1))),
@@ -359,6 +480,28 @@ fn substitution_descends_into_cons_and_destructors() {
         cons(
             head(Computation::Quote(Symbol(3))),
             tail(Computation::Var(Symbol(2)))
+        )
+    );
+}
+
+#[test]
+fn substitution_and_free_symbols_descend_into_if() {
+    let computation = if_computation(
+        Computation::Var(Symbol(1)),
+        Computation::Var(Symbol(2)),
+        Computation::Quote(Symbol(3)),
+    );
+
+    assert_eq!(
+        free_symbols(&computation),
+        HashSet::from([Symbol(1), Symbol(2)])
+    );
+    assert_eq!(
+        substitute(&computation, Symbol(1), &Computation::Quote(TRUE_SYMBOL)),
+        if_computation(
+            Computation::Quote(TRUE_SYMBOL),
+            Computation::Var(Symbol(2)),
+            Computation::Quote(Symbol(3)),
         )
     );
 }

@@ -135,8 +135,6 @@ fn load_prelude_computation_source() -> Result<LoadedSource, SourceComputationEr
 pub(crate) fn prelude_env() -> ElabEnv {
     let mut env = ElabEnv::new();
 
-    env.intern_symbol(":true");
-    env.intern_symbol(":false");
     env.intern_symbol("unit");
 
     env

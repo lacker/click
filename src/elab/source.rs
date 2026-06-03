@@ -3,9 +3,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    Computation, ErrorName, Lambda, ListCase, Name, Prop, Symbol, and, computes_to,
-    computes_to_list, diverges, equal, errors_with, exists, exists_where, forall, forall_where,
-    implies, is_effect, is_list, is_outcome, is_value, or,
+    Computation, ErrorName, FALSE_SYMBOL, Lambda, ListCase, Name, Prop, Symbol, TRUE_SYMBOL, and,
+    computes_to, computes_to_list, diverges, equal, errors_with, exists, exists_where, forall,
+    forall_where, if_then_else, implies, is_effect, is_list, is_outcome, is_value, or,
 };
 
 const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
@@ -41,12 +41,18 @@ impl Default for ElabEnv {
 
 impl ElabEnv {
     pub fn new() -> Self {
+        let symbols = HashMap::from([
+            (":true".to_owned(), TRUE_SYMBOL),
+            (":false".to_owned(), FALSE_SYMBOL),
+        ]);
+        let next_symbol = TRUE_SYMBOL.0.max(FALSE_SYMBOL.0) + 1;
+
         Self {
             computations: HashMap::new(),
             theorems: HashMap::new(),
-            symbols: HashMap::new(),
+            symbols,
             next_name: 1,
-            next_symbol: 1,
+            next_symbol,
         }
     }
 
@@ -712,6 +718,7 @@ impl<'a> SourceParser<'a> {
                 "cons" => return self.cons(items),
                 "head" => return self.head(items),
                 "tail" => return self.tail(items),
+                "if" => return self.if_computation(items),
                 "error" => return self.error(items),
                 "quote" => return self.quote(items),
                 _ => {}
@@ -770,6 +777,15 @@ impl<'a> SourceParser<'a> {
     fn tail(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
         expect_len("tail", items, 2)?;
         Ok(Computation::Tail(Box::new(self.computation(&items[1])?)))
+    }
+
+    fn if_computation(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
+        expect_len("if", items, 4)?;
+        Ok(if_then_else(
+            self.computation(&items[1])?,
+            self.computation(&items[2])?,
+            self.computation(&items[3])?,
+        ))
     }
 
     fn error(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
@@ -1327,6 +1343,7 @@ mod tests {
     fn elab_env_allocates_names_and_symbols_from_source() {
         let mut env = ElabEnv::new();
         assert_eq!(env.intern_symbol(":true"), Symbol(1));
+        assert_eq!(env.symbol(":false"), Some(Symbol(2)));
 
         let module = env
             .parse_module(
@@ -1342,9 +1359,29 @@ mod tests {
         assert_eq!(env.computation("id"), Some(Name(1)));
         assert_eq!(env.theorem("id_computes"), Some(Name(2)));
         assert_eq!(env.symbol(":true"), Some(Symbol(1)));
-        assert_eq!(env.symbol("x"), Some(Symbol(2)));
+        assert_eq!(env.symbol("x"), Some(Symbol(3)));
         assert!(module.computation(Name(1)).is_some());
         assert!(module.theorem(Name(2)).is_some());
+    }
+
+    #[test]
+    fn parses_if_computation() {
+        let mut env = ElabEnv::new();
+
+        let module = env
+            .parse_module("(def choose (if (quote :true) nil diverge))")
+            .expect("source if expression should parse");
+
+        assert_eq!(
+            module.computation(Name(1)),
+            Some(&if_then_else(
+                Computation::Quote(TRUE_SYMBOL),
+                Computation::Nil,
+                Computation::Diverge,
+            ))
+        );
+        assert_eq!(env.symbol(":true"), Some(TRUE_SYMBOL));
+        assert_eq!(env.symbol(":false"), Some(FALSE_SYMBOL));
     }
 
     #[test]

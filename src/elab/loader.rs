@@ -196,8 +196,8 @@ mod tests {
         assert_eq!(
             loaded.theory().computation(id),
             Some(&Computation::Lambda(crate::Lambda {
-                parameter: crate::Symbol(1),
-                body: Box::new(Computation::Var(crate::Symbol(1))),
+                parameter: crate::Symbol(3),
+                body: Box::new(Computation::Var(crate::Symbol(3))),
             }))
         );
         assert_eq!(
@@ -209,6 +209,42 @@ mod tests {
                 },
                 Computation::Nil
             ))
+        );
+    }
+
+    #[test]
+    fn load_str_checks_if_theorems() {
+        let mut loaded = LoadedSource::new();
+
+        loaded
+            .load_str(
+                "
+                (def choose (if (quote :true) nil diverge))
+                (theorem choose_nil
+                  (computes-to choose nil)
+                  (proof (eval-to choose nil)))
+                ",
+            )
+            .expect("source if theorem should load");
+
+        let choose = loaded
+            .computation("choose")
+            .expect("loader should record if computation spelling");
+        let choose_nil = loaded
+            .theorem("choose_nil")
+            .expect("loader should record if theorem spelling");
+
+        assert_eq!(
+            loaded.theory().computation(choose),
+            Some(&crate::if_then_else(
+                Computation::Quote(crate::TRUE_SYMBOL),
+                Computation::Nil,
+                Computation::Diverge,
+            ))
+        );
+        assert_eq!(
+            loaded.theory().theorem(choose_nil),
+            Some(&computes_to(Computation::Ref(choose), Computation::Nil))
         );
     }
 

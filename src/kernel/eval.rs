@@ -13,6 +13,11 @@ pub(super) fn step_in_bindings(computation: &Computation, bindings: &Bindings) -
         Computation::Head(computation) => step_head(computation, bindings),
         Computation::Tail(computation) => step_tail(computation, bindings),
         Computation::ListCase(list_case) => step_list_case(list_case, bindings),
+        Computation::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => step_if(condition, then_branch, else_branch, bindings),
         Computation::Ref(name) => match bindings.computation(*name) {
             Some(computation) => Step::Reduced(computation.clone()),
             None => Step::Normal,
@@ -116,7 +121,8 @@ fn step_head(computation: &Computation, bindings: &Bindings) -> Step {
             | Computation::Apply { .. }
             | Computation::Head(_)
             | Computation::Tail(_)
-            | Computation::ListCase(_) => Step::Normal,
+            | Computation::ListCase(_)
+            | Computation::If { .. } => Step::Normal,
             Computation::Nil | Computation::Quote(_) | Computation::Lambda(_) => {
                 Step::Reduced(runtime_error())
             }
@@ -135,7 +141,8 @@ fn step_tail(computation: &Computation, bindings: &Bindings) -> Step {
             | Computation::Apply { .. }
             | Computation::Head(_)
             | Computation::Tail(_)
-            | Computation::ListCase(_) => Step::Normal,
+            | Computation::ListCase(_)
+            | Computation::If { .. } => Step::Normal,
             Computation::Nil | Computation::Quote(_) | Computation::Lambda(_) => {
                 Step::Reduced(runtime_error())
             }
@@ -166,8 +173,40 @@ fn step_list_case(list_case: &ListCase, bindings: &Bindings) -> Step {
             | Computation::Apply { .. }
             | Computation::Head(_)
             | Computation::Tail(_)
-            | Computation::ListCase(_) => Step::Normal,
+            | Computation::ListCase(_)
+            | Computation::If { .. } => Step::Normal,
             Computation::Quote(_) | Computation::Lambda(_) => Step::Reduced(runtime_error()),
+        },
+    }
+}
+
+fn step_if(
+    condition: &Computation,
+    then_branch: &Computation,
+    else_branch: &Computation,
+    bindings: &Bindings,
+) -> Step {
+    match step_in_bindings(condition, bindings) {
+        Step::Reduced(condition) => Step::Reduced(Computation::If {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch.clone()),
+            else_branch: Box::new(else_branch.clone()),
+        }),
+        Step::Normal => match condition {
+            Computation::Quote(TRUE_SYMBOL) => Step::Reduced(then_branch.clone()),
+            Computation::Quote(FALSE_SYMBOL) => Step::Reduced(else_branch.clone()),
+            Computation::Error(_) | Computation::Diverge => Step::Reduced(condition.clone()),
+            Computation::Ref(_)
+            | Computation::Var(_)
+            | Computation::Apply { .. }
+            | Computation::Head(_)
+            | Computation::Tail(_)
+            | Computation::ListCase(_)
+            | Computation::If { .. } => Step::Normal,
+            Computation::Nil
+            | Computation::Cons { .. }
+            | Computation::Lambda(_)
+            | Computation::Quote(_) => Step::Reduced(runtime_error()),
         },
     }
 }
