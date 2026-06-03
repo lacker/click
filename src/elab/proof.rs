@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use crate::{
     Computation, Context, ListCase, Name, Proof, Prop, Step, Symbol, Theorem, TheoremError, Theory,
-    alpha_eq_computation, alpha_eq_prop, is_list, is_value, substitute_prop,
+    alpha_eq_computation, alpha_eq_prop, free_symbols, is_list, is_value, substitute_prop,
 };
 
 #[cfg(test)]
@@ -214,8 +214,14 @@ fn proof_expr_to_proof_in_context(
         } => {
             let existential_proof =
                 subproof("exists-elim existential", existential, theory, context)?;
-            let context =
-                exists_elim_context(context, theory, &existential_proof, *witness, *assumption);
+            let context = exists_elim_context(
+                "exists-elim",
+                context,
+                theory,
+                &existential_proof,
+                *witness,
+                *assumption,
+            )?;
 
             Ok(Proof::ExistsElim {
                 existential: Box::new(existential_proof),
@@ -375,6 +381,15 @@ fn tactic_steps_to_proof(
             ensure_no_more_tactics(rest, "exists")?;
             tactic_exists(witness, proof, theory, goal)
         }
+        TacticExpr::ExistsElim {
+            existential,
+            witness,
+            assumption,
+        } => tactic_exists_elim(existential, *witness, *assumption, rest, theory, goal),
+        TacticExpr::ForAllElim { forall, arguments } => {
+            ensure_no_more_tactics(rest, "forall-elim")?;
+            tactic_forall_elim(forall, arguments, theory, goal)
+        }
         TacticExpr::Left(proof) => {
             ensure_no_more_tactics(rest, "left")?;
             tactic_left(proof, theory, goal)
@@ -526,9 +541,20 @@ fn tactic_apply(
     };
     let mut proof = Proof::Known(theorem);
 
+    (proof, prop) = instantiate_forall("apply", proof, prop, arguments)?;
+
+    apply_implications_from_context("apply", proof, prop, theory, goal)
+}
+
+fn instantiate_forall(
+    tactic: &'static str,
+    mut proof: Proof,
+    mut prop: Prop,
+    arguments: &[Computation],
+) -> Result<(Proof, Prop), ProofElaborationError> {
     for argument in arguments {
         let Prop::ForAll { variable, body, .. } = prop else {
-            return Err(tactic_failed("apply", "too many explicit arguments"));
+            return Err(tactic_failed(tactic, "too many explicit arguments"));
         };
         proof = Proof::ForAllElim {
             forall: Box::new(proof),
@@ -537,10 +563,11 @@ fn tactic_apply(
         prop = substitute_prop(&body, variable, argument);
     }
 
-    apply_implications_from_context(proof, prop, theory, goal)
+    Ok((proof, prop))
 }
 
 fn apply_implications_from_context(
+    tactic: &'static str,
     mut proof: Proof,
     mut prop: Prop,
     theory: &Theory,
@@ -553,11 +580,8 @@ fn apply_implications_from_context(
 
         let Prop::Implies(premise, conclusion) = prop else {
             return Err(tactic_failed(
-                "apply",
-                format!(
-                    "theorem concludes {:?}, but goal is {:?}",
-                    prop, goal.target
-                ),
+                tactic,
+                format!("proof concludes {:?}, but goal is {:?}", prop, goal.target),
             ));
         };
 
@@ -567,7 +591,7 @@ fn apply_implications_from_context(
         };
         let premise_proof = tactic_assumption(&premise_goal).map_err(|_| {
             tactic_failed(
-                "apply",
+                tactic,
                 format!("premise {:?} is not available as an assumption", premise),
             )
         })?;
@@ -578,7 +602,7 @@ fn apply_implications_from_context(
         };
         prop = theory
             .proven_prop_in_context(&proof, &goal.context)
-            .ok_or_else(|| tactic_failed("apply", "applying theorem produced no proposition"))?;
+            .ok_or_else(|| tactic_failed(tactic, "applying proof produced no proposition"))?;
 
         if alpha_eq_prop(&prop, conclusion.as_ref()) {
             prop = conclusion.as_ref().clone();
@@ -643,6 +667,54 @@ fn tactic_exists(
         witness: witness.clone(),
         proof: Box::new(tactic_script_to_proof(script, theory, &witness_goal)?),
     })
+}
+
+fn tactic_exists_elim(
+    existential_expr: &ProofExpr,
+    witness: Symbol,
+    assumption: Symbol,
+    rest: &[TacticExpr],
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let existential = proof_expr_to_proof_in_context(existential_expr, theory, &goal.context)?;
+    let context = exists_elim_context(
+        "exists-elim",
+        &goal.context,
+        theory,
+        &existential,
+        witness,
+        assumption,
+    )?;
+
+    Ok(Proof::ExistsElim {
+        existential: Box::new(existential),
+        witness,
+        assumption,
+        proof: Box::new(tactic_steps_to_proof(
+            rest,
+            theory,
+            &Goal {
+                context,
+                target: goal.target.clone(),
+            },
+        )?),
+    })
+}
+
+fn tactic_forall_elim(
+    forall_expr: &ProofExpr,
+    arguments: &[Computation],
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let proof = proof_expr_to_proof_in_context(forall_expr, theory, &goal.context)?;
+    let prop = theory
+        .proven_prop_in_context(&proof, &goal.context)
+        .ok_or_else(|| tactic_failed("forall-elim", "proof proves no proposition"))?;
+    let (proof, prop) = instantiate_forall("forall-elim", proof, prop, arguments)?;
+
+    apply_implications_from_context("forall-elim", proof, prop, theory, goal)
 }
 
 fn tactic_left(
@@ -950,8 +1022,74 @@ fn replace_first_prop(
                 replace_first_prop(right, needle, replacement)
                     .map(|right| Prop::Or(left.clone(), Box::new(right)))
             }),
-        Prop::ForAll { .. } | Prop::Exists { .. } => None,
+        Prop::ForAll {
+            variable,
+            guard,
+            body,
+        } => replace_first_quantified_prop(
+            QuantifiedProp::ForAll,
+            *variable,
+            guard,
+            body,
+            needle,
+            replacement,
+        ),
+        Prop::Exists {
+            variable,
+            guard,
+            body,
+        } => replace_first_quantified_prop(
+            QuantifiedProp::Exists,
+            *variable,
+            guard,
+            body,
+            needle,
+            replacement,
+        ),
     }
+}
+
+#[derive(Clone, Copy)]
+enum QuantifiedProp {
+    ForAll,
+    Exists,
+}
+
+fn replace_first_quantified_prop(
+    quantified: QuantifiedProp,
+    variable: Symbol,
+    guard: &Option<Box<Prop>>,
+    body: &Prop,
+    needle: &Computation,
+    replacement: &Computation,
+) -> Option<Prop> {
+    if free_symbols(needle).contains(&variable) || free_symbols(replacement).contains(&variable) {
+        return None;
+    }
+
+    let rebuild = |guard: Option<Box<Prop>>, body: Box<Prop>| match quantified {
+        QuantifiedProp::ForAll => Prop::ForAll {
+            variable,
+            guard,
+            body,
+        },
+        QuantifiedProp::Exists => Prop::Exists {
+            variable,
+            guard,
+            body,
+        },
+    };
+
+    guard
+        .as_ref()
+        .and_then(|guard| {
+            replace_first_prop(guard, needle, replacement)
+                .map(|guard| rebuild(Some(Box::new(guard)), Box::new(body.clone())))
+        })
+        .or_else(|| {
+            replace_first_prop(body, needle, replacement)
+                .map(|body| rebuild(guard.clone(), Box::new(body)))
+        })
 }
 
 fn replace_first_computation(
@@ -1176,12 +1314,13 @@ fn list_induction_step_context(
 }
 
 fn exists_elim_context(
+    tactic: &'static str,
     context: &Context,
     theory: &Theory,
     existential_proof: &Proof,
     witness: Symbol,
     assumption: Symbol,
-) -> Context {
+) -> Result<Context, ProofElaborationError> {
     let mut context = context.clone();
 
     let Some(Prop::Exists {
@@ -1190,7 +1329,7 @@ fn exists_elim_context(
         body,
     }) = theory.proven_prop_in_context(existential_proof, &context)
     else {
-        return context;
+        return Err(tactic_failed(tactic, "proof is not an existential"));
     };
 
     let witness_var = Computation::Var(witness);
@@ -1199,7 +1338,7 @@ fn exists_elim_context(
     }
     context.insert(assumption, substitute_prop(&body, variable, &witness_var));
 
-    context
+    Ok(context)
 }
 
 fn subproof(

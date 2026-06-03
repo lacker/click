@@ -301,6 +301,15 @@ pub(crate) enum TacticExpr {
         witness: Computation,
         proof: TacticScript,
     },
+    ExistsElim {
+        existential: Box<ProofExpr>,
+        witness: Symbol,
+        assumption: Symbol,
+    },
+    ForAllElim {
+        forall: Box<ProofExpr>,
+        arguments: Vec<Computation>,
+    },
     Left(TacticScript),
     Right(TacticScript),
     Rewrite {
@@ -1158,6 +1167,8 @@ impl<'a> SourceParser<'a> {
             "apply" => self.tactic_apply(items),
             "split" | "constructor" => self.tactic_split(form, items),
             "exists" => self.tactic_exists(items),
+            "exists-elim" => self.tactic_exists_elim(items),
+            "forall-elim" => self.tactic_forall_elim(items),
             "left" => self.tactic_left(items),
             "right" => self.tactic_right(items),
             "rewrite" => self.tactic_rewrite(items),
@@ -1230,6 +1241,32 @@ impl<'a> SourceParser<'a> {
         Ok(TacticExpr::Exists {
             witness: self.computation(&items[1])?,
             proof: self.nested_tactic_script(&items[2])?,
+        })
+    }
+
+    fn tactic_exists_elim(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        expect_len("exists-elim", items, 4)?;
+        Ok(TacticExpr::ExistsElim {
+            existential: Box::new(self.proof_expr_or_ref(&items[1])?),
+            witness: self.proof_symbol(atom(&items[2])?)?,
+            assumption: self.proof_symbol(atom(&items[3])?)?,
+        })
+    }
+
+    fn tactic_forall_elim(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        if items.len() < 3 {
+            return Err(ParseError::new(format!(
+                "`forall-elim` expects a proof and at least one argument, got {}",
+                items.len().saturating_sub(1)
+            )));
+        }
+
+        Ok(TacticExpr::ForAllElim {
+            forall: Box::new(self.proof_expr_or_ref(&items[1])?),
+            arguments: items[2..]
+                .iter()
+                .map(|item| self.computation(item))
+                .collect::<Result<Vec<_>, _>>()?,
         })
     }
 
@@ -2045,6 +2082,71 @@ mod tests {
                 induction_hypothesis_assumption: Symbol(2_003),
                 ..
             }]
+        ));
+    }
+
+    #[test]
+    fn parses_eliminator_tactic_scripts() {
+        let theorems = [
+            NameBinding {
+                spelling: "list_exists",
+                name: Name(1),
+            },
+            NameBinding {
+                spelling: "value_self",
+                name: Name(2),
+            },
+            NameBinding {
+                spelling: "elim_example",
+                name: Name(3),
+            },
+        ];
+
+        let module = parse_module(
+            "
+            (theorem list_exists
+              (exists result (is-list result)
+                (computes-to nil result))
+              (by
+                (exists nil
+                  (by
+                    (eval)))))
+            (theorem value_self
+              (forall value (is-value value)
+                (computes-to value value))
+              (by
+                (intro value)
+                (eval)))
+            (theorem elim_example
+              (computes-to nil nil)
+              (by
+                (exists-elim list_exists witness witness_proof)
+                (forall-elim value_self nil)))
+            ",
+            &[],
+            &theorems,
+            &[],
+        )
+        .expect("eliminator tactic source should parse");
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[2].proof else {
+            panic!("expected a tactic proof script");
+        };
+        assert!(matches!(
+            tactics.as_slice(),
+            [
+                TacticExpr::ExistsElim {
+                    existential,
+                    witness: Symbol(2_002),
+                    assumption: Symbol(2_003),
+                },
+                TacticExpr::ForAllElim {
+                    forall,
+                    arguments,
+                },
+            ] if **existential == ProofExpr::Known(Name(1))
+                && **forall == ProofExpr::Known(Name(2))
+                && arguments.as_slice() == [Computation::Nil]
         ));
     }
 

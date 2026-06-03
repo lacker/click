@@ -285,6 +285,32 @@ mod tests {
                     (intro value_nil)
                     (rewrite value_nil)
                     (eval)))
+                (theorem value_self
+                  (forall value (is-value value)
+                    (computes-to value value))
+                  (by
+                    (intro value)
+                    (eval)))
+                (theorem nil_via_forall_elim
+                  (computes-to nil nil)
+                  (by
+                    (forall-elim value_self nil)))
+                (theorem list_exists
+                  (exists result (is-list result)
+                    (computes-to nil result))
+                  (by
+                    (exists nil
+                      (by
+                        (eval)))))
+                (theorem nil_from_exists
+                  (computes-to nil nil)
+                  (by
+                    (exists-elim list_exists witness witness_proof)
+                    (exact
+                      (trans
+                        (assume witness_proof)
+                        (symm
+                          (assume witness_proof))))))
                 (theorem list_self
                   (forall list (is-list list)
                     (computes-to list list))
@@ -328,6 +354,12 @@ mod tests {
         let id_rewrite_nil = loaded
             .theorem("id_rewrite_nil")
             .expect("loader should record rewrite tactic theorem spelling");
+        let nil_via_forall_elim = loaded
+            .theorem("nil_via_forall_elim")
+            .expect("loader should record forall-elim tactic theorem spelling");
+        let nil_from_exists = loaded
+            .theorem("nil_from_exists")
+            .expect("loader should record exists-elim tactic theorem spelling");
         let list_self = loaded
             .theorem("list_self")
             .expect("loader should record induction tactic theorem spelling");
@@ -357,6 +389,8 @@ mod tests {
             ))
         );
         assert!(loaded.theory().theorem(id_rewrite_nil).is_some());
+        assert!(loaded.theory().theorem(nil_via_forall_elim).is_some());
+        assert!(loaded.theory().theorem(nil_from_exists).is_some());
         assert!(loaded.theory().theorem(list_self).is_some());
     }
 

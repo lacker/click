@@ -301,47 +301,34 @@
   (forall list (is-list list)
     (forall acc (is-list acc)
       (computes-to-list result (reverse_acc list acc))))
-  (proof
+  (by
     (list-induction list
-      (forall acc (is-list acc)
-        (computes-to-list result (reverse_acc list acc)))
-      (forall-intro acc (is-list acc)
-        (exists-intro result (is-list result)
-          (computes-to (reverse_acc nil acc) result)
-          acc
-          (eval-to (reverse_acc nil acc) acc)))
+      (by
+        (intro acc)
+        (exists acc
+          (by
+            (eval))))
       head
       tail
       induction_hypothesis
-      (forall-intro acc (is-list acc)
+      (by
+        (intro acc)
         (rewrite
-          (symm
-            (eval-same
-              (reverse_acc (cons head tail) acc)
-              (reverse_acc tail (cons head acc))))
-          (forall-elim
-            (assume induction_hypothesis)
-            (cons head acc))
-          rewrite_target
-          (computes-to-list result rewrite_target))))))
+          (eval-same
+            (reverse_acc (cons head tail) acc)
+            (reverse_acc tail (cons head acc))))
+        (forall-elim induction_hypothesis (cons head acc))))))
 
 (theorem reverse_computes_to_list
   (forall list (is-list list)
     (computes-to-list result (reverse list)))
-  (proof
-    (forall-intro list (is-list list)
-      (rewrite
-        (symm
-          (eval-to
-            (reverse list)
-            (reverse_acc list nil)))
-        (forall-elim
-          (forall-elim
-            (known reverse_acc_computes_to_list)
-            list)
-          nil)
-        rewrite_target
-        (computes-to-list result rewrite_target)))))
+  (by
+    (intro list)
+    (rewrite
+      (eval-to
+        (reverse list)
+        (reverse_acc list nil)))
+    (forall-elim reverse_acc_computes_to_list list nil)))
 
 (theorem reverse_nil_computes_to_list
   (computes-to-list result (reverse nil))
@@ -375,37 +362,35 @@
   (forall left (is-list left)
     (forall right (is-list right)
       (computes-to-list result (append left right))))
-  (proof
+  (by
     (list-induction left
-      (forall right (is-list right)
-        (computes-to-list result (append left right)))
-      (forall-intro right (is-list right)
-        (exists-intro result (is-list result)
-          (computes-to (append nil right) result)
-          right
-          (eval-to (append nil right) right)))
+      (by
+        (intro right)
+        (exists right
+          (by
+            (eval))))
       head
       tail
       induction_hypothesis
-      (forall-intro right (is-list right)
+      (by
+        (intro right)
         (exists-elim
-          (forall-elim
-            (assume induction_hypothesis)
-            right)
+          (forall-elim (assume induction_hypothesis) right)
           tail_result
-          tail_result_proof
-          (exists-intro result (is-list result)
-            (computes-to (append (cons head tail) right) result)
-            (cons head tail_result)
-            (rewrite
-              (assume tail_result_proof)
-              (eval-same
-                (append (cons head tail) right)
-                (cons head (append tail right)))
-              rewrite_target
-              (computes-to
-                (append (cons head tail) right)
-                (cons head rewrite_target)))))))))
+          tail_result_proof)
+        (exists (cons head tail_result)
+          (by
+            (calc
+              (append (cons head tail) right)
+              (==
+                (cons head (append tail right))
+                (by
+                  (eval)))
+              (==
+                (cons head tail_result)
+                (by
+                  (rewrite tail_result_proof)
+                  (eval))))))))))
 
 (theorem append_nil_returns_right
   (forall right (is-list right)
