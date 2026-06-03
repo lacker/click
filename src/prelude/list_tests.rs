@@ -176,6 +176,38 @@ pub fn all_definition() -> Computation {
     definition("all")
 }
 
+pub fn is_symbol() -> Computation {
+    computation_ref("is-symbol")
+}
+
+pub fn is_symbol_definition() -> Computation {
+    definition("is-symbol")
+}
+
+pub fn is_lambda() -> Computation {
+    computation_ref("is-lambda")
+}
+
+pub fn is_lambda_definition() -> Computation {
+    definition("is-lambda")
+}
+
+pub fn is_list_value() -> Computation {
+    computation_ref("is-list-value")
+}
+
+pub fn is_list_value_definition() -> Computation {
+    definition("is-list-value")
+}
+
+pub fn value_eq() -> Computation {
+    computation_ref("value-eq")
+}
+
+pub fn value_eq_definition() -> Computation {
+    definition("value-eq")
+}
+
 pub fn last() -> Computation {
     computation_ref("last")
 }
@@ -577,6 +609,22 @@ pub fn any_call(predicate: Computation, list: Computation) -> Computation {
 
 pub fn all_call(predicate: Computation, list: Computation) -> Computation {
     apply(apply(all(), predicate), list)
+}
+
+pub fn is_symbol_call(value: Computation) -> Computation {
+    apply(is_symbol(), value)
+}
+
+pub fn is_lambda_call(value: Computation) -> Computation {
+    apply(is_lambda(), value)
+}
+
+pub fn is_list_value_call(value: Computation) -> Computation {
+    apply(is_list_value(), value)
+}
+
+pub fn value_eq_call(left: Computation, right: Computation) -> Computation {
+    apply(apply(value_eq(), left), right)
 }
 
 pub fn last_call(list: Computation) -> Computation {
@@ -3633,6 +3681,183 @@ mod tests {
     fn all_symbol_eq_returns_false_when_any_missing() {
         assert_evaluates(
             all_call(is_a_predicate(), triple(quote(A), quote(B), quote(A))),
+            Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn is_symbol_returns_true_for_symbols() {
+        assert_evaluates(
+            is_symbol_call(quote(A)),
+            Value::quote(prelude_symbol(":true")),
+        );
+    }
+
+    #[test]
+    fn is_symbol_returns_false_for_lists_and_lambdas() {
+        assert_evaluates(
+            is_symbol_call(nil()),
+            Value::quote(prelude_symbol(":false")),
+        );
+        assert_evaluates(
+            is_symbol_call(lambda(X, var(X))),
+            Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn is_lambda_returns_true_for_lambdas() {
+        assert_evaluates(
+            is_lambda_call(lambda(X, var(X))),
+            Value::quote(prelude_symbol(":true")),
+        );
+    }
+
+    #[test]
+    fn is_lambda_returns_false_for_symbols_and_lists() {
+        assert_evaluates(
+            is_lambda_call(quote(A)),
+            Value::quote(prelude_symbol(":false")),
+        );
+        assert_evaluates(
+            is_lambda_call(nil()),
+            Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn is_list_value_returns_true_for_nil_and_cons() {
+        assert_evaluates(
+            is_list_value_call(nil()),
+            Value::quote(prelude_symbol(":true")),
+        );
+        assert_evaluates(
+            is_list_value_call(singleton(quote(A))),
+            Value::quote(prelude_symbol(":true")),
+        );
+    }
+
+    #[test]
+    fn is_list_value_returns_false_for_symbols_and_lambdas() {
+        assert_evaluates(
+            is_list_value_call(quote(A)),
+            Value::quote(prelude_symbol(":false")),
+        );
+        assert_evaluates(
+            is_list_value_call(lambda(X, var(X))),
+            Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn value_eq_symbol_same_returns_true() {
+        assert_evaluates(
+            value_eq_call(quote(A), quote(A)),
+            Value::quote(prelude_symbol(":true")),
+        );
+    }
+
+    #[test]
+    fn value_eq_symbol_different_returns_false() {
+        assert_evaluates(
+            value_eq_call(quote(A), quote(B)),
+            Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn value_eq_symbol_list_mismatch_returns_false() {
+        assert_evaluates(
+            value_eq_call(quote(A), singleton(quote(A))),
+            Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn value_eq_nil_nil_returns_true() {
+        assert_evaluates(
+            value_eq_call(nil(), nil()),
+            Value::quote(prelude_symbol(":true")),
+        );
+    }
+
+    #[test]
+    fn value_eq_nil_cons_returns_false() {
+        assert_evaluates(
+            value_eq_call(nil(), singleton(quote(A))),
+            Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn value_eq_cons_nil_returns_false() {
+        assert_evaluates(
+            value_eq_call(singleton(quote(A)), nil()),
+            Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn value_eq_equal_cons_returns_true() {
+        assert_evaluates(
+            value_eq_call(pair(quote(A), quote(B)), pair(quote(A), quote(B))),
+            Value::quote(prelude_symbol(":true")),
+        );
+    }
+
+    #[test]
+    fn value_eq_nested_lists_returns_true() {
+        let left = pair(singleton(quote(A)), pair(quote(B), nil()));
+        let right = pair(singleton(quote(A)), pair(quote(B), nil()));
+
+        assert_evaluates(
+            value_eq_call(left, right),
+            Value::quote(prelude_symbol(":true")),
+        );
+    }
+
+    #[test]
+    fn value_eq_nested_lists_detect_difference() {
+        let left = pair(singleton(quote(A)), pair(quote(B), nil()));
+        let right = pair(singleton(quote(A)), pair(quote(A), nil()));
+
+        assert_evaluates(
+            value_eq_call(left, right),
+            Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn value_eq_lambda_left_errors() {
+        assert_evaluates(
+            value_eq_call(lambda(X, var(X)), quote(A)),
+            Effect::error(RUNTIME_ERROR),
+        );
+    }
+
+    #[test]
+    fn value_eq_lambda_right_errors() {
+        assert_evaluates(
+            value_eq_call(quote(A), lambda(X, var(X))),
+            Effect::error(RUNTIME_ERROR),
+        );
+    }
+
+    #[test]
+    fn value_eq_cons_lambda_head_errors() {
+        assert_evaluates(
+            value_eq_call(singleton(lambda(X, var(X))), singleton(lambda(X, var(X)))),
+            Effect::error(RUNTIME_ERROR),
+        );
+    }
+
+    #[test]
+    fn value_eq_short_circuits_tail_after_head_difference() {
+        let left = pair(quote(A), lambda(X, var(X)));
+        let right = pair(quote(B), lambda(X, var(X)));
+
+        assert_evaluates(
+            value_eq_call(left, right),
             Value::quote(prelude_symbol(":false")),
         );
     }

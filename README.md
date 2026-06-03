@@ -69,7 +69,9 @@ values, and propagates effects.
 The kernel also has a `value-kind` computation form for broad value
 introspection. After evaluating its input, it returns `:symbol`, `:lambda`, or
 `:list`, and propagates effects. Lists are one value kind; use `list-case` to
-distinguish `nil` from `cons`.
+distinguish `nil` from `cons`. Prelude helpers use `value-kind` to define
+boolean value predicates and `value-eq`, a structural equality for symbols and
+lists that errors on lambdas.
 
 At the source level, `(is-bool x)` is proposition shorthand for saying that `x`
 computes to either `(quote :true)` or `(quote :false)`. It elaborates to an
@@ -111,8 +113,8 @@ represented as a computation variable plus a proposition such as `is-value`.
 The standard prelude is just a theory built on top of the kernel. It currently
 contains list definitions such as `reverse_acc`, `reverse`, `append`, `snoc`,
 `concat`, `map`, `concat-map`, `fold-right`, `fold-left`, `zip-with`, `filter`,
-`any`, `all`, `last`, `init`, `null`, and `is-singleton`, plus theorems about
-those definitions. Prelude
+`any`, `all`, `is-symbol`, `is-lambda`, `is-list-value`, `value-eq`, `last`,
+`init`, `null`, and `is-singleton`, plus theorems about those definitions. Prelude
 booleans use the kernel's reserved quoted symbols.
 The list prelude itself lives in `src/prelude/list.lisp`; the corresponding
 Rust module only includes that source file, with list-specific Rust helpers kept

@@ -78,6 +78,22 @@ fn all() -> Computation {
     computation_ref("all")
 }
 
+fn is_symbol() -> Computation {
+    computation_ref("is-symbol")
+}
+
+fn is_lambda() -> Computation {
+    computation_ref("is-lambda")
+}
+
+fn is_list_value() -> Computation {
+    computation_ref("is-list-value")
+}
+
+fn value_eq() -> Computation {
+    computation_ref("value-eq")
+}
+
 fn last() -> Computation {
     computation_ref("last")
 }
@@ -298,6 +314,22 @@ fn theory_defines_reverse() {
         Some(&list_tests::all_definition())
     );
     assert_eq!(
+        theory.computation(computation("is-symbol")),
+        Some(&list_tests::is_symbol_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("is-lambda")),
+        Some(&list_tests::is_lambda_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("is-list-value")),
+        Some(&list_tests::is_list_value_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("value-eq")),
+        Some(&list_tests::value_eq_definition())
+    );
+    assert_eq!(
         theory.computation(computation("last")),
         Some(&list_tests::last_definition())
     );
@@ -326,6 +358,13 @@ fn theory_defines_reverse() {
     assert_eq!(filter(), Computation::Ref(computation("filter")));
     assert_eq!(any(), Computation::Ref(computation("any")));
     assert_eq!(all(), Computation::Ref(computation("all")));
+    assert_eq!(is_symbol(), Computation::Ref(computation("is-symbol")));
+    assert_eq!(is_lambda(), Computation::Ref(computation("is-lambda")));
+    assert_eq!(
+        is_list_value(),
+        Computation::Ref(computation("is-list-value"))
+    );
+    assert_eq!(value_eq(), Computation::Ref(computation("value-eq")));
     assert_eq!(last(), Computation::Ref(computation("last")));
     assert_eq!(init(), Computation::Ref(computation("init")));
     assert_eq!(null(), Computation::Ref(computation("null")));
@@ -372,6 +411,34 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&zip_with()),
         Step::Reduced(list_tests::zip_with_definition())
+    );
+    assert_eq!(
+        theory.reduce(&filter()),
+        Step::Reduced(list_tests::filter_definition())
+    );
+    assert_eq!(
+        theory.reduce(&any()),
+        Step::Reduced(list_tests::any_definition())
+    );
+    assert_eq!(
+        theory.reduce(&all()),
+        Step::Reduced(list_tests::all_definition())
+    );
+    assert_eq!(
+        theory.reduce(&is_symbol()),
+        Step::Reduced(list_tests::is_symbol_definition())
+    );
+    assert_eq!(
+        theory.reduce(&is_lambda()),
+        Step::Reduced(list_tests::is_lambda_definition())
+    );
+    assert_eq!(
+        theory.reduce(&is_list_value()),
+        Step::Reduced(list_tests::is_list_value_definition())
+    );
+    assert_eq!(
+        theory.reduce(&value_eq()),
+        Step::Reduced(list_tests::value_eq_definition())
     );
     assert_eq!(
         theory.reduce(&last()),
