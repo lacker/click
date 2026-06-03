@@ -275,6 +275,28 @@ mod tests {
                       (id (id nil))
                       (== (id nil) (by (eval)))
                       (== nil (by (eval))))))
+                (theorem id_rewrite_nil
+                  (forall value (is-value value)
+                    (implies
+                      (computes-to value nil)
+                      (computes-to (id value) nil)))
+                  (by
+                    (intro value)
+                    (intro value_nil)
+                    (rewrite value_nil)
+                    (eval)))
+                (theorem list_self
+                  (forall list (is-list list)
+                    (computes-to list list))
+                  (by
+                    (list-induction list
+                      (by
+                        (eval))
+                      head
+                      tail
+                      ih
+                      (by
+                        (eval)))))
                 (theorem nil_exact
                   (computes-to nil nil)
                   (by
@@ -303,6 +325,12 @@ mod tests {
         let id_id_nil = loaded
             .theorem("id_id_nil")
             .expect("loader should record calc tactic theorem spelling");
+        let id_rewrite_nil = loaded
+            .theorem("id_rewrite_nil")
+            .expect("loader should record rewrite tactic theorem spelling");
+        let list_self = loaded
+            .theorem("list_self")
+            .expect("loader should record induction tactic theorem spelling");
         let id = loaded.computation("id").expect("id should be loaded");
 
         assert_eq!(
@@ -328,6 +356,8 @@ mod tests {
                 Computation::Nil
             ))
         );
+        assert!(loaded.theory().theorem(id_rewrite_nil).is_some());
+        assert!(loaded.theory().theorem(list_self).is_some());
     }
 
     #[test]

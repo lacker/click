@@ -303,6 +303,17 @@ pub(crate) enum TacticExpr {
     },
     Left(TacticScript),
     Right(TacticScript),
+    Rewrite {
+        equality: Box<ProofExpr>,
+    },
+    ListInduction {
+        variable: Symbol,
+        base: TacticScript,
+        head: Symbol,
+        tail: Symbol,
+        induction_hypothesis_assumption: Symbol,
+        step: TacticScript,
+    },
     Calc {
         start: Computation,
         steps: Vec<CalcStep>,
@@ -1149,6 +1160,8 @@ impl<'a> SourceParser<'a> {
             "exists" => self.tactic_exists(items),
             "left" => self.tactic_left(items),
             "right" => self.tactic_right(items),
+            "rewrite" => self.tactic_rewrite(items),
+            "induction" | "list-induction" => self.tactic_list_induction(form, items),
             "calc" => self.tactic_calc(items),
             _ => Err(ParseError::new(format!("unknown tactic `{form}`"))),
         }
@@ -1230,6 +1243,29 @@ impl<'a> SourceParser<'a> {
         Ok(TacticExpr::Right(self.nested_tactic_script(&items[1])?))
     }
 
+    fn tactic_rewrite(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        expect_len("rewrite", items, 2)?;
+        Ok(TacticExpr::Rewrite {
+            equality: Box::new(self.proof_expr_or_ref(&items[1])?),
+        })
+    }
+
+    fn tactic_list_induction(
+        &mut self,
+        form: &str,
+        items: &[Expr],
+    ) -> Result<TacticExpr, ParseError> {
+        expect_len(form, items, 7)?;
+        Ok(TacticExpr::ListInduction {
+            variable: self.proof_symbol(atom(&items[1])?)?,
+            base: self.nested_tactic_script(&items[2])?,
+            head: self.proof_symbol(atom(&items[3])?)?,
+            tail: self.proof_symbol(atom(&items[4])?)?,
+            induction_hypothesis_assumption: self.proof_symbol(atom(&items[5])?)?,
+            step: self.nested_tactic_script(&items[6])?,
+        })
+    }
+
     fn tactic_calc(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
         if items.len() < 3 {
             return Err(ParseError::new(format!(
@@ -1263,6 +1299,22 @@ impl<'a> SourceParser<'a> {
             target: self.computation(&items[1])?,
             proof: self.proof_script(&items[2])?,
         })
+    }
+
+    fn proof_expr_or_ref(&mut self, expression: &Expr) -> Result<ProofExpr, ParseError> {
+        match expression {
+            Expr::Atom(spelling) => {
+                if let Some(symbol) = self.local_symbol(spelling) {
+                    return Ok(ProofExpr::Assume(symbol));
+                }
+                if let Some(theorem) = self.theorem(spelling) {
+                    return Ok(ProofExpr::Known(theorem));
+                }
+
+                Err(ParseError::new(format!("unknown proof `{spelling}`")))
+            }
+            Expr::List(_) => self.proof_expr(expression),
+        }
     }
 
     fn proof_expr(&mut self, expression: &Expr) -> Result<ProofExpr, ParseError> {
@@ -1901,6 +1953,98 @@ mod tests {
         assert!(matches!(
             tactics.as_slice(),
             [TacticExpr::Calc { steps, .. }] if steps.len() == 2
+        ));
+    }
+
+    #[test]
+    fn parses_rewrite_tactic_scripts() {
+        let computations = [NameBinding {
+            spelling: "id",
+            name: Name(1),
+        }];
+        let theorems = [NameBinding {
+            spelling: "id_rewrite_nil",
+            name: Name(2),
+        }];
+        let symbols = [SymbolBinding {
+            spelling: "x",
+            symbol: Symbol(1),
+        }];
+
+        let module = parse_module(
+            "
+            (def id (lambda x x))
+            (theorem id_rewrite_nil
+              (forall value (is-value value)
+                (implies
+                  (computes-to value nil)
+                  (computes-to (id value) nil)))
+              (by
+                (intro value)
+                (intro value_nil)
+                (rewrite value_nil)
+                (eval)))
+            ",
+            &computations,
+            &theorems,
+            &symbols,
+        )
+        .expect("rewrite tactic source should parse");
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[0].proof else {
+            panic!("expected a tactic proof script");
+        };
+        assert!(matches!(
+            tactics.as_slice(),
+            [
+                TacticExpr::Intro(Symbol(2_000)),
+                TacticExpr::Intro(Symbol(2_001)),
+                TacticExpr::Rewrite { equality },
+                TacticExpr::Eval { limit: 128 }
+            ] if **equality == ProofExpr::Assume(Symbol(2_001))
+        ));
+    }
+
+    #[test]
+    fn parses_list_induction_tactic_scripts() {
+        let theorems = [NameBinding {
+            spelling: "list_identity",
+            name: Name(1),
+        }];
+
+        let module = parse_module(
+            "
+            (theorem list_identity
+              (forall list (is-list list)
+                (computes-to list list))
+              (by
+                (list-induction list
+                  (by
+                    (eval))
+                  head
+                  tail
+                  ih
+                  (by
+                    (eval)))))
+            ",
+            &[],
+            &theorems,
+            &[],
+        )
+        .expect("list-induction tactic source should parse");
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[0].proof else {
+            panic!("expected a tactic proof script");
+        };
+        assert!(matches!(
+            tactics.as_slice(),
+            [TacticExpr::ListInduction {
+                variable: Symbol(2_000),
+                head: Symbol(2_001),
+                tail: Symbol(2_002),
+                induction_hypothesis_assumption: Symbol(2_003),
+                ..
+            }]
         ));
     }
 

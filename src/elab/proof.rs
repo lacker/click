@@ -1,7 +1,9 @@
 //! Proof-script elaboration and evaluation-proof helpers.
 
+use std::collections::HashSet;
+
 use crate::{
-    Computation, Context, Name, Proof, Prop, Step, Symbol, Theorem, TheoremError, Theory,
+    Computation, Context, ListCase, Name, Proof, Prop, Step, Symbol, Theorem, TheoremError, Theory,
     alpha_eq_computation, alpha_eq_prop, is_list, is_value, substitute_prop,
 };
 
@@ -381,6 +383,27 @@ fn tactic_steps_to_proof(
             ensure_no_more_tactics(rest, "right")?;
             tactic_right(proof, theory, goal)
         }
+        TacticExpr::Rewrite { equality } => tactic_rewrite(equality, rest, theory, goal),
+        TacticExpr::ListInduction {
+            variable,
+            base,
+            head,
+            tail,
+            induction_hypothesis_assumption,
+            step,
+        } => {
+            ensure_no_more_tactics(rest, "list-induction")?;
+            tactic_list_induction(
+                *variable,
+                base,
+                *head,
+                *tail,
+                *induction_hypothesis_assumption,
+                step,
+                theory,
+                goal,
+            )
+        }
         TacticExpr::Calc { start, steps } => {
             ensure_no_more_tactics(rest, "calc")?;
             tactic_calc(start, steps, theory, goal)
@@ -666,6 +689,115 @@ fn tactic_right(
     })
 }
 
+fn tactic_rewrite(
+    equality_expr: &ProofExpr,
+    rest: &[TacticExpr],
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let equality = proof_expr_to_proof_in_context(equality_expr, theory, &goal.context)?;
+    let Some(Prop::Equal(left, right)) = theory.proven_prop_in_context(&equality, &goal.context)
+    else {
+        return Err(tactic_failed("rewrite", "proof is not an equality"));
+    };
+
+    let placeholder = fresh_rewrite_symbol(&goal.target, &left, &right);
+    let Some(template) = rewrite_template(&goal.target, &left, placeholder) else {
+        return Err(tactic_failed(
+            "rewrite",
+            format!("goal does not contain the left side {:?}", left),
+        ));
+    };
+
+    let rewritten_goal = Goal {
+        context: goal.context.clone(),
+        target: substitute_prop(&template, placeholder, &right),
+    };
+    let proof = tactic_steps_to_proof(rest, theory, &rewritten_goal)?;
+
+    Ok(Proof::Rewrite {
+        equality: Box::new(Proof::Symm(Box::new(equality))),
+        proof: Box::new(proof),
+        variable: placeholder,
+        template,
+    })
+}
+
+fn tactic_list_induction(
+    variable: Symbol,
+    base: &TacticScript,
+    head: Symbol,
+    tail: Symbol,
+    induction_hypothesis_assumption: Symbol,
+    step: &TacticScript,
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let Prop::ForAll {
+        variable: goal_variable,
+        guard: Some(guard),
+        body,
+    } = &goal.target
+    else {
+        return Err(tactic_failed(
+            "list-induction",
+            "goal is not a guarded forall",
+        ));
+    };
+
+    if variable != *goal_variable {
+        return Err(tactic_failed(
+            "list-induction",
+            format!(
+                "expected theorem binder {:?}, got {:?}",
+                goal_variable, variable
+            ),
+        ));
+    }
+
+    let expected_guard = is_list(Computation::Var(variable));
+    if !alpha_eq_prop(guard, &expected_guard) {
+        return Err(tactic_failed(
+            "list-induction",
+            "forall guard is not an is-list guard",
+        ));
+    }
+
+    let property = body.as_ref().clone();
+    let base_goal = Goal {
+        context: goal.context.clone(),
+        target: substitute_prop(&property, variable, &Computation::Nil),
+    };
+    let step_goal = Goal {
+        context: list_induction_step_context(
+            &goal.context,
+            variable,
+            &property,
+            head,
+            tail,
+            induction_hypothesis_assumption,
+        ),
+        target: substitute_prop(
+            &property,
+            variable,
+            &Computation::Cons {
+                head: Box::new(Computation::Var(head)),
+                tail: Box::new(Computation::Var(tail)),
+            },
+        ),
+    };
+
+    Ok(Proof::ListInduction {
+        variable,
+        property,
+        base: Box::new(tactic_script_to_proof(base, theory, &base_goal)?),
+        head,
+        tail,
+        induction_hypothesis_assumption,
+        step: Box::new(tactic_script_to_proof(step, theory, &step_goal)?),
+    })
+}
+
 fn tactic_calc(
     start: &Computation,
     steps: &[CalcStep],
@@ -755,6 +887,272 @@ fn tactic_failed(tactic: &'static str, message: impl Into<String>) -> ProofElabo
     ProofElaborationError::TacticFailed {
         tactic,
         message: message.into(),
+    }
+}
+
+fn fresh_rewrite_symbol(target: &Prop, left: &Computation, right: &Computation) -> Symbol {
+    let mut symbols = HashSet::new();
+    add_all_symbols_prop(target, &mut symbols);
+    add_all_symbols_computation(left, &mut symbols);
+    add_all_symbols_computation(right, &mut symbols);
+
+    let mut symbol = Symbol(0);
+    while symbols.contains(&symbol) {
+        symbol = Symbol(symbol.0 + 1);
+    }
+    symbol
+}
+
+fn rewrite_template(target: &Prop, needle: &Computation, placeholder: Symbol) -> Option<Prop> {
+    let replacement = Computation::Var(placeholder);
+    replace_first_prop(target, needle, &replacement)
+}
+
+fn replace_first_prop(
+    prop: &Prop,
+    needle: &Computation,
+    replacement: &Computation,
+) -> Option<Prop> {
+    match prop {
+        Prop::Equal(left, right) => replace_first_computation(left, needle, replacement)
+            .map(|left| Prop::Equal(left, right.clone()))
+            .or_else(|| {
+                replace_first_computation(right, needle, replacement)
+                    .map(|right| Prop::Equal(left.clone(), right))
+            }),
+        Prop::IsValue(computation) => {
+            replace_first_computation(computation, needle, replacement).map(Prop::IsValue)
+        }
+        Prop::IsList(computation) => {
+            replace_first_computation(computation, needle, replacement).map(Prop::IsList)
+        }
+        Prop::IsEffect(computation) => {
+            replace_first_computation(computation, needle, replacement).map(Prop::IsEffect)
+        }
+        Prop::IsOutcome(computation) => {
+            replace_first_computation(computation, needle, replacement).map(Prop::IsOutcome)
+        }
+        Prop::Implies(premise, conclusion) => replace_first_prop(premise, needle, replacement)
+            .map(|premise| Prop::Implies(Box::new(premise), conclusion.clone()))
+            .or_else(|| {
+                replace_first_prop(conclusion, needle, replacement)
+                    .map(|conclusion| Prop::Implies(premise.clone(), Box::new(conclusion)))
+            }),
+        Prop::And(left, right) => replace_first_prop(left, needle, replacement)
+            .map(|left| Prop::And(Box::new(left), right.clone()))
+            .or_else(|| {
+                replace_first_prop(right, needle, replacement)
+                    .map(|right| Prop::And(left.clone(), Box::new(right)))
+            }),
+        Prop::Or(left, right) => replace_first_prop(left, needle, replacement)
+            .map(|left| Prop::Or(Box::new(left), right.clone()))
+            .or_else(|| {
+                replace_first_prop(right, needle, replacement)
+                    .map(|right| Prop::Or(left.clone(), Box::new(right)))
+            }),
+        Prop::ForAll { .. } | Prop::Exists { .. } => None,
+    }
+}
+
+fn replace_first_computation(
+    computation: &Computation,
+    needle: &Computation,
+    replacement: &Computation,
+) -> Option<Computation> {
+    if alpha_eq_computation(computation, needle) {
+        return Some(replacement.clone());
+    }
+
+    match computation {
+        Computation::Apply { function, argument } => {
+            replace_first_computation(function, needle, replacement)
+                .map(|function| Computation::Apply {
+                    function: Box::new(function),
+                    argument: argument.clone(),
+                })
+                .or_else(|| {
+                    replace_first_computation(argument, needle, replacement).map(|argument| {
+                        Computation::Apply {
+                            function: function.clone(),
+                            argument: Box::new(argument),
+                        }
+                    })
+                })
+        }
+        Computation::Cons { head, tail } => replace_first_computation(head, needle, replacement)
+            .map(|head| Computation::Cons {
+                head: Box::new(head),
+                tail: tail.clone(),
+            })
+            .or_else(|| {
+                replace_first_computation(tail, needle, replacement).map(|tail| Computation::Cons {
+                    head: head.clone(),
+                    tail: Box::new(tail),
+                })
+            }),
+        Computation::Head(computation) => {
+            replace_first_computation(computation, needle, replacement)
+                .map(|computation| Computation::Head(Box::new(computation)))
+        }
+        Computation::Tail(computation) => {
+            replace_first_computation(computation, needle, replacement)
+                .map(|computation| Computation::Tail(Box::new(computation)))
+        }
+        Computation::ListCase(list_case) => replace_first_list_case(list_case, needle, replacement),
+        Computation::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => replace_first_computation(condition, needle, replacement)
+            .map(|condition| Computation::If {
+                condition: Box::new(condition),
+                then_branch: then_branch.clone(),
+                else_branch: else_branch.clone(),
+            })
+            .or_else(|| {
+                replace_first_computation(then_branch, needle, replacement).map(|then_branch| {
+                    Computation::If {
+                        condition: condition.clone(),
+                        then_branch: Box::new(then_branch),
+                        else_branch: else_branch.clone(),
+                    }
+                })
+            })
+            .or_else(|| {
+                replace_first_computation(else_branch, needle, replacement).map(|else_branch| {
+                    Computation::If {
+                        condition: condition.clone(),
+                        then_branch: then_branch.clone(),
+                        else_branch: Box::new(else_branch),
+                    }
+                })
+            }),
+        Computation::SymbolEq { left, right } => {
+            replace_first_computation(left, needle, replacement)
+                .map(|left| Computation::SymbolEq {
+                    left: Box::new(left),
+                    right: right.clone(),
+                })
+                .or_else(|| {
+                    replace_first_computation(right, needle, replacement).map(|right| {
+                        Computation::SymbolEq {
+                            left: left.clone(),
+                            right: Box::new(right),
+                        }
+                    })
+                })
+        }
+        Computation::ValueKind(computation) => {
+            replace_first_computation(computation, needle, replacement)
+                .map(|computation| Computation::ValueKind(Box::new(computation)))
+        }
+        Computation::Lambda(_)
+        | Computation::Nil
+        | Computation::Ref(_)
+        | Computation::Error(_)
+        | Computation::Diverge
+        | Computation::Var(_)
+        | Computation::Quote(_) => None,
+    }
+}
+
+fn replace_first_list_case(
+    list_case: &ListCase,
+    needle: &Computation,
+    replacement: &Computation,
+) -> Option<Computation> {
+    replace_first_computation(&list_case.list, needle, replacement)
+        .map(|list| {
+            let mut list_case = list_case.clone();
+            list_case.list = Box::new(list);
+            Computation::ListCase(list_case)
+        })
+        .or_else(|| {
+            replace_first_computation(&list_case.nil, needle, replacement).map(|nil| {
+                let mut list_case = list_case.clone();
+                list_case.nil = Box::new(nil);
+                Computation::ListCase(list_case)
+            })
+        })
+}
+
+fn add_all_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
+    match prop {
+        Prop::Equal(left, right) => {
+            add_all_symbols_computation(left, symbols);
+            add_all_symbols_computation(right, symbols);
+        }
+        Prop::IsValue(computation)
+        | Prop::IsList(computation)
+        | Prop::IsEffect(computation)
+        | Prop::IsOutcome(computation) => {
+            add_all_symbols_computation(computation, symbols);
+        }
+        Prop::Implies(premise, conclusion)
+        | Prop::And(premise, conclusion)
+        | Prop::Or(premise, conclusion) => {
+            add_all_symbols_prop(premise, symbols);
+            add_all_symbols_prop(conclusion, symbols);
+        }
+        Prop::ForAll {
+            variable,
+            guard,
+            body,
+        }
+        | Prop::Exists {
+            variable,
+            guard,
+            body,
+        } => {
+            symbols.insert(*variable);
+            if let Some(guard) = guard {
+                add_all_symbols_prop(guard, symbols);
+            }
+            add_all_symbols_prop(body, symbols);
+        }
+    }
+}
+
+fn add_all_symbols_computation(computation: &Computation, symbols: &mut HashSet<Symbol>) {
+    match computation {
+        Computation::Apply { function, argument } => {
+            add_all_symbols_computation(function, symbols);
+            add_all_symbols_computation(argument, symbols);
+        }
+        Computation::Lambda(lambda) => {
+            symbols.insert(lambda.parameter);
+            add_all_symbols_computation(&lambda.body, symbols);
+        }
+        Computation::Cons { head, tail } => {
+            add_all_symbols_computation(head, symbols);
+            add_all_symbols_computation(tail, symbols);
+        }
+        Computation::Head(computation)
+        | Computation::Tail(computation)
+        | Computation::ValueKind(computation) => add_all_symbols_computation(computation, symbols),
+        Computation::ListCase(list_case) => {
+            add_all_symbols_computation(&list_case.list, symbols);
+            add_all_symbols_computation(&list_case.nil, symbols);
+            symbols.insert(list_case.cons);
+            add_all_symbols_computation(&list_case.cons_case, symbols);
+        }
+        Computation::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            add_all_symbols_computation(condition, symbols);
+            add_all_symbols_computation(then_branch, symbols);
+            add_all_symbols_computation(else_branch, symbols);
+        }
+        Computation::SymbolEq { left, right } => {
+            add_all_symbols_computation(left, symbols);
+            add_all_symbols_computation(right, symbols);
+        }
+        Computation::Var(symbol) | Computation::Quote(symbol) => {
+            symbols.insert(*symbol);
+        }
+        Computation::Nil | Computation::Ref(_) | Computation::Error(_) | Computation::Diverge => {}
     }
 }
 
