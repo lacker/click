@@ -208,6 +208,14 @@ pub fn value_eq_definition() -> Computation {
     definition("value-eq")
 }
 
+pub fn member() -> Computation {
+    computation_ref("member")
+}
+
+pub fn member_definition() -> Computation {
+    definition("member")
+}
+
 pub fn last() -> Computation {
     computation_ref("last")
 }
@@ -485,6 +493,42 @@ pub fn any_computes_to_bool_source_theorem() -> Prop {
     theorem_prop("any_computes_to_bool")
 }
 
+pub fn value_eq_true_true_source_theorem() -> Prop {
+    theorem_prop("value_eq_true_true")
+}
+
+pub fn value_eq_true_false_source_theorem() -> Prop {
+    theorem_prop("value_eq_true_false")
+}
+
+pub fn value_eq_nil_source_theorem() -> Prop {
+    theorem_prop("value_eq_nil")
+}
+
+pub fn value_eq_nil_cons_source_theorem() -> Prop {
+    theorem_prop("value_eq_nil_cons")
+}
+
+pub fn value_eq_cons_nil_source_theorem() -> Prop {
+    theorem_prop("value_eq_cons_nil")
+}
+
+pub fn value_eq_cons_source_theorem() -> Prop {
+    theorem_prop("value_eq_cons")
+}
+
+pub fn member_nil_source_theorem() -> Prop {
+    theorem_prop("member_nil")
+}
+
+pub fn member_cons_true_source_theorem() -> Prop {
+    theorem_prop("member_cons_true")
+}
+
+pub fn member_cons_false_source_theorem() -> Prop {
+    theorem_prop("member_cons_false")
+}
+
 pub fn all_nil_source_theorem() -> Prop {
     theorem_prop("all_nil")
 }
@@ -625,6 +669,30 @@ pub fn is_list_value_call(value: Computation) -> Computation {
 
 pub fn value_eq_call(left: Computation, right: Computation) -> Computation {
     apply(apply(value_eq(), left), right)
+}
+
+pub fn head_call(list: Computation) -> Computation {
+    Computation::Head(Box::new(list))
+}
+
+pub fn tail_call(list: Computation) -> Computation {
+    Computation::Tail(Box::new(list))
+}
+
+pub fn if_call(
+    condition: Computation,
+    then_branch: Computation,
+    else_branch: Computation,
+) -> Computation {
+    Computation::If {
+        condition: Box::new(condition),
+        then_branch: Box::new(then_branch),
+        else_branch: Box::new(else_branch),
+    }
+}
+
+pub fn member_call(value: Computation, list: Computation) -> Computation {
+    apply(apply(member(), value), list)
 }
 
 pub fn last_call(list: Computation) -> Computation {
@@ -1625,6 +1693,150 @@ pub fn any_computes_to_bool_theorem(predicate: Symbol, value: Symbol, list: Symb
                 list,
                 is_list(var(list)),
                 is_bool(any_call(var(predicate), var(list))),
+            ),
+        ),
+    )
+}
+
+/// The reserved true symbol equals itself under `value-eq`.
+pub fn value_eq_true_true_theorem() -> Prop {
+    computes_to(value_eq_call(true_value(), true_value()), true_value())
+}
+
+/// Distinct reserved boolean symbols differ under `value-eq`.
+pub fn value_eq_true_false_theorem() -> Prop {
+    computes_to(value_eq_call(true_value(), false_value()), false_value())
+}
+
+/// `nil` equals itself under `value-eq`.
+pub fn value_eq_nil_theorem() -> Prop {
+    computes_to(value_eq_call(nil(), nil()), true_value())
+}
+
+/// `nil` does not equal a cons list under `value-eq`.
+pub fn value_eq_nil_cons_theorem(head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            tail,
+            is_list(var(tail)),
+            computes_to(
+                value_eq_call(nil(), cons(var(head), var(tail))),
+                false_value(),
+            ),
+        ),
+    )
+}
+
+/// A cons list does not equal `nil` under `value-eq`.
+pub fn value_eq_cons_nil_theorem(head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            tail,
+            is_list(var(tail)),
+            computes_to(
+                value_eq_call(cons(var(head), var(tail)), nil()),
+                false_value(),
+            ),
+        ),
+    )
+}
+
+/// Cons equality reduces to head equality and then tail equality.
+pub fn value_eq_cons_theorem(
+    left_head: Symbol,
+    left_tail: Symbol,
+    right_head: Symbol,
+    right_tail: Symbol,
+) -> Prop {
+    forall_where(
+        left_head,
+        is_value(var(left_head)),
+        forall_where(
+            left_tail,
+            is_list(var(left_tail)),
+            forall_where(
+                right_head,
+                is_value(var(right_head)),
+                forall_where(
+                    right_tail,
+                    is_list(var(right_tail)),
+                    computes_to(
+                        value_eq_call(
+                            cons(var(left_head), var(left_tail)),
+                            cons(var(right_head), var(right_tail)),
+                        ),
+                        if_call(
+                            value_eq_call(
+                                head_call(cons(var(left_head), var(left_tail))),
+                                head_call(cons(var(right_head), var(right_tail))),
+                            ),
+                            value_eq_call(
+                                tail_call(cons(var(left_head), var(left_tail))),
+                                tail_call(cons(var(right_head), var(right_tail))),
+                            ),
+                            false_value(),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// `member` over `nil` returns false.
+pub fn member_nil_theorem(value: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        computes_to(member_call(var(value), nil()), false_value()),
+    )
+}
+
+/// If the target equals the head, `member` over a cons returns true.
+pub fn member_cons_true_theorem(value: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                implies(
+                    computes_to(value_eq_call(var(value), var(head)), true_value()),
+                    computes_to(
+                        member_call(var(value), cons(var(head), var(tail))),
+                        true_value(),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the target differs from the head, `member` recurs on the tail.
+pub fn member_cons_false_theorem(value: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                implies(
+                    computes_to(value_eq_call(var(value), var(head)), false_value()),
+                    computes_to(
+                        member_call(var(value), cons(var(head), var(tail))),
+                        member_call(var(value), var(tail)),
+                    ),
+                ),
             ),
         ),
     )
@@ -2878,6 +3090,45 @@ mod tests {
     }
 
     #[test]
+    fn value_eq_source_theorems_have_expected_shape() {
+        let nil_cons_head = theorem_symbol("value_eq_nil_cons", "head");
+        let nil_cons_tail = theorem_symbol("value_eq_nil_cons", "tail");
+        let cons_nil_head = theorem_symbol("value_eq_cons_nil", "head");
+        let cons_nil_tail = theorem_symbol("value_eq_cons_nil", "tail");
+        let cons_left_head = theorem_symbol("value_eq_cons", "left_head");
+        let cons_left_tail = theorem_symbol("value_eq_cons", "left_tail");
+        let cons_right_head = theorem_symbol("value_eq_cons", "right_head");
+        let cons_right_tail = theorem_symbol("value_eq_cons", "right_tail");
+
+        assert_eq!(
+            value_eq_true_true_source_theorem(),
+            value_eq_true_true_theorem()
+        );
+        assert_eq!(
+            value_eq_true_false_source_theorem(),
+            value_eq_true_false_theorem()
+        );
+        assert_eq!(value_eq_nil_source_theorem(), value_eq_nil_theorem());
+        assert_eq!(
+            value_eq_nil_cons_source_theorem(),
+            value_eq_nil_cons_theorem(nil_cons_head, nil_cons_tail)
+        );
+        assert_eq!(
+            value_eq_cons_nil_source_theorem(),
+            value_eq_cons_nil_theorem(cons_nil_head, cons_nil_tail)
+        );
+        assert_eq!(
+            value_eq_cons_source_theorem(),
+            value_eq_cons_theorem(
+                cons_left_head,
+                cons_left_tail,
+                cons_right_head,
+                cons_right_tail,
+            )
+        );
+    }
+
+    #[test]
     fn filter_any_all_source_theorems_have_expected_shape() {
         let filter_nil_predicate = theorem_symbol("filter_nil", "predicate");
         let filter_true_predicate = theorem_symbol("filter_cons_true", "predicate");
@@ -2940,6 +3191,27 @@ mod tests {
                 any_computes_value,
                 any_computes_list,
             )
+        );
+
+        let member_nil_value = theorem_symbol("member_nil", "value");
+        let member_true_value = theorem_symbol("member_cons_true", "value");
+        let member_true_head = theorem_symbol("member_cons_true", "head");
+        let member_true_tail = theorem_symbol("member_cons_true", "tail");
+        let member_false_value = theorem_symbol("member_cons_false", "value");
+        let member_false_head = theorem_symbol("member_cons_false", "head");
+        let member_false_tail = theorem_symbol("member_cons_false", "tail");
+
+        assert_eq!(
+            member_nil_source_theorem(),
+            member_nil_theorem(member_nil_value)
+        );
+        assert_eq!(
+            member_cons_true_source_theorem(),
+            member_cons_true_theorem(member_true_value, member_true_head, member_true_tail)
+        );
+        assert_eq!(
+            member_cons_false_source_theorem(),
+            member_cons_false_theorem(member_false_value, member_false_head, member_false_tail)
         );
 
         let all_nil_predicate = theorem_symbol("all_nil", "predicate");
@@ -3859,6 +4131,73 @@ mod tests {
         assert_evaluates(
             value_eq_call(left, right),
             Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn member_nil_returns_false() {
+        assert_evaluates(
+            member_call(quote(A), nil()),
+            Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn member_returns_true_for_head_match() {
+        assert_evaluates(
+            member_call(quote(A), triple(quote(A), quote(B), unit())),
+            Value::quote(prelude_symbol(":true")),
+        );
+    }
+
+    #[test]
+    fn member_returns_true_for_tail_match() {
+        assert_evaluates(
+            member_call(quote(A), triple(quote(B), unit(), quote(A))),
+            Value::quote(prelude_symbol(":true")),
+        );
+    }
+
+    #[test]
+    fn member_returns_false_for_miss() {
+        assert_evaluates(
+            member_call(quote(A), pair(quote(B), unit())),
+            Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn member_matches_nested_list_values() {
+        assert_evaluates(
+            member_call(
+                singleton(quote(A)),
+                pair(singleton(quote(B)), singleton(quote(A))),
+            ),
+            Value::quote(prelude_symbol(":true")),
+        );
+    }
+
+    #[test]
+    fn member_lambda_target_errors() {
+        assert_evaluates(
+            member_call(lambda(X, var(X)), singleton(quote(A))),
+            Effect::error(RUNTIME_ERROR),
+        );
+    }
+
+    #[test]
+    fn member_lambda_head_errors() {
+        assert_evaluates(
+            member_call(quote(A), singleton(lambda(X, var(X)))),
+            Effect::error(RUNTIME_ERROR),
+        );
+    }
+
+    #[test]
+    fn member_short_circuits_tail_after_head_match() {
+        assert_evaluates(
+            member_call(quote(A), pair(quote(A), lambda(X, var(X)))),
+            Value::quote(prelude_symbol(":true")),
         );
     }
 

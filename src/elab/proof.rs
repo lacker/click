@@ -1,6 +1,9 @@
 //! Proof-script elaboration and evaluation-proof helpers.
 
-use crate::{Computation, Name, Proof, Step, Theorem, TheoremError, Theory, alpha_eq_computation};
+use crate::{
+    Computation, Context, Name, Proof, Prop, Step, Symbol, Theorem, TheoremError, Theory,
+    alpha_eq_computation, is_list, is_value, substitute_prop,
+};
 
 #[cfg(test)]
 use crate::{Outcome, computes_to_outcome};
@@ -92,6 +95,14 @@ pub(crate) fn source_theorem_result(
 }
 
 fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Result<Proof, ProofElaborationError> {
+    proof_expr_to_proof_in_context(proof, theory, &Context::new())
+}
+
+fn proof_expr_to_proof_in_context(
+    proof: &ProofExpr,
+    theory: &Theory,
+    context: &Context,
+) -> Result<Proof, ProofElaborationError> {
     match proof {
         ProofExpr::Known(name) => {
             if theory.theorem(*name).is_some() {
@@ -101,25 +112,34 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Result<Proof, Proo
             }
         }
         ProofExpr::Assume(symbol) => Ok(Proof::Assume(*symbol)),
-        ProofExpr::Symm(proof) => Ok(Proof::Symm(Box::new(subproof("symm", proof, theory)?))),
+        ProofExpr::Symm(proof) => Ok(Proof::Symm(Box::new(subproof(
+            "symm", proof, theory, context,
+        )?))),
         ProofExpr::Trans(first, second) => Ok(Proof::Trans(
-            Box::new(subproof("trans first", first, theory)?),
-            Box::new(subproof("trans second", second, theory)?),
+            Box::new(subproof("trans first", first, theory, context)?),
+            Box::new(subproof("trans second", second, theory, context)?),
         )),
         ProofExpr::EvalTo {
             computation,
             expected,
             limit,
-        } => proof_by_reduction_to_computation_in_theory(
+        } => proof_by_reduction_to_computation_in_theory_and_context(
             computation.clone(),
             expected.clone(),
             theory,
+            context,
             *limit,
         )
         .map_err(ProofElaborationError::EvaluationFailed),
         ProofExpr::EvalSame { left, right, limit } => {
-            proof_by_same_normal_form_in_theory(left.clone(), right.clone(), theory, *limit)
-                .map_err(ProofElaborationError::EvaluationFailed)
+            proof_by_same_normal_form_in_theory_and_context(
+                left.clone(),
+                right.clone(),
+                theory,
+                context,
+                *limit,
+            )
+            .map_err(ProofElaborationError::EvaluationFailed)
         }
         ProofExpr::Rewrite {
             equality,
@@ -127,8 +147,8 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Result<Proof, Proo
             variable,
             template,
         } => Ok(Proof::Rewrite {
-            equality: Box::new(subproof("rewrite equality", equality, theory)?),
-            proof: Box::new(subproof("rewrite proof", proof, theory)?),
+            equality: Box::new(subproof("rewrite equality", equality, theory, context)?),
+            proof: Box::new(subproof("rewrite proof", proof, theory, context)?),
             variable: *variable,
             template: template.clone(),
         }),
@@ -136,17 +156,26 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Result<Proof, Proo
             assumption,
             premise,
             proof,
-        } => Ok(Proof::ImpliesIntro {
-            assumption: *assumption,
-            premise: premise.clone(),
-            proof: Box::new(subproof("implies-intro proof", proof, theory)?),
-        }),
+        } => {
+            let mut context = context.clone();
+            context.insert(*assumption, premise.clone());
+            Ok(Proof::ImpliesIntro {
+                assumption: *assumption,
+                premise: premise.clone(),
+                proof: Box::new(subproof("implies-intro proof", proof, theory, &context)?),
+            })
+        }
         ProofExpr::ImpliesElim {
             implication,
             premise,
         } => Ok(Proof::ImpliesElim {
-            implication: Box::new(subproof("implies-elim implication", implication, theory)?),
-            premise: Box::new(subproof("implies-elim premise", premise, theory)?),
+            implication: Box::new(subproof(
+                "implies-elim implication",
+                implication,
+                theory,
+                context,
+            )?),
+            premise: Box::new(subproof("implies-elim premise", premise, theory, context)?),
         }),
         ProofExpr::ExistsIntro {
             variable,
@@ -159,40 +188,49 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Result<Proof, Proo
             guard: guard.clone(),
             body: body.clone(),
             witness: witness.clone(),
-            proof: Box::new(subproof("exists-intro proof", proof, theory)?),
+            proof: Box::new(subproof("exists-intro proof", proof, theory, context)?),
         }),
         ProofExpr::ExistsElim {
             existential,
             witness,
             assumption,
             proof,
-        } => Ok(Proof::ExistsElim {
-            existential: Box::new(subproof("exists-elim existential", existential, theory)?),
-            witness: *witness,
-            assumption: *assumption,
-            proof: Box::new(subproof("exists-elim proof", proof, theory)?),
-        }),
+        } => {
+            let existential_proof =
+                subproof("exists-elim existential", existential, theory, context)?;
+            let context =
+                exists_elim_context(context, theory, &existential_proof, *witness, *assumption);
+
+            Ok(Proof::ExistsElim {
+                existential: Box::new(existential_proof),
+                witness: *witness,
+                assumption: *assumption,
+                proof: Box::new(subproof("exists-elim proof", proof, theory, &context)?),
+            })
+        }
         ProofExpr::AndIntro(left, right) => Ok(Proof::AndIntro(
-            Box::new(subproof("and-intro left", left, theory)?),
-            Box::new(subproof("and-intro right", right, theory)?),
+            Box::new(subproof("and-intro left", left, theory, context)?),
+            Box::new(subproof("and-intro right", right, theory, context)?),
         )),
         ProofExpr::AndElimLeft(proof) => Ok(Proof::AndElimLeft(Box::new(subproof(
             "and-elim-left",
             proof,
             theory,
+            context,
         )?))),
         ProofExpr::AndElimRight(proof) => Ok(Proof::AndElimRight(Box::new(subproof(
             "and-elim-right",
             proof,
             theory,
+            context,
         )?))),
         ProofExpr::OrIntroLeft { proof, right } => Ok(Proof::OrIntroLeft {
-            proof: Box::new(subproof("or-intro-left", proof, theory)?),
+            proof: Box::new(subproof("or-intro-left", proof, theory, context)?),
             right: right.clone(),
         }),
         ProofExpr::OrIntroRight { left, proof } => Ok(Proof::OrIntroRight {
             left: left.clone(),
-            proof: Box::new(subproof("or-intro-right", proof, theory)?),
+            proof: Box::new(subproof("or-intro-right", proof, theory, context)?),
         }),
         ProofExpr::OrElim {
             disjunction,
@@ -201,11 +239,16 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Result<Proof, Proo
             right_assumption,
             right_proof,
         } => Ok(Proof::OrElim {
-            disjunction: Box::new(subproof("or-elim disjunction", disjunction, theory)?),
+            disjunction: Box::new(subproof(
+                "or-elim disjunction",
+                disjunction,
+                theory,
+                context,
+            )?),
             left_assumption: *left_assumption,
-            left_proof: Box::new(subproof("or-elim left", left_proof, theory)?),
+            left_proof: Box::new(subproof("or-elim left", left_proof, theory, context)?),
             right_assumption: *right_assumption,
-            right_proof: Box::new(subproof("or-elim right", right_proof, theory)?),
+            right_proof: Box::new(subproof("or-elim right", right_proof, theory, context)?),
         }),
         ProofExpr::ListInduction {
             variable,
@@ -218,49 +261,117 @@ fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Result<Proof, Proo
         } => Ok(Proof::ListInduction {
             variable: *variable,
             property: property.clone(),
-            base: Box::new(subproof("list-induction base", base, theory)?),
+            base: Box::new(subproof("list-induction base", base, theory, context)?),
             head: *head,
             tail: *tail,
             induction_hypothesis_assumption: *induction_hypothesis_assumption,
-            step: Box::new(subproof("list-induction step", step, theory)?),
+            step: Box::new(subproof(
+                "list-induction step",
+                step,
+                theory,
+                &list_induction_step_context(
+                    context,
+                    *variable,
+                    property,
+                    *head,
+                    *tail,
+                    *induction_hypothesis_assumption,
+                ),
+            )?),
         }),
         ProofExpr::ForAllIntro {
             variable,
             guard,
             proof,
-        } => Ok(Proof::ForAllIntro {
-            variable: *variable,
-            guard: guard.clone(),
-            proof: Box::new(subproof("forall-intro proof", proof, theory)?),
-        }),
+        } => {
+            let mut context = context.clone();
+            if let Some(guard) = guard {
+                context.insert(*variable, guard.clone());
+            }
+            Ok(Proof::ForAllIntro {
+                variable: *variable,
+                guard: guard.clone(),
+                proof: Box::new(subproof("forall-intro proof", proof, theory, &context)?),
+            })
+        }
         ProofExpr::ForAllElim { forall, argument } => Ok(Proof::ForAllElim {
-            forall: Box::new(subproof("forall-elim forall", forall, theory)?),
+            forall: Box::new(subproof("forall-elim forall", forall, theory, context)?),
             argument: argument.clone(),
         }),
     }
+}
+
+fn list_induction_step_context(
+    context: &Context,
+    variable: Symbol,
+    property: &crate::Prop,
+    head: Symbol,
+    tail: Symbol,
+    induction_hypothesis_assumption: Symbol,
+) -> Context {
+    let mut context = context.clone();
+    let tail_var = Computation::Var(tail);
+    context.insert(
+        induction_hypothesis_assumption,
+        substitute_prop(property, variable, &tail_var),
+    );
+    context.insert(head, is_value(Computation::Var(head)));
+    context.insert(tail, is_list(tail_var));
+    context
+}
+
+fn exists_elim_context(
+    context: &Context,
+    theory: &Theory,
+    existential_proof: &Proof,
+    witness: Symbol,
+    assumption: Symbol,
+) -> Context {
+    let mut context = context.clone();
+
+    let Some(Prop::Exists {
+        variable,
+        guard,
+        body,
+    }) = theory.proven_prop_in_context(existential_proof, &context)
+    else {
+        return context;
+    };
+
+    let witness_var = Computation::Var(witness);
+    if let Some(guard) = guard {
+        context.insert(witness, substitute_prop(&guard, variable, &witness_var));
+    }
+    context.insert(assumption, substitute_prop(&body, variable, &witness_var));
+
+    context
 }
 
 fn subproof(
     form: &'static str,
     proof: &ProofExpr,
     theory: &Theory,
+    context: &Context,
 ) -> Result<Proof, ProofElaborationError> {
-    proof_expr_to_proof(proof, theory).map_err(|error| ProofElaborationError::InSubproof {
-        form,
-        error: Box::new(error),
+    proof_expr_to_proof_in_context(proof, theory, context).map_err(|error| {
+        ProofElaborationError::InSubproof {
+            form,
+            error: Box::new(error),
+        }
     })
 }
 
-pub(crate) fn evaluation_chain_in_theory(
+pub(crate) fn evaluation_chain_in_theory_and_context(
     computation: Computation,
     theory: &Theory,
+    context: &Context,
     limit: usize,
 ) -> Result<Vec<Computation>, EvaluationProofError> {
     let mut computation = computation;
     let mut chain = vec![computation.clone()];
 
     for _ in 0..limit {
-        match theory.reduce(&computation) {
+        match theory.reduce_in_context(&computation, context) {
             Step::Reduced(next) => {
                 chain.push(next.clone());
                 computation = next;
@@ -282,13 +393,30 @@ pub(crate) fn proof_by_evaluation_in_theory(
     proof_by_evaluation_to_computation_in_theory(computation, expected.into().into(), theory, limit)
 }
 
+#[cfg(test)]
 pub(crate) fn proof_by_evaluation_to_computation_in_theory(
     computation: Computation,
     expected: Computation,
     theory: &Theory,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
-    let chain = evaluation_chain_in_theory(computation, theory, limit)?;
+    proof_by_evaluation_to_computation_in_theory_and_context(
+        computation,
+        expected,
+        theory,
+        &Context::new(),
+        limit,
+    )
+}
+
+pub(crate) fn proof_by_evaluation_to_computation_in_theory_and_context(
+    computation: Computation,
+    expected: Computation,
+    theory: &Theory,
+    context: &Context,
+    limit: usize,
+) -> Result<Proof, EvaluationProofError> {
+    let chain = evaluation_chain_in_theory_and_context(computation, theory, context, limit)?;
     let actual = chain
         .last()
         .cloned()
@@ -301,10 +429,11 @@ pub(crate) fn proof_by_evaluation_to_computation_in_theory(
     Ok(Proof::Steps(chain))
 }
 
-pub(crate) fn proof_by_reduction_to_computation_in_theory(
+pub(crate) fn proof_by_reduction_to_computation_in_theory_and_context(
     computation: Computation,
     expected: Computation,
     theory: &Theory,
+    context: &Context,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
     let mut computation = computation;
@@ -315,7 +444,7 @@ pub(crate) fn proof_by_reduction_to_computation_in_theory(
     }
 
     for _ in 0..limit {
-        match theory.reduce(&computation) {
+        match theory.reduce_in_context(&computation, context) {
             Step::Reduced(next) => {
                 chain.push(next.clone());
                 if alpha_eq_computation(&next, &expected) {
@@ -335,14 +464,15 @@ pub(crate) fn proof_by_reduction_to_computation_in_theory(
     Err(EvaluationProofError::StepLimitExceeded { limit })
 }
 
-pub(crate) fn proof_by_same_normal_form_in_theory(
+pub(crate) fn proof_by_same_normal_form_in_theory_and_context(
     left: Computation,
     right: Computation,
     theory: &Theory,
+    context: &Context,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
-    let left_normal = theory.normal_form(&left);
-    let right_normal = theory.normal_form(&right);
+    let left_normal = theory.normal_form_in_context(&left, context);
+    let right_normal = theory.normal_form_in_context(&right, context);
 
     if !alpha_eq_computation(&left_normal, &right_normal) {
         return Err(EvaluationProofError::UnexpectedNormalForm {
@@ -351,10 +481,20 @@ pub(crate) fn proof_by_same_normal_form_in_theory(
         });
     }
 
-    let left_proof =
-        proof_by_evaluation_to_computation_in_theory(left, left_normal, theory, limit)?;
-    let right_proof =
-        proof_by_evaluation_to_computation_in_theory(right, right_normal, theory, limit)?;
+    let left_proof = proof_by_evaluation_to_computation_in_theory_and_context(
+        left,
+        left_normal,
+        theory,
+        context,
+        limit,
+    )?;
+    let right_proof = proof_by_evaluation_to_computation_in_theory_and_context(
+        right,
+        right_normal,
+        theory,
+        context,
+        limit,
+    )?;
 
     Ok(Proof::Trans(
         Box::new(left_proof),

@@ -94,6 +94,10 @@ fn value_eq() -> Computation {
     computation_ref("value-eq")
 }
 
+fn member() -> Computation {
+    computation_ref("member")
+}
+
 fn last() -> Computation {
     computation_ref("last")
 }
@@ -166,6 +170,15 @@ fn prelude_theorem_names() -> Vec<Name> {
         "any_cons_true",
         "any_cons_false",
         "any_computes_to_bool",
+        "value_eq_true_true",
+        "value_eq_true_false",
+        "value_eq_nil",
+        "value_eq_nil_cons",
+        "value_eq_cons_nil",
+        "value_eq_cons",
+        "member_nil",
+        "member_cons_true",
+        "member_cons_false",
         "all_nil",
         "all_cons_true",
         "all_cons_false",
@@ -330,6 +343,10 @@ fn theory_defines_reverse() {
         Some(&list_tests::value_eq_definition())
     );
     assert_eq!(
+        theory.computation(computation("member")),
+        Some(&list_tests::member_definition())
+    );
+    assert_eq!(
         theory.computation(computation("last")),
         Some(&list_tests::last_definition())
     );
@@ -365,6 +382,7 @@ fn theory_defines_reverse() {
         Computation::Ref(computation("is-list-value"))
     );
     assert_eq!(value_eq(), Computation::Ref(computation("value-eq")));
+    assert_eq!(member(), Computation::Ref(computation("member")));
     assert_eq!(last(), Computation::Ref(computation("last")));
     assert_eq!(init(), Computation::Ref(computation("init")));
     assert_eq!(null(), Computation::Ref(computation("null")));
@@ -439,6 +457,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&value_eq()),
         Step::Reduced(list_tests::value_eq_definition())
+    );
+    assert_eq!(
+        theory.reduce(&member()),
+        Step::Reduced(list_tests::member_definition())
     );
     assert_eq!(
         theory.reduce(&last()),
@@ -653,6 +675,15 @@ fn theory_defines_reverse_theorems() {
     let any_cons_true_prop = list_tests::any_cons_true_source_theorem();
     let any_cons_false_prop = list_tests::any_cons_false_source_theorem();
     let any_computes_to_bool_prop = list_tests::any_computes_to_bool_source_theorem();
+    let value_eq_true_true_prop = list_tests::value_eq_true_true_source_theorem();
+    let value_eq_true_false_prop = list_tests::value_eq_true_false_source_theorem();
+    let value_eq_nil_prop = list_tests::value_eq_nil_source_theorem();
+    let value_eq_nil_cons_prop = list_tests::value_eq_nil_cons_source_theorem();
+    let value_eq_cons_nil_prop = list_tests::value_eq_cons_nil_source_theorem();
+    let value_eq_cons_prop = list_tests::value_eq_cons_source_theorem();
+    let member_nil_prop = list_tests::member_nil_source_theorem();
+    let member_cons_true_prop = list_tests::member_cons_true_source_theorem();
+    let member_cons_false_prop = list_tests::member_cons_false_source_theorem();
     let all_nil_prop = list_tests::all_nil_source_theorem();
     let all_cons_true_prop = list_tests::all_cons_true_source_theorem();
     let all_cons_false_prop = list_tests::all_cons_false_source_theorem();
@@ -821,6 +852,42 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("any_computes_to_bool")),
         Some(&any_computes_to_bool_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("value_eq_true_true")),
+        Some(&value_eq_true_true_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("value_eq_true_false")),
+        Some(&value_eq_true_false_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("value_eq_nil")),
+        Some(&value_eq_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("value_eq_nil_cons")),
+        Some(&value_eq_nil_cons_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("value_eq_cons_nil")),
+        Some(&value_eq_cons_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("value_eq_cons")),
+        Some(&value_eq_cons_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("member_nil")),
+        Some(&member_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("member_cons_true")),
+        Some(&member_cons_true_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("member_cons_false")),
+        Some(&member_cons_false_prop)
     );
     assert_eq!(theory.theorem(theorem("all_nil")), Some(&all_nil_prop));
     assert_eq!(
@@ -1261,6 +1328,60 @@ fn theory_defines_reverse_theorems() {
             .expect("any computes theorem source proof should check with dependencies")
             .prop(),
         &any_computes_to_bool_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_true_true")
+            .expect("value-eq true theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_true_true_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_true_false")
+            .expect("value-eq false theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_true_false_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_nil")
+            .expect("value-eq nil theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_nil_cons")
+            .expect("value-eq nil cons theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_nil_cons_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_cons_nil")
+            .expect("value-eq cons nil theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_cons_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_cons")
+            .expect("value-eq cons theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_cons_prop,
+    );
+    assert_eq!(
+        checked_theorem("member_nil")
+            .expect("member nil theorem source proof should check with dependencies")
+            .prop(),
+        &member_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("member_cons_true")
+            .expect("member true cons theorem source proof should check with dependencies")
+            .prop(),
+        &member_cons_true_prop,
+    );
+    assert_eq!(
+        checked_theorem("member_cons_false")
+            .expect("member false cons theorem source proof should check with dependencies")
+            .prop(),
+        &member_cons_false_prop,
     );
     assert_eq!(
         checked_theorem("all_nil")

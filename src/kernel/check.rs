@@ -231,6 +231,14 @@ pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context)
     proven_prop_in_context(proof, bindings, context)
 }
 
+pub(super) fn step_in_bindings_and_context(
+    computation: &Computation,
+    bindings: &Bindings,
+    context: &Context,
+) -> Step {
+    step_for_proof(computation, bindings, context)
+}
+
 fn proven_prop_in_context(proof: &Proof, bindings: &Bindings, context: &Context) -> Option<Prop> {
     match proof {
         Proof::Known(name) => bindings.theorem(*name).cloned(),

@@ -227,6 +227,17 @@
                     (value-eq (tail left_cell) (tail right_cell))
                     (quote :false)))))))))))
 
+(def member
+  (lambda value
+    (lambda list
+      (list-case list
+        (quote :false)
+        cell
+        (if
+          (value-eq value (head cell))
+          (quote :true)
+          (member value (tail cell)))))))
+
 (def last
   ((lambda fixed_point_function
      ((lambda fixed_point_self
@@ -1688,6 +1699,199 @@
                     head)
                   tail)
                 (assume predicate_false)))))))))
+
+(theorem value_eq_true_true
+  (computes-to
+    (value-eq (quote :true) (quote :true))
+    (quote :true))
+  (proof
+    (eval-to
+      (value-eq (quote :true) (quote :true))
+      (quote :true))))
+
+(theorem value_eq_true_false
+  (computes-to
+    (value-eq (quote :true) (quote :false))
+    (quote :false))
+  (proof
+    (eval-to
+      (value-eq (quote :true) (quote :false))
+      (quote :false))))
+
+(theorem value_eq_nil
+  (computes-to (value-eq nil nil) (quote :true))
+  (proof
+    (eval-to (value-eq nil nil) (quote :true))))
+
+(theorem value_eq_nil_cons
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (computes-to
+        (value-eq nil (cons head tail))
+        (quote :false))))
+  (proof
+    (forall-intro head (is-value head)
+      (forall-intro tail (is-list tail)
+        (eval-to
+          (value-eq nil (cons head tail))
+          (quote :false))))))
+
+(theorem value_eq_cons_nil
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (computes-to
+        (value-eq (cons head tail) nil)
+        (quote :false))))
+  (proof
+    (forall-intro head (is-value head)
+      (forall-intro tail (is-list tail)
+        (eval-to
+          (value-eq (cons head tail) nil)
+          (quote :false))))))
+
+(theorem value_eq_cons
+  (forall left_head (is-value left_head)
+    (forall left_tail (is-list left_tail)
+      (forall right_head (is-value right_head)
+        (forall right_tail (is-list right_tail)
+          (computes-to
+            (value-eq
+              (cons left_head left_tail)
+              (cons right_head right_tail))
+            (if
+              (value-eq
+                (head (cons left_head left_tail))
+                (head (cons right_head right_tail)))
+              (value-eq
+                (tail (cons left_head left_tail))
+                (tail (cons right_head right_tail)))
+              (quote :false)))))))
+  (proof
+    (forall-intro left_head (is-value left_head)
+      (forall-intro left_tail (is-list left_tail)
+        (forall-intro right_head (is-value right_head)
+          (forall-intro right_tail (is-list right_tail)
+            (eval-same
+              (value-eq
+                (cons left_head left_tail)
+                (cons right_head right_tail))
+              (if
+                (value-eq
+                  (head (cons left_head left_tail))
+                  (head (cons right_head right_tail)))
+                (value-eq
+                  (tail (cons left_head left_tail))
+                  (tail (cons right_head right_tail)))
+                (quote :false)))))))))
+
+(theorem member_nil
+  (forall value (is-value value)
+    (computes-to (member value nil) (quote :false)))
+  (proof
+    (forall-intro value (is-value value)
+      (eval-to (member value nil) (quote :false)))))
+
+(theorem member_cons_true
+  (forall value (is-value value)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (value-eq value head) (quote :true))
+          (computes-to
+            (member value (cons head tail))
+            (quote :true))))))
+  (proof
+    (forall-intro value (is-value value)
+      (forall-intro head (is-value head)
+        (forall-intro tail (is-list tail)
+          (implies-intro value_eq_true
+            (computes-to (value-eq value head) (quote :true))
+            (trans
+              (eval-same
+                (member value (cons head tail))
+                (if
+                  (value-eq value head)
+                  (quote :true)
+                  (member value (tail (cons head tail)))))
+              (trans
+                (rewrite
+                  (assume value_eq_true)
+                  (eval-to
+                    (if
+                      (value-eq value head)
+                      (quote :true)
+                      (member value (tail (cons head tail))))
+                    (if
+                      (value-eq value head)
+                      (quote :true)
+                      (member value (tail (cons head tail)))))
+                  value_eq_rewrite_target
+                  (computes-to
+                    (if
+                      (value-eq value head)
+                      (quote :true)
+                      (member value (tail (cons head tail))))
+                    (if
+                      value_eq_rewrite_target
+                      (quote :true)
+                      (member value (tail (cons head tail))))))
+                (eval-to
+                  (if
+                    (quote :true)
+                    (quote :true)
+                    (member value (tail (cons head tail))))
+                  (quote :true))))))))))
+
+(theorem member_cons_false
+  (forall value (is-value value)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (value-eq value head) (quote :false))
+          (computes-to
+            (member value (cons head tail))
+            (member value tail))))))
+  (proof
+    (forall-intro value (is-value value)
+      (forall-intro head (is-value head)
+        (forall-intro tail (is-list tail)
+          (implies-intro value_eq_false
+            (computes-to (value-eq value head) (quote :false))
+            (trans
+              (eval-same
+                (member value (cons head tail))
+                (if
+                  (value-eq value head)
+                  (quote :true)
+                  (member value (tail (cons head tail)))))
+              (trans
+                (rewrite
+                  (assume value_eq_false)
+                  (eval-to
+                    (if
+                      (value-eq value head)
+                      (quote :true)
+                      (member value (tail (cons head tail))))
+                    (if
+                      (value-eq value head)
+                      (quote :true)
+                      (member value (tail (cons head tail)))))
+                  value_eq_rewrite_target
+                  (computes-to
+                    (if
+                      (value-eq value head)
+                      (quote :true)
+                      (member value (tail (cons head tail))))
+                    (if
+                      value_eq_rewrite_target
+                      (quote :true)
+                      (member value (tail (cons head tail))))))
+                (eval-same
+                  (if
+                    (quote :false)
+                    (quote :true)
+                    (member value (tail (cons head tail))))
+                  (member value tail))))))))))
 
 (theorem map_identity
   (forall list (is-list list)

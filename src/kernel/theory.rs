@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use super::{
     calculus::*,
-    check::{check_in_bindings, check_in_bindings_and_context, free_symbols_prop, proven_prop},
+    check::{
+        check_in_bindings, check_in_bindings_and_context, free_symbols_prop, proven_prop,
+        step_in_bindings_and_context,
+    },
     eval::{normal_form_in_bindings, normal_outcome_in_bindings, step_in_bindings},
 };
 
@@ -335,6 +338,10 @@ impl Theory {
         check_in_bindings_and_context(proof, prop, &self.bindings, context)
     }
 
+    pub(crate) fn proven_prop_in_context(&self, proof: &Proof, context: &Context) -> Option<Prop> {
+        proven_prop(proof, &self.bindings, context)
+    }
+
     pub fn from_proof(&self, proof: Proof, prop: Prop) -> Option<Theorem> {
         self.from_proof_result(proof, prop).ok()
     }
@@ -355,8 +362,26 @@ impl Theory {
         step_in_bindings(computation, &self.bindings)
     }
 
+    pub(crate) fn reduce_in_context(&self, computation: &Computation, context: &Context) -> Step {
+        step_in_bindings_and_context(computation, &self.bindings, context)
+    }
+
     pub fn normal_form(&self, computation: &Computation) -> Computation {
         normal_form_in_bindings(computation, &self.bindings)
+    }
+
+    pub(crate) fn normal_form_in_context(
+        &self,
+        computation: &Computation,
+        context: &Context,
+    ) -> Computation {
+        let mut computation = computation.clone();
+
+        while let Step::Reduced(next) = self.reduce_in_context(&computation, context) {
+            computation = next;
+        }
+
+        computation
     }
 
     pub fn normal_outcome(&self, computation: &Computation) -> Option<Outcome> {
