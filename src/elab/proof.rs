@@ -1,11 +1,13 @@
 //! Proof-script elaboration and evaluation-proof helpers.
 
-use crate::{
-    Computation, Name, Outcome, Proof, Step, Theorem, TheoremError, Theory, alpha_eq_computation,
-    computes_to_outcome,
-};
+use crate::{Computation, Name, Proof, Step, Theorem, TheoremError, Theory, alpha_eq_computation};
 
-use super::source::{ParseError, ParsedModule, ParsedTheorem, ProofExpr, ProofScript};
+#[cfg(test)]
+use crate::{Outcome, computes_to_outcome};
+
+#[cfg(test)]
+use super::source::ParsedModule;
+use super::source::{ParseError, ParsedTheorem, ProofExpr, ProofScript};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvaluationProofError {
@@ -71,6 +73,7 @@ pub(crate) fn proof_for_theorem_result(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn source_theorem_result(
     module: ParsedModule,
     name: Name,
@@ -248,6 +251,7 @@ pub(crate) fn evaluation_chain_in_theory(
     Err(EvaluationProofError::StepLimitExceeded { limit })
 }
 
+#[cfg(test)]
 pub(crate) fn proof_by_evaluation_in_theory(
     computation: Computation,
     expected: impl Into<Outcome>,
@@ -274,15 +278,6 @@ pub(crate) fn proof_by_evaluation_to_computation_in_theory(
     }
 
     Ok(Proof::Steps(chain))
-}
-
-pub(crate) fn proof_by_reduction_in_theory(
-    computation: Computation,
-    expected: impl Into<Outcome>,
-    theory: &Theory,
-    limit: usize,
-) -> Result<Proof, EvaluationProofError> {
-    proof_by_reduction_to_computation_in_theory(computation, expected.into().into(), theory, limit)
 }
 
 pub(crate) fn proof_by_reduction_to_computation_in_theory(
@@ -346,6 +341,7 @@ pub(crate) fn proof_by_same_normal_form_in_theory(
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn check_evaluates_to_in_theory(
     computation: Computation,
     outcome: impl Into<Outcome>,

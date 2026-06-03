@@ -1,11 +1,13 @@
 //! Standard definitions layered on top of the kernel.
 
-pub mod list;
+mod list;
+#[cfg(test)]
+mod list_tests;
 
 use std::sync::OnceLock;
 
 use crate::{
-    Computation, Name, Symbol, Theorem, Theory,
+    Name, Symbol, Theory,
     elab::{
         ElabEnv, LoadedSource,
         loader::{define_module_computations_result, define_module_theorems_result},
@@ -53,14 +55,6 @@ pub fn symbol_name(spelling: &str) -> Option<Symbol> {
     loaded_computation_source().ok()?.symbol(spelling)
 }
 
-fn expect_computation_name(spelling: &str) -> Name {
-    computation_name(spelling).expect("prelude source should define requested computation")
-}
-
-fn checked_source_theorem(spelling: &str) -> Option<Theorem> {
-    list::checked_source_theorem(theorem_name(spelling)?)
-}
-
 pub fn theory() -> Theory {
     loaded().into_theory()
 }
@@ -101,10 +95,12 @@ fn loaded_computation_source() -> Result<&'static LoadedSource, SourceComputatio
         .map_err(|error| error.clone())
 }
 
+#[cfg(test)]
 pub(crate) fn parsed_prelude_env() -> Result<&'static ElabEnv, SourceComputationError> {
     loaded_computation_source().map(LoadedSource::env)
 }
 
+#[cfg(test)]
 pub(crate) fn parsed_list_module() -> Result<&'static source::ParsedModule, SourceComputationError>
 {
     loaded_computation_source().map(|loaded| {
@@ -204,178 +200,13 @@ pub fn try_define_theorems_in_theory(theory: &mut Theory) -> Result<(), SourceTh
     Ok(())
 }
 
-pub fn reverse_acc_computes_to_list() -> Option<Theorem> {
-    checked_source_theorem("reverse_acc_computes_to_list")
-}
-
-pub fn reverse_computes_to_list() -> Option<Theorem> {
-    checked_source_theorem("reverse_computes_to_list")
-}
-
-pub fn reverse_nil_computes_to_list() -> Option<Theorem> {
-    checked_source_theorem("reverse_nil_computes_to_list")
-}
-
-pub fn reverse_nil_exact() -> Option<Theorem> {
-    checked_source_theorem("reverse_nil")
-}
-
-pub fn reverse_singleton() -> Option<Theorem> {
-    checked_source_theorem("reverse_singleton")
-}
-
-pub fn reverse_acc_append() -> Option<Theorem> {
-    checked_source_theorem("reverse_acc_append")
-}
-
-pub fn reverse_cons() -> Option<Theorem> {
-    checked_source_theorem("reverse_cons")
-}
-
-pub fn reverse_acc_reverse() -> Option<Theorem> {
-    checked_source_theorem("reverse_acc_reverse")
-}
-
-pub fn reverse_double() -> Option<Theorem> {
-    checked_source_theorem("reverse_double")
-}
-
-pub fn reverse_acc_of_append() -> Option<Theorem> {
-    checked_source_theorem("reverse_acc_of_append")
-}
-
-pub fn reverse_append() -> Option<Theorem> {
-    checked_source_theorem("reverse_append")
-}
-
-pub fn snoc_computes_to_list() -> Option<Theorem> {
-    checked_source_theorem("snoc_computes_to_list")
-}
-
-pub fn snoc_nil() -> Option<Theorem> {
-    checked_source_theorem("snoc_nil")
-}
-
-pub fn snoc_cons() -> Option<Theorem> {
-    checked_source_theorem("snoc_cons")
-}
-
-pub fn concat_nil() -> Option<Theorem> {
-    checked_source_theorem("concat_nil")
-}
-
-pub fn last_nil_errors() -> Option<Theorem> {
-    checked_source_theorem("last_nil_errors")
-}
-
-pub fn last_singleton() -> Option<Theorem> {
-    checked_source_theorem("last_singleton")
-}
-
-pub fn last_cons() -> Option<Theorem> {
-    checked_source_theorem("last_cons")
-}
-
-pub fn init_nil_errors() -> Option<Theorem> {
-    checked_source_theorem("init_nil_errors")
-}
-
-pub fn init_singleton() -> Option<Theorem> {
-    checked_source_theorem("init_singleton")
-}
-
-pub fn init_cons() -> Option<Theorem> {
-    checked_source_theorem("init_cons")
-}
-
-pub fn null_nil() -> Option<Theorem> {
-    checked_source_theorem("null_nil")
-}
-
-pub fn null_cons() -> Option<Theorem> {
-    checked_source_theorem("null_cons")
-}
-
-pub fn is_singleton_nil() -> Option<Theorem> {
-    checked_source_theorem("is_singleton_nil")
-}
-
-pub fn is_singleton_singleton() -> Option<Theorem> {
-    checked_source_theorem("is_singleton_singleton")
-}
-
-pub fn is_singleton_cons() -> Option<Theorem> {
-    checked_source_theorem("is_singleton_cons")
-}
-
-pub fn append_nil_computes_to_list() -> Option<Theorem> {
-    checked_source_theorem("append_nil_computes_to_list")
-}
-
-pub fn append_computes_to_list() -> Option<Theorem> {
-    checked_source_theorem("append_computes_to_list")
-}
-
-pub fn append_nil_returns_right() -> Option<Theorem> {
-    checked_source_theorem("append_nil_returns_right")
-}
-
-pub fn append_right_nil() -> Option<Theorem> {
-    checked_source_theorem("append_right_nil")
-}
-
-pub fn append_cons() -> Option<Theorem> {
-    checked_source_theorem("append_cons")
-}
-
-pub fn append_singleton() -> Option<Theorem> {
-    checked_source_theorem("append_singleton")
-}
-
-pub fn append_assoc() -> Option<Theorem> {
-    checked_source_theorem("append_assoc")
-}
-
-pub fn reverse_acc() -> Computation {
-    Computation::Ref(expect_computation_name("reverse_acc"))
-}
-
-pub fn reverse() -> Computation {
-    Computation::Ref(expect_computation_name("reverse"))
-}
-
-pub fn append() -> Computation {
-    Computation::Ref(expect_computation_name("append"))
-}
-
-pub fn snoc() -> Computation {
-    Computation::Ref(expect_computation_name("snoc"))
-}
-
-pub fn concat() -> Computation {
-    Computation::Ref(expect_computation_name("concat"))
-}
-
-pub fn last() -> Computation {
-    Computation::Ref(expect_computation_name("last"))
-}
-
-pub fn init() -> Computation {
-    Computation::Ref(expect_computation_name("init"))
-}
-
-pub fn null() -> Computation {
-    Computation::Ref(expect_computation_name("null"))
-}
-
-pub fn is_singleton() -> Computation {
-    Computation::Ref(expect_computation_name("is-singleton"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ComputationDefinitionError, Step, TheoremError, computes_to_list, elab::proof};
+    use crate::{
+        Computation, ComputationDefinitionError, Step, Theorem, TheoremError, computes_to_list,
+        elab::proof,
+    };
 
     fn computation(spelling: &str) -> Name {
         computation_name(spelling).expect("prelude should define requested computation")
@@ -387,6 +218,50 @@ mod tests {
 
     fn symbol(spelling: &str) -> Symbol {
         symbol_name(spelling).expect("prelude should define requested symbol")
+    }
+
+    fn computation_ref(spelling: &str) -> Computation {
+        Computation::Ref(computation(spelling))
+    }
+
+    fn checked_theorem(spelling: &str) -> Option<Theorem> {
+        theory().known(theorem(spelling))
+    }
+
+    fn reverse_acc() -> Computation {
+        computation_ref("reverse_acc")
+    }
+
+    fn reverse() -> Computation {
+        computation_ref("reverse")
+    }
+
+    fn append() -> Computation {
+        computation_ref("append")
+    }
+
+    fn snoc() -> Computation {
+        computation_ref("snoc")
+    }
+
+    fn concat() -> Computation {
+        computation_ref("concat")
+    }
+
+    fn last() -> Computation {
+        computation_ref("last")
+    }
+
+    fn init() -> Computation {
+        computation_ref("init")
+    }
+
+    fn null() -> Computation {
+        computation_ref("null")
+    }
+
+    fn is_singleton() -> Computation {
+        computation_ref("is-singleton")
     }
 
     fn parse_test_module(source: &str) -> (source::ParsedModule, ElabEnv) {
@@ -454,11 +329,11 @@ mod tests {
         assert_eq!(loaded.symbol("missing"), None);
         assert_eq!(
             loaded.theory().computation(computation("append")),
-            Some(&list::append_definition())
+            Some(&list_tests::append_definition())
         );
         assert_eq!(
             loaded.theory().theorem(theorem("append_assoc")),
-            Some(&list::append_assoc_source_theorem())
+            Some(&list_tests::append_assoc_source_theorem())
         );
         assert_eq!(
             loaded.env().computation("reverse_acc"),
@@ -487,7 +362,7 @@ mod tests {
         );
         assert_eq!(
             loaded.theory().computation(computation("reverse")),
-            Some(&list::reverse_definition())
+            Some(&list_tests::reverse_definition())
         );
         assert!(loaded.theory().theorem(theorem("append_assoc")).is_none());
     }
@@ -499,43 +374,43 @@ mod tests {
 
         assert_eq!(
             theory.computation(computation("reverse_acc")),
-            Some(&list::reverse_acc_definition())
+            Some(&list_tests::reverse_acc_definition())
         );
         assert_eq!(
             try_theory.computation(computation("reverse_acc")),
-            Some(&list::reverse_acc_definition())
+            Some(&list_tests::reverse_acc_definition())
         );
         assert_eq!(
             theory.computation(computation("reverse")),
-            Some(&list::reverse_definition())
+            Some(&list_tests::reverse_definition())
         );
         assert_eq!(
             theory.computation(computation("append")),
-            Some(&list::append_definition())
+            Some(&list_tests::append_definition())
         );
         assert_eq!(
             theory.computation(computation("snoc")),
-            Some(&list::snoc_definition())
+            Some(&list_tests::snoc_definition())
         );
         assert_eq!(
             theory.computation(computation("concat")),
-            Some(&list::concat_definition())
+            Some(&list_tests::concat_definition())
         );
         assert_eq!(
             theory.computation(computation("last")),
-            Some(&list::last_definition())
+            Some(&list_tests::last_definition())
         );
         assert_eq!(
             theory.computation(computation("init")),
-            Some(&list::init_definition())
+            Some(&list_tests::init_definition())
         );
         assert_eq!(
             theory.computation(computation("null")),
-            Some(&list::null_definition())
+            Some(&list_tests::null_definition())
         );
         assert_eq!(
             theory.computation(computation("is-singleton")),
-            Some(&list::is_singleton_definition())
+            Some(&list_tests::is_singleton_definition())
         );
         assert_eq!(reverse_acc(), Computation::Ref(computation("reverse_acc")));
         assert_eq!(reverse(), Computation::Ref(computation("reverse")));
@@ -551,39 +426,39 @@ mod tests {
         );
         assert_eq!(
             theory.reduce(&reverse_acc()),
-            Step::Reduced(list::reverse_acc_definition())
+            Step::Reduced(list_tests::reverse_acc_definition())
         );
         assert_eq!(
             theory.reduce(&reverse()),
-            Step::Reduced(list::reverse_definition())
+            Step::Reduced(list_tests::reverse_definition())
         );
         assert_eq!(
             theory.reduce(&append()),
-            Step::Reduced(list::append_definition())
+            Step::Reduced(list_tests::append_definition())
         );
         assert_eq!(
             theory.reduce(&snoc()),
-            Step::Reduced(list::snoc_definition())
+            Step::Reduced(list_tests::snoc_definition())
         );
         assert_eq!(
             theory.reduce(&concat()),
-            Step::Reduced(list::concat_definition())
+            Step::Reduced(list_tests::concat_definition())
         );
         assert_eq!(
             theory.reduce(&last()),
-            Step::Reduced(list::last_definition())
+            Step::Reduced(list_tests::last_definition())
         );
         assert_eq!(
             theory.reduce(&init()),
-            Step::Reduced(list::init_definition())
+            Step::Reduced(list_tests::init_definition())
         );
         assert_eq!(
             theory.reduce(&null()),
-            Step::Reduced(list::null_definition())
+            Step::Reduced(list_tests::null_definition())
         );
         assert_eq!(
             theory.reduce(&is_singleton()),
-            Step::Reduced(list::is_singleton_definition())
+            Step::Reduced(list_tests::is_singleton_definition())
         );
     }
 
@@ -742,39 +617,39 @@ mod tests {
     #[test]
     fn theory_defines_reverse_theorems() {
         let theory = theory();
-        let reverse_acc_prop = list::reverse_acc_computes_to_list_source_theorem();
-        let reverse_prop = list::reverse_computes_to_list_source_theorem();
-        let reverse_nil_prop = list::reverse_nil_computes_to_list_source_theorem();
-        let reverse_nil_exact_prop = list::reverse_nil_source_theorem();
-        let reverse_singleton_prop = list::reverse_singleton_source_theorem();
-        let reverse_acc_append_prop = list::reverse_acc_append_source_theorem();
-        let reverse_cons_prop = list::reverse_cons_source_theorem();
-        let reverse_acc_reverse_prop = list::reverse_acc_reverse_source_theorem();
-        let reverse_double_prop = list::reverse_double_source_theorem();
-        let reverse_acc_of_append_prop = list::reverse_acc_of_append_source_theorem();
-        let reverse_append_prop = list::reverse_append_source_theorem();
-        let snoc_prop = list::snoc_computes_to_list_source_theorem();
-        let snoc_nil_prop = list::snoc_nil_source_theorem();
-        let snoc_cons_prop = list::snoc_cons_source_theorem();
-        let concat_nil_prop = list::concat_nil_source_theorem();
-        let last_nil_errors_prop = list::last_nil_errors_source_theorem();
-        let last_singleton_prop = list::last_singleton_source_theorem();
-        let last_cons_prop = list::last_cons_source_theorem();
-        let init_nil_errors_prop = list::init_nil_errors_source_theorem();
-        let init_singleton_prop = list::init_singleton_source_theorem();
-        let init_cons_prop = list::init_cons_source_theorem();
-        let null_nil_prop = list::null_nil_source_theorem();
-        let null_cons_prop = list::null_cons_source_theorem();
-        let is_singleton_nil_prop = list::is_singleton_nil_source_theorem();
-        let is_singleton_singleton_prop = list::is_singleton_singleton_source_theorem();
-        let is_singleton_cons_prop = list::is_singleton_cons_source_theorem();
-        let append_nil_prop = list::append_nil_computes_to_list_source_theorem();
-        let append_prop = list::append_computes_to_list_source_theorem();
-        let append_nil_returns_right_prop = list::append_nil_returns_right_source_theorem();
-        let append_right_nil_prop = list::append_right_nil_source_theorem();
-        let append_cons_prop = list::append_cons_source_theorem();
-        let append_singleton_prop = list::append_singleton_source_theorem();
-        let append_assoc_prop = list::append_assoc_source_theorem();
+        let reverse_acc_prop = list_tests::reverse_acc_computes_to_list_source_theorem();
+        let reverse_prop = list_tests::reverse_computes_to_list_source_theorem();
+        let reverse_nil_prop = list_tests::reverse_nil_computes_to_list_source_theorem();
+        let reverse_nil_exact_prop = list_tests::reverse_nil_source_theorem();
+        let reverse_singleton_prop = list_tests::reverse_singleton_source_theorem();
+        let reverse_acc_append_prop = list_tests::reverse_acc_append_source_theorem();
+        let reverse_cons_prop = list_tests::reverse_cons_source_theorem();
+        let reverse_acc_reverse_prop = list_tests::reverse_acc_reverse_source_theorem();
+        let reverse_double_prop = list_tests::reverse_double_source_theorem();
+        let reverse_acc_of_append_prop = list_tests::reverse_acc_of_append_source_theorem();
+        let reverse_append_prop = list_tests::reverse_append_source_theorem();
+        let snoc_prop = list_tests::snoc_computes_to_list_source_theorem();
+        let snoc_nil_prop = list_tests::snoc_nil_source_theorem();
+        let snoc_cons_prop = list_tests::snoc_cons_source_theorem();
+        let concat_nil_prop = list_tests::concat_nil_source_theorem();
+        let last_nil_errors_prop = list_tests::last_nil_errors_source_theorem();
+        let last_singleton_prop = list_tests::last_singleton_source_theorem();
+        let last_cons_prop = list_tests::last_cons_source_theorem();
+        let init_nil_errors_prop = list_tests::init_nil_errors_source_theorem();
+        let init_singleton_prop = list_tests::init_singleton_source_theorem();
+        let init_cons_prop = list_tests::init_cons_source_theorem();
+        let null_nil_prop = list_tests::null_nil_source_theorem();
+        let null_cons_prop = list_tests::null_cons_source_theorem();
+        let is_singleton_nil_prop = list_tests::is_singleton_nil_source_theorem();
+        let is_singleton_singleton_prop = list_tests::is_singleton_singleton_source_theorem();
+        let is_singleton_cons_prop = list_tests::is_singleton_cons_source_theorem();
+        let append_nil_prop = list_tests::append_nil_computes_to_list_source_theorem();
+        let append_prop = list_tests::append_computes_to_list_source_theorem();
+        let append_nil_returns_right_prop = list_tests::append_nil_returns_right_source_theorem();
+        let append_right_nil_prop = list_tests::append_right_nil_source_theorem();
+        let append_cons_prop = list_tests::append_cons_source_theorem();
+        let append_singleton_prop = list_tests::append_singleton_source_theorem();
+        let append_assoc_prop = list_tests::append_assoc_source_theorem();
 
         assert_eq!(
             theory.theorem(theorem("reverse_acc_computes_to_list")),
@@ -898,55 +773,55 @@ mod tests {
             &reverse_prop,
         );
         assert_eq!(
-            reverse_computes_to_list()
+            checked_theorem("reverse_computes_to_list")
                 .expect("reverse theorem source proof should check with dependencies")
                 .prop(),
             &reverse_prop,
         );
         assert_eq!(
-            reverse_nil_computes_to_list()
+            checked_theorem("reverse_nil_computes_to_list")
                 .expect("reverse nil theorem source proof should check with dependencies")
                 .prop(),
             &reverse_nil_prop,
         );
         assert_eq!(
-            reverse_nil_exact()
+            checked_theorem("reverse_nil")
                 .expect("reverse nil exact theorem source proof should check with dependencies")
                 .prop(),
             &reverse_nil_exact_prop,
         );
         assert_eq!(
-            reverse_singleton()
+            checked_theorem("reverse_singleton")
                 .expect("reverse singleton theorem source proof should check with dependencies")
                 .prop(),
             &reverse_singleton_prop,
         );
         assert_eq!(
-            reverse_acc_append()
+            checked_theorem("reverse_acc_append")
                 .expect("reverse accumulator theorem source proof should check with dependencies")
                 .prop(),
             &reverse_acc_append_prop,
         );
         assert_eq!(
-            reverse_cons()
+            checked_theorem("reverse_cons")
                 .expect("reverse cons theorem source proof should check with dependencies")
                 .prop(),
             &reverse_cons_prop,
         );
         assert_eq!(
-            reverse_acc_reverse()
+            checked_theorem("reverse_acc_reverse")
                 .expect("reverse accumulator inverse theorem source proof should check with dependencies")
                 .prop(),
             &reverse_acc_reverse_prop,
         );
         assert_eq!(
-            reverse_double()
+            checked_theorem("reverse_double")
                 .expect("reverse double theorem source proof should check with dependencies")
                 .prop(),
             &reverse_double_prop,
         );
         assert_eq!(
-            reverse_acc_of_append()
+            checked_theorem("reverse_acc_of_append")
                 .expect(
                     "reverse accumulator append theorem source proof should check with dependencies"
                 )
@@ -954,91 +829,91 @@ mod tests {
             &reverse_acc_of_append_prop,
         );
         assert_eq!(
-            reverse_append()
+            checked_theorem("reverse_append")
                 .expect("reverse append theorem source proof should check with dependencies")
                 .prop(),
             &reverse_append_prop,
         );
         assert_eq!(
-            snoc_computes_to_list()
+            checked_theorem("snoc_computes_to_list")
                 .expect("snoc theorem source proof should check with dependencies")
                 .prop(),
             &snoc_prop,
         );
         assert_eq!(
-            snoc_nil()
+            checked_theorem("snoc_nil")
                 .expect("snoc nil theorem source proof should check with dependencies")
                 .prop(),
             &snoc_nil_prop,
         );
         assert_eq!(
-            snoc_cons()
+            checked_theorem("snoc_cons")
                 .expect("snoc cons theorem source proof should check with dependencies")
                 .prop(),
             &snoc_cons_prop,
         );
         assert_eq!(
-            concat_nil()
+            checked_theorem("concat_nil")
                 .expect("concat nil theorem source proof should check with dependencies")
                 .prop(),
             &concat_nil_prop,
         );
         assert_eq!(
-            last_nil_errors()
+            checked_theorem("last_nil_errors")
                 .expect("last nil theorem source proof should check with dependencies")
                 .prop(),
             &last_nil_errors_prop,
         );
         assert_eq!(
-            last_singleton()
+            checked_theorem("last_singleton")
                 .expect("last singleton theorem source proof should check with dependencies")
                 .prop(),
             &last_singleton_prop,
         );
         assert_eq!(
-            last_cons()
+            checked_theorem("last_cons")
                 .expect("last cons theorem source proof should check with dependencies")
                 .prop(),
             &last_cons_prop,
         );
         assert_eq!(
-            init_nil_errors()
+            checked_theorem("init_nil_errors")
                 .expect("init nil theorem source proof should check with dependencies")
                 .prop(),
             &init_nil_errors_prop,
         );
         assert_eq!(
-            init_singleton()
+            checked_theorem("init_singleton")
                 .expect("init singleton theorem source proof should check with dependencies")
                 .prop(),
             &init_singleton_prop,
         );
         assert_eq!(
-            init_cons()
+            checked_theorem("init_cons")
                 .expect("init cons theorem source proof should check with dependencies")
                 .prop(),
             &init_cons_prop,
         );
         assert_eq!(
-            null_nil()
+            checked_theorem("null_nil")
                 .expect("null nil theorem source proof should check with dependencies")
                 .prop(),
             &null_nil_prop,
         );
         assert_eq!(
-            null_cons()
+            checked_theorem("null_cons")
                 .expect("null cons theorem source proof should check with dependencies")
                 .prop(),
             &null_cons_prop,
         );
         assert_eq!(
-            is_singleton_nil()
+            checked_theorem("is_singleton_nil")
                 .expect("is-singleton nil theorem source proof should check with dependencies")
                 .prop(),
             &is_singleton_nil_prop,
         );
         assert_eq!(
-            is_singleton_singleton()
+            checked_theorem("is_singleton_singleton")
                 .expect(
                     "is-singleton singleton theorem source proof should check with dependencies"
                 )
@@ -1046,49 +921,49 @@ mod tests {
             &is_singleton_singleton_prop,
         );
         assert_eq!(
-            is_singleton_cons()
+            checked_theorem("is_singleton_cons")
                 .expect("is-singleton cons theorem source proof should check with dependencies")
                 .prop(),
             &is_singleton_cons_prop,
         );
         assert_eq!(
-            append_nil_computes_to_list()
+            checked_theorem("append_nil_computes_to_list")
                 .expect("append nil theorem source proof should check with dependencies")
                 .prop(),
             &append_nil_prop,
         );
         assert_eq!(
-            append_computes_to_list()
+            checked_theorem("append_computes_to_list")
                 .expect("append theorem source proof should check with dependencies")
                 .prop(),
             &append_prop,
         );
         assert_eq!(
-            append_nil_returns_right()
+            checked_theorem("append_nil_returns_right")
                 .expect("append nil exact theorem source proof should check with dependencies")
                 .prop(),
             &append_nil_returns_right_prop,
         );
         assert_eq!(
-            append_right_nil()
+            checked_theorem("append_right_nil")
                 .expect("append right nil theorem source proof should check with dependencies")
                 .prop(),
             &append_right_nil_prop,
         );
         assert_eq!(
-            append_cons()
+            checked_theorem("append_cons")
                 .expect("append cons theorem source proof should check with dependencies")
                 .prop(),
             &append_cons_prop,
         );
         assert_eq!(
-            append_singleton()
+            checked_theorem("append_singleton")
                 .expect("append singleton theorem source proof should check with dependencies")
                 .prop(),
             &append_singleton_prop,
         );
         assert_eq!(
-            append_assoc()
+            checked_theorem("append_assoc")
                 .expect("append associativity theorem source proof should check with dependencies")
                 .prop(),
             &append_assoc_prop,
@@ -1102,14 +977,14 @@ mod tests {
             .known(theorem("reverse_computes_to_list"))
             .expect("reverse theorem should be defined");
         let instantiated = theory
-            .forall_elim(&reverse, list::nil())
+            .forall_elim(&reverse, list_tests::nil())
             .expect("known theorem should instantiate in its theory");
 
         assert_eq!(
             instantiated.prop(),
             &computes_to_list(
-                list::reverse_computes_to_list_source_result_symbol(),
-                list::reverse_call(list::nil()),
+                list_tests::reverse_computes_to_list_source_result_symbol(),
+                list_tests::reverse_call(list_tests::nil()),
             )
         );
     }

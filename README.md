@@ -89,3 +89,6 @@ contains list definitions such as `reverse_acc`, `reverse`, `append`, `snoc`,
 `concat`, `last`, `init`, `null`, and `is-singleton`, plus theorems about those
 definitions. Prelude booleans are conventional quoted symbols: `:true` and
 `:false`. They are not special kernel values.
+The list prelude itself lives in `src/prelude/list.lisp`; the corresponding
+Rust module only includes that source file, with list-specific Rust helpers kept
+as test support.

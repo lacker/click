@@ -246,6 +246,7 @@ pub(crate) struct ParsedModule {
 }
 
 impl ParsedModule {
+    #[cfg(test)]
     pub(crate) fn computation(&self, name: Name) -> Option<&Computation> {
         self.computations
             .iter()
@@ -254,6 +255,7 @@ impl ParsedModule {
             })
     }
 
+    #[cfg(test)]
     pub(crate) fn theorem(&self, name: Name) -> Option<&ParsedTheorem> {
         self.theorems.iter().find(|theorem| theorem.name == name)
     }
