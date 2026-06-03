@@ -268,6 +268,13 @@ mod tests {
                   (computes-to (id nil) nil)
                   (by
                     (apply id_computes nil)))
+                (theorem id_id_nil
+                  (computes-to (id (id nil)) nil)
+                  (by
+                    (calc
+                      (id (id nil))
+                      (== (id nil) (by (eval)))
+                      (== nil (by (eval))))))
                 (theorem nil_exact
                   (computes-to nil nil)
                   (by
@@ -293,15 +300,30 @@ mod tests {
         let id_nil = loaded
             .theorem("id_nil")
             .expect("loader should record tactic theorem spelling");
+        let id_id_nil = loaded
+            .theorem("id_id_nil")
+            .expect("loader should record calc tactic theorem spelling");
+        let id = loaded.computation("id").expect("id should be loaded");
 
         assert_eq!(
             loaded.theory().theorem(id_nil),
             Some(&computes_to(
                 Computation::Apply {
-                    function: Box::new(Computation::Ref(
-                        loaded.computation("id").expect("id should be loaded")
-                    )),
+                    function: Box::new(Computation::Ref(id)),
                     argument: Box::new(Computation::Nil),
+                },
+                Computation::Nil
+            ))
+        );
+        assert_eq!(
+            loaded.theory().theorem(id_id_nil),
+            Some(&computes_to(
+                Computation::Apply {
+                    function: Box::new(Computation::Ref(id)),
+                    argument: Box::new(Computation::Apply {
+                        function: Box::new(Computation::Ref(id)),
+                        argument: Box::new(Computation::Nil),
+                    }),
                 },
                 Computation::Nil
             ))

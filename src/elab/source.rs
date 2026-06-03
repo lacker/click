@@ -303,6 +303,16 @@ pub(crate) enum TacticExpr {
     },
     Left(TacticScript),
     Right(TacticScript),
+    Calc {
+        start: Computation,
+        steps: Vec<CalcStep>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CalcStep {
+    pub target: Computation,
+    pub proof: ProofScript,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1139,6 +1149,7 @@ impl<'a> SourceParser<'a> {
             "exists" => self.tactic_exists(items),
             "left" => self.tactic_left(items),
             "right" => self.tactic_right(items),
+            "calc" => self.tactic_calc(items),
             _ => Err(ParseError::new(format!("unknown tactic `{form}`"))),
         }
     }
@@ -1217,6 +1228,41 @@ impl<'a> SourceParser<'a> {
     fn tactic_right(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
         expect_len("right", items, 2)?;
         Ok(TacticExpr::Right(self.nested_tactic_script(&items[1])?))
+    }
+
+    fn tactic_calc(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        if items.len() < 3 {
+            return Err(ParseError::new(format!(
+                "`calc` expects a start expression and at least one step, got {}",
+                items.len().saturating_sub(1)
+            )));
+        }
+
+        Ok(TacticExpr::Calc {
+            start: self.computation(&items[1])?,
+            steps: items[2..]
+                .iter()
+                .map(|item| self.calc_step(item))
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+
+    fn calc_step(&mut self, expression: &Expr) -> Result<CalcStep, ParseError> {
+        let Expr::List(items) = expression else {
+            return Err(ParseError::new("expected calc step"));
+        };
+        expect_len("==", items, 3)?;
+        let form = atom(&items[0])?;
+        if form != "==" {
+            return Err(ParseError::new(format!(
+                "expected calc step form `==`, got `{form}`"
+            )));
+        }
+
+        Ok(CalcStep {
+            target: self.computation(&items[1])?,
+            proof: self.proof_script(&items[2])?,
+        })
     }
 
     fn proof_expr(&mut self, expression: &Expr) -> Result<ProofExpr, ParseError> {
@@ -1815,6 +1861,47 @@ mod tests {
                 }],
             })
         );
+    }
+
+    #[test]
+    fn parses_calc_tactic_scripts() {
+        let computations = [NameBinding {
+            spelling: "id",
+            name: Name(1),
+        }];
+        let theorems = [NameBinding {
+            spelling: "id_id_nil",
+            name: Name(2),
+        }];
+        let symbols = [SymbolBinding {
+            spelling: "x",
+            symbol: Symbol(1),
+        }];
+
+        let module = parse_module(
+            "
+            (def id (lambda x x))
+            (theorem id_id_nil
+              (computes-to (id (id nil)) nil)
+              (by
+                (calc
+                  (id (id nil))
+                  (== (id nil) (by (eval)))
+                  (== nil (by (eval))))))
+            ",
+            &computations,
+            &theorems,
+            &symbols,
+        )
+        .expect("calc tactic source should parse");
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[0].proof else {
+            panic!("expected a tactic proof script");
+        };
+        assert!(matches!(
+            tactics.as_slice(),
+            [TacticExpr::Calc { steps, .. }] if steps.len() == 2
+        ));
     }
 
     #[test]

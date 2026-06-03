@@ -10,7 +10,9 @@ use crate::{Outcome, computes_to_outcome};
 
 #[cfg(test)]
 use super::source::ParsedModule;
-use super::source::{ParseError, ParsedTheorem, ProofExpr, ProofScript, TacticExpr, TacticScript};
+use super::source::{
+    CalcStep, ParseError, ParsedTheorem, ProofExpr, ProofScript, TacticExpr, TacticScript,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvaluationProofError {
@@ -379,6 +381,10 @@ fn tactic_steps_to_proof(
             ensure_no_more_tactics(rest, "right")?;
             tactic_right(proof, theory, goal)
         }
+        TacticExpr::Calc { start, steps } => {
+            ensure_no_more_tactics(rest, "calc")?;
+            tactic_calc(start, steps, theory, goal)
+        }
     }
 }
 
@@ -658,6 +664,77 @@ fn tactic_right(
             },
         )?),
     })
+}
+
+fn tactic_calc(
+    start: &Computation,
+    steps: &[CalcStep],
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let Prop::Equal(goal_left, goal_right) = &goal.target else {
+        return Err(tactic_failed("calc", "goal is not an equality"));
+    };
+
+    if !alpha_eq_computation(start, goal_left) {
+        return Err(tactic_failed(
+            "calc",
+            format!(
+                "calc starts at {:?}, but goal starts at {:?}",
+                start, goal_left
+            ),
+        ));
+    }
+
+    let mut previous = start.clone();
+    let mut proofs = Vec::new();
+
+    for step in steps {
+        let step_goal = Goal {
+            context: goal.context.clone(),
+            target: Prop::Equal(previous.clone(), step.target.clone()),
+        };
+        proofs.push(proof_script_to_proof_for_goal(
+            &step.proof,
+            theory,
+            &step_goal,
+        )?);
+        previous = step.target.clone();
+    }
+
+    if !alpha_eq_computation(&previous, goal_right) {
+        return Err(tactic_failed(
+            "calc",
+            format!(
+                "calc ends at {:?}, but goal ends at {:?}",
+                previous, goal_right
+            ),
+        ));
+    }
+
+    trans_chain(proofs).ok_or_else(|| tactic_failed("calc", "calc has no steps"))
+}
+
+fn proof_script_to_proof_for_goal(
+    script: &ProofScript,
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    match script {
+        ProofScript::Proof(proof) => tactic_exact(proof, theory, goal),
+        ProofScript::By(script) => tactic_script_to_proof(script, theory, goal),
+    }
+}
+
+fn trans_chain(proofs: Vec<Proof>) -> Option<Proof> {
+    let mut proofs = proofs.into_iter();
+    let mut proof = proofs.next()?;
+
+    for next in proofs {
+        proof = Proof::Trans(Box::new(proof), Box::new(next));
+    }
+
+    Some(proof)
 }
 
 fn ensure_no_more_tactics(
