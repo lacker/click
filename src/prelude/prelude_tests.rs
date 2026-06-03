@@ -50,6 +50,14 @@ fn map() -> Computation {
     computation_ref("map")
 }
 
+fn concat_map() -> Computation {
+    computation_ref("concat-map")
+}
+
+fn fold_right() -> Computation {
+    computation_ref("fold-right")
+}
+
 fn last() -> Computation {
     computation_ref("last")
 }
@@ -101,6 +109,12 @@ fn prelude_theorem_names() -> Vec<Name> {
         "map_nil",
         "map_cons",
         "map_computes_to_list",
+        "concat_map_nil",
+        "concat_map_cons",
+        "concat_map_computes_to_list",
+        "fold_right_nil",
+        "fold_right_cons",
+        "fold_right_computes_to_value",
         "last_nil_errors",
         "last_singleton",
         "last_cons",
@@ -206,6 +220,14 @@ fn theory_defines_reverse() {
         Some(&list_tests::map_definition())
     );
     assert_eq!(
+        theory.computation(computation("concat-map")),
+        Some(&list_tests::concat_map_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("fold-right")),
+        Some(&list_tests::fold_right_definition())
+    );
+    assert_eq!(
         theory.computation(computation("last")),
         Some(&list_tests::last_definition())
     );
@@ -227,6 +249,8 @@ fn theory_defines_reverse() {
     assert_eq!(snoc(), Computation::Ref(computation("snoc")));
     assert_eq!(concat(), Computation::Ref(computation("concat")));
     assert_eq!(map(), Computation::Ref(computation("map")));
+    assert_eq!(concat_map(), Computation::Ref(computation("concat-map")));
+    assert_eq!(fold_right(), Computation::Ref(computation("fold-right")));
     assert_eq!(last(), Computation::Ref(computation("last")));
     assert_eq!(init(), Computation::Ref(computation("init")));
     assert_eq!(null(), Computation::Ref(computation("null")));
@@ -257,6 +281,14 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&map()),
         Step::Reduced(list_tests::map_definition())
+    );
+    assert_eq!(
+        theory.reduce(&concat_map()),
+        Step::Reduced(list_tests::concat_map_definition())
+    );
+    assert_eq!(
+        theory.reduce(&fold_right()),
+        Step::Reduced(list_tests::fold_right_definition())
     );
     assert_eq!(
         theory.reduce(&last()),
@@ -449,6 +481,13 @@ fn theory_defines_reverse_theorems() {
     let map_nil_prop = list_tests::map_nil_source_theorem();
     let map_cons_prop = list_tests::map_cons_source_theorem();
     let map_computes_to_list_prop = list_tests::map_computes_to_list_source_theorem();
+    let concat_map_nil_prop = list_tests::concat_map_nil_source_theorem();
+    let concat_map_cons_prop = list_tests::concat_map_cons_source_theorem();
+    let concat_map_computes_to_list_prop = list_tests::concat_map_computes_to_list_source_theorem();
+    let fold_right_nil_prop = list_tests::fold_right_nil_source_theorem();
+    let fold_right_cons_prop = list_tests::fold_right_cons_source_theorem();
+    let fold_right_computes_to_value_prop =
+        list_tests::fold_right_computes_to_value_source_theorem();
     let last_nil_errors_prop = list_tests::last_nil_errors_source_theorem();
     let last_singleton_prop = list_tests::last_singleton_source_theorem();
     let last_cons_prop = list_tests::last_cons_source_theorem();
@@ -527,6 +566,30 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("map_computes_to_list")),
         Some(&map_computes_to_list_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("concat_map_nil")),
+        Some(&concat_map_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("concat_map_cons")),
+        Some(&concat_map_cons_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("concat_map_computes_to_list")),
+        Some(&concat_map_computes_to_list_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("fold_right_nil")),
+        Some(&fold_right_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("fold_right_cons")),
+        Some(&fold_right_cons_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("fold_right_computes_to_value")),
+        Some(&fold_right_computes_to_value_prop)
     );
     assert_eq!(
         theory.theorem(theorem("last_nil_errors")),
@@ -808,6 +871,42 @@ fn theory_defines_reverse_theorems() {
             .expect("map computes theorem source proof should check with dependencies")
             .prop(),
         &map_computes_to_list_prop,
+    );
+    assert_eq!(
+        checked_theorem("concat_map_nil")
+            .expect("concat-map nil theorem source proof should check with dependencies")
+            .prop(),
+        &concat_map_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("concat_map_cons")
+            .expect("concat-map cons theorem source proof should check with dependencies")
+            .prop(),
+        &concat_map_cons_prop,
+    );
+    assert_eq!(
+        checked_theorem("concat_map_computes_to_list")
+            .expect("concat-map computes theorem source proof should check with dependencies")
+            .prop(),
+        &concat_map_computes_to_list_prop,
+    );
+    assert_eq!(
+        checked_theorem("fold_right_nil")
+            .expect("fold-right nil theorem source proof should check with dependencies")
+            .prop(),
+        &fold_right_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("fold_right_cons")
+            .expect("fold-right cons theorem source proof should check with dependencies")
+            .prop(),
+        &fold_right_cons_prop,
+    );
+    assert_eq!(
+        checked_theorem("fold_right_computes_to_value")
+            .expect("fold-right computes theorem source proof should check with dependencies")
+            .prop(),
+        &fold_right_computes_to_value_prop,
     );
 }
 
