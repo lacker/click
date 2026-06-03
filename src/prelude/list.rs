@@ -10,21 +10,9 @@ use crate::{
     errors_with, forall_where, is_list, is_value,
 };
 
-use super::{FALSE, SourceComputationError, SourceTheoremError, TRUE};
-
-#[cfg(test)]
-use super::{
-    APPEND_ASSOC, APPEND_COMPUTES_TO_LIST, APPEND_CONS, APPEND_NIL_COMPUTES_TO_LIST,
-    APPEND_NIL_RETURNS_RIGHT, APPEND_RIGHT_NIL, APPEND_SINGLETON, INIT_CONS, INIT_SINGLETON,
-    IS_SINGLETON_CONS, IS_SINGLETON_SINGLETON, LAST_CONS, LAST_SINGLETON, NULL_CONS,
-    REVERSE_ACC_APPEND, REVERSE_ACC_COMPUTES_TO_LIST, REVERSE_ACC_OF_APPEND, REVERSE_ACC_REVERSE,
-    REVERSE_APPEND, REVERSE_COMPUTES_TO_LIST, REVERSE_CONS, REVERSE_DOUBLE,
-    REVERSE_NIL_COMPUTES_TO_LIST, REVERSE_SINGLETON, SNOC_COMPUTES_TO_LIST, SNOC_CONS, SNOC_NIL,
-};
+use super::{SourceComputationError, SourceTheoremError};
 
 pub use crate::elab::EvaluationProofError;
-
-pub(super) const UNIT: Symbol = Symbol(3);
 
 pub(super) const SOURCE: &str = include_str!("list.lisp");
 
@@ -86,15 +74,15 @@ pub fn list_case(
 }
 
 pub fn unit() -> Computation {
-    quote(UNIT)
+    quote(prelude_symbol("unit"))
 }
 
 pub fn true_value() -> Computation {
-    quote(TRUE)
+    quote(prelude_symbol(":true"))
 }
 
 pub fn false_value() -> Computation {
-    quote(FALSE)
+    quote(prelude_symbol(":false"))
 }
 
 pub fn error(name: ErrorName) -> Computation {
@@ -200,6 +188,10 @@ fn definition(spelling: &str) -> Computation {
         .computation(name)
         .cloned()
         .expect("prelude list source should define requested computation")
+}
+
+fn prelude_symbol(spelling: &str) -> Symbol {
+    super::symbol_name(spelling).expect("prelude source should define requested symbol")
 }
 
 pub fn reverse_acc_computes_to_list_source_theorem() -> Prop {
@@ -353,24 +345,15 @@ fn theorem_definition(spelling: &str) -> ParsedTheorem {
 }
 
 #[cfg(test)]
-fn theorem_definition_by_name(name: Name) -> ParsedTheorem {
-    module()
-        .expect("prelude list source should parse theorem statements")
-        .theorem(name)
-        .cloned()
-        .expect("prelude list source should define requested theorem")
-}
-
-#[cfg(test)]
-fn theorem_symbol(name: Name, spelling: &str) -> Symbol {
-    theorem_definition_by_name(name)
+fn theorem_symbol(theorem: &str, spelling: &str) -> Symbol {
+    theorem_definition(theorem)
         .symbol(spelling)
         .expect("prelude list source should define requested theorem symbol once")
 }
 
 #[cfg(test)]
 pub(super) fn reverse_computes_to_list_source_result_symbol() -> Symbol {
-    theorem_symbol(REVERSE_COMPUTES_TO_LIST, "result")
+    theorem_symbol("reverse_computes_to_list", "result")
 }
 
 pub(super) fn checked_source_theorem(name: Name) -> Option<Theorem> {
@@ -966,9 +949,9 @@ mod tests {
 
     #[test]
     fn reverse_acc_source_theorem_has_expected_shape() {
-        let list = theorem_symbol(REVERSE_ACC_COMPUTES_TO_LIST, "list");
-        let acc = theorem_symbol(REVERSE_ACC_COMPUTES_TO_LIST, "acc");
-        let result = theorem_symbol(REVERSE_ACC_COMPUTES_TO_LIST, "result");
+        let list = theorem_symbol("reverse_acc_computes_to_list", "list");
+        let acc = theorem_symbol("reverse_acc_computes_to_list", "acc");
+        let result = theorem_symbol("reverse_acc_computes_to_list", "result");
 
         assert_eq!(
             reverse_acc_computes_to_list_source_theorem(),
@@ -994,8 +977,8 @@ mod tests {
 
     #[test]
     fn reverse_source_theorem_has_expected_shape() {
-        let list = theorem_symbol(REVERSE_COMPUTES_TO_LIST, "list");
-        let result = theorem_symbol(REVERSE_COMPUTES_TO_LIST, "result");
+        let list = theorem_symbol("reverse_computes_to_list", "list");
+        let result = theorem_symbol("reverse_computes_to_list", "result");
 
         assert_eq!(
             reverse_computes_to_list_source_theorem(),
@@ -1005,7 +988,7 @@ mod tests {
 
     #[test]
     fn reverse_nil_source_theorem_has_expected_shape() {
-        let result = theorem_symbol(REVERSE_NIL_COMPUTES_TO_LIST, "result");
+        let result = theorem_symbol("reverse_nil_computes_to_list", "result");
 
         assert_eq!(
             reverse_nil_computes_to_list_source_theorem(),
@@ -1032,7 +1015,7 @@ mod tests {
 
     #[test]
     fn reverse_singleton_source_theorem_has_expected_shape() {
-        let head = theorem_symbol(REVERSE_SINGLETON, "head");
+        let head = theorem_symbol("reverse_singleton", "head");
 
         assert_eq!(
             reverse_singleton_source_theorem(),
@@ -1061,8 +1044,8 @@ mod tests {
 
     #[test]
     fn reverse_acc_append_source_theorem_has_expected_shape() {
-        let list = theorem_symbol(REVERSE_ACC_APPEND, "list");
-        let acc = theorem_symbol(REVERSE_ACC_APPEND, "acc");
+        let list = theorem_symbol("reverse_acc_append", "list");
+        let acc = theorem_symbol("reverse_acc_append", "acc");
 
         assert_eq!(
             reverse_acc_append_source_theorem(),
@@ -1091,8 +1074,8 @@ mod tests {
 
     #[test]
     fn reverse_cons_source_theorem_has_expected_shape() {
-        let head = theorem_symbol(REVERSE_CONS, "head");
-        let tail = theorem_symbol(REVERSE_CONS, "tail");
+        let head = theorem_symbol("reverse_cons", "head");
+        let tail = theorem_symbol("reverse_cons", "tail");
 
         assert_eq!(
             reverse_cons_source_theorem(),
@@ -1121,8 +1104,8 @@ mod tests {
 
     #[test]
     fn reverse_acc_reverse_source_theorem_has_expected_shape() {
-        let list = theorem_symbol(REVERSE_ACC_REVERSE, "list");
-        let acc = theorem_symbol(REVERSE_ACC_REVERSE, "acc");
+        let list = theorem_symbol("reverse_acc_reverse", "list");
+        let acc = theorem_symbol("reverse_acc_reverse", "acc");
 
         assert_eq!(
             reverse_acc_reverse_source_theorem(),
@@ -1144,7 +1127,7 @@ mod tests {
 
     #[test]
     fn reverse_double_source_theorem_has_expected_shape() {
-        let list = theorem_symbol(REVERSE_DOUBLE, "list");
+        let list = theorem_symbol("reverse_double", "list");
 
         assert_eq!(
             reverse_double_source_theorem(),
@@ -1183,9 +1166,9 @@ mod tests {
 
     #[test]
     fn reverse_acc_of_append_source_theorem_has_expected_shape() {
-        let left = theorem_symbol(REVERSE_ACC_OF_APPEND, "left");
-        let right = theorem_symbol(REVERSE_ACC_OF_APPEND, "right");
-        let acc = theorem_symbol(REVERSE_ACC_OF_APPEND, "acc");
+        let left = theorem_symbol("reverse_acc_of_append", "left");
+        let right = theorem_symbol("reverse_acc_of_append", "right");
+        let acc = theorem_symbol("reverse_acc_of_append", "acc");
 
         assert_eq!(
             reverse_acc_of_append_source_theorem(),
@@ -1214,8 +1197,8 @@ mod tests {
 
     #[test]
     fn reverse_append_source_theorem_has_expected_shape() {
-        let left = theorem_symbol(REVERSE_APPEND, "left");
-        let right = theorem_symbol(REVERSE_APPEND, "right");
+        let left = theorem_symbol("reverse_append", "left");
+        let right = theorem_symbol("reverse_append", "right");
 
         assert_eq!(
             reverse_append_source_theorem(),
@@ -1245,9 +1228,9 @@ mod tests {
 
     #[test]
     fn snoc_source_theorem_has_expected_shape() {
-        let list = theorem_symbol(SNOC_COMPUTES_TO_LIST, "list");
-        let value = theorem_symbol(SNOC_COMPUTES_TO_LIST, "value");
-        let result = theorem_symbol(SNOC_COMPUTES_TO_LIST, "result");
+        let list = theorem_symbol("snoc_computes_to_list", "list");
+        let value = theorem_symbol("snoc_computes_to_list", "value");
+        let result = theorem_symbol("snoc_computes_to_list", "result");
 
         assert_eq!(
             snoc_computes_to_list_source_theorem(),
@@ -1287,10 +1270,10 @@ mod tests {
 
     #[test]
     fn snoc_exact_source_theorems_have_expected_shape() {
-        let nil_value = theorem_symbol(SNOC_NIL, "value");
-        let cons_head = theorem_symbol(SNOC_CONS, "head");
-        let cons_tail = theorem_symbol(SNOC_CONS, "tail");
-        let cons_value = theorem_symbol(SNOC_CONS, "value");
+        let nil_value = theorem_symbol("snoc_nil", "value");
+        let cons_head = theorem_symbol("snoc_cons", "head");
+        let cons_tail = theorem_symbol("snoc_cons", "tail");
+        let cons_value = theorem_symbol("snoc_cons", "value");
 
         assert_eq!(snoc_nil_source_theorem(), snoc_nil_theorem(nil_value));
         assert_eq!(
@@ -1341,10 +1324,10 @@ mod tests {
 
     #[test]
     fn last_source_theorems_have_expected_shape() {
-        let singleton_head = theorem_symbol(LAST_SINGLETON, "head");
-        let cons_head = theorem_symbol(LAST_CONS, "head");
-        let cons_next = theorem_symbol(LAST_CONS, "next");
-        let cons_tail = theorem_symbol(LAST_CONS, "tail");
+        let singleton_head = theorem_symbol("last_singleton", "head");
+        let cons_head = theorem_symbol("last_cons", "head");
+        let cons_next = theorem_symbol("last_cons", "next");
+        let cons_tail = theorem_symbol("last_cons", "tail");
 
         assert_eq!(last_nil_errors_source_theorem(), last_nil_errors_theorem());
         assert_eq!(
@@ -1394,10 +1377,10 @@ mod tests {
 
     #[test]
     fn init_source_theorems_have_expected_shape() {
-        let singleton_head = theorem_symbol(INIT_SINGLETON, "head");
-        let cons_head = theorem_symbol(INIT_CONS, "head");
-        let cons_next = theorem_symbol(INIT_CONS, "next");
-        let cons_tail = theorem_symbol(INIT_CONS, "tail");
+        let singleton_head = theorem_symbol("init_singleton", "head");
+        let cons_head = theorem_symbol("init_cons", "head");
+        let cons_next = theorem_symbol("init_cons", "next");
+        let cons_tail = theorem_symbol("init_cons", "tail");
 
         assert_eq!(init_nil_errors_source_theorem(), init_nil_errors_theorem());
         assert_eq!(
@@ -1432,8 +1415,8 @@ mod tests {
 
     #[test]
     fn null_source_theorems_have_expected_shape() {
-        let cons_head = theorem_symbol(NULL_CONS, "head");
-        let cons_tail = theorem_symbol(NULL_CONS, "tail");
+        let cons_head = theorem_symbol("null_cons", "head");
+        let cons_tail = theorem_symbol("null_cons", "tail");
 
         assert_eq!(null_nil_source_theorem(), null_nil_theorem());
         assert_eq!(
@@ -1479,10 +1462,10 @@ mod tests {
 
     #[test]
     fn is_singleton_source_theorems_have_expected_shape() {
-        let singleton_head = theorem_symbol(IS_SINGLETON_SINGLETON, "head");
-        let cons_head = theorem_symbol(IS_SINGLETON_CONS, "head");
-        let cons_next = theorem_symbol(IS_SINGLETON_CONS, "next");
-        let cons_tail = theorem_symbol(IS_SINGLETON_CONS, "tail");
+        let singleton_head = theorem_symbol("is_singleton_singleton", "head");
+        let cons_head = theorem_symbol("is_singleton_cons", "head");
+        let cons_next = theorem_symbol("is_singleton_cons", "next");
+        let cons_tail = theorem_symbol("is_singleton_cons", "tail");
 
         assert_eq!(
             is_singleton_nil_source_theorem(),
@@ -1516,8 +1499,8 @@ mod tests {
 
     #[test]
     fn append_nil_source_theorem_has_expected_shape() {
-        let right = theorem_symbol(APPEND_NIL_COMPUTES_TO_LIST, "right");
-        let result = theorem_symbol(APPEND_NIL_COMPUTES_TO_LIST, "result");
+        let right = theorem_symbol("append_nil_computes_to_list", "right");
+        let result = theorem_symbol("append_nil_computes_to_list", "result");
 
         assert_eq!(
             append_nil_computes_to_list_source_theorem(),
@@ -1543,9 +1526,9 @@ mod tests {
 
     #[test]
     fn append_source_theorem_has_expected_shape() {
-        let left = theorem_symbol(APPEND_COMPUTES_TO_LIST, "left");
-        let right = theorem_symbol(APPEND_COMPUTES_TO_LIST, "right");
-        let result = theorem_symbol(APPEND_COMPUTES_TO_LIST, "result");
+        let left = theorem_symbol("append_computes_to_list", "left");
+        let right = theorem_symbol("append_computes_to_list", "right");
+        let result = theorem_symbol("append_computes_to_list", "result");
 
         assert_eq!(
             append_computes_to_list_source_theorem(),
@@ -1555,7 +1538,7 @@ mod tests {
 
     #[test]
     fn append_nil_returns_right_source_theorem_has_expected_shape() {
-        let right = theorem_symbol(APPEND_NIL_RETURNS_RIGHT, "right");
+        let right = theorem_symbol("append_nil_returns_right", "right");
 
         assert_eq!(
             append_nil_returns_right_source_theorem(),
@@ -1565,7 +1548,7 @@ mod tests {
 
     #[test]
     fn append_right_nil_source_theorem_has_expected_shape() {
-        let left = theorem_symbol(APPEND_RIGHT_NIL, "left");
+        let left = theorem_symbol("append_right_nil", "left");
 
         assert_eq!(
             append_right_nil_source_theorem(),
@@ -1598,9 +1581,9 @@ mod tests {
 
     #[test]
     fn append_cons_source_theorem_has_expected_shape() {
-        let head = theorem_symbol(APPEND_CONS, "head");
-        let tail = theorem_symbol(APPEND_CONS, "tail");
-        let right = theorem_symbol(APPEND_CONS, "right");
+        let head = theorem_symbol("append_cons", "head");
+        let tail = theorem_symbol("append_cons", "tail");
+        let right = theorem_symbol("append_cons", "right");
 
         assert_eq!(
             append_cons_source_theorem(),
@@ -1629,8 +1612,8 @@ mod tests {
 
     #[test]
     fn append_singleton_source_theorem_has_expected_shape() {
-        let head = theorem_symbol(APPEND_SINGLETON, "head");
-        let right = theorem_symbol(APPEND_SINGLETON, "right");
+        let head = theorem_symbol("append_singleton", "head");
+        let right = theorem_symbol("append_singleton", "right");
 
         assert_eq!(
             append_singleton_source_theorem(),
@@ -1663,9 +1646,9 @@ mod tests {
 
     #[test]
     fn append_assoc_source_theorem_has_expected_shape() {
-        let left = theorem_symbol(APPEND_ASSOC, "left");
-        let middle = theorem_symbol(APPEND_ASSOC, "middle");
-        let right = theorem_symbol(APPEND_ASSOC, "right");
+        let left = theorem_symbol("append_assoc", "left");
+        let middle = theorem_symbol("append_assoc", "middle");
+        let right = theorem_symbol("append_assoc", "right");
 
         assert_eq!(
             append_assoc_source_theorem(),
@@ -1793,29 +1776,38 @@ mod tests {
 
     #[test]
     fn null_nil_returns_true() {
-        assert_evaluates(null_call(nil()), Value::quote(TRUE));
+        assert_evaluates(null_call(nil()), Value::quote(prelude_symbol(":true")));
     }
 
     #[test]
     fn null_cons_returns_false() {
-        assert_evaluates(null_call(singleton(quote(A))), Value::quote(FALSE));
+        assert_evaluates(
+            null_call(singleton(quote(A))),
+            Value::quote(prelude_symbol(":false")),
+        );
     }
 
     #[test]
     fn is_singleton_nil_returns_false() {
-        assert_evaluates(is_singleton_call(nil()), Value::quote(FALSE));
+        assert_evaluates(
+            is_singleton_call(nil()),
+            Value::quote(prelude_symbol(":false")),
+        );
     }
 
     #[test]
     fn is_singleton_singleton_returns_true() {
-        assert_evaluates(is_singleton_call(singleton(quote(A))), Value::quote(TRUE));
+        assert_evaluates(
+            is_singleton_call(singleton(quote(A))),
+            Value::quote(prelude_symbol(":true")),
+        );
     }
 
     #[test]
     fn is_singleton_pair_returns_false() {
         assert_evaluates(
             is_singleton_call(pair(quote(A), quote(B))),
-            Value::quote(FALSE),
+            Value::quote(prelude_symbol(":false")),
         );
     }
 
