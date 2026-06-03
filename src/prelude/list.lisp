@@ -1846,72 +1846,72 @@
           acc
           list)
         (reverse_acc list acc))))
-  (proof
+  (by
     (list-induction list
-      (forall acc (is-list acc)
-        (computes-to
-          (fold-left
-            (lambda accumulator
-              (lambda value
-                (cons value accumulator)))
-            acc
-            list)
-          (reverse_acc list acc)))
-      (forall-intro acc (is-list acc)
-        (eval-same
-          (fold-left
-            (lambda accumulator
-              (lambda value
-                (cons value accumulator)))
-            acc
-            nil)
-          (reverse_acc nil acc)))
+      (by
+        (intro acc)
+        (eval))
       head
       tail
       induction_hypothesis
-      (forall-intro acc (is-list acc)
-        (trans
-          (rewrite
-            (eval-to
-              ((lambda accumulator
-                 (lambda value
-                   (cons value accumulator)))
-               acc
-               head)
-              (cons head acc))
+      (by
+        (intro acc)
+        (have fold_step
+          (computes-to
+            (fold-left
+              (lambda accumulator
+                (lambda value
+                  (cons value accumulator)))
+              acc
+              (cons head tail))
+            (fold-left
+              (lambda accumulator
+                (lambda value
+                  (cons value accumulator)))
+              (cons head acc)
+              tail))
+          (by
+            (rewrite
+              (symm
+                (eval-to
+                  ((lambda accumulator
+                     (lambda value
+                       (cons value accumulator)))
+                   acc
+                   head)
+                  (cons head acc))))
             (forall-elim
-              (forall-elim
-                (forall-elim
-                  (forall-elim
-                    (known fold_left_cons)
-                    (lambda accumulator
-                      (lambda value
-                        (cons value accumulator))))
-                  acc)
-                head)
+              fold_left_cons
+              (lambda accumulator
+                (lambda value
+                  (cons value accumulator)))
+              acc
+              head
+              tail)))
+        (calc
+          (fold-left
+            (lambda accumulator
+              (lambda value
+                (cons value accumulator)))
+            acc
+            (cons head tail))
+          (==
+            (fold-left
+              (lambda accumulator
+                (lambda value
+                  (cons value accumulator)))
+              (cons head acc)
               tail)
-            next_accumulator_rewrite_target
-            (computes-to
-              (fold-left
-                (lambda accumulator
-                  (lambda value
-                    (cons value accumulator)))
-                acc
-                (cons head tail))
-              (fold-left
-                (lambda accumulator
-                  (lambda value
-                    (cons value accumulator)))
-                next_accumulator_rewrite_target
-                tail)))
-          (trans
-            (forall-elim
-              (assume induction_hypothesis)
-              (cons head acc))
-            (symm
-              (eval-same
-                (reverse_acc (cons head tail) acc)
-                (reverse_acc tail (cons head acc))))))))))
+            (by
+              (exact fold_step)))
+          (==
+            (reverse_acc tail (cons head acc))
+            (by
+              (forall-elim induction_hypothesis (cons head acc))))
+          (==
+            (reverse_acc (cons head tail) acc)
+            (by
+              (eval))))))))
 
 (theorem fold_left_reverse
   (forall list (is-list list)

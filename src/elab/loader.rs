@@ -295,6 +295,15 @@ mod tests {
                   (computes-to nil nil)
                   (by
                     (forall-elim value_self nil)))
+                (theorem nil_via_have
+                  (computes-to nil nil)
+                  (by
+                    (have nil_self
+                      (computes-to nil nil)
+                      (by
+                        (exact value_self nil)))
+                    (rewrite (value_self nil))
+                    (exact nil_self)))
                 (theorem list_exists
                   (exists result (is-list result)
                     (computes-to nil result))
@@ -357,6 +366,9 @@ mod tests {
         let nil_via_forall_elim = loaded
             .theorem("nil_via_forall_elim")
             .expect("loader should record forall-elim tactic theorem spelling");
+        let nil_via_have = loaded
+            .theorem("nil_via_have")
+            .expect("loader should record have tactic theorem spelling");
         let nil_from_exists = loaded
             .theorem("nil_from_exists")
             .expect("loader should record exists-elim tactic theorem spelling");
@@ -390,6 +402,7 @@ mod tests {
         );
         assert!(loaded.theory().theorem(id_rewrite_nil).is_some());
         assert!(loaded.theory().theorem(nil_via_forall_elim).is_some());
+        assert!(loaded.theory().theorem(nil_via_have).is_some());
         assert!(loaded.theory().theorem(nil_from_exists).is_some());
         assert!(loaded.theory().theorem(list_self).is_some());
     }

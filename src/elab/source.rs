@@ -286,6 +286,11 @@ pub(crate) enum TacticExpr {
     Intro(Symbol),
     Exact(Box<ProofExpr>),
     Assumption,
+    Have {
+        assumption: Symbol,
+        prop: Prop,
+        proof: ProofScript,
+    },
     Eval {
         limit: usize,
     },
@@ -1163,6 +1168,7 @@ impl<'a> SourceParser<'a> {
             "intro" => self.tactic_intro(items),
             "exact" => self.tactic_exact(items),
             "assumption" => self.tactic_assumption(items),
+            "have" => self.tactic_have(items),
             "eval" => self.tactic_eval(items),
             "apply" => self.tactic_apply(items),
             "split" | "constructor" => self.tactic_split(form, items),
@@ -1184,13 +1190,30 @@ impl<'a> SourceParser<'a> {
     }
 
     fn tactic_exact(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
-        expect_len("exact", items, 2)?;
-        Ok(TacticExpr::Exact(Box::new(self.proof_expr(&items[1])?)))
+        if items.len() < 2 {
+            return Err(ParseError::new(format!(
+                "`exact` expects at least 1 argument, got {}",
+                items.len().saturating_sub(1)
+            )));
+        }
+
+        Ok(TacticExpr::Exact(Box::new(
+            self.proof_expr_or_ref_with_arguments(&items[1], &items[2..])?,
+        )))
     }
 
     fn tactic_assumption(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
         expect_len("assumption", items, 1)?;
         Ok(TacticExpr::Assumption)
+    }
+
+    fn tactic_have(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        expect_len("have", items, 4)?;
+        Ok(TacticExpr::Have {
+            assumption: self.proof_symbol(atom(&items[1])?)?,
+            prop: self.proof_prop(&items[2])?,
+            proof: self.proof_script(&items[3])?,
+        })
     }
 
     fn tactic_eval(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
@@ -1281,9 +1304,14 @@ impl<'a> SourceParser<'a> {
     }
 
     fn tactic_rewrite(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
-        expect_len("rewrite", items, 2)?;
+        if items.len() < 2 {
+            return Err(ParseError::new(format!(
+                "`rewrite` expects at least 1 argument, got {}",
+                items.len().saturating_sub(1)
+            )));
+        }
         Ok(TacticExpr::Rewrite {
-            equality: Box::new(self.proof_expr_or_ref(&items[1])?),
+            equality: Box::new(self.proof_expr_or_ref_with_arguments(&items[1], &items[2..])?),
         })
     }
 
@@ -1350,8 +1378,41 @@ impl<'a> SourceParser<'a> {
 
                 Err(ParseError::new(format!("unknown proof `{spelling}`")))
             }
-            Expr::List(_) => self.proof_expr(expression),
+            Expr::List(items) => {
+                let Some(head) = items.first() else {
+                    return Err(ParseError::new("empty proof expression"));
+                };
+                if let Ok(spelling) = atom(head) {
+                    if self.local_symbol(spelling).is_some() || self.theorem(spelling).is_some() {
+                        return self.proof_expr_or_ref_with_arguments(head, &items[1..]);
+                    }
+                }
+
+                self.proof_expr(expression)
+            }
         }
+    }
+
+    fn proof_expr_or_ref_with_arguments(
+        &mut self,
+        expression: &Expr,
+        arguments: &[Expr],
+    ) -> Result<ProofExpr, ParseError> {
+        let proof = self.proof_expr_or_ref(expression)?;
+        self.apply_proof_arguments(proof, arguments)
+    }
+
+    fn apply_proof_arguments(
+        &mut self,
+        proof: ProofExpr,
+        arguments: &[Expr],
+    ) -> Result<ProofExpr, ParseError> {
+        arguments.iter().try_fold(proof, |proof, argument| {
+            Ok(ProofExpr::ForAllElim {
+                forall: Box::new(proof),
+                argument: self.computation(argument)?,
+            })
+        })
     }
 
     fn proof_expr(&mut self, expression: &Expr) -> Result<ProofExpr, ParseError> {
@@ -2147,6 +2208,72 @@ mod tests {
             ] if **existential == ProofExpr::Known(Name(1))
                 && **forall == ProofExpr::Known(Name(2))
                 && arguments.as_slice() == [Computation::Nil]
+        ));
+    }
+
+    #[test]
+    fn parses_have_and_proof_application_tactics() {
+        let theorems = [
+            NameBinding {
+                spelling: "value_self",
+                name: Name(1),
+            },
+            NameBinding {
+                spelling: "have_example",
+                name: Name(2),
+            },
+        ];
+
+        let module = parse_module(
+            "
+            (theorem value_self
+              (forall value (is-value value)
+                (computes-to value value))
+              (by
+                (intro value)
+                (eval)))
+            (theorem have_example
+              (computes-to nil nil)
+              (by
+                (have nil_self
+                  (computes-to nil nil)
+                  (by
+                    (exact value_self nil)))
+                (rewrite (value_self nil))
+                (exact nil_self)))
+            ",
+            &[],
+            &theorems,
+            &[],
+        )
+        .expect("have and proof application tactics should parse");
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[1].proof else {
+            panic!("expected a tactic proof script");
+        };
+        assert!(matches!(
+            tactics.as_slice(),
+            [
+                TacticExpr::Have {
+                    assumption: Symbol(2_001),
+                    proof: ProofScript::By(TacticScript { tactics: have_tactics }),
+                    ..
+                },
+                TacticExpr::Rewrite { equality },
+                TacticExpr::Exact(exact),
+            ] if matches!(
+                    have_tactics.as_slice(),
+                    [TacticExpr::Exact(proof)]
+                        if **proof == ProofExpr::ForAllElim {
+                            forall: Box::new(ProofExpr::Known(Name(1))),
+                            argument: Computation::Nil,
+                        }
+                )
+                && **equality == ProofExpr::ForAllElim {
+                    forall: Box::new(ProofExpr::Known(Name(1))),
+                    argument: Computation::Nil,
+                }
+                && **exact == ProofExpr::Assume(Symbol(2_001))
         ));
     }
 

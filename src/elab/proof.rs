@@ -365,6 +365,11 @@ fn tactic_steps_to_proof(
             ensure_no_more_tactics(rest, "assumption")?;
             tactic_assumption(goal)
         }
+        TacticExpr::Have {
+            assumption,
+            prop,
+            proof,
+        } => tactic_have(*assumption, prop, proof, rest, theory, goal),
         TacticExpr::Eval { limit } => {
             ensure_no_more_tactics(rest, "eval")?;
             tactic_eval(*limit, theory, goal)
@@ -504,6 +509,51 @@ fn tactic_assumption(goal: &Goal) -> Result<Proof, ProofElaborationError> {
             alpha_eq_prop(prop, &goal.target).then_some(Proof::Assume(*symbol))
         })
         .ok_or_else(|| tactic_failed("assumption", "no local assumption matches the goal"))
+}
+
+fn tactic_have(
+    assumption: Symbol,
+    prop: &Prop,
+    proof_script: &ProofScript,
+    rest: &[TacticExpr],
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    if goal.context.contains_key(&assumption) {
+        return Err(tactic_failed(
+            "have",
+            format!("assumption symbol {:?} is already in scope", assumption),
+        ));
+    }
+
+    let premise_proof = proof_script_to_proof_for_goal(
+        proof_script,
+        theory,
+        &Goal {
+            context: goal.context.clone(),
+            target: prop.clone(),
+        },
+    )?;
+
+    let mut context = goal.context.clone();
+    context.insert(assumption, prop.clone());
+    let implication = Proof::ImpliesIntro {
+        assumption,
+        premise: prop.clone(),
+        proof: Box::new(tactic_steps_to_proof(
+            rest,
+            theory,
+            &Goal {
+                context,
+                target: goal.target.clone(),
+            },
+        )?),
+    };
+
+    Ok(Proof::ImpliesElim {
+        implication: Box::new(implication),
+        premise: Box::new(premise_proof),
+    })
 }
 
 fn tactic_eval(limit: usize, theory: &Theory, goal: &Goal) -> Result<Proof, ProofElaborationError> {

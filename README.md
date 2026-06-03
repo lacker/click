@@ -56,7 +56,7 @@ They can also use goal-directed tactic scripts with `(by ...)`. Tactics inspect
 the current goal and local context, then elaborate to ordinary kernel `Proof`
 values that are checked by the kernel. The initial tactic set is intentionally
 small and deterministic: `intro`, `assumption`, `exact`, `eval`, `apply`,
-`rewrite`, `forall-elim`, `exists-elim`, `list-induction`, `calc`,
+`have`, `rewrite`, `forall-elim`, `exists-elim`, `list-induction`, `calc`,
 `split`/`constructor`, `exists`, `left`, and `right`.
 
 Propositions can talk about arbitrary computations. Quantifiers may be
