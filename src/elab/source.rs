@@ -24,17 +24,6 @@ pub(crate) struct SymbolBinding {
     pub symbol: Symbol,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct ModuleSpec {
-    pub source: &'static str,
-}
-
-impl ModuleSpec {
-    pub(crate) fn parse(&self, env: &mut ElabEnv) -> Result<ParsedModule, ParseError> {
-        env.parse_module(self.source)
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ElabEnv {
     computations: HashMap<String, Name>,

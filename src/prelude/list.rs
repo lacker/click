@@ -5,12 +5,12 @@ use crate::{
     Theorem, Theory, computes_to, computes_to_list,
     elab::{
         proof,
-        source::{ModuleSpec, ParseError, ParsedModule, ParsedTheorem},
+        source::{ParsedModule, ParsedTheorem},
     },
     errors_with, forall_where, is_list, is_value,
 };
 
-use super::{FALSE, SourceTheoremError, TRUE};
+use super::{FALSE, SourceComputationError, SourceTheoremError, TRUE};
 
 #[cfg(test)]
 use super::{
@@ -26,11 +26,9 @@ pub use crate::elab::EvaluationProofError;
 
 pub(super) const UNIT: Symbol = Symbol(3);
 
-const SOURCE: &str = include_str!("list.lisp");
+pub(super) const SOURCE: &str = include_str!("list.lisp");
 
 const LOOP_ARGUMENT: Symbol = Symbol(1_007);
-
-pub(super) const MODULE: ModuleSpec = ModuleSpec { source: SOURCE };
 
 pub fn quote(symbol: Symbol) -> Computation {
     Computation::Quote(symbol)
@@ -119,7 +117,7 @@ pub fn reverse_acc() -> Computation {
     super::reverse_acc()
 }
 
-pub(super) fn module() -> Result<ParsedModule, ParseError> {
+pub(super) fn module() -> Result<ParsedModule, SourceComputationError> {
     super::parsed_list_module().cloned()
 }
 
@@ -380,7 +378,14 @@ pub(super) fn checked_source_theorem(name: Name) -> Option<Theorem> {
 }
 
 pub(super) fn checked_source_theorem_result(name: Name) -> Result<Theorem, SourceTheoremError> {
-    let module = module().map_err(SourceTheoremError::ModuleParseFailed)?;
+    let module = module().map_err(|error| match error {
+        SourceComputationError::ModuleParseFailed(error) => {
+            SourceTheoremError::ModuleParseFailed(error)
+        }
+        SourceComputationError::ComputationRejected { .. } => {
+            unreachable!("fresh prelude computation loading should not reject definitions")
+        }
+    })?;
 
     proof::source_theorem_result(module, name, super::computation_theory())
 }
