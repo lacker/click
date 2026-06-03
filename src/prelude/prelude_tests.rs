@@ -66,6 +66,18 @@ fn zip_with() -> Computation {
     computation_ref("zip-with")
 }
 
+fn filter() -> Computation {
+    computation_ref("filter")
+}
+
+fn any() -> Computation {
+    computation_ref("any")
+}
+
+fn all() -> Computation {
+    computation_ref("all")
+}
+
 fn last() -> Computation {
     computation_ref("last")
 }
@@ -130,6 +142,18 @@ fn prelude_theorem_names() -> Vec<Name> {
         "zip_with_right_nil",
         "zip_with_cons",
         "zip_with_computes_to_list",
+        "filter_nil",
+        "filter_cons_true",
+        "filter_cons_false",
+        "filter_computes_to_list",
+        "any_nil",
+        "any_cons_true",
+        "any_cons_false",
+        "any_computes_to_bool",
+        "all_nil",
+        "all_cons_true",
+        "all_cons_false",
+        "all_computes_to_bool",
         "map_identity",
         "concat_map_singleton",
         "fold_right_cons_nil",
@@ -256,6 +280,18 @@ fn theory_defines_reverse() {
         Some(&list_tests::zip_with_definition())
     );
     assert_eq!(
+        theory.computation(computation("filter")),
+        Some(&list_tests::filter_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("any")),
+        Some(&list_tests::any_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("all")),
+        Some(&list_tests::all_definition())
+    );
+    assert_eq!(
         theory.computation(computation("last")),
         Some(&list_tests::last_definition())
     );
@@ -281,6 +317,9 @@ fn theory_defines_reverse() {
     assert_eq!(fold_right(), Computation::Ref(computation("fold-right")));
     assert_eq!(fold_left(), Computation::Ref(computation("fold-left")));
     assert_eq!(zip_with(), Computation::Ref(computation("zip-with")));
+    assert_eq!(filter(), Computation::Ref(computation("filter")));
+    assert_eq!(any(), Computation::Ref(computation("any")));
+    assert_eq!(all(), Computation::Ref(computation("all")));
     assert_eq!(last(), Computation::Ref(computation("last")));
     assert_eq!(init(), Computation::Ref(computation("init")));
     assert_eq!(null(), Computation::Ref(computation("null")));
@@ -533,6 +572,18 @@ fn theory_defines_reverse_theorems() {
     let zip_with_right_nil_prop = list_tests::zip_with_right_nil_source_theorem();
     let zip_with_cons_prop = list_tests::zip_with_cons_source_theorem();
     let zip_with_computes_to_list_prop = list_tests::zip_with_computes_to_list_source_theorem();
+    let filter_nil_prop = list_tests::filter_nil_source_theorem();
+    let filter_cons_true_prop = list_tests::filter_cons_true_source_theorem();
+    let filter_cons_false_prop = list_tests::filter_cons_false_source_theorem();
+    let filter_computes_to_list_prop = list_tests::filter_computes_to_list_source_theorem();
+    let any_nil_prop = list_tests::any_nil_source_theorem();
+    let any_cons_true_prop = list_tests::any_cons_true_source_theorem();
+    let any_cons_false_prop = list_tests::any_cons_false_source_theorem();
+    let any_computes_to_bool_prop = list_tests::any_computes_to_bool_source_theorem();
+    let all_nil_prop = list_tests::all_nil_source_theorem();
+    let all_cons_true_prop = list_tests::all_cons_true_source_theorem();
+    let all_cons_false_prop = list_tests::all_cons_false_source_theorem();
+    let all_computes_to_bool_prop = list_tests::all_computes_to_bool_source_theorem();
     let map_identity_prop = list_tests::map_identity_source_theorem();
     let concat_map_singleton_prop = list_tests::concat_map_singleton_source_theorem();
     let fold_right_cons_nil_prop = list_tests::fold_right_cons_nil_source_theorem();
@@ -668,6 +719,48 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("zip_with_computes_to_list")),
         Some(&zip_with_computes_to_list_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("filter_nil")),
+        Some(&filter_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("filter_cons_true")),
+        Some(&filter_cons_true_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("filter_cons_false")),
+        Some(&filter_cons_false_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("filter_computes_to_list")),
+        Some(&filter_computes_to_list_prop)
+    );
+    assert_eq!(theory.theorem(theorem("any_nil")), Some(&any_nil_prop));
+    assert_eq!(
+        theory.theorem(theorem("any_cons_true")),
+        Some(&any_cons_true_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("any_cons_false")),
+        Some(&any_cons_false_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("any_computes_to_bool")),
+        Some(&any_computes_to_bool_prop)
+    );
+    assert_eq!(theory.theorem(theorem("all_nil")), Some(&all_nil_prop));
+    assert_eq!(
+        theory.theorem(theorem("all_cons_true")),
+        Some(&all_cons_true_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("all_cons_false")),
+        Some(&all_cons_false_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("all_computes_to_bool")),
+        Some(&all_computes_to_bool_prop)
     );
     assert_eq!(
         theory.theorem(theorem("map_identity")),
@@ -1047,6 +1140,78 @@ fn theory_defines_reverse_theorems() {
             .expect("zip-with computes theorem source proof should check with dependencies")
             .prop(),
         &zip_with_computes_to_list_prop,
+    );
+    assert_eq!(
+        checked_theorem("filter_nil")
+            .expect("filter nil theorem source proof should check with dependencies")
+            .prop(),
+        &filter_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("filter_cons_true")
+            .expect("filter true cons theorem source proof should check with dependencies")
+            .prop(),
+        &filter_cons_true_prop,
+    );
+    assert_eq!(
+        checked_theorem("filter_cons_false")
+            .expect("filter false cons theorem source proof should check with dependencies")
+            .prop(),
+        &filter_cons_false_prop,
+    );
+    assert_eq!(
+        checked_theorem("filter_computes_to_list")
+            .expect("filter computes theorem source proof should check with dependencies")
+            .prop(),
+        &filter_computes_to_list_prop,
+    );
+    assert_eq!(
+        checked_theorem("any_nil")
+            .expect("any nil theorem source proof should check with dependencies")
+            .prop(),
+        &any_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("any_cons_true")
+            .expect("any true cons theorem source proof should check with dependencies")
+            .prop(),
+        &any_cons_true_prop,
+    );
+    assert_eq!(
+        checked_theorem("any_cons_false")
+            .expect("any false cons theorem source proof should check with dependencies")
+            .prop(),
+        &any_cons_false_prop,
+    );
+    assert_eq!(
+        checked_theorem("any_computes_to_bool")
+            .expect("any computes theorem source proof should check with dependencies")
+            .prop(),
+        &any_computes_to_bool_prop,
+    );
+    assert_eq!(
+        checked_theorem("all_nil")
+            .expect("all nil theorem source proof should check with dependencies")
+            .prop(),
+        &all_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("all_cons_true")
+            .expect("all true cons theorem source proof should check with dependencies")
+            .prop(),
+        &all_cons_true_prop,
+    );
+    assert_eq!(
+        checked_theorem("all_cons_false")
+            .expect("all false cons theorem source proof should check with dependencies")
+            .prop(),
+        &all_cons_false_prop,
+    );
+    assert_eq!(
+        checked_theorem("all_computes_to_bool")
+            .expect("all computes theorem source proof should check with dependencies")
+            .prop(),
+        &all_computes_to_bool_prop,
     );
     assert_eq!(
         checked_theorem("map_identity")

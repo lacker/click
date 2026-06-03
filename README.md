@@ -105,8 +105,9 @@ represented as a computation variable plus a proposition such as `is-value`.
 
 The standard prelude is just a theory built on top of the kernel. It currently
 contains list definitions such as `reverse_acc`, `reverse`, `append`, `snoc`,
-`concat`, `map`, `concat-map`, `fold-right`, `fold-left`, `zip-with`, `last`,
-`init`, `null`, and `is-singleton`, plus theorems about those definitions. Prelude
+`concat`, `map`, `concat-map`, `fold-right`, `fold-left`, `zip-with`, `filter`,
+`any`, `all`, `last`, `init`, `null`, and `is-singleton`, plus theorems about
+those definitions. Prelude
 booleans use the kernel's reserved quoted symbols.
 The list prelude itself lives in `src/prelude/list.lisp`; the corresponding
 Rust module only includes that source file, with list-specific Rust helpers kept

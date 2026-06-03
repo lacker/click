@@ -151,6 +151,41 @@
                 (tail left_cell)
                 (tail right_cell)))))))))
 
+(def filter
+  (lambda predicate
+    (lambda list
+      (list-case list
+        nil
+        cell
+        (if
+          (predicate (head cell))
+          (cons
+            (head cell)
+            (filter predicate (tail cell)))
+          (filter predicate (tail cell)))))))
+
+(def any
+  (lambda predicate
+    (lambda list
+      (list-case list
+        (quote :false)
+        cell
+        (if
+          (predicate (head cell))
+          (quote :true)
+          (any predicate (tail cell)))))))
+
+(def all
+  (lambda predicate
+    (lambda list
+      (list-case list
+        (quote :true)
+        cell
+        (if
+          (predicate (head cell))
+          (all predicate (tail cell))
+          (quote :false))))))
+
 (def last
   ((lambda fixed_point_function
      ((lambda fixed_point_self
@@ -1041,6 +1076,577 @@
                       (cons
                         zipped_head
                         zipped_tail_rewrite_target))))))))))))
+
+(theorem filter_nil
+  (forall predicate (is-value predicate)
+    (computes-to (filter predicate nil) nil))
+  (proof
+    (forall-intro predicate (is-value predicate)
+      (eval-to (filter predicate nil) nil))))
+
+(theorem filter_cons_true
+  (forall predicate (is-value predicate)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (predicate head) (quote :true))
+          (computes-to
+            (filter predicate (cons head tail))
+            (cons head (filter predicate tail)))))))
+  (proof
+    (forall-intro predicate (is-value predicate)
+      (forall-intro head (is-value head)
+        (forall-intro tail (is-list tail)
+          (implies-intro predicate_true
+            (computes-to (predicate head) (quote :true))
+            (trans
+              (eval-to
+                (filter predicate (cons head tail))
+                (if
+                  (predicate head)
+                  (cons
+                    (head (cons head tail))
+                    (filter predicate (tail (cons head tail))))
+                  (filter predicate (tail (cons head tail)))))
+              (trans
+                (rewrite
+                  (assume predicate_true)
+                  (eval-to
+                    (if
+                      (predicate head)
+                      (cons
+                        (head (cons head tail))
+                        (filter predicate (tail (cons head tail))))
+                      (filter predicate (tail (cons head tail))))
+                    (if
+                      (predicate head)
+                      (cons
+                        (head (cons head tail))
+                        (filter predicate (tail (cons head tail))))
+                      (filter predicate (tail (cons head tail)))))
+                  predicate_rewrite_target
+                  (computes-to
+                    (if
+                      (predicate head)
+                      (cons
+                        (head (cons head tail))
+                        (filter predicate (tail (cons head tail))))
+                      (filter predicate (tail (cons head tail))))
+                    (if
+                      predicate_rewrite_target
+                      (cons
+                        (head (cons head tail))
+                        (filter predicate (tail (cons head tail))))
+                      (filter predicate (tail (cons head tail))))))
+                (eval-same
+                  (if
+                    (quote :true)
+                    (cons
+                      (head (cons head tail))
+                      (filter predicate (tail (cons head tail))))
+                    (filter predicate (tail (cons head tail))))
+                  (cons head (filter predicate tail)))))))))))
+
+(theorem filter_cons_false
+  (forall predicate (is-value predicate)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (predicate head) (quote :false))
+          (computes-to
+            (filter predicate (cons head tail))
+            (filter predicate tail))))))
+  (proof
+    (forall-intro predicate (is-value predicate)
+      (forall-intro head (is-value head)
+        (forall-intro tail (is-list tail)
+          (implies-intro predicate_false
+            (computes-to (predicate head) (quote :false))
+            (trans
+              (eval-to
+                (filter predicate (cons head tail))
+                (if
+                  (predicate head)
+                  (cons
+                    (head (cons head tail))
+                    (filter predicate (tail (cons head tail))))
+                  (filter predicate (tail (cons head tail)))))
+              (trans
+                (rewrite
+                  (assume predicate_false)
+                  (eval-to
+                    (if
+                      (predicate head)
+                      (cons
+                        (head (cons head tail))
+                        (filter predicate (tail (cons head tail))))
+                      (filter predicate (tail (cons head tail))))
+                    (if
+                      (predicate head)
+                      (cons
+                        (head (cons head tail))
+                        (filter predicate (tail (cons head tail))))
+                      (filter predicate (tail (cons head tail)))))
+                  predicate_rewrite_target
+                  (computes-to
+                    (if
+                      (predicate head)
+                      (cons
+                        (head (cons head tail))
+                        (filter predicate (tail (cons head tail))))
+                      (filter predicate (tail (cons head tail))))
+                    (if
+                      predicate_rewrite_target
+                      (cons
+                        (head (cons head tail))
+                        (filter predicate (tail (cons head tail))))
+                      (filter predicate (tail (cons head tail))))))
+                (eval-same
+                  (if
+                    (quote :false)
+                    (cons
+                      (head (cons head tail))
+                      (filter predicate (tail (cons head tail))))
+                    (filter predicate (tail (cons head tail))))
+                  (filter predicate tail))))))))))
+
+(theorem any_nil
+  (forall predicate (is-value predicate)
+    (computes-to (any predicate nil) (quote :false)))
+  (proof
+    (forall-intro predicate (is-value predicate)
+      (eval-to (any predicate nil) (quote :false)))))
+
+(theorem any_cons_true
+  (forall predicate (is-value predicate)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (predicate head) (quote :true))
+          (computes-to
+            (any predicate (cons head tail))
+            (quote :true))))))
+  (proof
+    (forall-intro predicate (is-value predicate)
+      (forall-intro head (is-value head)
+        (forall-intro tail (is-list tail)
+          (implies-intro predicate_true
+            (computes-to (predicate head) (quote :true))
+            (trans
+              (eval-to
+                (any predicate (cons head tail))
+                (if
+                  (predicate head)
+                  (quote :true)
+                  (any predicate (tail (cons head tail)))))
+              (trans
+                (rewrite
+                  (assume predicate_true)
+                  (eval-to
+                    (if
+                      (predicate head)
+                      (quote :true)
+                      (any predicate (tail (cons head tail))))
+                    (if
+                      (predicate head)
+                      (quote :true)
+                      (any predicate (tail (cons head tail)))))
+                  predicate_rewrite_target
+                  (computes-to
+                    (if
+                      (predicate head)
+                      (quote :true)
+                      (any predicate (tail (cons head tail))))
+                    (if
+                      predicate_rewrite_target
+                      (quote :true)
+                      (any predicate (tail (cons head tail))))))
+                (eval-to
+                  (if
+                    (quote :true)
+                    (quote :true)
+                    (any predicate (tail (cons head tail))))
+                  (quote :true))))))))))
+
+(theorem any_cons_false
+  (forall predicate (is-value predicate)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (predicate head) (quote :false))
+          (computes-to
+            (any predicate (cons head tail))
+            (any predicate tail))))))
+  (proof
+    (forall-intro predicate (is-value predicate)
+      (forall-intro head (is-value head)
+        (forall-intro tail (is-list tail)
+          (implies-intro predicate_false
+            (computes-to (predicate head) (quote :false))
+            (trans
+              (eval-to
+                (any predicate (cons head tail))
+                (if
+                  (predicate head)
+                  (quote :true)
+                  (any predicate (tail (cons head tail)))))
+              (trans
+                (rewrite
+                  (assume predicate_false)
+                  (eval-to
+                    (if
+                      (predicate head)
+                      (quote :true)
+                      (any predicate (tail (cons head tail))))
+                    (if
+                      (predicate head)
+                      (quote :true)
+                      (any predicate (tail (cons head tail)))))
+                  predicate_rewrite_target
+                  (computes-to
+                    (if
+                      (predicate head)
+                      (quote :true)
+                      (any predicate (tail (cons head tail))))
+                    (if
+                      predicate_rewrite_target
+                      (quote :true)
+                      (any predicate (tail (cons head tail))))))
+                (eval-same
+                  (if
+                    (quote :false)
+                    (quote :true)
+                    (any predicate (tail (cons head tail))))
+                  (any predicate tail))))))))))
+
+(theorem all_nil
+  (forall predicate (is-value predicate)
+    (computes-to (all predicate nil) (quote :true)))
+  (proof
+    (forall-intro predicate (is-value predicate)
+      (eval-to (all predicate nil) (quote :true)))))
+
+(theorem all_cons_true
+  (forall predicate (is-value predicate)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (predicate head) (quote :true))
+          (computes-to
+            (all predicate (cons head tail))
+            (all predicate tail))))))
+  (proof
+    (forall-intro predicate (is-value predicate)
+      (forall-intro head (is-value head)
+        (forall-intro tail (is-list tail)
+          (implies-intro predicate_true
+            (computes-to (predicate head) (quote :true))
+            (trans
+              (eval-to
+                (all predicate (cons head tail))
+                (if
+                  (predicate head)
+                  (all predicate (tail (cons head tail)))
+                  (quote :false)))
+              (trans
+                (rewrite
+                  (assume predicate_true)
+                  (eval-to
+                    (if
+                      (predicate head)
+                      (all predicate (tail (cons head tail)))
+                      (quote :false))
+                    (if
+                      (predicate head)
+                      (all predicate (tail (cons head tail)))
+                      (quote :false)))
+                  predicate_rewrite_target
+                  (computes-to
+                    (if
+                      (predicate head)
+                      (all predicate (tail (cons head tail)))
+                      (quote :false))
+                    (if
+                      predicate_rewrite_target
+                      (all predicate (tail (cons head tail)))
+                      (quote :false))))
+                (eval-same
+                  (if
+                    (quote :true)
+                    (all predicate (tail (cons head tail)))
+                    (quote :false))
+                  (all predicate tail))))))))))
+
+(theorem all_cons_false
+  (forall predicate (is-value predicate)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (predicate head) (quote :false))
+          (computes-to
+            (all predicate (cons head tail))
+            (quote :false))))))
+  (proof
+    (forall-intro predicate (is-value predicate)
+      (forall-intro head (is-value head)
+        (forall-intro tail (is-list tail)
+          (implies-intro predicate_false
+            (computes-to (predicate head) (quote :false))
+            (trans
+              (eval-to
+                (all predicate (cons head tail))
+                (if
+                  (predicate head)
+                  (all predicate (tail (cons head tail)))
+                  (quote :false)))
+              (trans
+                (rewrite
+                  (assume predicate_false)
+                  (eval-to
+                    (if
+                      (predicate head)
+                      (all predicate (tail (cons head tail)))
+                      (quote :false))
+                    (if
+                      (predicate head)
+                      (all predicate (tail (cons head tail)))
+                      (quote :false)))
+                  predicate_rewrite_target
+                  (computes-to
+                    (if
+                      (predicate head)
+                      (all predicate (tail (cons head tail)))
+                      (quote :false))
+                    (if
+                      predicate_rewrite_target
+                      (all predicate (tail (cons head tail)))
+                      (quote :false))))
+                (eval-to
+                  (if
+                    (quote :false)
+                    (all predicate (tail (cons head tail)))
+                    (quote :false))
+                  (quote :false))))))))))
+
+(theorem filter_computes_to_list
+  (forall predicate (is-value predicate)
+    (implies
+      (forall value (is-value value)
+        (is-bool (predicate value)))
+      (forall list (is-list list)
+        (computes-to-list result (filter predicate list)))))
+  (proof
+    (forall-intro predicate (is-value predicate)
+      (implies-intro predicate_returns_bool
+        (forall value (is-value value)
+          (is-bool (predicate value)))
+        (list-induction list
+          (computes-to-list result (filter predicate list))
+          (exists-intro result (is-list result)
+            (computes-to (filter predicate nil) result)
+            nil
+            (eval-to (filter predicate nil) nil))
+          head
+          tail
+          induction_hypothesis
+          (or-elim
+            (forall-elim
+              (assume predicate_returns_bool)
+              head)
+            predicate_true
+            (exists-elim
+              (assume induction_hypothesis)
+              filtered_tail
+              filtered_tail_proof
+              (exists-intro result (is-list result)
+                (computes-to
+                  (filter predicate (cons head tail))
+                  result)
+                (cons head filtered_tail)
+                (rewrite
+                  (assume filtered_tail_proof)
+                  (implies-elim
+                    (forall-elim
+                      (forall-elim
+                        (forall-elim
+                          (known filter_cons_true)
+                          predicate)
+                        head)
+                      tail)
+                    (assume predicate_true))
+                  filtered_tail_rewrite_target
+                  (computes-to
+                    (filter predicate (cons head tail))
+                    (cons head filtered_tail_rewrite_target)))))
+            predicate_false
+            (exists-elim
+              (assume induction_hypothesis)
+              filtered_tail
+              filtered_tail_proof
+              (exists-intro result (is-list result)
+                (computes-to
+                  (filter predicate (cons head tail))
+                  result)
+                filtered_tail
+                (trans
+                  (implies-elim
+                    (forall-elim
+                      (forall-elim
+                        (forall-elim
+                          (known filter_cons_false)
+                          predicate)
+                        head)
+                      tail)
+                    (assume predicate_false))
+                  (assume filtered_tail_proof))))))))))
+
+(theorem any_computes_to_bool
+  (forall predicate (is-value predicate)
+    (implies
+      (forall value (is-value value)
+        (is-bool (predicate value)))
+      (forall list (is-list list)
+        (is-bool (any predicate list)))))
+  (proof
+    (forall-intro predicate (is-value predicate)
+      (implies-intro predicate_returns_bool
+        (forall value (is-value value)
+          (is-bool (predicate value)))
+        (list-induction list
+          (is-bool (any predicate list))
+          (or-intro-right
+            (computes-to (any predicate nil) (quote :true))
+            (eval-to (any predicate nil) (quote :false)))
+          head
+          tail
+          induction_hypothesis
+          (or-elim
+            (forall-elim
+              (assume predicate_returns_bool)
+              head)
+            predicate_true
+            (or-intro-left
+              (implies-elim
+                (forall-elim
+                  (forall-elim
+                    (forall-elim
+                      (known any_cons_true)
+                      predicate)
+                    head)
+                  tail)
+                (assume predicate_true))
+              (computes-to
+                (any predicate (cons head tail))
+                (quote :false)))
+            predicate_false
+            (or-elim
+              (assume induction_hypothesis)
+              tail_true
+              (or-intro-left
+                (trans
+                  (implies-elim
+                    (forall-elim
+                      (forall-elim
+                        (forall-elim
+                          (known any_cons_false)
+                          predicate)
+                        head)
+                      tail)
+                    (assume predicate_false))
+                  (assume tail_true))
+                (computes-to
+                  (any predicate (cons head tail))
+                  (quote :false)))
+              tail_false
+              (or-intro-right
+                (computes-to
+                  (any predicate (cons head tail))
+                  (quote :true))
+                (trans
+                  (implies-elim
+                    (forall-elim
+                      (forall-elim
+                        (forall-elim
+                          (known any_cons_false)
+                          predicate)
+                        head)
+                      tail)
+                    (assume predicate_false))
+                  (assume tail_false))))))))))
+
+(theorem all_computes_to_bool
+  (forall predicate (is-value predicate)
+    (implies
+      (forall value (is-value value)
+        (is-bool (predicate value)))
+      (forall list (is-list list)
+        (is-bool (all predicate list)))))
+  (proof
+    (forall-intro predicate (is-value predicate)
+      (implies-intro predicate_returns_bool
+        (forall value (is-value value)
+          (is-bool (predicate value)))
+        (list-induction list
+          (is-bool (all predicate list))
+          (or-intro-left
+            (eval-to (all predicate nil) (quote :true))
+            (computes-to (all predicate nil) (quote :false)))
+          head
+          tail
+          induction_hypothesis
+          (or-elim
+            (forall-elim
+              (assume predicate_returns_bool)
+              head)
+            predicate_true
+            (or-elim
+              (assume induction_hypothesis)
+              tail_true
+              (or-intro-left
+                (trans
+                  (implies-elim
+                    (forall-elim
+                      (forall-elim
+                        (forall-elim
+                          (known all_cons_true)
+                          predicate)
+                        head)
+                      tail)
+                    (assume predicate_true))
+                  (assume tail_true))
+                (computes-to
+                  (all predicate (cons head tail))
+                  (quote :false)))
+              tail_false
+              (or-intro-right
+                (computes-to
+                  (all predicate (cons head tail))
+                  (quote :true))
+                (trans
+                  (implies-elim
+                    (forall-elim
+                      (forall-elim
+                        (forall-elim
+                          (known all_cons_true)
+                          predicate)
+                        head)
+                      tail)
+                    (assume predicate_true))
+                  (assume tail_false))))
+            predicate_false
+            (or-intro-right
+              (computes-to
+                (all predicate (cons head tail))
+                (quote :true))
+              (implies-elim
+                (forall-elim
+                  (forall-elim
+                    (forall-elim
+                      (known all_cons_false)
+                      predicate)
+                    head)
+                  tail)
+                (assume predicate_false)))))))))
 
 (theorem map_identity
   (forall list (is-list list)

@@ -12,29 +12,26 @@ related helper machinery.
 1. `member` - true iff a value appears in a list.
 2. `elem-index` - return the first matching index. Also needs naturals/options.
 3. `find` - return the first element satisfying a predicate. Needs predicates/options.
-4. `any` - true iff a predicate holds for some element.
-5. `all` - true iff a predicate holds for every element.
-6. `filter` - keep elements satisfying a predicate.
-7. `partition` - split a list into elements that pass/fail a predicate.
+4. `partition` - split a list into elements that pass/fail a predicate.
 
 ## Needs Naturals
 
 These need a natural-number representation and basic arithmetic theorems.
 
-8. `length` - count list elements.
-9. `nth` - return the element at an index, with an error or option on out-of-bounds.
-10. `take` - first `n` elements.
-11. `drop` - remove first `n` elements.
-12. `split-at` - pair of `take n list` and `drop n list`.
-13. `replicate` - build a list with `n` copies of a value.
-14. `range` - build a list of natural numbers.
+5. `length` - count list elements.
+6. `nth` - return the element at an index, with an error or option on out-of-bounds.
+7. `take` - first `n` elements.
+8. `drop` - remove first `n` elements.
+9. `split-at` - pair of `take n list` and `drop n list`.
+10. `replicate` - build a list with `n` copies of a value.
+11. `range` - build a list of natural numbers.
 
 ## Pair/List Shape Utilities
 
 These use Lisp-style pairs encoded as two-element lists or cons cells. We should
 pick the representation before adding them.
 
-15. `zip` - combine two lists into a list of pairs.
-16. `unzip` - split a list of pairs into a pair of lists.
-17. `intersperse` - place a separator between list elements.
-18. `intercalate` - concatenate a list of lists with a separator list.
+12. `zip` - combine two lists into a list of pairs.
+13. `unzip` - split a list of pairs into a pair of lists.
+14. `intersperse` - place a separator between list elements.
+15. `intercalate` - concatenate a list of lists with a separator list.

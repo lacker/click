@@ -4,7 +4,7 @@ use crate::{
     Computation, Lambda, Outcome, Proof, Prop, RUNTIME_ERROR, Symbol, Theory, computes_to,
     computes_to_list,
     elab::{proof, source::ParsedTheorem},
-    errors_with, exists_where, forall_where, implies, is_list, is_value,
+    errors_with, exists_where, forall_where, implies, is_bool, is_list, is_value,
 };
 
 pub use crate::elab::EvaluationProofError;
@@ -150,6 +150,30 @@ pub fn zip_with() -> Computation {
 
 pub fn zip_with_definition() -> Computation {
     definition("zip-with")
+}
+
+pub fn filter() -> Computation {
+    computation_ref("filter")
+}
+
+pub fn filter_definition() -> Computation {
+    definition("filter")
+}
+
+pub fn any() -> Computation {
+    computation_ref("any")
+}
+
+pub fn any_definition() -> Computation {
+    definition("any")
+}
+
+pub fn all() -> Computation {
+    computation_ref("all")
+}
+
+pub fn all_definition() -> Computation {
+    definition("all")
 }
 
 pub fn last() -> Computation {
@@ -397,6 +421,54 @@ pub fn zip_with_computes_to_list_source_theorem() -> Prop {
     theorem_prop("zip_with_computes_to_list")
 }
 
+pub fn filter_nil_source_theorem() -> Prop {
+    theorem_prop("filter_nil")
+}
+
+pub fn filter_cons_true_source_theorem() -> Prop {
+    theorem_prop("filter_cons_true")
+}
+
+pub fn filter_cons_false_source_theorem() -> Prop {
+    theorem_prop("filter_cons_false")
+}
+
+pub fn filter_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("filter_computes_to_list")
+}
+
+pub fn any_nil_source_theorem() -> Prop {
+    theorem_prop("any_nil")
+}
+
+pub fn any_cons_true_source_theorem() -> Prop {
+    theorem_prop("any_cons_true")
+}
+
+pub fn any_cons_false_source_theorem() -> Prop {
+    theorem_prop("any_cons_false")
+}
+
+pub fn any_computes_to_bool_source_theorem() -> Prop {
+    theorem_prop("any_computes_to_bool")
+}
+
+pub fn all_nil_source_theorem() -> Prop {
+    theorem_prop("all_nil")
+}
+
+pub fn all_cons_true_source_theorem() -> Prop {
+    theorem_prop("all_cons_true")
+}
+
+pub fn all_cons_false_source_theorem() -> Prop {
+    theorem_prop("all_cons_false")
+}
+
+pub fn all_computes_to_bool_source_theorem() -> Prop {
+    theorem_prop("all_computes_to_bool")
+}
+
 pub fn map_identity_source_theorem() -> Prop {
     theorem_prop("map_identity")
 }
@@ -493,6 +565,18 @@ pub fn fold_left_call(
 
 pub fn zip_with_call(function: Computation, left: Computation, right: Computation) -> Computation {
     apply(apply(apply(zip_with(), function), left), right)
+}
+
+pub fn filter_call(predicate: Computation, list: Computation) -> Computation {
+    apply(apply(filter(), predicate), list)
+}
+
+pub fn any_call(predicate: Computation, list: Computation) -> Computation {
+    apply(apply(any(), predicate), list)
+}
+
+pub fn all_call(predicate: Computation, list: Computation) -> Computation {
+    apply(apply(all(), predicate), list)
 }
 
 pub fn last_call(list: Computation) -> Computation {
@@ -1338,6 +1422,236 @@ pub fn zip_with_computes_to_list_theorem(
                     is_list(var(right)),
                     computes_to_list(result, zip_with_call(var(function), var(left), var(right))),
                 ),
+            ),
+        ),
+    )
+}
+
+/// Filtering `nil` returns `nil`.
+pub fn filter_nil_theorem(predicate: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        computes_to(filter_call(var(predicate), nil()), nil()),
+    )
+}
+
+/// If the predicate returns true for the head, filtering a cons keeps the head.
+pub fn filter_cons_true_theorem(predicate: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                implies(
+                    computes_to(apply(var(predicate), var(head)), true_value()),
+                    computes_to(
+                        filter_call(var(predicate), cons(var(head), var(tail))),
+                        cons(var(head), filter_call(var(predicate), var(tail))),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the predicate returns false for the head, filtering a cons drops the head.
+pub fn filter_cons_false_theorem(predicate: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                implies(
+                    computes_to(apply(var(predicate), var(head)), false_value()),
+                    computes_to(
+                        filter_call(var(predicate), cons(var(head), var(tail))),
+                        filter_call(var(predicate), var(tail)),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the predicate returns booleans, filtering returns a list.
+pub fn filter_computes_to_list_theorem(
+    predicate: Symbol,
+    value: Symbol,
+    list: Symbol,
+    result: Symbol,
+) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        implies(
+            forall_where(
+                value,
+                is_value(var(value)),
+                is_bool(apply(var(predicate), var(value))),
+            ),
+            forall_where(
+                list,
+                is_list(var(list)),
+                computes_to_list(result, filter_call(var(predicate), var(list))),
+            ),
+        ),
+    )
+}
+
+/// `any` over `nil` returns false.
+pub fn any_nil_theorem(predicate: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        computes_to(any_call(var(predicate), nil()), false_value()),
+    )
+}
+
+/// If the predicate returns true for the head, `any` over a cons returns true.
+pub fn any_cons_true_theorem(predicate: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                implies(
+                    computes_to(apply(var(predicate), var(head)), true_value()),
+                    computes_to(
+                        any_call(var(predicate), cons(var(head), var(tail))),
+                        true_value(),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the predicate returns false for the head, `any` recurs on the tail.
+pub fn any_cons_false_theorem(predicate: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                implies(
+                    computes_to(apply(var(predicate), var(head)), false_value()),
+                    computes_to(
+                        any_call(var(predicate), cons(var(head), var(tail))),
+                        any_call(var(predicate), var(tail)),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the predicate returns booleans, `any` returns a boolean.
+pub fn any_computes_to_bool_theorem(predicate: Symbol, value: Symbol, list: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        implies(
+            forall_where(
+                value,
+                is_value(var(value)),
+                is_bool(apply(var(predicate), var(value))),
+            ),
+            forall_where(
+                list,
+                is_list(var(list)),
+                is_bool(any_call(var(predicate), var(list))),
+            ),
+        ),
+    )
+}
+
+/// `all` over `nil` returns true.
+pub fn all_nil_theorem(predicate: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        computes_to(all_call(var(predicate), nil()), true_value()),
+    )
+}
+
+/// If the predicate returns true for the head, `all` recurs on the tail.
+pub fn all_cons_true_theorem(predicate: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                implies(
+                    computes_to(apply(var(predicate), var(head)), true_value()),
+                    computes_to(
+                        all_call(var(predicate), cons(var(head), var(tail))),
+                        all_call(var(predicate), var(tail)),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the predicate returns false for the head, `all` over a cons returns false.
+pub fn all_cons_false_theorem(predicate: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                implies(
+                    computes_to(apply(var(predicate), var(head)), false_value()),
+                    computes_to(
+                        all_call(var(predicate), cons(var(head), var(tail))),
+                        false_value(),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the predicate returns booleans, `all` returns a boolean.
+pub fn all_computes_to_bool_theorem(predicate: Symbol, value: Symbol, list: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        implies(
+            forall_where(
+                value,
+                is_value(var(value)),
+                is_bool(apply(var(predicate), var(value))),
+            ),
+            forall_where(
+                list,
+                is_list(var(list)),
+                is_bool(all_call(var(predicate), var(list))),
             ),
         ),
     )
@@ -2516,6 +2830,101 @@ mod tests {
     }
 
     #[test]
+    fn filter_any_all_source_theorems_have_expected_shape() {
+        let filter_nil_predicate = theorem_symbol("filter_nil", "predicate");
+        let filter_true_predicate = theorem_symbol("filter_cons_true", "predicate");
+        let filter_true_head = theorem_symbol("filter_cons_true", "head");
+        let filter_true_tail = theorem_symbol("filter_cons_true", "tail");
+        let filter_false_predicate = theorem_symbol("filter_cons_false", "predicate");
+        let filter_false_head = theorem_symbol("filter_cons_false", "head");
+        let filter_false_tail = theorem_symbol("filter_cons_false", "tail");
+        let filter_computes_predicate = theorem_symbol("filter_computes_to_list", "predicate");
+        let filter_computes_value = theorem_symbol("filter_computes_to_list", "value");
+        let filter_computes_list = theorem_symbol("filter_computes_to_list", "list");
+        let filter_computes_result = theorem_symbol("filter_computes_to_list", "result");
+
+        assert_eq!(
+            filter_nil_source_theorem(),
+            filter_nil_theorem(filter_nil_predicate)
+        );
+        assert_eq!(
+            filter_cons_true_source_theorem(),
+            filter_cons_true_theorem(filter_true_predicate, filter_true_head, filter_true_tail)
+        );
+        assert_eq!(
+            filter_cons_false_source_theorem(),
+            filter_cons_false_theorem(filter_false_predicate, filter_false_head, filter_false_tail)
+        );
+        assert_eq!(
+            filter_computes_to_list_source_theorem(),
+            filter_computes_to_list_theorem(
+                filter_computes_predicate,
+                filter_computes_value,
+                filter_computes_list,
+                filter_computes_result,
+            )
+        );
+
+        let any_nil_predicate = theorem_symbol("any_nil", "predicate");
+        let any_true_predicate = theorem_symbol("any_cons_true", "predicate");
+        let any_true_head = theorem_symbol("any_cons_true", "head");
+        let any_true_tail = theorem_symbol("any_cons_true", "tail");
+        let any_false_predicate = theorem_symbol("any_cons_false", "predicate");
+        let any_false_head = theorem_symbol("any_cons_false", "head");
+        let any_false_tail = theorem_symbol("any_cons_false", "tail");
+        let any_computes_predicate = theorem_symbol("any_computes_to_bool", "predicate");
+        let any_computes_value = theorem_symbol("any_computes_to_bool", "value");
+        let any_computes_list = theorem_symbol("any_computes_to_bool", "list");
+
+        assert_eq!(any_nil_source_theorem(), any_nil_theorem(any_nil_predicate));
+        assert_eq!(
+            any_cons_true_source_theorem(),
+            any_cons_true_theorem(any_true_predicate, any_true_head, any_true_tail)
+        );
+        assert_eq!(
+            any_cons_false_source_theorem(),
+            any_cons_false_theorem(any_false_predicate, any_false_head, any_false_tail)
+        );
+        assert_eq!(
+            any_computes_to_bool_source_theorem(),
+            any_computes_to_bool_theorem(
+                any_computes_predicate,
+                any_computes_value,
+                any_computes_list,
+            )
+        );
+
+        let all_nil_predicate = theorem_symbol("all_nil", "predicate");
+        let all_true_predicate = theorem_symbol("all_cons_true", "predicate");
+        let all_true_head = theorem_symbol("all_cons_true", "head");
+        let all_true_tail = theorem_symbol("all_cons_true", "tail");
+        let all_false_predicate = theorem_symbol("all_cons_false", "predicate");
+        let all_false_head = theorem_symbol("all_cons_false", "head");
+        let all_false_tail = theorem_symbol("all_cons_false", "tail");
+        let all_computes_predicate = theorem_symbol("all_computes_to_bool", "predicate");
+        let all_computes_value = theorem_symbol("all_computes_to_bool", "value");
+        let all_computes_list = theorem_symbol("all_computes_to_bool", "list");
+
+        assert_eq!(all_nil_source_theorem(), all_nil_theorem(all_nil_predicate));
+        assert_eq!(
+            all_cons_true_source_theorem(),
+            all_cons_true_theorem(all_true_predicate, all_true_head, all_true_tail)
+        );
+        assert_eq!(
+            all_cons_false_source_theorem(),
+            all_cons_false_theorem(all_false_predicate, all_false_head, all_false_tail)
+        );
+        assert_eq!(
+            all_computes_to_bool_source_theorem(),
+            all_computes_to_bool_theorem(
+                all_computes_predicate,
+                all_computes_value,
+                all_computes_list,
+            )
+        );
+    }
+
+    #[test]
     fn higher_order_relation_source_theorems_have_expected_shape() {
         assert_alpha_eq(
             &map_identity_source_theorem(),
@@ -3134,6 +3543,97 @@ mod tests {
                 pair(unit(), quote(A)),
             ),
             value(expected),
+        );
+    }
+
+    fn always_true_predicate() -> Computation {
+        lambda(X, true_value())
+    }
+
+    fn always_false_predicate() -> Computation {
+        lambda(X, false_value())
+    }
+
+    fn is_a_predicate() -> Computation {
+        lambda(X, crate::symbol_eq(var(X), quote(A)))
+    }
+
+    #[test]
+    fn filter_nil_returns_nil() {
+        assert_evaluates(filter_call(always_true_predicate(), nil()), Value::nil());
+    }
+
+    #[test]
+    fn filter_true_predicate_keeps_everything() {
+        let list = triple(quote(A), quote(B), unit());
+
+        assert_evaluates(
+            filter_call(always_true_predicate(), list.clone()),
+            value(list),
+        );
+    }
+
+    #[test]
+    fn filter_false_predicate_drops_everything() {
+        assert_evaluates(
+            filter_call(always_false_predicate(), triple(quote(A), quote(B), unit())),
+            Value::nil(),
+        );
+    }
+
+    #[test]
+    fn filter_symbol_eq_keeps_matching_symbols() {
+        assert_evaluates(
+            filter_call(is_a_predicate(), triple(quote(A), quote(B), quote(A))),
+            value(pair(quote(A), quote(A))),
+        );
+    }
+
+    #[test]
+    fn any_nil_returns_false() {
+        assert_evaluates(
+            any_call(always_true_predicate(), nil()),
+            Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn any_symbol_eq_returns_true_when_match_exists() {
+        assert_evaluates(
+            any_call(is_a_predicate(), triple(quote(B), quote(A), unit())),
+            Value::quote(prelude_symbol(":true")),
+        );
+    }
+
+    #[test]
+    fn any_symbol_eq_returns_false_when_no_match() {
+        assert_evaluates(
+            any_call(is_a_predicate(), pair(quote(B), unit())),
+            Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn all_nil_returns_true() {
+        assert_evaluates(
+            all_call(always_false_predicate(), nil()),
+            Value::quote(prelude_symbol(":true")),
+        );
+    }
+
+    #[test]
+    fn all_symbol_eq_returns_true_when_all_match() {
+        assert_evaluates(
+            all_call(is_a_predicate(), pair(quote(A), quote(A))),
+            Value::quote(prelude_symbol(":true")),
+        );
+    }
+
+    #[test]
+    fn all_symbol_eq_returns_false_when_any_missing() {
+        assert_evaluates(
+            all_call(is_a_predicate(), triple(quote(A), quote(B), quote(A))),
+            Value::quote(prelude_symbol(":false")),
         );
     }
 
