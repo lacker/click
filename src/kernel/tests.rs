@@ -56,6 +56,10 @@ fn symbol_eq_computation(left: Computation, right: Computation) -> Computation {
     symbol_eq(left, right)
 }
 
+fn value_kind_computation(computation: Computation) -> Computation {
+    value_kind(computation)
+}
+
 fn error(error: ErrorName) -> Computation {
     Computation::Error(error)
 }
@@ -527,6 +531,77 @@ fn symbol_eq_open_operands_are_neutral_and_effects_propagate() {
 }
 
 #[test]
+fn value_kind_reduces_after_evaluating_input() {
+    let input = apply(
+        lambda(Symbol(1), Computation::Var(Symbol(1))),
+        Computation::Quote(Symbol(9)),
+    );
+    let computation = value_kind_computation(input);
+
+    assert_eq!(
+        step(&computation),
+        Step::Reduced(value_kind_computation(Computation::Quote(Symbol(9))))
+    );
+    assert_eq!(
+        normal_form(&computation),
+        Computation::Quote(SYMBOL_KIND_SYMBOL)
+    );
+}
+
+#[test]
+fn value_kind_returns_symbol_lambda_or_list() {
+    assert_eq!(
+        normal_form(&value_kind_computation(Computation::Quote(Symbol(9)))),
+        Computation::Quote(SYMBOL_KIND_SYMBOL)
+    );
+    assert_eq!(
+        normal_form(&value_kind_computation(lambda(
+            Symbol(1),
+            Computation::Var(Symbol(1)),
+        ))),
+        Computation::Quote(LAMBDA_KIND_SYMBOL)
+    );
+    assert_eq!(
+        normal_form(&value_kind_computation(Computation::Nil)),
+        Computation::Quote(LIST_KIND_SYMBOL)
+    );
+    assert_eq!(
+        normal_form(&value_kind_computation(cons(
+            Computation::Quote(Symbol(9)),
+            Computation::Nil,
+        ))),
+        Computation::Quote(LIST_KIND_SYMBOL)
+    );
+}
+
+#[test]
+fn value_kind_open_input_is_neutral_and_effects_propagate() {
+    assert_eq!(
+        step(&value_kind_computation(Computation::Var(Symbol(1)))),
+        Step::Normal
+    );
+    assert_eq!(
+        normal_form(&value_kind_computation(error(ErrorName(7)))),
+        error(ErrorName(7))
+    );
+    assert_eq!(
+        normal_form(&value_kind_computation(Computation::Diverge)),
+        Computation::Diverge
+    );
+}
+
+#[test]
+fn value_kind_malformed_list_reduces_to_error() {
+    assert_eq!(
+        normal_form(&value_kind_computation(cons(
+            Computation::Quote(Symbol(9)),
+            Computation::Quote(Symbol(10)),
+        ))),
+        error(RUNTIME_ERROR)
+    );
+}
+
+#[test]
 fn step_proof_proves_if_reduction() {
     let computation = if_computation(
         Computation::Quote(TRUE_SYMBOL),
@@ -548,6 +623,29 @@ fn step_proof_proves_symbol_eq_reduction() {
     assert!(check(
         &Proof::Step(computation.clone()),
         &equal(computation, Computation::Quote(TRUE_SYMBOL)),
+    ));
+}
+
+#[test]
+fn step_proof_proves_value_kind_reduction() {
+    let computation = value_kind_computation(Computation::Quote(Symbol(9)));
+
+    assert!(check(
+        &Proof::Step(computation.clone()),
+        &equal(computation, Computation::Quote(SYMBOL_KIND_SYMBOL)),
+    ));
+}
+
+#[test]
+fn step_proof_uses_context_to_prove_value_kind_list_reduction() {
+    let computation = value_kind_computation(Computation::Var(Symbol(1)));
+    let mut context = Context::new();
+    context.insert(Symbol(99), is_list(Computation::Var(Symbol(1))));
+
+    assert!(check_in_context(
+        &Proof::Step(computation.clone()),
+        &equal(computation, Computation::Quote(LIST_KIND_SYMBOL)),
+        &context,
     ));
 }
 
@@ -601,6 +699,17 @@ fn substitution_and_free_symbols_descend_into_symbol_eq() {
     assert_eq!(
         substitute(&computation, Symbol(1), &Computation::Quote(Symbol(9))),
         symbol_eq_computation(Computation::Quote(Symbol(9)), Computation::Var(Symbol(2)))
+    );
+}
+
+#[test]
+fn substitution_and_free_symbols_descend_into_value_kind() {
+    let computation = value_kind_computation(Computation::Var(Symbol(1)));
+
+    assert_eq!(free_symbols(&computation), HashSet::from([Symbol(1)]));
+    assert_eq!(
+        substitute(&computation, Symbol(1), &Computation::Quote(Symbol(9))),
+        value_kind_computation(Computation::Quote(Symbol(9)))
     );
 }
 

@@ -3,10 +3,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    Computation, ErrorName, FALSE_SYMBOL, Lambda, ListCase, Name, Prop, Symbol, TRUE_SYMBOL, and,
-    computes_to, computes_to_list, diverges, equal, errors_with, exists, exists_where, forall,
-    forall_where, if_then_else, implies, is_bool, is_effect, is_list, is_outcome, is_value, or,
-    symbol_eq,
+    Computation, ErrorName, FALSE_SYMBOL, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Lambda, ListCase,
+    Name, Prop, SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL, and, computes_to, computes_to_list,
+    diverges, equal, errors_with, exists, exists_where, forall, forall_where, if_then_else,
+    implies, is_bool, is_effect, is_list, is_outcome, is_value, or, symbol_eq, value_kind,
 };
 
 const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
@@ -45,8 +45,22 @@ impl ElabEnv {
         let symbols = HashMap::from([
             (":true".to_owned(), TRUE_SYMBOL),
             (":false".to_owned(), FALSE_SYMBOL),
+            (":symbol".to_owned(), SYMBOL_KIND_SYMBOL),
+            (":lambda".to_owned(), LAMBDA_KIND_SYMBOL),
+            (":list".to_owned(), LIST_KIND_SYMBOL),
         ]);
-        let next_symbol = TRUE_SYMBOL.0.max(FALSE_SYMBOL.0) + 1;
+        let max_reserved_symbol = [
+            TRUE_SYMBOL,
+            FALSE_SYMBOL,
+            SYMBOL_KIND_SYMBOL,
+            LAMBDA_KIND_SYMBOL,
+            LIST_KIND_SYMBOL,
+        ]
+        .into_iter()
+        .map(|symbol| symbol.0)
+        .max()
+        .expect("reserved symbol set should be nonempty");
+        let next_symbol = max_reserved_symbol + 1;
 
         Self {
             computations: HashMap::new(),
@@ -736,6 +750,7 @@ impl<'a> SourceParser<'a> {
                 "tail" => return self.tail(items),
                 "if" => return self.if_computation(items),
                 "symbol-eq" => return self.symbol_eq(items),
+                "value-kind" => return self.value_kind(items),
                 "error" => return self.error(items),
                 "quote" => return self.quote(items),
                 _ => {}
@@ -811,6 +826,11 @@ impl<'a> SourceParser<'a> {
             self.computation(&items[1])?,
             self.computation(&items[2])?,
         ))
+    }
+
+    fn value_kind(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
+        expect_len("value-kind", items, 2)?;
+        Ok(value_kind(self.computation(&items[1])?))
     }
 
     fn error(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
@@ -1420,7 +1440,7 @@ mod tests {
         assert_eq!(env.computation("id"), Some(Name(1)));
         assert_eq!(env.theorem("id_computes"), Some(Name(2)));
         assert_eq!(env.symbol(":true"), Some(Symbol(1)));
-        assert_eq!(env.symbol("x"), Some(Symbol(3)));
+        assert_eq!(env.symbol("x"), Some(Symbol(LIST_KIND_SYMBOL.0 + 1)));
         assert!(module.computation(Name(1)).is_some());
         assert!(module.theorem(Name(2)).is_some());
     }
@@ -1474,6 +1494,23 @@ mod tests {
             module.theorem(Name(2)).map(|theorem| &theorem.prop),
             Some(&is_bool(Computation::Ref(Name(1))))
         );
+    }
+
+    #[test]
+    fn parses_value_kind_computation_and_reserved_kind_symbols() {
+        let mut env = ElabEnv::new();
+
+        let module = env
+            .parse_module("(def kind (value-kind (quote :true)))")
+            .expect("source value-kind expression should parse");
+
+        assert_eq!(
+            module.computation(Name(1)),
+            Some(&value_kind(Computation::Quote(TRUE_SYMBOL)))
+        );
+        assert_eq!(env.symbol(":symbol"), Some(SYMBOL_KIND_SYMBOL));
+        assert_eq!(env.symbol(":lambda"), Some(LAMBDA_KIND_SYMBOL));
+        assert_eq!(env.symbol(":list"), Some(LIST_KIND_SYMBOL));
     }
 
     #[test]

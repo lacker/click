@@ -180,6 +180,9 @@ fn alpha_eq_computation_in_context(
             alpha_eq_computation_in_context(left_left, right_left, bindings)
                 && alpha_eq_computation_in_context(left_right, right_right, bindings)
         }
+        (Computation::ValueKind(left), Computation::ValueKind(right)) => {
+            alpha_eq_computation_in_context(left, right, bindings)
+        }
         (Computation::Ref(left), Computation::Ref(right)) => left == right,
         (Computation::Error(left), Computation::Error(right)) => left == right,
         (Computation::Diverge, Computation::Diverge) => true,
@@ -494,6 +497,9 @@ fn step_for_proof(computation: &Computation, bindings: &Bindings, context: &Cont
         Computation::SymbolEq { left, right } => {
             step_symbol_eq_for_proof(left, right, bindings, context)
         }
+        Computation::ValueKind(computation) => {
+            step_value_kind_for_proof(computation, bindings, context)
+        }
         Computation::Ref(name) => match bindings.computation(*name) {
             Some(computation) => Step::Reduced(computation.clone()),
             None => Step::Normal,
@@ -609,6 +615,7 @@ fn step_head_for_proof(computation: &Computation, bindings: &Bindings, context: 
             | Computation::ListCase(_)
             | Computation::If { .. }
             | Computation::SymbolEq { .. }
+            | Computation::ValueKind(_)
             | Computation::Cons { .. }
             | Computation::Error(_)
             | Computation::Diverge => Step::Normal,
@@ -637,6 +644,7 @@ fn step_tail_for_proof(computation: &Computation, bindings: &Bindings, context: 
             | Computation::ListCase(_)
             | Computation::If { .. }
             | Computation::SymbolEq { .. }
+            | Computation::ValueKind(_)
             | Computation::Cons { .. }
             | Computation::Error(_)
             | Computation::Diverge => Step::Normal,
@@ -673,6 +681,7 @@ fn step_list_case_for_proof(list_case: &ListCase, bindings: &Bindings, context: 
             | Computation::ListCase(_)
             | Computation::If { .. }
             | Computation::SymbolEq { .. }
+            | Computation::ValueKind(_)
             | Computation::Cons { .. }
             | Computation::Error(_)
             | Computation::Diverge => Step::Normal,
@@ -748,6 +757,36 @@ fn symbol_eq_result_for_proof(
             || computation_is_known_non_symbol_value(right, context) =>
         {
             Some(Computation::Quote(FALSE_SYMBOL))
+        }
+        _ => None,
+    }
+}
+
+fn step_value_kind_for_proof(
+    computation: &Computation,
+    bindings: &Bindings,
+    context: &Context,
+) -> Step {
+    match step_for_proof(computation, bindings, context) {
+        Step::Reduced(computation) => Step::Reduced(Computation::ValueKind(Box::new(computation))),
+        Step::Normal if computation_is_effect(computation, context) => {
+            Step::Reduced(computation.clone())
+        }
+        Step::Normal => {
+            value_kind_result_for_proof(computation, context).map_or(Step::Normal, Step::Reduced)
+        }
+    }
+}
+
+fn value_kind_result_for_proof(
+    computation: &Computation,
+    context: &Context,
+) -> Option<Computation> {
+    match computation {
+        Computation::Quote(_) => Some(Computation::Quote(SYMBOL_KIND_SYMBOL)),
+        Computation::Lambda(_) => Some(Computation::Quote(LAMBDA_KIND_SYMBOL)),
+        _ if computation_is_list(computation, context) => {
+            Some(Computation::Quote(LIST_KIND_SYMBOL))
         }
         _ => None,
     }

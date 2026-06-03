@@ -12,6 +12,9 @@ pub struct ErrorName(pub u64);
 pub const RUNTIME_ERROR: ErrorName = ErrorName(0);
 pub const TRUE_SYMBOL: Symbol = Symbol(1);
 pub const FALSE_SYMBOL: Symbol = Symbol(2);
+pub const SYMBOL_KIND_SYMBOL: Symbol = Symbol(3);
+pub const LAMBDA_KIND_SYMBOL: Symbol = Symbol(4);
+pub const LIST_KIND_SYMBOL: Symbol = Symbol(5);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Lambda {
@@ -51,6 +54,7 @@ pub enum Computation {
         left: Box<Computation>,
         right: Box<Computation>,
     },
+    ValueKind(Box<Computation>),
     Ref(Name),
     Error(ErrorName),
     Diverge,
@@ -443,6 +447,10 @@ pub fn symbol_eq(left: Computation, right: Computation) -> Computation {
     }
 }
 
+pub fn value_kind(computation: Computation) -> Computation {
+    Computation::ValueKind(Box::new(computation))
+}
+
 pub fn is_bool(computation: Computation) -> Prop {
     or(
         computes_to(computation.clone(), Computation::Quote(TRUE_SYMBOL)),
@@ -547,6 +555,9 @@ pub fn substitute(
             left: Box::new(substitute(left, variable, replacement)),
             right: Box::new(substitute(right, variable, replacement)),
         },
+        Computation::ValueKind(computation) => {
+            Computation::ValueKind(Box::new(substitute(computation, variable, replacement)))
+        }
         Computation::Error(error) => Computation::Error(*error),
         Computation::Ref(_)
         | Computation::Diverge
@@ -647,6 +658,9 @@ pub(super) fn add_free_symbols(computation: &Computation, symbols: &mut HashSet<
             add_free_symbols(left, symbols);
             add_free_symbols(right, symbols);
         }
+        Computation::ValueKind(computation) => {
+            add_free_symbols(computation, symbols);
+        }
         Computation::Error(_) | Computation::Ref(_) | Computation::Diverge => {}
         Computation::Var(symbol) => {
             symbols.insert(*symbol);
@@ -702,6 +716,9 @@ pub(super) fn rename_bound_var(computation: &Computation, old: Symbol, new: Symb
             left: Box::new(rename_bound_var(left, old, new)),
             right: Box::new(rename_bound_var(right, old, new)),
         },
+        Computation::ValueKind(computation) => {
+            Computation::ValueKind(Box::new(rename_bound_var(computation, old, new)))
+        }
         Computation::Error(error) => Computation::Error(*error),
         Computation::Ref(_) | Computation::Diverge => computation.clone(),
         Computation::Var(symbol) if *symbol == old => Computation::Var(new),
@@ -762,6 +779,9 @@ pub(super) fn add_all_symbols(computation: &Computation, symbols: &mut HashSet<S
         Computation::SymbolEq { left, right } => {
             add_all_symbols(left, symbols);
             add_all_symbols(right, symbols);
+        }
+        Computation::ValueKind(computation) => {
+            add_all_symbols(computation, symbols);
         }
         Computation::Error(_) | Computation::Ref(_) | Computation::Diverge => {}
         Computation::Var(symbol) | Computation::Quote(symbol) => {

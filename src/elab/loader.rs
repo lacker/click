@@ -193,11 +193,13 @@ mod tests {
             .theorem("id_nil")
             .expect("loader should record theorem spelling");
 
+        let parameter = crate::Symbol(crate::LIST_KIND_SYMBOL.0 + 1);
+
         assert_eq!(
             loaded.theory().computation(id),
             Some(&Computation::Lambda(crate::Lambda {
-                parameter: crate::Symbol(3),
-                body: Box::new(Computation::Var(crate::Symbol(3))),
+                parameter,
+                body: Box::new(Computation::Var(parameter)),
             }))
         );
         assert_eq!(
@@ -283,6 +285,42 @@ mod tests {
         assert_eq!(
             loaded.theory().theorem(same_is_bool),
             Some(&crate::is_bool(Computation::Ref(same)))
+        );
+    }
+
+    #[test]
+    fn load_str_checks_value_kind_theorems() {
+        let mut loaded = LoadedSource::new();
+
+        loaded
+            .load_str(
+                "
+                (def list_kind (value-kind nil))
+                (theorem list_kind_is_list
+                  (computes-to list_kind (quote :list))
+                  (proof
+                    (eval-to list_kind (quote :list))))
+                ",
+            )
+            .expect("source value-kind theorem should load");
+
+        let list_kind = loaded
+            .computation("list_kind")
+            .expect("loader should record value-kind computation spelling");
+        let list_kind_is_list = loaded
+            .theorem("list_kind_is_list")
+            .expect("loader should record value-kind theorem spelling");
+
+        assert_eq!(
+            loaded.theory().computation(list_kind),
+            Some(&crate::value_kind(Computation::Nil))
+        );
+        assert_eq!(
+            loaded.theory().theorem(list_kind_is_list),
+            Some(&crate::computes_to(
+                Computation::Ref(list_kind),
+                Computation::Quote(crate::LIST_KIND_SYMBOL),
+            ))
         );
     }
 

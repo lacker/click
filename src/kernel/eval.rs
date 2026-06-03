@@ -19,6 +19,7 @@ pub(super) fn step_in_bindings(computation: &Computation, bindings: &Bindings) -
             else_branch,
         } => step_if(condition, then_branch, else_branch, bindings),
         Computation::SymbolEq { left, right } => step_symbol_eq(left, right, bindings),
+        Computation::ValueKind(computation) => step_value_kind(computation, bindings),
         Computation::Ref(name) => match bindings.computation(*name) {
             Some(computation) => Step::Reduced(computation.clone()),
             None => Step::Normal,
@@ -124,6 +125,7 @@ fn step_head(computation: &Computation, bindings: &Bindings) -> Step {
             | Computation::Tail(_)
             | Computation::ListCase(_)
             | Computation::SymbolEq { .. }
+            | Computation::ValueKind(_)
             | Computation::If { .. } => Step::Normal,
             Computation::Nil | Computation::Quote(_) | Computation::Lambda(_) => {
                 Step::Reduced(runtime_error())
@@ -145,6 +147,7 @@ fn step_tail(computation: &Computation, bindings: &Bindings) -> Step {
             | Computation::Tail(_)
             | Computation::ListCase(_)
             | Computation::SymbolEq { .. }
+            | Computation::ValueKind(_)
             | Computation::If { .. } => Step::Normal,
             Computation::Nil | Computation::Quote(_) | Computation::Lambda(_) => {
                 Step::Reduced(runtime_error())
@@ -178,6 +181,7 @@ fn step_list_case(list_case: &ListCase, bindings: &Bindings) -> Step {
             | Computation::Tail(_)
             | Computation::ListCase(_)
             | Computation::SymbolEq { .. }
+            | Computation::ValueKind(_)
             | Computation::If { .. } => Step::Normal,
             Computation::Quote(_) | Computation::Lambda(_) => Step::Reduced(runtime_error()),
         },
@@ -207,6 +211,7 @@ fn step_if(
             | Computation::Tail(_)
             | Computation::ListCase(_)
             | Computation::SymbolEq { .. }
+            | Computation::ValueKind(_)
             | Computation::If { .. } => Step::Normal,
             Computation::Nil
             | Computation::Cons { .. }
@@ -242,6 +247,26 @@ fn symbol_eq_result(left: &Computation, right: &Computation) -> Computation {
             Computation::Quote(TRUE_SYMBOL)
         }
         _ => Computation::Quote(FALSE_SYMBOL),
+    }
+}
+
+fn step_value_kind(computation: &Computation, bindings: &Bindings) -> Step {
+    match step_in_bindings(computation, bindings) {
+        Step::Reduced(computation) => Step::Reduced(Computation::ValueKind(Box::new(computation))),
+        Step::Normal if is_effect(computation) => Step::Reduced(computation.clone()),
+        Step::Normal => value_kind_result(computation).map_or(Step::Normal, Step::Reduced),
+    }
+}
+
+fn value_kind_result(computation: &Computation) -> Option<Computation> {
+    match computation {
+        Computation::Quote(_) => Some(Computation::Quote(SYMBOL_KIND_SYMBOL)),
+        Computation::Lambda(_) => Some(Computation::Quote(LAMBDA_KIND_SYMBOL)),
+        Computation::Nil => Some(Computation::Quote(LIST_KIND_SYMBOL)),
+        Computation::Cons { .. } if computation.as_list_value().is_some() => {
+            Some(Computation::Quote(LIST_KIND_SYMBOL))
+        }
+        _ => None,
     }
 }
 

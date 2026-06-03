@@ -66,6 +66,11 @@ form for comparing finalized quoted symbols. It returns `:true` only when both
 operands are the same quoted symbol, returns `:false` for other finalized
 values, and propagates effects.
 
+The kernel also has a `value-kind` computation form for broad value
+introspection. After evaluating its input, it returns `:symbol`, `:lambda`, or
+`:list`, and propagates effects. Lists are one value kind; use `list-case` to
+distinguish `nil` from `cons`.
+
 At the source level, `(is-bool x)` is proposition shorthand for saying that `x`
 computes to either `(quote :true)` or `(quote :false)`. It elaborates to an
 ordinary disjunction, not to a separate primitive proposition.

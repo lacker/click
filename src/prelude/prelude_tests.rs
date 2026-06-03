@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::{
-    Computation, ComputationDefinitionError, Step, Theorem, TheoremError, computes_to_list,
-    elab::proof,
+    Computation, ComputationDefinitionError, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL,
+    SYMBOL_KIND_SYMBOL, Step, Theorem, TheoremError, computes_to_list, elab::proof,
 };
 
 fn computation(spelling: &str) -> Name {
@@ -187,6 +187,9 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
     );
     assert_eq!(loaded.symbol(":true"), Some(symbol(":true")));
     assert_eq!(loaded.symbol(":false"), Some(symbol(":false")));
+    assert_eq!(loaded.symbol(":symbol"), Some(SYMBOL_KIND_SYMBOL));
+    assert_eq!(loaded.symbol(":lambda"), Some(LAMBDA_KIND_SYMBOL));
+    assert_eq!(loaded.symbol(":list"), Some(LIST_KIND_SYMBOL));
     assert_eq!(loaded.computation("missing"), None);
     assert_eq!(loaded.theorem("missing"), None);
     assert_eq!(loaded.symbol("missing"), None);
@@ -212,6 +215,9 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         Some(theorem("reverse_double"))
     );
     assert_eq!(symbol_name(":true"), Some(symbol(":true")));
+    assert_eq!(symbol_name(":symbol"), Some(SYMBOL_KIND_SYMBOL));
+    assert_eq!(symbol_name(":lambda"), Some(LAMBDA_KIND_SYMBOL));
+    assert_eq!(symbol_name(":list"), Some(LIST_KIND_SYMBOL));
 }
 
 #[test]
