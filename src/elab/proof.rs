@@ -2,7 +2,7 @@
 
 use crate::{
     Computation, Context, Name, Proof, Prop, Step, Symbol, Theorem, TheoremError, Theory,
-    alpha_eq_computation, is_list, is_value, substitute_prop,
+    alpha_eq_computation, alpha_eq_prop, is_list, is_value, substitute_prop,
 };
 
 #[cfg(test)]
@@ -10,7 +10,7 @@ use crate::{Outcome, computes_to_outcome};
 
 #[cfg(test)]
 use super::source::ParsedModule;
-use super::source::{ParseError, ParsedTheorem, ProofExpr, ProofScript};
+use super::source::{ParseError, ParsedTheorem, ProofExpr, ProofScript, TacticExpr, TacticScript};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvaluationProofError {
@@ -27,6 +27,10 @@ pub enum EvaluationProofError {
 pub enum ProofElaborationError {
     EvaluationFailed(EvaluationProofError),
     UnknownTheorem(Name),
+    TacticFailed {
+        tactic: &'static str,
+        message: String,
+    },
     InSubproof {
         form: &'static str,
         error: Box<ProofElaborationError>,
@@ -73,6 +77,14 @@ pub(crate) fn proof_for_theorem_result(
                 error,
             }
         }),
+        ProofScript::By(script) => {
+            tactic_script_to_proof(script, theory, &Goal::new(theorem.prop.clone())).map_err(
+                |error| SourceTheoremError::ProofElaborationFailed {
+                    theorem: theorem.name,
+                    error,
+                },
+            )
+        }
     }
 }
 
@@ -298,6 +310,374 @@ fn proof_expr_to_proof_in_context(
             forall: Box::new(subproof("forall-elim forall", forall, theory, context)?),
             argument: argument.clone(),
         }),
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Goal {
+    context: Context,
+    target: Prop,
+}
+
+impl Goal {
+    fn new(target: Prop) -> Self {
+        Self {
+            context: Context::new(),
+            target,
+        }
+    }
+}
+
+fn tactic_script_to_proof(
+    script: &TacticScript,
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    tactic_steps_to_proof(&script.tactics, theory, goal)
+}
+
+fn tactic_steps_to_proof(
+    tactics: &[TacticExpr],
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let Some((tactic, rest)) = tactics.split_first() else {
+        return Err(tactic_failed("by", "tactic script left the goal unsolved"));
+    };
+
+    match tactic {
+        TacticExpr::Intro(symbol) => tactic_intro(*symbol, rest, theory, goal),
+        TacticExpr::Exact(proof) => {
+            ensure_no_more_tactics(rest, "exact")?;
+            tactic_exact(proof, theory, goal)
+        }
+        TacticExpr::Assumption => {
+            ensure_no_more_tactics(rest, "assumption")?;
+            tactic_assumption(goal)
+        }
+        TacticExpr::Eval { limit } => {
+            ensure_no_more_tactics(rest, "eval")?;
+            tactic_eval(*limit, theory, goal)
+        }
+        TacticExpr::Apply { theorem, arguments } => {
+            ensure_no_more_tactics(rest, "apply")?;
+            tactic_apply(*theorem, arguments, theory, goal)
+        }
+        TacticExpr::Split { left, right } => {
+            ensure_no_more_tactics(rest, "split")?;
+            tactic_split(left, right, theory, goal)
+        }
+        TacticExpr::Exists { witness, proof } => {
+            ensure_no_more_tactics(rest, "exists")?;
+            tactic_exists(witness, proof, theory, goal)
+        }
+        TacticExpr::Left(proof) => {
+            ensure_no_more_tactics(rest, "left")?;
+            tactic_left(proof, theory, goal)
+        }
+        TacticExpr::Right(proof) => {
+            ensure_no_more_tactics(rest, "right")?;
+            tactic_right(proof, theory, goal)
+        }
+    }
+}
+
+fn tactic_intro(
+    symbol: Symbol,
+    rest: &[TacticExpr],
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    match &goal.target {
+        Prop::ForAll {
+            variable,
+            guard,
+            body,
+        } if *variable == symbol => {
+            let mut next_goal = Goal {
+                context: goal.context.clone(),
+                target: body.as_ref().clone(),
+            };
+            if let Some(guard) = guard.as_ref() {
+                next_goal.context.insert(symbol, guard.as_ref().clone());
+            }
+            Ok(Proof::ForAllIntro {
+                variable: symbol,
+                guard: guard.as_deref().cloned(),
+                proof: Box::new(tactic_steps_to_proof(rest, theory, &next_goal)?),
+            })
+        }
+        Prop::ForAll { variable, .. } => Err(tactic_failed(
+            "intro",
+            format!("expected theorem binder {:?}, got {:?}", variable, symbol),
+        )),
+        Prop::Implies(premise, conclusion) => {
+            let mut next_goal = Goal {
+                context: goal.context.clone(),
+                target: conclusion.as_ref().clone(),
+            };
+            next_goal.context.insert(symbol, premise.as_ref().clone());
+            Ok(Proof::ImpliesIntro {
+                assumption: symbol,
+                premise: premise.as_ref().clone(),
+                proof: Box::new(tactic_steps_to_proof(rest, theory, &next_goal)?),
+            })
+        }
+        _ => Err(tactic_failed(
+            "intro",
+            "goal is not a forall or implication",
+        )),
+    }
+}
+
+fn tactic_exact(
+    proof_expr: &ProofExpr,
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let proof = proof_expr_to_proof_in_context(proof_expr, theory, &goal.context)?;
+    let Some(proven) = theory.proven_prop_in_context(&proof, &goal.context) else {
+        return Err(tactic_failed(
+            "exact",
+            "proof expression proves no proposition",
+        ));
+    };
+
+    if alpha_eq_prop(&proven, &goal.target) {
+        Ok(proof)
+    } else {
+        Err(tactic_failed(
+            "exact",
+            format!("proof proves {:?}, but goal is {:?}", proven, goal.target),
+        ))
+    }
+}
+
+fn tactic_assumption(goal: &Goal) -> Result<Proof, ProofElaborationError> {
+    goal.context
+        .iter()
+        .find_map(|(symbol, prop)| {
+            alpha_eq_prop(prop, &goal.target).then_some(Proof::Assume(*symbol))
+        })
+        .ok_or_else(|| tactic_failed("assumption", "no local assumption matches the goal"))
+}
+
+fn tactic_eval(limit: usize, theory: &Theory, goal: &Goal) -> Result<Proof, ProofElaborationError> {
+    let Prop::Equal(left, right) = &goal.target else {
+        return Err(tactic_failed("eval", "goal is not an equality"));
+    };
+
+    proof_by_reduction_to_computation_in_theory_and_context(
+        left.clone(),
+        right.clone(),
+        theory,
+        &goal.context,
+        limit,
+    )
+    .or_else(|_| {
+        proof_by_same_normal_form_in_theory_and_context(
+            left.clone(),
+            right.clone(),
+            theory,
+            &goal.context,
+            limit,
+        )
+    })
+    .map_err(ProofElaborationError::EvaluationFailed)
+}
+
+fn tactic_apply(
+    theorem: Name,
+    arguments: &[Computation],
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let Some(mut prop) = theory.theorem(theorem).cloned() else {
+        return Err(ProofElaborationError::UnknownTheorem(theorem));
+    };
+    let mut proof = Proof::Known(theorem);
+
+    for argument in arguments {
+        let Prop::ForAll { variable, body, .. } = prop else {
+            return Err(tactic_failed("apply", "too many explicit arguments"));
+        };
+        proof = Proof::ForAllElim {
+            forall: Box::new(proof),
+            argument: argument.clone(),
+        };
+        prop = substitute_prop(&body, variable, argument);
+    }
+
+    apply_implications_from_context(proof, prop, theory, goal)
+}
+
+fn apply_implications_from_context(
+    mut proof: Proof,
+    mut prop: Prop,
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    loop {
+        if alpha_eq_prop(&prop, &goal.target) {
+            return Ok(proof);
+        }
+
+        let Prop::Implies(premise, conclusion) = prop else {
+            return Err(tactic_failed(
+                "apply",
+                format!(
+                    "theorem concludes {:?}, but goal is {:?}",
+                    prop, goal.target
+                ),
+            ));
+        };
+
+        let premise_goal = Goal {
+            context: goal.context.clone(),
+            target: premise.as_ref().clone(),
+        };
+        let premise_proof = tactic_assumption(&premise_goal).map_err(|_| {
+            tactic_failed(
+                "apply",
+                format!("premise {:?} is not available as an assumption", premise),
+            )
+        })?;
+
+        proof = Proof::ImpliesElim {
+            implication: Box::new(proof),
+            premise: Box::new(premise_proof),
+        };
+        prop = theory
+            .proven_prop_in_context(&proof, &goal.context)
+            .ok_or_else(|| tactic_failed("apply", "applying theorem produced no proposition"))?;
+
+        if alpha_eq_prop(&prop, conclusion.as_ref()) {
+            prop = conclusion.as_ref().clone();
+        }
+    }
+}
+
+fn tactic_split(
+    left_script: &TacticScript,
+    right_script: &TacticScript,
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let Prop::And(left, right) = &goal.target else {
+        return Err(tactic_failed("split", "goal is not a conjunction"));
+    };
+
+    Ok(Proof::AndIntro(
+        Box::new(tactic_script_to_proof(
+            left_script,
+            theory,
+            &Goal {
+                context: goal.context.clone(),
+                target: left.as_ref().clone(),
+            },
+        )?),
+        Box::new(tactic_script_to_proof(
+            right_script,
+            theory,
+            &Goal {
+                context: goal.context.clone(),
+                target: right.as_ref().clone(),
+            },
+        )?),
+    ))
+}
+
+fn tactic_exists(
+    witness: &Computation,
+    script: &TacticScript,
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let Prop::Exists {
+        variable,
+        guard,
+        body,
+    } = &goal.target
+    else {
+        return Err(tactic_failed("exists", "goal is not an existential"));
+    };
+
+    let witness_goal = Goal {
+        context: goal.context.clone(),
+        target: substitute_prop(body, *variable, witness),
+    };
+
+    Ok(Proof::ExistsIntro {
+        variable: *variable,
+        guard: guard.as_deref().cloned(),
+        body: body.as_ref().clone(),
+        witness: witness.clone(),
+        proof: Box::new(tactic_script_to_proof(script, theory, &witness_goal)?),
+    })
+}
+
+fn tactic_left(
+    script: &TacticScript,
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let Prop::Or(left, right) = &goal.target else {
+        return Err(tactic_failed("left", "goal is not a disjunction"));
+    };
+
+    Ok(Proof::OrIntroLeft {
+        proof: Box::new(tactic_script_to_proof(
+            script,
+            theory,
+            &Goal {
+                context: goal.context.clone(),
+                target: left.as_ref().clone(),
+            },
+        )?),
+        right: right.as_ref().clone(),
+    })
+}
+
+fn tactic_right(
+    script: &TacticScript,
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let Prop::Or(left, right) = &goal.target else {
+        return Err(tactic_failed("right", "goal is not a disjunction"));
+    };
+
+    Ok(Proof::OrIntroRight {
+        left: left.as_ref().clone(),
+        proof: Box::new(tactic_script_to_proof(
+            script,
+            theory,
+            &Goal {
+                context: goal.context.clone(),
+                target: right.as_ref().clone(),
+            },
+        )?),
+    })
+}
+
+fn ensure_no_more_tactics(
+    rest: &[TacticExpr],
+    tactic: &'static str,
+) -> Result<(), ProofElaborationError> {
+    if rest.is_empty() {
+        Ok(())
+    } else {
+        Err(tactic_failed(
+            tactic,
+            "tactic solved the current goal before the script ended",
+        ))
+    }
+}
+
+fn tactic_failed(tactic: &'static str, message: impl Into<String>) -> ProofElaborationError {
+    ProofElaborationError::TacticFailed {
+        tactic,
+        message: message.into(),
     }
 }
 

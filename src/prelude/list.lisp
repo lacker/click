@@ -1704,24 +1704,20 @@
   (computes-to
     (value-eq (quote :true) (quote :true))
     (quote :true))
-  (proof
-    (eval-to
-      (value-eq (quote :true) (quote :true))
-      (quote :true))))
+  (by
+    (eval)))
 
 (theorem value_eq_true_false
   (computes-to
     (value-eq (quote :true) (quote :false))
     (quote :false))
-  (proof
-    (eval-to
-      (value-eq (quote :true) (quote :false))
-      (quote :false))))
+  (by
+    (eval)))
 
 (theorem value_eq_nil
   (computes-to (value-eq nil nil) (quote :true))
-  (proof
-    (eval-to (value-eq nil nil) (quote :true))))
+  (by
+    (eval)))
 
 (theorem value_eq_nil_cons
   (forall head (is-value head)
@@ -1729,12 +1725,10 @@
       (computes-to
         (value-eq nil (cons head tail))
         (quote :false))))
-  (proof
-    (forall-intro head (is-value head)
-      (forall-intro tail (is-list tail)
-        (eval-to
-          (value-eq nil (cons head tail))
-          (quote :false))))))
+  (by
+    (intro head)
+    (intro tail)
+    (eval)))
 
 (theorem value_eq_cons_nil
   (forall head (is-value head)
@@ -1742,12 +1736,10 @@
       (computes-to
         (value-eq (cons head tail) nil)
         (quote :false))))
-  (proof
-    (forall-intro head (is-value head)
-      (forall-intro tail (is-list tail)
-        (eval-to
-          (value-eq (cons head tail) nil)
-          (quote :false))))))
+  (by
+    (intro head)
+    (intro tail)
+    (eval)))
 
 (theorem value_eq_cons
   (forall left_head (is-value left_head)
@@ -1766,30 +1758,19 @@
                 (tail (cons left_head left_tail))
                 (tail (cons right_head right_tail)))
               (quote :false)))))))
-  (proof
-    (forall-intro left_head (is-value left_head)
-      (forall-intro left_tail (is-list left_tail)
-        (forall-intro right_head (is-value right_head)
-          (forall-intro right_tail (is-list right_tail)
-            (eval-same
-              (value-eq
-                (cons left_head left_tail)
-                (cons right_head right_tail))
-              (if
-                (value-eq
-                  (head (cons left_head left_tail))
-                  (head (cons right_head right_tail)))
-                (value-eq
-                  (tail (cons left_head left_tail))
-                  (tail (cons right_head right_tail)))
-                (quote :false)))))))))
+  (by
+    (intro left_head)
+    (intro left_tail)
+    (intro right_head)
+    (intro right_tail)
+    (eval)))
 
 (theorem member_nil
   (forall value (is-value value)
     (computes-to (member value nil) (quote :false)))
-  (proof
-    (forall-intro value (is-value value)
-      (eval-to (member value nil) (quote :false)))))
+  (by
+    (intro value)
+    (eval)))
 
 (theorem member_cons_true
   (forall value (is-value value)

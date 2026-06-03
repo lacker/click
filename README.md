@@ -51,6 +51,13 @@ public API; callers resolve source spellings through the elaborator environment.
 General source loading uses `LoadedSource`, which can load source strings or
 files into a checked `Theory` while maintaining the shared `ElabEnv`.
 
+Source theorems can still use raw kernel-like proof terms with `(proof ...)`.
+They can also use goal-directed tactic scripts with `(by ...)`. Tactics inspect
+the current goal and local context, then elaborate to ordinary kernel `Proof`
+values that are checked by the kernel. The initial tactic set is intentionally
+small and deterministic: `intro`, `assumption`, `exact`, `eval`, `apply`,
+`split`/`constructor`, `exists`, `left`, and `right`.
+
 Propositions can talk about arbitrary computations. Quantifiers may be
 unguarded, or guarded by propositions such as `is-value`, `is-list`,
 `is-effect`, and `is-outcome`. Rust APIs that require a concrete finalized

@@ -579,6 +579,7 @@ fn proof_error_contains_evaluation_failure(error: &ProofElaborationError) -> boo
             proof_error_contains_evaluation_failure(error)
         }
         ProofElaborationError::UnknownTheorem(_) => false,
+        ProofElaborationError::TacticFailed { .. } => false,
     }
 }
 

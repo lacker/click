@@ -191,6 +191,7 @@ impl ParsedTheorem {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ProofScript {
     Proof(ProofExpr),
+    By(TacticScript),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -273,6 +274,35 @@ pub(crate) enum ProofExpr {
         forall: Box<ProofExpr>,
         argument: Computation,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TacticScript {
+    pub tactics: Vec<TacticExpr>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum TacticExpr {
+    Intro(Symbol),
+    Exact(Box<ProofExpr>),
+    Assumption,
+    Eval {
+        limit: usize,
+    },
+    Apply {
+        theorem: Name,
+        arguments: Vec<Computation>,
+    },
+    Split {
+        left: TacticScript,
+        right: TacticScript,
+    },
+    Exists {
+        witness: Computation,
+        proof: TacticScript,
+    },
+    Left(TacticScript),
+    Right(TacticScript),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1065,8 +1095,128 @@ impl<'a> SourceParser<'a> {
                 expect_len("proof", items, 2)?;
                 Ok(ProofScript::Proof(self.proof_expr(&items[1])?))
             }
+            "by" => Ok(ProofScript::By(self.tactic_script(items)?)),
             _ => Err(ParseError::new(format!("unknown proof script `{form}`"))),
         }
+    }
+
+    fn tactic_script(&mut self, items: &[Expr]) -> Result<TacticScript, ParseError> {
+        if items.first().and_then(|head| atom(head).ok()) != Some("by") {
+            return Err(ParseError::new("expected tactic script"));
+        }
+
+        Ok(TacticScript {
+            tactics: items[1..]
+                .iter()
+                .map(|item| self.tactic_expr(item))
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+
+    fn nested_tactic_script(&mut self, expression: &Expr) -> Result<TacticScript, ParseError> {
+        let Expr::List(items) = expression else {
+            return Err(ParseError::new("expected tactic script"));
+        };
+        self.tactic_script(items)
+    }
+
+    fn tactic_expr(&mut self, expression: &Expr) -> Result<TacticExpr, ParseError> {
+        let Expr::List(items) = expression else {
+            return Err(ParseError::new("expected tactic expression"));
+        };
+        let Some(head) = items.first() else {
+            return Err(ParseError::new("empty tactic expression"));
+        };
+        let form = atom(head)?;
+
+        match form {
+            "intro" => self.tactic_intro(items),
+            "exact" => self.tactic_exact(items),
+            "assumption" => self.tactic_assumption(items),
+            "eval" => self.tactic_eval(items),
+            "apply" => self.tactic_apply(items),
+            "split" | "constructor" => self.tactic_split(form, items),
+            "exists" => self.tactic_exists(items),
+            "left" => self.tactic_left(items),
+            "right" => self.tactic_right(items),
+            _ => Err(ParseError::new(format!("unknown tactic `{form}`"))),
+        }
+    }
+
+    fn tactic_intro(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        expect_len("intro", items, 2)?;
+        Ok(TacticExpr::Intro(self.proof_symbol(atom(&items[1])?)?))
+    }
+
+    fn tactic_exact(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        expect_len("exact", items, 2)?;
+        Ok(TacticExpr::Exact(Box::new(self.proof_expr(&items[1])?)))
+    }
+
+    fn tactic_assumption(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        expect_len("assumption", items, 1)?;
+        Ok(TacticExpr::Assumption)
+    }
+
+    fn tactic_eval(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        match items.len() {
+            1 => Ok(TacticExpr::Eval { limit: 128 }),
+            2 => Ok(TacticExpr::Eval {
+                limit: parse_usize(atom(&items[1])?)?,
+            }),
+            _ => Err(ParseError::new(format!(
+                "`eval` expects 0 or 1 arguments, got {}",
+                items.len().saturating_sub(1)
+            ))),
+        }
+    }
+
+    fn tactic_apply(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        if items.len() < 2 {
+            return Err(ParseError::new(format!(
+                "`apply` expects at least 1 argument, got {}",
+                items.len().saturating_sub(1)
+            )));
+        }
+
+        let theorem = atom(&items[1])?;
+        let Some(theorem) = self.theorem(theorem) else {
+            return Err(ParseError::new(format!("unknown theorem `{theorem}`")));
+        };
+
+        Ok(TacticExpr::Apply {
+            theorem,
+            arguments: items[2..]
+                .iter()
+                .map(|item| self.computation(item))
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+
+    fn tactic_split(&mut self, form: &str, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        expect_len(form, items, 3)?;
+        Ok(TacticExpr::Split {
+            left: self.nested_tactic_script(&items[1])?,
+            right: self.nested_tactic_script(&items[2])?,
+        })
+    }
+
+    fn tactic_exists(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        expect_len("exists", items, 3)?;
+        Ok(TacticExpr::Exists {
+            witness: self.computation(&items[1])?,
+            proof: self.nested_tactic_script(&items[2])?,
+        })
+    }
+
+    fn tactic_left(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        expect_len("left", items, 2)?;
+        Ok(TacticExpr::Left(self.nested_tactic_script(&items[1])?))
+    }
+
+    fn tactic_right(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        expect_len("right", items, 2)?;
+        Ok(TacticExpr::Right(self.nested_tactic_script(&items[1])?))
     }
 
     fn proof_expr(&mut self, expression: &Expr) -> Result<ProofExpr, ParseError> {
@@ -1596,6 +1746,72 @@ mod tests {
                         spelling: "value".to_owned(),
                         symbol: Symbol(2_000),
                     }],
+                }],
+            })
+        );
+    }
+
+    #[test]
+    fn parses_by_tactic_scripts() {
+        let computations = [NameBinding {
+            spelling: "id",
+            name: Name(1),
+        }];
+        let theorems = [NameBinding {
+            spelling: "id_computes",
+            name: Name(2),
+        }];
+        let symbols = [SymbolBinding {
+            spelling: "x",
+            symbol: Symbol(1),
+        }];
+
+        assert_eq!(
+            parse_module(
+                "
+                (def id (lambda x x))
+                (theorem id_computes
+                  (forall value (is-value value)
+                    (computes-to (id value) value))
+                  (by
+                    (intro value)
+                    (eval)))
+                ",
+                &computations,
+                &theorems,
+                &symbols,
+            ),
+            Ok(ParsedModule {
+                computations: vec![(
+                    Name(1),
+                    Computation::Lambda(Lambda {
+                        parameter: Symbol(1),
+                        body: Box::new(Computation::Var(Symbol(1))),
+                    }),
+                )],
+                theorems: vec![ParsedTheorem {
+                    name: Name(2),
+                    prop: forall_where(
+                        Symbol(2_000),
+                        is_value(Computation::Var(Symbol(2_000))),
+                        computes_to(
+                            Computation::Apply {
+                                function: Box::new(Computation::Ref(Name(1))),
+                                argument: Box::new(Computation::Var(Symbol(2_000))),
+                            },
+                            Computation::Var(Symbol(2_000)),
+                        ),
+                    ),
+                    proof: ProofScript::By(TacticScript {
+                        tactics: vec![
+                            TacticExpr::Intro(Symbol(2_000)),
+                            TacticExpr::Eval { limit: 128 }
+                        ],
+                    }),
+                    local_symbols: vec![LocalSymbol {
+                        spelling: "value".to_owned(),
+                        symbol: Symbol(2_000),
+                    },],
                 }],
             })
         );

@@ -251,6 +251,114 @@ mod tests {
     }
 
     #[test]
+    fn load_str_checks_by_tactic_theorems() {
+        let mut loaded = LoadedSource::new();
+
+        loaded
+            .load_str(
+                "
+                (def id (lambda x x))
+                (theorem id_computes
+                  (forall value (is-value value)
+                    (computes-to (id value) value))
+                  (by
+                    (intro value)
+                    (eval)))
+                (theorem id_nil
+                  (computes-to (id nil) nil)
+                  (by
+                    (apply id_computes nil)))
+                (theorem nil_exact
+                  (computes-to nil nil)
+                  (by
+                    (exact (eval-to nil nil))))
+                (theorem nil_identity
+                  (implies
+                    (computes-to nil nil)
+                    (computes-to nil nil))
+                  (by
+                    (intro h)
+                    (assumption)))
+                (theorem nil_identity_apply
+                  (implies
+                    (computes-to nil nil)
+                    (computes-to nil nil))
+                  (by
+                    (intro h)
+                    (apply nil_identity)))
+                ",
+            )
+            .expect("source tactic theorems should load");
+
+        let id_nil = loaded
+            .theorem("id_nil")
+            .expect("loader should record tactic theorem spelling");
+
+        assert_eq!(
+            loaded.theory().theorem(id_nil),
+            Some(&computes_to(
+                Computation::Apply {
+                    function: Box::new(Computation::Ref(
+                        loaded.computation("id").expect("id should be loaded")
+                    )),
+                    argument: Box::new(Computation::Nil),
+                },
+                Computation::Nil
+            ))
+        );
+    }
+
+    #[test]
+    fn load_str_checks_structured_by_tactics() {
+        let mut loaded = LoadedSource::new();
+
+        loaded
+            .load_str(
+                "
+                (theorem nil_result
+                  (computes-to-list result nil)
+                  (by
+                    (exists nil
+                      (by
+                        (eval)))))
+                (theorem split_or
+                  (and
+                    (computes-to nil nil)
+                    (or
+                      (computes-to nil nil)
+                      (computes-to diverge diverge)))
+                  (by
+                    (split
+                      (by
+                        (eval))
+                      (by
+                        (left
+                          (by
+                            (eval)))))))
+                (theorem constructor_right
+                  (and
+                    (computes-to nil nil)
+                    (or
+                      (computes-to diverge diverge)
+                      (computes-to nil nil)))
+                  (by
+                    (constructor
+                      (by
+                        (eval))
+                      (by
+                        (right
+                          (by
+                            (eval)))))))
+                ",
+            )
+            .expect("structured tactic theorems should load");
+
+        assert!(loaded.theorem("nil_result").is_some());
+        assert!(loaded.theorem("split_or").is_some());
+        assert!(loaded.theorem("constructor_right").is_some());
+    }
+
+    #[test]
     fn load_str_checks_symbol_eq_is_bool_theorems() {
         let mut loaded = LoadedSource::new();
 
