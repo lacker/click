@@ -62,6 +62,10 @@ fn fold_left() -> Computation {
     computation_ref("fold-left")
 }
 
+fn zip_with() -> Computation {
+    computation_ref("zip-with")
+}
+
 fn last() -> Computation {
     computation_ref("last")
 }
@@ -122,6 +126,10 @@ fn prelude_theorem_names() -> Vec<Name> {
         "fold_left_nil",
         "fold_left_cons",
         "fold_left_computes_to_value",
+        "zip_with_left_nil",
+        "zip_with_right_nil",
+        "zip_with_cons",
+        "zip_with_computes_to_list",
         "map_identity",
         "concat_map_singleton",
         "fold_right_cons_nil",
@@ -244,6 +252,10 @@ fn theory_defines_reverse() {
         Some(&list_tests::fold_left_definition())
     );
     assert_eq!(
+        theory.computation(computation("zip-with")),
+        Some(&list_tests::zip_with_definition())
+    );
+    assert_eq!(
         theory.computation(computation("last")),
         Some(&list_tests::last_definition())
     );
@@ -268,6 +280,7 @@ fn theory_defines_reverse() {
     assert_eq!(concat_map(), Computation::Ref(computation("concat-map")));
     assert_eq!(fold_right(), Computation::Ref(computation("fold-right")));
     assert_eq!(fold_left(), Computation::Ref(computation("fold-left")));
+    assert_eq!(zip_with(), Computation::Ref(computation("zip-with")));
     assert_eq!(last(), Computation::Ref(computation("last")));
     assert_eq!(init(), Computation::Ref(computation("init")));
     assert_eq!(null(), Computation::Ref(computation("null")));
@@ -310,6 +323,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&fold_left()),
         Step::Reduced(list_tests::fold_left_definition())
+    );
+    assert_eq!(
+        theory.reduce(&zip_with()),
+        Step::Reduced(list_tests::zip_with_definition())
     );
     assert_eq!(
         theory.reduce(&last()),
@@ -512,6 +529,10 @@ fn theory_defines_reverse_theorems() {
     let fold_left_nil_prop = list_tests::fold_left_nil_source_theorem();
     let fold_left_cons_prop = list_tests::fold_left_cons_source_theorem();
     let fold_left_computes_to_value_prop = list_tests::fold_left_computes_to_value_source_theorem();
+    let zip_with_left_nil_prop = list_tests::zip_with_left_nil_source_theorem();
+    let zip_with_right_nil_prop = list_tests::zip_with_right_nil_source_theorem();
+    let zip_with_cons_prop = list_tests::zip_with_cons_source_theorem();
+    let zip_with_computes_to_list_prop = list_tests::zip_with_computes_to_list_source_theorem();
     let map_identity_prop = list_tests::map_identity_source_theorem();
     let concat_map_singleton_prop = list_tests::concat_map_singleton_source_theorem();
     let fold_right_cons_nil_prop = list_tests::fold_right_cons_nil_source_theorem();
@@ -631,6 +652,22 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("fold_left_computes_to_value")),
         Some(&fold_left_computes_to_value_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("zip_with_left_nil")),
+        Some(&zip_with_left_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("zip_with_right_nil")),
+        Some(&zip_with_right_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("zip_with_cons")),
+        Some(&zip_with_cons_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("zip_with_computes_to_list")),
+        Some(&zip_with_computes_to_list_prop)
     );
     assert_eq!(
         theory.theorem(theorem("map_identity")),
@@ -986,6 +1023,30 @@ fn theory_defines_reverse_theorems() {
             .expect("fold-left computes theorem source proof should check with dependencies")
             .prop(),
         &fold_left_computes_to_value_prop,
+    );
+    assert_eq!(
+        checked_theorem("zip_with_left_nil")
+            .expect("zip-with left nil theorem source proof should check with dependencies")
+            .prop(),
+        &zip_with_left_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("zip_with_right_nil")
+            .expect("zip-with right nil theorem source proof should check with dependencies")
+            .prop(),
+        &zip_with_right_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("zip_with_cons")
+            .expect("zip-with cons theorem source proof should check with dependencies")
+            .prop(),
+        &zip_with_cons_prop,
+    );
+    assert_eq!(
+        checked_theorem("zip_with_computes_to_list")
+            .expect("zip-with computes theorem source proof should check with dependencies")
+            .prop(),
+        &zip_with_computes_to_list_prop,
     );
     assert_eq!(
         checked_theorem("map_identity")

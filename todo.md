@@ -29,19 +29,12 @@ These need a natural-number representation and basic arithmetic theorems.
 13. `replicate` - build a list with `n` copies of a value.
 14. `range` - build a list of natural numbers.
 
-## Higher-Order List Functions
-
-These need a clear convention for applying function values and propagating
-errors/divergence.
-
-15. `zip-with` - combine two lists elementwise with a function.
-
 ## Pair/List Shape Utilities
 
 These use Lisp-style pairs encoded as two-element lists or cons cells. We should
 pick the representation before adding them.
 
-16. `zip` - combine two lists into a list of pairs.
-17. `unzip` - split a list of pairs into a pair of lists.
-18. `intersperse` - place a separator between list elements.
-19. `intercalate` - concatenate a list of lists with a separator list.
+15. `zip` - combine two lists into a list of pairs.
+16. `unzip` - split a list of pairs into a pair of lists.
+17. `intersperse` - place a separator between list elements.
+18. `intercalate` - concatenate a list of lists with a separator list.

@@ -134,6 +134,23 @@
             (function initial (head cell))
             (tail cell)))))))
 
+(def zip-with
+  (lambda function
+    (lambda left
+      (lambda right
+        (list-case left
+          nil
+          left_cell
+          (list-case right
+            nil
+            right_cell
+            (cons
+              (function (head left_cell) (head right_cell))
+              (zip-with
+                function
+                (tail left_cell)
+                (tail right_cell)))))))))
+
 (def last
   ((lambda fixed_point_function
      ((lambda fixed_point_self
@@ -869,6 +886,161 @@
                       (computes-to
                         (fold-left function folded_initial_rewrite_target tail)
                         result))))))))))))
+
+(theorem zip_with_left_nil
+  (forall function (is-value function)
+    (forall right (is-list right)
+      (computes-to (zip-with function nil right) nil)))
+  (proof
+    (forall-intro function (is-value function)
+      (forall-intro right (is-list right)
+        (eval-to (zip-with function nil right) nil)))))
+
+(theorem zip_with_right_nil
+  (forall function (is-value function)
+    (forall left (is-list left)
+      (computes-to (zip-with function left nil) nil)))
+  (proof
+    (forall-intro function (is-value function)
+      (list-induction left
+        (computes-to (zip-with function left nil) nil)
+        (eval-to (zip-with function nil nil) nil)
+        head
+        tail
+        induction_hypothesis
+        (eval-to (zip-with function (cons head tail) nil) nil)))))
+
+(theorem zip_with_cons
+  (forall function (is-value function)
+    (forall left_head (is-value left_head)
+      (forall left_tail (is-list left_tail)
+        (forall right_head (is-value right_head)
+          (forall right_tail (is-list right_tail)
+            (computes-to
+              (zip-with
+                function
+                (cons left_head left_tail)
+                (cons right_head right_tail))
+              (cons
+                (function left_head right_head)
+                (zip-with function left_tail right_tail))))))))
+  (proof
+    (forall-intro function (is-value function)
+      (forall-intro left_head (is-value left_head)
+        (forall-intro left_tail (is-list left_tail)
+          (forall-intro right_head (is-value right_head)
+            (forall-intro right_tail (is-list right_tail)
+              (eval-same
+                (zip-with
+                  function
+                  (cons left_head left_tail)
+                  (cons right_head right_tail))
+                (cons
+                  (function left_head right_head)
+                  (zip-with function left_tail right_tail))))))))))
+
+(theorem zip_with_computes_to_list
+  (forall function (is-value function)
+    (implies
+      (forall left_value (is-value left_value)
+        (forall right_value (is-value right_value)
+          (exists zipped_value (is-value zipped_value)
+            (computes-to
+              (function left_value right_value)
+              zipped_value))))
+      (forall left (is-list left)
+        (forall right (is-list right)
+          (computes-to-list result (zip-with function left right))))))
+  (proof
+    (forall-intro function (is-value function)
+      (implies-intro combines_values
+        (forall left_value (is-value left_value)
+          (forall right_value (is-value right_value)
+            (exists zipped_value (is-value zipped_value)
+              (computes-to
+                (function left_value right_value)
+                zipped_value))))
+        (list-induction left
+          (forall right (is-list right)
+            (computes-to-list result (zip-with function left right)))
+          (forall-intro right (is-list right)
+            (exists-intro result (is-list result)
+              (computes-to (zip-with function nil right) result)
+              nil
+              (eval-to (zip-with function nil right) nil)))
+          left_head
+          left_tail
+          left_induction_hypothesis
+          (list-induction right
+            (computes-to-list
+              result
+              (zip-with function (cons left_head left_tail) right))
+            (exists-intro result (is-list result)
+              (computes-to
+                (zip-with function (cons left_head left_tail) nil)
+                result)
+              nil
+              (eval-to
+                (zip-with function (cons left_head left_tail) nil)
+                nil))
+            right_head
+            right_tail
+            right_induction_hypothesis
+            (exists-elim
+              (forall-elim
+                (forall-elim
+                  (assume combines_values)
+                  left_head)
+                right_head)
+              zipped_head
+              zipped_head_proof
+              (exists-elim
+                (forall-elim
+                  (assume left_induction_hypothesis)
+                  right_tail)
+                zipped_tail
+                zipped_tail_proof
+                (exists-intro result (is-list result)
+                  (computes-to
+                    (zip-with
+                      function
+                      (cons left_head left_tail)
+                      (cons right_head right_tail))
+                    result)
+                  (cons zipped_head zipped_tail)
+                  (rewrite
+                    (assume zipped_tail_proof)
+                    (rewrite
+                      (assume zipped_head_proof)
+                      (forall-elim
+                        (forall-elim
+                          (forall-elim
+                            (forall-elim
+                              (forall-elim
+                                (known zip_with_cons)
+                                function)
+                              left_head)
+                            left_tail)
+                          right_head)
+                        right_tail)
+                      zipped_head_rewrite_target
+                      (computes-to
+                        (zip-with
+                          function
+                          (cons left_head left_tail)
+                          (cons right_head right_tail))
+                        (cons
+                          zipped_head_rewrite_target
+                          (zip-with function left_tail right_tail))))
+                    zipped_tail_rewrite_target
+                    (computes-to
+                      (zip-with
+                        function
+                        (cons left_head left_tail)
+                        (cons right_head right_tail))
+                      (cons
+                        zipped_head
+                        zipped_tail_rewrite_target))))))))))))
 
 (theorem map_identity
   (forall list (is-list list)

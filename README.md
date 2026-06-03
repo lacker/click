@@ -92,8 +92,8 @@ represented as a computation variable plus a proposition such as `is-value`.
 
 The standard prelude is just a theory built on top of the kernel. It currently
 contains list definitions such as `reverse_acc`, `reverse`, `append`, `snoc`,
-`concat`, `map`, `concat-map`, `fold-right`, `fold-left`, `last`, `init`,
-`null`, and `is-singleton`, plus theorems about those definitions. Prelude
+`concat`, `map`, `concat-map`, `fold-right`, `fold-left`, `zip-with`, `last`,
+`init`, `null`, and `is-singleton`, plus theorems about those definitions. Prelude
 booleans are conventional quoted symbols: `:true` and `:false`. They are not
 special kernel values.
 The list prelude itself lives in `src/prelude/list.lisp`; the corresponding

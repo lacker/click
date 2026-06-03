@@ -144,6 +144,14 @@ pub fn fold_left_definition() -> Computation {
     definition("fold-left")
 }
 
+pub fn zip_with() -> Computation {
+    computation_ref("zip-with")
+}
+
+pub fn zip_with_definition() -> Computation {
+    definition("zip-with")
+}
+
 pub fn last() -> Computation {
     computation_ref("last")
 }
@@ -373,6 +381,22 @@ pub fn fold_left_computes_to_value_source_theorem() -> Prop {
     theorem_prop("fold_left_computes_to_value")
 }
 
+pub fn zip_with_left_nil_source_theorem() -> Prop {
+    theorem_prop("zip_with_left_nil")
+}
+
+pub fn zip_with_right_nil_source_theorem() -> Prop {
+    theorem_prop("zip_with_right_nil")
+}
+
+pub fn zip_with_cons_source_theorem() -> Prop {
+    theorem_prop("zip_with_cons")
+}
+
+pub fn zip_with_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("zip_with_computes_to_list")
+}
+
 pub fn map_identity_source_theorem() -> Prop {
     theorem_prop("map_identity")
 }
@@ -465,6 +489,10 @@ pub fn fold_left_call(
     list: Computation,
 ) -> Computation {
     apply(apply(apply(fold_left(), function), initial), list)
+}
+
+pub fn zip_with_call(function: Computation, left: Computation, right: Computation) -> Computation {
+    apply(apply(apply(zip_with(), function), left), right)
 }
 
 pub fn last_call(list: Computation) -> Computation {
@@ -1205,6 +1233,116 @@ pub fn fold_left_computes_to_value_theorem(
     )
 }
 
+/// Zipping with an empty left list returns `nil`.
+pub fn zip_with_left_nil_theorem(function: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        forall_where(
+            right,
+            is_list(var(right)),
+            computes_to(zip_with_call(var(function), nil(), var(right)), nil()),
+        ),
+    )
+}
+
+/// Zipping with an empty right list returns `nil`.
+pub fn zip_with_right_nil_theorem(function: Symbol, left: Symbol) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        forall_where(
+            left,
+            is_list(var(left)),
+            computes_to(zip_with_call(var(function), var(left), nil()), nil()),
+        ),
+    )
+}
+
+/// Zipping two conses combines the heads and recurs on the tails.
+pub fn zip_with_cons_theorem(
+    function: Symbol,
+    left_head: Symbol,
+    left_tail: Symbol,
+    right_head: Symbol,
+    right_tail: Symbol,
+) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        forall_where(
+            left_head,
+            is_value(var(left_head)),
+            forall_where(
+                left_tail,
+                is_list(var(left_tail)),
+                forall_where(
+                    right_head,
+                    is_value(var(right_head)),
+                    forall_where(
+                        right_tail,
+                        is_list(var(right_tail)),
+                        computes_to(
+                            zip_with_call(
+                                var(function),
+                                cons(var(left_head), var(left_tail)),
+                                cons(var(right_head), var(right_tail)),
+                            ),
+                            cons(
+                                apply(apply(var(function), var(left_head)), var(right_head)),
+                                zip_with_call(var(function), var(left_tail), var(right_tail)),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the combining function maps two values to a value, `zip-with` returns a list.
+pub fn zip_with_computes_to_list_theorem(
+    function: Symbol,
+    left_value: Symbol,
+    right_value: Symbol,
+    zipped_value: Symbol,
+    left: Symbol,
+    right: Symbol,
+    result: Symbol,
+) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        implies(
+            forall_where(
+                left_value,
+                is_value(var(left_value)),
+                forall_where(
+                    right_value,
+                    is_value(var(right_value)),
+                    exists_where(
+                        zipped_value,
+                        is_value(var(zipped_value)),
+                        computes_to(
+                            apply(apply(var(function), var(left_value)), var(right_value)),
+                            var(zipped_value),
+                        ),
+                    ),
+                ),
+            ),
+            forall_where(
+                left,
+                is_list(var(left)),
+                forall_where(
+                    right,
+                    is_list(var(right)),
+                    computes_to_list(result, zip_with_call(var(function), var(left), var(right))),
+                ),
+            ),
+        ),
+    )
+}
+
 pub fn identity_function(value: Symbol) -> Computation {
     lambda(value, var(value))
 }
@@ -1377,6 +1515,13 @@ mod tests {
     const MAPPED_LIST: Symbol = Symbol(210);
     const INITIAL: Symbol = Symbol(211);
     const FOLDED_VALUE: Symbol = Symbol(212);
+    const LEFT_HEAD: Symbol = Symbol(213);
+    const LEFT_TAIL: Symbol = Symbol(214);
+    const RIGHT_HEAD: Symbol = Symbol(215);
+    const RIGHT_TAIL: Symbol = Symbol(216);
+    const LEFT_VALUE: Symbol = Symbol(217);
+    const RIGHT_VALUE: Symbol = Symbol(218);
+    const ZIPPED_VALUE: Symbol = Symbol(219);
 
     fn prove_evaluation(computation: Computation, expected: impl Into<Outcome>) -> Proof {
         proof_by_evaluation(computation, expected, 512).expect("example should evaluate")
@@ -2206,6 +2351,171 @@ mod tests {
     }
 
     #[test]
+    fn zip_with_theorems_have_expected_shape() {
+        assert_eq!(
+            zip_with_left_nil_theorem(FUNCTION, RIGHT_LIST),
+            forall_where(
+                FUNCTION,
+                is_value(var(FUNCTION)),
+                forall_where(
+                    RIGHT_LIST,
+                    is_list(var(RIGHT_LIST)),
+                    computes_to(zip_with_call(var(FUNCTION), nil(), var(RIGHT_LIST)), nil()),
+                ),
+            )
+        );
+        assert_eq!(
+            zip_with_right_nil_theorem(FUNCTION, X),
+            forall_where(
+                FUNCTION,
+                is_value(var(FUNCTION)),
+                forall_where(
+                    X,
+                    is_list(var(X)),
+                    computes_to(zip_with_call(var(FUNCTION), var(X), nil()), nil()),
+                ),
+            )
+        );
+        assert_eq!(
+            zip_with_cons_theorem(FUNCTION, LEFT_HEAD, LEFT_TAIL, RIGHT_HEAD, RIGHT_TAIL),
+            forall_where(
+                FUNCTION,
+                is_value(var(FUNCTION)),
+                forall_where(
+                    LEFT_HEAD,
+                    is_value(var(LEFT_HEAD)),
+                    forall_where(
+                        LEFT_TAIL,
+                        is_list(var(LEFT_TAIL)),
+                        forall_where(
+                            RIGHT_HEAD,
+                            is_value(var(RIGHT_HEAD)),
+                            forall_where(
+                                RIGHT_TAIL,
+                                is_list(var(RIGHT_TAIL)),
+                                computes_to(
+                                    zip_with_call(
+                                        var(FUNCTION),
+                                        cons(var(LEFT_HEAD), var(LEFT_TAIL)),
+                                        cons(var(RIGHT_HEAD), var(RIGHT_TAIL)),
+                                    ),
+                                    cons(
+                                        apply(
+                                            apply(var(FUNCTION), var(LEFT_HEAD)),
+                                            var(RIGHT_HEAD),
+                                        ),
+                                        zip_with_call(
+                                            var(FUNCTION),
+                                            var(LEFT_TAIL),
+                                            var(RIGHT_TAIL),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        );
+        assert_eq!(
+            zip_with_computes_to_list_theorem(
+                FUNCTION,
+                LEFT_VALUE,
+                RIGHT_VALUE,
+                ZIPPED_VALUE,
+                X,
+                RIGHT_LIST,
+                RESULT,
+            ),
+            forall_where(
+                FUNCTION,
+                is_value(var(FUNCTION)),
+                implies(
+                    forall_where(
+                        LEFT_VALUE,
+                        is_value(var(LEFT_VALUE)),
+                        forall_where(
+                            RIGHT_VALUE,
+                            is_value(var(RIGHT_VALUE)),
+                            exists_where(
+                                ZIPPED_VALUE,
+                                is_value(var(ZIPPED_VALUE)),
+                                computes_to(
+                                    apply(apply(var(FUNCTION), var(LEFT_VALUE)), var(RIGHT_VALUE),),
+                                    var(ZIPPED_VALUE),
+                                ),
+                            ),
+                        ),
+                    ),
+                    forall_where(
+                        X,
+                        is_list(var(X)),
+                        forall_where(
+                            RIGHT_LIST,
+                            is_list(var(RIGHT_LIST)),
+                            computes_to_list(
+                                RESULT,
+                                zip_with_call(var(FUNCTION), var(X), var(RIGHT_LIST)),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn zip_with_source_theorems_have_expected_shape() {
+        let left_nil_function = theorem_symbol("zip_with_left_nil", "function");
+        let left_nil_right = theorem_symbol("zip_with_left_nil", "right");
+        let right_nil_function = theorem_symbol("zip_with_right_nil", "function");
+        let right_nil_left = theorem_symbol("zip_with_right_nil", "left");
+        let cons_function = theorem_symbol("zip_with_cons", "function");
+        let cons_left_head = theorem_symbol("zip_with_cons", "left_head");
+        let cons_left_tail = theorem_symbol("zip_with_cons", "left_tail");
+        let cons_right_head = theorem_symbol("zip_with_cons", "right_head");
+        let cons_right_tail = theorem_symbol("zip_with_cons", "right_tail");
+        let computes_function = theorem_symbol("zip_with_computes_to_list", "function");
+        let computes_left_value = theorem_symbol("zip_with_computes_to_list", "left_value");
+        let computes_right_value = theorem_symbol("zip_with_computes_to_list", "right_value");
+        let computes_zipped_value = theorem_symbol("zip_with_computes_to_list", "zipped_value");
+        let computes_left = theorem_symbol("zip_with_computes_to_list", "left");
+        let computes_right = theorem_symbol("zip_with_computes_to_list", "right");
+        let computes_result = theorem_symbol("zip_with_computes_to_list", "result");
+
+        assert_eq!(
+            zip_with_left_nil_source_theorem(),
+            zip_with_left_nil_theorem(left_nil_function, left_nil_right)
+        );
+        assert_eq!(
+            zip_with_right_nil_source_theorem(),
+            zip_with_right_nil_theorem(right_nil_function, right_nil_left)
+        );
+        assert_eq!(
+            zip_with_cons_source_theorem(),
+            zip_with_cons_theorem(
+                cons_function,
+                cons_left_head,
+                cons_left_tail,
+                cons_right_head,
+                cons_right_tail,
+            )
+        );
+        assert_eq!(
+            zip_with_computes_to_list_source_theorem(),
+            zip_with_computes_to_list_theorem(
+                computes_function,
+                computes_left_value,
+                computes_right_value,
+                computes_zipped_value,
+                computes_left,
+                computes_right,
+                computes_result,
+            )
+        );
+    }
+
+    #[test]
     fn higher_order_relation_source_theorems_have_expected_shape() {
         assert_alpha_eq(
             &map_identity_source_theorem(),
@@ -2789,6 +3099,41 @@ mod tests {
         assert_evaluates(
             fold_left_call(front_cons, singleton(unit()), pair(quote(A), quote(B))),
             value(triple(quote(B), quote(A), unit())),
+        );
+    }
+
+    #[test]
+    fn zip_with_left_nil_returns_nil() {
+        let pair_function = lambda(X, lambda(NEXT, pair(var(X), var(NEXT))));
+
+        assert_evaluates(
+            zip_with_call(pair_function, nil(), pair(quote(A), quote(B))),
+            Value::nil(),
+        );
+    }
+
+    #[test]
+    fn zip_with_right_nil_returns_nil() {
+        let pair_function = lambda(X, lambda(NEXT, pair(var(X), var(NEXT))));
+
+        assert_evaluates(
+            zip_with_call(pair_function, pair(quote(A), quote(B)), nil()),
+            Value::nil(),
+        );
+    }
+
+    #[test]
+    fn zip_with_pair_function_truncates_to_shorter_list() {
+        let pair_function = lambda(X, lambda(NEXT, pair(var(X), var(NEXT))));
+        let expected = pair(pair(quote(A), unit()), pair(quote(B), quote(A)));
+
+        assert_evaluates(
+            zip_with_call(
+                pair_function,
+                triple(quote(A), quote(B), quote(NOT_A_LIST)),
+                pair(unit(), quote(A)),
+            ),
+            value(expected),
         );
     }
 
