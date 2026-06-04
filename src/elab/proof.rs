@@ -156,6 +156,14 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
             theory,
             context,
         )?))),
+        ProofExpr::IfEffectThenConditionFalse(proof) => {
+            Ok(Proof::IfValueWithEffectThenConditionFalse(Box::new(
+                subproof("if-effect-then-condition-false", proof, theory, context)?,
+            )))
+        }
+        ProofExpr::IfEffectThenElse(proof) => Ok(Proof::IfValueWithEffectThenElse(Box::new(
+            subproof("if-effect-then-else", proof, theory, context)?,
+        ))),
         ProofExpr::EvalTo {
             computation,
             expected,

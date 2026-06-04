@@ -205,7 +205,9 @@ fn prelude_theorem_names() -> Vec<Name> {
         "value_eq_cons_nil",
         "value_eq_cons",
         "is_symbol_true_implies_is_lambda_false",
+        "value_eq_true_implies_not_lambdas",
         "value_eq_left_symbol_true",
+        "value_eq_left_symbol_sound",
         "value_eq_cons_true_elim",
         "cons_congr",
         "member_nil",
@@ -236,6 +238,7 @@ fn prelude_theorem_names() -> Vec<Name> {
         "if_condition_true",
         "if_condition_false",
         "if_true_result_with_false_else",
+        "if_true_result_with_error_then",
         "symbol_eq_unit_unit",
         "symbol_eq_true_false",
         "symbol_eq_true",
@@ -712,12 +715,13 @@ fn theorem_definitions_require_computations() {
 
     let mut theory = Theory::new();
 
+    let theorem_result = try_define_theorems_in_theory(&mut theory);
     let Err(SourceTheoremError::ProofElaborationFailed {
         theorem: failed_theorem,
         error,
-    }) = try_define_theorems_in_theory(&mut theory)
+    }) = theorem_result
     else {
-        panic!("theorem loading should report proof elaboration failure");
+        panic!("theorem loading should report proof elaboration failure, got {theorem_result:?}");
     };
     assert_eq!(failed_theorem, theorem("reverse_acc_computes_to_list"));
     assert!(proof_error_contains_evaluation_failure(&error));
@@ -728,6 +732,7 @@ fn theorem_definitions_require_computations() {
         theorem("if_condition_true"),
         theorem("if_condition_false"),
         theorem("if_true_result_with_false_else"),
+        theorem("if_true_result_with_error_then"),
         theorem("symbol_eq_unit_unit"),
         theorem("symbol_eq_true_false"),
         theorem("symbol_eq_true"),
@@ -880,7 +885,10 @@ fn theory_defines_reverse_theorems() {
     let value_eq_cons_prop = list_tests::value_eq_cons_source_theorem();
     let is_symbol_true_implies_is_lambda_false_prop =
         list_tests::is_symbol_true_implies_is_lambda_false_source_theorem();
+    let value_eq_true_implies_not_lambdas_prop =
+        list_tests::value_eq_true_implies_not_lambdas_source_theorem();
     let value_eq_left_symbol_true_prop = list_tests::value_eq_left_symbol_true_source_theorem();
+    let value_eq_left_symbol_sound_prop = list_tests::value_eq_left_symbol_sound_source_theorem();
     let value_eq_cons_true_elim_prop = list_tests::value_eq_cons_true_elim_source_theorem();
     let cons_congr_prop = list_tests::cons_congr_source_theorem();
     let member_nil_prop = list_tests::member_nil_source_theorem();
@@ -1574,10 +1582,24 @@ fn theory_defines_reverse_theorems() {
         &is_symbol_true_implies_is_lambda_false_prop,
     );
     assert_eq!(
+        checked_theorem("value_eq_true_implies_not_lambdas")
+            .expect("value-eq lambda guard theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_true_implies_not_lambdas_prop,
+    );
+    assert_eq!(
         checked_theorem("value_eq_left_symbol_true")
             .expect("value-eq left symbol theorem source proof should check with dependencies")
             .prop(),
         &value_eq_left_symbol_true_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_left_symbol_sound")
+            .expect(
+                "value-eq left symbol soundness theorem source proof should check with dependencies"
+            )
+            .prop(),
+        &value_eq_left_symbol_sound_prop,
     );
     assert_eq!(
         checked_theorem("value_eq_cons_true_elim")

@@ -288,6 +288,8 @@ pub enum Proof {
     SymbolEqTrueElim(Box<Proof>),
     IfTrueWithFalseElseCondition(Box<Proof>),
     IfTrueWithFalseElseThen(Box<Proof>),
+    IfValueWithEffectThenConditionFalse(Box<Proof>),
+    IfValueWithEffectThenElse(Box<Proof>),
     Step(Computation),
     Steps(Vec<Computation>),
     Rewrite {

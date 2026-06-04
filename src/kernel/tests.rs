@@ -1459,6 +1459,46 @@ fn if_true_with_false_else_elims_invert_boolean_results() {
 }
 
 #[test]
+fn if_value_with_effect_then_elims_invert_effect_guards() {
+    let condition = Computation::Quote(FALSE_SYMBOL);
+    let then_branch = error(ErrorName(7));
+    let else_branch = Computation::Quote(Symbol(8));
+    let conditional = if_computation(condition.clone(), then_branch, else_branch.clone());
+
+    assert!(check(
+        &Proof::IfValueWithEffectThenConditionFalse(Box::new(Proof::Step(conditional.clone()))),
+        &equal(condition, Computation::Quote(FALSE_SYMBOL))
+    ));
+    assert!(check(
+        &Proof::IfValueWithEffectThenElse(Box::new(Proof::Step(conditional))),
+        &equal(else_branch.clone(), else_branch)
+    ));
+
+    let not_effect_then = if_computation(
+        Computation::Quote(TRUE_SYMBOL),
+        Computation::Quote(TRUE_SYMBOL),
+        Computation::Nil,
+    );
+    assert!(!check(
+        &Proof::IfValueWithEffectThenConditionFalse(Box::new(Proof::Step(not_effect_then))),
+        &equal(
+            Computation::Quote(TRUE_SYMBOL),
+            Computation::Quote(FALSE_SYMBOL)
+        )
+    ));
+
+    let effect_result = if_computation(
+        Computation::Quote(FALSE_SYMBOL),
+        error(ErrorName(7)),
+        Computation::Diverge,
+    );
+    assert!(!check(
+        &Proof::IfValueWithEffectThenElse(Box::new(Proof::Step(effect_result))),
+        &equal(Computation::Diverge, Computation::Diverge)
+    ));
+}
+
+#[test]
 fn prop_helpers_construct_expected_shapes() {
     let prop = equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(1)));
     let computation = apply(

@@ -205,6 +205,8 @@ pub(crate) enum ProofExpr {
     SymbolEqTrue(Box<ProofExpr>),
     IfTrueCondition(Box<ProofExpr>),
     IfTrueThen(Box<ProofExpr>),
+    IfEffectThenConditionFalse(Box<ProofExpr>),
+    IfEffectThenElse(Box<ProofExpr>),
     EvalTo {
         computation: Computation,
         expected: Computation,
@@ -1593,6 +1595,8 @@ impl<'a> SourceParser<'a> {
             "symbol-eq-true" => self.proof_symbol_eq_true(items),
             "if-true-condition" => self.proof_if_true_condition(items),
             "if-true-then" => self.proof_if_true_then(items),
+            "if-effect-then-condition-false" => self.proof_if_effect_then_condition_false(items),
+            "if-effect-then-else" => self.proof_if_effect_then_else(items),
             "eval-to" => self.proof_eval_to(items),
             "eval-same" => self.proof_eval_same(items),
             "rewrite" => self.proof_rewrite(items),
@@ -1669,6 +1673,23 @@ impl<'a> SourceParser<'a> {
     fn proof_if_true_then(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
         expect_len("if-true-then", items, 2)?;
         Ok(ProofExpr::IfTrueThen(Box::new(
+            self.proof_expr_or_ref(&items[1])?,
+        )))
+    }
+
+    fn proof_if_effect_then_condition_false(
+        &mut self,
+        items: &[Expr],
+    ) -> Result<ProofExpr, ParseError> {
+        expect_len("if-effect-then-condition-false", items, 2)?;
+        Ok(ProofExpr::IfEffectThenConditionFalse(Box::new(
+            self.proof_expr_or_ref(&items[1])?,
+        )))
+    }
+
+    fn proof_if_effect_then_else(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("if-effect-then-else", items, 2)?;
+        Ok(ProofExpr::IfEffectThenElse(Box::new(
             self.proof_expr_or_ref(&items[1])?,
         )))
     }
@@ -3084,23 +3105,44 @@ mod tests {
             (theorem bool_inversions
               (and
                 (computes-to (quote :true) (quote :true))
-                (computes-to (quote :true) (quote :true)))
+                (and
+                  (computes-to (quote :false) (quote :false))
+                  (computes-to (quote unit) (quote unit))))
               (proof
                 (and-intro
                   (if-true-condition
                     (eval-to
                       (if (quote :true) (quote :true) (quote :false))
                       (quote :true)))
-                  (symbol-eq-true
-                    (eval-to
-                      (symbol-eq (quote unit) (quote unit))
-                      (quote :true))))))
+                  (and-intro
+                    (if-effect-then-condition-false
+                      (eval-to
+                        (if (quote :false) (error 0) (quote unit))
+                        (quote unit)))
+                    (if-effect-then-else
+                      (eval-to
+                        (if (quote :false) (error 0) (quote unit))
+                        (quote unit)))))))
+
+            (theorem symbol_eq_inversion
+              (computes-to (quote unit) (quote unit))
+              (proof
+                (symbol-eq-true
+                  (eval-to
+                    (symbol-eq (quote unit) (quote unit))
+                    (quote :true)))))
             ",
             &[],
-            &[NameBinding {
-                spelling: "bool_inversions",
-                name: Name(1),
-            }],
+            &[
+                NameBinding {
+                    spelling: "bool_inversions",
+                    name: Name(1),
+                },
+                NameBinding {
+                    spelling: "symbol_eq_inversion",
+                    name: Name(2),
+                },
+            ],
             &[
                 SymbolBinding {
                     spelling: ":true",
@@ -3121,8 +3163,19 @@ mod tests {
         let ProofScript::Proof(ProofExpr::AndIntro(left, right)) = &module.theorems[0].proof else {
             panic!("expected an and-intro proof");
         };
+        let ProofExpr::AndIntro(middle, right) = right.as_ref() else {
+            panic!("expected nested and-intro proof");
+        };
         assert!(matches!(left.as_ref(), ProofExpr::IfTrueCondition(_)));
-        assert!(matches!(right.as_ref(), ProofExpr::SymbolEqTrue(_)));
+        assert!(matches!(
+            middle.as_ref(),
+            ProofExpr::IfEffectThenConditionFalse(_)
+        ));
+        assert!(matches!(right.as_ref(), ProofExpr::IfEffectThenElse(_)));
+        assert!(matches!(
+            &module.theorems[1].proof,
+            ProofScript::Proof(ProofExpr::SymbolEqTrue(_))
+        ));
     }
 
     #[test]

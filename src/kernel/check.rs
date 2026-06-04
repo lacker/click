@@ -254,6 +254,14 @@ fn proven_prop_in_context(proof: &Proof, bindings: &Bindings, context: &Context)
         Proof::IfTrueWithFalseElseThen(proof) => {
             if_true_with_false_else_then(proven_prop_in_context(proof, bindings, context)?)
         }
+        Proof::IfValueWithEffectThenConditionFalse(proof) => {
+            if_value_with_effect_then_condition_false(proven_prop_in_context(
+                proof, bindings, context,
+            )?)
+        }
+        Proof::IfValueWithEffectThenElse(proof) => {
+            if_value_with_effect_then_else(proven_prop_in_context(proof, bindings, context)?)
+        }
         Proof::Step(computation) => match step_for_proof(computation, bindings, context) {
             Step::Reduced(reduced) => Some(Prop::Equal(computation.clone(), reduced)),
             Step::Normal => None,
@@ -480,6 +488,38 @@ fn if_true_with_false_else_then(prop: Prop) -> Option<Prop> {
             Computation::Quote(TRUE_SYMBOL),
         ) if alpha_eq_computation(else_branch.as_ref(), &Computation::Quote(FALSE_SYMBOL)) => {
             Some(Prop::Equal(*then_branch, Computation::Quote(TRUE_SYMBOL)))
+        }
+        _ => None,
+    }
+}
+
+fn if_value_with_effect_then_condition_false(prop: Prop) -> Option<Prop> {
+    match prop {
+        Prop::Equal(
+            Computation::If {
+                condition,
+                then_branch,
+                else_branch: _,
+            },
+            value,
+        ) if then_branch.as_effect().is_some() && value.as_value().is_some() => {
+            Some(Prop::Equal(*condition, Computation::Quote(FALSE_SYMBOL)))
+        }
+        _ => None,
+    }
+}
+
+fn if_value_with_effect_then_else(prop: Prop) -> Option<Prop> {
+    match prop {
+        Prop::Equal(
+            Computation::If {
+                condition: _,
+                then_branch,
+                else_branch,
+            },
+            value,
+        ) if then_branch.as_effect().is_some() && value.as_value().is_some() => {
+            Some(Prop::Equal(*else_branch, value))
         }
         _ => None,
     }

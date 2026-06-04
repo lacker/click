@@ -372,6 +372,27 @@
             (if-true-condition (assume if_is_true))
             (if-true-then (assume if_is_true))))))))
 
+(theorem if_true_result_with_error_then
+  (forall condition
+    (forall else_branch
+      (implies
+        (computes-to
+          (if condition (error 0) else_branch)
+          (quote :true))
+        (and
+          (computes-to condition (quote :false))
+          (computes-to else_branch (quote :true))))))
+  (proof
+    (forall-intro condition
+      (forall-intro else_branch
+        (implies-intro if_is_true
+          (computes-to
+            (if condition (error 0) else_branch)
+            (quote :true))
+          (and-intro
+            (if-effect-then-condition-false (assume if_is_true))
+            (if-effect-then-else (assume if_is_true))))))))
+
 (theorem symbol_eq_unit_unit
   (computes-to
     (symbol-eq (quote unit) (quote unit))
@@ -1472,6 +1493,135 @@
               (symbol-eq kind (quote :lambda))
               (quote :false))))))))
 
+(theorem value_eq_true_implies_not_lambdas
+  (forall left (is-value left)
+    (forall right (is-value right)
+      (implies
+        (computes-to (value-eq left right) (quote :true))
+        (and
+          (computes-to (is-lambda left) (quote :false))
+          (computes-to (is-lambda right) (quote :false))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro values_equal)
+    (have top_if_true
+      (computes-to
+        (if
+          (is-lambda left)
+          (error 0)
+          (if
+            (is-lambda right)
+            (error 0)
+            (if
+              (is-symbol left)
+              (symbol-eq left right)
+              (if
+                (is-symbol right)
+                (quote :false)
+                (list-case left
+                  (list-case right
+                    (quote :true)
+                    right_cell
+                    (quote :false))
+                  left_cell
+                  (list-case right
+                    (quote :false)
+                    right_cell
+                    (if
+                      (value-eq (head left_cell) (head right_cell))
+                      (value-eq (tail left_cell) (tail right_cell))
+                      (quote :false))))))))
+        (quote :true))
+      (by
+        (calc
+          (if
+            (is-lambda left)
+            (error 0)
+            (if
+              (is-lambda right)
+              (error 0)
+              (if
+                (is-symbol left)
+                (symbol-eq left right)
+                (if
+                  (is-symbol right)
+                  (quote :false)
+                  (list-case left
+                    (list-case right
+                      (quote :true)
+                      right_cell
+                      (quote :false))
+                    left_cell
+                    (list-case right
+                      (quote :false)
+                      right_cell
+                      (if
+                        (value-eq (head left_cell) (head right_cell))
+                        (value-eq (tail left_cell) (tail right_cell))
+                        (quote :false))))))))
+          (==
+            (value-eq left right)
+            (by
+              (eval)))
+          (==
+            (quote :true)
+            (by
+              (exact values_equal)))))
+      (by
+        (specialize left_branch_parts if_true_result_with_error_then
+          (is-lambda left)
+          (if
+            (is-lambda right)
+            (error 0)
+            (if
+              (is-symbol left)
+              (symbol-eq left right)
+              (if
+                (is-symbol right)
+                (quote :false)
+                (list-case left
+                  (list-case right
+                    (quote :true)
+                    right_cell
+                    (quote :false))
+                  left_cell
+                  (list-case right
+                    (quote :false)
+                    right_cell
+                    (if
+                      (value-eq (head left_cell) (head right_cell))
+                      (value-eq (tail left_cell) (tail right_cell))
+                      (quote :false))))))))
+        (cases left_branch_parts left_not_lambda after_left_guard)
+        (specialize right_branch_parts if_true_result_with_error_then
+          (is-lambda right)
+          (if
+            (is-symbol left)
+            (symbol-eq left right)
+            (if
+              (is-symbol right)
+              (quote :false)
+              (list-case left
+                (list-case right
+                  (quote :true)
+                  right_cell
+                  (quote :false))
+                left_cell
+                (list-case right
+                  (quote :false)
+                  right_cell
+                  (if
+                    (value-eq (head left_cell) (head right_cell))
+                    (value-eq (tail left_cell) (tail right_cell))
+                    (quote :false)))))))
+        (cases right_branch_parts right_not_lambda after_right_guard)
+        (split
+          (by
+            (exact left_not_lambda))
+          (by
+            (exact right_not_lambda)))))))
+
 (theorem value_eq_left_symbol_true
   (forall left (is-value left)
     (implies
@@ -1585,6 +1735,24 @@
       (by
         (specialize result symbol_eq_true left right)
         (exact result)))))
+
+(theorem value_eq_left_symbol_sound
+  (forall left (is-value left)
+    (implies
+      (computes-to (is-symbol left) (quote :true))
+      (forall right (is-value right)
+        (implies
+          (computes-to (value-eq left right) (quote :true))
+          (computes-to left right)))))
+  (by
+    (intro left)
+    (intro left_is_symbol)
+    (intro right)
+    (intro values_equal)
+    (specialize not_lambdas value_eq_true_implies_not_lambdas left right)
+    (cases not_lambdas left_not_lambda right_not_lambda)
+    (specialize result value_eq_left_symbol_true left right)
+    (exact result)))
 
 (theorem value_eq_cons_true_elim
   (forall left_head (is-value left_head)

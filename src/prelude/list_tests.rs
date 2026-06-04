@@ -510,8 +510,16 @@ pub fn is_symbol_true_implies_is_lambda_false_source_theorem() -> Prop {
     theorem_prop("is_symbol_true_implies_is_lambda_false")
 }
 
+pub fn value_eq_true_implies_not_lambdas_source_theorem() -> Prop {
+    theorem_prop("value_eq_true_implies_not_lambdas")
+}
+
 pub fn value_eq_left_symbol_true_source_theorem() -> Prop {
     theorem_prop("value_eq_left_symbol_true")
+}
+
+pub fn value_eq_left_symbol_sound_source_theorem() -> Prop {
+    theorem_prop("value_eq_left_symbol_sound")
 }
 
 pub fn value_eq_cons_true_elim_source_theorem() -> Prop {
@@ -1803,6 +1811,25 @@ pub fn is_symbol_true_implies_is_lambda_false_theorem(value: Symbol) -> Prop {
     )
 }
 
+/// If `value-eq` returns true, neither compared value is a lambda.
+pub fn value_eq_true_implies_not_lambdas_theorem(left: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_value(var(left)),
+        forall_where(
+            right,
+            is_value(var(right)),
+            implies(
+                computes_to(value_eq_call(var(left), var(right)), true_value()),
+                and(
+                    computes_to(is_lambda_call(var(left)), false_value()),
+                    computes_to(is_lambda_call(var(right)), false_value()),
+                ),
+            ),
+        ),
+    )
+}
+
 /// If `value-eq` succeeds with a known left symbol, the values compute equally.
 pub fn value_eq_left_symbol_true_theorem(left: Symbol, right: Symbol) -> Prop {
     forall_where(
@@ -1819,6 +1846,25 @@ pub fn value_eq_left_symbol_true_theorem(left: Symbol, right: Symbol) -> Prop {
                         computes_to(value_eq_call(var(left), var(right)), true_value()),
                         computes_to(var(left), var(right)),
                     ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If `value-eq` succeeds with a known left symbol, the values compute equally.
+pub fn value_eq_left_symbol_sound_theorem(left: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_value(var(left)),
+        implies(
+            computes_to(is_symbol_call(var(left)), true_value()),
+            forall_where(
+                right,
+                is_value(var(right)),
+                implies(
+                    computes_to(value_eq_call(var(left), var(right)), true_value()),
+                    computes_to(var(left), var(right)),
                 ),
             ),
         ),
@@ -3210,8 +3256,12 @@ mod tests {
         let cons_right_tail = theorem_symbol("value_eq_cons", "right_tail");
         let symbol_not_lambda_value =
             theorem_symbol("is_symbol_true_implies_is_lambda_false", "value");
+        let not_lambdas_left = theorem_symbol("value_eq_true_implies_not_lambdas", "left");
+        let not_lambdas_right = theorem_symbol("value_eq_true_implies_not_lambdas", "right");
         let left_symbol_left = theorem_symbol("value_eq_left_symbol_true", "left");
         let left_symbol_right = theorem_symbol("value_eq_left_symbol_true", "right");
+        let left_symbol_sound_left = theorem_symbol("value_eq_left_symbol_sound", "left");
+        let left_symbol_sound_right = theorem_symbol("value_eq_left_symbol_sound", "right");
         let cons_elim_left_head = theorem_symbol("value_eq_cons_true_elim", "left_head");
         let cons_elim_left_tail = theorem_symbol("value_eq_cons_true_elim", "left_tail");
         let cons_elim_right_head = theorem_symbol("value_eq_cons_true_elim", "right_head");
@@ -3252,8 +3302,16 @@ mod tests {
             is_symbol_true_implies_is_lambda_false_theorem(symbol_not_lambda_value)
         );
         assert_eq!(
+            value_eq_true_implies_not_lambdas_source_theorem(),
+            value_eq_true_implies_not_lambdas_theorem(not_lambdas_left, not_lambdas_right)
+        );
+        assert_eq!(
             value_eq_left_symbol_true_source_theorem(),
             value_eq_left_symbol_true_theorem(left_symbol_left, left_symbol_right)
+        );
+        assert_eq!(
+            value_eq_left_symbol_sound_source_theorem(),
+            value_eq_left_symbol_sound_theorem(left_symbol_sound_left, left_symbol_sound_right)
         );
         assert_eq!(
             value_eq_cons_true_elim_source_theorem(),
