@@ -323,27 +323,9 @@
       (by
         (intro right)
         (intro cons_is_nat)
-        (cases
-          (implies-elim
-            (forall-elim
-              (forall-elim
-                (known is_nat_value_cons_true_elim)
-                head)
-              tail)
-            (assume cons_is_nat))
-          head_unit
-          tail_is_nat)
-        (have tail_succ
-          (computes-to
-            (add tail (cons (quote unit) right))
-            (succ (add tail right)))
-          (by
-            (exact
-              (implies-elim
-                (forall-elim
-                  (assume induction_hypothesis)
-                  right)
-                (assume tail_is_nat)))))
+        (specialize cons_parts is_nat_value_cons_true_elim head tail)
+        (cases cons_parts head_unit tail_is_nat)
+        (specialize tail_succ induction_hypothesis right)
         (obtain tail_sum tail_sum_proof
           (add_computes_to_list tail right))
         (calc
@@ -403,6 +385,7 @@
     (intro left)
     (intro right)
     (intro left_is_nat)
+    (specialize add_cons_unit_right_step add_cons_unit_right left right)
     (calc
       (add left (succ right))
       (==
@@ -412,14 +395,7 @@
       (==
         (succ (add left right))
         (by
-          (exact
-            (implies-elim
-              (forall-elim
-                (forall-elim
-                  (known add_cons_unit_right)
-                  left)
-                right)
-              (assume left_is_nat))))))))
+          (exact add_cons_unit_right_step))))))
 
 (theorem add_zero_right
   (forall nat (is-list nat)
@@ -472,6 +448,7 @@
         (intro right_is_nat)
         (obtain tail_sum tail_sum_proof
           (add_computes_to_list tail right))
+        (specialize tail_suffix_preserves_nat induction_hypothesis right)
         (calc
           (is-nat-value (add (cons head tail) right))
           (==
@@ -505,10 +482,7 @@
               (is-nat-value tail)
               (quote :false))
             (by
-              (rewrite
-                (implies-elim
-                  (forall-elim (assume induction_hypothesis) right)
-                  (assume right_is_nat)))
+              (rewrite tail_suffix_preserves_nat)
               (eval)))
           (==
             (is-nat-value (cons head tail))
@@ -530,19 +504,13 @@
     (intro right)
     (intro left_is_nat)
     (intro right_is_nat)
+    (specialize suffix_preserves add_nat_suffix_preserves_nat_value left right)
     (calc
       (is-nat-value (add left right))
       (==
         (is-nat-value left)
         (by
-          (exact
-            (implies-elim
-              (forall-elim
-                (forall-elim
-                  (known add_nat_suffix_preserves_nat_value)
-                  left)
-                right)
-              (assume right_is_nat)))))
+          (exact suffix_preserves)))
       (==
         (quote :true)
         (by
@@ -645,42 +613,10 @@
         (intro right)
         (intro cons_is_nat)
         (intro right_is_nat)
-        (cases
-          (implies-elim
-            (forall-elim
-              (forall-elim
-                (known is_nat_value_cons_true_elim)
-                head)
-              tail)
-            (assume cons_is_nat))
-          head_unit
-          tail_is_nat)
-        (have tail_comm
-          (computes-to
-            (add tail right)
-            (add right tail))
-          (by
-            (exact
-              (implies-elim
-                (implies-elim
-                  (forall-elim
-                    (assume induction_hypothesis)
-                    right)
-                  (assume tail_is_nat))
-                (assume right_is_nat)))))
-        (have right_succ_tail
-          (computes-to
-            (add right (succ tail))
-            (succ (add right tail)))
-          (by
-            (exact
-              (implies-elim
-                (forall-elim
-                  (forall-elim
-                    (known add_succ_right)
-                    right)
-                  tail)
-                (assume right_is_nat)))))
+        (specialize cons_parts is_nat_value_cons_true_elim head tail)
+        (cases cons_parts head_unit tail_is_nat)
+        (specialize tail_comm induction_hypothesis right)
+        (specialize right_succ_tail add_succ_right right tail)
         (obtain right_tail right_tail_proof
           (add_computes_to_list right tail))
         (calc
@@ -744,21 +680,7 @@
     (intro rest)
     (intro left_is_nat)
     (intro right_is_nat)
-    (have left_right_comm
-      (computes-to
-        (add left right)
-        (add right left))
-      (by
-        (exact
-          (implies-elim
-            (implies-elim
-              (forall-elim
-                (forall-elim
-                  (known add_comm)
-                  left)
-                right)
-              (assume left_is_nat))
-            (assume right_is_nat)))))
+    (specialize left_right_comm add_comm left right)
     (calc
       (add left (add right rest))
       (==
@@ -811,8 +733,8 @@
       induction_hypothesis
       (by
         (intro right)
-        (obtain tail_product tail_product_proof
-          (forall-elim (assume induction_hypothesis) right))
+        (specialize tail_product_exists induction_hypothesis right)
+        (obtain tail_product tail_product_proof tail_product_exists)
         (obtain product product_proof
           (add_computes_to_list right tail_product))
         (exists product
@@ -857,29 +779,9 @@
         (intro right)
         (intro cons_is_nat)
         (intro right_is_nat)
-        (cases
-          (implies-elim
-            (forall-elim
-              (forall-elim
-                (known is_nat_value_cons_true_elim)
-                head)
-              tail)
-            (assume cons_is_nat))
-          ignored_head_unit
-          tail_is_nat)
-        (have tail_product_is_nat
-          (computes-to
-            (is-nat-value (mul tail right))
-            (quote :true))
-          (by
-            (exact
-              (implies-elim
-                (implies-elim
-                  (forall-elim
-                    (assume induction_hypothesis)
-                    right)
-                  (assume tail_is_nat))
-                (assume right_is_nat)))))
+        (specialize cons_parts is_nat_value_cons_true_elim head tail)
+        (cases cons_parts ignored_head_unit tail_is_nat)
+        (specialize tail_product_is_nat induction_hypothesis right)
         (obtain tail_product tail_product_proof
           (mul_computes_to_list tail right))
         (have tail_product_value_is_nat
@@ -894,10 +796,11 @@
                 (by
                   (rewrite (symm tail_product_proof))
                   (eval)))
-              (==
+            (==
                 (quote :true)
                 (by
                   (exact tail_product_is_nat))))))
+        (specialize product_is_nat add_preserves_nat_value right tail_product)
         (calc
           (is-nat-value (mul (cons head tail) right))
           (==
@@ -913,16 +816,7 @@
           (==
             (quote :true)
             (by
-              (exact
-                (implies-elim
-                  (implies-elim
-                    (forall-elim
-                      (forall-elim
-                        (known add_preserves_nat_value)
-                        right)
-                      tail_product)
-                    (assume right_is_nat))
-                  (assume tail_product_value_is_nat))))))))))
+              (exact product_is_nat))))))))
 
 (theorem mul_succ_left
   (forall left (is-list left)
@@ -968,16 +862,8 @@
         (intro right)
         (intro cons_is_nat)
         (intro right_is_nat)
-        (cases
-          (implies-elim
-            (forall-elim
-              (forall-elim
-                (known is_nat_value_cons_true_elim)
-                head)
-              tail)
-            (assume cons_is_nat))
-          head_unit
-          tail_is_nat)
+        (specialize cons_parts is_nat_value_cons_true_elim head tail)
+        (cases cons_parts head_unit tail_is_nat)
         (have cons_unit_right_is_nat
           (computes-to
             (is-nat-value (cons (quote unit) right))
@@ -993,19 +879,7 @@
                 (quote :true)
                 (by
                   (exact right_is_nat))))))
-        (have tail_succ
-          (computes-to
-            (mul tail (succ right))
-            (add tail (mul tail right)))
-          (by
-            (exact
-              (implies-elim
-                (implies-elim
-                  (forall-elim
-                    (assume induction_hypothesis)
-                    right)
-                  (assume tail_is_nat))
-                (assume right_is_nat)))))
+        (specialize tail_succ induction_hypothesis right)
         (obtain tail_product tail_product_proof
           (mul_computes_to_list tail right))
         (obtain right_tail_product right_tail_product_proof
@@ -1026,36 +900,8 @@
                 (by
                   (rewrite tail_product_proof)
                   (eval))))))
-        (have swapped_tail
-          (computes-to
-            (add (cons (quote unit) right) (add tail tail_product))
-            (add tail (add (cons (quote unit) right) tail_product)))
-          (by
-            (exact
-              (implies-elim
-                (implies-elim
-                  (forall-elim
-                    (forall-elim
-                      (forall-elim
-                        (known add_swap)
-                        (cons (quote unit) right))
-                      tail)
-                    tail_product)
-                  (assume cons_unit_right_is_nat))
-                (assume tail_is_nat)))))
-        (have tail_cons_unit
-          (computes-to
-            (add tail (cons (quote unit) right_tail_product))
-            (succ (add tail right_tail_product)))
-          (by
-            (exact
-              (implies-elim
-                (forall-elim
-                  (forall-elim
-                    (known add_cons_unit_right)
-                    tail)
-                  right_tail_product)
-                (assume tail_is_nat)))))
+        (specialize swapped_tail add_swap (cons (quote unit) right) tail tail_product)
+        (specialize tail_cons_unit add_cons_unit_right tail right_tail_product)
         (calc
           (mul (cons head tail) (succ right))
           (==
@@ -1228,25 +1074,9 @@
       induction_hypothesis
       (by
         (intro cons_is_nat)
-        (cases
-          (implies-elim
-            (forall-elim
-              (forall-elim
-                (known is_nat_value_cons_true_elim)
-                head)
-              tail)
-            (assume cons_is_nat))
-          head_unit
-          tail_is_nat)
-        (have tail_product
-          (computes-to
-            (mul tail (succ zero))
-            tail)
-          (by
-            (exact
-              (implies-elim
-                (assume induction_hypothesis)
-                (assume tail_is_nat)))))
+        (specialize cons_parts is_nat_value_cons_true_elim head tail)
+        (cases cons_parts head_unit tail_is_nat)
+        (specialize tail_product induction_hypothesis)
         (calc
           (mul (cons head tail) (succ zero))
           (==
@@ -1319,44 +1149,10 @@
         (intro right)
         (intro cons_is_nat)
         (intro right_is_nat)
-        (cases
-          (implies-elim
-            (forall-elim
-              (forall-elim
-                (known is_nat_value_cons_true_elim)
-                head)
-              tail)
-            (assume cons_is_nat))
-          head_unit
-          tail_is_nat)
-        (have tail_product
-          (computes-to
-            (mul tail right)
-            (mul right tail))
-          (by
-            (exact
-              (implies-elim
-                (implies-elim
-                  (forall-elim
-                    (assume induction_hypothesis)
-                    right)
-                  (assume tail_is_nat))
-                (assume right_is_nat)))))
-        (have right_times_succ
-          (computes-to
-            (mul right (succ tail))
-            (add right (mul right tail)))
-          (by
-            (exact
-              (implies-elim
-                (implies-elim
-                  (forall-elim
-                    (forall-elim
-                      (known mul_succ_right)
-                      right)
-                    tail)
-                  (assume right_is_nat))
-                (assume tail_is_nat)))))
+        (specialize cons_parts is_nat_value_cons_true_elim head tail)
+        (cases cons_parts head_unit tail_is_nat)
+        (specialize tail_product induction_hypothesis right)
+        (specialize right_times_succ mul_succ_right right tail)
         (calc
           (mul (cons head tail) right)
           (==
@@ -1431,17 +1227,7 @@
       (by
         (intro middle)
         (intro right)
-        (have tail_distrib
-          (computes-to
-            (mul (add tail middle) right)
-            (add (mul tail right) (mul middle right)))
-          (by
-            (exact
-              (forall-elim
-                (forall-elim
-                  (assume induction_hypothesis)
-                  middle)
-                right))))
+        (specialize tail_distrib induction_hypothesis middle right)
         (obtain tail_middle tail_middle_proof
           (add_computes_to_list tail middle))
         (obtain tail_right tail_right_proof
@@ -1548,17 +1334,7 @@
       (by
         (intro middle)
         (intro right)
-        (have tail_assoc
-          (computes-to
-            (mul (mul tail middle) right)
-            (mul tail (mul middle right)))
-          (by
-            (exact
-              (forall-elim
-                (forall-elim
-                  (assume induction_hypothesis)
-                  middle)
-                right))))
+        (specialize tail_assoc induction_hypothesis middle right)
         (obtain tail_middle tail_middle_proof
           (mul_computes_to_list tail middle))
         (obtain middle_right middle_right_proof
@@ -1631,21 +1407,7 @@
     (intro right_is_nat)
     (obtain middle_right_sum middle_right_sum_proof
       (add_computes_to_list middle right))
-    (have sum_is_nat
-      (computes-to
-        (is-nat-value (add middle right))
-        (quote :true))
-      (by
-        (exact
-          (implies-elim
-            (implies-elim
-              (forall-elim
-                (forall-elim
-                  (known add_preserves_nat_value)
-                  middle)
-                right)
-              (assume middle_is_nat))
-            (assume right_is_nat)))))
+    (specialize sum_is_nat add_preserves_nat_value middle right)
     (have sum_value_is_nat
       (computes-to
         (is-nat-value middle_right_sum)
@@ -1662,51 +1424,9 @@
             (quote :true)
             (by
               (exact sum_is_nat))))))
-    (have left_sum_comm
-      (computes-to
-        (mul left middle_right_sum)
-        (mul middle_right_sum left))
-      (by
-        (exact
-          (implies-elim
-            (implies-elim
-              (forall-elim
-                (forall-elim
-                  (known mul_comm)
-                  left)
-                middle_right_sum)
-              (assume left_is_nat))
-            (assume sum_value_is_nat)))))
-    (have middle_left_comm
-      (computes-to
-        (mul middle left)
-        (mul left middle))
-      (by
-        (exact
-          (implies-elim
-            (implies-elim
-              (forall-elim
-                (forall-elim
-                  (known mul_comm)
-                  middle)
-                left)
-              (assume middle_is_nat))
-            (assume left_is_nat)))))
-    (have right_left_comm
-      (computes-to
-        (mul right left)
-        (mul left right))
-      (by
-        (exact
-          (implies-elim
-            (implies-elim
-              (forall-elim
-                (forall-elim
-                  (known mul_comm)
-                  right)
-                left)
-              (assume right_is_nat))
-            (assume left_is_nat)))))
+    (specialize left_sum_comm mul_comm left middle_right_sum)
+    (specialize middle_left_comm mul_comm middle left)
+    (specialize right_left_comm mul_comm right left)
     (calc
       (mul left (add middle right))
       (==

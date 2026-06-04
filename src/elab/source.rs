@@ -306,6 +306,12 @@ pub(crate) enum TacticExpr {
         theorem: Name,
         arguments: Vec<Computation>,
     },
+    Specialize {
+        assumption: Symbol,
+        proof: Box<ProofExpr>,
+        arguments: Vec<Computation>,
+        body: Option<TacticScript>,
+    },
     Split {
         left: TacticScript,
         right: TacticScript,
@@ -1194,6 +1200,7 @@ impl<'a> SourceParser<'a> {
             "have" => self.tactic_have(items),
             "eval" => self.tactic_eval(items),
             "apply" => self.tactic_apply(items),
+            "specialize" => self.tactic_specialize(items),
             "split" | "constructor" => self.tactic_split(form, items),
             "exists" => self.tactic_exists(items),
             "obtain" => self.tactic_obtain(items),
@@ -1303,6 +1310,28 @@ impl<'a> SourceParser<'a> {
         })
     }
 
+    fn tactic_specialize(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        if items.len() < 3 {
+            return Err(ParseError::new(format!(
+                "`specialize` expects a name, proof, zero or more arguments, and optional `(by ...)` body; got {} arguments",
+                items.len().saturating_sub(1)
+            )));
+        }
+
+        let assumption = self.proof_symbol(atom(&items[1])?)?;
+        let proof = self.proof_expr_or_ref(&items[2])?;
+        let (arguments, body) = self.split_optional_final_tactic_body(&items[3..])?;
+        Ok(TacticExpr::Specialize {
+            assumption,
+            proof: Box::new(proof),
+            arguments: arguments
+                .iter()
+                .map(|item| self.computation(item))
+                .collect::<Result<Vec<_>, _>>()?,
+            body,
+        })
+    }
+
     fn tactic_split(&mut self, form: &str, items: &[Expr]) -> Result<TacticExpr, ParseError> {
         expect_len(form, items, 3)?;
         Ok(TacticExpr::Split {
@@ -1384,6 +1413,23 @@ impl<'a> SourceParser<'a> {
         }
 
         Ok(Some(self.tactic_script(body_items)?))
+    }
+
+    fn split_optional_final_tactic_body<'b>(
+        &mut self,
+        items: &'b [Expr],
+    ) -> Result<(&'b [Expr], Option<TacticScript>), ParseError> {
+        let Some(Expr::List(body_items)) = items.last() else {
+            return Ok((items, None));
+        };
+        if body_items.first().and_then(|head| atom(head).ok()) != Some("by") {
+            return Ok((items, None));
+        }
+
+        Ok((
+            &items[..items.len() - 1],
+            Some(self.tactic_script(body_items)?),
+        ))
     }
 
     fn tactic_cases(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
@@ -2379,6 +2425,10 @@ mod tests {
                 spelling: "cases_example",
                 name: Name(7),
             },
+            NameBinding {
+                spelling: "specialize_example",
+                name: Name(8),
+            },
         ];
 
         let module = parse_module(
@@ -2435,6 +2485,11 @@ mod tests {
               (by
                 (cases and_source left_case right_case)
                 (exact left_case)))
+            (theorem specialize_example
+              (computes-to nil nil)
+              (by
+                (specialize nil_self value_self nil)
+                (exact nil_self)))
             ",
             &[],
             &theorems,
@@ -2494,6 +2549,24 @@ mod tests {
             ] if **conjunction == ProofExpr::Known(Name(6))
                 && **proof == ProofExpr::Assume(Symbol(2_006))
         ));
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[7].proof else {
+            panic!("expected a tactic proof script");
+        };
+        assert!(matches!(
+            tactics.as_slice(),
+            [
+                TacticExpr::Specialize {
+                    assumption: Symbol(2_008),
+                    proof,
+                    arguments,
+                    body: None,
+                },
+                TacticExpr::Exact(exact),
+            ] if **proof == ProofExpr::Known(Name(2))
+                && arguments.as_slice() == [Computation::Nil]
+                && **exact == ProofExpr::Assume(Symbol(2_008))
+        ));
     }
 
     #[test]
@@ -2510,6 +2583,10 @@ mod tests {
             NameBinding {
                 spelling: "explicit_have",
                 name: Name(3),
+            },
+            NameBinding {
+                spelling: "explicit_specialize",
+                name: Name(4),
             },
         ];
 
@@ -2537,6 +2614,13 @@ mod tests {
                     (eval))
                   (by
                     (exact nil_self)))))
+            (theorem explicit_specialize
+              (exists result (is-list result)
+                (computes-to nil result))
+              (by
+                (specialize list_copy list_exists
+                  (by
+                    (exact list_copy)))))
             ",
             &[],
             &theorems,
@@ -2583,6 +2667,27 @@ mod tests {
         };
         let [TacticExpr::Exact(proof)] = body_tactics.as_slice() else {
             panic!("expected the have body to contain an exact tactic");
+        };
+        assert_eq!(**proof, ProofExpr::Assume(*assumption));
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[3].proof else {
+            panic!("expected a tactic proof script");
+        };
+        let [
+            TacticExpr::Specialize {
+                assumption,
+                body:
+                    Some(TacticScript {
+                        tactics: body_tactics,
+                    }),
+                ..
+            },
+        ] = tactics.as_slice()
+        else {
+            panic!("expected a specialize tactic with an explicit body");
+        };
+        let [TacticExpr::Exact(proof)] = body_tactics.as_slice() else {
+            panic!("expected the specialize body to contain an exact tactic");
         };
         assert_eq!(**proof, ProofExpr::Assume(*assumption));
     }

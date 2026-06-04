@@ -419,22 +419,24 @@
       induction_hypothesis
       (by
         (intro acc)
+        (specialize reversed_tail induction_hypothesis (cons head acc))
         (rewrite
           (eval-same
             (reverse_acc (cons head tail) acc)
             (reverse_acc tail (cons head acc))))
-        (forall-elim induction_hypothesis (cons head acc))))))
+        (exact reversed_tail)))))
 
 (theorem reverse_computes_to_list
   (forall list (is-list list)
     (computes-to-list result (reverse list)))
   (by
     (intro list)
+    (specialize reversed_acc reverse_acc_computes_to_list list nil)
     (rewrite
       (eval-to
         (reverse list)
         (reverse_acc list nil)))
-    (forall-elim reverse_acc_computes_to_list list nil)))
+    (exact reversed_acc)))
 
 (theorem reverse_nil_computes_to_list
   (computes-to-list result (reverse nil))
@@ -480,8 +482,8 @@
       induction_hypothesis
       (by
         (intro right)
-        (obtain tail_result tail_result_proof
-          (forall-elim (assume induction_hypothesis) right))
+        (specialize tail_result_exists induction_hypothesis right)
+        (obtain tail_result tail_result_proof tail_result_exists)
         (exists (cons head tail_result)
           (by
             (calc
@@ -1663,6 +1665,7 @@
       induction_hypothesis
       (by
         (intro acc)
+        (specialize tail_reverse_acc induction_hypothesis (cons head acc))
         (have fold_step
           (computes-to
             (fold-left
@@ -1678,6 +1681,15 @@
               (cons head acc)
               tail))
           (by
+            (specialize
+              fold_left_cons_step
+              fold_left_cons
+              (lambda accumulator
+                (lambda value
+                  (cons value accumulator)))
+              acc
+              head
+              tail)
             (rewrite
               (symm
                 (eval-to
@@ -1687,14 +1699,7 @@
                    acc
                    head)
                   (cons head acc))))
-            (forall-elim
-              fold_left_cons
-              (lambda accumulator
-                (lambda value
-                  (cons value accumulator)))
-              acc
-              head
-              tail))
+            (exact fold_left_cons_step))
           (by
             (calc
               (fold-left
@@ -1715,7 +1720,7 @@
               (==
                 (reverse_acc tail (cons head acc))
                 (by
-                  (forall-elim induction_hypothesis (cons head acc))))
+                  (exact tail_reverse_acc)))
               (==
                 (reverse_acc (cons head tail) acc)
                 (by

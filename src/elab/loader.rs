@@ -313,6 +313,11 @@ mod tests {
                         (exact value_self nil))
                       (by
                         (exact nil_self)))))
+                (theorem nil_via_specialize
+                  (computes-to nil nil)
+                  (by
+                    (specialize nil_self value_self nil)
+                    (exact nil_self)))
                 (theorem nil_via_symm_application
                   (computes-to nil nil)
                   (by
@@ -419,6 +424,9 @@ mod tests {
         let nil_via_have_body = loaded
             .theorem("nil_via_have_body")
             .expect("loader should record explicit have body theorem spelling");
+        let nil_via_specialize = loaded
+            .theorem("nil_via_specialize")
+            .expect("loader should record specialize tactic theorem spelling");
         let nil_via_symm_application = loaded
             .theorem("nil_via_symm_application")
             .expect("loader should record symm proof application theorem spelling");
@@ -469,6 +477,7 @@ mod tests {
         assert!(loaded.theory().theorem(nil_via_forall_elim).is_some());
         assert!(loaded.theory().theorem(nil_via_have).is_some());
         assert!(loaded.theory().theorem(nil_via_have_body).is_some());
+        assert!(loaded.theory().theorem(nil_via_specialize).is_some());
         assert!(loaded.theory().theorem(nil_via_symm_application).is_some());
         assert!(loaded.theory().theorem(nil_from_exists).is_some());
         assert!(loaded.theory().theorem(nil_from_exists_body).is_some());

@@ -75,6 +75,15 @@ fn tactic_steps_to_proof(
             ensure_no_more_tactics(rest, "apply")?;
             tactic_apply(*theorem, arguments, theory, goal)
         }
+        TacticExpr::Specialize {
+            assumption,
+            proof,
+            arguments,
+            body,
+        } => {
+            let rest = explicit_body_or_rest(body.as_ref(), rest, "specialize")?;
+            tactic_specialize(*assumption, proof, arguments, rest, theory, goal)
+        }
         TacticExpr::Split { left, right } => {
             ensure_no_more_tactics(rest, "split")?;
             tactic_split(left, right, theory, goal)
@@ -371,6 +380,55 @@ fn tactic_apply(
     }
 }
 
+fn tactic_specialize(
+    assumption: Symbol,
+    proof_expr: &ProofExpr,
+    arguments: &[Computation],
+    rest: &[TacticExpr],
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    if goal.context.contains_key(&assumption) {
+        return Err(tactic_failed(
+            "specialize",
+            format!("assumption symbol {:?} is already in scope", assumption),
+        ));
+    }
+
+    let proof = proof_expr_to_proof_in_context(proof_expr, theory, &goal.context)?;
+    let prop = theory
+        .proven_prop_in_context(&proof, &goal.context)
+        .ok_or_else(|| tactic_failed("specialize", "proof expression proves no proposition"))?;
+    let (specialized_proof, specialized_prop) = apply_arguments_and_available_implications(
+        "specialize",
+        proof,
+        prop,
+        arguments,
+        theory,
+        &goal.context,
+    )?;
+
+    let mut context = goal.context.clone();
+    context.insert(assumption, specialized_prop.clone());
+    let implication = Proof::ImpliesIntro {
+        assumption,
+        premise: specialized_prop,
+        proof: Box::new(tactic_steps_to_proof(
+            rest,
+            theory,
+            &Goal {
+                context,
+                target: goal.target.clone(),
+            },
+        )?),
+    };
+
+    Ok(Proof::ImpliesElim {
+        implication: Box::new(implication),
+        premise: Box::new(specialized_proof),
+    })
+}
+
 pub(super) fn apply_arguments_and_implications(
     tactic: &'static str,
     mut proof: Proof,
@@ -416,6 +474,51 @@ pub(super) fn apply_arguments_and_implications(
     }
 
     finish_implications(tactic, proof, prop, theory, context, target)
+}
+
+fn apply_arguments_and_available_implications(
+    tactic: &'static str,
+    proof: Proof,
+    prop: Prop,
+    arguments: &[Computation],
+    theory: &Theory,
+    context: &Context,
+) -> Result<(Proof, Prop), ProofElaborationError> {
+    let (proof, prop) =
+        apply_arguments_and_implications(tactic, proof, prop, arguments, theory, context, None)?;
+    finish_available_implications(tactic, proof, prop, theory, context)
+}
+
+fn finish_available_implications(
+    tactic: &'static str,
+    mut proof: Proof,
+    mut prop: Prop,
+    theory: &Theory,
+    context: &Context,
+) -> Result<(Proof, Prop), ProofElaborationError> {
+    loop {
+        let (premise, conclusion) = match &prop {
+            Prop::Implies(premise, conclusion) => {
+                (premise.as_ref().clone(), conclusion.as_ref().clone())
+            }
+            _ => {
+                return Ok((proof, prop));
+            }
+        };
+
+        let Ok(next_proof) = apply_available_premise(tactic, proof.clone(), &premise, context)
+        else {
+            return Ok((proof, prop));
+        };
+
+        proof = next_proof;
+        prop = theory
+            .proven_prop_in_context(&proof, context)
+            .ok_or_else(|| tactic_failed(tactic, "applying premise produced no proposition"))?;
+        if alpha_eq_prop(&prop, &conclusion) {
+            prop = conclusion;
+        }
+    }
 }
 
 fn finish_implications(

@@ -56,13 +56,13 @@ They can also use goal-directed tactic scripts with `(by ...)`. Tactics inspect
 the current goal and local context, then elaborate to ordinary kernel `Proof`
 values that are checked by the kernel. The initial tactic set is intentionally
 small and deterministic: `intro`, `assumption`, `exact`, `eval`, `apply`,
-`have`, `obtain`, `cases`, `rewrite`, `forall-elim`, `or-elim`,
+`have`, `specialize`, `obtain`, `cases`, `rewrite`, `forall-elim`, `or-elim`,
 `list-induction`, `calc`, `split`/`constructor`, `exists`, `left`, and
 `right`. `exists-elim` is still accepted as a lower-level compatibility spelling
 for `obtain`.
-Continuation tactics such as `have`, `obtain`, and `cases` can either scope over the
-remaining tactic script or take an explicit final `(by ...)` body to make the
-scope boundary visible in source.
+Continuation tactics such as `have`, `specialize`, `obtain`, and `cases` can
+either scope over the remaining tactic script or take an explicit final
+`(by ...)` body to make the scope boundary visible in source.
 
 Propositions can talk about arbitrary computations. Kernel quantifiers are
 plain binders. Source syntax may attach a predicate to a quantifier as
