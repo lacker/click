@@ -227,6 +227,14 @@ fn prelude_theorem_names() -> Vec<Name> {
         "is_singleton_nil",
         "is_singleton_singleton",
         "is_singleton_cons",
+        "if_true",
+        "if_false",
+        "if_condition_true",
+        "if_condition_false",
+        "if_true_result_with_false_else",
+        "symbol_eq_unit_unit",
+        "symbol_eq_true_false",
+        "symbol_eq_true",
         "add_is_append",
         "zero_computes_to_list",
         "zero_is_nat_value",
@@ -239,6 +247,7 @@ fn prelude_theorem_names() -> Vec<Name> {
         "succ_computes_to_list",
         "succ_preserves_nat_value",
         "is_nat_value_cons",
+        "is_nat_value_cons_true_elim",
         "add_zero_left",
         "add_computes_to_list",
         "add_cons",
@@ -683,9 +692,11 @@ fn full_source_load_diagnostics_report_computation_failures() {
 
 #[test]
 fn theorem_definitions_require_computations() {
+    let mut quick_check_theory = Theory::new();
+    assert!(!define_theorems_in_theory(&mut quick_check_theory));
+
     let mut theory = Theory::new();
 
-    assert!(!define_theorems_in_theory(&mut theory));
     let Err(SourceTheoremError::ProofElaborationFailed {
         theorem: failed_theorem,
         error,
@@ -696,8 +707,24 @@ fn theorem_definitions_require_computations() {
     assert_eq!(failed_theorem, theorem("reverse_acc_computes_to_list"));
     assert!(proof_error_contains_evaluation_failure(&error));
 
+    let computation_independent_theorems = [
+        theorem("if_true"),
+        theorem("if_false"),
+        theorem("if_condition_true"),
+        theorem("if_condition_false"),
+        theorem("if_true_result_with_false_else"),
+        theorem("symbol_eq_unit_unit"),
+        theorem("symbol_eq_true_false"),
+        theorem("symbol_eq_true"),
+    ];
+    for theorem in computation_independent_theorems {
+        assert!(theory.theorem(theorem).is_some());
+    }
+
     for theorem in prelude_theorem_names() {
-        assert!(theory.theorem(theorem).is_none());
+        if !computation_independent_theorems.contains(&theorem) {
+            assert!(theory.theorem(theorem).is_none());
+        }
     }
 }
 

@@ -146,6 +146,21 @@ fn proof_expr_to_proof_in_context_with_target(
             Box::new(subproof("trans first", first, theory, context)?),
             Box::new(subproof("trans second", second, theory, context)?),
         )),
+        ProofExpr::SymbolEqTrue(proof) => Ok(Proof::SymbolEqTrueElim(Box::new(subproof(
+            "symbol-eq-true",
+            proof,
+            theory,
+            context,
+        )?))),
+        ProofExpr::IfTrueCondition(proof) => Ok(Proof::IfTrueWithFalseElseCondition(Box::new(
+            subproof("if-true-condition", proof, theory, context)?,
+        ))),
+        ProofExpr::IfTrueThen(proof) => Ok(Proof::IfTrueWithFalseElseThen(Box::new(subproof(
+            "if-true-then",
+            proof,
+            theory,
+            context,
+        )?))),
         ProofExpr::EvalTo {
             computation,
             expected,

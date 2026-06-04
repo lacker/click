@@ -176,6 +176,53 @@
               tail))
           (eval))))))
 
+(theorem is_nat_value_cons_true_elim
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (implies
+        (computes-to
+          (is-nat-value (cons head tail))
+          (quote :true))
+        (and
+          (computes-to head (quote unit))
+          (computes-to
+            (is-nat-value tail)
+            (quote :true))))))
+  (by
+    (intro head)
+    (intro tail)
+    (intro cons_is_nat)
+    (have unfolded
+      (computes-to
+        (if
+          (symbol-eq head (quote unit))
+          (is-nat-value tail)
+          (quote :false))
+        (quote :true))
+      (by
+        (calc
+          (if
+            (symbol-eq head (quote unit))
+            (is-nat-value tail)
+            (quote :false))
+          (==
+            (is-nat-value (cons head tail))
+            (by
+              (exact (symm (is_nat_value_cons head tail)))))
+          (==
+            (quote :true)
+            (by
+              (exact cons_is_nat)))))
+      (by
+        (split
+          (by
+            (exact
+              (symbol-eq-true
+                (if-true-condition unfolded))))
+          (by
+            (exact
+              (if-true-then unfolded))))))))
+
 (theorem add_zero_left
   (forall right (is-list right)
     (computes-to (add zero right) right))

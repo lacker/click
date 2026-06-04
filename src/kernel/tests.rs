@@ -1411,6 +1411,54 @@ fn primitive_proof_proves_structural_props() {
 }
 
 #[test]
+fn symbol_eq_true_elim_inverts_true_symbol_comparisons() {
+    let left = Computation::Quote(Symbol(8));
+    let right = Computation::Quote(Symbol(8));
+    let comparison = symbol_eq_computation(left.clone(), right.clone());
+    let proof = Proof::SymbolEqTrueElim(Box::new(Proof::Step(comparison)));
+
+    assert!(check(&proof, &equal(left, right)));
+
+    let distinct_left = Computation::Quote(Symbol(8));
+    let distinct_right = Computation::Quote(Symbol(9));
+    let distinct = symbol_eq_computation(distinct_left.clone(), distinct_right.clone());
+    let invalid = Proof::SymbolEqTrueElim(Box::new(Proof::Step(distinct)));
+
+    assert!(!check(&invalid, &equal(distinct_left, distinct_right)));
+}
+
+#[test]
+fn if_true_with_false_else_elims_invert_boolean_results() {
+    let condition = Computation::Quote(TRUE_SYMBOL);
+    let then_branch = Computation::Quote(TRUE_SYMBOL);
+    let else_branch = Computation::Quote(FALSE_SYMBOL);
+    let conditional = if_computation(condition.clone(), then_branch.clone(), else_branch.clone());
+
+    assert!(check(
+        &Proof::IfTrueWithFalseElseCondition(Box::new(Proof::Step(conditional.clone()))),
+        &equal(condition, Computation::Quote(TRUE_SYMBOL))
+    ));
+    assert!(check(
+        &Proof::IfTrueWithFalseElseThen(Box::new(Proof::Step(conditional))),
+        &equal(then_branch, Computation::Quote(TRUE_SYMBOL))
+    ));
+
+    let wrong_else = if_computation(
+        Computation::Quote(TRUE_SYMBOL),
+        Computation::Quote(TRUE_SYMBOL),
+        Computation::Nil,
+    );
+
+    assert!(!check(
+        &Proof::IfTrueWithFalseElseCondition(Box::new(Proof::Step(wrong_else))),
+        &equal(
+            Computation::Quote(TRUE_SYMBOL),
+            Computation::Quote(TRUE_SYMBOL)
+        )
+    ));
+}
+
+#[test]
 fn prop_helpers_construct_expected_shapes() {
     let prop = equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(1)));
     let computation = apply(

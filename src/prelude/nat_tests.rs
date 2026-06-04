@@ -166,6 +166,10 @@ pub fn is_nat_value_cons_source_theorem() -> Prop {
     theorem_prop("is_nat_value_cons")
 }
 
+pub fn is_nat_value_cons_true_elim_source_theorem() -> Prop {
+    theorem_prop("is_nat_value_cons_true_elim")
+}
+
 pub fn add_zero_left_source_theorem() -> Prop {
     theorem_prop("add_zero_left")
 }
@@ -476,6 +480,11 @@ fn checked_theory_contains_nat_theorems() {
         &theory,
         "is_nat_value_cons",
         is_nat_value_cons_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "is_nat_value_cons_true_elim",
+        is_nat_value_cons_true_elim_source_theorem(),
     );
     assert_theory_has_theorem(&theory, "add_zero_left", add_zero_left_source_theorem());
     assert_theory_has_theorem(

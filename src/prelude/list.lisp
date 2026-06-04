@@ -297,6 +297,112 @@
         rest_cell
         (quote :false)))))
 
+(theorem if_true
+  (forall then
+    (forall else
+      (computes-to
+        (if (quote :true) then else)
+        then)))
+  (by
+    (intro then)
+    (intro else)
+    (eval)))
+
+(theorem if_false
+  (forall then
+    (forall else
+      (computes-to
+        (if (quote :false) then else)
+        else)))
+  (by
+    (intro then)
+    (intro else)
+    (eval)))
+
+(theorem if_condition_true
+  (forall condition
+    (forall then
+      (forall else
+        (implies
+          (computes-to condition (quote :true))
+          (computes-to
+            (if condition then else)
+            then)))))
+  (by
+    (intro condition)
+    (intro then)
+    (intro else)
+    (rewrite else)
+    (eval)))
+
+(theorem if_condition_false
+  (forall condition
+    (forall then
+      (forall else
+        (implies
+          (computes-to condition (quote :false))
+          (computes-to
+            (if condition then else)
+            else)))))
+  (by
+    (intro condition)
+    (intro then)
+    (intro else)
+    (rewrite else)
+    (eval)))
+
+(theorem if_true_result_with_false_else
+  (forall condition
+    (forall then_branch
+      (implies
+        (computes-to
+          (if condition then_branch (quote :false))
+          (quote :true))
+        (and
+          (computes-to condition (quote :true))
+          (computes-to then_branch (quote :true))))))
+  (proof
+    (forall-intro condition
+      (forall-intro then_branch
+        (implies-intro if_is_true
+          (computes-to
+            (if condition then_branch (quote :false))
+            (quote :true))
+          (and-intro
+            (if-true-condition (assume if_is_true))
+            (if-true-then (assume if_is_true))))))))
+
+(theorem symbol_eq_unit_unit
+  (computes-to
+    (symbol-eq (quote unit) (quote unit))
+    (quote :true))
+  (by
+    (eval)))
+
+(theorem symbol_eq_true_false
+  (computes-to
+    (symbol-eq (quote :true) (quote :false))
+    (quote :false))
+  (by
+    (eval)))
+
+(theorem symbol_eq_true
+  (forall left
+    (forall right
+      (implies
+        (computes-to
+          (symbol-eq left right)
+          (quote :true))
+        (computes-to left right))))
+  (proof
+    (forall-intro left
+      (forall-intro right
+        (implies-intro symbol_eq_is_true
+          (computes-to
+            (symbol-eq left right)
+            (quote :true))
+          (symbol-eq-true (assume symbol_eq_is_true)))))))
+
 (theorem reverse_acc_computes_to_list
   (forall list (is-list list)
     (forall acc (is-list acc)

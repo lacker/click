@@ -285,6 +285,9 @@ pub enum Proof {
     Refl(Computation),
     Symm(Box<Proof>),
     Trans(Box<Proof>, Box<Proof>),
+    SymbolEqTrueElim(Box<Proof>),
+    IfTrueWithFalseElseCondition(Box<Proof>),
+    IfTrueWithFalseElseThen(Box<Proof>),
     Step(Computation),
     Steps(Vec<Computation>),
     Rewrite {

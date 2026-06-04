@@ -245,6 +245,15 @@ fn proven_prop_in_context(proof: &Proof, bindings: &Bindings, context: &Context)
                 _ => None,
             }
         }
+        Proof::SymbolEqTrueElim(proof) => {
+            symbol_eq_true_elim(proven_prop_in_context(proof, bindings, context)?)
+        }
+        Proof::IfTrueWithFalseElseCondition(proof) => {
+            if_true_with_false_else_condition(proven_prop_in_context(proof, bindings, context)?)
+        }
+        Proof::IfTrueWithFalseElseThen(proof) => {
+            if_true_with_false_else_then(proven_prop_in_context(proof, bindings, context)?)
+        }
         Proof::Step(computation) => match step_for_proof(computation, bindings, context) {
             Step::Reduced(reduced) => Some(Prop::Equal(computation.clone(), reduced)),
             Step::Normal => None,
@@ -432,6 +441,47 @@ fn proven_prop_in_context(proof: &Proof, bindings: &Bindings, context: &Context)
             }
             _ => None,
         },
+    }
+}
+
+fn symbol_eq_true_elim(prop: Prop) -> Option<Prop> {
+    match prop {
+        Prop::Equal(Computation::SymbolEq { left, right }, Computation::Quote(TRUE_SYMBOL)) => {
+            Some(Prop::Equal(*left, *right))
+        }
+        _ => None,
+    }
+}
+
+fn if_true_with_false_else_condition(prop: Prop) -> Option<Prop> {
+    match prop {
+        Prop::Equal(
+            Computation::If {
+                condition,
+                then_branch: _,
+                else_branch,
+            },
+            Computation::Quote(TRUE_SYMBOL),
+        ) if alpha_eq_computation(else_branch.as_ref(), &Computation::Quote(FALSE_SYMBOL)) => {
+            Some(Prop::Equal(*condition, Computation::Quote(TRUE_SYMBOL)))
+        }
+        _ => None,
+    }
+}
+
+fn if_true_with_false_else_then(prop: Prop) -> Option<Prop> {
+    match prop {
+        Prop::Equal(
+            Computation::If {
+                condition: _,
+                then_branch,
+                else_branch,
+            },
+            Computation::Quote(TRUE_SYMBOL),
+        ) if alpha_eq_computation(else_branch.as_ref(), &Computation::Quote(FALSE_SYMBOL)) => {
+            Some(Prop::Equal(*then_branch, Computation::Quote(TRUE_SYMBOL)))
+        }
+        _ => None,
     }
 }
 

@@ -202,6 +202,9 @@ pub(crate) enum ProofExpr {
     Primitive(Prop),
     Symm(Box<ProofExpr>),
     Trans(Box<ProofExpr>, Box<ProofExpr>),
+    SymbolEqTrue(Box<ProofExpr>),
+    IfTrueCondition(Box<ProofExpr>),
+    IfTrueThen(Box<ProofExpr>),
     EvalTo {
         computation: Computation,
         expected: Computation,
@@ -1512,6 +1515,9 @@ impl<'a> SourceParser<'a> {
             "primitive" => self.proof_primitive(items),
             "symm" => self.proof_symm(items),
             "trans" => self.proof_trans(items),
+            "symbol-eq-true" => self.proof_symbol_eq_true(items),
+            "if-true-condition" => self.proof_if_true_condition(items),
+            "if-true-then" => self.proof_if_true_then(items),
             "eval-to" => self.proof_eval_to(items),
             "eval-same" => self.proof_eval_same(items),
             "rewrite" => self.proof_rewrite(items),
@@ -1569,6 +1575,27 @@ impl<'a> SourceParser<'a> {
             Box::new(self.proof_expr(&items[1])?),
             Box::new(self.proof_expr(&items[2])?),
         ))
+    }
+
+    fn proof_symbol_eq_true(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("symbol-eq-true", items, 2)?;
+        Ok(ProofExpr::SymbolEqTrue(Box::new(
+            self.proof_expr_or_ref(&items[1])?,
+        )))
+    }
+
+    fn proof_if_true_condition(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("if-true-condition", items, 2)?;
+        Ok(ProofExpr::IfTrueCondition(Box::new(
+            self.proof_expr_or_ref(&items[1])?,
+        )))
+    }
+
+    fn proof_if_true_then(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("if-true-then", items, 2)?;
+        Ok(ProofExpr::IfTrueThen(Box::new(
+            self.proof_expr_or_ref(&items[1])?,
+        )))
     }
 
     fn proof_eval_to(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
@@ -2733,6 +2760,54 @@ mod tests {
             panic!("expected an exists-intro proof");
         };
         assert_eq!(*variable, Symbol(2_000));
+    }
+
+    #[test]
+    fn parses_bool_inversion_proof_helpers() {
+        let module = parse_module(
+            "
+            (theorem bool_inversions
+              (and
+                (computes-to (quote :true) (quote :true))
+                (computes-to (quote :true) (quote :true)))
+              (proof
+                (and-intro
+                  (if-true-condition
+                    (eval-to
+                      (if (quote :true) (quote :true) (quote :false))
+                      (quote :true)))
+                  (symbol-eq-true
+                    (eval-to
+                      (symbol-eq (quote unit) (quote unit))
+                      (quote :true))))))
+            ",
+            &[],
+            &[NameBinding {
+                spelling: "bool_inversions",
+                name: Name(1),
+            }],
+            &[
+                SymbolBinding {
+                    spelling: ":true",
+                    symbol: TRUE_SYMBOL,
+                },
+                SymbolBinding {
+                    spelling: ":false",
+                    symbol: FALSE_SYMBOL,
+                },
+                SymbolBinding {
+                    spelling: "unit",
+                    symbol: Symbol(9),
+                },
+            ],
+        )
+        .expect("bool inversion proof helpers should parse");
+
+        let ProofScript::Proof(ProofExpr::AndIntro(left, right)) = &module.theorems[0].proof else {
+            panic!("expected an and-intro proof");
+        };
+        assert!(matches!(left.as_ref(), ProofExpr::IfTrueCondition(_)));
+        assert!(matches!(right.as_ref(), ProofExpr::SymbolEqTrue(_)));
     }
 
     #[test]
