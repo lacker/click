@@ -293,6 +293,11 @@ pub enum Proof {
     IfValueWithEffectThenElse(Box<Proof>),
     IfValueConditionBool(Box<Proof>),
     DistinctOutcomes(Box<Proof>),
+    ValueNonSymbolNonLambdaIsList {
+        value: Box<Proof>,
+        not_symbol: Box<Proof>,
+        not_lambda: Box<Proof>,
+    },
     AbsurdElim {
         absurd: Box<Proof>,
         prop: Prop,

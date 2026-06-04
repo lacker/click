@@ -514,6 +514,14 @@ pub fn value_eq_true_implies_not_lambdas_source_theorem() -> Prop {
     theorem_prop("value_eq_true_implies_not_lambdas")
 }
 
+pub fn value_non_symbol_non_lambda_is_list_source_theorem() -> Prop {
+    theorem_prop("value_non_symbol_non_lambda_is_list")
+}
+
+pub fn value_eq_left_non_symbol_true_implies_lists_source_theorem() -> Prop {
+    theorem_prop("value_eq_left_non_symbol_true_implies_lists")
+}
+
 pub fn value_eq_left_symbol_true_source_theorem() -> Prop {
     theorem_prop("value_eq_left_symbol_true")
 }
@@ -1824,6 +1832,40 @@ pub fn value_eq_true_implies_not_lambdas_theorem(left: Symbol, right: Symbol) ->
                 and(
                     computes_to(is_lambda_call(var(left)), false_value()),
                     computes_to(is_lambda_call(var(right)), false_value()),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Any value whose kind is neither symbol nor lambda is a list.
+pub fn value_non_symbol_non_lambda_is_list_theorem(value: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        implies(
+            computes_to(is_symbol_call(var(value)), false_value()),
+            implies(
+                computes_to(is_lambda_call(var(value)), false_value()),
+                is_list(var(value)),
+            ),
+        ),
+    )
+}
+
+/// If `value-eq` returns true for a non-symbol left value, both values are lists.
+pub fn value_eq_left_non_symbol_true_implies_lists_theorem(left: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_value(var(left)),
+        implies(
+            computes_to(is_symbol_call(var(left)), false_value()),
+            forall_where(
+                right,
+                is_value(var(right)),
+                implies(
+                    computes_to(value_eq_call(var(left), var(right)), true_value()),
+                    and(is_list(var(left)), is_list(var(right))),
                 ),
             ),
         ),
@@ -3258,6 +3300,11 @@ mod tests {
             theorem_symbol("is_symbol_true_implies_is_lambda_false", "value");
         let not_lambdas_left = theorem_symbol("value_eq_true_implies_not_lambdas", "left");
         let not_lambdas_right = theorem_symbol("value_eq_true_implies_not_lambdas", "right");
+        let classified_list_value = theorem_symbol("value_non_symbol_non_lambda_is_list", "value");
+        let non_symbol_lists_left =
+            theorem_symbol("value_eq_left_non_symbol_true_implies_lists", "left");
+        let non_symbol_lists_right =
+            theorem_symbol("value_eq_left_non_symbol_true_implies_lists", "right");
         let left_symbol_left = theorem_symbol("value_eq_left_symbol_true", "left");
         let left_symbol_right = theorem_symbol("value_eq_left_symbol_true", "right");
         let left_symbol_sound_left = theorem_symbol("value_eq_left_symbol_sound", "left");
@@ -3304,6 +3351,17 @@ mod tests {
         assert_eq!(
             value_eq_true_implies_not_lambdas_source_theorem(),
             value_eq_true_implies_not_lambdas_theorem(not_lambdas_left, not_lambdas_right)
+        );
+        assert_eq!(
+            value_non_symbol_non_lambda_is_list_source_theorem(),
+            value_non_symbol_non_lambda_is_list_theorem(classified_list_value)
+        );
+        assert_eq!(
+            value_eq_left_non_symbol_true_implies_lists_source_theorem(),
+            value_eq_left_non_symbol_true_implies_lists_theorem(
+                non_symbol_lists_left,
+                non_symbol_lists_right,
+            )
         );
         assert_eq!(
             value_eq_left_symbol_true_source_theorem(),

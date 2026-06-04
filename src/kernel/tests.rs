@@ -1546,6 +1546,55 @@ fn distinct_outcomes_prove_absurd_and_absurd_eliminates() {
 }
 
 #[test]
+fn non_symbol_non_lambda_values_are_lists() {
+    let value = Computation::Var(Symbol(1));
+    let value_assumption = Symbol(10);
+    let not_symbol_assumption = Symbol(11);
+    let not_lambda_assumption = Symbol(12);
+    let mut context = Context::new();
+    context.insert(value_assumption, is_value(value.clone()));
+    context.insert(
+        not_symbol_assumption,
+        equal(
+            symbol_eq_computation(
+                value_kind_computation(value.clone()),
+                Computation::Quote(SYMBOL_KIND_SYMBOL),
+            ),
+            Computation::Quote(FALSE_SYMBOL),
+        ),
+    );
+    context.insert(
+        not_lambda_assumption,
+        equal(
+            symbol_eq_computation(
+                value_kind_computation(value.clone()),
+                Computation::Quote(LAMBDA_KIND_SYMBOL),
+            ),
+            Computation::Quote(FALSE_SYMBOL),
+        ),
+    );
+
+    let proof = Proof::ValueNonSymbolNonLambdaIsList {
+        value: Box::new(Proof::Assume(value_assumption)),
+        not_symbol: Box::new(Proof::Assume(not_symbol_assumption)),
+        not_lambda: Box::new(Proof::Assume(not_lambda_assumption)),
+    };
+
+    assert!(check_in_context(&proof, &is_list(value.clone()), &context));
+
+    let wrong_not_lambda = Proof::ValueNonSymbolNonLambdaIsList {
+        value: Box::new(Proof::Assume(value_assumption)),
+        not_symbol: Box::new(Proof::Assume(not_symbol_assumption)),
+        not_lambda: Box::new(Proof::Assume(not_symbol_assumption)),
+    };
+    assert!(!check_in_context(
+        &wrong_not_lambda,
+        &is_list(value),
+        &context
+    ));
+}
+
+#[test]
 fn prop_helpers_construct_expected_shapes() {
     let prop = equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(1)));
     let computation = apply(

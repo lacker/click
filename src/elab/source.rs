@@ -209,6 +209,11 @@ pub(crate) enum ProofExpr {
     IfEffectThenElse(Box<ProofExpr>),
     IfValueConditionBool(Box<ProofExpr>),
     DistinctOutcomes(Box<ProofExpr>),
+    ValueNonSymbolNonLambdaIsList {
+        value: Box<ProofExpr>,
+        not_symbol: Box<ProofExpr>,
+        not_lambda: Box<ProofExpr>,
+    },
     AbsurdElim {
         absurd: Box<ProofExpr>,
         prop: Prop,
@@ -1611,6 +1616,9 @@ impl<'a> SourceParser<'a> {
             "if-effect-then-else" => self.proof_if_effect_then_else(items),
             "if-value-condition-bool" => self.proof_if_value_condition_bool(items),
             "distinct-outcomes" => self.proof_distinct_outcomes(items),
+            "value-non-symbol-non-lambda-is-list" => {
+                self.proof_value_non_symbol_non_lambda_is_list(items)
+            }
             "absurd-elim" => self.proof_absurd_elim(items),
             "eval-to" => self.proof_eval_to(items),
             "eval-same" => self.proof_eval_same(items),
@@ -1721,6 +1729,18 @@ impl<'a> SourceParser<'a> {
         Ok(ProofExpr::DistinctOutcomes(Box::new(
             self.proof_expr_or_ref(&items[1])?,
         )))
+    }
+
+    fn proof_value_non_symbol_non_lambda_is_list(
+        &mut self,
+        items: &[Expr],
+    ) -> Result<ProofExpr, ParseError> {
+        expect_len("value-non-symbol-non-lambda-is-list", items, 4)?;
+        Ok(ProofExpr::ValueNonSymbolNonLambdaIsList {
+            value: Box::new(self.proof_expr_or_ref(&items[1])?),
+            not_symbol: Box::new(self.proof_expr_or_ref(&items[2])?),
+            not_lambda: Box::new(self.proof_expr_or_ref(&items[3])?),
+        })
     }
 
     fn proof_absurd_elim(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
@@ -3192,6 +3212,14 @@ mod tests {
                     (primitive
                       (equal (quote :true) (quote :false))))
                   (is-value nil))))
+
+            (theorem value_classification
+              (is-list nil)
+              (proof
+                (value-non-symbol-non-lambda-is-list
+                  (primitive (is-value nil))
+                  (eval-to (is-symbol nil) (quote :false))
+                  (eval-to (is-lambda nil) (quote :false)))))
             ",
             &[],
             &[
@@ -3214,6 +3242,10 @@ mod tests {
                 NameBinding {
                     spelling: "absurd_elimination",
                     name: Name(5),
+                },
+                NameBinding {
+                    spelling: "value_classification",
+                    name: Name(6),
                 },
             ],
             &[
@@ -3260,6 +3292,10 @@ mod tests {
         assert!(matches!(
             &module.theorems[4].proof,
             ProofScript::Proof(ProofExpr::AbsurdElim { .. })
+        ));
+        assert!(matches!(
+            &module.theorems[5].proof,
+            ProofScript::Proof(ProofExpr::ValueNonSymbolNonLambdaIsList { .. })
         ));
     }
 

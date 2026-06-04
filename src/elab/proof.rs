@@ -173,6 +173,30 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
             theory,
             context,
         )?))),
+        ProofExpr::ValueNonSymbolNonLambdaIsList {
+            value,
+            not_symbol,
+            not_lambda,
+        } => Ok(Proof::ValueNonSymbolNonLambdaIsList {
+            value: Box::new(subproof(
+                "value-non-symbol-non-lambda-is-list value",
+                value,
+                theory,
+                context,
+            )?),
+            not_symbol: Box::new(subproof(
+                "value-non-symbol-non-lambda-is-list not-symbol",
+                not_symbol,
+                theory,
+                context,
+            )?),
+            not_lambda: Box::new(subproof(
+                "value-non-symbol-non-lambda-is-list not-lambda",
+                not_lambda,
+                theory,
+                context,
+            )?),
+        }),
         ProofExpr::AbsurdElim { absurd, prop } => Ok(Proof::AbsurdElim {
             absurd: Box::new(subproof("absurd-elim", absurd, theory, context)?),
             prop: prop.clone(),

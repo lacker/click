@@ -269,6 +269,15 @@ fn proven_prop_in_context(proof: &Proof, bindings: &Bindings, context: &Context)
         Proof::DistinctOutcomes(proof) => {
             distinct_outcomes(proven_prop_in_context(proof, bindings, context)?)
         }
+        Proof::ValueNonSymbolNonLambdaIsList {
+            value,
+            not_symbol,
+            not_lambda,
+        } => value_non_symbol_non_lambda_is_list(
+            proven_prop_in_context(value, bindings, context)?,
+            proven_prop_in_context(not_symbol, bindings, context)?,
+            proven_prop_in_context(not_lambda, bindings, context)?,
+        ),
         Proof::AbsurdElim { absurd, prop } => {
             let Prop::Absurd = proven_prop_in_context(absurd, bindings, context)? else {
                 return None;
@@ -564,6 +573,34 @@ fn distinct_outcomes(prop: Prop) -> Option<Prop> {
         }
         _ => None,
     }
+}
+
+fn value_non_symbol_non_lambda_is_list(
+    value: Prop,
+    not_symbol: Prop,
+    not_lambda: Prop,
+) -> Option<Prop> {
+    let Prop::IsValue(computation) = value else {
+        return None;
+    };
+
+    let expected_not_symbol = value_kind_is_not_kind(computation.clone(), SYMBOL_KIND_SYMBOL);
+    let expected_not_lambda = value_kind_is_not_kind(computation.clone(), LAMBDA_KIND_SYMBOL);
+
+    if alpha_eq_prop(&not_symbol, &expected_not_symbol)
+        && alpha_eq_prop(&not_lambda, &expected_not_lambda)
+    {
+        Some(Prop::IsList(computation))
+    } else {
+        None
+    }
+}
+
+fn value_kind_is_not_kind(computation: Computation, kind: Symbol) -> Prop {
+    equal(
+        symbol_eq(value_kind(computation), Computation::Quote(kind)),
+        Computation::Quote(FALSE_SYMBOL),
+    )
 }
 
 fn step_for_proof(computation: &Computation, bindings: &Bindings, context: &Context) -> Step {

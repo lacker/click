@@ -206,6 +206,8 @@ fn prelude_theorem_names() -> Vec<Name> {
         "value_eq_cons",
         "is_symbol_true_implies_is_lambda_false",
         "value_eq_true_implies_not_lambdas",
+        "value_non_symbol_non_lambda_is_list",
+        "value_eq_left_non_symbol_true_implies_lists",
         "value_eq_left_symbol_true",
         "value_eq_left_symbol_sound",
         "value_eq_cons_true_elim",
@@ -893,6 +895,10 @@ fn theory_defines_reverse_theorems() {
         list_tests::is_symbol_true_implies_is_lambda_false_source_theorem();
     let value_eq_true_implies_not_lambdas_prop =
         list_tests::value_eq_true_implies_not_lambdas_source_theorem();
+    let value_non_symbol_non_lambda_is_list_prop =
+        list_tests::value_non_symbol_non_lambda_is_list_source_theorem();
+    let value_eq_left_non_symbol_true_implies_lists_prop =
+        list_tests::value_eq_left_non_symbol_true_implies_lists_source_theorem();
     let value_eq_left_symbol_true_prop = list_tests::value_eq_left_symbol_true_source_theorem();
     let value_eq_left_symbol_sound_prop = list_tests::value_eq_left_symbol_sound_source_theorem();
     let value_eq_cons_true_elim_prop = list_tests::value_eq_cons_true_elim_source_theorem();
@@ -1592,6 +1598,18 @@ fn theory_defines_reverse_theorems() {
             .expect("value-eq lambda guard theorem source proof should check with dependencies")
             .prop(),
         &value_eq_true_implies_not_lambdas_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_non_symbol_non_lambda_is_list")
+            .expect("value classification theorem source proof should check with dependencies")
+            .prop(),
+        &value_non_symbol_non_lambda_is_list_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_left_non_symbol_true_implies_lists")
+            .expect("value-eq non-symbol list theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_left_non_symbol_true_implies_lists_prop,
     );
     assert_eq!(
         checked_theorem("value_eq_left_symbol_true")
