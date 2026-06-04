@@ -56,10 +56,11 @@ They can also use goal-directed tactic scripts with `(by ...)`. Tactics inspect
 the current goal and local context, then elaborate to ordinary kernel `Proof`
 values that are checked by the kernel. The initial tactic set is intentionally
 small and deterministic: `intro`, `assumption`, `exact`, `eval`, `apply`,
-`have`, `rewrite`, `forall-elim`, `exists-elim`, `or-elim`,
+`have`, `obtain`, `rewrite`, `forall-elim`, `or-elim`,
 `list-induction`, `calc`, `split`/`constructor`, `exists`, `left`, and
-`right`.
-Continuation tactics such as `have` and `exists-elim` can either scope over the
+`right`. `exists-elim` is still accepted as a lower-level compatibility spelling
+for `obtain`.
+Continuation tactics such as `have` and `obtain` can either scope over the
 remaining tactic script or take an explicit final `(by ...)` body to make the
 scope boundary visible in source.
 

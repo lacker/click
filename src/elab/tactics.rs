@@ -84,13 +84,22 @@ fn tactic_steps_to_proof(
             tactic_exists(witness, proof, theory, goal)
         }
         TacticExpr::ExistsElim {
+            tactic,
             existential,
             witness,
             assumption,
             body,
         } => {
-            let rest = explicit_body_or_rest(body.as_ref(), rest, "exists-elim")?;
-            tactic_exists_elim(existential, *witness, *assumption, rest, theory, goal)
+            let rest = explicit_body_or_rest(body.as_ref(), rest, tactic)?;
+            tactic_exists_elim(
+                tactic,
+                existential,
+                *witness,
+                *assumption,
+                rest,
+                theory,
+                goal,
+            )
         }
         TacticExpr::OrElim {
             disjunction,
@@ -580,6 +589,7 @@ fn existential_witness_goal(
 }
 
 fn tactic_exists_elim(
+    tactic: &'static str,
     existential_expr: &ProofExpr,
     witness: Symbol,
     assumption: Symbol,
@@ -589,7 +599,7 @@ fn tactic_exists_elim(
 ) -> Result<Proof, ProofElaborationError> {
     let existential = proof_expr_to_proof_in_context(existential_expr, theory, &goal.context)?;
     let context = exists_elim_context(
-        "exists-elim",
+        tactic,
         &goal.context,
         theory,
         &existential,

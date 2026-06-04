@@ -480,10 +480,8 @@
       induction_hypothesis
       (by
         (intro right)
-        (exists-elim
-          (forall-elim (assume induction_hypothesis) right)
-          tail_result
-          tail_result_proof)
+        (obtain tail_result tail_result_proof
+          (forall-elim (assume induction_hypothesis) right))
         (exists (cons head tail_result)
           (by
             (calc
@@ -592,11 +590,9 @@
       tail
       induction_hypothesis
       (by
-        (exists-elim
-          (maps_values head)
-          mapped_head
-          mapped_head_proof)
-        (exists-elim induction_hypothesis mapped_tail mapped_tail_proof)
+        (obtain mapped_head mapped_head_proof
+          (maps_values head))
+        (obtain mapped_tail mapped_tail_proof induction_hypothesis)
         (exists (cons mapped_head mapped_tail)
           (by
             (calc
@@ -657,15 +653,11 @@
       tail
       induction_hypothesis
       (by
-        (exists-elim
-          (maps_values_to_lists head)
-          mapped_head
-          mapped_head_proof)
-        (exists-elim induction_hypothesis mapped_tail mapped_tail_proof)
-        (exists-elim
-          (append_computes_to_list mapped_head mapped_tail)
-          appended
-          appended_proof)
+        (obtain mapped_head mapped_head_proof
+          (maps_values_to_lists head))
+        (obtain mapped_tail mapped_tail_proof induction_hypothesis)
+        (obtain appended appended_proof
+          (append_computes_to_list mapped_head mapped_tail))
         (exists appended
           (by
             (calc
@@ -743,11 +735,9 @@
       tail
       induction_hypothesis
       (by
-        (exists-elim induction_hypothesis tail_result tail_result_proof)
-        (exists-elim
-          (combines_values head tail_result)
-          folded_result
-          folded_result_proof)
+        (obtain tail_result tail_result_proof induction_hypothesis)
+        (obtain folded_result folded_result_proof
+          (combines_values head tail_result))
         (exists folded_result
           (by
             (calc
@@ -824,14 +814,10 @@
       induction_hypothesis
       (by
         (intro initial)
-        (exists-elim
-          (combines_values initial head)
-          folded_initial
-          folded_initial_proof)
-        (exists-elim
-          (induction_hypothesis folded_initial)
-          result
-          result_proof)
+        (obtain folded_initial folded_initial_proof
+          (combines_values initial head))
+        (obtain result result_proof
+          (induction_hypothesis folded_initial))
         (exists result
           (by
             (calc
@@ -933,14 +919,10 @@
           right_tail
           right_induction_hypothesis
           (by
-            (exists-elim
-              (combines_values left_head right_head)
-              zipped_head
-              zipped_head_proof)
-            (exists-elim
-              (left_induction_hypothesis right_tail)
-              zipped_tail
-              zipped_tail_proof)
+            (obtain zipped_head zipped_head_proof
+              (combines_values left_head right_head))
+            (obtain zipped_tail zipped_tail_proof
+              (left_induction_hypothesis right_tail))
             (exists (cons zipped_head zipped_tail)
               (by
                 (calc
@@ -1241,7 +1223,7 @@
           (predicate_returns_bool head)
           predicate_true
           (by
-            (exists-elim induction_hypothesis filtered_tail filtered_tail_proof)
+            (obtain filtered_tail filtered_tail_proof induction_hypothesis)
             (exists (cons head filtered_tail)
               (by
                 (calc
@@ -1257,7 +1239,7 @@
                       (eval)))))))
           predicate_false
           (by
-            (exists-elim induction_hypothesis filtered_tail filtered_tail_proof)
+            (obtain filtered_tail filtered_tail_proof induction_hypothesis)
             (exists filtered_tail
               (by
                 (calc
@@ -1779,10 +1761,8 @@
       (by
         (intro middle)
         (intro right)
-        (exists-elim
-          (append_computes_to_list middle right)
-          middle_right
-          middle_right_proof)
+        (obtain middle_right middle_right_proof
+          (append_computes_to_list middle right))
         (calc
           (append (append nil middle) right)
           (==
@@ -1808,14 +1788,10 @@
       (by
         (intro middle)
         (intro right)
-        (exists-elim
-          (append_computes_to_list tail middle)
-          tail_middle
-          tail_middle_proof)
-        (exists-elim
-          (append_computes_to_list middle right)
-          middle_right
-          middle_right_proof)
+        (obtain tail_middle tail_middle_proof
+          (append_computes_to_list tail middle))
+        (obtain middle_right middle_right_proof
+          (append_computes_to_list middle right))
         (calc
           (append (append (cons head tail) middle) right)
           (==
@@ -1873,10 +1849,8 @@
       induction_hypothesis
       (by
         (intro acc)
-        (exists-elim
-          (reverse_computes_to_list tail)
-          tail_reversed
-          tail_reversed_proof)
+        (obtain tail_reversed tail_reversed_proof
+          (reverse_computes_to_list tail))
         (have reverse_cons_step
           (computes-to
             (reverse (cons head tail))
@@ -1962,10 +1936,8 @@
     (list-induction list
       (by
         (intro acc)
-        (exists-elim
-          (reverse_computes_to_list acc)
-          acc_reversed
-          acc_reversed_proof)
+        (obtain acc_reversed acc_reversed_proof
+          (reverse_computes_to_list acc))
         (calc
           (reverse (reverse_acc nil acc))
           (==
@@ -1990,10 +1962,8 @@
       induction_hypothesis
       (by
         (intro acc)
-        (exists-elim
-          (reverse_computes_to_list acc)
-          acc_reversed
-          acc_reversed_proof)
+        (obtain acc_reversed acc_reversed_proof
+          (reverse_computes_to_list acc))
         (calc
           (reverse (reverse_acc (cons head tail) acc))
           (==
@@ -2075,10 +2045,8 @@
       (by
         (intro right)
         (intro acc)
-        (exists-elim
-          (append_computes_to_list tail right)
-          tail_right
-          tail_right_proof)
+        (obtain tail_right tail_right_proof
+          (append_computes_to_list tail right))
         (calc
           (reverse_acc (append (cons head tail) right) acc)
           (==
@@ -2123,14 +2091,10 @@
   (by
     (intro left)
     (intro right)
-    (exists-elim
-      (append_computes_to_list left right)
-      appended
-      appended_proof)
-    (exists-elim
-      (reverse_acc_computes_to_list left nil)
-      left_reversed_acc
-      left_reversed_acc_proof)
+    (obtain appended appended_proof
+      (append_computes_to_list left right))
+    (obtain left_reversed_acc left_reversed_acc_proof
+      (reverse_acc_computes_to_list left nil))
     (have reverse_left_step
       (computes-to
         (reverse left)
@@ -2198,10 +2162,8 @@
       induction_hypothesis
       (by
         (intro value)
-        (exists-elim
-          (induction_hypothesis value)
-          tail_result
-          tail_result_proof)
+        (obtain tail_result tail_result_proof
+          (induction_hypothesis value))
         (exists (cons head tail_result)
           (by
             (calc

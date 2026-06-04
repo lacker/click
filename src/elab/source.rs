@@ -315,6 +315,7 @@ pub(crate) enum TacticExpr {
         proof: TacticScript,
     },
     ExistsElim {
+        tactic: &'static str,
         existential: Box<ProofExpr>,
         witness: Symbol,
         assumption: Symbol,
@@ -1325,6 +1326,7 @@ impl<'a> SourceParser<'a> {
         let body = self.optional_tactic_body("obtain", items.get(4))?;
 
         Ok(TacticExpr::ExistsElim {
+            tactic: "obtain",
             existential,
             witness,
             assumption,
@@ -1346,6 +1348,7 @@ impl<'a> SourceParser<'a> {
         let body = self.optional_tactic_body("exists-elim", items.get(4))?;
 
         Ok(TacticExpr::ExistsElim {
+            tactic: "exists-elim",
             existential,
             witness,
             assumption,
@@ -2400,6 +2403,7 @@ mod tests {
             tactics.as_slice(),
             [
                 TacticExpr::ExistsElim {
+                    tactic,
                     existential,
                     witness: Symbol(2_002),
                     assumption: Symbol(2_003),
@@ -2409,7 +2413,8 @@ mod tests {
                     forall,
                     arguments,
                 },
-            ] if **existential == ProofExpr::Known(Name(1))
+            ] if *tactic == "obtain"
+                && **existential == ProofExpr::Known(Name(1))
                 && **forall == ProofExpr::Known(Name(2))
                 && arguments.as_slice() == [Computation::Nil]
         ));
@@ -2490,10 +2495,10 @@ mod tests {
             },
         ] = tactics.as_slice()
         else {
-            panic!("expected an exists-elim tactic with an explicit body");
+            panic!("expected an obtain tactic with an explicit body");
         };
         let [TacticExpr::Exact(proof)] = body_tactics.as_slice() else {
-            panic!("expected the exists-elim body to contain an exact tactic");
+            panic!("expected the obtain body to contain an exact tactic");
         };
         assert_eq!(**proof, ProofExpr::Assume(*assumption));
 
