@@ -72,6 +72,21 @@ shorthand: `(forall x P Q)` elaborates to `forall x. P -> Q`, and
 concrete finalized result use `Value`, `Effect`, or `Outcome`. Errors are named
 effects, not a second channel for returning structured values.
 
+Kernel equality is the proof-level equality proposition. The source proposition
+`(computes-to computation result)` is readability-oriented syntax for that same
+equality relation; it elaborates to `equal computation result`, and the kernel
+does not give it a separate proof rule. Use `computes-to` when the right side is
+being presented as an evaluation result, and `equal` when the statement is
+symmetric or algebraic.
+
+The raw equality proof tools are direct kernel proof forms. `eval-to` proves
+that a computation reduces to a stated result, while `eval-same` proves equality
+by reducing two computations to the same normal form. `symm` and `trans` are
+symmetry and transitivity for proof equality. `rewrite` transports a proof
+across an equality inside a proposition template. `symbol-eq-true` is a bridge
+from the computational boolean `(symbol-eq left right)` returning `:true` to
+proof equality of `left` and `right`.
+
 Boolean values are reserved quoted symbols: `:true` and `:false`. They are not
 a separate kernel value variant, but the kernel has an `if` computation form
 that branches on exactly those two quoted symbols. A non-boolean condition
@@ -79,14 +94,19 @@ reduces to a runtime error; condition errors and divergence propagate, and only
 the selected branch is evaluated. The kernel also has a `symbol-eq` computation
 form for comparing finalized quoted symbols. It returns `:true` only when both
 operands are the same quoted symbol, returns `:false` for other finalized
-values, and propagates effects.
+values, and propagates effects. Since `symbol-eq` is a computation rather than
+a proposition, proofs use bridge rules such as `symbol-eq-true` to turn a proof
+that `(symbol-eq left right)` computes to `:true` into proof equality of `left`
+and `right`.
 
 The kernel also has a `value-kind` computation form for broad value
 introspection. After evaluating its input, it returns `:symbol`, `:lambda`, or
 `:list`, and propagates effects. Lists are one value kind; use `list-case` to
 distinguish `nil` from `cons`. Prelude helpers use `value-kind` to define
 boolean value predicates and `value-eq`, a structural equality for symbols and
-lists that errors on lambdas.
+lists that errors on lambdas. Like `symbol-eq`, `value-eq` is a computation;
+future prelude equality work should add general bridge theorems connecting a
+`:true` result from `value-eq` to proof equality.
 
 At the source level, `(is-bool x)` is proposition shorthand for saying that `x`
 computes to either `(quote :true)` or `(quote :false)`. It elaborates to an

@@ -1565,6 +1565,8 @@ impl<'a> SourceParser<'a> {
         };
         let form = atom(head)?;
 
+        // These raw proof-expression forms map directly to kernel proof rules.
+        // Goal-directed source should normally prefer `(by ...)` tactics.
         match form {
             "known" => self.proof_known(items),
             "assume" => self.proof_assume(items),
@@ -2952,6 +2954,47 @@ mod tests {
             panic!("expected an exists-intro proof");
         };
         assert_eq!(*variable, Symbol(2_000));
+    }
+
+    #[test]
+    fn computes_to_elaborates_to_equal() {
+        let module = parse_module(
+            "
+            (theorem equal_statement
+              (equal (head (cons nil nil)) nil)
+              (proof
+                (eval-to (head (cons nil nil)) nil)))
+            (theorem computes_to_statement
+              (computes-to (head (cons nil nil)) nil)
+              (proof
+                (eval-to (head (cons nil nil)) nil)))
+            ",
+            &[],
+            &[
+                NameBinding {
+                    spelling: "equal_statement",
+                    name: Name(1),
+                },
+                NameBinding {
+                    spelling: "computes_to_statement",
+                    name: Name(2),
+                },
+            ],
+            &[],
+        )
+        .expect("equal and computes-to statements should parse");
+
+        assert_eq!(module.theorems[0].prop, module.theorems[1].prop);
+        assert_eq!(
+            module.theorems[0].prop,
+            equal(
+                Computation::Head(Box::new(Computation::Cons {
+                    head: Box::new(Computation::Nil),
+                    tail: Box::new(Computation::Nil),
+                })),
+                Computation::Nil,
+            )
+        );
     }
 
     #[test]
