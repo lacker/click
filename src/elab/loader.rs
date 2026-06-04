@@ -343,6 +343,15 @@ mod tests {
                             (assume witness_proof)
                             (symm
                               (assume witness_proof))))))))
+                (theorem nil_from_obtain
+                  (computes-to nil nil)
+                  (by
+                    (obtain witness witness_proof list_exists)
+                    (exact
+                      (trans
+                        (assume witness_proof)
+                        (symm
+                          (assume witness_proof))))))
                 (theorem list_self
                   (forall list (is-list list)
                     (computes-to list list))
@@ -404,6 +413,9 @@ mod tests {
         let nil_from_exists_body = loaded
             .theorem("nil_from_exists_body")
             .expect("loader should record explicit exists-elim body theorem spelling");
+        let nil_from_obtain = loaded
+            .theorem("nil_from_obtain")
+            .expect("loader should record obtain tactic theorem spelling");
         let list_self = loaded
             .theorem("list_self")
             .expect("loader should record induction tactic theorem spelling");
@@ -439,6 +451,7 @@ mod tests {
         assert!(loaded.theory().theorem(nil_via_symm_application).is_some());
         assert!(loaded.theory().theorem(nil_from_exists).is_some());
         assert!(loaded.theory().theorem(nil_from_exists_body).is_some());
+        assert!(loaded.theory().theorem(nil_from_obtain).is_some());
         assert!(loaded.theory().theorem(list_self).is_some());
     }
 

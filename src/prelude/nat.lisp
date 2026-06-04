@@ -276,10 +276,8 @@
   (by
     (intro left)
     (intro right)
-    (exists-elim
-      (add_computes_to_list left right)
-      sum
-      sum_proof)
+    (obtain sum sum_proof
+      (add_computes_to_list left right))
     (calc
       (add (succ left) right)
       (==
@@ -360,10 +358,8 @@
                   (assume induction_hypothesis)
                   right)
                 (assume tail_is_nat)))))
-        (exists-elim
-          (add_computes_to_list tail right)
-          tail_sum
-          tail_sum_proof)
+        (obtain tail_sum tail_sum_proof
+          (add_computes_to_list tail right))
         (calc
           (add (cons head tail) (cons (quote unit) right))
           (==
@@ -488,10 +484,8 @@
       (by
         (intro right)
         (intro right_is_nat)
-        (exists-elim
-          (add_computes_to_list tail right)
-          tail_sum
-          tail_sum_proof)
+        (obtain tail_sum tail_sum_proof
+          (add_computes_to_list tail right))
         (calc
           (is-nat-value (add (cons head tail) right))
           (==
@@ -579,14 +573,10 @@
     (intro left)
     (intro middle)
     (intro right)
-    (exists-elim
-      (add_computes_to_list left middle)
-      left_middle
-      left_middle_proof)
-    (exists-elim
-      (add_computes_to_list middle right)
-      middle_right
-      middle_right_proof)
+    (obtain left_middle left_middle_proof
+      (add_computes_to_list left middle))
+    (obtain middle_right middle_right_proof
+      (add_computes_to_list middle right))
     (calc
       (add (add left middle) right)
       (==
@@ -719,10 +709,8 @@
                     right)
                   tail)
                 (assume right_is_nat)))))
-        (exists-elim
-          (add_computes_to_list right tail)
-          right_tail
-          right_tail_proof)
+        (obtain right_tail right_tail_proof
+          (add_computes_to_list right tail))
         (calc
           (add (cons head tail) right)
           (==
@@ -851,14 +839,10 @@
       induction_hypothesis
       (by
         (intro right)
-        (exists-elim
-          (forall-elim (assume induction_hypothesis) right)
-          tail_product
-          tail_product_proof)
-        (exists-elim
-          (add_computes_to_list right tail_product)
-          product
-          product_proof)
+        (obtain tail_product tail_product_proof
+          (forall-elim (assume induction_hypothesis) right))
+        (obtain product product_proof
+          (add_computes_to_list right tail_product))
         (exists product
           (by
             (calc
@@ -926,10 +910,8 @@
                     right)
                   (assume tail_is_nat))
                 (assume right_is_nat)))))
-        (exists-elim
-          (mul_computes_to_list tail right)
-          tail_product
-          tail_product_proof)
+        (obtain tail_product tail_product_proof
+          (mul_computes_to_list tail right))
         (have tail_product_value_is_nat
           (computes-to
             (is-nat-value tail_product)
@@ -1068,14 +1050,10 @@
                     right)
                   (assume tail_is_nat))
                 (assume right_is_nat)))))
-        (exists-elim
-          (mul_computes_to_list tail right)
-          tail_product
-          tail_product_proof)
-        (exists-elim
-          (add_computes_to_list right tail_product)
-          right_tail_product
-          right_tail_product_proof)
+        (obtain tail_product tail_product_proof
+          (mul_computes_to_list tail right))
+        (obtain right_tail_product right_tail_product_proof
+          (add_computes_to_list right tail_product))
         (have cons_product
           (computes-to
             (mul (cons head tail) right)
@@ -1207,10 +1185,8 @@
       tail
       induction_hypothesis
       (by
-        (exists-elim
-          (mul_computes_to_list tail nil)
-          tail_product
-          tail_product_proof)
+        (obtain tail_product tail_product_proof
+          (mul_computes_to_list tail nil))
         (calc
           (mul (cons head tail) zero)
           (==
@@ -1490,10 +1466,8 @@
       (by
         (intro middle)
         (intro right)
-        (exists-elim
-          (mul_computes_to_list middle right)
-          middle_right
-          middle_right_proof)
+        (obtain middle_right middle_right_proof
+          (mul_computes_to_list middle right))
         (calc
           (mul (add nil middle) right)
           (==
@@ -1540,18 +1514,12 @@
                   (assume induction_hypothesis)
                   middle)
                 right))))
-        (exists-elim
-          (add_computes_to_list tail middle)
-          tail_middle
-          tail_middle_proof)
-        (exists-elim
-          (mul_computes_to_list tail right)
-          tail_right
-          tail_right_proof)
-        (exists-elim
-          (mul_computes_to_list middle right)
-          middle_right
-          middle_right_proof)
+        (obtain tail_middle tail_middle_proof
+          (add_computes_to_list tail middle))
+        (obtain tail_right tail_right_proof
+          (mul_computes_to_list tail right))
+        (obtain middle_right middle_right_proof
+          (mul_computes_to_list middle right))
         (calc
           (mul (add (cons head tail) middle) right)
           (==
@@ -1620,10 +1588,8 @@
       (by
         (intro middle)
         (intro right)
-        (exists-elim
-          (mul_computes_to_list middle right)
-          middle_right
-          middle_right_proof)
+        (obtain middle_right middle_right_proof
+          (mul_computes_to_list middle right))
         (calc
           (mul (mul nil middle) right)
           (==
@@ -1665,14 +1631,10 @@
                   (assume induction_hypothesis)
                   middle)
                 right))))
-        (exists-elim
-          (mul_computes_to_list tail middle)
-          tail_middle
-          tail_middle_proof)
-        (exists-elim
-          (mul_computes_to_list middle right)
-          middle_right
-          middle_right_proof)
+        (obtain tail_middle tail_middle_proof
+          (mul_computes_to_list tail middle))
+        (obtain middle_right middle_right_proof
+          (mul_computes_to_list middle right))
         (calc
           (mul (mul (cons head tail) middle) right)
           (==
@@ -1739,10 +1701,8 @@
     (intro left_is_nat)
     (intro middle_is_nat)
     (intro right_is_nat)
-    (exists-elim
-      (add_computes_to_list middle right)
-      middle_right_sum
-      middle_right_sum_proof)
+    (obtain middle_right_sum middle_right_sum_proof
+      (add_computes_to_list middle right))
     (have sum_is_nat
       (computes-to
         (is-nat-value (add middle right))

@@ -1189,6 +1189,7 @@ impl<'a> SourceParser<'a> {
             "apply" => self.tactic_apply(items),
             "split" | "constructor" => self.tactic_split(form, items),
             "exists" => self.tactic_exists(items),
+            "obtain" => self.tactic_obtain(items),
             "exists-elim" => self.tactic_exists_elim(items),
             "or-elim" => self.tactic_or_elim(items),
             "forall-elim" => self.tactic_forall_elim(items),
@@ -1310,6 +1311,27 @@ impl<'a> SourceParser<'a> {
         })
     }
 
+    fn tactic_obtain(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        if !(4..=5).contains(&items.len()) {
+            return Err(ParseError::new(format!(
+                "`obtain` expects a witness name, proof name, existential proof, and optional `(by ...)` body; got {} arguments",
+                items.len().saturating_sub(1)
+            )));
+        }
+
+        let witness = self.proof_symbol(atom(&items[1])?)?;
+        let assumption = self.proof_symbol(atom(&items[2])?)?;
+        let existential = Box::new(self.proof_expr_or_ref(&items[3])?);
+        let body = self.optional_tactic_body("obtain", items.get(4))?;
+
+        Ok(TacticExpr::ExistsElim {
+            existential,
+            witness,
+            assumption,
+            body,
+        })
+    }
+
     fn tactic_exists_elim(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
         if !(4..=5).contains(&items.len()) {
             return Err(ParseError::new(format!(
@@ -1321,21 +1343,7 @@ impl<'a> SourceParser<'a> {
         let existential = Box::new(self.proof_expr_or_ref(&items[1])?);
         let witness = self.proof_symbol(atom(&items[2])?)?;
         let assumption = self.proof_symbol(atom(&items[3])?)?;
-        let body = if items.len() == 5 {
-            let Expr::List(body_items) = &items[4] else {
-                return Err(ParseError::new(
-                    "`exists-elim` body must be a `(by ...)` tactic script",
-                ));
-            };
-            if body_items.first().and_then(|head| atom(head).ok()) != Some("by") {
-                return Err(ParseError::new(
-                    "`exists-elim` got an extra argument that is not a `(by ...)` body; if this is the next tactic, close the `(exists-elim ...)` form before it",
-                ));
-            }
-            Some(self.tactic_script(body_items)?)
-        } else {
-            None
-        };
+        let body = self.optional_tactic_body("exists-elim", items.get(4))?;
 
         Ok(TacticExpr::ExistsElim {
             existential,
@@ -1343,6 +1351,29 @@ impl<'a> SourceParser<'a> {
             assumption,
             body,
         })
+    }
+
+    fn optional_tactic_body(
+        &mut self,
+        form: &str,
+        body: Option<&Expr>,
+    ) -> Result<Option<TacticScript>, ParseError> {
+        let Some(body) = body else {
+            return Ok(None);
+        };
+
+        let Expr::List(body_items) = body else {
+            return Err(ParseError::new(format!(
+                "`{form}` body must be a `(by ...)` tactic script"
+            )));
+        };
+        if body_items.first().and_then(|head| atom(head).ok()) != Some("by") {
+            return Err(ParseError::new(format!(
+                "`{form}` got an extra argument that is not a `(by ...)` body; if this is the next tactic, close the `({form} ...)` form before it"
+            )));
+        }
+
+        Ok(Some(self.tactic_script(body_items)?))
     }
 
     fn tactic_or_elim(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
@@ -2334,7 +2365,7 @@ mod tests {
             (theorem elim_example
               (computes-to nil nil)
               (by
-                (exists-elim list_exists witness witness_proof)
+                (obtain witness witness_proof list_exists)
                 (forall-elim value_self nil)))
             (theorem or_source
               (or
@@ -2426,7 +2457,7 @@ mod tests {
             (theorem explicit_exists
               (computes-to nil nil)
               (by
-                (exists-elim list_exists witness witness_proof
+                (obtain witness witness_proof list_exists
                   (by
                     (exact witness_proof)))))
             (theorem explicit_have
