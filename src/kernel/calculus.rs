@@ -271,16 +271,8 @@ pub enum Prop {
     IsEffect(Computation),
     IsOutcome(Computation),
     Implies(Box<Prop>, Box<Prop>),
-    ForAll {
-        variable: Symbol,
-        guard: Option<Box<Prop>>,
-        body: Box<Prop>,
-    },
-    Exists {
-        variable: Symbol,
-        guard: Option<Box<Prop>>,
-        body: Box<Prop>,
-    },
+    ForAll { variable: Symbol, body: Box<Prop> },
+    Exists { variable: Symbol, body: Box<Prop> },
     And(Box<Prop>, Box<Prop>),
     Or(Box<Prop>, Box<Prop>),
 }
@@ -289,6 +281,7 @@ pub enum Prop {
 pub enum Proof {
     Known(Name),
     Assume(Symbol),
+    Primitive(Prop),
     Refl(Computation),
     Symm(Box<Proof>),
     Trans(Box<Proof>, Box<Proof>),
@@ -320,7 +313,6 @@ pub enum Proof {
     },
     ForAllIntro {
         variable: Symbol,
-        guard: Option<Prop>,
         proof: Box<Proof>,
     },
     ForAllElim {
@@ -329,7 +321,6 @@ pub enum Proof {
     },
     ExistsIntro {
         variable: Symbol,
-        guard: Option<Prop>,
         body: Prop,
         witness: Computation,
         proof: Box<Proof>,
@@ -387,33 +378,23 @@ pub fn implies(premise: Prop, conclusion: Prop) -> Prop {
 pub fn forall(variable: Symbol, body: Prop) -> Prop {
     Prop::ForAll {
         variable,
-        guard: None,
         body: Box::new(body),
     }
 }
 
 pub fn forall_where(variable: Symbol, guard: Prop, body: Prop) -> Prop {
-    Prop::ForAll {
-        variable,
-        guard: Some(Box::new(guard)),
-        body: Box::new(body),
-    }
+    forall(variable, implies(guard, body))
 }
 
 pub fn exists(variable: Symbol, body: Prop) -> Prop {
     Prop::Exists {
         variable,
-        guard: None,
         body: Box::new(body),
     }
 }
 
 pub fn exists_where(variable: Symbol, guard: Prop, body: Prop) -> Prop {
-    Prop::Exists {
-        variable,
-        guard: Some(Box::new(guard)),
-        body: Box::new(body),
-    }
+    exists(variable, and(guard, body))
 }
 
 pub fn exists_value(variable: Symbol, body: Prop) -> Prop {

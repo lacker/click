@@ -158,7 +158,6 @@ fn alpha_eq_computation_renames_lambda_and_list_case_binders() {
 fn checker_accepts_alpha_equivalent_goal() {
     let proof = Proof::ForAllIntro {
         variable: Symbol(1),
-        guard: None,
         proof: Box::new(Proof::Refl(Computation::Var(Symbol(1)))),
     };
     let expected = forall(
@@ -1016,7 +1015,6 @@ fn theorem_first_order_rules_build_checked_theorems() {
     let universal = Theorem::from_proof(
         Proof::ForAllIntro {
             variable: Symbol(1),
-            guard: None,
             proof: Box::new(Proof::Refl(Computation::Var(Symbol(1)))),
         },
         forall(
@@ -1120,8 +1118,11 @@ fn guarded_beta_requires_value_arguments() {
     );
     let proof = Proof::ForAllIntro {
         variable,
-        guard: Some(is_value(Computation::Var(variable))),
-        proof: Box::new(Proof::Step(application.clone())),
+        proof: Box::new(Proof::ImpliesIntro {
+            assumption: variable,
+            premise: is_value(Computation::Var(variable)),
+            proof: Box::new(Proof::Step(application.clone())),
+        }),
     };
     let expected = forall_where(
         variable,
@@ -1130,7 +1131,6 @@ fn guarded_beta_requires_value_arguments() {
     );
     let unguarded_proof = Proof::ForAllIntro {
         variable,
-        guard: None,
         proof: Box::new(Proof::Step(apply(
             Computation::Lambda(lambda_value),
             Computation::Var(variable),
@@ -1168,15 +1168,21 @@ fn guarded_list_reductions_require_list_arguments() {
     let destructured_head = head(list.clone());
     let proof = Proof::ForAllIntro {
         variable: head_symbol,
-        guard: Some(is_value(Computation::Var(head_symbol))),
-        proof: Box::new(Proof::ForAllIntro {
-            variable: tail_symbol,
-            guard: Some(is_list(Computation::Var(tail_symbol))),
-            proof: Box::new(Proof::Steps(vec![
-                destructure.clone(),
-                destructured_head,
-                Computation::Var(head_symbol),
-            ])),
+        proof: Box::new(Proof::ImpliesIntro {
+            assumption: head_symbol,
+            premise: is_value(Computation::Var(head_symbol)),
+            proof: Box::new(Proof::ForAllIntro {
+                variable: tail_symbol,
+                proof: Box::new(Proof::ImpliesIntro {
+                    assumption: tail_symbol,
+                    premise: is_list(Computation::Var(tail_symbol)),
+                    proof: Box::new(Proof::Steps(vec![
+                        destructure.clone(),
+                        destructured_head,
+                        Computation::Var(head_symbol),
+                    ])),
+                }),
+            }),
         }),
     };
     let expected = forall_where(
@@ -1190,16 +1196,18 @@ fn guarded_list_reductions_require_list_arguments() {
     );
     let unguarded_tail_proof = Proof::ForAllIntro {
         variable: head_symbol,
-        guard: Some(is_value(Computation::Var(head_symbol))),
-        proof: Box::new(Proof::ForAllIntro {
-            variable: tail_symbol,
-            guard: None,
-            proof: Box::new(Proof::Step(list_case(
-                list,
-                Computation::Quote(Symbol(0)),
-                Symbol(9),
-                head(Computation::Var(Symbol(9))),
-            ))),
+        proof: Box::new(Proof::ImpliesIntro {
+            assumption: head_symbol,
+            premise: is_value(Computation::Var(head_symbol)),
+            proof: Box::new(Proof::ForAllIntro {
+                variable: tail_symbol,
+                proof: Box::new(Proof::Step(list_case(
+                    list,
+                    Computation::Quote(Symbol(0)),
+                    Symbol(9),
+                    head(Computation::Var(Symbol(9))),
+                ))),
+            }),
         }),
     };
 
@@ -1300,7 +1308,6 @@ fn forall_intro_and_elim_work() {
     let proof = Proof::ForAllElim {
         forall: Box::new(Proof::ForAllIntro {
             variable: Symbol(1),
-            guard: None,
             proof: Box::new(Proof::Refl(Computation::Var(Symbol(1)))),
         }),
         argument: Computation::Quote(Symbol(2)),
@@ -1319,7 +1326,6 @@ fn exists_intro_and_elim_work() {
     let proof = Proof::ExistsElim {
         existential: Box::new(Proof::ExistsIntro {
             variable: Symbol(1),
-            guard: None,
             body,
             witness: Computation::Quote(Symbol(2)),
             proof: Box::new(Proof::Refl(Computation::Quote(Symbol(2)))),
@@ -1382,13 +1388,23 @@ fn exists_intro_uses_witness() {
     let body = equal(Computation::Var(Symbol(1)), Computation::Var(Symbol(1)));
     let proof = Proof::ExistsIntro {
         variable: Symbol(1),
-        guard: None,
         body: body.clone(),
         witness: Computation::Quote(Symbol(2)),
         proof: Box::new(Proof::Refl(Computation::Quote(Symbol(2)))),
     };
 
     assert!(check(&proof, &exists(Symbol(1), body)));
+}
+
+#[test]
+fn primitive_proof_proves_structural_props() {
+    let prop = is_list(Computation::Nil);
+
+    assert!(check(&Proof::Primitive(prop.clone()), &prop));
+    assert!(!check(
+        &Proof::Primitive(is_list(Computation::Quote(Symbol(1)))),
+        &is_list(Computation::Quote(Symbol(1)))
+    ));
 }
 
 #[test]
@@ -1402,6 +1418,14 @@ fn prop_helpers_construct_expected_shapes() {
     assert_eq!(
         implies(prop.clone(), prop.clone()),
         Prop::Implies(Box::new(prop.clone()), Box::new(prop.clone()))
+    );
+    assert_eq!(
+        forall_where(Symbol(8), prop.clone(), prop.clone()),
+        forall(Symbol(8), implies(prop.clone(), prop.clone()))
+    );
+    assert_eq!(
+        exists_where(Symbol(8), prop.clone(), prop.clone()),
+        exists(Symbol(8), and(prop.clone(), prop.clone()))
     );
     assert_eq!(
         terminates(Symbol(9), computation.clone()),

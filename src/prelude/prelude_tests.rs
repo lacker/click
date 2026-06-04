@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::{
-    Computation, ComputationDefinitionError, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL,
-    SYMBOL_KIND_SYMBOL, Step, Theorem, TheoremError, computes_to_list, elab::proof,
+    Computation, ComputationDefinitionError, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Proof,
+    SYMBOL_KIND_SYMBOL, Step, Theorem, TheoremError, computes_to_list, elab::proof, is_list,
 };
 
 fn computation(spelling: &str) -> Name {
@@ -1551,9 +1551,17 @@ fn prelude_theory_instantiates_named_reverse_theorem() {
     let reverse = theory
         .known(theorem("reverse_computes_to_list"))
         .expect("reverse theorem should be defined");
-    let instantiated = theory
+    let guarded = theory
         .forall_elim(&reverse, list_tests::nil())
         .expect("known theorem should instantiate in its theory");
+    let nil_is_list = Theorem::from_proof(
+        Proof::Primitive(is_list(list_tests::nil())),
+        is_list(list_tests::nil()),
+    )
+    .expect("nil should prove is-list as a primitive proposition");
+    let instantiated = theory
+        .implies_elim(&guarded, &nil_is_list)
+        .expect("reverse theorem premise should discharge for nil");
 
     assert_eq!(
         instantiated.prop(),

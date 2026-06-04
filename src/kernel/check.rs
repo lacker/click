@@ -62,42 +62,25 @@ fn alpha_eq_prop_in_context(
         (
             Prop::ForAll {
                 variable: left_variable,
-                guard: left_guard,
                 body: left_body,
             },
             Prop::ForAll {
                 variable: right_variable,
-                guard: right_guard,
                 body: right_body,
             },
         )
         | (
             Prop::Exists {
                 variable: left_variable,
-                guard: left_guard,
                 body: left_body,
             },
             Prop::Exists {
                 variable: right_variable,
-                guard: right_guard,
                 body: right_body,
             },
         ) => alpha_eq_binder(*left_variable, *right_variable, bindings, |bindings| {
-            alpha_eq_optional_prop(left_guard, right_guard, bindings)
-                && alpha_eq_prop_in_context(left_body, right_body, bindings)
+            alpha_eq_prop_in_context(left_body, right_body, bindings)
         }),
-        _ => false,
-    }
-}
-
-fn alpha_eq_optional_prop(
-    left: &Option<Box<Prop>>,
-    right: &Option<Box<Prop>>,
-    bindings: &mut Vec<(Symbol, Symbol)>,
-) -> bool {
-    match (left, right) {
-        (Some(left), Some(right)) => alpha_eq_prop_in_context(left, right, bindings),
-        (None, None) => true,
         _ => false,
     }
 }
@@ -243,6 +226,7 @@ fn proven_prop_in_context(proof: &Proof, bindings: &Bindings, context: &Context)
     match proof {
         Proof::Known(name) => bindings.theorem(*name).cloned(),
         Proof::Assume(symbol) => context.get(symbol).cloned(),
+        Proof::Primitive(prop) => primitive_prop_holds(prop, context).then_some(prop.clone()),
         Proof::Refl(computation) => Some(Prop::Equal(computation.clone(), computation.clone())),
         Proof::Symm(proof) => match proven_prop_in_context(proof, bindings, context)? {
             Prop::Equal(left, right) => Some(Prop::Equal(right, left)),
@@ -332,56 +316,26 @@ fn proven_prop_in_context(proof: &Proof, bindings: &Bindings, context: &Context)
                 _ => None,
             }
         }
-        Proof::ForAllIntro {
-            variable,
-            guard,
-            proof,
-        } => {
-            if context_mentions_symbol(context, *variable)
-                || (guard.is_some() && context.contains_key(variable))
-            {
+        Proof::ForAllIntro { variable, proof } => {
+            if context_mentions_symbol(context, *variable) {
                 return None;
             }
 
-            let mut context = context.clone();
-            if let Some(guard) = guard {
-                context.insert(*variable, guard.clone());
-            }
-            let body = proven_prop_in_context(proof, bindings, &context)?;
-            Some(Prop::ForAll {
-                variable: *variable,
-                guard: guard.clone().map(Box::new),
-                body: Box::new(body),
-            })
+            let body = proven_prop_in_context(proof, bindings, context)?;
+            Some(forall(*variable, body))
         }
         Proof::ForAllElim { forall, argument } => {
             match proven_prop_in_context(forall, bindings, context)? {
-                Prop::ForAll {
-                    variable,
-                    guard,
-                    body,
-                } if guard.as_ref().is_none_or(|guard| {
-                    primitive_prop_holds(&substitute_prop(guard, variable, argument), context)
-                }) =>
-                {
-                    Some(substitute_prop(&body, variable, argument))
-                }
+                Prop::ForAll { variable, body } => Some(substitute_prop(&body, variable, argument)),
                 _ => None,
             }
         }
         Proof::ExistsIntro {
             variable,
-            guard,
             body,
             witness,
             proof,
         } => {
-            if let Some(guard) = guard {
-                if !primitive_prop_holds(&substitute_prop(guard, *variable, witness), context) {
-                    return None;
-                }
-            }
-
             let witness_body = substitute_prop(body, *variable, witness);
             if !alpha_eq_prop(
                 &proven_prop_in_context(proof, bindings, context)?,
@@ -390,11 +344,7 @@ fn proven_prop_in_context(proof: &Proof, bindings: &Bindings, context: &Context)
                 return None;
             }
 
-            Some(Prop::Exists {
-                variable: *variable,
-                guard: guard.clone().map(Box::new),
-                body: Box::new(body.clone()),
-            })
+            Some(exists(*variable, body.clone()))
         }
         Proof::ExistsElim {
             existential,
@@ -402,32 +352,31 @@ fn proven_prop_in_context(proof: &Proof, bindings: &Bindings, context: &Context)
             assumption,
             proof,
         } => match proven_prop_in_context(existential, bindings, context)? {
-            Prop::Exists {
-                variable,
-                guard,
-                body,
-            } => {
+            Prop::Exists { variable, body } => {
                 let existential = Prop::Exists {
                     variable,
-                    guard: guard.clone(),
                     body: body.clone(),
                 };
+                let has_witness_assumption = matches!(body.as_ref(), Prop::And(_, _));
                 if prop_mentions_symbol(&existential, *witness)
                     || context_mentions_symbol(context, *witness)
-                    || (guard.is_some() && (context.contains_key(witness) || assumption == witness))
+                    || (has_witness_assumption
+                        && (context.contains_key(witness) || assumption == witness))
                 {
                     return None;
                 }
 
-                let witness_prop = substitute_prop(&body, variable, &Computation::Var(*witness));
+                let witness_var = Computation::Var(*witness);
                 let mut context = context.clone();
-                if let Some(guard) = guard {
-                    context.insert(
-                        *witness,
-                        substitute_prop(&guard, variable, &Computation::Var(*witness)),
-                    );
+                match body.as_ref() {
+                    Prop::And(left, right) => {
+                        context.insert(*witness, substitute_prop(left, variable, &witness_var));
+                        context.insert(*assumption, substitute_prop(right, variable, &witness_var));
+                    }
+                    _ => {
+                        context.insert(*assumption, substitute_prop(&body, variable, &witness_var));
+                    }
                 }
-                context.insert(*assumption, witness_prop);
                 let conclusion = proven_prop_in_context(proof, bindings, &context)?;
 
                 if prop_mentions_symbol(&conclusion, *witness) {
@@ -913,11 +862,11 @@ fn prove_list_induction(
     }
 
     let variable_computation = Computation::Var(variable);
-    Some(Prop::ForAll {
+    Some(forall_where(
         variable,
-        guard: Some(Box::new(is_list(variable_computation.clone()))),
-        body: Box::new(substitute_prop(property, variable, &variable_computation)),
-    })
+        is_list(variable_computation.clone()),
+        substitute_prop(property, variable, &variable_computation),
+    ))
 }
 
 fn list_induction_symbols_are_fresh(
@@ -991,13 +940,17 @@ fn computation_is_outcome(computation: &Computation, context: &Context) -> bool 
         || computation_is_effect(computation, context)
 }
 
-fn primitive_prop_holds(prop: &Prop, context: &Context) -> bool {
+pub(crate) fn primitive_prop_holds(prop: &Prop, context: &Context) -> bool {
+    structural_primitive_prop_holds(prop, context) || context_contains_prop(context, prop)
+}
+
+pub(crate) fn structural_primitive_prop_holds(prop: &Prop, context: &Context) -> bool {
     match prop {
         Prop::IsValue(computation) => computation_is_known_value(computation, context),
         Prop::IsList(computation) => computation_is_list(computation, context),
         Prop::IsEffect(computation) => computation_is_effect(computation, context),
         Prop::IsOutcome(computation) => computation_is_outcome(computation, context),
-        _ => context_contains_prop(context, prop),
+        _ => false,
     }
 }
 
@@ -1037,28 +990,12 @@ pub fn substitute_prop(prop: &Prop, variable: Symbol, replacement: &Computation)
         ),
         Prop::ForAll {
             variable: binder,
-            guard,
             body,
-        } => substitute_quantified_prop(
-            Quantifier::ForAll,
-            *binder,
-            guard.as_deref(),
-            body,
-            variable,
-            replacement,
-        ),
+        } => substitute_quantified_prop(Quantifier::ForAll, *binder, body, variable, replacement),
         Prop::Exists {
             variable: binder,
-            guard,
             body,
-        } => substitute_quantified_prop(
-            Quantifier::Exists,
-            *binder,
-            guard.as_deref(),
-            body,
-            variable,
-            replacement,
-        ),
+        } => substitute_quantified_prop(Quantifier::Exists, *binder, body, variable, replacement),
         Prop::And(left, right) => Prop::And(
             Box::new(substitute_prop(left, variable, replacement)),
             Box::new(substitute_prop(right, variable, replacement)),
@@ -1079,23 +1016,20 @@ enum Quantifier {
 fn substitute_quantified_prop(
     quantifier: Quantifier,
     binder: Symbol,
-    guard: Option<&Prop>,
     body: &Prop,
     variable: Symbol,
     replacement: &Computation,
 ) -> Prop {
     if binder == variable {
-        return quantified_prop(quantifier, binder, guard.cloned(), body.clone());
+        return quantified_prop(quantifier, binder, body.clone());
     }
 
     if free_symbols(replacement).contains(&binder) {
-        let fresh = fresh_symbol_for_quantified_prop(guard, body, replacement, variable);
-        let guard = guard.map(|guard| rename_bound_var_prop(guard, binder, fresh));
+        let fresh = fresh_symbol_for_quantified_prop(body, replacement, variable);
         let body = rename_bound_var_prop(body, binder, fresh);
         return quantified_prop(
             quantifier,
             fresh,
-            guard.map(|guard| substitute_prop(&guard, variable, replacement)),
             substitute_prop(&body, variable, replacement),
         );
     }
@@ -1103,26 +1037,18 @@ fn substitute_quantified_prop(
     quantified_prop(
         quantifier,
         binder,
-        guard.map(|guard| substitute_prop(guard, variable, replacement)),
         substitute_prop(body, variable, replacement),
     )
 }
 
-fn quantified_prop(
-    quantifier: Quantifier,
-    variable: Symbol,
-    guard: Option<Prop>,
-    body: Prop,
-) -> Prop {
+fn quantified_prop(quantifier: Quantifier, variable: Symbol, body: Prop) -> Prop {
     match quantifier {
         Quantifier::ForAll => Prop::ForAll {
             variable,
-            guard: guard.map(Box::new),
             body: Box::new(body),
         },
         Quantifier::Exists => Prop::Exists {
             variable,
-            guard: guard.map(Box::new),
             body: Box::new(body),
         },
     }
@@ -1152,20 +1078,8 @@ fn add_free_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
             add_free_symbols_prop(premise, symbols);
             add_free_symbols_prop(conclusion, symbols);
         }
-        Prop::ForAll {
-            variable,
-            guard,
-            body,
-        }
-        | Prop::Exists {
-            variable,
-            guard,
-            body,
-        } => {
+        Prop::ForAll { variable, body } | Prop::Exists { variable, body } => {
             let mut body_symbols = HashSet::new();
-            if let Some(guard) = guard {
-                add_free_symbols_prop(guard, &mut body_symbols);
-            }
             add_free_symbols_prop(body, &mut body_symbols);
             body_symbols.remove(variable);
             symbols.extend(body_symbols);
@@ -1188,27 +1102,13 @@ fn rename_bound_var_prop(prop: &Prop, old: Symbol, new: Symbol) -> Prop {
             Box::new(rename_bound_var_prop(conclusion, old, new)),
         ),
         Prop::ForAll { variable, .. } if *variable == old => prop.clone(),
-        Prop::ForAll {
-            variable,
-            guard,
-            body,
-        } => Prop::ForAll {
+        Prop::ForAll { variable, body } => Prop::ForAll {
             variable: *variable,
-            guard: guard
-                .as_ref()
-                .map(|guard| Box::new(rename_bound_var_prop(guard, old, new))),
             body: Box::new(rename_bound_var_prop(body, old, new)),
         },
         Prop::Exists { variable, .. } if *variable == old => prop.clone(),
-        Prop::Exists {
-            variable,
-            guard,
-            body,
-        } => Prop::Exists {
+        Prop::Exists { variable, body } => Prop::Exists {
             variable: *variable,
-            guard: guard
-                .as_ref()
-                .map(|guard| Box::new(rename_bound_var_prop(guard, old, new))),
             body: Box::new(rename_bound_var_prop(body, old, new)),
         },
         Prop::And(left, right) => Prop::And(
@@ -1223,15 +1123,11 @@ fn rename_bound_var_prop(prop: &Prop, old: Symbol, new: Symbol) -> Prop {
 }
 
 fn fresh_symbol_for_quantified_prop(
-    guard: Option<&Prop>,
     body: &Prop,
     replacement: &Computation,
     variable: Symbol,
 ) -> Symbol {
     let mut symbols = HashSet::new();
-    if let Some(guard) = guard {
-        add_all_symbols_prop(guard, &mut symbols);
-    }
     add_all_symbols_prop(body, &mut symbols);
     add_all_symbols(replacement, &mut symbols);
     symbols.insert(variable);
@@ -1265,20 +1161,8 @@ fn add_all_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
             add_all_symbols_prop(premise, symbols);
             add_all_symbols_prop(conclusion, symbols);
         }
-        Prop::ForAll {
-            variable,
-            guard,
-            body,
-        }
-        | Prop::Exists {
-            variable,
-            guard,
-            body,
-        } => {
+        Prop::ForAll { variable, body } | Prop::Exists { variable, body } => {
             symbols.insert(*variable);
-            if let Some(guard) = guard {
-                add_all_symbols_prop(guard, symbols);
-            }
             add_all_symbols_prop(body, symbols);
         }
     }

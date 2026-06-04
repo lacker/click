@@ -6,7 +6,8 @@ use crate::{
     Computation, ErrorName, FALSE_SYMBOL, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Lambda, ListCase,
     Name, Prop, SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL, and, computes_to, computes_to_list,
     diverges, equal, errors_with, exists, exists_where, forall, forall_where, if_then_else,
-    implies, is_bool, is_effect, is_list, is_outcome, is_value, or, symbol_eq, value_kind,
+    implies, is_bool, is_effect, is_list, is_outcome, is_value, or, substitute_prop, symbol_eq,
+    value_kind,
 };
 
 const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
@@ -198,6 +199,7 @@ pub(crate) enum ProofScript {
 pub(crate) enum ProofExpr {
     Known(Name),
     Assume(Symbol),
+    Primitive(Prop),
     Symm(Box<ProofExpr>),
     Trans(Box<ProofExpr>, Box<ProofExpr>),
     EvalTo {
@@ -227,7 +229,6 @@ pub(crate) enum ProofExpr {
     },
     ExistsIntro {
         variable: Symbol,
-        guard: Option<Prop>,
         body: Prop,
         witness: Computation,
         proof: Box<ProofExpr>,
@@ -267,12 +268,15 @@ pub(crate) enum ProofExpr {
     },
     ForAllIntro {
         variable: Symbol,
-        guard: Option<Prop>,
         proof: Box<ProofExpr>,
     },
     ForAllElim {
         forall: Box<ProofExpr>,
         argument: Computation,
+    },
+    Apply {
+        proof: Box<ProofExpr>,
+        arguments: Vec<Computation>,
     },
 }
 
@@ -1480,11 +1484,16 @@ impl<'a> SourceParser<'a> {
         proof: ProofExpr,
         arguments: &[Expr],
     ) -> Result<ProofExpr, ParseError> {
-        arguments.iter().try_fold(proof, |proof, argument| {
-            Ok(ProofExpr::ForAllElim {
-                forall: Box::new(proof),
-                argument: self.computation(argument)?,
-            })
+        if arguments.is_empty() {
+            return Ok(proof);
+        }
+
+        Ok(ProofExpr::Apply {
+            proof: Box::new(proof),
+            arguments: arguments
+                .iter()
+                .map(|argument| self.computation(argument))
+                .collect::<Result<_, _>>()?,
         })
     }
 
@@ -1500,6 +1509,7 @@ impl<'a> SourceParser<'a> {
         match form {
             "known" => self.proof_known(items),
             "assume" => self.proof_assume(items),
+            "primitive" => self.proof_primitive(items),
             "symm" => self.proof_symm(items),
             "trans" => self.proof_trans(items),
             "eval-to" => self.proof_eval_to(items),
@@ -1539,6 +1549,11 @@ impl<'a> SourceParser<'a> {
         Ok(ProofExpr::Assume(
             self.existing_local_symbol(atom(&items[1])?)?,
         ))
+    }
+
+    fn proof_primitive(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("primitive", items, 2)?;
+        Ok(ProofExpr::Primitive(self.proof_prop(&items[1])?))
     }
 
     fn proof_symm(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
@@ -1646,12 +1661,29 @@ impl<'a> SourceParser<'a> {
             }
         };
         let variable = self.proof_symbol(atom(variable)?)?;
+        let guard = self.quantifier_guard(guard, PropSymbolMode::Reference)?;
+        let body = self.proof_prop(body)?;
+        let witness = self.computation(witness)?;
+        let proof = self.proof_expr(proof)?;
+
+        let (body, proof) = if let Some(guard) = guard {
+            let witness_guard = substitute_prop(&guard, variable, &witness);
+            (
+                and(guard, body),
+                ProofExpr::AndIntro(
+                    Box::new(ProofExpr::Primitive(witness_guard)),
+                    Box::new(proof),
+                ),
+            )
+        } else {
+            (body, proof)
+        };
+
         Ok(ProofExpr::ExistsIntro {
             variable,
-            guard: self.quantifier_guard(guard, PropSymbolMode::Reference)?,
-            body: self.proof_prop(body)?,
-            witness: self.computation(witness)?,
-            proof: Box::new(self.proof_expr(proof)?),
+            body,
+            witness,
+            proof: Box::new(proof),
         })
     }
 
@@ -1726,10 +1758,20 @@ impl<'a> SourceParser<'a> {
             }
         };
         let variable = self.proof_symbol(atom(variable)?)?;
+        let proof = self.proof_expr(proof)?;
+        let proof = if let Some(guard) = self.quantifier_guard(guard, PropSymbolMode::Reference)? {
+            ProofExpr::ImpliesIntro {
+                assumption: variable,
+                premise: guard,
+                proof: Box::new(proof),
+            }
+        } else {
+            proof
+        };
+
         Ok(ProofExpr::ForAllIntro {
             variable,
-            guard: self.quantifier_guard(guard, PropSymbolMode::Reference)?,
-            proof: Box::new(self.proof_expr(proof)?),
+            proof: Box::new(proof),
         })
     }
 
@@ -2003,7 +2045,6 @@ mod tests {
                     ),
                     proof: ProofScript::Proof(ProofExpr::ForAllIntro {
                         variable: Symbol(2_000),
-                        guard: None,
                         proof: Box::new(ProofExpr::EvalTo {
                             computation: Computation::Apply {
                                 function: Box::new(Computation::Ref(Name(2))),
@@ -2499,14 +2540,14 @@ mod tests {
             ] if matches!(
                     have_tactics.as_slice(),
                     [TacticExpr::Exact(proof)]
-                        if **proof == ProofExpr::ForAllElim {
-                            forall: Box::new(ProofExpr::Known(Name(1))),
-                            argument: Computation::Nil,
+                        if **proof == ProofExpr::Apply {
+                            proof: Box::new(ProofExpr::Known(Name(1))),
+                            arguments: vec![Computation::Nil],
                         }
                 )
-                && **equality == ProofExpr::ForAllElim {
-                    forall: Box::new(ProofExpr::Known(Name(1))),
-                    argument: Computation::Nil,
+                && **equality == ProofExpr::Apply {
+                    proof: Box::new(ProofExpr::Known(Name(1))),
+                    arguments: vec![Computation::Nil],
                 }
                 && **exact == ProofExpr::Assume(Symbol(2_001))
         ));
@@ -2610,25 +2651,35 @@ mod tests {
                     ),
                     proof: ProofScript::Proof(ProofExpr::ForAllIntro {
                         variable: Symbol(2_000),
-                        guard: Some(is_list(Computation::Var(Symbol(2_000)))),
-                        proof: Box::new(ProofExpr::ExistsIntro {
-                            variable: Symbol(2_001),
-                            guard: Some(is_list(Computation::Var(Symbol(2_001)))),
-                            body: computes_to(
-                                Computation::Apply {
-                                    function: Box::new(Computation::Ref(Name(2))),
-                                    argument: Box::new(Computation::Var(Symbol(2_000))),
-                                },
-                                Computation::Var(Symbol(2_001)),
-                            ),
-                            witness: Computation::Var(Symbol(2_000)),
-                            proof: Box::new(ProofExpr::EvalTo {
-                                computation: Computation::Apply {
-                                    function: Box::new(Computation::Ref(Name(2))),
-                                    argument: Box::new(Computation::Var(Symbol(2_000))),
-                                },
-                                expected: Computation::Var(Symbol(2_000)),
-                                limit: 128,
+                        proof: Box::new(ProofExpr::ImpliesIntro {
+                            assumption: Symbol(2_000),
+                            premise: is_list(Computation::Var(Symbol(2_000))),
+                            proof: Box::new(ProofExpr::ExistsIntro {
+                                variable: Symbol(2_001),
+                                body: and(
+                                    is_list(Computation::Var(Symbol(2_001))),
+                                    computes_to(
+                                        Computation::Apply {
+                                            function: Box::new(Computation::Ref(Name(2))),
+                                            argument: Box::new(Computation::Var(Symbol(2_000))),
+                                        },
+                                        Computation::Var(Symbol(2_001)),
+                                    ),
+                                ),
+                                witness: Computation::Var(Symbol(2_000)),
+                                proof: Box::new(ProofExpr::AndIntro(
+                                    Box::new(ProofExpr::Primitive(is_list(Computation::Var(
+                                        Symbol(2_000),
+                                    )))),
+                                    Box::new(ProofExpr::EvalTo {
+                                        computation: Computation::Apply {
+                                            function: Box::new(Computation::Ref(Name(2))),
+                                            argument: Box::new(Computation::Var(Symbol(2_000))),
+                                        },
+                                        expected: Computation::Var(Symbol(2_000)),
+                                        limit: 128,
+                                    }),
+                                )),
                             }),
                         }),
                     }),
@@ -2645,6 +2696,41 @@ mod tests {
                 }],
             })
         );
+    }
+
+    #[test]
+    fn parses_proof_helpers() {
+        let module = parse_module(
+            "
+            (theorem pair_reflexive
+              (exists x
+                (and
+                  (computes-to x x)
+                  (computes-to x x)))
+              (proof
+                (exists-intro x
+                  (and
+                    (computes-to x x)
+                    (computes-to x x))
+                  nil
+                  (and-intro
+                    (eval-to nil nil)
+                    (eval-to nil nil)))))
+            ",
+            &[],
+            &[NameBinding {
+                spelling: "pair_reflexive",
+                name: Name(1),
+            }],
+            &[],
+        )
+        .expect("proof helper source should parse");
+
+        let ProofScript::Proof(ProofExpr::ExistsIntro { variable, .. }) = &module.theorems[0].proof
+        else {
+            panic!("expected an exists-intro proof");
+        };
+        assert_eq!(*variable, Symbol(2_000));
     }
 
     #[test]

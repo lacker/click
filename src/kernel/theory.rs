@@ -4,7 +4,7 @@ use super::{
     calculus::*,
     check::{
         check_in_bindings, check_in_bindings_and_context, free_symbols_prop, proven_prop,
-        step_in_bindings_and_context,
+        step_in_bindings_and_context, substitute_prop,
     },
     eval::{normal_form_in_bindings, normal_outcome_in_bindings, step_in_bindings},
 };
@@ -212,7 +212,6 @@ impl Theorem {
     ) -> Option<Self> {
         Self::from_proof_without_assumptions(Proof::ExistsIntro {
             variable,
-            guard: None,
             body,
             witness,
             proof: Box::new(proof.proof.clone()),
@@ -226,12 +225,15 @@ impl Theorem {
         witness: Computation,
         proof: &Self,
     ) -> Option<Self> {
+        let witness_guard = substitute_prop(&guard, variable, &witness);
         Self::from_proof_without_assumptions(Proof::ExistsIntro {
             variable,
-            guard: Some(guard),
-            body,
-            witness,
-            proof: Box::new(proof.proof.clone()),
+            body: and(guard, body),
+            witness: witness.clone(),
+            proof: Box::new(Proof::AndIntro(
+                Box::new(Proof::Primitive(witness_guard)),
+                Box::new(proof.proof.clone()),
+            )),
         })
     }
 
@@ -449,7 +451,6 @@ impl Theory {
     ) -> Option<Theorem> {
         self.theorem_from_proof_without_assumptions(Proof::ExistsIntro {
             variable,
-            guard: None,
             body,
             witness,
             proof: Box::new(proof.proof.clone()),
@@ -464,12 +465,15 @@ impl Theory {
         witness: Computation,
         proof: &Theorem,
     ) -> Option<Theorem> {
+        let witness_guard = substitute_prop(&guard, variable, &witness);
         self.theorem_from_proof_without_assumptions(Proof::ExistsIntro {
             variable,
-            guard: Some(guard),
-            body,
-            witness,
-            proof: Box::new(proof.proof.clone()),
+            body: and(guard, body),
+            witness: witness.clone(),
+            proof: Box::new(Proof::AndIntro(
+                Box::new(Proof::Primitive(witness_guard)),
+                Box::new(proof.proof.clone()),
+            )),
         })
     }
 

@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use crate::kernel::{primitive_prop_holds, structural_primitive_prop_holds};
 use crate::{
     Computation, Context, ListCase, Name, Proof, Prop, Step, Symbol, Theorem, TheoremError, Theory,
     alpha_eq_computation, alpha_eq_prop, free_symbols, is_list, is_value, substitute_prop,
@@ -119,6 +120,15 @@ fn proof_expr_to_proof_in_context(
     theory: &Theory,
     context: &Context,
 ) -> Result<Proof, ProofElaborationError> {
+    proof_expr_to_proof_in_context_with_target(proof, theory, context, None)
+}
+
+fn proof_expr_to_proof_in_context_with_target(
+    proof: &ProofExpr,
+    theory: &Theory,
+    context: &Context,
+    target: Option<&Prop>,
+) -> Result<Proof, ProofElaborationError> {
     match proof {
         ProofExpr::Known(name) => {
             if theory.theorem(*name).is_some() {
@@ -128,6 +138,7 @@ fn proof_expr_to_proof_in_context(
             }
         }
         ProofExpr::Assume(symbol) => Ok(Proof::Assume(*symbol)),
+        ProofExpr::Primitive(prop) => Ok(Proof::Primitive(prop.clone())),
         ProofExpr::Symm(proof) => Ok(Proof::Symm(Box::new(subproof(
             "symm", proof, theory, context,
         )?))),
@@ -195,13 +206,11 @@ fn proof_expr_to_proof_in_context(
         }),
         ProofExpr::ExistsIntro {
             variable,
-            guard,
             body,
             witness,
             proof,
         } => Ok(Proof::ExistsIntro {
             variable: *variable,
-            guard: guard.clone(),
             body: body.clone(),
             witness: witness.clone(),
             proof: Box::new(subproof("exists-intro proof", proof, theory, context)?),
@@ -301,25 +310,42 @@ fn proof_expr_to_proof_in_context(
                 ),
             )?),
         }),
-        ProofExpr::ForAllIntro {
-            variable,
-            guard,
-            proof,
-        } => {
-            let mut context = context.clone();
-            if let Some(guard) = guard {
-                context.insert(*variable, guard.clone());
-            }
-            Ok(Proof::ForAllIntro {
-                variable: *variable,
-                guard: guard.clone(),
-                proof: Box::new(subproof("forall-intro proof", proof, theory, &context)?),
-            })
-        }
-        ProofExpr::ForAllElim { forall, argument } => Ok(Proof::ForAllElim {
-            forall: Box::new(subproof("forall-elim forall", forall, theory, context)?),
-            argument: argument.clone(),
+        ProofExpr::ForAllIntro { variable, proof } => Ok(Proof::ForAllIntro {
+            variable: *variable,
+            proof: Box::new(subproof("forall-intro proof", proof, theory, context)?),
         }),
+        ProofExpr::ForAllElim { forall, argument } => {
+            let proof = subproof("forall-elim forall", forall, theory, context)?;
+            let prop = theory
+                .proven_prop_in_context(&proof, context)
+                .ok_or_else(|| tactic_failed("forall-elim", "proof proves no proposition"))?;
+            apply_arguments_and_implications(
+                "forall-elim",
+                proof,
+                prop,
+                std::slice::from_ref(argument),
+                theory,
+                context,
+                target,
+            )
+            .map(|(proof, _)| proof)
+        }
+        ProofExpr::Apply { proof, arguments } => {
+            let proof = subproof("proof application", proof, theory, context)?;
+            let prop = theory
+                .proven_prop_in_context(&proof, context)
+                .ok_or_else(|| tactic_failed("proof application", "proof proves no proposition"))?;
+            apply_arguments_and_implications(
+                "proof application",
+                proof,
+                prop,
+                arguments,
+                theory,
+                context,
+                target,
+            )
+            .map(|(proof, _)| proof)
+        }
     }
 }
 
@@ -464,22 +490,33 @@ fn tactic_intro(
     goal: &Goal,
 ) -> Result<Proof, ProofElaborationError> {
     match &goal.target {
-        Prop::ForAll {
-            variable,
-            guard,
-            body,
-        } if *variable == symbol => {
-            let mut next_goal = Goal {
-                context: goal.context.clone(),
-                target: body.as_ref().clone(),
-            };
-            if let Some(guard) = guard.as_ref() {
-                next_goal.context.insert(symbol, guard.as_ref().clone());
+        Prop::ForAll { variable, body } if *variable == symbol => {
+            if let Prop::Implies(premise, conclusion) = body.as_ref() {
+                let mut next_goal = Goal {
+                    context: goal.context.clone(),
+                    target: conclusion.as_ref().clone(),
+                };
+                next_goal.context.insert(symbol, premise.as_ref().clone());
+                return Ok(Proof::ForAllIntro {
+                    variable: symbol,
+                    proof: Box::new(Proof::ImpliesIntro {
+                        assumption: symbol,
+                        premise: premise.as_ref().clone(),
+                        proof: Box::new(tactic_steps_to_proof(rest, theory, &next_goal)?),
+                    }),
+                });
             }
+
             Ok(Proof::ForAllIntro {
                 variable: symbol,
-                guard: guard.as_deref().cloned(),
-                proof: Box::new(tactic_steps_to_proof(rest, theory, &next_goal)?),
+                proof: Box::new(tactic_steps_to_proof(
+                    rest,
+                    theory,
+                    &Goal {
+                        context: goal.context.clone(),
+                        target: body.as_ref().clone(),
+                    },
+                )?),
             })
         }
         Prop::ForAll { variable, .. } => Err(tactic_failed(
@@ -510,7 +547,12 @@ fn tactic_exact(
     theory: &Theory,
     goal: &Goal,
 ) -> Result<Proof, ProofElaborationError> {
-    let proof = proof_expr_to_proof_in_context(proof_expr, theory, &goal.context)?;
+    let proof = proof_expr_to_proof_in_context_with_target(
+        proof_expr,
+        theory,
+        &goal.context,
+        Some(&goal.target),
+    )?;
     let Some(proven) = theory.proven_prop_in_context(&proof, &goal.context) else {
         return Err(tactic_failed(
             "exact",
@@ -617,73 +659,170 @@ fn tactic_apply(
     };
     let mut proof = Proof::Known(theorem);
 
-    (proof, prop) = instantiate_forall("apply", proof, prop, arguments)?;
+    (proof, prop) = apply_arguments_and_implications(
+        "apply",
+        proof,
+        prop,
+        arguments,
+        theory,
+        &goal.context,
+        Some(&goal.target),
+    )?;
 
-    apply_implications_from_context("apply", proof, prop, theory, goal)
+    if alpha_eq_prop(&prop, &goal.target) {
+        Ok(proof)
+    } else {
+        Err(tactic_failed(
+            "apply",
+            format!("proof concludes {:?}, but goal is {:?}", prop, goal.target),
+        ))
+    }
 }
 
-fn instantiate_forall(
+fn apply_arguments_and_implications(
     tactic: &'static str,
     mut proof: Proof,
     mut prop: Prop,
     arguments: &[Computation],
+    theory: &Theory,
+    context: &Context,
+    target: Option<&Prop>,
 ) -> Result<(Proof, Prop), ProofElaborationError> {
     for argument in arguments {
-        let Prop::ForAll { variable, body, .. } = prop else {
-            return Err(tactic_failed(tactic, "too many explicit arguments"));
-        };
-        proof = Proof::ForAllElim {
-            forall: Box::new(proof),
-            argument: argument.clone(),
-        };
-        prop = substitute_prop(&body, variable, argument);
+        loop {
+            match prop {
+                Prop::ForAll { variable, body, .. } => {
+                    let expected = substitute_prop(&body, variable, argument);
+                    proof = Proof::ForAllElim {
+                        forall: Box::new(proof),
+                        argument: argument.clone(),
+                    };
+                    prop = theory
+                        .proven_prop_in_context(&proof, context)
+                        .ok_or_else(|| {
+                            tactic_failed(tactic, "forall elimination produced no proposition")
+                        })?;
+                    if alpha_eq_prop(&prop, &expected) {
+                        prop = expected;
+                    }
+                    break;
+                }
+                Prop::Implies(premise, conclusion) => {
+                    proof = apply_available_premise(tactic, proof, premise.as_ref(), context)?;
+                    prop = theory
+                        .proven_prop_in_context(&proof, context)
+                        .ok_or_else(|| {
+                            tactic_failed(tactic, "applying premise produced no proposition")
+                        })?;
+                    if alpha_eq_prop(&prop, conclusion.as_ref()) {
+                        prop = conclusion.as_ref().clone();
+                    }
+                }
+                _ => return Err(tactic_failed(tactic, "too many explicit arguments")),
+            }
+        }
     }
 
-    Ok((proof, prop))
+    finish_implications(tactic, proof, prop, theory, context, target)
 }
 
-fn apply_implications_from_context(
+fn finish_implications(
     tactic: &'static str,
     mut proof: Proof,
     mut prop: Prop,
     theory: &Theory,
-    goal: &Goal,
-) -> Result<Proof, ProofElaborationError> {
+    context: &Context,
+    target: Option<&Prop>,
+) -> Result<(Proof, Prop), ProofElaborationError> {
     loop {
-        if alpha_eq_prop(&prop, &goal.target) {
-            return Ok(proof);
+        if target.is_some_and(|target| alpha_eq_prop(&prop, target)) {
+            return Ok((proof, prop));
         }
 
-        let Prop::Implies(premise, conclusion) = prop else {
-            return Err(tactic_failed(
-                tactic,
-                format!("proof concludes {:?}, but goal is {:?}", prop, goal.target),
-            ));
+        let (premise, conclusion) = match &prop {
+            Prop::Implies(premise, conclusion) => {
+                (premise.as_ref().clone(), conclusion.as_ref().clone())
+            }
+            _ => {
+                return match target {
+                    Some(target) => Err(tactic_failed(
+                        tactic,
+                        format!("proof concludes {:?}, but goal is {:?}", prop, target),
+                    )),
+                    None => Ok((proof, prop)),
+                };
+            }
         };
 
-        let premise_goal = Goal {
-            context: goal.context.clone(),
-            target: premise.as_ref().clone(),
+        let next_proof = match target {
+            Some(_) => apply_available_premise(tactic, proof.clone(), &premise, context),
+            None => apply_structural_premise(tactic, proof.clone(), &premise, context),
         };
-        let premise_proof = tactic_assumption(&premise_goal).map_err(|_| {
-            tactic_failed(
-                tactic,
-                format!("premise {:?} is not available as an assumption", premise),
-            )
-        })?;
+        let Ok(next_proof) = next_proof else {
+            return match target {
+                Some(_) => Err(tactic_failed(
+                    tactic,
+                    format!("premise {:?} is not available", premise),
+                )),
+                None => Ok((proof, prop)),
+            };
+        };
 
-        proof = Proof::ImpliesElim {
-            implication: Box::new(proof),
-            premise: Box::new(premise_proof),
-        };
+        proof = next_proof;
         prop = theory
-            .proven_prop_in_context(&proof, &goal.context)
-            .ok_or_else(|| tactic_failed(tactic, "applying proof produced no proposition"))?;
+            .proven_prop_in_context(&proof, context)
+            .ok_or_else(|| tactic_failed(tactic, "applying premise produced no proposition"))?;
 
-        if alpha_eq_prop(&prop, conclusion.as_ref()) {
-            prop = conclusion.as_ref().clone();
+        if alpha_eq_prop(&prop, &conclusion) {
+            prop = conclusion;
         }
     }
+}
+
+fn apply_available_premise(
+    tactic: &'static str,
+    implication: Proof,
+    premise: &Prop,
+    context: &Context,
+) -> Result<Proof, ProofElaborationError> {
+    let premise_proof = available_prop_proof(premise, context)
+        .map_err(|_| tactic_failed(tactic, format!("premise {:?} is not available", premise)))?;
+
+    Ok(Proof::ImpliesElim {
+        implication: Box::new(implication),
+        premise: Box::new(premise_proof),
+    })
+}
+
+fn available_prop_proof(prop: &Prop, context: &Context) -> Result<Proof, ProofElaborationError> {
+    let goal = Goal {
+        context: context.clone(),
+        target: prop.clone(),
+    };
+    tactic_assumption(&goal).or_else(|_| {
+        primitive_prop_holds(prop, context)
+            .then_some(Proof::Primitive(prop.clone()))
+            .ok_or_else(|| tactic_failed("available", "proposition is not available"))
+    })
+}
+
+fn apply_structural_premise(
+    tactic: &'static str,
+    implication: Proof,
+    premise: &Prop,
+    context: &Context,
+) -> Result<Proof, ProofElaborationError> {
+    if !structural_primitive_prop_holds(premise, context) {
+        return Err(tactic_failed(
+            tactic,
+            format!("premise {:?} is not structurally available", premise),
+        ));
+    }
+
+    Ok(Proof::ImpliesElim {
+        implication: Box::new(implication),
+        premise: Box::new(Proof::Primitive(premise.clone())),
+    })
 }
 
 fn tactic_split(
@@ -722,27 +861,54 @@ fn tactic_exists(
     theory: &Theory,
     goal: &Goal,
 ) -> Result<Proof, ProofElaborationError> {
-    let Prop::Exists {
-        variable,
-        guard,
-        body,
-    } = &goal.target
-    else {
+    let Prop::Exists { variable, body } = &goal.target else {
         return Err(tactic_failed("exists", "goal is not an existential"));
     };
 
-    let witness_goal = Goal {
-        context: goal.context.clone(),
-        target: substitute_prop(body, *variable, witness),
+    let (witness_goal, witness_guard) =
+        existential_witness_goal(body, *variable, witness, &goal.context);
+    let proof = tactic_script_to_proof(
+        script,
+        theory,
+        &Goal {
+            context: goal.context.clone(),
+            target: witness_goal,
+        },
+    )?;
+    let proof = match witness_guard {
+        Some(witness_guard) => {
+            Proof::AndIntro(Box::new(Proof::Primitive(witness_guard)), Box::new(proof))
+        }
+        None => proof,
     };
 
     Ok(Proof::ExistsIntro {
         variable: *variable,
-        guard: guard.as_deref().cloned(),
         body: body.as_ref().clone(),
         witness: witness.clone(),
-        proof: Box::new(tactic_script_to_proof(script, theory, &witness_goal)?),
+        proof: Box::new(proof),
     })
+}
+
+fn existential_witness_goal(
+    body: &Prop,
+    variable: Symbol,
+    witness: &Computation,
+    context: &Context,
+) -> (Prop, Option<Prop>) {
+    let Prop::And(left, right) = body else {
+        return (substitute_prop(body, variable, witness), None);
+    };
+
+    let witness_guard = substitute_prop(left, variable, witness);
+    if primitive_prop_holds(&witness_guard, context) {
+        (
+            substitute_prop(right, variable, witness),
+            Some(witness_guard),
+        )
+    } else {
+        (substitute_prop(body, variable, witness), None)
+    }
 }
 
 fn tactic_exists_elim(
@@ -844,9 +1010,24 @@ fn tactic_forall_elim(
     let prop = theory
         .proven_prop_in_context(&proof, &goal.context)
         .ok_or_else(|| tactic_failed("forall-elim", "proof proves no proposition"))?;
-    let (proof, prop) = instantiate_forall("forall-elim", proof, prop, arguments)?;
+    let (proof, prop) = apply_arguments_and_implications(
+        "forall-elim",
+        proof,
+        prop,
+        arguments,
+        theory,
+        &goal.context,
+        Some(&goal.target),
+    )?;
 
-    apply_implications_from_context("forall-elim", proof, prop, theory, goal)
+    if alpha_eq_prop(&prop, &goal.target) {
+        Ok(proof)
+    } else {
+        Err(tactic_failed(
+            "forall-elim",
+            format!("proof concludes {:?}, but goal is {:?}", prop, goal.target),
+        ))
+    }
 }
 
 fn tactic_left(
@@ -937,19 +1118,9 @@ fn tactic_list_induction(
     theory: &Theory,
     goal: &Goal,
 ) -> Result<Proof, ProofElaborationError> {
-    let Prop::ForAll {
-        variable: goal_variable,
-        guard: Some(guard),
-        body,
-    } = &goal.target
-    else {
-        return Err(tactic_failed(
-            "list-induction",
-            "goal is not a guarded forall",
-        ));
-    };
+    let (goal_variable, guard, property) = list_induction_goal(&goal.target)?;
 
-    if variable != *goal_variable {
+    if variable != goal_variable {
         return Err(tactic_failed(
             "list-induction",
             format!(
@@ -960,14 +1131,13 @@ fn tactic_list_induction(
     }
 
     let expected_guard = is_list(Computation::Var(variable));
-    if !alpha_eq_prop(guard, &expected_guard) {
+    if !alpha_eq_prop(&guard, &expected_guard) {
         return Err(tactic_failed(
             "list-induction",
             "forall guard is not an is-list guard",
         ));
     }
 
-    let property = body.as_ref().clone();
     let base_goal = Goal {
         context: goal.context.clone(),
         target: substitute_prop(&property, variable, &Computation::Nil),
@@ -1000,6 +1170,21 @@ fn tactic_list_induction(
         induction_hypothesis_assumption,
         step: Box::new(tactic_script_to_proof(step, theory, &step_goal)?),
     })
+}
+
+fn list_induction_goal(target: &Prop) -> Result<(Symbol, Prop, Prop), ProofElaborationError> {
+    let Prop::ForAll { variable, body } = target else {
+        return Err(tactic_failed("list-induction", "goal is not a forall"));
+    };
+
+    let Prop::Implies(guard, body) = body.as_ref() else {
+        return Err(tactic_failed(
+            "list-induction",
+            "forall body is not a guarded implication",
+        ));
+    };
+
+    Ok((*variable, guard.as_ref().clone(), body.as_ref().clone()))
 }
 
 fn tactic_calc(
@@ -1168,26 +1353,16 @@ fn replace_first_prop(
                 replace_first_prop(right, needle, replacement)
                     .map(|right| Prop::Or(left.clone(), Box::new(right)))
             }),
-        Prop::ForAll {
-            variable,
-            guard,
-            body,
-        } => replace_first_quantified_prop(
+        Prop::ForAll { variable, body } => replace_first_quantified_prop(
             QuantifiedProp::ForAll,
             *variable,
-            guard,
             body,
             needle,
             replacement,
         ),
-        Prop::Exists {
-            variable,
-            guard,
-            body,
-        } => replace_first_quantified_prop(
+        Prop::Exists { variable, body } => replace_first_quantified_prop(
             QuantifiedProp::Exists,
             *variable,
-            guard,
             body,
             needle,
             replacement,
@@ -1204,7 +1379,6 @@ enum QuantifiedProp {
 fn replace_first_quantified_prop(
     quantified: QuantifiedProp,
     variable: Symbol,
-    guard: &Option<Box<Prop>>,
     body: &Prop,
     needle: &Computation,
     replacement: &Computation,
@@ -1213,29 +1387,12 @@ fn replace_first_quantified_prop(
         return None;
     }
 
-    let rebuild = |guard: Option<Box<Prop>>, body: Box<Prop>| match quantified {
-        QuantifiedProp::ForAll => Prop::ForAll {
-            variable,
-            guard,
-            body,
-        },
-        QuantifiedProp::Exists => Prop::Exists {
-            variable,
-            guard,
-            body,
-        },
+    let rebuild = |body: Box<Prop>| match quantified {
+        QuantifiedProp::ForAll => Prop::ForAll { variable, body },
+        QuantifiedProp::Exists => Prop::Exists { variable, body },
     };
 
-    guard
-        .as_ref()
-        .and_then(|guard| {
-            replace_first_prop(guard, needle, replacement)
-                .map(|guard| rebuild(Some(Box::new(guard)), Box::new(body.clone())))
-        })
-        .or_else(|| {
-            replace_first_prop(body, needle, replacement)
-                .map(|body| rebuild(guard.clone(), Box::new(body)))
-        })
+    replace_first_prop(body, needle, replacement).map(|body| rebuild(Box::new(body)))
 }
 
 fn replace_first_computation(
@@ -1378,20 +1535,8 @@ fn add_all_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
             add_all_symbols_prop(premise, symbols);
             add_all_symbols_prop(conclusion, symbols);
         }
-        Prop::ForAll {
-            variable,
-            guard,
-            body,
-        }
-        | Prop::Exists {
-            variable,
-            guard,
-            body,
-        } => {
+        Prop::ForAll { variable, body } | Prop::Exists { variable, body } => {
             symbols.insert(*variable);
-            if let Some(guard) = guard {
-                add_all_symbols_prop(guard, symbols);
-            }
             add_all_symbols_prop(body, symbols);
         }
     }
@@ -1469,20 +1614,22 @@ fn exists_elim_context(
 ) -> Result<Context, ProofElaborationError> {
     let mut context = context.clone();
 
-    let Some(Prop::Exists {
-        variable,
-        guard,
-        body,
-    }) = theory.proven_prop_in_context(existential_proof, &context)
+    let Some(Prop::Exists { variable, body }) =
+        theory.proven_prop_in_context(existential_proof, &context)
     else {
         return Err(tactic_failed(tactic, "proof is not an existential"));
     };
 
     let witness_var = Computation::Var(witness);
-    if let Some(guard) = guard {
-        context.insert(witness, substitute_prop(&guard, variable, &witness_var));
+    match body.as_ref() {
+        Prop::And(left, right) => {
+            context.insert(witness, substitute_prop(left, variable, &witness_var));
+            context.insert(assumption, substitute_prop(right, variable, &witness_var));
+        }
+        _ => {
+            context.insert(assumption, substitute_prop(&body, variable, &witness_var));
+        }
     }
-    context.insert(assumption, substitute_prop(&body, variable, &witness_var));
 
     Ok(context)
 }
