@@ -1,10 +1,10 @@
 //! Test helpers and expected shapes for the list prelude source.
 
 use crate::{
-    Computation, Lambda, Outcome, Proof, Prop, RUNTIME_ERROR, Symbol, Theory, computes_to,
+    Computation, Lambda, Outcome, Proof, Prop, RUNTIME_ERROR, Symbol, Theory, and, computes_to,
     computes_to_list,
     elab::{proof, source::ParsedTheorem},
-    errors_with, exists_where, forall_where, implies, is_bool, is_list, is_value,
+    equal, errors_with, exists_where, forall, forall_where, implies, is_bool, is_list, is_value,
 };
 
 pub use crate::elab::EvaluationProofError;
@@ -515,6 +515,22 @@ pub fn value_eq_cons_nil_source_theorem() -> Prop {
 
 pub fn value_eq_cons_source_theorem() -> Prop {
     theorem_prop("value_eq_cons")
+}
+
+pub fn is_symbol_true_implies_is_lambda_false_source_theorem() -> Prop {
+    theorem_prop("is_symbol_true_implies_is_lambda_false")
+}
+
+pub fn value_eq_left_symbol_true_source_theorem() -> Prop {
+    theorem_prop("value_eq_left_symbol_true")
+}
+
+pub fn value_eq_cons_true_elim_source_theorem() -> Prop {
+    theorem_prop("value_eq_cons_true_elim")
+}
+
+pub fn cons_congr_source_theorem() -> Prop {
+    theorem_prop("cons_congr")
 }
 
 pub fn member_nil_source_theorem() -> Prop {
@@ -1780,6 +1796,111 @@ pub fn value_eq_cons_theorem(
                             ),
                             false_value(),
                         ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// A value known to be a symbol is not a lambda.
+pub fn is_symbol_true_implies_is_lambda_false_theorem(value: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        implies(
+            computes_to(is_symbol_call(var(value)), true_value()),
+            computes_to(is_lambda_call(var(value)), false_value()),
+        ),
+    )
+}
+
+/// If `value-eq` succeeds with a known left symbol, the values compute equally.
+pub fn value_eq_left_symbol_true_theorem(left: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_value(var(left)),
+        implies(
+            computes_to(is_symbol_call(var(left)), true_value()),
+            forall_where(
+                right,
+                is_value(var(right)),
+                implies(
+                    computes_to(is_lambda_call(var(right)), false_value()),
+                    implies(
+                        computes_to(value_eq_call(var(left), var(right)), true_value()),
+                        computes_to(var(left), var(right)),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If cons `value-eq` returns true, both heads and tails return true under `value-eq`.
+pub fn value_eq_cons_true_elim_theorem(
+    left_head: Symbol,
+    left_tail: Symbol,
+    right_head: Symbol,
+    right_tail: Symbol,
+) -> Prop {
+    forall_where(
+        left_head,
+        is_value(var(left_head)),
+        forall_where(
+            left_tail,
+            is_list(var(left_tail)),
+            forall_where(
+                right_head,
+                is_value(var(right_head)),
+                forall_where(
+                    right_tail,
+                    is_list(var(right_tail)),
+                    implies(
+                        computes_to(
+                            value_eq_call(
+                                cons(var(left_head), var(left_tail)),
+                                cons(var(right_head), var(right_tail)),
+                            ),
+                            true_value(),
+                        ),
+                        and(
+                            computes_to(
+                                value_eq_call(var(left_head), var(right_head)),
+                                true_value(),
+                            ),
+                            computes_to(
+                                value_eq_call(var(left_tail), var(right_tail)),
+                                true_value(),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// `cons` respects equality of its head and tail arguments.
+pub fn cons_congr_theorem(
+    left_head: Symbol,
+    left_tail: Symbol,
+    right_head: Symbol,
+    right_tail: Symbol,
+) -> Prop {
+    forall(
+        left_head,
+        forall(
+            left_tail,
+            forall_where(
+                right_head,
+                equal(var(left_head), var(right_head)),
+                forall_where(
+                    right_tail,
+                    equal(var(left_tail), var(right_tail)),
+                    equal(
+                        cons(var(left_head), var(left_tail)),
+                        cons(var(right_head), var(right_tail)),
                     ),
                 ),
             ),
@@ -3099,6 +3220,18 @@ mod tests {
         let cons_left_tail = theorem_symbol("value_eq_cons", "left_tail");
         let cons_right_head = theorem_symbol("value_eq_cons", "right_head");
         let cons_right_tail = theorem_symbol("value_eq_cons", "right_tail");
+        let symbol_not_lambda_value =
+            theorem_symbol("is_symbol_true_implies_is_lambda_false", "value");
+        let left_symbol_left = theorem_symbol("value_eq_left_symbol_true", "left");
+        let left_symbol_right = theorem_symbol("value_eq_left_symbol_true", "right");
+        let cons_elim_left_head = theorem_symbol("value_eq_cons_true_elim", "left_head");
+        let cons_elim_left_tail = theorem_symbol("value_eq_cons_true_elim", "left_tail");
+        let cons_elim_right_head = theorem_symbol("value_eq_cons_true_elim", "right_head");
+        let cons_elim_right_tail = theorem_symbol("value_eq_cons_true_elim", "right_tail");
+        let cons_congr_left_head = theorem_symbol("cons_congr", "left_head");
+        let cons_congr_left_tail = theorem_symbol("cons_congr", "left_tail");
+        let cons_congr_right_head = theorem_symbol("cons_congr", "right_head");
+        let cons_congr_right_tail = theorem_symbol("cons_congr", "right_tail");
 
         assert_eq!(
             value_eq_true_true_source_theorem(),
@@ -3124,6 +3257,32 @@ mod tests {
                 cons_left_tail,
                 cons_right_head,
                 cons_right_tail,
+            )
+        );
+        assert_eq!(
+            is_symbol_true_implies_is_lambda_false_source_theorem(),
+            is_symbol_true_implies_is_lambda_false_theorem(symbol_not_lambda_value)
+        );
+        assert_eq!(
+            value_eq_left_symbol_true_source_theorem(),
+            value_eq_left_symbol_true_theorem(left_symbol_left, left_symbol_right)
+        );
+        assert_eq!(
+            value_eq_cons_true_elim_source_theorem(),
+            value_eq_cons_true_elim_theorem(
+                cons_elim_left_head,
+                cons_elim_left_tail,
+                cons_elim_right_head,
+                cons_elim_right_tail,
+            )
+        );
+        assert_eq!(
+            cons_congr_source_theorem(),
+            cons_congr_theorem(
+                cons_congr_left_head,
+                cons_congr_left_tail,
+                cons_congr_right_head,
+                cons_congr_right_tail,
             )
         );
     }

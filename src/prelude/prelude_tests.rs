@@ -204,6 +204,10 @@ fn prelude_theorem_names() -> Vec<Name> {
         "value_eq_nil_cons",
         "value_eq_cons_nil",
         "value_eq_cons",
+        "is_symbol_true_implies_is_lambda_false",
+        "value_eq_left_symbol_true",
+        "value_eq_cons_true_elim",
+        "cons_congr",
         "member_nil",
         "member_cons_true",
         "member_cons_false",
@@ -874,6 +878,11 @@ fn theory_defines_reverse_theorems() {
     let value_eq_nil_cons_prop = list_tests::value_eq_nil_cons_source_theorem();
     let value_eq_cons_nil_prop = list_tests::value_eq_cons_nil_source_theorem();
     let value_eq_cons_prop = list_tests::value_eq_cons_source_theorem();
+    let is_symbol_true_implies_is_lambda_false_prop =
+        list_tests::is_symbol_true_implies_is_lambda_false_source_theorem();
+    let value_eq_left_symbol_true_prop = list_tests::value_eq_left_symbol_true_source_theorem();
+    let value_eq_cons_true_elim_prop = list_tests::value_eq_cons_true_elim_source_theorem();
+    let cons_congr_prop = list_tests::cons_congr_source_theorem();
     let member_nil_prop = list_tests::member_nil_source_theorem();
     let member_cons_true_prop = list_tests::member_cons_true_source_theorem();
     let member_cons_false_prop = list_tests::member_cons_false_source_theorem();
@@ -1557,6 +1566,30 @@ fn theory_defines_reverse_theorems() {
             .expect("value-eq cons theorem source proof should check with dependencies")
             .prop(),
         &value_eq_cons_prop,
+    );
+    assert_eq!(
+        checked_theorem("is_symbol_true_implies_is_lambda_false")
+            .expect("symbol kind theorem source proof should check with dependencies")
+            .prop(),
+        &is_symbol_true_implies_is_lambda_false_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_left_symbol_true")
+            .expect("value-eq left symbol theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_left_symbol_true_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_cons_true_elim")
+            .expect("value-eq cons elimination theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_cons_true_elim_prop,
+    );
+    assert_eq!(
+        checked_theorem("cons_congr")
+            .expect("cons congruence theorem source proof should check with dependencies")
+            .prop(),
+        &cons_congr_prop,
     );
     assert_eq!(
         checked_theorem("member_nil")

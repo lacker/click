@@ -1438,6 +1438,267 @@
     (intro right_tail)
     (eval)))
 
+(theorem is_symbol_true_implies_is_lambda_false
+  (forall value (is-value value)
+    (implies
+      (computes-to (is-symbol value) (quote :true))
+      (computes-to (is-lambda value) (quote :false))))
+  (proof
+    (forall-intro value
+      (is-value value)
+      (implies-intro value_is_symbol
+        (computes-to (is-symbol value) (quote :true))
+        (trans
+          (eval-same
+            (is-lambda value)
+            (symbol-eq (value-kind value) (quote :lambda)))
+          (rewrite
+            (symm
+              (implies-elim
+                (forall-elim
+                  (forall-elim
+                    (known symbol_eq_true)
+                    (value-kind value))
+                  (quote :symbol))
+                (trans
+                  (eval-same
+                    (symbol-eq (value-kind value) (quote :symbol))
+                    (is-symbol value))
+                  (assume value_is_symbol))))
+            (eval-to
+              (symbol-eq (quote :symbol) (quote :lambda))
+              (quote :false))
+            kind
+            (computes-to
+              (symbol-eq kind (quote :lambda))
+              (quote :false))))))))
+
+(theorem value_eq_left_symbol_true
+  (forall left (is-value left)
+    (implies
+      (computes-to (is-symbol left) (quote :true))
+      (forall right (is-value right)
+        (implies
+          (computes-to (is-lambda right) (quote :false))
+          (implies
+            (computes-to (value-eq left right) (quote :true))
+            (computes-to left right))))))
+  (by
+    (intro left)
+    (intro left_is_symbol)
+    (intro right)
+    (intro right_is_not_lambda)
+    (intro values_equal)
+    (specialize left_is_not_lambda is_symbol_true_implies_is_lambda_false left)
+    (have symbols_equal
+      (computes-to
+        (symbol-eq left right)
+        (quote :true))
+      (by
+        (calc
+          (symbol-eq left right)
+          (==
+            (if
+              (is-symbol left)
+              (symbol-eq left right)
+              (if
+                (is-symbol right)
+                (quote :false)
+                (list-case left
+                  (list-case right
+                    (quote :true)
+                    right_cell
+                    (quote :false))
+                  left_cell
+                  (list-case right
+                    (quote :false)
+                    right_cell
+                    (if
+                      (value-eq (head left_cell) (head right_cell))
+                      (value-eq (tail left_cell) (tail right_cell))
+                      (quote :false))))))
+            (by
+              (rewrite left_is_symbol)
+              (eval)))
+          (==
+            (if
+              (is-lambda right)
+              (error 0)
+              (if
+                (is-symbol left)
+                (symbol-eq left right)
+                (if
+                  (is-symbol right)
+                  (quote :false)
+                  (list-case left
+                    (list-case right
+                      (quote :true)
+                      right_cell
+                      (quote :false))
+                    left_cell
+                    (list-case right
+                      (quote :false)
+                      right_cell
+                      (if
+                        (value-eq (head left_cell) (head right_cell))
+                        (value-eq (tail left_cell) (tail right_cell))
+                        (quote :false)))))))
+            (by
+              (rewrite right_is_not_lambda)
+              (eval)))
+          (==
+            (if
+              (is-lambda left)
+              (error 0)
+              (if
+                (is-lambda right)
+                (error 0)
+                (if
+                  (is-symbol left)
+                  (symbol-eq left right)
+                  (if
+                    (is-symbol right)
+                    (quote :false)
+                    (list-case left
+                      (list-case right
+                        (quote :true)
+                        right_cell
+                        (quote :false))
+                      left_cell
+                      (list-case right
+                        (quote :false)
+                        right_cell
+                        (if
+                          (value-eq (head left_cell) (head right_cell))
+                          (value-eq (tail left_cell) (tail right_cell))
+                          (quote :false))))))))
+            (by
+              (rewrite left_is_not_lambda)
+              (eval)))
+          (==
+            (value-eq left right)
+            (by
+              (eval)))
+          (==
+            (quote :true)
+            (by
+              (exact values_equal)))))
+      (by
+        (specialize result symbol_eq_true left right)
+        (exact result)))))
+
+(theorem value_eq_cons_true_elim
+  (forall left_head (is-value left_head)
+    (forall left_tail (is-list left_tail)
+      (forall right_head (is-value right_head)
+        (forall right_tail (is-list right_tail)
+          (implies
+            (computes-to
+              (value-eq
+                (cons left_head left_tail)
+                (cons right_head right_tail))
+              (quote :true))
+            (and
+              (computes-to
+                (value-eq left_head right_head)
+                (quote :true))
+              (computes-to
+                (value-eq left_tail right_tail)
+                (quote :true))))))))
+  (by
+    (intro left_head)
+    (intro left_tail)
+    (intro right_head)
+    (intro right_tail)
+    (intro conses_equal)
+    (specialize cons_step value_eq_cons left_head left_tail right_head right_tail)
+    (have branch_true
+      (computes-to
+        (if
+          (value-eq
+            (head (cons left_head left_tail))
+            (head (cons right_head right_tail)))
+          (value-eq
+            (tail (cons left_head left_tail))
+            (tail (cons right_head right_tail)))
+          (quote :false))
+        (quote :true))
+      (by
+        (calc
+          (if
+            (value-eq
+              (head (cons left_head left_tail))
+              (head (cons right_head right_tail)))
+            (value-eq
+              (tail (cons left_head left_tail))
+              (tail (cons right_head right_tail)))
+            (quote :false))
+          (==
+            (value-eq
+              (cons left_head left_tail)
+              (cons right_head right_tail))
+            (by
+              (exact (symm cons_step))))
+          (==
+            (quote :true)
+            (by
+              (exact conses_equal)))))
+      (by
+        (specialize branch_parts if_true_result_with_false_else
+          (value-eq
+            (head (cons left_head left_tail))
+            (head (cons right_head right_tail)))
+          (value-eq
+            (tail (cons left_head left_tail))
+            (tail (cons right_head right_tail))))
+        (cases branch_parts head_equal tail_equal)
+        (split
+          (by
+            (calc
+              (value-eq left_head right_head)
+              (==
+                (value-eq
+                  (head (cons left_head left_tail))
+                  (head (cons right_head right_tail)))
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact head_equal)))))
+          (by
+            (calc
+              (value-eq left_tail right_tail)
+              (==
+                (value-eq
+                  (tail (cons left_head left_tail))
+                  (tail (cons right_head right_tail)))
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact tail_equal))))))))))
+
+(theorem cons_congr
+  (forall left_head
+    (forall left_tail
+      (forall right_head
+        (equal left_head right_head)
+        (forall right_tail
+          (equal left_tail right_tail)
+          (equal
+            (cons left_head left_tail)
+            (cons right_head right_tail))))))
+  (by
+    (intro left_head)
+    (intro left_tail)
+    (intro right_head)
+    (intro right_tail)
+    (rewrite right_head)
+    (rewrite right_tail)
+    (eval)))
+
 (theorem member_nil
   (forall value (is-value value)
     (computes-to (member value nil) (quote :false)))
