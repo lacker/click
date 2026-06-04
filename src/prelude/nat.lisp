@@ -20,10 +20,29 @@
           (quote :false)))
       (quote :false))))
 
+(def is-zero
+  (lambda nat
+    (null nat)))
+
+(def pred
+  (lambda nat
+    (list-case nat
+      nil
+      cell
+      (tail cell))))
+
 (def add
   (lambda left
     (lambda right
       (append left right))))
+
+(def mul
+  (lambda left
+    (lambda right
+      (list-case left
+        nil
+        cell
+        (add right (mul (tail cell) right))))))
 
 (theorem add_is_append
   (forall left (is-list left)
@@ -54,6 +73,47 @@
     (cons (quote unit) nil))
   (by
     (eval)))
+
+(theorem is_zero_zero
+  (computes-to (is-zero zero) (quote :true))
+  (by
+    (eval)))
+
+(theorem is_zero_succ
+  (forall nat (is-list nat)
+    (computes-to (is-zero (succ nat)) (quote :false)))
+  (by
+    (intro nat)
+    (eval)))
+
+(theorem pred_zero
+  (computes-to (pred zero) zero)
+  (by
+    (eval)))
+
+(theorem pred_succ
+  (forall nat (is-list nat)
+    (computes-to (pred (succ nat)) nat))
+  (by
+    (intro nat)
+    (eval)))
+
+(theorem pred_computes_to_list
+  (forall nat (is-list nat)
+    (computes-to-list result (pred nat)))
+  (by
+    (list-induction nat
+      (by
+        (exists nil
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (exists tail
+          (by
+            (eval)))))))
 
 (theorem succ_computes_to_list
   (forall nat (is-list nat)
@@ -390,3 +450,168 @@
         (by
           (rewrite (symm middle_right_proof))
           (eval))))))
+
+(theorem mul_zero_left
+  (forall right (is-list right)
+    (computes-to (mul zero right) zero))
+  (by
+    (intro right)
+    (eval)))
+
+(theorem mul_cons
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (forall right (is-list right)
+        (computes-to
+          (mul (cons head tail) right)
+          (add right (mul tail right))))))
+  (by
+    (intro head)
+    (intro tail)
+    (intro right)
+    (eval)))
+
+(theorem mul_computes_to_list
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (computes-to-list result (mul left right))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (exists nil
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro right)
+        (exists-elim
+          (forall-elim (assume induction_hypothesis) right)
+          tail_product
+          tail_product_proof)
+        (exists-elim
+          (add_computes_to_list right tail_product)
+          product
+          product_proof)
+        (exists product
+          (by
+            (calc
+              (mul (cons head tail) right)
+              (==
+                (add right (mul tail right))
+                (by
+                  (exact mul_cons head tail right)))
+              (==
+                (add right tail_product)
+                (by
+                  (rewrite tail_product_proof)
+                  (eval)))
+              (==
+                product
+                (by
+                  (exact product_proof))))))))))
+
+(theorem mul_succ_left
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (computes-to
+        (mul (succ left) right)
+        (add right (mul left right)))))
+  (by
+    (intro left)
+    (intro right)
+    (calc
+      (mul (succ left) right)
+      (==
+        (mul (cons (quote unit) left) right)
+        (by
+          (eval)))
+      (==
+        (add right (mul left right))
+        (by
+          (exact mul_cons (quote unit) left right))))))
+
+(theorem mul_zero_right
+  (forall nat (is-list nat)
+    (computes-to (mul nat zero) zero))
+  (by
+    (list-induction nat
+      (by
+        (eval))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (exists-elim
+          (mul_computes_to_list tail nil)
+          tail_product
+          tail_product_proof)
+        (calc
+          (mul (cons head tail) zero)
+          (==
+            (mul (cons head tail) nil)
+            (by
+              (rewrite (eval-to zero nil))
+              (eval)))
+          (==
+            (add nil (mul tail nil))
+            (by
+              (exact mul_cons head tail nil)))
+          (==
+            (add zero tail_product)
+            (by
+              (rewrite tail_product_proof)
+              (eval)))
+          (==
+            tail_product
+            (by
+              (exact add_zero_left tail_product)))
+          (==
+            (mul tail nil)
+            (by
+              (rewrite (symm tail_product_proof))
+              (eval)))
+          (==
+            (mul tail zero)
+            (by
+              (rewrite (symm (eval-to zero nil)))
+              (eval)))
+          (==
+            zero
+            (by
+              (exact induction_hypothesis))))))))
+
+(theorem mul_one_left
+  (forall right (is-list right)
+    (computes-to
+      (mul (succ zero) right)
+      right))
+  (by
+    (intro right)
+    (calc
+      (mul (succ zero) right)
+      (==
+        (mul (succ nil) right)
+        (by
+          (rewrite (eval-to zero nil))
+          (eval)))
+      (==
+        (add right (mul nil right))
+        (by
+          (exact mul_succ_left nil right)))
+      (==
+        (add right (mul zero right))
+        (by
+          (rewrite (symm (eval-to zero nil)))
+          (eval)))
+      (==
+        (add right zero)
+        (by
+          (rewrite (mul_zero_left right))
+          (eval)))
+      (==
+        right
+        (by
+          (exact add_zero_right right))))))

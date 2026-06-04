@@ -38,12 +38,36 @@ pub fn is_nat_value_definition() -> Computation {
     definition("is-nat-value")
 }
 
+pub fn is_zero() -> Computation {
+    computation_ref("is-zero")
+}
+
+pub fn is_zero_definition() -> Computation {
+    definition("is-zero")
+}
+
+pub fn pred() -> Computation {
+    computation_ref("pred")
+}
+
+pub fn pred_definition() -> Computation {
+    definition("pred")
+}
+
 pub fn add() -> Computation {
     computation_ref("add")
 }
 
 pub fn add_definition() -> Computation {
     definition("add")
+}
+
+pub fn mul() -> Computation {
+    computation_ref("mul")
+}
+
+pub fn mul_definition() -> Computation {
+    definition("mul")
 }
 
 pub fn succ_call(nat: Computation) -> Computation {
@@ -54,8 +78,20 @@ pub fn is_nat_value_call(value: Computation) -> Computation {
     apply(is_nat_value(), value)
 }
 
+pub fn is_zero_call(nat: Computation) -> Computation {
+    apply(is_zero(), nat)
+}
+
+pub fn pred_call(nat: Computation) -> Computation {
+    apply(pred(), nat)
+}
+
 pub fn add_call(left: Computation, right: Computation) -> Computation {
     apply(apply(add(), left), right)
+}
+
+pub fn mul_call(left: Computation, right: Computation) -> Computation {
+    apply(apply(mul(), left), right)
 }
 
 pub fn one_value() -> Computation {
@@ -74,6 +110,14 @@ pub fn four_value() -> Computation {
     cons(unit(), three_value())
 }
 
+pub fn five_value() -> Computation {
+    cons(unit(), four_value())
+}
+
+pub fn six_value() -> Computation {
+    cons(unit(), five_value())
+}
+
 pub fn add_is_append_source_theorem() -> Prop {
     theorem_prop("add_is_append")
 }
@@ -88,6 +132,26 @@ pub fn zero_is_nat_value_source_theorem() -> Prop {
 
 pub fn succ_zero_source_theorem() -> Prop {
     theorem_prop("succ_zero")
+}
+
+pub fn is_zero_zero_source_theorem() -> Prop {
+    theorem_prop("is_zero_zero")
+}
+
+pub fn is_zero_succ_source_theorem() -> Prop {
+    theorem_prop("is_zero_succ")
+}
+
+pub fn pred_zero_source_theorem() -> Prop {
+    theorem_prop("pred_zero")
+}
+
+pub fn pred_succ_source_theorem() -> Prop {
+    theorem_prop("pred_succ")
+}
+
+pub fn pred_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("pred_computes_to_list")
 }
 
 pub fn succ_computes_to_list_source_theorem() -> Prop {
@@ -132,6 +196,30 @@ pub fn add_preserves_nat_value_source_theorem() -> Prop {
 
 pub fn add_assoc_source_theorem() -> Prop {
     theorem_prop("add_assoc")
+}
+
+pub fn mul_zero_left_source_theorem() -> Prop {
+    theorem_prop("mul_zero_left")
+}
+
+pub fn mul_cons_source_theorem() -> Prop {
+    theorem_prop("mul_cons")
+}
+
+pub fn mul_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("mul_computes_to_list")
+}
+
+pub fn mul_succ_left_source_theorem() -> Prop {
+    theorem_prop("mul_succ_left")
+}
+
+pub fn mul_zero_right_source_theorem() -> Prop {
+    theorem_prop("mul_zero_right")
+}
+
+pub fn mul_one_left_source_theorem() -> Prop {
+    theorem_prop("mul_one_left")
 }
 
 fn definition(spelling: &str) -> Computation {
@@ -182,16 +270,36 @@ fn nat_definitions_load_from_source() {
         Computation::Ref(super::computation_name("is-nat-value").unwrap())
     );
     assert_eq!(
+        is_zero(),
+        Computation::Ref(super::computation_name("is-zero").unwrap())
+    );
+    assert_eq!(
+        pred(),
+        Computation::Ref(super::computation_name("pred").unwrap())
+    );
+    assert_eq!(
         add(),
         Computation::Ref(super::computation_name("add").unwrap())
+    );
+    assert_eq!(
+        mul(),
+        Computation::Ref(super::computation_name("mul").unwrap())
     );
 }
 
 #[test]
 fn nat_theorem_statements_load_from_source() {
     let zero_result = theorem_symbol("zero_computes_to_list", "result");
+    let pred_succ_nat = theorem_symbol("pred_succ", "nat");
+    let pred_result = theorem_symbol("pred_computes_to_list", "result");
+    let pred_nat = theorem_symbol("pred_computes_to_list", "nat");
     let add_zero_left_right = theorem_symbol("add_zero_left", "right");
     let add_zero_right_nat = theorem_symbol("add_zero_right", "nat");
+    let mul_result = theorem_symbol("mul_computes_to_list", "result");
+    let mul_left = theorem_symbol("mul_computes_to_list", "left");
+    let mul_right = theorem_symbol("mul_computes_to_list", "right");
+    let mul_zero_right_nat = theorem_symbol("mul_zero_right", "nat");
+    let mul_one_left_right = theorem_symbol("mul_one_left", "right");
 
     assert_eq!(
         zero_computes_to_list_source_theorem(),
@@ -204,6 +312,22 @@ fn nat_theorem_statements_load_from_source() {
     assert_eq!(
         succ_zero_source_theorem(),
         computes_to(succ_call(zero()), one_value())
+    );
+    assert_eq!(
+        pred_succ_source_theorem(),
+        crate::forall_where(
+            pred_succ_nat,
+            is_list(var(pred_succ_nat)),
+            computes_to(pred_call(succ_call(var(pred_succ_nat))), var(pred_succ_nat))
+        )
+    );
+    assert_eq!(
+        pred_computes_to_list_source_theorem(),
+        crate::forall_where(
+            pred_nat,
+            is_list(var(pred_nat)),
+            computes_to_list(pred_result, pred_call(var(pred_nat)))
+        )
     );
     assert_eq!(
         add_zero_left_source_theorem(),
@@ -227,18 +351,57 @@ fn nat_theorem_statements_load_from_source() {
             )
         )
     );
+    assert_eq!(
+        mul_computes_to_list_source_theorem(),
+        crate::forall_where(
+            mul_left,
+            is_list(var(mul_left)),
+            crate::forall_where(
+                mul_right,
+                is_list(var(mul_right)),
+                computes_to_list(mul_result, mul_call(var(mul_left), var(mul_right)))
+            )
+        )
+    );
+    assert_eq!(
+        mul_zero_right_source_theorem(),
+        crate::forall_where(
+            mul_zero_right_nat,
+            is_list(var(mul_zero_right_nat)),
+            computes_to(mul_call(var(mul_zero_right_nat), zero()), zero())
+        )
+    );
+    assert_eq!(
+        mul_one_left_source_theorem(),
+        crate::forall_where(
+            mul_one_left_right,
+            is_list(var(mul_one_left_right)),
+            computes_to(
+                mul_call(succ_call(zero()), var(mul_one_left_right)),
+                var(mul_one_left_right)
+            )
+        )
+    );
 }
 
 #[test]
 fn constructors_evaluate_to_unary_lists() {
     assert_evaluates_to(succ_call(zero()), one_value());
     assert_evaluates_to(succ_call(one_value()), two_value());
+    assert_evaluates_to(is_zero_call(zero()), true_value());
+    assert_evaluates_to(is_zero_call(one_value()), false_value());
+    assert_evaluates_to(pred_call(zero()), nil());
+    assert_evaluates_to(pred_call(three_value()), two_value());
     assert_evaluates_to(add_call(two_value(), one_value()), three_value());
     assert_evaluates_to(add_call(two_value(), zero()), two_value());
     assert_evaluates_to(
         add_call(add_call(one_value(), two_value()), one_value()),
         four_value(),
     );
+    assert_evaluates_to(mul_call(zero(), three_value()), nil());
+    assert_evaluates_to(mul_call(three_value(), zero()), nil());
+    assert_evaluates_to(mul_call(one_value(), three_value()), three_value());
+    assert_evaluates_to(mul_call(two_value(), three_value()), six_value());
 }
 
 #[test]
@@ -290,6 +453,15 @@ fn checked_theory_contains_nat_theorems() {
         zero_is_nat_value_source_theorem(),
     );
     assert_theory_has_theorem(&theory, "succ_zero", succ_zero_source_theorem());
+    assert_theory_has_theorem(&theory, "is_zero_zero", is_zero_zero_source_theorem());
+    assert_theory_has_theorem(&theory, "is_zero_succ", is_zero_succ_source_theorem());
+    assert_theory_has_theorem(&theory, "pred_zero", pred_zero_source_theorem());
+    assert_theory_has_theorem(&theory, "pred_succ", pred_succ_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "pred_computes_to_list",
+        pred_computes_to_list_source_theorem(),
+    );
     assert_theory_has_theorem(
         &theory,
         "succ_computes_to_list",
@@ -325,6 +497,16 @@ fn checked_theory_contains_nat_theorems() {
         add_preserves_nat_value_source_theorem(),
     );
     assert_theory_has_theorem(&theory, "add_assoc", add_assoc_source_theorem());
+    assert_theory_has_theorem(&theory, "mul_zero_left", mul_zero_left_source_theorem());
+    assert_theory_has_theorem(&theory, "mul_cons", mul_cons_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "mul_computes_to_list",
+        mul_computes_to_list_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "mul_succ_left", mul_succ_left_source_theorem());
+    assert_theory_has_theorem(&theory, "mul_zero_right", mul_zero_right_source_theorem());
+    assert_theory_has_theorem(&theory, "mul_one_left", mul_one_left_source_theorem());
 }
 
 fn assert_theory_has_theorem(theory: &Theory, spelling: &str, prop: Prop) {

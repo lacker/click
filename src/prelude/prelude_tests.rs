@@ -126,8 +126,20 @@ fn is_nat_value() -> Computation {
     computation_ref("is-nat-value")
 }
 
+fn is_zero() -> Computation {
+    computation_ref("is-zero")
+}
+
+fn pred() -> Computation {
+    computation_ref("pred")
+}
+
 fn add() -> Computation {
     computation_ref("add")
+}
+
+fn mul() -> Computation {
+    computation_ref("mul")
 }
 
 fn parse_test_module(source: &str) -> (source::ParsedModule, ElabEnv) {
@@ -219,6 +231,11 @@ fn prelude_theorem_names() -> Vec<Name> {
         "zero_computes_to_list",
         "zero_is_nat_value",
         "succ_zero",
+        "is_zero_zero",
+        "is_zero_succ",
+        "pred_zero",
+        "pred_succ",
+        "pred_computes_to_list",
         "succ_computes_to_list",
         "succ_preserves_nat_value",
         "is_nat_value_cons",
@@ -230,6 +247,12 @@ fn prelude_theorem_names() -> Vec<Name> {
         "add_nat_suffix_preserves_nat_value",
         "add_preserves_nat_value",
         "add_assoc",
+        "mul_zero_left",
+        "mul_cons",
+        "mul_computes_to_list",
+        "mul_succ_left",
+        "mul_zero_right",
+        "mul_one_left",
     ]
     .into_iter()
     .map(theorem)
@@ -319,6 +342,10 @@ fn loaded_computation_prelude_keeps_env_without_defining_theorems() {
     assert_eq!(
         loaded.theory().computation(computation("add")),
         Some(&nat_tests::add_definition())
+    );
+    assert_eq!(
+        loaded.theory().computation(computation("mul")),
+        Some(&nat_tests::mul_definition())
     );
     assert!(loaded.theory().theorem(theorem("append_assoc")).is_none());
     assert!(
@@ -439,8 +466,20 @@ fn theory_defines_reverse() {
         Some(&nat_tests::is_nat_value_definition())
     );
     assert_eq!(
+        theory.computation(computation("is-zero")),
+        Some(&nat_tests::is_zero_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("pred")),
+        Some(&nat_tests::pred_definition())
+    );
+    assert_eq!(
         theory.computation(computation("add")),
         Some(&nat_tests::add_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("mul")),
+        Some(&nat_tests::mul_definition())
     );
     assert_eq!(reverse_acc(), Computation::Ref(computation("reverse_acc")));
     assert_eq!(reverse(), Computation::Ref(computation("reverse")));
@@ -578,8 +617,20 @@ fn theory_defines_reverse() {
         Step::Reduced(nat_tests::is_nat_value_definition())
     );
     assert_eq!(
+        theory.reduce(&is_zero()),
+        Step::Reduced(nat_tests::is_zero_definition())
+    );
+    assert_eq!(
+        theory.reduce(&pred()),
+        Step::Reduced(nat_tests::pred_definition())
+    );
+    assert_eq!(
         theory.reduce(&add()),
         Step::Reduced(nat_tests::add_definition())
+    );
+    assert_eq!(
+        theory.reduce(&mul()),
+        Step::Reduced(nat_tests::mul_definition())
     );
 }
 
