@@ -186,6 +186,14 @@ pub fn add_succ_left_source_theorem() -> Prop {
     theorem_prop("add_succ_left")
 }
 
+pub fn add_cons_unit_right_source_theorem() -> Prop {
+    theorem_prop("add_cons_unit_right")
+}
+
+pub fn add_succ_right_source_theorem() -> Prop {
+    theorem_prop("add_succ_right")
+}
+
 pub fn add_zero_right_source_theorem() -> Prop {
     theorem_prop("add_zero_right")
 }
@@ -202,6 +210,14 @@ pub fn add_assoc_source_theorem() -> Prop {
     theorem_prop("add_assoc")
 }
 
+pub fn add_comm_source_theorem() -> Prop {
+    theorem_prop("add_comm")
+}
+
+pub fn add_swap_source_theorem() -> Prop {
+    theorem_prop("add_swap")
+}
+
 pub fn mul_zero_left_source_theorem() -> Prop {
     theorem_prop("mul_zero_left")
 }
@@ -214,8 +230,16 @@ pub fn mul_computes_to_list_source_theorem() -> Prop {
     theorem_prop("mul_computes_to_list")
 }
 
+pub fn mul_preserves_nat_value_source_theorem() -> Prop {
+    theorem_prop("mul_preserves_nat_value")
+}
+
 pub fn mul_succ_left_source_theorem() -> Prop {
     theorem_prop("mul_succ_left")
+}
+
+pub fn mul_succ_right_source_theorem() -> Prop {
+    theorem_prop("mul_succ_right")
 }
 
 pub fn mul_zero_right_source_theorem() -> Prop {
@@ -224,6 +248,26 @@ pub fn mul_zero_right_source_theorem() -> Prop {
 
 pub fn mul_one_left_source_theorem() -> Prop {
     theorem_prop("mul_one_left")
+}
+
+pub fn mul_one_right_source_theorem() -> Prop {
+    theorem_prop("mul_one_right")
+}
+
+pub fn mul_comm_source_theorem() -> Prop {
+    theorem_prop("mul_comm")
+}
+
+pub fn mul_add_left_distrib_source_theorem() -> Prop {
+    theorem_prop("mul_add_left_distrib")
+}
+
+pub fn mul_assoc_source_theorem() -> Prop {
+    theorem_prop("mul_assoc")
+}
+
+pub fn mul_add_right_distrib_source_theorem() -> Prop {
+    theorem_prop("mul_add_right_distrib")
 }
 
 fn definition(spelling: &str) -> Computation {
@@ -494,6 +538,12 @@ fn checked_theory_contains_nat_theorems() {
     );
     assert_theory_has_theorem(&theory, "add_cons", add_cons_source_theorem());
     assert_theory_has_theorem(&theory, "add_succ_left", add_succ_left_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "add_cons_unit_right",
+        add_cons_unit_right_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "add_succ_right", add_succ_right_source_theorem());
     assert_theory_has_theorem(&theory, "add_zero_right", add_zero_right_source_theorem());
     assert_theory_has_theorem(
         &theory,
@@ -506,6 +556,8 @@ fn checked_theory_contains_nat_theorems() {
         add_preserves_nat_value_source_theorem(),
     );
     assert_theory_has_theorem(&theory, "add_assoc", add_assoc_source_theorem());
+    assert_theory_has_theorem(&theory, "add_comm", add_comm_source_theorem());
+    assert_theory_has_theorem(&theory, "add_swap", add_swap_source_theorem());
     assert_theory_has_theorem(&theory, "mul_zero_left", mul_zero_left_source_theorem());
     assert_theory_has_theorem(&theory, "mul_cons", mul_cons_source_theorem());
     assert_theory_has_theorem(
@@ -513,9 +565,28 @@ fn checked_theory_contains_nat_theorems() {
         "mul_computes_to_list",
         mul_computes_to_list_source_theorem(),
     );
+    assert_theory_has_theorem(
+        &theory,
+        "mul_preserves_nat_value",
+        mul_preserves_nat_value_source_theorem(),
+    );
     assert_theory_has_theorem(&theory, "mul_succ_left", mul_succ_left_source_theorem());
+    assert_theory_has_theorem(&theory, "mul_succ_right", mul_succ_right_source_theorem());
     assert_theory_has_theorem(&theory, "mul_zero_right", mul_zero_right_source_theorem());
     assert_theory_has_theorem(&theory, "mul_one_left", mul_one_left_source_theorem());
+    assert_theory_has_theorem(&theory, "mul_one_right", mul_one_right_source_theorem());
+    assert_theory_has_theorem(&theory, "mul_comm", mul_comm_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "mul_add_left_distrib",
+        mul_add_left_distrib_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "mul_assoc", mul_assoc_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "mul_add_right_distrib",
+        mul_add_right_distrib_source_theorem(),
+    );
 }
 
 fn assert_theory_has_theorem(theory: &Theory, spelling: &str, prop: Prop) {
