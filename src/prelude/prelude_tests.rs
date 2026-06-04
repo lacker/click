@@ -114,6 +114,22 @@ fn is_singleton() -> Computation {
     computation_ref("is-singleton")
 }
 
+fn zero() -> Computation {
+    computation_ref("zero")
+}
+
+fn succ() -> Computation {
+    computation_ref("succ")
+}
+
+fn is_nat_value() -> Computation {
+    computation_ref("is-nat-value")
+}
+
+fn add() -> Computation {
+    computation_ref("add")
+}
+
 fn parse_test_module(source: &str) -> (source::ParsedModule, ElabEnv) {
     let mut env = prelude_env();
     let module = env
@@ -199,6 +215,14 @@ fn prelude_theorem_names() -> Vec<Name> {
         "is_singleton_nil",
         "is_singleton_singleton",
         "is_singleton_cons",
+        "zero_computes_to_list",
+        "zero_is_nat_value",
+        "succ_zero",
+        "succ_computes_to_list",
+        "succ_preserves_nat_value",
+        "add_zero_left",
+        "add_succ_left",
+        "add_computes_to_list",
     ]
     .into_iter()
     .map(theorem)
@@ -210,9 +234,14 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
     let loaded = loaded();
 
     assert_eq!(loaded.computation("append"), Some(computation("append")));
+    assert_eq!(loaded.computation("zero"), Some(computation("zero")));
     assert_eq!(
         loaded.theorem("append_assoc"),
         Some(theorem("append_assoc"))
+    );
+    assert_eq!(
+        loaded.theorem("add_computes_to_list"),
+        Some(theorem("add_computes_to_list"))
     );
     assert_eq!(loaded.symbol(":true"), Some(symbol(":true")));
     assert_eq!(loaded.symbol(":false"), Some(symbol(":false")));
@@ -227,8 +256,16 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         Some(&list_tests::append_definition())
     );
     assert_eq!(
+        loaded.theory().computation(computation("zero")),
+        Some(&nat_tests::zero_definition())
+    );
+    assert_eq!(
         loaded.theory().theorem(theorem("append_assoc")),
         Some(&list_tests::append_assoc_source_theorem())
+    );
+    assert_eq!(
+        loaded.theory().theorem(theorem("add_computes_to_list")),
+        Some(&nat_tests::add_computes_to_list_source_theorem())
     );
     assert_eq!(
         loaded.env().computation("reverse_acc"),
@@ -247,6 +284,11 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
     assert_eq!(symbol_name(":symbol"), Some(SYMBOL_KIND_SYMBOL));
     assert_eq!(symbol_name(":lambda"), Some(LAMBDA_KIND_SYMBOL));
     assert_eq!(symbol_name(":list"), Some(LIST_KIND_SYMBOL));
+    assert_eq!(computation_name("zero"), Some(computation("zero")));
+    assert_eq!(
+        theorem_name("add_computes_to_list"),
+        Some(theorem("add_computes_to_list"))
+    );
 }
 
 #[test]
@@ -254,15 +296,30 @@ fn loaded_computation_prelude_keeps_env_without_defining_theorems() {
     let loaded = loaded_computations();
 
     assert_eq!(loaded.computation("reverse"), Some(computation("reverse")));
+    assert_eq!(loaded.computation("add"), Some(computation("add")));
     assert_eq!(
         loaded.theorem("append_assoc"),
         Some(theorem("append_assoc"))
     );
     assert_eq!(
+        loaded.theorem("add_computes_to_list"),
+        Some(theorem("add_computes_to_list"))
+    );
+    assert_eq!(
         loaded.theory().computation(computation("reverse")),
         Some(&list_tests::reverse_definition())
     );
+    assert_eq!(
+        loaded.theory().computation(computation("add")),
+        Some(&nat_tests::add_definition())
+    );
     assert!(loaded.theory().theorem(theorem("append_assoc")).is_none());
+    assert!(
+        loaded
+            .theory()
+            .theorem(theorem("add_computes_to_list"))
+            .is_none()
+    );
 }
 
 #[test]
@@ -362,6 +419,22 @@ fn theory_defines_reverse() {
         theory.computation(computation("is-singleton")),
         Some(&list_tests::is_singleton_definition())
     );
+    assert_eq!(
+        theory.computation(computation("zero")),
+        Some(&nat_tests::zero_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("succ")),
+        Some(&nat_tests::succ_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("is-nat-value")),
+        Some(&nat_tests::is_nat_value_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("add")),
+        Some(&nat_tests::add_definition())
+    );
     assert_eq!(reverse_acc(), Computation::Ref(computation("reverse_acc")));
     assert_eq!(reverse(), Computation::Ref(computation("reverse")));
     assert_eq!(append(), Computation::Ref(computation("append")));
@@ -390,6 +463,13 @@ fn theory_defines_reverse() {
         is_singleton(),
         Computation::Ref(computation("is-singleton"))
     );
+    assert_eq!(zero(), Computation::Ref(computation("zero")));
+    assert_eq!(succ(), Computation::Ref(computation("succ")));
+    assert_eq!(
+        is_nat_value(),
+        Computation::Ref(computation("is-nat-value"))
+    );
+    assert_eq!(add(), Computation::Ref(computation("add")));
     assert_eq!(
         theory.reduce(&reverse_acc()),
         Step::Reduced(list_tests::reverse_acc_definition())
@@ -477,6 +557,22 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&is_singleton()),
         Step::Reduced(list_tests::is_singleton_definition())
+    );
+    assert_eq!(
+        theory.reduce(&zero()),
+        Step::Reduced(nat_tests::zero_definition())
+    );
+    assert_eq!(
+        theory.reduce(&succ()),
+        Step::Reduced(nat_tests::succ_definition())
+    );
+    assert_eq!(
+        theory.reduce(&is_nat_value()),
+        Step::Reduced(nat_tests::is_nat_value_definition())
+    );
+    assert_eq!(
+        theory.reduce(&add()),
+        Step::Reduced(nat_tests::add_definition())
     );
 }
 

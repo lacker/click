@@ -3,6 +3,9 @@
 mod list;
 #[cfg(test)]
 mod list_tests;
+mod nat;
+#[cfg(test)]
+mod nat_tests;
 #[cfg(test)]
 mod prelude_tests;
 
@@ -22,7 +25,7 @@ pub use crate::elab::{
     SourceLoadError, SourceTheoremError,
 };
 
-const SOURCES: &[&str] = &[list::SOURCE];
+const SOURCES: &[&str] = &[list::SOURCE, nat::SOURCE];
 static LOADED_PRELUDE: OnceLock<Result<LoadedSource, SourceLoadError>> = OnceLock::new();
 static LOADED_PRELUDE_COMPUTATIONS: OnceLock<Result<LoadedSource, SourceComputationError>> =
     OnceLock::new();
@@ -109,6 +112,15 @@ pub(crate) fn parsed_list_module() -> Result<&'static source::ParsedModule, Sour
         loaded
             .module(0)
             .expect("prelude should contain the list module")
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn parsed_nat_module() -> Result<&'static source::ParsedModule, SourceComputationError> {
+    loaded_computation_source().map(|loaded| {
+        loaded
+            .module(1)
+            .expect("prelude should contain the nat module")
     })
 }
 
