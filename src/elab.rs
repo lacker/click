@@ -3,6 +3,7 @@
 pub(crate) mod loader;
 pub(crate) mod proof;
 pub(crate) mod source;
+pub(crate) mod tactics;
 
 pub use loader::{LoadedSource, SourceComputationError, SourceFileLoadError, SourceLoadError};
 pub use proof::{EvaluationProofError, ProofElaborationError, SourceTheoremError};
