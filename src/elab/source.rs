@@ -1007,7 +1007,7 @@ impl<'a> SourceParser<'a> {
     }
 
     fn forall(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
-        let (variable, guard, body) = match items.len() {
+        let (variable, predicate, body) = match items.len() {
             3 => (atom(&items[1])?, None, &items[2]),
             4 => (atom(&items[1])?, Some(&items[2]), &items[3]),
             _ => {
@@ -1019,18 +1019,18 @@ impl<'a> SourceParser<'a> {
         };
         let symbol = self.prop_symbol(variable, symbol_mode)?;
         self.push_variable(variable, symbol);
-        let guard = self.quantifier_guard(guard, symbol_mode)?;
+        let predicate = self.quantifier_predicate(predicate, symbol_mode)?;
         let body = self.prop_with_symbols(body, symbol_mode)?;
         self.pop_variable();
 
-        match guard {
-            Some(guard) => Ok(forall_where(symbol, guard, body)),
+        match predicate {
+            Some(predicate) => Ok(forall_where(symbol, predicate, body)),
             None => Ok(forall(symbol, body)),
         }
     }
 
     fn exists(&mut self, items: &[Expr], symbol_mode: PropSymbolMode) -> Result<Prop, ParseError> {
-        let (variable, guard, body) = match items.len() {
+        let (variable, predicate, body) = match items.len() {
             3 => (atom(&items[1])?, None, &items[2]),
             4 => (atom(&items[1])?, Some(&items[2]), &items[3]),
             _ => {
@@ -1042,12 +1042,12 @@ impl<'a> SourceParser<'a> {
         };
         let symbol = self.prop_symbol(variable, symbol_mode)?;
         self.push_variable(variable, symbol);
-        let guard = self.quantifier_guard(guard, symbol_mode)?;
+        let predicate = self.quantifier_predicate(predicate, symbol_mode)?;
         let body = self.prop_with_symbols(body, symbol_mode)?;
         self.pop_variable();
 
-        match guard {
-            Some(guard) => Ok(exists_where(symbol, guard, body)),
+        match predicate {
+            Some(predicate) => Ok(exists_where(symbol, predicate, body)),
             None => Ok(exists(symbol, body)),
         }
     }
@@ -1118,12 +1118,12 @@ impl<'a> SourceParser<'a> {
         Ok(is_bool(self.computation(&items[1])?))
     }
 
-    fn quantifier_guard(
+    fn quantifier_predicate(
         &mut self,
-        guard: Option<&Expr>,
+        predicate: Option<&Expr>,
         symbol_mode: PropSymbolMode,
     ) -> Result<Option<Prop>, ParseError> {
-        match guard {
+        match predicate {
             Some(prop) => Ok(Some(self.prop_with_symbols(prop, symbol_mode)?)),
             None => Ok(None),
         }
@@ -1650,7 +1650,7 @@ impl<'a> SourceParser<'a> {
     }
 
     fn proof_exists_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        let (variable, guard, body, witness, proof) = match items.len() {
+        let (variable, predicate, body, witness, proof) = match items.len() {
             5 => (&items[1], None, &items[2], &items[3], &items[4]),
             6 => (&items[1], Some(&items[2]), &items[3], &items[4], &items[5]),
             _ => {
@@ -1661,17 +1661,17 @@ impl<'a> SourceParser<'a> {
             }
         };
         let variable = self.proof_symbol(atom(variable)?)?;
-        let guard = self.quantifier_guard(guard, PropSymbolMode::Reference)?;
+        let predicate = self.quantifier_predicate(predicate, PropSymbolMode::Reference)?;
         let body = self.proof_prop(body)?;
         let witness = self.computation(witness)?;
         let proof = self.proof_expr(proof)?;
 
-        let (body, proof) = if let Some(guard) = guard {
-            let witness_guard = substitute_prop(&guard, variable, &witness);
+        let (body, proof) = if let Some(predicate) = predicate {
+            let witness_predicate = substitute_prop(&predicate, variable, &witness);
             (
-                and(guard, body),
+                and(predicate, body),
                 ProofExpr::AndIntro(
-                    Box::new(ProofExpr::Primitive(witness_guard)),
+                    Box::new(ProofExpr::Primitive(witness_predicate)),
                     Box::new(proof),
                 ),
             )
@@ -1747,7 +1747,7 @@ impl<'a> SourceParser<'a> {
     }
 
     fn proof_forall_intro(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
-        let (variable, guard, proof) = match items.len() {
+        let (variable, predicate, proof) = match items.len() {
             3 => (&items[1], None, &items[2]),
             4 => (&items[1], Some(&items[2]), &items[3]),
             _ => {
@@ -1759,10 +1759,12 @@ impl<'a> SourceParser<'a> {
         };
         let variable = self.proof_symbol(atom(variable)?)?;
         let proof = self.proof_expr(proof)?;
-        let proof = if let Some(guard) = self.quantifier_guard(guard, PropSymbolMode::Reference)? {
+        let proof = if let Some(predicate) =
+            self.quantifier_predicate(predicate, PropSymbolMode::Reference)?
+        {
             ProofExpr::ImpliesIntro {
                 assumption: variable,
-                premise: guard,
+                premise: predicate,
                 proof: Box::new(proof),
             }
         } else {
@@ -2734,15 +2736,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_legacy_guard_form() {
+    fn rejects_legacy_sorted_quantifier_form() {
         let theorems = [NameBinding {
-            spelling: "old_guard",
+            spelling: "old_sort",
             name: Name(1),
         }];
 
         let error = parse_module(
             "
-            (theorem old_guard
+            (theorem old_sort
               (forall list x
                 (equal x x))
               (proof
@@ -2753,7 +2755,7 @@ mod tests {
             &theorems,
             &[],
         )
-        .expect_err("legacy guard form should not parse");
+        .expect_err("legacy sorted quantifier form should not parse");
 
         assert_eq!(error.message(), "expected proposition");
     }

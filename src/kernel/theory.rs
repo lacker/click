@@ -220,18 +220,18 @@ impl Theorem {
 
     pub fn exists_intro_where(
         variable: Symbol,
-        guard: Prop,
+        predicate: Prop,
         body: Prop,
         witness: Computation,
         proof: &Self,
     ) -> Option<Self> {
-        let witness_guard = substitute_prop(&guard, variable, &witness);
+        let witness_predicate = substitute_prop(&predicate, variable, &witness);
         Self::from_proof_without_assumptions(Proof::ExistsIntro {
             variable,
-            body: and(guard, body),
+            body: and(predicate, body),
             witness: witness.clone(),
             proof: Box::new(Proof::AndIntro(
-                Box::new(Proof::Primitive(witness_guard)),
+                Box::new(Proof::Primitive(witness_predicate)),
                 Box::new(proof.proof.clone()),
             )),
         })
@@ -460,18 +460,18 @@ impl Theory {
     pub fn exists_intro_where(
         &self,
         variable: Symbol,
-        guard: Prop,
+        predicate: Prop,
         body: Prop,
         witness: Computation,
         proof: &Theorem,
     ) -> Option<Theorem> {
-        let witness_guard = substitute_prop(&guard, variable, &witness);
+        let witness_predicate = substitute_prop(&predicate, variable, &witness);
         self.theorem_from_proof_without_assumptions(Proof::ExistsIntro {
             variable,
-            body: and(guard, body),
+            body: and(predicate, body),
             witness: witness.clone(),
             proof: Box::new(Proof::AndIntro(
-                Box::new(Proof::Primitive(witness_guard)),
+                Box::new(Proof::Primitive(witness_predicate)),
                 Box::new(proof.proof.clone()),
             )),
         })

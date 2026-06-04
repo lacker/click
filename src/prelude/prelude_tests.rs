@@ -1551,7 +1551,7 @@ fn prelude_theory_instantiates_named_reverse_theorem() {
     let reverse = theory
         .known(theorem("reverse_computes_to_list"))
         .expect("reverse theorem should be defined");
-    let guarded = theory
+    let with_predicate = theory
         .forall_elim(&reverse, list_tests::nil())
         .expect("known theorem should instantiate in its theory");
     let nil_is_list = Theorem::from_proof(
@@ -1560,7 +1560,7 @@ fn prelude_theory_instantiates_named_reverse_theorem() {
     )
     .expect("nil should prove is-list as a primitive proposition");
     let instantiated = theory
-        .implies_elim(&guarded, &nil_is_list)
+        .implies_elim(&with_predicate, &nil_is_list)
         .expect("reverse theorem premise should discharge for nil");
 
     assert_eq!(

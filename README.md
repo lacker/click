@@ -63,11 +63,12 @@ Continuation tactics such as `have` and `exists-elim` can either scope over the
 remaining tactic script or take an explicit final `(by ...)` body to make the
 scope boundary visible in source.
 
-Propositions can talk about arbitrary computations. Quantifiers may be
-unguarded, or guarded by propositions such as `is-value`, `is-list`,
-`is-effect`, and `is-outcome`. Rust APIs that require a concrete finalized
-result use `Value`, `Effect`, or `Outcome`. Errors are named effects, not a
-second channel for returning structured values.
+Propositions can talk about arbitrary computations. Kernel quantifiers are
+plain binders. Source syntax may attach a predicate to a quantifier as
+shorthand: `(forall x P Q)` elaborates to `forall x. P -> Q`, and
+`(exists x P Q)` elaborates to `exists x. P and Q`. Rust APIs that require a
+concrete finalized result use `Value`, `Effect`, or `Outcome`. Errors are named
+effects, not a second channel for returning structured values.
 
 Boolean values are reserved quoted symbols: `:true` and `:false`. They are not
 a separate kernel value variant, but the kernel has an `if` computation form
@@ -90,15 +91,15 @@ computes to either `(quote :true)` or `(quote :false)`. It elaborates to an
 ordinary disjunction, not to a separate primitive proposition.
 
 Kernel variables are computation variables. Facts about those variables live in
-propositions, including quantifier guards and local proof assumptions. This
-keeps the kernel from having a second built-in "type-ish" bookkeeping layer
-beside ordinary propositions.
+ordinary propositions, including predicate premises and local proof assumptions.
+This keeps the kernel from having a second built-in "type-ish" bookkeeping
+layer beside ordinary propositions.
 
 List values are proper by construction: `nil` and `cons` build list values, and
 a finalized cons tail must itself be a list. Raw computations can still contain
 open or malformed cons-shaped expressions until evaluation and proof reasoning
-settle them. The kernel uses `is-list` guards and list induction to reason over
-list values.
+settle them. The kernel uses `is-list` predicates and list induction to reason
+over list values.
 
 The core calculus can contain opaque names. The logistical layer gives those
 names meaning by binding them to computations or theorems. Human-facing spelling,

@@ -865,7 +865,7 @@ fn tactic_exists(
         return Err(tactic_failed("exists", "goal is not an existential"));
     };
 
-    let (witness_goal, witness_guard) =
+    let (witness_goal, witness_predicate) =
         existential_witness_goal(body, *variable, witness, &goal.context);
     let proof = tactic_script_to_proof(
         script,
@@ -875,10 +875,11 @@ fn tactic_exists(
             target: witness_goal,
         },
     )?;
-    let proof = match witness_guard {
-        Some(witness_guard) => {
-            Proof::AndIntro(Box::new(Proof::Primitive(witness_guard)), Box::new(proof))
-        }
+    let proof = match witness_predicate {
+        Some(witness_predicate) => Proof::AndIntro(
+            Box::new(Proof::Primitive(witness_predicate)),
+            Box::new(proof),
+        ),
         None => proof,
     };
 
@@ -900,11 +901,11 @@ fn existential_witness_goal(
         return (substitute_prop(body, variable, witness), None);
     };
 
-    let witness_guard = substitute_prop(left, variable, witness);
-    if primitive_prop_holds(&witness_guard, context) {
+    let witness_predicate = substitute_prop(left, variable, witness);
+    if primitive_prop_holds(&witness_predicate, context) {
         (
             substitute_prop(right, variable, witness),
-            Some(witness_guard),
+            Some(witness_predicate),
         )
     } else {
         (substitute_prop(body, variable, witness), None)
@@ -1118,7 +1119,7 @@ fn tactic_list_induction(
     theory: &Theory,
     goal: &Goal,
 ) -> Result<Proof, ProofElaborationError> {
-    let (goal_variable, guard, property) = list_induction_goal(&goal.target)?;
+    let (goal_variable, predicate, property) = list_induction_goal(&goal.target)?;
 
     if variable != goal_variable {
         return Err(tactic_failed(
@@ -1130,11 +1131,11 @@ fn tactic_list_induction(
         ));
     }
 
-    let expected_guard = is_list(Computation::Var(variable));
-    if !alpha_eq_prop(&guard, &expected_guard) {
+    let expected_predicate = is_list(Computation::Var(variable));
+    if !alpha_eq_prop(&predicate, &expected_predicate) {
         return Err(tactic_failed(
             "list-induction",
-            "forall guard is not an is-list guard",
+            "forall predicate is not an is-list predicate",
         ));
     }
 
@@ -1177,14 +1178,14 @@ fn list_induction_goal(target: &Prop) -> Result<(Symbol, Prop, Prop), ProofElabo
         return Err(tactic_failed("list-induction", "goal is not a forall"));
     };
 
-    let Prop::Implies(guard, body) = body.as_ref() else {
+    let Prop::Implies(predicate, body) = body.as_ref() else {
         return Err(tactic_failed(
             "list-induction",
-            "forall body is not a guarded implication",
+            "forall body is not a predicate implication",
         ));
     };
 
-    Ok((*variable, guard.as_ref().clone(), body.as_ref().clone()))
+    Ok((*variable, predicate.as_ref().clone(), body.as_ref().clone()))
 }
 
 fn tactic_calc(

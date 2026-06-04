@@ -1035,25 +1035,28 @@ fn theorem_first_order_rules_build_checked_theorems() {
 }
 
 #[test]
-fn theorem_exists_intro_supports_guarded_witnesses() {
+fn theorem_exists_intro_supports_predicate_witnesses() {
     let variable = Symbol(1);
     let body = equal(Computation::Var(variable), Computation::Nil);
     let proof = Theorem::refl(Computation::Nil).expect("closed refl should check");
-    let guard = is_list(Computation::Var(variable));
+    let predicate = is_list(Computation::Var(variable));
     let theorem = Theorem::exists_intro_where(
         variable,
-        guard.clone(),
+        predicate.clone(),
         body.clone(),
         Computation::Nil,
         &proof,
     )
     .expect("nil is a list witness");
 
-    assert_eq!(theorem.prop(), &exists_where(variable, guard.clone(), body));
+    assert_eq!(
+        theorem.prop(),
+        &exists_where(variable, predicate.clone(), body)
+    );
     assert!(
         Theorem::exists_intro_where(
             variable,
-            guard,
+            predicate,
             equal(Computation::Var(variable), Computation::Quote(Symbol(2))),
             Computation::Quote(Symbol(2)),
             &Theorem::refl(Computation::Quote(Symbol(2))).expect("closed refl should check"),
@@ -1106,7 +1109,7 @@ fn step_proof_reduces_arguments_before_beta() {
 }
 
 #[test]
-fn guarded_beta_requires_value_arguments() {
+fn beta_reduction_requires_value_premise() {
     let variable = Symbol(1);
     let lambda_value = Lambda {
         parameter: Symbol(2),
@@ -1129,7 +1132,7 @@ fn guarded_beta_requires_value_arguments() {
         is_value(Computation::Var(variable)),
         equal(application, Computation::Var(variable)),
     );
-    let unguarded_proof = Proof::ForAllIntro {
+    let missing_premise_proof = Proof::ForAllIntro {
         variable,
         proof: Box::new(Proof::Step(apply(
             Computation::Lambda(lambda_value),
@@ -1139,7 +1142,7 @@ fn guarded_beta_requires_value_arguments() {
 
     assert!(check(&proof, &expected));
     assert!(!check(
-        &unguarded_proof,
+        &missing_premise_proof,
         &forall(
             variable,
             equal(
@@ -1154,7 +1157,7 @@ fn guarded_beta_requires_value_arguments() {
 }
 
 #[test]
-fn guarded_list_reductions_require_list_arguments() {
+fn list_reductions_require_value_and_list_premises() {
     let head_symbol = Symbol(1);
     let tail_symbol = Symbol(2);
     let list = cons(Computation::Var(head_symbol), Computation::Var(tail_symbol));
@@ -1194,7 +1197,7 @@ fn guarded_list_reductions_require_list_arguments() {
             equal(destructure, Computation::Var(head_symbol)),
         ),
     );
-    let unguarded_tail_proof = Proof::ForAllIntro {
+    let missing_tail_premise_proof = Proof::ForAllIntro {
         variable: head_symbol,
         proof: Box::new(Proof::ImpliesIntro {
             assumption: head_symbol,
@@ -1213,7 +1216,7 @@ fn guarded_list_reductions_require_list_arguments() {
 
     assert!(check(&proof, &expected));
     assert!(!check(
-        &unguarded_tail_proof,
+        &missing_tail_premise_proof,
         &forall_where(
             head_symbol,
             is_value(Computation::Var(head_symbol)),

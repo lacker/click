@@ -382,8 +382,8 @@ pub fn forall(variable: Symbol, body: Prop) -> Prop {
     }
 }
 
-pub fn forall_where(variable: Symbol, guard: Prop, body: Prop) -> Prop {
-    forall(variable, implies(guard, body))
+pub fn forall_where(variable: Symbol, predicate: Prop, body: Prop) -> Prop {
+    forall(variable, implies(predicate, body))
 }
 
 pub fn exists(variable: Symbol, body: Prop) -> Prop {
@@ -393,8 +393,8 @@ pub fn exists(variable: Symbol, body: Prop) -> Prop {
     }
 }
 
-pub fn exists_where(variable: Symbol, guard: Prop, body: Prop) -> Prop {
-    exists(variable, and(guard, body))
+pub fn exists_where(variable: Symbol, predicate: Prop, body: Prop) -> Prop {
+    exists(variable, and(predicate, body))
 }
 
 pub fn exists_value(variable: Symbol, body: Prop) -> Prop {
