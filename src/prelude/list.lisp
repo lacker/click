@@ -393,6 +393,65 @@
             (if-effect-then-condition-false (assume if_is_true))
             (if-effect-then-else (assume if_is_true))))))))
 
+(theorem if_true_result_with_false_then
+  (forall condition
+    (forall else_branch
+      (implies
+        (computes-to
+          (if condition (quote :false) else_branch)
+          (quote :true))
+        (and
+          (computes-to condition (quote :false))
+          (computes-to else_branch (quote :true))))))
+  (by
+    (intro condition)
+    (intro else_branch)
+    (have condition_is_bool
+      (is-bool condition)
+      (proof
+        (if-value-condition-bool (assume else_branch))))
+    (or-elim condition_is_bool
+      condition_true
+      (by
+        (have impossible_eq
+          (computes-to (quote :false) (quote :true))
+          (by
+            (calc
+              (quote :false)
+              (==
+                (if condition (quote :false) else_branch)
+                (by
+                  (rewrite condition_true)
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact else_branch)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (and
+                  (computes-to condition (quote :false))
+                  (computes-to else_branch (quote :true))))))))
+      condition_false
+      (by
+        (split
+          (by
+            (exact condition_false))
+          (by
+            (calc
+              else_branch
+              (==
+                (if condition (quote :false) else_branch)
+                (by
+                  (rewrite condition_false)
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact else_branch))))))))))
+
 (theorem symbol_eq_unit_unit
   (computes-to
     (symbol-eq (quote unit) (quote unit))

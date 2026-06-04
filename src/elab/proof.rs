@@ -164,6 +164,19 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
         ProofExpr::IfEffectThenElse(proof) => Ok(Proof::IfValueWithEffectThenElse(Box::new(
             subproof("if-effect-then-else", proof, theory, context)?,
         ))),
+        ProofExpr::IfValueConditionBool(proof) => Ok(Proof::IfValueConditionBool(Box::new(
+            subproof("if-value-condition-bool", proof, theory, context)?,
+        ))),
+        ProofExpr::DistinctOutcomes(proof) => Ok(Proof::DistinctOutcomes(Box::new(subproof(
+            "distinct-outcomes",
+            proof,
+            theory,
+            context,
+        )?))),
+        ProofExpr::AbsurdElim { absurd, prop } => Ok(Proof::AbsurdElim {
+            absurd: Box::new(subproof("absurd-elim", absurd, theory, context)?),
+            prop: prop.clone(),
+        }),
         ProofExpr::EvalTo {
             computation,
             expected,

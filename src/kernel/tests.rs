@@ -1499,6 +1499,53 @@ fn if_value_with_effect_then_elims_invert_effect_guards() {
 }
 
 #[test]
+fn if_value_condition_bool_extracts_boolean_condition() {
+    let condition = Computation::Quote(TRUE_SYMBOL);
+    let conditional = if_computation(condition.clone(), Computation::Nil, error(ErrorName(7)));
+
+    assert!(check(
+        &Proof::IfValueConditionBool(Box::new(Proof::Step(conditional))),
+        &is_bool(condition)
+    ));
+
+    let effect_result = if_computation(
+        Computation::Quote(FALSE_SYMBOL),
+        Computation::Nil,
+        error(ErrorName(7)),
+    );
+    assert!(!check(
+        &Proof::IfValueConditionBool(Box::new(Proof::Step(effect_result))),
+        &is_bool(Computation::Quote(FALSE_SYMBOL))
+    ));
+}
+
+#[test]
+fn distinct_outcomes_prove_absurd_and_absurd_eliminates() {
+    let assumption = Symbol(99);
+    let contradiction = equal(
+        Computation::Quote(TRUE_SYMBOL),
+        Computation::Quote(FALSE_SYMBOL),
+    );
+    let target = is_value(Computation::Nil);
+    let mut context = Context::new();
+    context.insert(assumption, contradiction);
+
+    let absurd_proof = Proof::DistinctOutcomes(Box::new(Proof::Assume(assumption)));
+    assert!(check_in_context(&absurd_proof, &absurd(), &context));
+    assert!(check_in_context(
+        &Proof::AbsurdElim {
+            absurd: Box::new(absurd_proof),
+            prop: target.clone(),
+        },
+        &target,
+        &context
+    ));
+
+    let matching_outcomes = Proof::DistinctOutcomes(Box::new(Proof::Refl(Computation::Nil)));
+    assert!(!check(&matching_outcomes, &absurd()));
+}
+
+#[test]
 fn prop_helpers_construct_expected_shapes() {
     let prop = equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(1)));
     let computation = apply(

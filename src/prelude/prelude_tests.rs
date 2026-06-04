@@ -239,6 +239,7 @@ fn prelude_theorem_names() -> Vec<Name> {
         "if_condition_false",
         "if_true_result_with_false_else",
         "if_true_result_with_error_then",
+        "if_true_result_with_false_then",
         "symbol_eq_unit_unit",
         "symbol_eq_true_false",
         "symbol_eq_true",
@@ -723,7 +724,11 @@ fn theorem_definitions_require_computations() {
     else {
         panic!("theorem loading should report proof elaboration failure, got {theorem_result:?}");
     };
-    assert_eq!(failed_theorem, theorem("reverse_acc_computes_to_list"));
+    assert_eq!(
+        failed_theorem,
+        theorem("reverse_acc_computes_to_list"),
+        "{error:?}"
+    );
     assert!(proof_error_contains_evaluation_failure(&error));
 
     let computation_independent_theorems = [
@@ -733,6 +738,7 @@ fn theorem_definitions_require_computations() {
         theorem("if_condition_false"),
         theorem("if_true_result_with_false_else"),
         theorem("if_true_result_with_error_then"),
+        theorem("if_true_result_with_false_then"),
         theorem("symbol_eq_unit_unit"),
         theorem("symbol_eq_true_false"),
         theorem("symbol_eq_true"),

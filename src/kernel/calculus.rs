@@ -265,6 +265,7 @@ pub enum Step {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Prop {
+    Absurd,
     Equal(Computation, Computation),
     IsValue(Computation),
     IsList(Computation),
@@ -290,6 +291,12 @@ pub enum Proof {
     IfTrueWithFalseElseThen(Box<Proof>),
     IfValueWithEffectThenConditionFalse(Box<Proof>),
     IfValueWithEffectThenElse(Box<Proof>),
+    IfValueConditionBool(Box<Proof>),
+    DistinctOutcomes(Box<Proof>),
+    AbsurdElim {
+        absurd: Box<Proof>,
+        prop: Prop,
+    },
     Step(Computation),
     Steps(Vec<Computation>),
     Rewrite {
@@ -354,6 +361,10 @@ pub enum Proof {
         right_assumption: Symbol,
         right_proof: Box<Proof>,
     },
+}
+
+pub fn absurd() -> Prop {
+    Prop::Absurd
 }
 
 pub fn equal(left: Computation, right: Computation) -> Prop {

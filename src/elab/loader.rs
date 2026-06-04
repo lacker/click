@@ -576,6 +576,77 @@ mod tests {
     }
 
     #[test]
+    fn load_str_checks_absurd_and_if_condition_bool_theorems() {
+        let mut loaded = LoadedSource::new();
+
+        loaded
+            .load_str(
+                "
+                (theorem condition_is_bool
+                  (is-bool (quote :true))
+                  (proof
+                    (if-value-condition-bool
+                      (eval-to
+                        (if (quote :true) nil (error 0))
+                        nil))))
+                (theorem assumed_distinct_outcomes_are_absurd
+                  (implies
+                    (equal (quote :true) (quote :false))
+                    (absurd))
+                  (proof
+                    (implies-intro impossible
+                      (equal (quote :true) (quote :false))
+                      (distinct-outcomes
+                        (assume impossible)))))
+                (theorem absurd_eliminates
+                  (implies
+                    (equal (quote :true) (quote :false))
+                    (is-value nil))
+                  (proof
+                    (implies-intro impossible
+                      (equal (quote :true) (quote :false))
+                      (absurd-elim
+                        (distinct-outcomes
+                          (assume impossible))
+                        (is-value nil)))))
+                ",
+            )
+            .expect("source absurd and if condition bool theorems should load");
+
+        let condition_is_bool = loaded
+            .theorem("condition_is_bool")
+            .expect("loader should record condition bool theorem spelling");
+        let assumed_distinct_outcomes_are_absurd = loaded
+            .theorem("assumed_distinct_outcomes_are_absurd")
+            .expect("loader should record absurd theorem spelling");
+        let absurd_eliminates = loaded
+            .theorem("absurd_eliminates")
+            .expect("loader should record absurd elimination theorem spelling");
+
+        let contradiction = crate::equal(
+            Computation::Quote(crate::TRUE_SYMBOL),
+            Computation::Quote(crate::FALSE_SYMBOL),
+        );
+        assert_eq!(
+            loaded.theory().theorem(condition_is_bool),
+            Some(&crate::is_bool(Computation::Quote(crate::TRUE_SYMBOL)))
+        );
+        assert_eq!(
+            loaded
+                .theory()
+                .theorem(assumed_distinct_outcomes_are_absurd),
+            Some(&crate::implies(contradiction.clone(), crate::absurd()))
+        );
+        assert_eq!(
+            loaded.theory().theorem(absurd_eliminates),
+            Some(&crate::implies(
+                contradiction,
+                crate::is_value(Computation::Nil)
+            ))
+        );
+    }
+
+    #[test]
     fn load_str_checks_value_kind_theorems() {
         let mut loaded = LoadedSource::new();
 

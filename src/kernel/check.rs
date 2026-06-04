@@ -40,6 +40,7 @@ fn alpha_eq_prop_in_context(
     bindings: &mut Vec<(Symbol, Symbol)>,
 ) -> bool {
     match (left, right) {
+        (Prop::Absurd, Prop::Absurd) => true,
         (Prop::Equal(left_left, left_right), Prop::Equal(right_left, right_right)) => {
             alpha_eq_computation_in_context(left_left, right_left, bindings)
                 && alpha_eq_computation_in_context(left_right, right_right, bindings)
@@ -261,6 +262,18 @@ fn proven_prop_in_context(proof: &Proof, bindings: &Bindings, context: &Context)
         }
         Proof::IfValueWithEffectThenElse(proof) => {
             if_value_with_effect_then_else(proven_prop_in_context(proof, bindings, context)?)
+        }
+        Proof::IfValueConditionBool(proof) => {
+            if_value_condition_bool(proven_prop_in_context(proof, bindings, context)?)
+        }
+        Proof::DistinctOutcomes(proof) => {
+            distinct_outcomes(proven_prop_in_context(proof, bindings, context)?)
+        }
+        Proof::AbsurdElim { absurd, prop } => {
+            let Prop::Absurd = proven_prop_in_context(absurd, bindings, context)? else {
+                return None;
+            };
+            Some(prop.clone())
         }
         Proof::Step(computation) => match step_for_proof(computation, bindings, context) {
             Step::Reduced(reduced) => Some(Prop::Equal(computation.clone(), reduced)),
@@ -520,6 +533,34 @@ fn if_value_with_effect_then_else(prop: Prop) -> Option<Prop> {
             value,
         ) if then_branch.as_effect().is_some() && value.as_value().is_some() => {
             Some(Prop::Equal(*else_branch, value))
+        }
+        _ => None,
+    }
+}
+
+fn if_value_condition_bool(prop: Prop) -> Option<Prop> {
+    match prop {
+        Prop::Equal(
+            Computation::If {
+                condition,
+                then_branch: _,
+                else_branch: _,
+            },
+            value,
+        ) if value.as_value().is_some() => Some(is_bool(*condition)),
+        _ => None,
+    }
+}
+
+fn distinct_outcomes(prop: Prop) -> Option<Prop> {
+    match prop {
+        Prop::Equal(left, right)
+            if left
+                .as_outcome()
+                .zip(right.as_outcome())
+                .is_some_and(|(left, right)| left != right) =>
+        {
+            Some(Prop::Absurd)
         }
         _ => None,
     }
@@ -1062,6 +1103,7 @@ fn prop_contains_prop(prop: &Prop, target: &Prop) -> bool {
 
 pub fn substitute_prop(prop: &Prop, variable: Symbol, replacement: &Computation) -> Prop {
     match prop {
+        Prop::Absurd => Prop::Absurd,
         Prop::Equal(left, right) => Prop::Equal(
             substitute(left, variable, replacement),
             substitute(right, variable, replacement),
@@ -1152,6 +1194,7 @@ pub fn free_symbols_prop(prop: &Prop) -> HashSet<Symbol> {
 
 fn add_free_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
     match prop {
+        Prop::Absurd => {}
         Prop::Equal(left, right) => {
             add_free_symbols(left, symbols);
             add_free_symbols(right, symbols);
@@ -1179,6 +1222,7 @@ fn add_free_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
 
 fn rename_bound_var_prop(prop: &Prop, old: Symbol, new: Symbol) -> Prop {
     match prop {
+        Prop::Absurd => Prop::Absurd,
         Prop::Equal(left, right) => Prop::Equal(
             rename_bound_var(left, old, new),
             rename_bound_var(right, old, new),
@@ -1235,6 +1279,7 @@ fn fresh_symbol_avoiding(symbols: &HashSet<Symbol>) -> Symbol {
 
 fn add_all_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
     match prop {
+        Prop::Absurd => {}
         Prop::Equal(left, right) => {
             add_all_symbols(left, symbols);
             add_all_symbols(right, symbols);

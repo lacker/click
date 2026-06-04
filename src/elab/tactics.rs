@@ -48,7 +48,7 @@ fn tactic_steps_to_proof(
         return Err(tactic_failed("by", "tactic script left the goal unsolved"));
     };
 
-    match tactic {
+    let result = match tactic {
         TacticExpr::Intro(symbol) => tactic_intro(*symbol, rest, theory, goal),
         TacticExpr::Exact(proof) => {
             ensure_no_more_tactics(rest, "exact")?;
@@ -168,7 +168,9 @@ fn tactic_steps_to_proof(
             ensure_no_more_tactics(rest, "calc")?;
             tactic_calc(start, steps, theory, goal)
         }
-    }
+    };
+
+    result.map_err(|error| add_goal_context(error, tactic, &goal.target))
 }
 
 fn tactic_intro(
@@ -1146,6 +1148,28 @@ pub(super) fn tactic_failed(
     }
 }
 
+fn add_goal_context(
+    error: ProofElaborationError,
+    tactic_expr: &TacticExpr,
+    target: &Prop,
+) -> ProofElaborationError {
+    match error {
+        ProofElaborationError::TacticFailed { tactic, message } => {
+            ProofElaborationError::TacticFailed {
+                tactic,
+                message: format!(
+                    "{message}; while running {tactic_expr:?}; while proving {target:?}"
+                ),
+            }
+        }
+        ProofElaborationError::InSubproof { form, error } => ProofElaborationError::InSubproof {
+            form,
+            error: Box::new(add_goal_context(*error, tactic_expr, target)),
+        },
+        error => error,
+    }
+}
+
 fn fresh_rewrite_symbol(target: &Prop, left: &Computation, right: &Computation) -> Symbol {
     let mut symbols = HashSet::new();
     add_all_symbols_prop(target, &mut symbols);
@@ -1170,6 +1194,7 @@ fn replace_first_prop(
     replacement: &Computation,
 ) -> Option<Prop> {
     match prop {
+        Prop::Absurd => None,
         Prop::Equal(left, right) => replace_first_computation(left, needle, replacement)
             .map(|left| Prop::Equal(left, right.clone()))
             .or_else(|| {
@@ -1372,6 +1397,7 @@ fn replace_first_list_case(
 
 fn add_all_symbols_prop(prop: &Prop, symbols: &mut HashSet<Symbol>) {
     match prop {
+        Prop::Absurd => {}
         Prop::Equal(left, right) => {
             add_all_symbols_computation(left, symbols);
             add_all_symbols_computation(right, symbols);

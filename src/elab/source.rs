@@ -4,10 +4,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     Computation, ErrorName, FALSE_SYMBOL, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Lambda, ListCase,
-    Name, Prop, SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL, and, computes_to, computes_to_list,
-    diverges, equal, errors_with, exists, exists_where, forall, forall_where, if_then_else,
-    implies, is_bool, is_effect, is_list, is_outcome, is_value, or, substitute_prop, symbol_eq,
-    value_kind,
+    Name, Prop, SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL, absurd, and, computes_to,
+    computes_to_list, diverges, equal, errors_with, exists, exists_where, forall, forall_where,
+    if_then_else, implies, is_bool, is_effect, is_list, is_outcome, is_value, or, substitute_prop,
+    symbol_eq, value_kind,
 };
 
 const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
@@ -207,6 +207,12 @@ pub(crate) enum ProofExpr {
     IfTrueThen(Box<ProofExpr>),
     IfEffectThenConditionFalse(Box<ProofExpr>),
     IfEffectThenElse(Box<ProofExpr>),
+    IfValueConditionBool(Box<ProofExpr>),
+    DistinctOutcomes(Box<ProofExpr>),
+    AbsurdElim {
+        absurd: Box<ProofExpr>,
+        prop: Prop,
+    },
     EvalTo {
         computation: Computation,
         expected: Computation,
@@ -993,6 +999,7 @@ impl<'a> SourceParser<'a> {
         let form = atom(head)?;
 
         match form {
+            "absurd" => self.absurd(items),
             "equal" => self.equal(items),
             "computes-to" => self.computes_to(items),
             "implies" => self.implies(items, symbol_mode),
@@ -1018,6 +1025,11 @@ impl<'a> SourceParser<'a> {
             self.computation(&items[1])?,
             self.computation(&items[2])?,
         ))
+    }
+
+    fn absurd(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
+        expect_len("absurd", items, 1)?;
+        Ok(absurd())
     }
 
     fn computes_to(&mut self, items: &[Expr]) -> Result<Prop, ParseError> {
@@ -1597,6 +1609,9 @@ impl<'a> SourceParser<'a> {
             "if-true-then" => self.proof_if_true_then(items),
             "if-effect-then-condition-false" => self.proof_if_effect_then_condition_false(items),
             "if-effect-then-else" => self.proof_if_effect_then_else(items),
+            "if-value-condition-bool" => self.proof_if_value_condition_bool(items),
+            "distinct-outcomes" => self.proof_distinct_outcomes(items),
+            "absurd-elim" => self.proof_absurd_elim(items),
             "eval-to" => self.proof_eval_to(items),
             "eval-same" => self.proof_eval_same(items),
             "rewrite" => self.proof_rewrite(items),
@@ -1692,6 +1707,28 @@ impl<'a> SourceParser<'a> {
         Ok(ProofExpr::IfEffectThenElse(Box::new(
             self.proof_expr_or_ref(&items[1])?,
         )))
+    }
+
+    fn proof_if_value_condition_bool(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("if-value-condition-bool", items, 2)?;
+        Ok(ProofExpr::IfValueConditionBool(Box::new(
+            self.proof_expr_or_ref(&items[1])?,
+        )))
+    }
+
+    fn proof_distinct_outcomes(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("distinct-outcomes", items, 2)?;
+        Ok(ProofExpr::DistinctOutcomes(Box::new(
+            self.proof_expr_or_ref(&items[1])?,
+        )))
+    }
+
+    fn proof_absurd_elim(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("absurd-elim", items, 3)?;
+        Ok(ProofExpr::AbsurdElim {
+            absurd: Box::new(self.proof_expr_or_ref(&items[1])?),
+            prop: self.proof_prop(&items[2])?,
+        })
     }
 
     fn proof_eval_to(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
@@ -3131,6 +3168,30 @@ mod tests {
                   (eval-to
                     (symbol-eq (quote unit) (quote unit))
                     (quote :true)))))
+
+            (theorem condition_bool
+              (is-bool (quote :true))
+              (proof
+                (if-value-condition-bool
+                  (eval-to
+                    (if (quote :true) nil nil)
+                    nil))))
+
+            (theorem distinct_outcomes
+              (absurd)
+              (proof
+                (distinct-outcomes
+                  (primitive
+                    (equal (quote :true) (quote :false))))))
+
+            (theorem absurd_elimination
+              (is-value nil)
+              (proof
+                (absurd-elim
+                  (distinct-outcomes
+                    (primitive
+                      (equal (quote :true) (quote :false))))
+                  (is-value nil))))
             ",
             &[],
             &[
@@ -3141,6 +3202,18 @@ mod tests {
                 NameBinding {
                     spelling: "symbol_eq_inversion",
                     name: Name(2),
+                },
+                NameBinding {
+                    spelling: "condition_bool",
+                    name: Name(3),
+                },
+                NameBinding {
+                    spelling: "distinct_outcomes",
+                    name: Name(4),
+                },
+                NameBinding {
+                    spelling: "absurd_elimination",
+                    name: Name(5),
                 },
             ],
             &[
@@ -3175,6 +3248,18 @@ mod tests {
         assert!(matches!(
             &module.theorems[1].proof,
             ProofScript::Proof(ProofExpr::SymbolEqTrue(_))
+        ));
+        assert!(matches!(
+            &module.theorems[2].proof,
+            ProofScript::Proof(ProofExpr::IfValueConditionBool(_))
+        ));
+        assert!(matches!(
+            &module.theorems[3].proof,
+            ProofScript::Proof(ProofExpr::DistinctOutcomes(_))
+        ));
+        assert!(matches!(
+            &module.theorems[4].proof,
+            ProofScript::Proof(ProofExpr::AbsurdElim { .. })
         ));
     }
 
