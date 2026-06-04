@@ -321,6 +321,12 @@ pub(crate) enum TacticExpr {
         assumption: Symbol,
         body: Option<TacticScript>,
     },
+    Cases {
+        conjunction: Box<ProofExpr>,
+        left_assumption: Symbol,
+        right_assumption: Symbol,
+        body: Option<TacticScript>,
+    },
     OrElim {
         disjunction: Box<ProofExpr>,
         left_assumption: Symbol,
@@ -1192,6 +1198,7 @@ impl<'a> SourceParser<'a> {
             "exists" => self.tactic_exists(items),
             "obtain" => self.tactic_obtain(items),
             "exists-elim" => self.tactic_exists_elim(items),
+            "cases" => self.tactic_cases(items),
             "or-elim" => self.tactic_or_elim(items),
             "forall-elim" => self.tactic_forall_elim(items),
             "left" => self.tactic_left(items),
@@ -1377,6 +1384,22 @@ impl<'a> SourceParser<'a> {
         }
 
         Ok(Some(self.tactic_script(body_items)?))
+    }
+
+    fn tactic_cases(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        if !(4..=5).contains(&items.len()) {
+            return Err(ParseError::new(format!(
+                "`cases` expects a conjunction proof, left proof name, right proof name, and optional `(by ...)` body; got {} arguments",
+                items.len().saturating_sub(1)
+            )));
+        }
+
+        Ok(TacticExpr::Cases {
+            conjunction: Box::new(self.proof_expr_or_ref(&items[1])?),
+            left_assumption: self.proof_symbol(atom(&items[2])?)?,
+            right_assumption: self.proof_symbol(atom(&items[3])?)?,
+            body: self.optional_tactic_body("cases", items.get(4))?,
+        })
     }
 
     fn tactic_or_elim(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
@@ -2348,6 +2371,14 @@ mod tests {
                 spelling: "or_example",
                 name: Name(5),
             },
+            NameBinding {
+                spelling: "and_source",
+                name: Name(6),
+            },
+            NameBinding {
+                spelling: "cases_example",
+                name: Name(7),
+            },
         ];
 
         let module = parse_module(
@@ -2389,6 +2420,21 @@ mod tests {
                   right_case
                   (by
                     (eval)))))
+            (theorem and_source
+              (and
+                (computes-to nil nil)
+                (computes-to nil nil))
+              (by
+                (split
+                  (by
+                    (eval))
+                  (by
+                    (eval)))))
+            (theorem cases_example
+              (computes-to nil nil)
+              (by
+                (cases and_source left_case right_case)
+                (exact left_case)))
             ",
             &[],
             &theorems,
@@ -2430,6 +2476,23 @@ mod tests {
                 right_assumption: Symbol(2_005),
                 ..
             }] if **disjunction == ProofExpr::Known(Name(4))
+        ));
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[6].proof else {
+            panic!("expected a tactic proof script");
+        };
+        assert!(matches!(
+            tactics.as_slice(),
+            [
+                TacticExpr::Cases {
+                    conjunction,
+                    left_assumption: Symbol(2_006),
+                    right_assumption: Symbol(2_007),
+                    body: None,
+                },
+                TacticExpr::Exact(proof),
+            ] if **conjunction == ProofExpr::Known(Name(6))
+                && **proof == ProofExpr::Assume(Symbol(2_006))
         ));
     }
 

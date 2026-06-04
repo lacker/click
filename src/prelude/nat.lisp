@@ -323,30 +323,16 @@
       (by
         (intro right)
         (intro cons_is_nat)
-        (have head_unit
-          (computes-to head (quote unit))
-          (by
-            (exact
-              (and-elim-left
-                (implies-elim
-                  (forall-elim
-                    (forall-elim
-                      (known is_nat_value_cons_true_elim)
-                      head)
-                    tail)
-                  (assume cons_is_nat))))))
-        (have tail_is_nat
-          (computes-to (is-nat-value tail) (quote :true))
-          (by
-            (exact
-              (and-elim-right
-                (implies-elim
-                  (forall-elim
-                    (forall-elim
-                      (known is_nat_value_cons_true_elim)
-                      head)
-                    tail)
-                  (assume cons_is_nat))))))
+        (cases
+          (implies-elim
+            (forall-elim
+              (forall-elim
+                (known is_nat_value_cons_true_elim)
+                head)
+              tail)
+            (assume cons_is_nat))
+          head_unit
+          tail_is_nat)
         (have tail_succ
           (computes-to
             (add tail (cons (quote unit) right))
@@ -659,30 +645,16 @@
         (intro right)
         (intro cons_is_nat)
         (intro right_is_nat)
-        (have head_unit
-          (computes-to head (quote unit))
-          (by
-            (exact
-              (and-elim-left
-                (implies-elim
-                  (forall-elim
-                    (forall-elim
-                      (known is_nat_value_cons_true_elim)
-                      head)
-                    tail)
-                  (assume cons_is_nat))))))
-        (have tail_is_nat
-          (computes-to (is-nat-value tail) (quote :true))
-          (by
-            (exact
-              (and-elim-right
-                (implies-elim
-                  (forall-elim
-                    (forall-elim
-                      (known is_nat_value_cons_true_elim)
-                      head)
-                    tail)
-                  (assume cons_is_nat))))))
+        (cases
+          (implies-elim
+            (forall-elim
+              (forall-elim
+                (known is_nat_value_cons_true_elim)
+                head)
+              tail)
+            (assume cons_is_nat))
+          head_unit
+          tail_is_nat)
         (have tail_comm
           (computes-to
             (add tail right)
@@ -885,18 +857,16 @@
         (intro right)
         (intro cons_is_nat)
         (intro right_is_nat)
-        (have tail_is_nat
-          (computes-to (is-nat-value tail) (quote :true))
-          (by
-            (exact
-              (and-elim-right
-                (implies-elim
-                  (forall-elim
-                    (forall-elim
-                      (known is_nat_value_cons_true_elim)
-                      head)
-                    tail)
-                  (assume cons_is_nat))))))
+        (cases
+          (implies-elim
+            (forall-elim
+              (forall-elim
+                (known is_nat_value_cons_true_elim)
+                head)
+              tail)
+            (assume cons_is_nat))
+          ignored_head_unit
+          tail_is_nat)
         (have tail_product_is_nat
           (computes-to
             (is-nat-value (mul tail right))
@@ -998,30 +968,16 @@
         (intro right)
         (intro cons_is_nat)
         (intro right_is_nat)
-        (have head_unit
-          (computes-to head (quote unit))
-          (by
-            (exact
-              (and-elim-left
-                (implies-elim
-                  (forall-elim
-                    (forall-elim
-                      (known is_nat_value_cons_true_elim)
-                      head)
-                    tail)
-                  (assume cons_is_nat))))))
-        (have tail_is_nat
-          (computes-to (is-nat-value tail) (quote :true))
-          (by
-            (exact
-              (and-elim-right
-                (implies-elim
-                  (forall-elim
-                    (forall-elim
-                      (known is_nat_value_cons_true_elim)
-                      head)
-                    tail)
-                  (assume cons_is_nat))))))
+        (cases
+          (implies-elim
+            (forall-elim
+              (forall-elim
+                (known is_nat_value_cons_true_elim)
+                head)
+              tail)
+            (assume cons_is_nat))
+          head_unit
+          tail_is_nat)
         (have cons_unit_right_is_nat
           (computes-to
             (is-nat-value (cons (quote unit) right))
@@ -1272,30 +1228,16 @@
       induction_hypothesis
       (by
         (intro cons_is_nat)
-        (have head_unit
-          (computes-to head (quote unit))
-          (by
-            (exact
-              (and-elim-left
-                (implies-elim
-                  (forall-elim
-                    (forall-elim
-                      (known is_nat_value_cons_true_elim)
-                      head)
-                    tail)
-                  (assume cons_is_nat))))))
-        (have tail_is_nat
-          (computes-to (is-nat-value tail) (quote :true))
-          (by
-            (exact
-              (and-elim-right
-                (implies-elim
-                  (forall-elim
-                    (forall-elim
-                      (known is_nat_value_cons_true_elim)
-                      head)
-                    tail)
-                  (assume cons_is_nat))))))
+        (cases
+          (implies-elim
+            (forall-elim
+              (forall-elim
+                (known is_nat_value_cons_true_elim)
+                head)
+              tail)
+            (assume cons_is_nat))
+          head_unit
+          tail_is_nat)
         (have tail_product
           (computes-to
             (mul tail (succ zero))
@@ -1377,30 +1319,16 @@
         (intro right)
         (intro cons_is_nat)
         (intro right_is_nat)
-        (have head_unit
-          (computes-to head (quote unit))
-          (by
-            (exact
-              (and-elim-left
-                (implies-elim
-                  (forall-elim
-                    (forall-elim
-                      (known is_nat_value_cons_true_elim)
-                      head)
-                    tail)
-                  (assume cons_is_nat))))))
-        (have tail_is_nat
-          (computes-to (is-nat-value tail) (quote :true))
-          (by
-            (exact
-              (and-elim-right
-                (implies-elim
-                  (forall-elim
-                    (forall-elim
-                      (known is_nat_value_cons_true_elim)
-                      head)
-                    tail)
-                  (assume cons_is_nat))))))
+        (cases
+          (implies-elim
+            (forall-elim
+              (forall-elim
+                (known is_nat_value_cons_true_elim)
+                head)
+              tail)
+            (assume cons_is_nat))
+          head_unit
+          tail_is_nat)
         (have tail_product
           (computes-to
             (mul tail right)

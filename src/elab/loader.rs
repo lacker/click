@@ -352,6 +352,21 @@ mod tests {
                         (assume witness_proof)
                         (symm
                           (assume witness_proof))))))
+                (theorem nil_pair
+                  (and
+                    (computes-to nil nil)
+                    (computes-to nil nil))
+                  (by
+                    (split
+                      (by
+                        (eval))
+                      (by
+                        (eval)))))
+                (theorem nil_from_cases
+                  (computes-to nil nil)
+                  (by
+                    (cases nil_pair nil_left nil_right)
+                    (exact nil_left)))
                 (theorem list_self
                   (forall list (is-list list)
                     (computes-to list list))
@@ -416,6 +431,12 @@ mod tests {
         let nil_from_obtain = loaded
             .theorem("nil_from_obtain")
             .expect("loader should record obtain tactic theorem spelling");
+        let nil_pair = loaded
+            .theorem("nil_pair")
+            .expect("loader should record conjunction tactic theorem spelling");
+        let nil_from_cases = loaded
+            .theorem("nil_from_cases")
+            .expect("loader should record cases tactic theorem spelling");
         let list_self = loaded
             .theorem("list_self")
             .expect("loader should record induction tactic theorem spelling");
@@ -452,6 +473,8 @@ mod tests {
         assert!(loaded.theory().theorem(nil_from_exists).is_some());
         assert!(loaded.theory().theorem(nil_from_exists_body).is_some());
         assert!(loaded.theory().theorem(nil_from_obtain).is_some());
+        assert!(loaded.theory().theorem(nil_pair).is_some());
+        assert!(loaded.theory().theorem(nil_from_cases).is_some());
         assert!(loaded.theory().theorem(list_self).is_some());
     }
 

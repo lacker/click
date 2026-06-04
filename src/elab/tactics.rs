@@ -101,6 +101,22 @@ fn tactic_steps_to_proof(
                 goal,
             )
         }
+        TacticExpr::Cases {
+            conjunction,
+            left_assumption,
+            right_assumption,
+            body,
+        } => {
+            let rest = explicit_body_or_rest(body.as_ref(), rest, "cases")?;
+            tactic_cases(
+                conjunction,
+                *left_assumption,
+                *right_assumption,
+                rest,
+                theory,
+                goal,
+            )
+        }
         TacticExpr::OrElim {
             disjunction,
             left_assumption,
@@ -619,6 +635,79 @@ fn tactic_exists_elim(
                 target: goal.target.clone(),
             },
         )?),
+    })
+}
+
+fn tactic_cases(
+    conjunction_expr: &ProofExpr,
+    left_assumption: Symbol,
+    right_assumption: Symbol,
+    rest: &[TacticExpr],
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    if left_assumption == right_assumption {
+        return Err(tactic_failed(
+            "cases",
+            "left and right assumption names must be distinct",
+        ));
+    }
+    if goal.context.contains_key(&left_assumption) {
+        return Err(tactic_failed(
+            "cases",
+            format!(
+                "left assumption symbol {:?} is already in scope",
+                left_assumption
+            ),
+        ));
+    }
+    if goal.context.contains_key(&right_assumption) {
+        return Err(tactic_failed(
+            "cases",
+            format!(
+                "right assumption symbol {:?} is already in scope",
+                right_assumption
+            ),
+        ));
+    }
+
+    let conjunction = proof_expr_to_proof_in_context(conjunction_expr, theory, &goal.context)?;
+    let Some(Prop::And(left, right)) = theory.proven_prop_in_context(&conjunction, &goal.context)
+    else {
+        return Err(tactic_failed("cases", "proof is not a conjunction"));
+    };
+
+    let left = left.as_ref().clone();
+    let right = right.as_ref().clone();
+    let mut context = goal.context.clone();
+    context.insert(left_assumption, left.clone());
+    context.insert(right_assumption, right.clone());
+
+    let scoped_proof = tactic_steps_to_proof(
+        rest,
+        theory,
+        &Goal {
+            context,
+            target: goal.target.clone(),
+        },
+    )?;
+    let implication = Proof::ImpliesIntro {
+        assumption: left_assumption,
+        premise: left,
+        proof: Box::new(Proof::ImpliesIntro {
+            assumption: right_assumption,
+            premise: right,
+            proof: Box::new(scoped_proof),
+        }),
+    };
+    let with_left = Proof::ImpliesElim {
+        implication: Box::new(implication),
+        premise: Box::new(Proof::AndElimLeft(Box::new(conjunction.clone()))),
+    };
+
+    Ok(Proof::ImpliesElim {
+        implication: Box::new(with_left),
+        premise: Box::new(Proof::AndElimRight(Box::new(conjunction))),
     })
 }
 
