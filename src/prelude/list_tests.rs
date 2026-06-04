@@ -1,10 +1,11 @@
 //! Test helpers and expected shapes for the list prelude source.
 
 use crate::{
-    Computation, Lambda, Outcome, Proof, Prop, RUNTIME_ERROR, Symbol, Theory, and, computes_to,
-    computes_to_list,
+    Computation, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Lambda, Outcome, Proof, Prop, RUNTIME_ERROR,
+    SYMBOL_KIND_SYMBOL, Symbol, Theory, and, computes_to, computes_to_list,
     elab::{proof, source::ParsedTheorem},
     equal, errors_with, exists_where, forall, forall_where, implies, is_bool, is_list, is_value,
+    symbol_eq, value_kind,
 };
 
 pub use crate::elab::EvaluationProofError;
@@ -176,24 +177,12 @@ pub fn all_definition() -> Computation {
     definition("all")
 }
 
-pub fn is_symbol() -> Computation {
-    computation_ref("is-symbol")
-}
-
 pub fn is_symbol_definition() -> Computation {
     definition("is-symbol")
 }
 
-pub fn is_lambda() -> Computation {
-    computation_ref("is-lambda")
-}
-
 pub fn is_lambda_definition() -> Computation {
     definition("is-lambda")
-}
-
-pub fn is_list_value() -> Computation {
-    computation_ref("is-list-value")
 }
 
 pub fn is_list_value_definition() -> Computation {
@@ -672,15 +661,15 @@ pub fn all_call(predicate: Computation, list: Computation) -> Computation {
 }
 
 pub fn is_symbol_call(value: Computation) -> Computation {
-    apply(is_symbol(), value)
+    symbol_eq(value_kind(value), quote(SYMBOL_KIND_SYMBOL))
 }
 
 pub fn is_lambda_call(value: Computation) -> Computation {
-    apply(is_lambda(), value)
+    symbol_eq(value_kind(value), quote(LAMBDA_KIND_SYMBOL))
 }
 
 pub fn is_list_value_call(value: Computation) -> Computation {
-    apply(is_list_value(), value)
+    symbol_eq(value_kind(value), quote(LIST_KIND_SYMBOL))
 }
 
 pub fn value_eq_call(left: Computation, right: Computation) -> Computation {
@@ -1803,11 +1792,10 @@ pub fn value_eq_cons_theorem(
     )
 }
 
-/// A value known to be a symbol is not a lambda.
+/// A computation whose symbol-kind test returns true has a false lambda-kind test.
 pub fn is_symbol_true_implies_is_lambda_false_theorem(value: Symbol) -> Prop {
-    forall_where(
+    forall(
         value,
-        is_value(var(value)),
         implies(
             computes_to(is_symbol_call(var(value)), true_value()),
             computes_to(is_lambda_call(var(value)), false_value()),

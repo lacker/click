@@ -840,6 +840,15 @@ impl<'a> SourceParser<'a> {
                 "if" => return self.if_computation(items),
                 "symbol-eq" => return self.symbol_eq(items),
                 "value-kind" => return self.value_kind(items),
+                "is-symbol" if self.variable(form).is_none() => {
+                    return self.value_kind_test(items, SYMBOL_KIND_SYMBOL);
+                }
+                "is-lambda" if self.variable(form).is_none() => {
+                    return self.value_kind_test(items, LAMBDA_KIND_SYMBOL);
+                }
+                "is-list-value" if self.variable(form).is_none() => {
+                    return self.value_kind_test(items, LIST_KIND_SYMBOL);
+                }
                 "error" => return self.error(items),
                 "quote" => return self.quote(items),
                 _ => {}
@@ -920,6 +929,14 @@ impl<'a> SourceParser<'a> {
     fn value_kind(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
         expect_len("value-kind", items, 2)?;
         Ok(value_kind(self.computation(&items[1])?))
+    }
+
+    fn value_kind_test(&mut self, items: &[Expr], kind: Symbol) -> Result<Computation, ParseError> {
+        expect_len(atom(&items[0])?, items, 2)?;
+        Ok(symbol_eq(
+            value_kind(self.computation(&items[1])?),
+            Computation::Quote(kind),
+        ))
     }
 
     fn error(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
@@ -2061,6 +2078,69 @@ mod tests {
         assert_eq!(env.symbol(":symbol"), Some(SYMBOL_KIND_SYMBOL));
         assert_eq!(env.symbol(":lambda"), Some(LAMBDA_KIND_SYMBOL));
         assert_eq!(env.symbol(":list"), Some(LIST_KIND_SYMBOL));
+    }
+
+    #[test]
+    fn parses_direct_value_kind_test_aliases() {
+        let mut env = ElabEnv::new();
+
+        let module = env
+            .parse_module(
+                "
+                (def is-symbol (lambda value value))
+                (def symbol_predicate is-symbol)
+                (def symbol_test (is-symbol (quote :true)))
+                (def lambda_test (is-lambda (lambda value value)))
+                (def list_test (is-list-value nil))
+                (def shadowed (lambda is-symbol (is-symbol (quote :true))))
+                ",
+            )
+            .expect("source value-kind test aliases should parse");
+        let value = env
+            .symbol("value")
+            .expect("lambda parameter should be interned");
+        let shadowed_is_symbol = env
+            .symbol("is-symbol")
+            .expect("shadowing lambda parameter should be interned");
+
+        assert_eq!(
+            module.computation(Name(2)),
+            Some(&Computation::Ref(Name(1)))
+        );
+        assert_eq!(
+            module.computation(Name(3)),
+            Some(&symbol_eq(
+                value_kind(Computation::Quote(TRUE_SYMBOL)),
+                Computation::Quote(SYMBOL_KIND_SYMBOL),
+            ))
+        );
+        assert_eq!(
+            module.computation(Name(4)),
+            Some(&symbol_eq(
+                value_kind(Computation::Lambda(Lambda {
+                    parameter: value,
+                    body: Box::new(Computation::Var(value)),
+                })),
+                Computation::Quote(LAMBDA_KIND_SYMBOL),
+            ))
+        );
+        assert_eq!(
+            module.computation(Name(5)),
+            Some(&symbol_eq(
+                value_kind(Computation::Nil),
+                Computation::Quote(LIST_KIND_SYMBOL),
+            ))
+        );
+        assert_eq!(
+            module.computation(Name(6)),
+            Some(&Computation::Lambda(Lambda {
+                parameter: shadowed_is_symbol,
+                body: Box::new(Computation::Apply {
+                    function: Box::new(Computation::Var(shadowed_is_symbol)),
+                    argument: Box::new(Computation::Quote(TRUE_SYMBOL)),
+                }),
+            }))
+        );
     }
 
     #[test]

@@ -1439,13 +1439,12 @@
     (eval)))
 
 (theorem is_symbol_true_implies_is_lambda_false
-  (forall value (is-value value)
+  (forall value
     (implies
       (computes-to (is-symbol value) (quote :true))
       (computes-to (is-lambda value) (quote :false))))
   (proof
     (forall-intro value
-      (is-value value)
       (implies-intro value_is_symbol
         (computes-to (is-symbol value) (quote :true))
         (trans
