@@ -538,6 +538,10 @@ pub fn cons_congr_source_theorem() -> Prop {
     theorem_prop("cons_congr")
 }
 
+pub fn value_eq_sound_source_theorem() -> Prop {
+    theorem_prop("value_eq_sound")
+}
+
 pub fn member_nil_source_theorem() -> Prop {
     theorem_prop("member_nil")
 }
@@ -1984,6 +1988,22 @@ pub fn cons_congr_theorem(
     )
 }
 
+/// If `value-eq` returns true, the two values compute equally.
+pub fn value_eq_sound_theorem(left: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_value(var(left)),
+        forall_where(
+            right,
+            is_value(var(right)),
+            implies(
+                computes_to(value_eq_call(var(left), var(right)), true_value()),
+                computes_to(var(left), var(right)),
+            ),
+        ),
+    )
+}
+
 /// `member` over `nil` returns false.
 pub fn member_nil_theorem(value: Symbol) -> Prop {
     forall_where(
@@ -3317,6 +3337,8 @@ mod tests {
         let cons_congr_left_tail = theorem_symbol("cons_congr", "left_tail");
         let cons_congr_right_head = theorem_symbol("cons_congr", "right_head");
         let cons_congr_right_tail = theorem_symbol("cons_congr", "right_tail");
+        let sound_left = theorem_symbol("value_eq_sound", "left");
+        let sound_right = theorem_symbol("value_eq_sound", "right");
 
         assert_eq!(
             value_eq_true_true_source_theorem(),
@@ -3388,6 +3410,10 @@ mod tests {
                 cons_congr_right_head,
                 cons_congr_right_tail,
             )
+        );
+        assert_eq!(
+            value_eq_sound_source_theorem(),
+            value_eq_sound_theorem(sound_left, sound_right)
         );
     }
 

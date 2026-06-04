@@ -365,6 +365,19 @@ pub(crate) enum TacticExpr {
         induction_hypothesis_assumption: Symbol,
         step: TacticScript,
     },
+    ValueInduction {
+        variable: Symbol,
+        symbol_assumption: Symbol,
+        symbol_case: TacticScript,
+        lambda_assumption: Symbol,
+        lambda_case: TacticScript,
+        nil_case: TacticScript,
+        head: Symbol,
+        tail: Symbol,
+        head_induction_hypothesis_assumption: Symbol,
+        tail_induction_hypothesis_assumption: Symbol,
+        cons_case: TacticScript,
+    },
     Calc {
         start: Computation,
         steps: Vec<CalcStep>,
@@ -1241,6 +1254,7 @@ impl<'a> SourceParser<'a> {
             "right" => self.tactic_right(items),
             "rewrite" => self.tactic_rewrite(items),
             "induction" | "list-induction" => self.tactic_list_induction(form, items),
+            "value-induction" => self.tactic_value_induction(items),
             "calc" => self.tactic_calc(items),
             _ => Err(ParseError::new(format!("unknown tactic `{form}`"))),
         }
@@ -1500,6 +1514,23 @@ impl<'a> SourceParser<'a> {
             tail: self.proof_symbol(atom(&items[4])?)?,
             induction_hypothesis_assumption: self.proof_symbol(atom(&items[5])?)?,
             step: self.nested_tactic_script(&items[6])?,
+        })
+    }
+
+    fn tactic_value_induction(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        expect_len("value-induction", items, 12)?;
+        Ok(TacticExpr::ValueInduction {
+            variable: self.proof_symbol(atom(&items[1])?)?,
+            symbol_assumption: self.proof_symbol(atom(&items[2])?)?,
+            symbol_case: self.nested_tactic_script(&items[3])?,
+            lambda_assumption: self.proof_symbol(atom(&items[4])?)?,
+            lambda_case: self.nested_tactic_script(&items[5])?,
+            nil_case: self.nested_tactic_script(&items[6])?,
+            head: self.proof_symbol(atom(&items[7])?)?,
+            tail: self.proof_symbol(atom(&items[8])?)?,
+            head_induction_hypothesis_assumption: self.proof_symbol(atom(&items[9])?)?,
+            tail_induction_hypothesis_assumption: self.proof_symbol(atom(&items[10])?)?,
+            cons_case: self.nested_tactic_script(&items[11])?,
         })
     }
 
@@ -2502,6 +2533,59 @@ mod tests {
                 head: Symbol(2_001),
                 tail: Symbol(2_002),
                 induction_hypothesis_assumption: Symbol(2_003),
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn parses_value_induction_tactic_scripts() {
+        let theorems = [NameBinding {
+            spelling: "value_identity",
+            name: Name(1),
+        }];
+
+        let module = parse_module(
+            "
+            (theorem value_identity
+              (forall value (is-value value)
+                (computes-to value value))
+              (by
+                (value-induction value
+                  value_is_symbol
+                  (by
+                    (eval))
+                  value_is_lambda
+                  (by
+                    (eval))
+                  (by
+                    (eval))
+                  head
+                  tail
+                  head_ih
+                  tail_ih
+                  (by
+                    (eval)))))
+            ",
+            &[],
+            &theorems,
+            &[],
+        )
+        .expect("value-induction tactic source should parse");
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[0].proof else {
+            panic!("expected a tactic proof script");
+        };
+        assert!(matches!(
+            tactics.as_slice(),
+            [TacticExpr::ValueInduction {
+                variable: Symbol(2_000),
+                symbol_assumption: Symbol(2_001),
+                lambda_assumption: Symbol(2_002),
+                head: Symbol(2_003),
+                tail: Symbol(2_004),
+                head_induction_hypothesis_assumption: Symbol(2_005),
+                tail_induction_hypothesis_assumption: Symbol(2_006),
                 ..
             }]
         ));

@@ -212,6 +212,7 @@ fn prelude_theorem_names() -> Vec<Name> {
         "value_eq_left_symbol_sound",
         "value_eq_cons_true_elim",
         "cons_congr",
+        "value_eq_sound",
         "member_nil",
         "member_cons_true",
         "member_cons_false",
@@ -903,6 +904,7 @@ fn theory_defines_reverse_theorems() {
     let value_eq_left_symbol_sound_prop = list_tests::value_eq_left_symbol_sound_source_theorem();
     let value_eq_cons_true_elim_prop = list_tests::value_eq_cons_true_elim_source_theorem();
     let cons_congr_prop = list_tests::cons_congr_source_theorem();
+    let value_eq_sound_prop = list_tests::value_eq_sound_source_theorem();
     let member_nil_prop = list_tests::member_nil_source_theorem();
     let member_cons_true_prop = list_tests::member_cons_true_source_theorem();
     let member_cons_false_prop = list_tests::member_cons_false_source_theorem();
@@ -1636,6 +1638,12 @@ fn theory_defines_reverse_theorems() {
             .expect("cons congruence theorem source proof should check with dependencies")
             .prop(),
         &cons_congr_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_sound")
+            .expect("value-eq soundness theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_sound_prop,
     );
     assert_eq!(
         checked_theorem("member_nil")

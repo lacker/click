@@ -1595,6 +1595,56 @@ fn non_symbol_non_lambda_values_are_lists() {
 }
 
 #[test]
+fn value_induction_proves_values_are_values() {
+    let value = Symbol(1);
+    let symbol_assumption = Symbol(2);
+    let lambda_assumption = Symbol(3);
+    let head = Symbol(4);
+    let tail = Symbol(5);
+    let head_ih = Symbol(6);
+    let tail_ih = Symbol(7);
+    let property = is_value(Computation::Var(value));
+    let cons_value = cons(Computation::Var(head), Computation::Var(tail));
+
+    let proof = Proof::ValueInduction {
+        variable: value,
+        property: property.clone(),
+        symbol_assumption,
+        symbol_case: Box::new(Proof::Assume(value)),
+        lambda_assumption,
+        lambda_case: Box::new(Proof::Assume(value)),
+        nil_case: Box::new(Proof::Primitive(is_value(Computation::Nil))),
+        head,
+        tail,
+        head_induction_hypothesis_assumption: head_ih,
+        tail_induction_hypothesis_assumption: tail_ih,
+        cons_case: Box::new(Proof::Primitive(is_value(cons_value))),
+    };
+    let expected = forall_where(value, is_value(Computation::Var(value)), property.clone());
+
+    assert!(check(&proof, &expected));
+
+    let duplicate_symbol = Proof::ValueInduction {
+        variable: value,
+        property,
+        symbol_assumption: value,
+        symbol_case: Box::new(Proof::Assume(value)),
+        lambda_assumption,
+        lambda_case: Box::new(Proof::Assume(value)),
+        nil_case: Box::new(Proof::Primitive(is_value(Computation::Nil))),
+        head,
+        tail,
+        head_induction_hypothesis_assumption: head_ih,
+        tail_induction_hypothesis_assumption: tail_ih,
+        cons_case: Box::new(Proof::Primitive(is_value(cons(
+            Computation::Var(head),
+            Computation::Var(tail),
+        )))),
+    };
+    assert!(!check(&duplicate_symbol, &expected));
+}
+
+#[test]
 fn prop_helpers_construct_expected_shapes() {
     let prop = equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(1)));
     let computation = apply(

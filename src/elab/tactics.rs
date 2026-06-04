@@ -4,8 +4,9 @@ use std::collections::HashSet;
 
 use crate::kernel::{primitive_prop_holds, structural_primitive_prop_holds};
 use crate::{
-    Computation, Context, ListCase, Name, Proof, Prop, Symbol, Theory, alpha_eq_computation,
-    alpha_eq_prop, free_symbols, is_list, substitute_prop,
+    Computation, Context, LAMBDA_KIND_SYMBOL, ListCase, Name, Proof, Prop, SYMBOL_KIND_SYMBOL,
+    Symbol, TRUE_SYMBOL, Theory, alpha_eq_computation, alpha_eq_prop, equal, free_symbols, is_list,
+    is_value, substitute_prop, symbol_eq, value_kind,
 };
 
 use super::proof::{
@@ -160,6 +161,36 @@ fn tactic_steps_to_proof(
                 *tail,
                 *induction_hypothesis_assumption,
                 step,
+                theory,
+                goal,
+            )
+        }
+        TacticExpr::ValueInduction {
+            variable,
+            symbol_assumption,
+            symbol_case,
+            lambda_assumption,
+            lambda_case,
+            nil_case,
+            head,
+            tail,
+            head_induction_hypothesis_assumption,
+            tail_induction_hypothesis_assumption,
+            cons_case,
+        } => {
+            ensure_no_more_tactics(rest, "value-induction")?;
+            tactic_value_induction(
+                *variable,
+                *symbol_assumption,
+                symbol_case,
+                *lambda_assumption,
+                lambda_case,
+                nil_case,
+                *head,
+                *tail,
+                *head_induction_hypothesis_assumption,
+                *tail_induction_hypothesis_assumption,
+                cons_case,
                 theory,
                 goal,
             )
@@ -1024,6 +1055,110 @@ fn tactic_list_induction(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn tactic_value_induction(
+    variable: Symbol,
+    symbol_assumption: Symbol,
+    symbol_case: &TacticScript,
+    lambda_assumption: Symbol,
+    lambda_case: &TacticScript,
+    nil_case: &TacticScript,
+    head: Symbol,
+    tail: Symbol,
+    head_induction_hypothesis_assumption: Symbol,
+    tail_induction_hypothesis_assumption: Symbol,
+    cons_case: &TacticScript,
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let (goal_variable, predicate, property) = value_induction_goal(&goal.target)?;
+
+    if variable != goal_variable {
+        return Err(tactic_failed(
+            "value-induction",
+            format!(
+                "expected theorem binder {:?}, got {:?}",
+                goal_variable, variable
+            ),
+        ));
+    }
+
+    let expected_predicate = is_value(Computation::Var(variable));
+    if !alpha_eq_prop(&predicate, &expected_predicate) {
+        return Err(tactic_failed(
+            "value-induction",
+            "forall predicate is not an is-value predicate",
+        ));
+    }
+
+    let variable_computation = Computation::Var(variable);
+    let variable_target = substitute_prop(&property, variable, &variable_computation);
+
+    let mut symbol_context = goal.context.clone();
+    symbol_context.insert(variable, is_value(variable_computation.clone()));
+    symbol_context.insert(
+        symbol_assumption,
+        value_kind_is_kind(variable_computation.clone(), SYMBOL_KIND_SYMBOL),
+    );
+    let symbol_goal = Goal {
+        context: symbol_context,
+        target: variable_target.clone(),
+    };
+
+    let mut lambda_context = goal.context.clone();
+    lambda_context.insert(variable, is_value(variable_computation));
+    lambda_context.insert(
+        lambda_assumption,
+        value_kind_is_kind(Computation::Var(variable), LAMBDA_KIND_SYMBOL),
+    );
+    let lambda_goal = Goal {
+        context: lambda_context,
+        target: variable_target,
+    };
+
+    let nil_goal = Goal {
+        context: goal.context.clone(),
+        target: substitute_prop(&property, variable, &Computation::Nil),
+    };
+
+    let head_var = Computation::Var(head);
+    let tail_var = Computation::Var(tail);
+    let cons = Computation::Cons {
+        head: Box::new(head_var.clone()),
+        tail: Box::new(tail_var.clone()),
+    };
+    let mut cons_context = goal.context.clone();
+    cons_context.insert(head, is_value(head_var.clone()));
+    cons_context.insert(tail, is_list(tail_var.clone()));
+    cons_context.insert(
+        head_induction_hypothesis_assumption,
+        substitute_prop(&property, variable, &head_var),
+    );
+    cons_context.insert(
+        tail_induction_hypothesis_assumption,
+        substitute_prop(&property, variable, &tail_var),
+    );
+    let cons_goal = Goal {
+        context: cons_context,
+        target: substitute_prop(&property, variable, &cons),
+    };
+
+    Ok(Proof::ValueInduction {
+        variable,
+        property,
+        symbol_assumption,
+        symbol_case: Box::new(tactic_script_to_proof(symbol_case, theory, &symbol_goal)?),
+        lambda_assumption,
+        lambda_case: Box::new(tactic_script_to_proof(lambda_case, theory, &lambda_goal)?),
+        nil_case: Box::new(tactic_script_to_proof(nil_case, theory, &nil_goal)?),
+        head,
+        tail,
+        head_induction_hypothesis_assumption,
+        tail_induction_hypothesis_assumption,
+        cons_case: Box::new(tactic_script_to_proof(cons_case, theory, &cons_goal)?),
+    })
+}
+
 fn list_induction_goal(target: &Prop) -> Result<(Symbol, Prop, Prop), ProofElaborationError> {
     let Prop::ForAll { variable, body } = target else {
         return Err(tactic_failed("list-induction", "goal is not a forall"));
@@ -1037,6 +1172,28 @@ fn list_induction_goal(target: &Prop) -> Result<(Symbol, Prop, Prop), ProofElabo
     };
 
     Ok((*variable, predicate.as_ref().clone(), body.as_ref().clone()))
+}
+
+fn value_induction_goal(target: &Prop) -> Result<(Symbol, Prop, Prop), ProofElaborationError> {
+    let Prop::ForAll { variable, body } = target else {
+        return Err(tactic_failed("value-induction", "goal is not a forall"));
+    };
+
+    let Prop::Implies(predicate, body) = body.as_ref() else {
+        return Err(tactic_failed(
+            "value-induction",
+            "forall body is not a predicate implication",
+        ));
+    };
+
+    Ok((*variable, predicate.as_ref().clone(), body.as_ref().clone()))
+}
+
+fn value_kind_is_kind(computation: Computation, kind: Symbol) -> Prop {
+    equal(
+        symbol_eq(value_kind(computation), Computation::Quote(kind)),
+        Computation::Quote(TRUE_SYMBOL),
+    )
 }
 
 fn tactic_calc(

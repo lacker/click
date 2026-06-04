@@ -328,6 +328,38 @@ fn proven_prop_in_context(proof: &Proof, bindings: &Bindings, context: &Context)
 
             prove_list_induction(bindings, context, symbols, property, base, step)
         }
+        Proof::ValueInduction {
+            variable,
+            property,
+            symbol_assumption,
+            symbol_case,
+            lambda_assumption,
+            lambda_case,
+            nil_case,
+            head,
+            tail,
+            head_induction_hypothesis_assumption,
+            tail_induction_hypothesis_assumption,
+            cons_case,
+        } => {
+            let symbols = ValueInductionSymbols {
+                variable: *variable,
+                symbol_assumption: *symbol_assumption,
+                lambda_assumption: *lambda_assumption,
+                head: *head,
+                tail: *tail,
+                head_induction_hypothesis_assumption: *head_induction_hypothesis_assumption,
+                tail_induction_hypothesis_assumption: *tail_induction_hypothesis_assumption,
+            };
+            let cases = ValueInductionCases {
+                symbol_case,
+                lambda_case,
+                nil_case,
+                cons_case,
+            };
+
+            prove_value_induction(bindings, context, symbols, property, cases)
+        }
         Proof::ImpliesIntro {
             assumption,
             premise,
@@ -600,6 +632,13 @@ fn value_kind_is_not_kind(computation: Computation, kind: Symbol) -> Prop {
     equal(
         symbol_eq(value_kind(computation), Computation::Quote(kind)),
         Computation::Quote(FALSE_SYMBOL),
+    )
+}
+
+fn value_kind_is_kind(computation: Computation, kind: Symbol) -> Prop {
+    equal(
+        symbol_eq(value_kind(computation), Computation::Quote(kind)),
+        Computation::Quote(TRUE_SYMBOL),
     )
 }
 
@@ -978,6 +1017,24 @@ struct ListInductionSymbols {
     induction_hypothesis_assumption: Symbol,
 }
 
+#[derive(Clone, Copy)]
+struct ValueInductionSymbols {
+    variable: Symbol,
+    symbol_assumption: Symbol,
+    lambda_assumption: Symbol,
+    head: Symbol,
+    tail: Symbol,
+    head_induction_hypothesis_assumption: Symbol,
+    tail_induction_hypothesis_assumption: Symbol,
+}
+
+struct ValueInductionCases<'a> {
+    symbol_case: &'a Proof,
+    lambda_case: &'a Proof,
+    nil_case: &'a Proof,
+    cons_case: &'a Proof,
+}
+
 fn prove_list_induction(
     bindings: &Bindings,
     context: &Context,
@@ -1037,6 +1094,96 @@ fn prove_list_induction(
     ))
 }
 
+fn prove_value_induction(
+    bindings: &Bindings,
+    context: &Context,
+    symbols: ValueInductionSymbols,
+    property: &Prop,
+    cases: ValueInductionCases<'_>,
+) -> Option<Prop> {
+    if !value_induction_symbols_are_fresh(context, symbols, property) {
+        return None;
+    }
+
+    let ValueInductionSymbols {
+        variable,
+        symbol_assumption,
+        lambda_assumption,
+        head,
+        tail,
+        head_induction_hypothesis_assumption,
+        tail_induction_hypothesis_assumption,
+    } = symbols;
+
+    let variable_computation = Computation::Var(variable);
+    let variable_prop = substitute_prop(property, variable, &variable_computation);
+
+    let mut symbol_context = context.clone();
+    symbol_context.insert(variable, is_value(variable_computation.clone()));
+    symbol_context.insert(
+        symbol_assumption,
+        value_kind_is_kind(variable_computation.clone(), SYMBOL_KIND_SYMBOL),
+    );
+    if !alpha_eq_prop(
+        &proven_prop_in_context(cases.symbol_case, bindings, &symbol_context)?,
+        &variable_prop,
+    ) {
+        return None;
+    }
+
+    let mut lambda_context = context.clone();
+    lambda_context.insert(variable, is_value(variable_computation.clone()));
+    lambda_context.insert(
+        lambda_assumption,
+        value_kind_is_kind(variable_computation.clone(), LAMBDA_KIND_SYMBOL),
+    );
+    if !alpha_eq_prop(
+        &proven_prop_in_context(cases.lambda_case, bindings, &lambda_context)?,
+        &variable_prop,
+    ) {
+        return None;
+    }
+
+    let nil_prop = substitute_prop(property, variable, &Computation::Nil);
+    if !alpha_eq_prop(
+        &proven_prop_in_context(cases.nil_case, bindings, context)?,
+        &nil_prop,
+    ) {
+        return None;
+    }
+
+    let head_var = Computation::Var(head);
+    let tail_var = Computation::Var(tail);
+    let cons = Computation::Cons {
+        head: Box::new(head_var.clone()),
+        tail: Box::new(tail_var.clone()),
+    };
+    let cons_prop = substitute_prop(property, variable, &cons);
+    let mut cons_context = context.clone();
+    cons_context.insert(head, is_value(head_var.clone()));
+    cons_context.insert(tail, is_list(tail_var.clone()));
+    cons_context.insert(
+        head_induction_hypothesis_assumption,
+        substitute_prop(property, variable, &head_var),
+    );
+    cons_context.insert(
+        tail_induction_hypothesis_assumption,
+        substitute_prop(property, variable, &tail_var),
+    );
+    if !alpha_eq_prop(
+        &proven_prop_in_context(cases.cons_case, bindings, &cons_context)?,
+        &cons_prop,
+    ) {
+        return None;
+    }
+
+    Some(forall_where(
+        variable,
+        is_value(variable_computation.clone()),
+        variable_prop,
+    ))
+}
+
 fn list_induction_symbols_are_fresh(
     context: &Context,
     symbols: ListInductionSymbols,
@@ -1070,6 +1217,53 @@ fn list_induction_symbols_are_fresh(
         && !context_mentions_symbol(context, tail)
         && !prop_mentions_symbol(property, head)
         && !prop_mentions_symbol(property, tail)
+}
+
+fn value_induction_symbols_are_fresh(
+    context: &Context,
+    symbols: ValueInductionSymbols,
+    property: &Prop,
+) -> bool {
+    let ValueInductionSymbols {
+        variable,
+        symbol_assumption,
+        lambda_assumption,
+        head,
+        tail,
+        head_induction_hypothesis_assumption,
+        tail_induction_hypothesis_assumption,
+    } = symbols;
+
+    let symbols = [
+        variable,
+        symbol_assumption,
+        lambda_assumption,
+        head,
+        tail,
+        head_induction_hypothesis_assumption,
+        tail_induction_hypothesis_assumption,
+    ];
+    let mut seen_symbols = HashSet::new();
+    if symbols
+        .into_iter()
+        .any(|symbol| !seen_symbols.insert(symbol) || context.contains_key(&symbol))
+    {
+        return false;
+    }
+
+    !context_mentions_symbol(context, variable)
+        && !context_mentions_symbol(context, symbol_assumption)
+        && !context_mentions_symbol(context, lambda_assumption)
+        && !context_mentions_symbol(context, head)
+        && !context_mentions_symbol(context, tail)
+        && !context_mentions_symbol(context, head_induction_hypothesis_assumption)
+        && !context_mentions_symbol(context, tail_induction_hypothesis_assumption)
+        && !prop_mentions_symbol(property, symbol_assumption)
+        && !prop_mentions_symbol(property, lambda_assumption)
+        && !prop_mentions_symbol(property, head)
+        && !prop_mentions_symbol(property, tail)
+        && !prop_mentions_symbol(property, head_induction_hypothesis_assumption)
+        && !prop_mentions_symbol(property, tail_induction_hypothesis_assumption)
 }
 
 fn computation_is_list(computation: &Computation, context: &Context) -> bool {
