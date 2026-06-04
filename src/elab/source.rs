@@ -320,8 +320,7 @@ pub(crate) enum TacticExpr {
         witness: Computation,
         proof: TacticScript,
     },
-    ExistsElim {
-        tactic: &'static str,
+    Obtain {
         existential: Box<ProofExpr>,
         witness: Symbol,
         assumption: Symbol,
@@ -339,10 +338,6 @@ pub(crate) enum TacticExpr {
         left: TacticScript,
         right_assumption: Symbol,
         right: TacticScript,
-    },
-    ForAllElim {
-        forall: Box<ProofExpr>,
-        arguments: Vec<Computation>,
     },
     Left(TacticScript),
     Right(TacticScript),
@@ -1204,10 +1199,8 @@ impl<'a> SourceParser<'a> {
             "split" | "constructor" => self.tactic_split(form, items),
             "exists" => self.tactic_exists(items),
             "obtain" => self.tactic_obtain(items),
-            "exists-elim" => self.tactic_exists_elim(items),
             "cases" => self.tactic_cases(items),
             "or-elim" => self.tactic_or_elim(items),
-            "forall-elim" => self.tactic_forall_elim(items),
             "left" => self.tactic_left(items),
             "right" => self.tactic_right(items),
             "rewrite" => self.tactic_rewrite(items),
@@ -1361,30 +1354,7 @@ impl<'a> SourceParser<'a> {
         let existential = Box::new(self.proof_expr_or_ref(&items[3])?);
         let body = self.optional_tactic_body("obtain", items.get(4))?;
 
-        Ok(TacticExpr::ExistsElim {
-            tactic: "obtain",
-            existential,
-            witness,
-            assumption,
-            body,
-        })
-    }
-
-    fn tactic_exists_elim(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
-        if !(4..=5).contains(&items.len()) {
-            return Err(ParseError::new(format!(
-                "`exists-elim` expects an existential proof, witness name, proof name, and optional `(by ...)` body; got {} arguments",
-                items.len().saturating_sub(1)
-            )));
-        }
-
-        let existential = Box::new(self.proof_expr_or_ref(&items[1])?);
-        let witness = self.proof_symbol(atom(&items[2])?)?;
-        let assumption = self.proof_symbol(atom(&items[3])?)?;
-        let body = self.optional_tactic_body("exists-elim", items.get(4))?;
-
-        Ok(TacticExpr::ExistsElim {
-            tactic: "exists-elim",
+        Ok(TacticExpr::Obtain {
             existential,
             witness,
             assumption,
@@ -1456,23 +1426,6 @@ impl<'a> SourceParser<'a> {
             left: self.nested_tactic_script(&items[3])?,
             right_assumption: self.proof_symbol(atom(&items[4])?)?,
             right: self.nested_tactic_script(&items[5])?,
-        })
-    }
-
-    fn tactic_forall_elim(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
-        if items.len() < 3 {
-            return Err(ParseError::new(format!(
-                "`forall-elim` expects a proof and at least one argument, got {}",
-                items.len().saturating_sub(1)
-            )));
-        }
-
-        Ok(TacticExpr::ForAllElim {
-            forall: Box::new(self.proof_expr_or_ref(&items[1])?),
-            arguments: items[2..]
-                .iter()
-                .map(|item| self.computation(item))
-                .collect::<Result<Vec<_>, _>>()?,
         })
     }
 
@@ -2450,7 +2403,7 @@ mod tests {
               (computes-to nil nil)
               (by
                 (obtain witness witness_proof list_exists)
-                (forall-elim value_self nil)))
+                (exact value_self nil)))
             (theorem or_source
               (or
                 (computes-to nil nil)
@@ -2503,21 +2456,18 @@ mod tests {
         assert!(matches!(
             tactics.as_slice(),
             [
-                TacticExpr::ExistsElim {
-                    tactic,
+                TacticExpr::Obtain {
                     existential,
                     witness: Symbol(2_002),
                     assumption: Symbol(2_003),
                     body: None,
                 },
-                TacticExpr::ForAllElim {
-                    forall,
-                    arguments,
-                },
-            ] if *tactic == "obtain"
-                && **existential == ProofExpr::Known(Name(1))
-                && **forall == ProofExpr::Known(Name(2))
-                && arguments.as_slice() == [Computation::Nil]
+                TacticExpr::Exact(proof),
+            ] if **existential == ProofExpr::Known(Name(1))
+                && **proof == ProofExpr::Apply {
+                    proof: Box::new(ProofExpr::Known(Name(2))),
+                    arguments: vec![Computation::Nil],
+                }
         ));
 
         let ProofScript::By(TacticScript { tactics }) = &module.theorems[4].proof else {
@@ -2632,7 +2582,7 @@ mod tests {
             panic!("expected a tactic proof script");
         };
         let [
-            TacticExpr::ExistsElim {
+            TacticExpr::Obtain {
                 assumption,
                 body:
                     Some(TacticScript {
@@ -2718,6 +2668,44 @@ mod tests {
             error.message(),
             "`have` got an extra argument that is not a `(by ...)` body; if this is the next tactic, close the `(have ...)` form before it"
         );
+    }
+
+    #[test]
+    fn rejects_raw_eliminators_as_tactics() {
+        for (source, theorem, tactic) in [
+            (
+                "
+                (theorem bad_forall_elim
+                  (computes-to nil nil)
+                  (by
+                    (forall-elim value_self nil)))
+                ",
+                "bad_forall_elim",
+                "forall-elim",
+            ),
+            (
+                "
+                (theorem bad_exists_elim
+                  (computes-to nil nil)
+                  (by
+                    (exists-elim list_exists witness witness_proof)))
+                ",
+                "bad_exists_elim",
+                "exists-elim",
+            ),
+        ] {
+            let error = parse_module(
+                source,
+                &[],
+                &[NameBinding {
+                    spelling: theorem,
+                    name: Name(1),
+                }],
+                &[],
+            )
+            .expect_err("raw eliminator should not parse as a tactic");
+            assert_eq!(error.message(), format!("unknown tactic `{tactic}`"));
+        }
     }
 
     #[test]

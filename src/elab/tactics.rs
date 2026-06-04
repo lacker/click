@@ -92,23 +92,14 @@ fn tactic_steps_to_proof(
             ensure_no_more_tactics(rest, "exists")?;
             tactic_exists(witness, proof, theory, goal)
         }
-        TacticExpr::ExistsElim {
-            tactic,
+        TacticExpr::Obtain {
             existential,
             witness,
             assumption,
             body,
         } => {
-            let rest = explicit_body_or_rest(body.as_ref(), rest, tactic)?;
-            tactic_exists_elim(
-                tactic,
-                existential,
-                *witness,
-                *assumption,
-                rest,
-                theory,
-                goal,
-            )
+            let rest = explicit_body_or_rest(body.as_ref(), rest, "obtain")?;
+            tactic_obtain(existential, *witness, *assumption, rest, theory, goal)
         }
         TacticExpr::Cases {
             conjunction,
@@ -143,10 +134,6 @@ fn tactic_steps_to_proof(
                 theory,
                 goal,
             )
-        }
-        TacticExpr::ForAllElim { forall, arguments } => {
-            ensure_no_more_tactics(rest, "forall-elim")?;
-            tactic_forall_elim(forall, arguments, theory, goal)
         }
         TacticExpr::Left(proof) => {
             ensure_no_more_tactics(rest, "left")?;
@@ -557,7 +544,7 @@ fn finish_implications(
             return match target {
                 Some(_) => Err(tactic_failed(
                     tactic,
-                    format!("premise {:?} is not available", premise),
+                    unavailable_premise_message(&premise, context),
                 )),
                 None => Ok((proof, prop)),
             };
@@ -581,7 +568,7 @@ fn apply_available_premise(
     context: &Context,
 ) -> Result<Proof, ProofElaborationError> {
     let premise_proof = available_prop_proof(premise, context)
-        .map_err(|_| tactic_failed(tactic, format!("premise {:?} is not available", premise)))?;
+        .map_err(|_| tactic_failed(tactic, unavailable_premise_message(premise, context)))?;
 
     Ok(Proof::ImpliesElim {
         implication: Box::new(implication),
@@ -599,6 +586,30 @@ fn available_prop_proof(prop: &Prop, context: &Context) -> Result<Proof, ProofEl
             .then_some(Proof::Primitive(prop.clone()))
             .ok_or_else(|| tactic_failed("available", "proposition is not available"))
     })
+}
+
+fn unavailable_premise_message(premise: &Prop, context: &Context) -> String {
+    format!(
+        "premise {:?} is not available; {}",
+        premise,
+        local_facts_message(context)
+    )
+}
+
+fn local_facts_message(context: &Context) -> String {
+    if context.is_empty() {
+        return "no local facts are in scope".to_owned();
+    }
+
+    let mut facts = context.iter().collect::<Vec<_>>();
+    facts.sort_by_key(|(symbol, _)| symbol.0);
+    let facts = facts
+        .into_iter()
+        .map(|(symbol, prop)| format!("{symbol:?}: {prop:?}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    format!("local facts in scope: {facts}")
 }
 
 fn apply_structural_premise(
@@ -707,8 +718,7 @@ fn existential_witness_goal(
     }
 }
 
-fn tactic_exists_elim(
-    tactic: &'static str,
+fn tactic_obtain(
     existential_expr: &ProofExpr,
     witness: Symbol,
     assumption: Symbol,
@@ -718,7 +728,7 @@ fn tactic_exists_elim(
 ) -> Result<Proof, ProofElaborationError> {
     let existential = proof_expr_to_proof_in_context(existential_expr, theory, &goal.context)?;
     let context = exists_elim_context(
-        tactic,
+        "obtain",
         &goal.context,
         theory,
         &existential,
@@ -868,36 +878,6 @@ fn tactic_or_elim(
             },
         )?),
     })
-}
-
-fn tactic_forall_elim(
-    forall_expr: &ProofExpr,
-    arguments: &[Computation],
-    theory: &Theory,
-    goal: &Goal,
-) -> Result<Proof, ProofElaborationError> {
-    let proof = proof_expr_to_proof_in_context(forall_expr, theory, &goal.context)?;
-    let prop = theory
-        .proven_prop_in_context(&proof, &goal.context)
-        .ok_or_else(|| tactic_failed("forall-elim", "proof proves no proposition"))?;
-    let (proof, prop) = apply_arguments_and_implications(
-        "forall-elim",
-        proof,
-        prop,
-        arguments,
-        theory,
-        &goal.context,
-        Some(&goal.target),
-    )?;
-
-    if alpha_eq_prop(&prop, &goal.target) {
-        Ok(proof)
-    } else {
-        Err(tactic_failed(
-            "forall-elim",
-            format!("proof concludes {:?}, but goal is {:?}", prop, goal.target),
-        ))
-    }
 }
 
 fn tactic_left(

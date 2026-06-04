@@ -291,10 +291,6 @@ mod tests {
                   (by
                     (intro value)
                     (eval)))
-                (theorem nil_via_forall_elim
-                  (computes-to nil nil)
-                  (by
-                    (forall-elim value_self nil)))
                 (theorem nil_via_have
                   (computes-to nil nil)
                   (by
@@ -329,19 +325,10 @@ mod tests {
                     (exists nil
                       (by
                         (eval)))))
-                (theorem nil_from_exists
+                (theorem nil_from_obtain_body
                   (computes-to nil nil)
                   (by
-                    (exists-elim list_exists witness witness_proof)
-                    (exact
-                      (trans
-                        (assume witness_proof)
-                        (symm
-                          (assume witness_proof))))))
-                (theorem nil_from_exists_body
-                  (computes-to nil nil)
-                  (by
-                    (exists-elim list_exists witness witness_proof
+                    (obtain witness witness_proof list_exists
                       (by
                         (exact
                           (trans
@@ -415,9 +402,6 @@ mod tests {
         let id_rewrite_nil = loaded
             .theorem("id_rewrite_nil")
             .expect("loader should record rewrite tactic theorem spelling");
-        let nil_via_forall_elim = loaded
-            .theorem("nil_via_forall_elim")
-            .expect("loader should record forall-elim tactic theorem spelling");
         let nil_via_have = loaded
             .theorem("nil_via_have")
             .expect("loader should record have tactic theorem spelling");
@@ -430,12 +414,9 @@ mod tests {
         let nil_via_symm_application = loaded
             .theorem("nil_via_symm_application")
             .expect("loader should record symm proof application theorem spelling");
-        let nil_from_exists = loaded
-            .theorem("nil_from_exists")
-            .expect("loader should record exists-elim tactic theorem spelling");
-        let nil_from_exists_body = loaded
-            .theorem("nil_from_exists_body")
-            .expect("loader should record explicit exists-elim body theorem spelling");
+        let nil_from_obtain_body = loaded
+            .theorem("nil_from_obtain_body")
+            .expect("loader should record explicit obtain body theorem spelling");
         let nil_from_obtain = loaded
             .theorem("nil_from_obtain")
             .expect("loader should record obtain tactic theorem spelling");
@@ -474,13 +455,11 @@ mod tests {
             ))
         );
         assert!(loaded.theory().theorem(id_rewrite_nil).is_some());
-        assert!(loaded.theory().theorem(nil_via_forall_elim).is_some());
         assert!(loaded.theory().theorem(nil_via_have).is_some());
         assert!(loaded.theory().theorem(nil_via_have_body).is_some());
         assert!(loaded.theory().theorem(nil_via_specialize).is_some());
         assert!(loaded.theory().theorem(nil_via_symm_application).is_some());
-        assert!(loaded.theory().theorem(nil_from_exists).is_some());
-        assert!(loaded.theory().theorem(nil_from_exists_body).is_some());
+        assert!(loaded.theory().theorem(nil_from_obtain_body).is_some());
         assert!(loaded.theory().theorem(nil_from_obtain).is_some());
         assert!(loaded.theory().theorem(nil_pair).is_some());
         assert!(loaded.theory().theorem(nil_from_cases).is_some());
@@ -685,6 +664,52 @@ mod tests {
         assert_eq!(loaded.computation("id"), id);
         assert_eq!(loaded.computation("bad"), None);
         assert_eq!(loaded.theorem("bad_theorem"), None);
+    }
+
+    #[test]
+    fn specialize_missing_premise_reports_context() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (theorem gated_forall
+                  (forall left (is-list left)
+                    (implies
+                      (computes-to (head left) nil)
+                      (forall right (is-list right)
+                        (equal right right))))
+                  (proof
+                    (forall-intro left (is-list left)
+                      (implies-intro left_head_nil
+                        (computes-to (head left) nil)
+                        (forall-intro right (is-list right)
+                          (eval-to right right))))))
+                (theorem bad_specialize
+                  (implies
+                    (computes-to nil nil)
+                    (equal nil nil))
+                  (by
+                    (intro nil_self)
+                    (specialize bad gated_forall nil nil)
+                    (exact nil_self)))
+                ",
+            )
+            .expect_err("specialize should report the unavailable premise");
+
+        let SourceLoadError::Theorem(SourceTheoremError::ProofElaborationFailed {
+            error: proof::ProofElaborationError::TacticFailed { tactic, message },
+            ..
+        }) = error
+        else {
+            panic!("expected a specialize tactic failure");
+        };
+
+        assert_eq!(tactic, "specialize");
+        assert!(message.contains("premise"));
+        assert!(message.contains("is not available"));
+        assert!(message.contains("local facts in scope"));
+        assert!(message.contains("nil_self") || message.contains("Symbol("));
     }
 
     #[test]
