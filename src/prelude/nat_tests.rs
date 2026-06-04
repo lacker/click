@@ -70,6 +70,14 @@ pub fn three_value() -> Computation {
     cons(unit(), two_value())
 }
 
+pub fn four_value() -> Computation {
+    cons(unit(), three_value())
+}
+
+pub fn add_is_append_source_theorem() -> Prop {
+    theorem_prop("add_is_append")
+}
+
 pub fn zero_computes_to_list_source_theorem() -> Prop {
     theorem_prop("zero_computes_to_list")
 }
@@ -90,16 +98,40 @@ pub fn succ_preserves_nat_value_source_theorem() -> Prop {
     theorem_prop("succ_preserves_nat_value")
 }
 
+pub fn is_nat_value_cons_source_theorem() -> Prop {
+    theorem_prop("is_nat_value_cons")
+}
+
 pub fn add_zero_left_source_theorem() -> Prop {
     theorem_prop("add_zero_left")
+}
+
+pub fn add_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("add_computes_to_list")
+}
+
+pub fn add_cons_source_theorem() -> Prop {
+    theorem_prop("add_cons")
 }
 
 pub fn add_succ_left_source_theorem() -> Prop {
     theorem_prop("add_succ_left")
 }
 
-pub fn add_computes_to_list_source_theorem() -> Prop {
-    theorem_prop("add_computes_to_list")
+pub fn add_zero_right_source_theorem() -> Prop {
+    theorem_prop("add_zero_right")
+}
+
+pub fn add_nat_suffix_preserves_nat_value_source_theorem() -> Prop {
+    theorem_prop("add_nat_suffix_preserves_nat_value")
+}
+
+pub fn add_preserves_nat_value_source_theorem() -> Prop {
+    theorem_prop("add_preserves_nat_value")
+}
+
+pub fn add_assoc_source_theorem() -> Prop {
+    theorem_prop("add_assoc")
 }
 
 fn definition(spelling: &str) -> Computation {
@@ -159,6 +191,7 @@ fn nat_definitions_load_from_source() {
 fn nat_theorem_statements_load_from_source() {
     let zero_result = theorem_symbol("zero_computes_to_list", "result");
     let add_zero_left_right = theorem_symbol("add_zero_left", "right");
+    let add_zero_right_nat = theorem_symbol("add_zero_right", "nat");
 
     assert_eq!(
         zero_computes_to_list_source_theorem(),
@@ -183,6 +216,17 @@ fn nat_theorem_statements_load_from_source() {
             )
         )
     );
+    assert_eq!(
+        add_zero_right_source_theorem(),
+        crate::forall_where(
+            add_zero_right_nat,
+            is_list(var(add_zero_right_nat)),
+            computes_to(
+                add_call(var(add_zero_right_nat), zero()),
+                var(add_zero_right_nat)
+            )
+        )
+    );
 }
 
 #[test]
@@ -190,6 +234,11 @@ fn constructors_evaluate_to_unary_lists() {
     assert_evaluates_to(succ_call(zero()), one_value());
     assert_evaluates_to(succ_call(one_value()), two_value());
     assert_evaluates_to(add_call(two_value(), one_value()), three_value());
+    assert_evaluates_to(add_call(two_value(), zero()), two_value());
+    assert_evaluates_to(
+        add_call(add_call(one_value(), two_value()), one_value()),
+        four_value(),
+    );
 }
 
 #[test]
@@ -229,6 +278,7 @@ fn assert_evaluates_to(computation: Computation, expected: Computation) {
 fn checked_theory_contains_nat_theorems() {
     let theory = super::theory();
 
+    assert_theory_has_theorem(&theory, "add_is_append", add_is_append_source_theorem());
     assert_theory_has_theorem(
         &theory,
         "zero_computes_to_list",
@@ -250,13 +300,31 @@ fn checked_theory_contains_nat_theorems() {
         "succ_preserves_nat_value",
         succ_preserves_nat_value_source_theorem(),
     );
+    assert_theory_has_theorem(
+        &theory,
+        "is_nat_value_cons",
+        is_nat_value_cons_source_theorem(),
+    );
     assert_theory_has_theorem(&theory, "add_zero_left", add_zero_left_source_theorem());
-    assert_theory_has_theorem(&theory, "add_succ_left", add_succ_left_source_theorem());
     assert_theory_has_theorem(
         &theory,
         "add_computes_to_list",
         add_computes_to_list_source_theorem(),
     );
+    assert_theory_has_theorem(&theory, "add_cons", add_cons_source_theorem());
+    assert_theory_has_theorem(&theory, "add_succ_left", add_succ_left_source_theorem());
+    assert_theory_has_theorem(&theory, "add_zero_right", add_zero_right_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "add_nat_suffix_preserves_nat_value",
+        add_nat_suffix_preserves_nat_value_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "add_preserves_nat_value",
+        add_preserves_nat_value_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "add_assoc", add_assoc_source_theorem());
 }
 
 fn assert_theory_has_theorem(theory: &Theory, spelling: &str, prop: Prop) {

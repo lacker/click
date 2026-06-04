@@ -215,14 +215,21 @@ fn prelude_theorem_names() -> Vec<Name> {
         "is_singleton_nil",
         "is_singleton_singleton",
         "is_singleton_cons",
+        "add_is_append",
         "zero_computes_to_list",
         "zero_is_nat_value",
         "succ_zero",
         "succ_computes_to_list",
         "succ_preserves_nat_value",
+        "is_nat_value_cons",
         "add_zero_left",
-        "add_succ_left",
         "add_computes_to_list",
+        "add_cons",
+        "add_succ_left",
+        "add_zero_right",
+        "add_nat_suffix_preserves_nat_value",
+        "add_preserves_nat_value",
+        "add_assoc",
     ]
     .into_iter()
     .map(theorem)
