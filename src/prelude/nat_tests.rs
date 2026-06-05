@@ -309,6 +309,14 @@ pub fn nat_lt_implies_nat_le_source_theorem() -> Prop {
     theorem_prop("nat_lt_implies_nat_le")
 }
 
+pub fn nat_le_trans_source_theorem() -> Prop {
+    theorem_prop("nat_le_trans")
+}
+
+pub fn nat_lt_trans_source_theorem() -> Prop {
+    theorem_prop("nat_lt_trans")
+}
+
 pub fn add_zero_left_source_theorem() -> Prop {
     theorem_prop("add_zero_left")
 }
@@ -549,6 +557,12 @@ fn nat_theorem_statements_load_from_source() {
     let nat_lt_self_succ_nat = theorem_symbol("nat_lt_self_succ", "nat");
     let nat_lt_implies_le_left = theorem_symbol("nat_lt_implies_nat_le", "left");
     let nat_lt_implies_le_right = theorem_symbol("nat_lt_implies_nat_le", "right");
+    let nat_le_trans_left = theorem_symbol("nat_le_trans", "left");
+    let nat_le_trans_middle = theorem_symbol("nat_le_trans", "middle");
+    let nat_le_trans_right = theorem_symbol("nat_le_trans", "right");
+    let nat_lt_trans_left = theorem_symbol("nat_lt_trans", "left");
+    let nat_lt_trans_middle = theorem_symbol("nat_lt_trans", "middle");
+    let nat_lt_trans_right = theorem_symbol("nat_lt_trans", "right");
     let add_zero_left_right = theorem_symbol("add_zero_left", "right");
     let add_zero_right_nat = theorem_symbol("add_zero_right", "nat");
     let nat_le_left_add_left = theorem_symbol("nat_le_left_add", "left");
@@ -745,6 +759,68 @@ fn nat_theorem_statements_load_from_source() {
                     computes_to(
                         nat_le_call(var(nat_lt_implies_le_left), var(nat_lt_implies_le_right)),
                         true_value()
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_le_trans_source_theorem(),
+        crate::forall_where(
+            nat_le_trans_left,
+            is_list(var(nat_le_trans_left)),
+            crate::forall_where(
+                nat_le_trans_middle,
+                is_list(var(nat_le_trans_middle)),
+                crate::forall_where(
+                    nat_le_trans_right,
+                    is_list(var(nat_le_trans_right)),
+                    implies(
+                        computes_to(
+                            nat_le_call(var(nat_le_trans_left), var(nat_le_trans_middle)),
+                            true_value()
+                        ),
+                        implies(
+                            computes_to(
+                                nat_le_call(var(nat_le_trans_middle), var(nat_le_trans_right)),
+                                true_value()
+                            ),
+                            computes_to(
+                                nat_le_call(var(nat_le_trans_left), var(nat_le_trans_right)),
+                                true_value()
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_trans_source_theorem(),
+        crate::forall_where(
+            nat_lt_trans_left,
+            is_list(var(nat_lt_trans_left)),
+            crate::forall_where(
+                nat_lt_trans_middle,
+                is_list(var(nat_lt_trans_middle)),
+                crate::forall_where(
+                    nat_lt_trans_right,
+                    is_list(var(nat_lt_trans_right)),
+                    implies(
+                        computes_to(
+                            nat_lt_call(var(nat_lt_trans_left), var(nat_lt_trans_middle)),
+                            true_value()
+                        ),
+                        implies(
+                            computes_to(
+                                nat_lt_call(var(nat_lt_trans_middle), var(nat_lt_trans_right)),
+                                true_value()
+                            ),
+                            computes_to(
+                                nat_lt_call(var(nat_lt_trans_left), var(nat_lt_trans_right)),
+                                true_value()
+                            )
+                        )
                     )
                 )
             )
@@ -1042,6 +1118,8 @@ fn checked_theory_contains_nat_theorems() {
         "nat_lt_implies_nat_le",
         nat_lt_implies_nat_le_source_theorem(),
     );
+    assert_theory_has_theorem(&theory, "nat_le_trans", nat_le_trans_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_lt_trans", nat_lt_trans_source_theorem());
     assert_theory_has_theorem(&theory, "add_zero_left", add_zero_left_source_theorem());
     assert_theory_has_theorem(
         &theory,
