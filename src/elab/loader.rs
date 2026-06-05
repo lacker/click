@@ -680,6 +680,77 @@ mod tests {
     }
 
     #[test]
+    fn failing_simp_reports_simplification_cycles() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (def alias nil)
+                (theorem alias_nil
+                  (equal alias nil)
+                  (by
+                    (eval)))
+                (theorem bad_simp_cycle
+                  (equal nil nil)
+                  (by
+                    (simp only (symm alias_nil))))
+                ",
+            )
+            .expect_err("expansion-oriented simp rule should report a cycle");
+
+        let SourceLoadError::Theorem(SourceTheoremError::ProofElaborationFailed {
+            error: proof::ProofElaborationError::TacticFailed { tactic, message },
+            ..
+        }) = error
+        else {
+            panic!("expected a simp tactic failure");
+        };
+
+        assert_eq!(tactic, "simp");
+        assert!(message.contains("simplification cycle detected"));
+        assert!(message.contains("repeated term"));
+        assert!(message.contains("oriented as an expansion"));
+        assert!(message.contains("rewrite`/`eval"));
+        assert!(message.contains("rewrite with rule"));
+        assert!(message.contains("kernel reduction"));
+    }
+
+    #[test]
+    fn failing_simpa_reports_simplification_cycles_as_simpa() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (def alias nil)
+                (theorem alias_nil
+                  (equal alias nil)
+                  (by
+                    (eval)))
+                (theorem bad_simpa_cycle
+                  (equal nil nil)
+                  (by
+                    (simpa only (symm alias_nil))))
+                ",
+            )
+            .expect_err("expansion-oriented simpa rule should report a cycle");
+
+        let SourceLoadError::Theorem(SourceTheoremError::ProofElaborationFailed {
+            error: proof::ProofElaborationError::TacticFailed { tactic, message },
+            ..
+        }) = error
+        else {
+            panic!("expected a simpa tactic failure");
+        };
+
+        assert_eq!(tactic, "simpa");
+        assert!(message.contains("simplification cycle detected"));
+        assert!(message.contains("oriented as an expansion"));
+        assert!(message.contains("canonical forms"));
+    }
+
+    #[test]
     fn load_str_checks_absurd_and_if_condition_bool_theorems() {
         let mut loaded = LoadedSource::new();
 

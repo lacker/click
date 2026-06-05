@@ -390,7 +390,7 @@ fn tactic_simp(
         return Err(tactic_failed("simp", "goal is not an equality"));
     };
 
-    let goal_result = simplify_equality(left, right, rules, theory, &goal.context)?;
+    let goal_result = simplify_equality("simp", left, right, rules, theory, &goal.context)?;
 
     if !alpha_eq_computation(&goal_result.left.result, &goal_result.right.result) {
         return Err(tactic_failed(
@@ -412,7 +412,8 @@ fn tactic_simpa(
         return Err(tactic_failed("simpa", "goal is not an equality"));
     };
 
-    let goal_result = simplify_equality(goal_left, goal_right, rules, theory, &goal.context)?;
+    let goal_result =
+        simplify_equality("simpa", goal_left, goal_right, rules, theory, &goal.context)?;
     let Some(proof_expr) = proof_expr else {
         if !alpha_eq_computation(&goal_result.left.result, &goal_result.right.result) {
             return Err(tactic_failed(
@@ -434,7 +435,14 @@ fn tactic_simpa(
             format!("using proof proves {:?}, not an equality", prop),
         ));
     };
-    let proof_result = simplify_equality(&proof_left, &proof_right, rules, theory, &goal.context)?;
+    let proof_result = simplify_equality(
+        "simpa",
+        &proof_left,
+        &proof_right,
+        rules,
+        theory,
+        &goal.context,
+    )?;
 
     if alpha_eq_computation(&goal_result.left.result, &proof_result.left.result)
         && alpha_eq_computation(&goal_result.right.result, &proof_result.right.result)
@@ -493,6 +501,10 @@ impl SimpTrace {
         }
         self.omitted_steps += other.omitted_steps;
     }
+
+    fn total_steps(&self) -> usize {
+        self.steps.len() + self.omitted_steps
+    }
 }
 
 struct SimpEqualityResult {
@@ -501,6 +513,7 @@ struct SimpEqualityResult {
 }
 
 fn simplify_equality(
+    tactic: &'static str,
     left: &Computation,
     right: &Computation,
     rules: &[ProofExpr],
@@ -508,8 +521,8 @@ fn simplify_equality(
     context: &Context,
 ) -> Result<SimpEqualityResult, ProofElaborationError> {
     Ok(SimpEqualityResult {
-        left: simplify_computation(left.clone(), rules, theory, context)?,
-        right: simplify_computation(right.clone(), rules, theory, context)?,
+        left: simplify_computation(tactic, left.clone(), rules, theory, context)?,
+        right: simplify_computation(tactic, right.clone(), rules, theory, context)?,
     })
 }
 
@@ -543,6 +556,7 @@ fn simpa_using_proof(
 }
 
 fn simplify_computation(
+    tactic: &'static str,
     original: Computation,
     rules: &[ProofExpr],
     theory: &Theory,
@@ -551,19 +565,22 @@ fn simplify_computation(
     let mut current = original.clone();
     let mut proofs = Vec::new();
     let mut trace = SimpTrace::default();
+    let mut seen = vec![current.clone()];
 
     for _ in 0..SIMP_STEP_LIMIT {
-        if let Some(rewrite) = simp_rewrite(&current, rules, theory, context)? {
+        if let Some(rewrite) = simp_rewrite(tactic, &current, rules, theory, context)? {
             trace.extend(rewrite.trace);
             proofs.push(rewrite.proof);
             current = rewrite.result;
+            record_simp_state(tactic, &mut seen, &current, &trace)?;
             continue;
         }
 
-        if let Some(rewrite) = simp_child(&current, rules, theory, context)? {
+        if let Some(rewrite) = simp_child(tactic, &current, rules, theory, context)? {
             trace.extend(rewrite.trace);
             proofs.push(rewrite.proof);
             current = rewrite.result;
+            record_simp_state(tactic, &mut seen, &current, &trace)?;
             continue;
         }
 
@@ -572,6 +589,7 @@ fn simplify_computation(
                 trace.push_change("kernel reduction", &current, &next);
                 proofs.push(Proof::Step(current));
                 current = next;
+                record_simp_state(tactic, &mut seen, &current, &trace)?;
                 continue;
             }
             crate::Step::Normal => {}
@@ -585,7 +603,7 @@ fn simplify_computation(
     }
 
     Err(tactic_failed(
-        "simp",
+        tactic,
         format!(
             "simplification exceeded {SIMP_STEP_LIMIT} steps\nsteps:\n{}",
             format_simp_trace(&trace)
@@ -600,13 +618,16 @@ struct SimpRewrite {
 }
 
 fn simp_rewrite(
+    tactic: &'static str,
     target: &Computation,
     rules: &[ProofExpr],
     theory: &Theory,
     context: &Context,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
     for (rule_index, rule) in rules.iter().enumerate() {
-        if let Some(rewrite) = simp_rewrite_with_rule(rule_index, rule, target, theory, context)? {
+        if let Some(rewrite) =
+            simp_rewrite_with_rule(tactic, rule_index, rule, target, theory, context)?
+        {
             return Ok(Some(rewrite));
         }
     }
@@ -620,6 +641,7 @@ struct SimpRule {
 }
 
 fn simp_rewrite_with_rule(
+    tactic: &'static str,
     rule_index: usize,
     rule: &ProofExpr,
     target: &Computation,
@@ -629,13 +651,13 @@ fn simp_rewrite_with_rule(
     let proof = proof_expr_to_proof_in_context(rule, theory, context)?;
     let prop = theory
         .proven_prop_in_context(&proof, context)
-        .ok_or_else(|| tactic_failed("simp", "simp rule proves no proposition"))?;
+        .ok_or_else(|| tactic_failed(tactic, "simp rule proves no proposition"))?;
 
     let candidates = simp_rule_candidates(proof, prop);
     let mut saw_rewrite_rule = false;
 
     for (proof, prop) in candidates {
-        let Ok(simp_rule) = parse_simp_rule(rule, &prop) else {
+        let Ok(simp_rule) = parse_simp_rule(tactic, rule, &prop) else {
             continue;
         };
         saw_rewrite_rule = true;
@@ -647,7 +669,7 @@ fn simp_rewrite_with_rule(
         }
 
         let Some((proof, proven)) =
-            instantiate_simp_rule(rule, proof, prop, &substitutions, theory, context)?
+            instantiate_simp_rule(tactic, rule, proof, prop, &substitutions, theory, context)?
         else {
             continue;
         };
@@ -685,7 +707,7 @@ fn simp_rewrite_with_rule(
         Ok(None)
     } else {
         Err(tactic_failed(
-            "simp",
+            tactic,
             format!("rule {rule:?} is not an equality rewrite rule"),
         ))
     }
@@ -706,6 +728,7 @@ fn simp_rule_candidates(proof: Proof, prop: Prop) -> Vec<(Proof, Prop)> {
 }
 
 fn instantiate_simp_rule(
+    tactic: &'static str,
     rule: &ProofExpr,
     mut proof: Proof,
     mut prop: Prop,
@@ -718,7 +741,7 @@ fn instantiate_simp_rule(
             Prop::ForAll { variable, body } => {
                 let Some(argument) = substitutions.get(&variable).cloned() else {
                     return Err(tactic_failed(
-                        "simp",
+                        tactic,
                         format!("could not infer argument {variable:?} for rule {rule:?}"),
                     ));
                 };
@@ -730,7 +753,7 @@ fn instantiate_simp_rule(
                 prop = theory
                     .proven_prop_in_context(&proof, context)
                     .ok_or_else(|| {
-                        tactic_failed("simp", "forall elimination produced no proposition")
+                        tactic_failed(tactic, "forall elimination produced no proposition")
                     })?;
                 if alpha_eq_prop(&prop, &expected) {
                     prop = expected;
@@ -747,7 +770,7 @@ fn instantiate_simp_rule(
                 prop = theory
                     .proven_prop_in_context(&proof, context)
                     .ok_or_else(|| {
-                        tactic_failed("simp", "applying premise produced no proposition")
+                        tactic_failed(tactic, "applying premise produced no proposition")
                     })?;
                 if alpha_eq_prop(&prop, &conclusion) {
                     prop = *conclusion;
@@ -758,7 +781,11 @@ fn instantiate_simp_rule(
     }
 }
 
-fn parse_simp_rule(rule: &ProofExpr, prop: &Prop) -> Result<SimpRule, ProofElaborationError> {
+fn parse_simp_rule(
+    tactic: &'static str,
+    rule: &ProofExpr,
+    prop: &Prop,
+) -> Result<SimpRule, ProofElaborationError> {
     let mut binders = Vec::new();
     let mut prop = prop.clone();
 
@@ -776,7 +803,7 @@ fn parse_simp_rule(rule: &ProofExpr, prop: &Prop) -> Result<SimpRule, ProofElabo
             }
             _ => {
                 return Err(tactic_failed(
-                    "simp",
+                    tactic,
                     format!("rule {rule:?} is not an equality rewrite rule"),
                 ));
             }
@@ -1001,6 +1028,39 @@ fn format_simp_trace(trace: &SimpTrace) -> String {
     lines.join("\n")
 }
 
+fn record_simp_state(
+    tactic: &'static str,
+    seen: &mut Vec<Computation>,
+    current: &Computation,
+    trace: &SimpTrace,
+) -> Result<(), ProofElaborationError> {
+    if let Some(first_seen_step) = seen
+        .iter()
+        .position(|seen| alpha_eq_computation(seen, current))
+    {
+        return Err(tactic_failed(
+            tactic,
+            simp_cycle_message(first_seen_step, current, trace),
+        ));
+    }
+
+    seen.push(current.clone());
+    Ok(())
+}
+
+fn simp_cycle_message(first_seen_step: usize, repeated: &Computation, trace: &SimpTrace) -> String {
+    format!(
+        "simplification cycle detected after {} steps\n\
+         repeated term first seen after {first_seen_step} steps: {}\n\
+         this usually means a simp rule is oriented as an expansion that kernel reduction can undo; \
+         use explicit `rewrite`/`eval` for one-shot expansion, or orient simp rules toward canonical forms\n\
+         steps:\n{}",
+        trace.total_steps(),
+        compact_debug(repeated),
+        format_simp_trace(trace)
+    )
+}
+
 fn compact_debug(value: &impl std::fmt::Debug) -> String {
     let mut text = format!("{value:?}");
     if text.chars().count() <= SIMP_TRACE_VALUE_LIMIT {
@@ -1018,6 +1078,7 @@ fn compact_debug(value: &impl std::fmt::Debug) -> String {
 }
 
 fn simp_child(
+    tactic: &'static str,
     computation: &Computation,
     rules: &[ProofExpr],
     theory: &Theory,
@@ -1025,6 +1086,7 @@ fn simp_child(
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
     match computation {
         Computation::Apply { function, argument } => simplify_child(
+            tactic,
             computation,
             argument,
             |argument| Computation::Apply {
@@ -1038,6 +1100,7 @@ fn simp_child(
         .map_or_else(
             || {
                 simplify_child(
+                    tactic,
                     computation,
                     function,
                     |function| Computation::Apply {
@@ -1052,6 +1115,7 @@ fn simp_child(
             |rewrite| Ok(Some(rewrite)),
         ),
         Computation::Cons { head, tail } => simplify_child(
+            tactic,
             computation,
             head,
             |head| Computation::Cons {
@@ -1065,6 +1129,7 @@ fn simp_child(
         .map_or_else(
             || {
                 simplify_child(
+                    tactic,
                     computation,
                     tail,
                     |tail| Computation::Cons {
@@ -1079,6 +1144,7 @@ fn simp_child(
             |rewrite| Ok(Some(rewrite)),
         ),
         Computation::Head(child) => simplify_child(
+            tactic,
             computation,
             child,
             |child| Computation::Head(Box::new(child)),
@@ -1087,6 +1153,7 @@ fn simp_child(
             context,
         ),
         Computation::Tail(child) => simplify_child(
+            tactic,
             computation,
             child,
             |child| Computation::Tail(Box::new(child)),
@@ -1095,6 +1162,7 @@ fn simp_child(
             context,
         ),
         Computation::ListCase(list_case) => simplify_child(
+            tactic,
             computation,
             &list_case.list,
             |list| {
@@ -1109,6 +1177,7 @@ fn simp_child(
         .map_or_else(
             || {
                 simplify_child(
+                    tactic,
                     computation,
                     &list_case.nil,
                     |nil| {
@@ -1128,6 +1197,7 @@ fn simp_child(
             then_branch,
             else_branch,
         } => simplify_child(
+            tactic,
             computation,
             condition,
             |condition| Computation::If {
@@ -1142,6 +1212,7 @@ fn simp_child(
         .map_or_else(
             || {
                 simplify_child(
+                    tactic,
                     computation,
                     then_branch,
                     |then_branch| Computation::If {
@@ -1156,6 +1227,7 @@ fn simp_child(
                 .map_or_else(
                     || {
                         simplify_child(
+                            tactic,
                             computation,
                             else_branch,
                             |else_branch| Computation::If {
@@ -1174,6 +1246,7 @@ fn simp_child(
             |rewrite| Ok(Some(rewrite)),
         ),
         Computation::SymbolEq { left, right } => simplify_child(
+            tactic,
             computation,
             left,
             |left| Computation::SymbolEq {
@@ -1187,6 +1260,7 @@ fn simp_child(
         .map_or_else(
             || {
                 simplify_child(
+                    tactic,
                     computation,
                     right,
                     |right| Computation::SymbolEq {
@@ -1201,6 +1275,7 @@ fn simp_child(
             |rewrite| Ok(Some(rewrite)),
         ),
         Computation::ValueKind(child) => simplify_child(
+            tactic,
             computation,
             child,
             |child| Computation::ValueKind(Box::new(child)),
@@ -1219,6 +1294,7 @@ fn simp_child(
 }
 
 fn simplify_child(
+    tactic: &'static str,
     parent: &Computation,
     child: &Computation,
     rebuild: impl Fn(Computation) -> Computation,
@@ -1226,7 +1302,7 @@ fn simplify_child(
     theory: &Theory,
     context: &Context,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
-    let child_result = simplify_computation(child.clone(), rules, theory, context)?;
+    let child_result = simplify_computation(tactic, child.clone(), rules, theory, context)?;
     if alpha_eq_computation(child, &child_result.result) {
         return Ok(None);
     }
@@ -2581,6 +2657,7 @@ mod tests {
         context.insert(TARGET_EQUAL, equal(target.clone(), Computation::Nil));
 
         let (_proof, proven) = instantiate_simp_rule(
+            "simp",
             &ProofExpr::Known(THEOREM),
             Proof::Known(THEOREM),
             prop,
@@ -2607,6 +2684,7 @@ mod tests {
 
         assert_eq!(
             instantiate_simp_rule(
+                "simp",
                 &ProofExpr::Known(THEOREM),
                 Proof::Known(THEOREM),
                 prop,
@@ -2622,6 +2700,7 @@ mod tests {
     fn simp_rewrite_uses_first_matching_rule() {
         let theory = nil_to_ref_theory();
         let rewrite = simp_rewrite(
+            "simp",
             &Computation::Nil,
             &[
                 ProofExpr::Known(NIL_TO_ALIAS_A),

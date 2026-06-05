@@ -76,6 +76,13 @@ left-hand side, discharges available premises from the local context, and
 rewrites inside subcomputations before falling back to reduction. It does not
 yet have global `[simp]`-style rule tags.
 
+By convention, simp rules should be oriented toward canonical forms. Avoid
+using expansion rules with `simp`, especially reverse-direction rules that
+introduce a reducible definition or alias. Since simplification interleaves
+rewriting with kernel reduction, an expansion can immediately reduce back to
+the original term and form a cycle. Use explicit `rewrite` followed by `eval`
+for one-shot expansion steps.
+
 The related `(simpa only rule ... using proof)` tactic simplifies the equality
 goal and the equality proven by `proof`, then closes the goal if the simplified
 sides match. `(simpa only rule ...)` is the proof-free form and behaves like a
