@@ -1,7 +1,8 @@
 //! Test helpers and expected behavior for the nat prelude source.
 
 use crate::{
-    Computation, Lambda, Prop, Symbol, Theory, computes_to, computes_to_list, is_bool, is_list,
+    Computation, Lambda, Prop, Symbol, Theory, computes_to, computes_to_list, implies, is_bool,
+    is_list, is_value,
 };
 
 use super::list_tests::{
@@ -288,6 +289,26 @@ pub fn nat_lt_is_bool_source_theorem() -> Prop {
     theorem_prop("nat_lt_is_bool")
 }
 
+pub fn nat_le_list_suffix_cons_source_theorem() -> Prop {
+    theorem_prop("nat_le_list_suffix_cons")
+}
+
+pub fn nat_lt_list_suffix_cons_source_theorem() -> Prop {
+    theorem_prop("nat_lt_list_suffix_cons")
+}
+
+pub fn nat_le_self_succ_source_theorem() -> Prop {
+    theorem_prop("nat_le_self_succ")
+}
+
+pub fn nat_lt_self_succ_source_theorem() -> Prop {
+    theorem_prop("nat_lt_self_succ")
+}
+
+pub fn nat_lt_implies_nat_le_source_theorem() -> Prop {
+    theorem_prop("nat_lt_implies_nat_le")
+}
+
 pub fn add_zero_left_source_theorem() -> Prop {
     theorem_prop("add_zero_left")
 }
@@ -520,6 +541,14 @@ fn nat_theorem_statements_load_from_source() {
     let nat_le_is_bool_right = theorem_symbol("nat_le_is_bool", "right");
     let nat_lt_succ_succ_left = theorem_symbol("nat_lt_succ_succ", "left");
     let nat_lt_succ_succ_right = theorem_symbol("nat_lt_succ_succ", "right");
+    let nat_le_suffix_tail = theorem_symbol("nat_le_list_suffix_cons", "tail");
+    let nat_le_suffix_head = theorem_symbol("nat_le_list_suffix_cons", "head");
+    let nat_lt_suffix_tail = theorem_symbol("nat_lt_list_suffix_cons", "tail");
+    let nat_lt_suffix_head = theorem_symbol("nat_lt_list_suffix_cons", "head");
+    let nat_le_self_succ_nat = theorem_symbol("nat_le_self_succ", "nat");
+    let nat_lt_self_succ_nat = theorem_symbol("nat_lt_self_succ", "nat");
+    let nat_lt_implies_le_left = theorem_symbol("nat_lt_implies_nat_le", "left");
+    let nat_lt_implies_le_right = theorem_symbol("nat_lt_implies_nat_le", "right");
     let add_zero_left_right = theorem_symbol("add_zero_left", "right");
     let add_zero_right_nat = theorem_symbol("add_zero_right", "nat");
     let nat_le_left_add_left = theorem_symbol("nat_le_left_add", "left");
@@ -632,6 +661,91 @@ fn nat_theorem_statements_load_from_source() {
                         succ_call(var(nat_lt_succ_succ_right))
                     ),
                     nat_lt_call(var(nat_lt_succ_succ_left), var(nat_lt_succ_succ_right))
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_le_list_suffix_cons_source_theorem(),
+        crate::forall_where(
+            nat_le_suffix_tail,
+            is_list(var(nat_le_suffix_tail)),
+            crate::forall_where(
+                nat_le_suffix_head,
+                is_value(var(nat_le_suffix_head)),
+                computes_to(
+                    nat_le_call(
+                        var(nat_le_suffix_tail),
+                        cons(var(nat_le_suffix_head), var(nat_le_suffix_tail))
+                    ),
+                    true_value()
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_list_suffix_cons_source_theorem(),
+        crate::forall_where(
+            nat_lt_suffix_tail,
+            is_list(var(nat_lt_suffix_tail)),
+            crate::forall_where(
+                nat_lt_suffix_head,
+                is_value(var(nat_lt_suffix_head)),
+                computes_to(
+                    nat_lt_call(
+                        var(nat_lt_suffix_tail),
+                        cons(var(nat_lt_suffix_head), var(nat_lt_suffix_tail))
+                    ),
+                    true_value()
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_le_self_succ_source_theorem(),
+        crate::forall_where(
+            nat_le_self_succ_nat,
+            is_list(var(nat_le_self_succ_nat)),
+            computes_to(
+                nat_le_call(
+                    var(nat_le_self_succ_nat),
+                    succ_call(var(nat_le_self_succ_nat))
+                ),
+                true_value()
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_self_succ_source_theorem(),
+        crate::forall_where(
+            nat_lt_self_succ_nat,
+            is_list(var(nat_lt_self_succ_nat)),
+            computes_to(
+                nat_lt_call(
+                    var(nat_lt_self_succ_nat),
+                    succ_call(var(nat_lt_self_succ_nat))
+                ),
+                true_value()
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_implies_nat_le_source_theorem(),
+        crate::forall_where(
+            nat_lt_implies_le_left,
+            is_list(var(nat_lt_implies_le_left)),
+            crate::forall_where(
+                nat_lt_implies_le_right,
+                is_list(var(nat_lt_implies_le_right)),
+                implies(
+                    computes_to(
+                        nat_lt_call(var(nat_lt_implies_le_left), var(nat_lt_implies_le_right)),
+                        true_value()
+                    ),
+                    computes_to(
+                        nat_le_call(var(nat_lt_implies_le_left), var(nat_lt_implies_le_right)),
+                        true_value()
+                    )
                 )
             )
         )
@@ -903,6 +1017,31 @@ fn checked_theory_contains_nat_theorems() {
     );
     assert_theory_has_theorem(&theory, "nat_lt_irrefl", nat_lt_irrefl_source_theorem());
     assert_theory_has_theorem(&theory, "nat_lt_is_bool", nat_lt_is_bool_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_list_suffix_cons",
+        nat_le_list_suffix_cons_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_list_suffix_cons",
+        nat_lt_list_suffix_cons_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_self_succ",
+        nat_le_self_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_self_succ",
+        nat_lt_self_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_implies_nat_le",
+        nat_lt_implies_nat_le_source_theorem(),
+    );
     assert_theory_has_theorem(&theory, "add_zero_left", add_zero_left_source_theorem());
     assert_theory_has_theorem(
         &theory,
