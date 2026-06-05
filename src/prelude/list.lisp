@@ -1534,6 +1534,44 @@
     (intro right_tail)
     (eval)))
 
+(theorem value_kind_symbol_implies_is_symbol
+  (forall value
+    (implies
+      (computes-to
+        (symbol-eq (value-kind value) (quote :symbol))
+        (quote :true))
+      (computes-to (is-symbol value) (quote :true))))
+  (proof
+    (forall-intro value
+      (implies-intro value_kind_symbol
+        (computes-to
+          (symbol-eq (value-kind value) (quote :symbol))
+          (quote :true))
+        (trans
+          (eval-same
+            (is-symbol value)
+            (symbol-eq (value-kind value) (quote :symbol)))
+          (assume value_kind_symbol))))))
+
+(theorem value_kind_lambda_implies_is_lambda
+  (forall value
+    (implies
+      (computes-to
+        (symbol-eq (value-kind value) (quote :lambda))
+        (quote :true))
+      (computes-to (is-lambda value) (quote :true))))
+  (proof
+    (forall-intro value
+      (implies-intro value_kind_lambda
+        (computes-to
+          (symbol-eq (value-kind value) (quote :lambda))
+          (quote :true))
+        (trans
+          (eval-same
+            (is-lambda value)
+            (symbol-eq (value-kind value) (quote :lambda)))
+          (assume value_kind_lambda))))))
+
 (theorem is_symbol_true_implies_is_lambda_false
   (forall value
     (implies
@@ -1567,6 +1605,99 @@
             (computes-to
               (symbol-eq kind (quote :lambda))
               (quote :false))))))))
+
+(theorem value_eq_comparable_symbol
+  (forall value (is-value value)
+    (implies
+      (computes-to (is-symbol value) (quote :true))
+      (computes-to (value-eq-comparable value) (quote :true))))
+  (by
+    (intro value)
+    (intro value_is_symbol)
+    (specialize value_not_lambda is_symbol_true_implies_is_lambda_false value)
+    (calc
+      (value-eq-comparable value)
+      (==
+        (if
+          (is-lambda value)
+          (quote :false)
+          (if
+            (is-symbol value)
+            (quote :true)
+            (list-case value
+              (quote :true)
+              cell
+              (if
+                (value-eq-comparable (head cell))
+                (value-eq-comparable (tail cell))
+                (quote :false)))))
+        (by
+          (eval)))
+      (==
+        (if
+          (is-symbol value)
+          (quote :true)
+          (list-case value
+            (quote :true)
+            cell
+            (if
+              (value-eq-comparable (head cell))
+              (value-eq-comparable (tail cell))
+              (quote :false))))
+        (by
+          (rewrite value_not_lambda)
+          (eval)))
+      (==
+        (quote :true)
+        (by
+          (rewrite value_is_symbol)
+          (eval))))))
+
+(theorem value_eq_comparable_nil
+  (computes-to (value-eq-comparable nil) (quote :true))
+  (by
+    (eval)))
+
+(theorem value_eq_comparable_cons
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (implies
+        (computes-to (value-eq-comparable head) (quote :true))
+        (implies
+          (computes-to (value-eq-comparable tail) (quote :true))
+          (computes-to
+            (value-eq-comparable (cons head tail))
+            (quote :true))))))
+  (by
+    (intro head)
+    (intro tail)
+    (intro head_comparable)
+    (intro tail_comparable)
+    (calc
+      (value-eq-comparable (cons head tail))
+      (==
+        (if
+          (value-eq-comparable head)
+          (value-eq-comparable (tail (cons head tail)))
+          (quote :false))
+        (by
+          (eval)))
+      (==
+        (if
+          (quote :true)
+          (value-eq-comparable (tail (cons head tail)))
+          (quote :false))
+        (by
+          (rewrite head_comparable)
+          (eval)))
+      (==
+        (value-eq-comparable tail)
+        (by
+          (eval)))
+      (==
+        (quote :true)
+        (by
+          (exact tail_comparable))))))
 
 (theorem value_eq_true_implies_not_lambdas
   (forall left (is-value left)
@@ -2622,6 +2753,209 @@
                   (rewrite head_equal)
                   (rewrite tail_equal_through_cell)
                   (eval))))))))))
+
+(theorem value_eq_true_implies_comparable_left
+  (forall left (is-value left)
+    (forall right (is-value right)
+      (implies
+        (computes-to (value-eq left right) (quote :true))
+        (computes-to (value-eq-comparable left) (quote :true)))))
+  (by
+    (value-induction left
+      left_is_symbol
+      (by
+        (intro right)
+        (intro values_equal)
+        (specialize left_is_symbol_result value_kind_symbol_implies_is_symbol left)
+        (specialize result value_eq_comparable_symbol left)
+        (exact result))
+      left_is_lambda
+      (by
+        (intro right)
+        (intro values_equal)
+        (specialize not_lambdas value_eq_true_implies_not_lambdas left right)
+        (cases not_lambdas left_not_lambda right_not_lambda)
+        (specialize left_is_lambda_result value_kind_lambda_implies_is_lambda left)
+        (have impossible_eq
+          (computes-to (quote :true) (quote :false))
+          (by
+            (calc
+              (quote :true)
+              (==
+                (is-lambda left)
+                (by
+                  (exact (symm left_is_lambda_result))))
+              (==
+                (quote :false)
+                (by
+                  (exact left_not_lambda)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (computes-to (value-eq-comparable left) (quote :true)))))))
+      (by
+        (intro right)
+        (intro values_equal)
+        (exact value_eq_comparable_nil))
+      left_head
+      left_tail
+      left_head_comparable
+      left_tail_comparable
+      (by
+        (value-induction right
+          right_is_symbol
+          (by
+            (intro values_equal)
+            (have left_not_symbol
+              (computes-to (is-symbol (cons left_head left_tail)) (quote :false))
+              (by
+                (eval)))
+            (specialize lists value_eq_left_non_symbol_true_implies_lists
+              (cons left_head left_tail)
+              right)
+            (cases lists left_is_list right_is_list)
+            (have right_not_symbol
+              (computes-to (is-symbol right) (quote :false))
+              (by
+                (eval)))
+            (specialize right_is_symbol_result value_kind_symbol_implies_is_symbol right)
+            (have impossible_eq
+              (computes-to (quote :true) (quote :false))
+              (by
+                (calc
+                  (quote :true)
+                  (==
+                    (is-symbol right)
+                    (by
+                      (exact (symm right_is_symbol_result))))
+                  (==
+                    (quote :false)
+                    (by
+                      (exact right_not_symbol)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to
+                      (value-eq-comparable (cons left_head left_tail))
+                      (quote :true)))))))
+          right_is_lambda
+          (by
+            (intro values_equal)
+            (specialize not_lambdas value_eq_true_implies_not_lambdas
+              (cons left_head left_tail)
+              right)
+            (cases not_lambdas left_not_lambda right_not_lambda)
+            (specialize right_is_lambda_result value_kind_lambda_implies_is_lambda right)
+            (have impossible_eq
+              (computes-to (quote :true) (quote :false))
+              (by
+                (calc
+                  (quote :true)
+                  (==
+                    (is-lambda right)
+                    (by
+                      (exact (symm right_is_lambda_result))))
+                  (==
+                    (quote :false)
+                    (by
+                      (exact right_not_lambda)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to
+                      (value-eq-comparable (cons left_head left_tail))
+                      (quote :true)))))))
+          (by
+            (intro values_equal)
+            (specialize cons_nil_false value_eq_cons_nil left_head left_tail)
+            (have impossible_eq
+              (computes-to (quote :false) (quote :true))
+              (by
+                (calc
+                  (quote :false)
+                  (==
+                    (value-eq (cons left_head left_tail) nil)
+                    (by
+                      (exact (symm cons_nil_false))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact values_equal)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to
+                      (value-eq-comparable (cons left_head left_tail))
+                      (quote :true)))))))
+          right_head
+          right_tail
+          right_head_comparable
+          right_tail_comparable
+          (by
+            (intro values_equal)
+            (specialize parts value_eq_cons_true_elim
+              left_head
+              left_tail
+              right_head
+              right_tail)
+            (cases parts heads_equal tails_equal)
+            (specialize head_comparable left_head_comparable right_head)
+            (specialize tail_comparable left_tail_comparable right_tail)
+            (specialize result value_eq_comparable_cons left_head left_tail)
+            (exact result)))))))
+
+(theorem value_eq_true_implies_comparable_right
+  (forall left (is-value left)
+    (forall right (is-value right)
+      (implies
+        (computes-to (value-eq left right) (quote :true))
+        (computes-to (value-eq-comparable right) (quote :true)))))
+  (by
+    (intro left)
+    (intro right)
+    (intro values_equal)
+    (specialize left_comparable value_eq_true_implies_comparable_left left right)
+    (specialize values_same value_eq_sound left right)
+    (calc
+      (value-eq-comparable right)
+      (==
+        (value-eq-comparable left)
+        (by
+          (rewrite (symm values_same))
+          (eval)))
+      (==
+        (quote :true)
+        (by
+          (exact left_comparable))))))
+
+(theorem value_eq_symm
+  (forall left (is-value left)
+    (forall right (is-value right)
+      (implies
+        (computes-to (value-eq left right) (quote :true))
+        (computes-to (value-eq right left) (quote :true)))))
+  (by
+    (intro left)
+    (intro right)
+    (intro values_equal)
+    (specialize right_comparable value_eq_true_implies_comparable_right left right)
+    (specialize values_same value_eq_sound left right)
+    (specialize right_refl value_eq_refl right)
+    (calc
+      (value-eq right left)
+      (==
+        (value-eq right right)
+        (by
+          (rewrite values_same)
+          (eval)))
+      (==
+        (quote :true)
+        (by
+          (exact right_refl))))))
 
 (theorem member_nil
   (forall value (is-value value)

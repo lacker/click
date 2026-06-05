@@ -208,7 +208,12 @@ fn prelude_theorem_names() -> Vec<Name> {
         "value_eq_nil_cons",
         "value_eq_cons_nil",
         "value_eq_cons",
+        "value_kind_symbol_implies_is_symbol",
+        "value_kind_lambda_implies_is_lambda",
         "is_symbol_true_implies_is_lambda_false",
+        "value_eq_comparable_symbol",
+        "value_eq_comparable_nil",
+        "value_eq_comparable_cons",
         "value_eq_true_implies_not_lambdas",
         "value_non_symbol_non_lambda_is_list",
         "value_eq_left_non_symbol_true_implies_lists",
@@ -218,6 +223,9 @@ fn prelude_theorem_names() -> Vec<Name> {
         "cons_congr",
         "value_eq_sound",
         "value_eq_refl",
+        "value_eq_true_implies_comparable_left",
+        "value_eq_true_implies_comparable_right",
+        "value_eq_symm",
         "member_nil",
         "member_cons_true",
         "member_cons_false",
@@ -909,8 +917,15 @@ fn theory_defines_reverse_theorems() {
     let value_eq_nil_cons_prop = list_tests::value_eq_nil_cons_source_theorem();
     let value_eq_cons_nil_prop = list_tests::value_eq_cons_nil_source_theorem();
     let value_eq_cons_prop = list_tests::value_eq_cons_source_theorem();
+    let value_kind_symbol_implies_is_symbol_prop =
+        list_tests::value_kind_symbol_implies_is_symbol_source_theorem();
+    let value_kind_lambda_implies_is_lambda_prop =
+        list_tests::value_kind_lambda_implies_is_lambda_source_theorem();
     let is_symbol_true_implies_is_lambda_false_prop =
         list_tests::is_symbol_true_implies_is_lambda_false_source_theorem();
+    let value_eq_comparable_symbol_prop = list_tests::value_eq_comparable_symbol_source_theorem();
+    let value_eq_comparable_nil_prop = list_tests::value_eq_comparable_nil_source_theorem();
+    let value_eq_comparable_cons_prop = list_tests::value_eq_comparable_cons_source_theorem();
     let value_eq_true_implies_not_lambdas_prop =
         list_tests::value_eq_true_implies_not_lambdas_source_theorem();
     let value_non_symbol_non_lambda_is_list_prop =
@@ -923,6 +938,11 @@ fn theory_defines_reverse_theorems() {
     let cons_congr_prop = list_tests::cons_congr_source_theorem();
     let value_eq_sound_prop = list_tests::value_eq_sound_source_theorem();
     let value_eq_refl_prop = list_tests::value_eq_refl_source_theorem();
+    let value_eq_true_implies_comparable_left_prop =
+        list_tests::value_eq_true_implies_comparable_left_source_theorem();
+    let value_eq_true_implies_comparable_right_prop =
+        list_tests::value_eq_true_implies_comparable_right_source_theorem();
+    let value_eq_symm_prop = list_tests::value_eq_symm_source_theorem();
     let member_nil_prop = list_tests::member_nil_source_theorem();
     let member_cons_true_prop = list_tests::member_cons_true_source_theorem();
     let member_cons_false_prop = list_tests::member_cons_false_source_theorem();
@@ -1608,10 +1628,40 @@ fn theory_defines_reverse_theorems() {
         &value_eq_cons_prop,
     );
     assert_eq!(
+        checked_theorem("value_kind_symbol_implies_is_symbol")
+            .expect("symbol classifier bridge theorem source proof should check with dependencies")
+            .prop(),
+        &value_kind_symbol_implies_is_symbol_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_kind_lambda_implies_is_lambda")
+            .expect("lambda classifier bridge theorem source proof should check with dependencies")
+            .prop(),
+        &value_kind_lambda_implies_is_lambda_prop,
+    );
+    assert_eq!(
         checked_theorem("is_symbol_true_implies_is_lambda_false")
             .expect("symbol kind theorem source proof should check with dependencies")
             .prop(),
         &is_symbol_true_implies_is_lambda_false_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_comparable_symbol")
+            .expect("symbol comparability theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_comparable_symbol_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_comparable_nil")
+            .expect("nil comparability theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_comparable_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_comparable_cons")
+            .expect("cons comparability theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_comparable_cons_prop,
     );
     assert_eq!(
         checked_theorem("value_eq_true_implies_not_lambdas")
@@ -1668,6 +1718,28 @@ fn theory_defines_reverse_theorems() {
             .expect("value-eq reflexivity theorem source proof should check with dependencies")
             .prop(),
         &value_eq_refl_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_true_implies_comparable_left")
+            .expect(
+                "value-eq left comparability theorem source proof should check with dependencies"
+            )
+            .prop(),
+        &value_eq_true_implies_comparable_left_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_true_implies_comparable_right")
+            .expect(
+                "value-eq right comparability theorem source proof should check with dependencies"
+            )
+            .prop(),
+        &value_eq_true_implies_comparable_right_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_symm")
+            .expect("value-eq symmetry theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_symm_prop,
     );
     assert_eq!(
         checked_theorem("member_nil")

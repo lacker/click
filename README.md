@@ -106,9 +106,9 @@ distinguish `nil` from `cons`. Prelude helpers use `value-kind` to define
 boolean value predicates and `value-eq`, a structural equality for symbols and
 lists that errors on lambdas. Like `symbol-eq`, `value-eq` is a computation;
 the list prelude proves `value_eq_sound`, which turns a `:true` result from
-`value-eq` into proof equality. It also proves `value_eq_refl` for values
-accepted by `value-eq-comparable`, the recursive predicate for lambda-free
-values.
+`value-eq` into proof equality. It also proves comparability facts for any
+successful `value-eq`, `value_eq_refl` for values accepted by
+`value-eq-comparable`, and `value_eq_symm` for successful comparisons.
 
 At the source level, `(is-bool x)` is proposition shorthand for saying that `x`
 computes to either `(quote :true)` or `(quote :false)`. It elaborates to an

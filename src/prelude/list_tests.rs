@@ -514,8 +514,28 @@ pub fn value_eq_cons_source_theorem() -> Prop {
     theorem_prop("value_eq_cons")
 }
 
+pub fn value_kind_symbol_implies_is_symbol_source_theorem() -> Prop {
+    theorem_prop("value_kind_symbol_implies_is_symbol")
+}
+
+pub fn value_kind_lambda_implies_is_lambda_source_theorem() -> Prop {
+    theorem_prop("value_kind_lambda_implies_is_lambda")
+}
+
 pub fn is_symbol_true_implies_is_lambda_false_source_theorem() -> Prop {
     theorem_prop("is_symbol_true_implies_is_lambda_false")
+}
+
+pub fn value_eq_comparable_symbol_source_theorem() -> Prop {
+    theorem_prop("value_eq_comparable_symbol")
+}
+
+pub fn value_eq_comparable_nil_source_theorem() -> Prop {
+    theorem_prop("value_eq_comparable_nil")
+}
+
+pub fn value_eq_comparable_cons_source_theorem() -> Prop {
+    theorem_prop("value_eq_comparable_cons")
 }
 
 pub fn value_eq_true_implies_not_lambdas_source_theorem() -> Prop {
@@ -552,6 +572,18 @@ pub fn value_eq_sound_source_theorem() -> Prop {
 
 pub fn value_eq_refl_source_theorem() -> Prop {
     theorem_prop("value_eq_refl")
+}
+
+pub fn value_eq_true_implies_comparable_left_source_theorem() -> Prop {
+    theorem_prop("value_eq_true_implies_comparable_left")
+}
+
+pub fn value_eq_true_implies_comparable_right_source_theorem() -> Prop {
+    theorem_prop("value_eq_true_implies_comparable_right")
+}
+
+pub fn value_eq_symm_source_theorem() -> Prop {
+    theorem_prop("value_eq_symm")
 }
 
 pub fn member_nil_source_theorem() -> Prop {
@@ -1828,6 +1860,34 @@ pub fn value_eq_cons_theorem(
     )
 }
 
+/// A true symbol-kind test gives a true `is-symbol` result.
+pub fn value_kind_symbol_implies_is_symbol_theorem(value: Symbol) -> Prop {
+    forall(
+        value,
+        implies(
+            computes_to(
+                symbol_eq(value_kind(var(value)), quote(SYMBOL_KIND_SYMBOL)),
+                true_value(),
+            ),
+            computes_to(is_symbol_call(var(value)), true_value()),
+        ),
+    )
+}
+
+/// A true lambda-kind test gives a true `is-lambda` result.
+pub fn value_kind_lambda_implies_is_lambda_theorem(value: Symbol) -> Prop {
+    forall(
+        value,
+        implies(
+            computes_to(
+                symbol_eq(value_kind(var(value)), quote(LAMBDA_KIND_SYMBOL)),
+                true_value(),
+            ),
+            computes_to(is_lambda_call(var(value)), true_value()),
+        ),
+    )
+}
+
 /// A computation whose symbol-kind test returns true has a false lambda-kind test.
 pub fn is_symbol_true_implies_is_lambda_false_theorem(value: Symbol) -> Prop {
     forall(
@@ -1835,6 +1895,45 @@ pub fn is_symbol_true_implies_is_lambda_false_theorem(value: Symbol) -> Prop {
         implies(
             computes_to(is_symbol_call(var(value)), true_value()),
             computes_to(is_lambda_call(var(value)), false_value()),
+        ),
+    )
+}
+
+/// Symbols are comparable by `value-eq`.
+pub fn value_eq_comparable_symbol_theorem(value: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        implies(
+            computes_to(is_symbol_call(var(value)), true_value()),
+            computes_to(value_eq_comparable_call(var(value)), true_value()),
+        ),
+    )
+}
+
+/// `nil` is comparable by `value-eq`.
+pub fn value_eq_comparable_nil_theorem() -> Prop {
+    computes_to(value_eq_comparable_call(nil()), true_value())
+}
+
+/// A cons is comparable when its head and tail are comparable.
+pub fn value_eq_comparable_cons_theorem(head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            tail,
+            is_list(var(tail)),
+            implies(
+                computes_to(value_eq_comparable_call(var(head)), true_value()),
+                implies(
+                    computes_to(value_eq_comparable_call(var(tail)), true_value()),
+                    computes_to(
+                        value_eq_comparable_call(cons(var(head), var(tail))),
+                        true_value(),
+                    ),
+                ),
+            ),
         ),
     )
 }
@@ -2028,6 +2127,54 @@ pub fn value_eq_refl_theorem(value: Symbol) -> Prop {
         implies(
             computes_to(value_eq_comparable_call(var(value)), true_value()),
             computes_to(value_eq_call(var(value), var(value)), true_value()),
+        ),
+    )
+}
+
+/// A true `value-eq` result means the left value is comparable.
+pub fn value_eq_true_implies_comparable_left_theorem(left: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_value(var(left)),
+        forall_where(
+            right,
+            is_value(var(right)),
+            implies(
+                computes_to(value_eq_call(var(left), var(right)), true_value()),
+                computes_to(value_eq_comparable_call(var(left)), true_value()),
+            ),
+        ),
+    )
+}
+
+/// A true `value-eq` result means the right value is comparable.
+pub fn value_eq_true_implies_comparable_right_theorem(left: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_value(var(left)),
+        forall_where(
+            right,
+            is_value(var(right)),
+            implies(
+                computes_to(value_eq_call(var(left), var(right)), true_value()),
+                computes_to(value_eq_comparable_call(var(right)), true_value()),
+            ),
+        ),
+    )
+}
+
+/// `value-eq` is symmetric when it returns true.
+pub fn value_eq_symm_theorem(left: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_value(var(left)),
+        forall_where(
+            right,
+            is_value(var(right)),
+            implies(
+                computes_to(value_eq_call(var(left), var(right)), true_value()),
+                computes_to(value_eq_call(var(right), var(left)), true_value()),
+            ),
         ),
     )
 }
@@ -3344,8 +3491,13 @@ mod tests {
         let cons_left_tail = theorem_symbol("value_eq_cons", "left_tail");
         let cons_right_head = theorem_symbol("value_eq_cons", "right_head");
         let cons_right_tail = theorem_symbol("value_eq_cons", "right_tail");
+        let kind_symbol_value = theorem_symbol("value_kind_symbol_implies_is_symbol", "value");
+        let kind_lambda_value = theorem_symbol("value_kind_lambda_implies_is_lambda", "value");
         let symbol_not_lambda_value =
             theorem_symbol("is_symbol_true_implies_is_lambda_false", "value");
+        let comparable_symbol_value = theorem_symbol("value_eq_comparable_symbol", "value");
+        let comparable_cons_head = theorem_symbol("value_eq_comparable_cons", "head");
+        let comparable_cons_tail = theorem_symbol("value_eq_comparable_cons", "tail");
         let not_lambdas_left = theorem_symbol("value_eq_true_implies_not_lambdas", "left");
         let not_lambdas_right = theorem_symbol("value_eq_true_implies_not_lambdas", "right");
         let classified_list_value = theorem_symbol("value_non_symbol_non_lambda_is_list", "value");
@@ -3368,6 +3520,15 @@ mod tests {
         let sound_left = theorem_symbol("value_eq_sound", "left");
         let sound_right = theorem_symbol("value_eq_sound", "right");
         let refl_value = theorem_symbol("value_eq_refl", "value");
+        let comparable_left_left = theorem_symbol("value_eq_true_implies_comparable_left", "left");
+        let comparable_left_right =
+            theorem_symbol("value_eq_true_implies_comparable_left", "right");
+        let comparable_right_left =
+            theorem_symbol("value_eq_true_implies_comparable_right", "left");
+        let comparable_right_right =
+            theorem_symbol("value_eq_true_implies_comparable_right", "right");
+        let symm_left = theorem_symbol("value_eq_symm", "left");
+        let symm_right = theorem_symbol("value_eq_symm", "right");
 
         assert_eq!(
             value_eq_true_true_source_theorem(),
@@ -3396,8 +3557,28 @@ mod tests {
             )
         );
         assert_eq!(
+            value_kind_symbol_implies_is_symbol_source_theorem(),
+            value_kind_symbol_implies_is_symbol_theorem(kind_symbol_value)
+        );
+        assert_eq!(
+            value_kind_lambda_implies_is_lambda_source_theorem(),
+            value_kind_lambda_implies_is_lambda_theorem(kind_lambda_value)
+        );
+        assert_eq!(
             is_symbol_true_implies_is_lambda_false_source_theorem(),
             is_symbol_true_implies_is_lambda_false_theorem(symbol_not_lambda_value)
+        );
+        assert_eq!(
+            value_eq_comparable_symbol_source_theorem(),
+            value_eq_comparable_symbol_theorem(comparable_symbol_value)
+        );
+        assert_eq!(
+            value_eq_comparable_nil_source_theorem(),
+            value_eq_comparable_nil_theorem()
+        );
+        assert_eq!(
+            value_eq_comparable_cons_source_theorem(),
+            value_eq_comparable_cons_theorem(comparable_cons_head, comparable_cons_tail)
         );
         assert_eq!(
             value_eq_true_implies_not_lambdas_source_theorem(),
@@ -3447,6 +3628,24 @@ mod tests {
         assert_eq!(
             value_eq_refl_source_theorem(),
             value_eq_refl_theorem(refl_value)
+        );
+        assert_eq!(
+            value_eq_true_implies_comparable_left_source_theorem(),
+            value_eq_true_implies_comparable_left_theorem(
+                comparable_left_left,
+                comparable_left_right,
+            )
+        );
+        assert_eq!(
+            value_eq_true_implies_comparable_right_source_theorem(),
+            value_eq_true_implies_comparable_right_theorem(
+                comparable_right_left,
+                comparable_right_right,
+            )
+        );
+        assert_eq!(
+            value_eq_symm_source_theorem(),
+            value_eq_symm_theorem(symm_left, symm_right)
         );
     }
 
