@@ -374,6 +374,8 @@ fn tactic_eval(limit: usize, theory: &Theory, goal: &Goal) -> Result<Proof, Proo
 }
 
 const SIMP_STEP_LIMIT: usize = 128;
+const SIMP_TRACE_LIMIT: usize = 32;
+const SIMP_TRACE_VALUE_LIMIT: usize = 240;
 
 fn tactic_simp(
     rules: &[ProofExpr],
@@ -384,25 +386,58 @@ fn tactic_simp(
         return Err(tactic_failed("simp", "goal is not an equality"));
     };
 
-    let (simplified_left, left_proof) =
-        simplify_computation(left.clone(), rules, theory, &goal.context)?;
-    let (simplified_right, right_proof) =
-        simplify_computation(right.clone(), rules, theory, &goal.context)?;
+    let left_result = simplify_computation(left.clone(), rules, theory, &goal.context)?;
+    let right_result = simplify_computation(right.clone(), rules, theory, &goal.context)?;
 
-    if !alpha_eq_computation(&simplified_left, &simplified_right) {
+    if !alpha_eq_computation(&left_result.result, &right_result.result) {
         return Err(tactic_failed(
             "simp",
-            format!(
-                "simplified goal to {:?} equals {:?}, but the sides still differ",
-                simplified_left, simplified_right
-            ),
+            simp_failure_message(left, &left_result, right, &right_result),
         ));
     }
 
     Ok(Proof::Trans(
-        Box::new(left_proof),
-        Box::new(Proof::Symm(Box::new(right_proof))),
+        Box::new(left_result.proof),
+        Box::new(Proof::Symm(Box::new(right_result.proof))),
     ))
+}
+
+struct SimpResult {
+    result: Computation,
+    proof: Proof,
+    trace: SimpTrace,
+}
+
+#[derive(Default)]
+struct SimpTrace {
+    steps: Vec<String>,
+    omitted_steps: usize,
+}
+
+impl SimpTrace {
+    fn push(&mut self, step: impl Into<String>) {
+        if self.steps.len() < SIMP_TRACE_LIMIT {
+            self.steps.push(step.into());
+        } else {
+            self.omitted_steps += 1;
+        }
+    }
+
+    fn push_change(&mut self, label: impl Into<String>, before: &Computation, after: &Computation) {
+        self.push(format!(
+            "{}: {} -> {}",
+            label.into(),
+            compact_debug(before),
+            compact_debug(after)
+        ));
+    }
+
+    fn extend(&mut self, other: SimpTrace) {
+        for step in other.steps {
+            self.push(step);
+        }
+        self.omitted_steps += other.omitted_steps;
+    }
 }
 
 fn simplify_computation(
@@ -410,18 +445,21 @@ fn simplify_computation(
     rules: &[ProofExpr],
     theory: &Theory,
     context: &Context,
-) -> Result<(Computation, Proof), ProofElaborationError> {
+) -> Result<SimpResult, ProofElaborationError> {
     let mut current = original.clone();
     let mut proofs = Vec::new();
+    let mut trace = SimpTrace::default();
 
     for _ in 0..SIMP_STEP_LIMIT {
         if let Some(rewrite) = simp_rewrite(&current, rules, theory, context)? {
+            trace.extend(rewrite.trace);
             proofs.push(rewrite.proof);
             current = rewrite.result;
             continue;
         }
 
         if let Some(rewrite) = simp_child(&current, rules, theory, context)? {
+            trace.extend(rewrite.trace);
             proofs.push(rewrite.proof);
             current = rewrite.result;
             continue;
@@ -429,6 +467,7 @@ fn simplify_computation(
 
         match theory.reduce_in_context(&current, context) {
             crate::Step::Reduced(next) => {
+                trace.push_change("kernel reduction", &current, &next);
                 proofs.push(Proof::Step(current));
                 current = next;
                 continue;
@@ -436,18 +475,26 @@ fn simplify_computation(
             crate::Step::Normal => {}
         }
 
-        return Ok((current, equality_chain_or_refl(original, proofs)));
+        return Ok(SimpResult {
+            result: current,
+            proof: equality_chain_or_refl(original, proofs),
+            trace,
+        });
     }
 
     Err(tactic_failed(
         "simp",
-        format!("simplification exceeded {SIMP_STEP_LIMIT} steps"),
+        format!(
+            "simplification exceeded {SIMP_STEP_LIMIT} steps\nsteps:\n{}",
+            format_simp_trace(&trace)
+        ),
     ))
 }
 
 struct SimpRewrite {
     result: Computation,
     proof: Proof,
+    trace: SimpTrace,
 }
 
 fn simp_rewrite(
@@ -456,8 +503,8 @@ fn simp_rewrite(
     theory: &Theory,
     context: &Context,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
-    for rule in rules {
-        if let Some(rewrite) = simp_rewrite_with_rule(rule, target, theory, context)? {
+    for (rule_index, rule) in rules.iter().enumerate() {
+        if let Some(rewrite) = simp_rewrite_with_rule(rule_index, rule, target, theory, context)? {
             return Ok(Some(rewrite));
         }
     }
@@ -471,6 +518,7 @@ struct SimpRule {
 }
 
 fn simp_rewrite_with_rule(
+    rule_index: usize,
     rule: &ProofExpr,
     target: &Computation,
     theory: &Theory,
@@ -510,9 +558,20 @@ fn simp_rewrite_with_rule(
                 if alpha_eq_computation(&right, target) {
                     continue;
                 }
+                let mut trace = SimpTrace::default();
+                trace.push_change(
+                    format!(
+                        "rewrite with rule {} ({})",
+                        rule_index + 1,
+                        compact_debug(rule)
+                    ),
+                    target,
+                    &right,
+                );
                 return Ok(Some(SimpRewrite {
                     result: right,
                     proof,
+                    trace,
                 }));
             }
             Prop::Implies(_, _) => continue,
@@ -763,6 +822,60 @@ fn equality_chain_or_refl(original: Computation, proofs: Vec<Proof>) -> Proof {
     trans_chain(proofs).unwrap_or(Proof::Refl(original))
 }
 
+fn simp_failure_message(
+    left_original: &Computation,
+    left_result: &SimpResult,
+    right_original: &Computation,
+    right_result: &SimpResult,
+) -> String {
+    format!(
+        "simplified goal, but the sides still differ\n\
+         left original: {}\n\
+         left result: {}\n\
+         left steps:\n{}\n\
+         right original: {}\n\
+         right result: {}\n\
+         right steps:\n{}",
+        compact_debug(left_original),
+        compact_debug(&left_result.result),
+        format_simp_trace(&left_result.trace),
+        compact_debug(right_original),
+        compact_debug(&right_result.result),
+        format_simp_trace(&right_result.trace)
+    )
+}
+
+fn format_simp_trace(trace: &SimpTrace) -> String {
+    if trace.steps.is_empty() {
+        return "  (no simplification steps)".to_string();
+    }
+
+    let mut lines = Vec::new();
+    for (index, step) in trace.steps.iter().enumerate() {
+        lines.push(format!("  {}. {step}", index + 1));
+    }
+    if trace.omitted_steps > 0 {
+        lines.push(format!("  ... {} more steps omitted", trace.omitted_steps));
+    }
+    lines.join("\n")
+}
+
+fn compact_debug(value: &impl std::fmt::Debug) -> String {
+    let mut text = format!("{value:?}");
+    if text.chars().count() <= SIMP_TRACE_VALUE_LIMIT {
+        return text;
+    }
+
+    let cutoff = text
+        .char_indices()
+        .nth(SIMP_TRACE_VALUE_LIMIT)
+        .map(|(index, _)| index)
+        .unwrap_or(text.len());
+    text.truncate(cutoff);
+    text.push_str("...");
+    text
+}
+
 fn simp_child(
     computation: &Computation,
     rules: &[ProofExpr],
@@ -972,29 +1085,31 @@ fn simplify_child(
     theory: &Theory,
     context: &Context,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
-    let (simplified_child, child_proof) =
-        simplify_computation(child.clone(), rules, theory, context)?;
-    if alpha_eq_computation(child, &simplified_child) {
+    let child_result = simplify_computation(child.clone(), rules, theory, context)?;
+    if alpha_eq_computation(child, &child_result.result) {
         return Ok(None);
     }
 
     let parent = parent.clone();
-    let result = rebuild(simplified_child.clone());
+    let result = rebuild(child_result.result.clone());
     let placeholder = fresh_rewrite_symbol(
         &Prop::Equal(parent.clone(), result.clone()),
         child,
-        &simplified_child,
+        &child_result.result,
     );
     let template = Prop::Equal(parent.clone(), rebuild(Computation::Var(placeholder)));
+    let mut trace = child_result.trace;
+    trace.push_change("lift subcomputation", &parent, &result);
 
     Ok(Some(SimpRewrite {
         result,
         proof: Proof::Rewrite {
-            equality: Box::new(child_proof),
+            equality: Box::new(child_result.proof),
             proof: Box::new(Proof::Refl(parent)),
             variable: placeholder,
             template,
         },
+        trace,
     }))
 }
 

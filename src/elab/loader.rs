@@ -633,6 +633,41 @@ mod tests {
     }
 
     #[test]
+    fn failing_simp_reports_simplification_steps() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (theorem bad_simp
+                  (equal
+                    (if (quote :true) nil (error 0))
+                    (error 1))
+                  (by
+                    (simp only)))
+                ",
+            )
+            .expect_err("bad simp theorem should report a useful failure");
+
+        let SourceLoadError::Theorem(SourceTheoremError::ProofElaborationFailed {
+            error: proof::ProofElaborationError::TacticFailed { tactic, message },
+            ..
+        }) = error
+        else {
+            panic!("expected a simp tactic failure");
+        };
+
+        assert_eq!(tactic, "simp");
+        assert!(message.contains("simplified goal, but the sides still differ"));
+        assert!(message.contains("left original"));
+        assert!(message.contains("left result"));
+        assert!(message.contains("left steps"));
+        assert!(message.contains("kernel reduction"));
+        assert!(message.contains("right steps"));
+        assert!(message.contains("(no simplification steps)"));
+    }
+
+    #[test]
     fn load_str_checks_absurd_and_if_condition_bool_theorems() {
         let mut loaded = LoadedSource::new();
 
