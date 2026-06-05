@@ -3971,6 +3971,37 @@
                       (simpa only (symm left_head_unit))))))))))))
 )
 
+(theorem nat_le_of_add_sub_cancel
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to
+          (add right (sub left right))
+          left)
+        (computes-to (nat-le right left) (quote :true)))))
+  (by
+    (intro left)
+    (intro right)
+    (intro add_sub_left)
+    (obtain difference difference_proof
+      (sub_computes_to_list left right))
+    (calc
+      (nat-le right left)
+      (==
+        (nat-le right (add right (sub left right)))
+        (by
+          (rewrite (symm add_sub_left))
+          (eval)))
+      (==
+        (nat-le right (add right difference))
+        (by
+          (rewrite difference_proof)
+          (eval)))
+      (==
+        (quote :true)
+        (by
+          (exact nat_le_left_add right difference))))))
+
 (theorem nat_lt_right_left_implies_nat_lt_zero_sub
   (forall left (is-list left)
     (forall right (is-list right)
