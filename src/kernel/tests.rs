@@ -1428,6 +1428,33 @@ fn symbol_eq_true_elim_inverts_true_symbol_comparisons() {
 }
 
 #[test]
+fn symbol_eq_reduces_reflexive_open_symbol_in_context() {
+    let value = Computation::Var(Symbol(1));
+    let comparison = symbol_eq_computation(value.clone(), value.clone());
+    let expected = equal(comparison.clone(), Computation::Quote(TRUE_SYMBOL));
+    assert!(!check(&Proof::Step(comparison.clone()), &expected));
+
+    let mut context = Context::new();
+    context.insert(Symbol(9), is_value(value.clone()));
+    context.insert(
+        Symbol(10),
+        equal(
+            symbol_eq_computation(
+                value_kind_computation(value.clone()),
+                Computation::Quote(SYMBOL_KIND_SYMBOL),
+            ),
+            Computation::Quote(TRUE_SYMBOL),
+        ),
+    );
+
+    assert!(check_in_context(
+        &Proof::Step(comparison),
+        &expected,
+        &context,
+    ));
+}
+
+#[test]
 fn if_true_with_false_else_elims_invert_boolean_results() {
     let condition = Computation::Quote(TRUE_SYMBOL);
     let then_branch = Computation::Quote(TRUE_SYMBOL);

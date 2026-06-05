@@ -94,6 +94,10 @@ fn value_eq() -> Computation {
     computation_ref("value-eq")
 }
 
+fn value_eq_comparable() -> Computation {
+    computation_ref("value-eq-comparable")
+}
+
 fn member() -> Computation {
     computation_ref("member")
 }
@@ -213,6 +217,7 @@ fn prelude_theorem_names() -> Vec<Name> {
         "value_eq_cons_true_elim",
         "cons_congr",
         "value_eq_sound",
+        "value_eq_refl",
         "member_nil",
         "member_cons_true",
         "member_cons_false",
@@ -465,6 +470,10 @@ fn theory_defines_reverse() {
         Some(&list_tests::value_eq_definition())
     );
     assert_eq!(
+        theory.computation(computation("value-eq-comparable")),
+        Some(&list_tests::value_eq_comparable_definition())
+    );
+    assert_eq!(
         theory.computation(computation("member")),
         Some(&list_tests::member_definition())
     );
@@ -532,6 +541,10 @@ fn theory_defines_reverse() {
         Computation::Ref(computation("is-list-value"))
     );
     assert_eq!(value_eq(), Computation::Ref(computation("value-eq")));
+    assert_eq!(
+        value_eq_comparable(),
+        Computation::Ref(computation("value-eq-comparable"))
+    );
     assert_eq!(member(), Computation::Ref(computation("member")));
     assert_eq!(last(), Computation::Ref(computation("last")));
     assert_eq!(init(), Computation::Ref(computation("init")));
@@ -614,6 +627,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&value_eq()),
         Step::Reduced(list_tests::value_eq_definition())
+    );
+    assert_eq!(
+        theory.reduce(&value_eq_comparable()),
+        Step::Reduced(list_tests::value_eq_comparable_definition())
     );
     assert_eq!(
         theory.reduce(&member()),
@@ -905,6 +922,7 @@ fn theory_defines_reverse_theorems() {
     let value_eq_cons_true_elim_prop = list_tests::value_eq_cons_true_elim_source_theorem();
     let cons_congr_prop = list_tests::cons_congr_source_theorem();
     let value_eq_sound_prop = list_tests::value_eq_sound_source_theorem();
+    let value_eq_refl_prop = list_tests::value_eq_refl_source_theorem();
     let member_nil_prop = list_tests::member_nil_source_theorem();
     let member_cons_true_prop = list_tests::member_cons_true_source_theorem();
     let member_cons_false_prop = list_tests::member_cons_false_source_theorem();
@@ -1644,6 +1662,12 @@ fn theory_defines_reverse_theorems() {
             .expect("value-eq soundness theorem source proof should check with dependencies")
             .prop(),
         &value_eq_sound_prop,
+    );
+    assert_eq!(
+        checked_theorem("value_eq_refl")
+            .expect("value-eq reflexivity theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_refl_prop,
     );
     assert_eq!(
         checked_theorem("member_nil")

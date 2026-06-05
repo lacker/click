@@ -57,7 +57,7 @@ the current goal and local context, then elaborate to ordinary kernel `Proof`
 values that are checked by the kernel. The initial tactic set is intentionally
 small and deterministic: `intro`, `assumption`, `exact`, `eval`, `apply`,
 `have`, `specialize`, `obtain`, `cases`, `rewrite`, `or-elim`, `list-induction`,
-`calc`, `split`/`constructor`, `exists`, `left`, and `right`.
+`value-induction`, `calc`, `split`/`constructor`, `exists`, `left`, and `right`.
 Continuation tactics such as `have`, `specialize`, `obtain`, and `cases` can
 either scope over the remaining tactic script or take an explicit final
 `(by ...)` body to make the scope boundary visible in source.
@@ -105,8 +105,10 @@ introspection. After evaluating its input, it returns `:symbol`, `:lambda`, or
 distinguish `nil` from `cons`. Prelude helpers use `value-kind` to define
 boolean value predicates and `value-eq`, a structural equality for symbols and
 lists that errors on lambdas. Like `symbol-eq`, `value-eq` is a computation;
-future prelude equality work should add general bridge theorems connecting a
-`:true` result from `value-eq` to proof equality.
+the list prelude proves `value_eq_sound`, which turns a `:true` result from
+`value-eq` into proof equality. It also proves `value_eq_refl` for values
+accepted by `value-eq-comparable`, the recursive predicate for lambda-free
+values.
 
 At the source level, `(is-bool x)` is proposition shorthand for saying that `x`
 computes to either `(quote :true)` or `(quote :false)`. It elaborates to an
@@ -122,6 +124,12 @@ a finalized cons tail must itself be a list. Raw computations can still contain
 open or malformed cons-shaped expressions until evaluation and proof reasoning
 settle them. The kernel uses `is-list` predicates and list induction to reason
 over list values.
+
+The kernel has both list induction and value induction. List induction reasons
+over a list spine. Value induction reasons over all finite values: symbols,
+lambdas, nil, and cons, with recursive hypotheses for both the cons head and
+tail. The head hypothesis is what makes proofs about nested list values
+possible; ordinary list induction only gives a hypothesis for the tail.
 
 The core calculus can contain opaque names. The logistical layer gives those
 names meaning by binding them to computations or theorems. Human-facing spelling,
@@ -148,9 +156,10 @@ represented as a computation variable plus a proposition such as `is-value`.
 The standard prelude is just a theory built on top of the kernel. It currently
 contains list definitions such as `reverse_acc`, `reverse`, `append`, `snoc`,
 `concat`, `map`, `concat-map`, `fold-right`, `fold-left`, `zip-with`, `filter`,
-`any`, `all`, `is-symbol`, `is-lambda`, `is-list-value`, `value-eq`, `member`,
-`last`, `init`, `null`, and `is-singleton`, plus theorems about those
-definitions. Prelude booleans use the kernel's reserved quoted symbols.
+`any`, `all`, `is-symbol`, `is-lambda`, `is-list-value`, `value-eq`,
+`value-eq-comparable`, `member`, `last`, `init`, `null`, and `is-singleton`,
+plus theorems about those definitions. Prelude booleans use the kernel's
+reserved quoted symbols.
 The list prelude itself lives in `src/prelude/list.lisp`; the corresponding
 Rust module only includes that source file, with list-specific Rust helpers kept
 as test support.

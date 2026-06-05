@@ -197,6 +197,14 @@ pub fn value_eq_definition() -> Computation {
     definition("value-eq")
 }
 
+pub fn value_eq_comparable() -> Computation {
+    computation_ref("value-eq-comparable")
+}
+
+pub fn value_eq_comparable_definition() -> Computation {
+    definition("value-eq-comparable")
+}
+
 pub fn member() -> Computation {
     computation_ref("member")
 }
@@ -542,6 +550,10 @@ pub fn value_eq_sound_source_theorem() -> Prop {
     theorem_prop("value_eq_sound")
 }
 
+pub fn value_eq_refl_source_theorem() -> Prop {
+    theorem_prop("value_eq_refl")
+}
+
 pub fn member_nil_source_theorem() -> Prop {
     theorem_prop("member_nil")
 }
@@ -694,6 +706,10 @@ pub fn is_list_value_call(value: Computation) -> Computation {
 
 pub fn value_eq_call(left: Computation, right: Computation) -> Computation {
     apply(apply(value_eq(), left), right)
+}
+
+pub fn value_eq_comparable_call(value: Computation) -> Computation {
+    apply(value_eq_comparable(), value)
 }
 
 pub fn head_call(list: Computation) -> Computation {
@@ -2000,6 +2016,18 @@ pub fn value_eq_sound_theorem(left: Symbol, right: Symbol) -> Prop {
                 computes_to(value_eq_call(var(left), var(right)), true_value()),
                 computes_to(var(left), var(right)),
             ),
+        ),
+    )
+}
+
+/// `value-eq` is reflexive for comparable values.
+pub fn value_eq_refl_theorem(value: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        implies(
+            computes_to(value_eq_comparable_call(var(value)), true_value()),
+            computes_to(value_eq_call(var(value), var(value)), true_value()),
         ),
     )
 }
@@ -3339,6 +3367,7 @@ mod tests {
         let cons_congr_right_tail = theorem_symbol("cons_congr", "right_tail");
         let sound_left = theorem_symbol("value_eq_sound", "left");
         let sound_right = theorem_symbol("value_eq_sound", "right");
+        let refl_value = theorem_symbol("value_eq_refl", "value");
 
         assert_eq!(
             value_eq_true_true_source_theorem(),
@@ -3414,6 +3443,10 @@ mod tests {
         assert_eq!(
             value_eq_sound_source_theorem(),
             value_eq_sound_theorem(sound_left, sound_right)
+        );
+        assert_eq!(
+            value_eq_refl_source_theorem(),
+            value_eq_refl_theorem(refl_value)
         );
     }
 
@@ -4419,6 +4452,34 @@ mod tests {
 
         assert_evaluates(
             value_eq_call(left, right),
+            Value::quote(prelude_symbol(":false")),
+        );
+    }
+
+    #[test]
+    fn value_eq_comparable_accepts_symbols_and_lambda_free_lists() {
+        assert_evaluates(
+            value_eq_comparable_call(quote(A)),
+            Value::quote(prelude_symbol(":true")),
+        );
+        assert_evaluates(
+            value_eq_comparable_call(pair(quote(A), quote(B))),
+            Value::quote(prelude_symbol(":true")),
+        );
+        assert_evaluates(
+            value_eq_comparable_call(pair(singleton(quote(A)), pair(quote(B), nil()))),
+            Value::quote(prelude_symbol(":true")),
+        );
+    }
+
+    #[test]
+    fn value_eq_comparable_rejects_lambdas_even_nested() {
+        assert_evaluates(
+            value_eq_comparable_call(lambda(X, var(X))),
+            Value::quote(prelude_symbol(":false")),
+        );
+        assert_evaluates(
+            value_eq_comparable_call(singleton(lambda(X, var(X)))),
             Value::quote(prelude_symbol(":false")),
         );
     }

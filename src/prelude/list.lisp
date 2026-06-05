@@ -227,6 +227,22 @@
                     (value-eq (tail left_cell) (tail right_cell))
                     (quote :false)))))))))))
 
+(def value-eq-comparable
+  (lambda value
+    (if
+      (is-lambda value)
+      (quote :false)
+      (if
+        (is-symbol value)
+        (quote :true)
+        (list-case value
+          (quote :true)
+          cell
+          (if
+            (value-eq-comparable (head cell))
+            (value-eq-comparable (tail cell))
+            (quote :false)))))))
+
 (def member
   (lambda value
     (lambda list
@@ -2332,6 +2348,280 @@
             (specialize tail_equal left_tail_sound right_tail)
             (specialize result cons_congr left_head left_tail right_head right_tail)
             (exact result)))))))
+
+(theorem value_eq_refl
+  (forall value (is-value value)
+    (implies
+      (computes-to (value-eq-comparable value) (quote :true))
+      (computes-to (value-eq value value) (quote :true))))
+  (by
+    (value-induction value
+      value_is_symbol
+      (by
+        (intro value_comparable)
+        (have value_is_symbol_result
+          (computes-to (is-symbol value) (quote :true))
+          (by
+            (calc
+              (is-symbol value)
+              (==
+                (symbol-eq (value-kind value) (quote :symbol))
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact value_is_symbol))))))
+        (specialize value_not_lambda is_symbol_true_implies_is_lambda_false value)
+        (have symbols_equal
+          (computes-to (symbol-eq value value) (quote :true))
+          (by
+            (eval)))
+        (calc
+          (value-eq value value)
+          (==
+            (if
+              (is-lambda value)
+              (error 0)
+              (if
+                (is-lambda value)
+                (error 0)
+                (if
+                  (is-symbol value)
+                  (symbol-eq value value)
+                  (if
+                    (is-symbol value)
+                    (quote :false)
+                    (list-case value
+                      (list-case value
+                        (quote :true)
+                        right_cell
+                        (quote :false))
+                      left_cell
+                      (list-case value
+                        (quote :false)
+                        right_cell
+                        (if
+                          (value-eq (head left_cell) (head right_cell))
+                          (value-eq (tail left_cell) (tail right_cell))
+                          (quote :false))))))))
+            (by
+              (eval)))
+          (==
+            (if
+              (is-lambda value)
+              (error 0)
+              (if
+                (is-symbol value)
+                (symbol-eq value value)
+                (if
+                  (is-symbol value)
+                  (quote :false)
+                  (list-case value
+                    (list-case value
+                      (quote :true)
+                      right_cell
+                      (quote :false))
+                    left_cell
+                    (list-case value
+                      (quote :false)
+                      right_cell
+                      (if
+                        (value-eq (head left_cell) (head right_cell))
+                        (value-eq (tail left_cell) (tail right_cell))
+                        (quote :false)))))))
+            (by
+              (rewrite value_not_lambda)
+              (eval)))
+          (==
+            (if
+              (is-symbol value)
+              (symbol-eq value value)
+              (if
+                (is-symbol value)
+                (quote :false)
+                (list-case value
+                  (list-case value
+                    (quote :true)
+                    right_cell
+                    (quote :false))
+                  left_cell
+                  (list-case value
+                    (quote :false)
+                    right_cell
+                    (if
+                      (value-eq (head left_cell) (head right_cell))
+                      (value-eq (tail left_cell) (tail right_cell))
+                      (quote :false))))))
+            (by
+              (rewrite value_not_lambda)
+              (eval)))
+          (==
+            (symbol-eq value value)
+            (by
+              (rewrite value_is_symbol_result)
+              (eval)))
+          (==
+            (quote :true)
+            (by
+              (exact symbols_equal)))))
+      value_is_lambda
+      (by
+        (intro value_comparable)
+        (have value_is_lambda_result
+          (computes-to (is-lambda value) (quote :true))
+          (by
+            (calc
+              (is-lambda value)
+              (==
+                (symbol-eq (value-kind value) (quote :lambda))
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact value_is_lambda))))))
+        (have comparable_false
+          (computes-to (value-eq-comparable value) (quote :false))
+          (by
+            (calc
+              (value-eq-comparable value)
+              (==
+                (if
+                  (is-lambda value)
+                  (quote :false)
+                  (if
+                    (is-symbol value)
+                    (quote :true)
+                    (list-case value
+                      (quote :true)
+                      cell
+                      (if
+                        (value-eq-comparable (head cell))
+                        (value-eq-comparable (tail cell))
+                        (quote :false)))))
+                (by
+                  (eval)))
+              (==
+                (quote :false)
+                (by
+                  (rewrite value_is_lambda_result)
+                  (eval))))))
+        (have impossible_eq
+          (computes-to (quote :false) (quote :true))
+          (by
+            (calc
+              (quote :false)
+              (==
+                (value-eq-comparable value)
+                (by
+                  (exact (symm comparable_false))))
+              (==
+                (quote :true)
+                (by
+                  (exact value_comparable)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (computes-to (value-eq value value) (quote :true)))))))
+      (by
+        (intro value_comparable)
+        (eval))
+      head
+      tail
+      head_refl
+      tail_refl
+      (by
+        (intro value_comparable)
+        (have branch_true
+          (computes-to
+            (if
+              (value-eq-comparable head)
+              (value-eq-comparable (tail (cons head tail)))
+              (quote :false))
+            (quote :true))
+          (by
+            (calc
+              (if
+                (value-eq-comparable head)
+                (value-eq-comparable (tail (cons head tail)))
+                (quote :false))
+              (==
+                (value-eq-comparable (cons head tail))
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact value_comparable)))))
+          (by
+            (specialize comparable_parts if_true_result_with_false_else
+              (value-eq-comparable head)
+              (value-eq-comparable (tail (cons head tail))))
+            (cases comparable_parts head_comparable tail_comparable_through_cell)
+            (have tail_comparable
+              (computes-to (value-eq-comparable tail) (quote :true))
+              (by
+                (calc
+                  (value-eq-comparable tail)
+                  (==
+                    (value-eq-comparable (tail (cons head tail)))
+                    (by
+                      (eval)))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact tail_comparable_through_cell))))))
+            (specialize head_equal head_refl)
+            (specialize tail_equal tail_refl)
+            (have tail_equal_through_cell
+              (computes-to
+                (value-eq
+                  (tail (cons head tail))
+                  (tail (cons head tail)))
+                (quote :true))
+              (by
+                (calc
+                  (value-eq
+                    (tail (cons head tail))
+                    (tail (cons head tail)))
+                  (==
+                    (value-eq tail tail)
+                    (by
+                      (eval)))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact tail_equal))))))
+            (calc
+              (value-eq (cons head tail) (cons head tail))
+              (==
+                (if
+                  (value-eq
+                    (head (cons head tail))
+                    (head (cons head tail)))
+                  (value-eq
+                    (tail (cons head tail))
+                    (tail (cons head tail)))
+                  (quote :false))
+                (by
+                  (apply value_eq_cons head tail head tail)))
+              (==
+                (if
+                  (value-eq head head)
+                  (value-eq
+                    (tail (cons head tail))
+                    (tail (cons head tail)))
+                  (quote :false))
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (rewrite head_equal)
+                  (rewrite tail_equal_through_cell)
+                  (eval))))))))))
 
 (theorem member_nil
   (forall value (is-value value)

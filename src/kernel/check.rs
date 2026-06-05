@@ -913,6 +913,11 @@ fn symbol_eq_result_for_proof(
     context: &Context,
 ) -> Option<Computation> {
     match (left, right) {
+        _ if alpha_eq_computation(left, right)
+            && computation_is_known_symbol_value(left, context) =>
+        {
+            Some(Computation::Quote(TRUE_SYMBOL))
+        }
         (Computation::Quote(left), Computation::Quote(right)) if left == right => {
             Some(Computation::Quote(TRUE_SYMBOL))
         }
@@ -989,6 +994,14 @@ fn computation_is_known_non_symbol_value(computation: &Computation, context: &Co
         Computation::Var(_) => computation_is_list(computation, context),
         _ => false,
     }
+}
+
+fn computation_is_known_symbol_value(computation: &Computation, context: &Context) -> bool {
+    matches!(computation, Computation::Quote(_))
+        || context_contains_prop(
+            context,
+            &value_kind_is_kind(computation.clone(), SYMBOL_KIND_SYMBOL),
+        )
 }
 
 fn proven_steps(
