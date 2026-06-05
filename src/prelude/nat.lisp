@@ -286,8 +286,7 @@
       (==
         (cons (quote unit) sum)
         (by
-          (rewrite sum_proof)
-          (eval)))
+          (simpa only sum_proof)))
       (==
         (succ sum)
         (by
@@ -295,8 +294,7 @@
       (==
         (succ (add left right))
         (by
-          (rewrite (symm sum_proof))
-          (eval))))))
+          (simpa only (symm sum_proof)))))))
 
 (theorem pred_add_succ_left
   (forall left (is-list left)
@@ -314,13 +312,11 @@
       (==
         (pred (succ (add left right)))
         (by
-          (rewrite (add_succ_left left right))
-          (eval)))
+          (simpa only (add_succ_left left right))))
       (==
         (pred (succ sum))
         (by
-          (rewrite sum_proof)
-          (eval)))
+          (simpa only sum_proof)))
       (==
         sum
         (by
@@ -328,8 +324,7 @@
       (==
         (add left right)
         (by
-          (rewrite (symm sum_proof))
-          (eval))))))
+          (simpa only (symm sum_proof)))))))
 
 (theorem is_zero_add_succ_left
   (forall left (is-list left)
@@ -347,9 +342,7 @@
       (==
         (is-zero (succ sum))
         (by
-          (rewrite (add_succ_left left right))
-          (rewrite sum_proof)
-          (eval)))
+          (simpa only (add_succ_left left right) sum_proof)))
       (==
         (quote :false)
         (by
@@ -389,13 +382,11 @@
           (==
             (cons head (succ (add tail right)))
             (by
-              (rewrite tail_succ)
-              (eval)))
+              (simpa only tail_succ)))
           (==
             (cons head (succ tail_sum))
             (by
-              (rewrite tail_sum_proof)
-              (eval)))
+              (simpa only tail_sum_proof)))
           (==
             (cons head (cons (quote unit) tail_sum))
             (by
@@ -403,8 +394,7 @@
           (==
             (cons (quote unit) (cons (quote unit) tail_sum))
             (by
-              (rewrite head_unit)
-              (eval)))
+              (simpa only head_unit)))
           (==
             (succ (cons (quote unit) tail_sum))
             (by
@@ -412,13 +402,11 @@
           (==
             (succ (cons head tail_sum))
             (by
-              (rewrite (symm head_unit))
-              (eval)))
+              (simpa only (symm head_unit))))
           (==
             (succ (cons head (add tail right)))
             (by
-              (rewrite (symm tail_sum_proof))
-              (eval)))
+              (simpa only (symm tail_sum_proof))))
           (==
             (succ (add (cons head tail) right))
             (by
@@ -469,13 +457,11 @@
       (==
         (pred (succ (add left right)))
         (by
-          (rewrite left_succ)
-          (eval)))
+          (simpa only left_succ)))
       (==
         (pred (succ sum))
         (by
-          (rewrite sum_proof)
-          (eval)))
+          (simpa only sum_proof)))
       (==
         sum
         (by
@@ -483,8 +469,7 @@
       (==
         (add left right)
         (by
-          (rewrite (symm sum_proof))
-          (eval))))))
+          (simpa only (symm sum_proof)))))))
 
 (theorem is_zero_add_succ_right
   (forall left (is-list left)
@@ -506,13 +491,11 @@
       (==
         (is-zero (succ (add left right)))
         (by
-          (rewrite left_succ)
-          (eval)))
+          (simpa only left_succ)))
       (==
         (is-zero (succ sum))
         (by
-          (rewrite sum_proof)
-          (eval)))
+          (simpa only sum_proof)))
       (==
         (quote :false)
         (by
@@ -575,13 +558,11 @@
           (==
             (is-nat-value (cons head (add tail right)))
             (by
-              (rewrite (add_cons head tail right))
-              (eval)))
+              (simpa only (add_cons head tail right))))
           (==
             (is-nat-value (cons head tail_sum))
             (by
-              (rewrite tail_sum_proof)
-              (eval)))
+              (simpa only tail_sum_proof)))
           (==
             (if
               (symbol-eq head (quote unit))
@@ -595,16 +576,14 @@
               (is-nat-value (add tail right))
               (quote :false))
             (by
-              (rewrite (symm tail_sum_proof))
-              (eval)))
+              (simpa only (symm tail_sum_proof))))
           (==
             (if
               (symbol-eq head (quote unit))
               (is-nat-value tail)
               (quote :false))
             (by
-              (rewrite tail_suffix_preserves_nat)
-              (eval)))
+              (simpa only tail_suffix_preserves_nat)))
           (==
             (is-nat-value (cons head tail))
             (by
@@ -657,8 +636,7 @@
       (==
         (add left_middle right)
         (by
-          (rewrite left_middle_proof)
-          (eval)))
+          (simpa only left_middle_proof)))
       (==
         (append left_middle right)
         (by
@@ -666,13 +644,11 @@
       (==
         (append (add left middle) right)
         (by
-          (rewrite (symm left_middle_proof))
-          (eval)))
+          (simpa only (symm left_middle_proof))))
       (==
         (append (append left middle) right)
         (by
-          (rewrite (add_is_append left middle))
-          (eval)))
+          (simpa only (add_is_append left middle))))
       (==
         (append left (append middle right))
         (by
@@ -685,8 +661,7 @@
       (==
         (append left middle_right)
         (by
-          (rewrite middle_right_proof)
-          (eval)))
+          (simpa only middle_right_proof)))
       (==
         (add left middle_right)
         (by
@@ -694,8 +669,7 @@
       (==
         (add left (add middle right))
         (by
-          (rewrite (symm middle_right_proof))
-          (eval))))))
+          (simpa only (symm middle_right_proof)))))))
 
 (theorem add_comm
   (forall left (is-list left)
@@ -749,18 +723,15 @@
           (==
             (cons head (add right tail))
             (by
-              (rewrite tail_comm)
-              (eval)))
+              (simpa only tail_comm)))
           (==
             (cons head right_tail)
             (by
-              (rewrite right_tail_proof)
-              (eval)))
+              (simpa only right_tail_proof)))
           (==
             (cons (quote unit) right_tail)
             (by
-              (rewrite head_unit)
-              (eval)))
+              (simpa only head_unit)))
           (==
             (succ right_tail)
             (by
@@ -768,8 +739,7 @@
           (==
             (succ (add right tail))
             (by
-              (rewrite (symm right_tail_proof))
-              (eval)))
+              (simpa only (symm right_tail_proof))))
           (==
             (add right (succ tail))
             (by
@@ -781,8 +751,7 @@
           (==
             (add right (cons head tail))
             (by
-              (rewrite (symm head_unit))
-              (eval))))))))
+              (simpa only (symm head_unit)))))))))
 
 (theorem add_swap
   (forall left (is-list left)
@@ -811,8 +780,7 @@
       (==
         (add (add right left) rest)
         (by
-          (rewrite left_right_comm)
-          (eval)))
+          (simpa only left_right_comm)))
       (==
         (add right (add left rest))
         (by
@@ -878,8 +846,7 @@
               (==
                 (add right tail_product)
                 (by
-                  (rewrite tail_product_proof)
-                  (eval)))
+                  (simpa only tail_product_proof)))
               (==
                 product
                 (by
@@ -924,8 +891,7 @@
               (==
                 (is-nat-value (mul tail right))
                 (by
-                  (rewrite (symm tail_product_proof))
-                  (eval)))
+                  (simpa only (symm tail_product_proof))))
             (==
                 (quote :true)
                 (by
@@ -936,13 +902,11 @@
           (==
             (is-nat-value (add right (mul tail right)))
             (by
-              (rewrite (mul_cons head tail right))
-              (eval)))
+              (simpa only (mul_cons head tail right))))
           (==
             (is-nat-value (add right tail_product))
             (by
-              (rewrite tail_product_proof)
-              (eval)))
+              (simpa only tail_product_proof)))
           (==
             (quote :true)
             (by
@@ -986,23 +950,19 @@
       (==
         (is-zero (mul (succ left) right_succ))
         (by
-          (rewrite right_succ_proof)
-          (eval)))
+          (simpa only right_succ_proof)))
       (==
         (is-zero (add right_succ (mul left right_succ)))
         (by
-          (rewrite (mul_succ_left left right_succ))
-          (eval)))
+          (simpa only (mul_succ_left left right_succ))))
       (==
         (is-zero (add right_succ tail_product))
         (by
-          (rewrite tail_product_proof)
-          (eval)))
+          (simpa only tail_product_proof)))
       (==
         (is-zero (add (succ right) tail_product))
         (by
-          (rewrite (symm right_succ_proof))
-          (eval)))
+          (simpa only (symm right_succ_proof))))
       (==
         (quote :false)
         (by
@@ -1026,23 +986,19 @@
       (==
         (pred (mul (succ left) right_succ))
         (by
-          (rewrite right_succ_proof)
-          (eval)))
+          (simpa only right_succ_proof)))
       (==
         (pred (add right_succ (mul left right_succ)))
         (by
-          (rewrite (mul_succ_left left right_succ))
-          (eval)))
+          (simpa only (mul_succ_left left right_succ))))
       (==
         (pred (add right_succ tail_product))
         (by
-          (rewrite tail_product_proof)
-          (eval)))
+          (simpa only tail_product_proof)))
       (==
         (pred (add (succ right) tail_product))
         (by
-          (rewrite (symm right_succ_proof))
-          (eval)))
+          (simpa only (symm right_succ_proof))))
       (==
         (add right tail_product)
         (by
@@ -1050,13 +1006,11 @@
       (==
         (add right (mul left right_succ))
         (by
-          (rewrite (symm tail_product_proof))
-          (eval)))
+          (simpa only (symm tail_product_proof))))
       (==
         (add right (mul left (succ right)))
         (by
-          (rewrite (symm right_succ_proof))
-          (eval))))))
+          (simpa only (symm right_succ_proof)))))))
 
 (theorem mul_succ_right
   (forall left (is-list left)
@@ -1118,8 +1072,7 @@
               (==
                 (add right tail_product)
                 (by
-                  (rewrite tail_product_proof)
-                  (eval))))))
+                  (simpa only tail_product_proof))))))
         (specialize swapped_tail add_swap (cons (quote unit) right) tail tail_product)
         (specialize tail_cons_unit add_cons_unit_right tail right_tail_product)
         (calc
@@ -1145,15 +1098,13 @@
               (cons (quote unit) right)
               (add tail (mul tail right)))
             (by
-              (rewrite tail_succ)
-              (eval)))
+              (simpa only tail_succ)))
           (==
             (add
               (cons (quote unit) right)
               (add tail tail_product))
             (by
-              (rewrite tail_product_proof)
-              (eval)))
+              (simpa only tail_product_proof)))
           (==
             (add tail (add (cons (quote unit) right) tail_product))
             (by
@@ -1161,13 +1112,11 @@
           (==
             (add tail (cons (quote unit) (add right tail_product)))
             (by
-              (rewrite (add_cons (quote unit) right tail_product))
-              (eval)))
+              (simpa only (add_cons (quote unit) right tail_product))))
           (==
             (add tail (cons (quote unit) right_tail_product))
             (by
-              (rewrite right_tail_product_proof)
-              (eval)))
+              (simpa only right_tail_product_proof)))
           (==
             (succ (add tail right_tail_product))
             (by
@@ -1183,18 +1132,15 @@
           (==
             (add (cons (quote unit) tail) (add right tail_product))
             (by
-              (rewrite (symm right_tail_product_proof))
-              (eval)))
+              (simpa only (symm right_tail_product_proof))))
           (==
             (add (cons head tail) (add right tail_product))
             (by
-              (rewrite (symm head_unit))
-              (eval)))
+              (simpa only (symm head_unit))))
           (==
             (add (cons head tail) (mul (cons head tail) right))
             (by
-              (rewrite (symm cons_product))
-              (eval))))))))
+              (simpa only (symm cons_product)))))))))
 
 (theorem mul_zero_right
   (forall nat (is-list nat)
@@ -1214,8 +1160,7 @@
           (==
             (mul (cons head tail) nil)
             (by
-              (rewrite (eval-to zero nil))
-              (eval)))
+              (simpa only (eval-to zero nil))))
           (==
             (add nil (mul tail nil))
             (by
@@ -1223,8 +1168,7 @@
           (==
             (add zero tail_product)
             (by
-              (rewrite tail_product_proof)
-              (eval)))
+              (simpa only tail_product_proof)))
           (==
             tail_product
             (by
@@ -1232,8 +1176,7 @@
           (==
             (mul tail nil)
             (by
-              (rewrite (symm tail_product_proof))
-              (eval)))
+              (simpa only (symm tail_product_proof))))
           (==
             (mul tail zero)
             (by
@@ -1256,8 +1199,7 @@
       (==
         (is-zero zero)
         (by
-          (rewrite (mul_zero_right nat))
-          (eval)))
+          (simpa only (mul_zero_right nat))))
       (==
         (quote :true)
         (by
@@ -1275,8 +1217,7 @@
       (==
         (mul (succ nil) right)
         (by
-          (rewrite (eval-to zero nil))
-          (eval)))
+          (simpa only (eval-to zero nil))))
       (==
         (add right (mul nil right))
         (by
@@ -1289,8 +1230,7 @@
       (==
         (add right zero)
         (by
-          (rewrite (mul_zero_left right))
-          (eval)))
+          (simpa only (mul_zero_left right))))
       (==
         right
         (by
@@ -1335,8 +1275,7 @@
           (==
             (add (succ zero) tail)
             (by
-              (rewrite tail_product)
-              (eval)))
+              (simpa only tail_product)))
           (==
             (cons (quote unit) tail)
             (by
@@ -1344,8 +1283,7 @@
           (==
             (cons head tail)
             (by
-              (rewrite (symm head_unit))
-              (eval))))))))
+              (simpa only (symm head_unit)))))))))
 
 (theorem mul_comm
   (forall left (is-list left)
@@ -1401,8 +1339,7 @@
           (==
             (add right (mul right tail))
             (by
-              (rewrite tail_product)
-              (eval)))
+              (simpa only tail_product)))
           (==
             (mul right (succ tail))
             (by
@@ -1414,8 +1351,7 @@
           (==
             (mul right (cons head tail))
             (by
-              (rewrite (symm head_unit))
-              (eval))))))))
+              (simpa only (symm head_unit)))))))))
 
 (theorem mul_add_left_distrib
   (forall left (is-list left)
@@ -1453,13 +1389,11 @@
           (==
             (add (mul nil right) middle_right)
             (by
-              (rewrite (eval-to zero nil))
-              (eval)))
+              (simpa only (eval-to zero nil))))
           (==
             (add (mul nil right) (mul middle right))
             (by
-              (rewrite (symm middle_right_proof))
-              (eval)))))
+              (simpa only (symm middle_right_proof))))))
       head
       tail
       induction_hypothesis
@@ -1478,13 +1412,11 @@
           (==
             (mul (cons head (add tail middle)) right)
             (by
-              (rewrite (add_cons head tail middle))
-              (eval)))
+              (simpa only (add_cons head tail middle))))
           (==
             (mul (cons head tail_middle) right)
             (by
-              (rewrite tail_middle_proof)
-              (eval)))
+              (simpa only tail_middle_proof)))
           (==
             (add right (mul tail_middle right))
             (by
@@ -1492,23 +1424,19 @@
           (==
             (add right (mul (add tail middle) right))
             (by
-              (rewrite (symm tail_middle_proof))
-              (eval)))
+              (simpa only (symm tail_middle_proof))))
           (==
             (add right (add (mul tail right) (mul middle right)))
             (by
-              (rewrite tail_distrib)
-              (eval)))
+              (simpa only tail_distrib)))
           (==
             (add right (add tail_right (mul middle right)))
             (by
-              (rewrite tail_right_proof)
-              (eval)))
+              (simpa only tail_right_proof)))
           (==
             (add right (add tail_right middle_right))
             (by
-              (rewrite middle_right_proof)
-              (eval)))
+              (simpa only middle_right_proof)))
           (==
             (add (add right tail_right) middle_right)
             (by
@@ -1516,13 +1444,11 @@
           (==
             (add (add right tail_right) (mul middle right))
             (by
-              (rewrite (symm middle_right_proof))
-              (eval)))
+              (simpa only (symm middle_right_proof))))
           (==
             (add (add right (mul tail right)) (mul middle right))
             (by
-              (rewrite (symm tail_right_proof))
-              (eval)))
+              (simpa only (symm tail_right_proof))))
           (==
             (add (mul (cons head tail) right) (mul middle right))
             (by
@@ -1560,13 +1486,11 @@
           (==
             (mul nil middle_right)
             (by
-              (rewrite (eval-to zero nil))
-              (eval)))
+              (simpa only (eval-to zero nil))))
           (==
             (mul nil (mul middle right))
             (by
-              (rewrite (symm middle_right_proof))
-              (eval)))))
+              (simpa only (symm middle_right_proof))))))
       head
       tail
       induction_hypothesis
@@ -1583,13 +1507,11 @@
           (==
             (mul (add middle (mul tail middle)) right)
             (by
-              (rewrite (mul_cons head tail middle))
-              (eval)))
+              (simpa only (mul_cons head tail middle))))
           (==
             (mul (add middle tail_middle) right)
             (by
-              (rewrite tail_middle_proof)
-              (eval)))
+              (simpa only tail_middle_proof)))
           (==
             (add (mul middle right) (mul tail_middle right))
             (by
@@ -1597,23 +1519,19 @@
           (==
             (add (mul middle right) (mul (mul tail middle) right))
             (by
-              (rewrite (symm tail_middle_proof))
-              (eval)))
+              (simpa only (symm tail_middle_proof))))
           (==
             (add (mul middle right) (mul tail (mul middle right)))
             (by
-              (rewrite tail_assoc)
-              (eval)))
+              (simpa only tail_assoc)))
           (==
             (add middle_right (mul tail (mul middle right)))
             (by
-              (rewrite middle_right_proof)
-              (eval)))
+              (simpa only middle_right_proof)))
           (==
             (add middle_right (mul tail middle_right))
             (by
-              (rewrite middle_right_proof)
-              (eval)))
+              (simpa only middle_right_proof)))
           (==
             (mul (cons head tail) middle_right)
             (by
@@ -1621,8 +1539,7 @@
           (==
             (mul (cons head tail) (mul middle right))
             (by
-              (rewrite (symm middle_right_proof))
-              (eval))))))))
+              (simpa only (symm middle_right_proof)))))))))
 
 (theorem mul_add_right_distrib
   (forall left (is-list left)
@@ -1657,8 +1574,7 @@
           (==
             (is-nat-value (add middle right))
             (by
-              (rewrite (symm middle_right_sum_proof))
-              (eval)))
+              (simpa only (symm middle_right_sum_proof))))
           (==
             (quote :true)
             (by
@@ -1671,8 +1587,7 @@
       (==
         (mul left middle_right_sum)
         (by
-          (rewrite middle_right_sum_proof)
-          (eval)))
+          (simpa only middle_right_sum_proof)))
       (==
         (mul middle_right_sum left)
         (by
@@ -1680,8 +1595,7 @@
       (==
         (mul (add middle right) left)
         (by
-          (rewrite (symm middle_right_sum_proof))
-          (eval)))
+          (simpa only (symm middle_right_sum_proof))))
       (==
         (add (mul middle left) (mul right left))
         (by
@@ -1689,10 +1603,8 @@
       (==
         (add (mul left middle) (mul right left))
         (by
-          (rewrite middle_left_comm)
-          (eval)))
+          (simpa only middle_left_comm)))
       (==
         (add (mul left middle) (mul left right))
         (by
-          (rewrite right_left_comm)
-          (eval))))))
+          (simpa only right_left_comm))))))

@@ -348,8 +348,7 @@
     (intro condition)
     (intro then)
     (intro else)
-    (rewrite else)
-    (eval)))
+    (simpa only else)))
 
 (theorem if_condition_false
   (forall condition
@@ -364,8 +363,7 @@
     (intro condition)
     (intro then)
     (intro else)
-    (rewrite else)
-    (eval)))
+    (simpa only else)))
 
 (theorem if_true_result_with_false_else
   (forall condition
@@ -437,8 +435,7 @@
               (==
                 (if condition (quote :false) else_branch)
                 (by
-                  (rewrite condition_true)
-                  (eval)))
+                  (simpa only condition_true)))
               (==
                 (quote :true)
                 (by
@@ -461,8 +458,7 @@
               (==
                 (if condition (quote :false) else_branch)
                 (by
-                  (rewrite condition_false)
-                  (eval)))
+                  (simpa only condition_false)))
               (==
                 (quote :true)
                 (by
@@ -591,8 +587,7 @@
               (==
                 (cons head tail_result)
                 (by
-                  (rewrite tail_result_proof)
-                  (eval))))))))))
+                  (simpa only tail_result_proof))))))))))
 
 (theorem append_nil_returns_right
   (forall right (is-list right)
@@ -621,8 +616,7 @@
           (==
             (cons head tail)
             (by
-              (rewrite induction_hypothesis)
-              (eval))))))))
+              (simpa only induction_hypothesis))))))))
 
 (theorem append_cons
   (forall head (is-value head)
@@ -702,13 +696,11 @@
               (==
                 (cons mapped_head (map function tail))
                 (by
-                  (rewrite mapped_head_proof)
-                  (eval)))
+                  (simpa only mapped_head_proof)))
               (==
                 (cons mapped_head mapped_tail)
                 (by
-                  (rewrite mapped_tail_proof)
-                  (eval))))))))))
+                  (simpa only mapped_tail_proof))))))))))
 
 (theorem concat_map_nil
   (forall function (is-value function)
@@ -767,13 +759,11 @@
               (==
                 (append mapped_head (concat-map function tail))
                 (by
-                  (rewrite mapped_head_proof)
-                  (eval)))
+                  (simpa only mapped_head_proof)))
               (==
                 (append mapped_head mapped_tail)
                 (by
-                  (rewrite mapped_tail_proof)
-                  (eval)))
+                  (simpa only mapped_tail_proof)))
               (==
                 appended
                 (by
@@ -849,8 +839,7 @@
               (==
                 (function head tail_result)
                 (by
-                  (rewrite tail_result_proof)
-                  (eval)))
+                  (simpa only tail_result_proof)))
               (==
                 folded_result
                 (by
@@ -930,8 +919,7 @@
               (==
                 (fold-left function folded_initial tail)
                 (by
-                  (rewrite folded_initial_proof)
-                  (eval)))
+                  (simpa only folded_initial_proof)))
               (==
                 result
                 (by
@@ -1045,13 +1033,11 @@
                       zipped_head
                       (zip-with function left_tail right_tail))
                     (by
-                      (rewrite zipped_head_proof)
-                      (eval)))
+                      (simpa only zipped_head_proof)))
                   (==
                     (cons zipped_head zipped_tail)
                     (by
-                      (rewrite zipped_tail_proof)
-                      (eval))))))))))))
+                      (simpa only zipped_tail_proof))))))))))))
 
 (theorem filter_nil
   (forall predicate (is-value predicate)
@@ -1205,8 +1191,7 @@
                   (==
                     (cons head filtered_tail)
                     (by
-                      (rewrite filtered_tail_proof)
-                      (eval)))))))
+                      (simpa only filtered_tail_proof)))))))
           predicate_false
           (by
             (obtain filtered_tail filtered_tail_proof induction_hypothesis)
@@ -1736,8 +1721,7 @@
                       (value-eq (tail left_cell) (tail right_cell))
                       (quote :false))))))
             (by
-              (rewrite left_not_symbol)
-              (eval)))
+              (simpa only left_not_symbol)))
           (==
             (if
               (is-lambda right)
@@ -1762,8 +1746,7 @@
                         (value-eq (tail left_cell) (tail right_cell))
                         (quote :false)))))))
             (by
-              (rewrite right_not_lambda)
-              (eval)))
+              (simpa only right_not_lambda)))
           (==
             (if
               (is-lambda left)
@@ -1791,8 +1774,7 @@
                           (value-eq (tail left_cell) (tail right_cell))
                           (quote :false))))))))
             (by
-              (rewrite left_not_lambda)
-              (eval)))
+              (simpa only left_not_lambda)))
           (==
             (value-eq left right)
             (by
@@ -1869,8 +1851,7 @@
                       (value-eq (tail left_cell) (tail right_cell))
                       (quote :false))))))
             (by
-              (rewrite left_is_symbol)
-              (eval)))
+              (simpa only left_is_symbol)))
           (==
             (if
               (is-lambda right)
@@ -1895,8 +1876,7 @@
                         (value-eq (tail left_cell) (tail right_cell))
                         (quote :false)))))))
             (by
-              (rewrite right_is_not_lambda)
-              (eval)))
+              (simpa only right_is_not_lambda)))
           (==
             (if
               (is-lambda left)
@@ -1924,8 +1904,7 @@
                           (value-eq (tail left_cell) (tail right_cell))
                           (quote :false))))))))
             (by
-              (rewrite left_is_not_lambda)
-              (eval)))
+              (simpa only left_is_not_lambda)))
           (==
             (value-eq left right)
             (by
@@ -2374,8 +2353,7 @@
                         (value-eq (tail left_cell) (tail right_cell))
                         (quote :false)))))))
             (by
-              (rewrite value_not_lambda)
-              (eval)))
+              (simpa only value_not_lambda)))
           (==
             (if
               (is-symbol value)
@@ -2397,13 +2375,11 @@
                       (value-eq (tail left_cell) (tail right_cell))
                       (quote :false))))))
             (by
-              (rewrite value_not_lambda)
-              (eval)))
+              (simpa only value_not_lambda)))
           (==
             (symbol-eq value value)
             (by
-              (rewrite value_is_symbol_result)
-              (eval)))
+              (simpa only value_is_symbol_result)))
           (==
             (quote :true)
             (by
@@ -2448,8 +2424,7 @@
               (==
                 (quote :false)
                 (by
-                  (rewrite value_is_lambda_result)
-                  (eval))))))
+                  (simpa only value_is_lambda_result))))))
         (have impossible_eq
           (computes-to (quote :false) (quote :true))
           (by
@@ -2979,8 +2954,7 @@
           (==
             (append nil (append middle right))
             (by
-              (rewrite (symm middle_right_proof))
-              (eval)))))
+              (simpa only (symm middle_right_proof))))))
       head
       tail
       induction_hypothesis
@@ -2996,13 +2970,11 @@
           (==
             (append (cons head (append tail middle)) right)
             (by
-              (rewrite (append_cons head tail middle))
-              (eval)))
+              (simpa only (append_cons head tail middle))))
           (==
             (append (cons head tail_middle) right)
             (by
-              (rewrite tail_middle_proof)
-              (eval)))
+              (simpa only tail_middle_proof)))
           (==
             (cons head (append tail_middle right))
             (by
@@ -3010,18 +2982,15 @@
           (==
             (cons head (append (append tail middle) right))
             (by
-              (rewrite (symm tail_middle_proof))
-              (eval)))
+              (simpa only (symm tail_middle_proof))))
           (==
             (cons head (append tail (append middle right)))
             (by
-              (rewrite (induction_hypothesis middle right))
-              (eval)))
+              (simpa only (induction_hypothesis middle right))))
           (==
             (cons head (append tail middle_right))
             (by
-              (rewrite middle_right_proof)
-              (eval)))
+              (simpa only middle_right_proof)))
           (==
             (append (cons head tail) middle_right)
             (by
@@ -3029,8 +2998,7 @@
           (==
             (append (cons head tail) (append middle right))
             (by
-              (rewrite (symm middle_right_proof))
-              (eval))))))))
+              (simpa only (symm middle_right_proof)))))))))
 
 (theorem reverse_acc_append
   (forall list (is-list list)
@@ -3068,8 +3036,7 @@
               (==
                 (append tail_reversed (cons head nil))
                 (by
-                  (rewrite tail_reversed_proof)
-                  (eval)))))
+                  (simpa only tail_reversed_proof)))))
           (by
             (calc
               (reverse_acc (cons head tail) acc)
@@ -3084,8 +3051,7 @@
               (==
                 (append tail_reversed (cons head acc))
                 (by
-                  (rewrite tail_reversed_proof)
-                  (eval)))
+                  (simpa only tail_reversed_proof)))
               (==
                 (append
                   tail_reversed
@@ -3102,8 +3068,7 @@
               (==
                 (append (reverse (cons head tail)) acc)
                 (by
-                  (rewrite (symm reverse_cons_step))
-                  (eval))))))))))
+                  (simpa only (symm reverse_cons_step)))))))))))
 
 (theorem reverse_cons
   (forall head (is-value head)
@@ -3154,8 +3119,7 @@
           (==
             (append (reverse acc) nil)
             (by
-              (rewrite (symm acc_reversed_proof))
-              (eval)))))
+              (simpa only (symm acc_reversed_proof))))))
       head
       tail
       induction_hypothesis
@@ -3186,13 +3150,11 @@
           (==
             (append acc_reversed (cons head tail))
             (by
-              (rewrite (append_singleton head tail))
-              (eval)))
+              (simpa only (append_singleton head tail))))
           (==
             (append (reverse acc) (cons head tail))
             (by
-              (rewrite (symm acc_reversed_proof))
-              (eval))))))))
+              (simpa only (symm acc_reversed_proof)))))))))
 
 (theorem reverse_double
   (forall list (is-list list)
@@ -3218,8 +3180,7 @@
       (==
         (append nil list)
         (by
-          (rewrite reverse_nil)
-          (eval)))
+          (simpa only reverse_nil)))
       (==
         list
         (by
@@ -3251,13 +3212,11 @@
           (==
             (reverse_acc (cons head (append tail right)) acc)
             (by
-              (rewrite (append_cons head tail right))
-              (eval)))
+              (simpa only (append_cons head tail right))))
           (==
             (reverse_acc (cons head tail_right) acc)
             (by
-              (rewrite tail_right_proof)
-              (eval)))
+              (simpa only tail_right_proof)))
           (==
             (reverse_acc tail_right (cons head acc))
             (by
@@ -3265,8 +3224,7 @@
           (==
             (reverse_acc (append tail right) (cons head acc))
             (by
-              (rewrite (symm tail_right_proof))
-              (eval)))
+              (simpa only (symm tail_right_proof))))
           (==
             (reverse_acc right (reverse_acc tail (cons head acc)))
             (by
@@ -3315,8 +3273,7 @@
           (==
             (reverse appended)
             (by
-              (rewrite appended_proof)
-              (eval)))
+              (simpa only appended_proof)))
           (==
             (reverse_acc appended nil)
             (by
@@ -3324,8 +3281,7 @@
           (==
             (reverse_acc (append left right) nil)
             (by
-              (rewrite (symm appended_proof))
-              (eval)))
+              (simpa only (symm appended_proof))))
           (==
             (reverse_acc right (reverse_acc left nil))
             (by
@@ -3333,8 +3289,7 @@
           (==
             (reverse_acc right left_reversed_acc)
             (by
-              (rewrite left_reversed_acc_proof)
-              (eval)))
+              (simpa only left_reversed_acc_proof)))
           (==
             (append (reverse right) left_reversed_acc)
             (by
@@ -3342,8 +3297,7 @@
           (==
             (append (reverse right) (reverse left))
             (by
-              (rewrite (symm reverse_left_step))
-              (eval))))))))
+              (simpa only (symm reverse_left_step)))))))))
 
 (theorem snoc_computes_to_list
   (forall list (is-list list)
@@ -3374,8 +3328,7 @@
               (==
                 (cons head tail_result)
                 (by
-                  (rewrite tail_result_proof)
-                  (eval))))))))))
+                  (simpa only tail_result_proof))))))))))
 
 (theorem snoc_nil
   (forall value (is-value value)
