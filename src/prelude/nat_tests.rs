@@ -1,6 +1,8 @@
 //! Test helpers and expected behavior for the nat prelude source.
 
-use crate::{Computation, Lambda, Prop, Symbol, Theory, computes_to, computes_to_list, is_list};
+use crate::{
+    Computation, Lambda, Prop, Symbol, Theory, computes_to, computes_to_list, is_bool, is_list,
+};
 
 use super::list_tests::{
     apply, check_evaluates_to, cons, false_value, nil, proof_by_evaluation, quote, true_value,
@@ -70,6 +72,18 @@ pub fn mul_definition() -> Computation {
     definition("mul")
 }
 
+pub fn nat_eq() -> Computation {
+    computation_ref("nat-eq")
+}
+
+pub fn nat_le() -> Computation {
+    computation_ref("nat-le")
+}
+
+pub fn nat_lt() -> Computation {
+    computation_ref("nat-lt")
+}
+
 pub fn succ_call(nat: Computation) -> Computation {
     apply(succ(), nat)
 }
@@ -92,6 +106,18 @@ pub fn add_call(left: Computation, right: Computation) -> Computation {
 
 pub fn mul_call(left: Computation, right: Computation) -> Computation {
     apply(apply(mul(), left), right)
+}
+
+pub fn nat_eq_call(left: Computation, right: Computation) -> Computation {
+    apply(apply(nat_eq(), left), right)
+}
+
+pub fn nat_le_call(left: Computation, right: Computation) -> Computation {
+    apply(apply(nat_le(), left), right)
+}
+
+pub fn nat_lt_call(left: Computation, right: Computation) -> Computation {
+    apply(apply(nat_lt(), left), right)
 }
 
 pub fn one_value() -> Computation {
@@ -142,6 +168,10 @@ pub fn is_zero_succ_source_theorem() -> Prop {
     theorem_prop("is_zero_succ")
 }
 
+pub fn is_zero_is_bool_source_theorem() -> Prop {
+    theorem_prop("is_zero_is_bool")
+}
+
 pub fn pred_zero_source_theorem() -> Prop {
     theorem_prop("pred_zero")
 }
@@ -174,6 +204,90 @@ pub fn is_nat_value_cons_true_elim_source_theorem() -> Prop {
     theorem_prop("is_nat_value_cons_true_elim")
 }
 
+pub fn nat_eq_zero_zero_source_theorem() -> Prop {
+    theorem_prop("nat_eq_zero_zero")
+}
+
+pub fn nat_eq_zero_succ_source_theorem() -> Prop {
+    theorem_prop("nat_eq_zero_succ")
+}
+
+pub fn nat_eq_succ_zero_source_theorem() -> Prop {
+    theorem_prop("nat_eq_succ_zero")
+}
+
+pub fn nat_eq_succ_succ_source_theorem() -> Prop {
+    theorem_prop("nat_eq_succ_succ")
+}
+
+pub fn nat_eq_zero_left_source_theorem() -> Prop {
+    theorem_prop("nat_eq_zero_left")
+}
+
+pub fn nat_eq_zero_right_source_theorem() -> Prop {
+    theorem_prop("nat_eq_zero_right")
+}
+
+pub fn nat_eq_refl_source_theorem() -> Prop {
+    theorem_prop("nat_eq_refl")
+}
+
+pub fn nat_eq_is_bool_source_theorem() -> Prop {
+    theorem_prop("nat_eq_is_bool")
+}
+
+pub fn nat_eq_pred_succ_source_theorem() -> Prop {
+    theorem_prop("nat_eq_pred_succ")
+}
+
+pub fn nat_le_zero_left_source_theorem() -> Prop {
+    theorem_prop("nat_le_zero_left")
+}
+
+pub fn nat_le_zero_right_source_theorem() -> Prop {
+    theorem_prop("nat_le_zero_right")
+}
+
+pub fn nat_le_succ_zero_source_theorem() -> Prop {
+    theorem_prop("nat_le_succ_zero")
+}
+
+pub fn nat_le_succ_succ_source_theorem() -> Prop {
+    theorem_prop("nat_le_succ_succ")
+}
+
+pub fn nat_le_refl_source_theorem() -> Prop {
+    theorem_prop("nat_le_refl")
+}
+
+pub fn nat_le_is_bool_source_theorem() -> Prop {
+    theorem_prop("nat_le_is_bool")
+}
+
+pub fn nat_lt_zero_zero_source_theorem() -> Prop {
+    theorem_prop("nat_lt_zero_zero")
+}
+
+pub fn nat_lt_zero_succ_source_theorem() -> Prop {
+    theorem_prop("nat_lt_zero_succ")
+}
+
+pub fn nat_lt_succ_zero_source_theorem() -> Prop {
+    theorem_prop("nat_lt_succ_zero")
+}
+
+pub fn nat_lt_succ_succ_source_theorem() -> Prop {
+    theorem_prop("nat_lt_succ_succ")
+}
+
+pub fn nat_lt_irrefl_source_theorem() -> Prop {
+    theorem_prop("nat_lt_irrefl")
+}
+
+pub fn nat_lt_is_bool_source_theorem() -> Prop {
+    theorem_prop("nat_lt_is_bool")
+}
+
 pub fn add_zero_left_source_theorem() -> Prop {
     theorem_prop("add_zero_left")
 }
@@ -184,6 +298,14 @@ pub fn add_computes_to_list_source_theorem() -> Prop {
 
 pub fn add_cons_source_theorem() -> Prop {
     theorem_prop("add_cons")
+}
+
+pub fn nat_le_left_add_source_theorem() -> Prop {
+    theorem_prop("nat_le_left_add")
+}
+
+pub fn nat_lt_left_add_succ_right_source_theorem() -> Prop {
+    theorem_prop("nat_lt_left_add_succ_right")
 }
 
 pub fn add_succ_left_source_theorem() -> Prop {
@@ -369,16 +491,39 @@ fn nat_definitions_load_from_source() {
         mul(),
         Computation::Ref(super::computation_name("mul").unwrap())
     );
+    assert_eq!(
+        nat_eq(),
+        Computation::Ref(super::computation_name("nat-eq").unwrap())
+    );
+    assert_eq!(
+        nat_le(),
+        Computation::Ref(super::computation_name("nat-le").unwrap())
+    );
+    assert_eq!(
+        nat_lt(),
+        Computation::Ref(super::computation_name("nat-lt").unwrap())
+    );
 }
 
 #[test]
 fn nat_theorem_statements_load_from_source() {
     let zero_result = theorem_symbol("zero_computes_to_list", "result");
+    let is_zero_bool_nat = theorem_symbol("is_zero_is_bool", "nat");
     let pred_succ_nat = theorem_symbol("pred_succ", "nat");
     let pred_result = theorem_symbol("pred_computes_to_list", "result");
     let pred_nat = theorem_symbol("pred_computes_to_list", "nat");
+    let nat_eq_refl_nat = theorem_symbol("nat_eq_refl", "nat");
+    let nat_eq_is_bool_left = theorem_symbol("nat_eq_is_bool", "left");
+    let nat_eq_is_bool_right = theorem_symbol("nat_eq_is_bool", "right");
+    let nat_le_refl_nat = theorem_symbol("nat_le_refl", "nat");
+    let nat_le_is_bool_left = theorem_symbol("nat_le_is_bool", "left");
+    let nat_le_is_bool_right = theorem_symbol("nat_le_is_bool", "right");
+    let nat_lt_succ_succ_left = theorem_symbol("nat_lt_succ_succ", "left");
+    let nat_lt_succ_succ_right = theorem_symbol("nat_lt_succ_succ", "right");
     let add_zero_left_right = theorem_symbol("add_zero_left", "right");
     let add_zero_right_nat = theorem_symbol("add_zero_right", "nat");
+    let nat_le_left_add_left = theorem_symbol("nat_le_left_add", "left");
+    let nat_le_left_add_right = theorem_symbol("nat_le_left_add", "right");
     let mul_result = theorem_symbol("mul_computes_to_list", "result");
     let mul_left = theorem_symbol("mul_computes_to_list", "left");
     let mul_right = theorem_symbol("mul_computes_to_list", "right");
@@ -392,6 +537,14 @@ fn nat_theorem_statements_load_from_source() {
     assert_eq!(
         zero_is_nat_value_source_theorem(),
         computes_to(is_nat_value_call(zero()), true_value())
+    );
+    assert_eq!(
+        is_zero_is_bool_source_theorem(),
+        crate::forall_where(
+            is_zero_bool_nat,
+            is_list(var(is_zero_bool_nat)),
+            is_bool(is_zero_call(var(is_zero_bool_nat)))
+        )
     );
     assert_eq!(
         succ_zero_source_theorem(),
@@ -414,6 +567,76 @@ fn nat_theorem_statements_load_from_source() {
         )
     );
     assert_eq!(
+        nat_eq_refl_source_theorem(),
+        crate::forall_where(
+            nat_eq_refl_nat,
+            is_list(var(nat_eq_refl_nat)),
+            computes_to(
+                nat_eq_call(var(nat_eq_refl_nat), var(nat_eq_refl_nat)),
+                true_value()
+            )
+        )
+    );
+    assert_eq!(
+        nat_eq_is_bool_source_theorem(),
+        crate::forall_where(
+            nat_eq_is_bool_left,
+            is_list(var(nat_eq_is_bool_left)),
+            crate::forall_where(
+                nat_eq_is_bool_right,
+                is_list(var(nat_eq_is_bool_right)),
+                is_bool(nat_eq_call(
+                    var(nat_eq_is_bool_left),
+                    var(nat_eq_is_bool_right)
+                ))
+            )
+        )
+    );
+    assert_eq!(
+        nat_le_refl_source_theorem(),
+        crate::forall_where(
+            nat_le_refl_nat,
+            is_list(var(nat_le_refl_nat)),
+            computes_to(
+                nat_le_call(var(nat_le_refl_nat), var(nat_le_refl_nat)),
+                true_value()
+            )
+        )
+    );
+    assert_eq!(
+        nat_le_is_bool_source_theorem(),
+        crate::forall_where(
+            nat_le_is_bool_left,
+            is_list(var(nat_le_is_bool_left)),
+            crate::forall_where(
+                nat_le_is_bool_right,
+                is_list(var(nat_le_is_bool_right)),
+                is_bool(nat_le_call(
+                    var(nat_le_is_bool_left),
+                    var(nat_le_is_bool_right)
+                ))
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_succ_succ_source_theorem(),
+        crate::forall_where(
+            nat_lt_succ_succ_left,
+            is_list(var(nat_lt_succ_succ_left)),
+            crate::forall_where(
+                nat_lt_succ_succ_right,
+                is_list(var(nat_lt_succ_succ_right)),
+                computes_to(
+                    nat_lt_call(
+                        succ_call(var(nat_lt_succ_succ_left)),
+                        succ_call(var(nat_lt_succ_succ_right))
+                    ),
+                    nat_lt_call(var(nat_lt_succ_succ_left), var(nat_lt_succ_succ_right))
+                )
+            )
+        )
+    );
+    assert_eq!(
         add_zero_left_source_theorem(),
         crate::forall_where(
             add_zero_left_right,
@@ -432,6 +655,24 @@ fn nat_theorem_statements_load_from_source() {
             computes_to(
                 add_call(var(add_zero_right_nat), zero()),
                 var(add_zero_right_nat)
+            )
+        )
+    );
+    assert_eq!(
+        nat_le_left_add_source_theorem(),
+        crate::forall_where(
+            nat_le_left_add_left,
+            is_list(var(nat_le_left_add_left)),
+            crate::forall_where(
+                nat_le_left_add_right,
+                is_list(var(nat_le_left_add_right)),
+                computes_to(
+                    nat_le_call(
+                        var(nat_le_left_add_left),
+                        add_call(var(nat_le_left_add_left), var(nat_le_left_add_right))
+                    ),
+                    true_value()
+                )
             )
         )
     );
@@ -486,6 +727,15 @@ fn constructors_evaluate_to_unary_lists() {
     assert_evaluates_to(mul_call(three_value(), zero()), nil());
     assert_evaluates_to(mul_call(one_value(), three_value()), three_value());
     assert_evaluates_to(mul_call(two_value(), three_value()), six_value());
+    assert_evaluates_to(nat_eq_call(two_value(), two_value()), true_value());
+    assert_evaluates_to(nat_eq_call(two_value(), three_value()), false_value());
+    assert_evaluates_to(nat_le_call(zero(), three_value()), true_value());
+    assert_evaluates_to(nat_le_call(two_value(), two_value()), true_value());
+    assert_evaluates_to(nat_le_call(three_value(), two_value()), false_value());
+    assert_evaluates_to(nat_lt_call(zero(), one_value()), true_value());
+    assert_evaluates_to(nat_lt_call(two_value(), two_value()), false_value());
+    assert_evaluates_to(nat_lt_call(two_value(), three_value()), true_value());
+    assert_evaluates_to(nat_lt_call(three_value(), two_value()), false_value());
 }
 
 #[test]
@@ -539,6 +789,7 @@ fn checked_theory_contains_nat_theorems() {
     assert_theory_has_theorem(&theory, "succ_zero", succ_zero_source_theorem());
     assert_theory_has_theorem(&theory, "is_zero_zero", is_zero_zero_source_theorem());
     assert_theory_has_theorem(&theory, "is_zero_succ", is_zero_succ_source_theorem());
+    assert_theory_has_theorem(&theory, "is_zero_is_bool", is_zero_is_bool_source_theorem());
     assert_theory_has_theorem(&theory, "pred_zero", pred_zero_source_theorem());
     assert_theory_has_theorem(&theory, "pred_succ", pred_succ_source_theorem());
     assert_theory_has_theorem(
@@ -571,6 +822,87 @@ fn checked_theory_contains_nat_theorems() {
         "is_nat_value_cons_true_elim",
         is_nat_value_cons_true_elim_source_theorem(),
     );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_zero_zero",
+        nat_eq_zero_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_zero_succ",
+        nat_eq_zero_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_succ_zero",
+        nat_eq_succ_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_succ_succ",
+        nat_eq_succ_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_zero_left",
+        nat_eq_zero_left_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_zero_right",
+        nat_eq_zero_right_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "nat_eq_refl", nat_eq_refl_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_eq_is_bool", nat_eq_is_bool_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_pred_succ",
+        nat_eq_pred_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_zero_left",
+        nat_le_zero_left_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_zero_right",
+        nat_le_zero_right_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_succ_zero",
+        nat_le_succ_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_succ_succ",
+        nat_le_succ_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "nat_le_refl", nat_le_refl_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_le_is_bool", nat_le_is_bool_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_zero_zero",
+        nat_lt_zero_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_zero_succ",
+        nat_lt_zero_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_succ_zero",
+        nat_lt_succ_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_succ_succ",
+        nat_lt_succ_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "nat_lt_irrefl", nat_lt_irrefl_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_lt_is_bool", nat_lt_is_bool_source_theorem());
     assert_theory_has_theorem(&theory, "add_zero_left", add_zero_left_source_theorem());
     assert_theory_has_theorem(
         &theory,
@@ -578,6 +910,12 @@ fn checked_theory_contains_nat_theorems() {
         add_computes_to_list_source_theorem(),
     );
     assert_theory_has_theorem(&theory, "add_cons", add_cons_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_le_left_add", nat_le_left_add_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_left_add_succ_right",
+        nat_lt_left_add_succ_right_source_theorem(),
+    );
     assert_theory_has_theorem(&theory, "add_succ_left", add_succ_left_source_theorem());
     assert_theory_has_theorem(
         &theory,
