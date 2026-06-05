@@ -337,6 +337,10 @@ pub fn nat_le_antisymm_source_theorem() -> Prop {
     theorem_prop("nat_le_antisymm")
 }
 
+pub fn nat_le_implies_nat_lt_cons_right_source_theorem() -> Prop {
+    theorem_prop("nat_le_implies_nat_lt_cons_right")
+}
+
 pub fn add_zero_left_source_theorem() -> Prop {
     theorem_prop("add_zero_left")
 }
@@ -355,6 +359,26 @@ pub fn nat_le_left_add_source_theorem() -> Prop {
 
 pub fn nat_lt_left_add_succ_right_source_theorem() -> Prop {
     theorem_prop("nat_lt_left_add_succ_right")
+}
+
+pub fn nat_le_right_add_source_theorem() -> Prop {
+    theorem_prop("nat_le_right_add")
+}
+
+pub fn nat_le_add_right_mono_source_theorem() -> Prop {
+    theorem_prop("nat_le_add_right_mono")
+}
+
+pub fn nat_lt_add_right_mono_source_theorem() -> Prop {
+    theorem_prop("nat_lt_add_right_mono")
+}
+
+pub fn nat_le_add_left_mono_source_theorem() -> Prop {
+    theorem_prop("nat_le_add_left_mono")
+}
+
+pub fn nat_lt_add_left_mono_source_theorem() -> Prop {
+    theorem_prop("nat_lt_add_left_mono")
 }
 
 pub fn add_succ_left_source_theorem() -> Prop {
@@ -594,10 +618,27 @@ fn nat_theorem_statements_load_from_source() {
     let nat_eq_le_rl_right = theorem_symbol("nat_eq_implies_nat_le_right_left", "right");
     let nat_le_antisymm_left = theorem_symbol("nat_le_antisymm", "left");
     let nat_le_antisymm_right = theorem_symbol("nat_le_antisymm", "right");
+    let nat_le_lt_cons_left = theorem_symbol("nat_le_implies_nat_lt_cons_right", "left");
+    let nat_le_lt_cons_right = theorem_symbol("nat_le_implies_nat_lt_cons_right", "right");
+    let nat_le_lt_cons_head = theorem_symbol("nat_le_implies_nat_lt_cons_right", "head");
     let add_zero_left_right = theorem_symbol("add_zero_left", "right");
     let add_zero_right_nat = theorem_symbol("add_zero_right", "nat");
     let nat_le_left_add_left = theorem_symbol("nat_le_left_add", "left");
     let nat_le_left_add_right = theorem_symbol("nat_le_left_add", "right");
+    let nat_le_right_add_left = theorem_symbol("nat_le_right_add", "left");
+    let nat_le_right_add_right = theorem_symbol("nat_le_right_add", "right");
+    let nat_le_add_right_mono_left = theorem_symbol("nat_le_add_right_mono", "left");
+    let nat_le_add_right_mono_right = theorem_symbol("nat_le_add_right_mono", "right");
+    let nat_le_add_right_mono_suffix = theorem_symbol("nat_le_add_right_mono", "suffix");
+    let nat_lt_add_right_mono_left = theorem_symbol("nat_lt_add_right_mono", "left");
+    let nat_lt_add_right_mono_right = theorem_symbol("nat_lt_add_right_mono", "right");
+    let nat_lt_add_right_mono_suffix = theorem_symbol("nat_lt_add_right_mono", "suffix");
+    let nat_le_add_left_mono_left = theorem_symbol("nat_le_add_left_mono", "left");
+    let nat_le_add_left_mono_right = theorem_symbol("nat_le_add_left_mono", "right");
+    let nat_le_add_left_mono_prefix = theorem_symbol("nat_le_add_left_mono", "prefix");
+    let nat_lt_add_left_mono_left = theorem_symbol("nat_lt_add_left_mono", "left");
+    let nat_lt_add_left_mono_right = theorem_symbol("nat_lt_add_left_mono", "right");
+    let nat_lt_add_left_mono_prefix = theorem_symbol("nat_lt_add_left_mono", "prefix");
     let mul_result = theorem_symbol("mul_computes_to_list", "result");
     let mul_left = theorem_symbol("mul_computes_to_list", "left");
     let mul_right = theorem_symbol("mul_computes_to_list", "right");
@@ -973,6 +1014,34 @@ fn nat_theorem_statements_load_from_source() {
         )
     );
     assert_eq!(
+        nat_le_implies_nat_lt_cons_right_source_theorem(),
+        crate::forall_where(
+            nat_le_lt_cons_left,
+            is_list(var(nat_le_lt_cons_left)),
+            crate::forall_where(
+                nat_le_lt_cons_right,
+                is_list(var(nat_le_lt_cons_right)),
+                crate::forall_where(
+                    nat_le_lt_cons_head,
+                    is_value(var(nat_le_lt_cons_head)),
+                    implies(
+                        computes_to(
+                            nat_le_call(var(nat_le_lt_cons_left), var(nat_le_lt_cons_right)),
+                            true_value()
+                        ),
+                        computes_to(
+                            nat_lt_call(
+                                var(nat_le_lt_cons_left),
+                                cons(var(nat_le_lt_cons_head), var(nat_le_lt_cons_right))
+                            ),
+                            true_value()
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
         add_zero_left_source_theorem(),
         crate::forall_where(
             add_zero_left_right,
@@ -1008,6 +1077,172 @@ fn nat_theorem_statements_load_from_source() {
                         add_call(var(nat_le_left_add_left), var(nat_le_left_add_right))
                     ),
                     true_value()
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_le_right_add_source_theorem(),
+        crate::forall_where(
+            nat_le_right_add_left,
+            is_list(var(nat_le_right_add_left)),
+            crate::forall_where(
+                nat_le_right_add_right,
+                is_list(var(nat_le_right_add_right)),
+                computes_to(
+                    nat_le_call(
+                        var(nat_le_right_add_right),
+                        add_call(var(nat_le_right_add_left), var(nat_le_right_add_right))
+                    ),
+                    true_value()
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_le_add_right_mono_source_theorem(),
+        crate::forall_where(
+            nat_le_add_right_mono_left,
+            is_list(var(nat_le_add_right_mono_left)),
+            crate::forall_where(
+                nat_le_add_right_mono_right,
+                is_list(var(nat_le_add_right_mono_right)),
+                crate::forall_where(
+                    nat_le_add_right_mono_suffix,
+                    is_list(var(nat_le_add_right_mono_suffix)),
+                    implies(
+                        computes_to(
+                            nat_le_call(
+                                var(nat_le_add_right_mono_left),
+                                var(nat_le_add_right_mono_right)
+                            ),
+                            true_value()
+                        ),
+                        computes_to(
+                            nat_le_call(
+                                add_call(
+                                    var(nat_le_add_right_mono_left),
+                                    var(nat_le_add_right_mono_suffix)
+                                ),
+                                add_call(
+                                    var(nat_le_add_right_mono_right),
+                                    var(nat_le_add_right_mono_suffix)
+                                )
+                            ),
+                            true_value()
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_add_right_mono_source_theorem(),
+        crate::forall_where(
+            nat_lt_add_right_mono_left,
+            is_list(var(nat_lt_add_right_mono_left)),
+            crate::forall_where(
+                nat_lt_add_right_mono_right,
+                is_list(var(nat_lt_add_right_mono_right)),
+                crate::forall_where(
+                    nat_lt_add_right_mono_suffix,
+                    is_list(var(nat_lt_add_right_mono_suffix)),
+                    implies(
+                        computes_to(
+                            nat_lt_call(
+                                var(nat_lt_add_right_mono_left),
+                                var(nat_lt_add_right_mono_right)
+                            ),
+                            true_value()
+                        ),
+                        computes_to(
+                            nat_lt_call(
+                                add_call(
+                                    var(nat_lt_add_right_mono_left),
+                                    var(nat_lt_add_right_mono_suffix)
+                                ),
+                                add_call(
+                                    var(nat_lt_add_right_mono_right),
+                                    var(nat_lt_add_right_mono_suffix)
+                                )
+                            ),
+                            true_value()
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_le_add_left_mono_source_theorem(),
+        crate::forall_where(
+            nat_le_add_left_mono_left,
+            is_list(var(nat_le_add_left_mono_left)),
+            crate::forall_where(
+                nat_le_add_left_mono_right,
+                is_list(var(nat_le_add_left_mono_right)),
+                crate::forall_where(
+                    nat_le_add_left_mono_prefix,
+                    is_list(var(nat_le_add_left_mono_prefix)),
+                    implies(
+                        computes_to(
+                            nat_le_call(
+                                var(nat_le_add_left_mono_left),
+                                var(nat_le_add_left_mono_right)
+                            ),
+                            true_value()
+                        ),
+                        computes_to(
+                            nat_le_call(
+                                add_call(
+                                    var(nat_le_add_left_mono_prefix),
+                                    var(nat_le_add_left_mono_left)
+                                ),
+                                add_call(
+                                    var(nat_le_add_left_mono_prefix),
+                                    var(nat_le_add_left_mono_right)
+                                )
+                            ),
+                            true_value()
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_add_left_mono_source_theorem(),
+        crate::forall_where(
+            nat_lt_add_left_mono_left,
+            is_list(var(nat_lt_add_left_mono_left)),
+            crate::forall_where(
+                nat_lt_add_left_mono_right,
+                is_list(var(nat_lt_add_left_mono_right)),
+                crate::forall_where(
+                    nat_lt_add_left_mono_prefix,
+                    is_list(var(nat_lt_add_left_mono_prefix)),
+                    implies(
+                        computes_to(
+                            nat_lt_call(
+                                var(nat_lt_add_left_mono_left),
+                                var(nat_lt_add_left_mono_right)
+                            ),
+                            true_value()
+                        ),
+                        computes_to(
+                            nat_lt_call(
+                                add_call(
+                                    var(nat_lt_add_left_mono_prefix),
+                                    var(nat_lt_add_left_mono_left)
+                                ),
+                                add_call(
+                                    var(nat_lt_add_left_mono_prefix),
+                                    var(nat_lt_add_left_mono_right)
+                                )
+                            ),
+                            true_value()
+                        )
+                    )
                 )
             )
         )
@@ -1279,6 +1514,11 @@ fn checked_theory_contains_nat_theorems() {
         nat_eq_implies_nat_le_right_left_source_theorem(),
     );
     assert_theory_has_theorem(&theory, "nat_le_antisymm", nat_le_antisymm_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_implies_nat_lt_cons_right",
+        nat_le_implies_nat_lt_cons_right_source_theorem(),
+    );
     assert_theory_has_theorem(&theory, "add_zero_left", add_zero_left_source_theorem());
     assert_theory_has_theorem(
         &theory,
@@ -1291,6 +1531,31 @@ fn checked_theory_contains_nat_theorems() {
         &theory,
         "nat_lt_left_add_succ_right",
         nat_lt_left_add_succ_right_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_right_add",
+        nat_le_right_add_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_add_right_mono",
+        nat_le_add_right_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_add_right_mono",
+        nat_lt_add_right_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_add_left_mono",
+        nat_le_add_left_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_add_left_mono",
+        nat_lt_add_left_mono_source_theorem(),
     );
     assert_theory_has_theorem(&theory, "add_succ_left", add_succ_left_source_theorem());
     assert_theory_has_theorem(
