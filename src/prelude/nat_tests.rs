@@ -509,6 +509,10 @@ pub fn nat_le_implies_sub_zero_source_theorem() -> Prop {
     theorem_prop("nat_le_implies_sub_zero")
 }
 
+pub fn nat_le_add_sub_cancel_source_theorem() -> Prop {
+    theorem_prop("nat_le_add_sub_cancel")
+}
+
 pub fn nat_lt_right_left_implies_nat_lt_zero_sub_source_theorem() -> Prop {
     theorem_prop("nat_lt_right_left_implies_nat_lt_zero_sub")
 }
@@ -775,6 +779,8 @@ fn nat_theorem_statements_load_from_source() {
     let nat_le_sub_left_right = theorem_symbol("nat_le_sub_left", "right");
     let nat_le_implies_sub_zero_left = theorem_symbol("nat_le_implies_sub_zero", "left");
     let nat_le_implies_sub_zero_right = theorem_symbol("nat_le_implies_sub_zero", "right");
+    let nat_le_add_sub_cancel_left = theorem_symbol("nat_le_add_sub_cancel", "left");
+    let nat_le_add_sub_cancel_right = theorem_symbol("nat_le_add_sub_cancel", "right");
     let nat_lt_sub_positive_left =
         theorem_symbol("nat_lt_right_left_implies_nat_lt_zero_sub", "left");
     let nat_lt_sub_positive_right =
@@ -1749,6 +1755,48 @@ fn nat_theorem_statements_load_from_source() {
         )
     );
     assert_eq!(
+        nat_le_add_sub_cancel_source_theorem(),
+        crate::forall_where(
+            nat_le_add_sub_cancel_left,
+            is_list(var(nat_le_add_sub_cancel_left)),
+            crate::forall_where(
+                nat_le_add_sub_cancel_right,
+                is_list(var(nat_le_add_sub_cancel_right)),
+                implies(
+                    computes_to(
+                        is_nat_value_call(var(nat_le_add_sub_cancel_left)),
+                        true_value()
+                    ),
+                    implies(
+                        computes_to(
+                            is_nat_value_call(var(nat_le_add_sub_cancel_right)),
+                            true_value()
+                        ),
+                        implies(
+                            computes_to(
+                                nat_le_call(
+                                    var(nat_le_add_sub_cancel_right),
+                                    var(nat_le_add_sub_cancel_left)
+                                ),
+                                true_value()
+                            ),
+                            computes_to(
+                                add_call(
+                                    var(nat_le_add_sub_cancel_right),
+                                    sub_call(
+                                        var(nat_le_add_sub_cancel_left),
+                                        var(nat_le_add_sub_cancel_right)
+                                    )
+                                ),
+                                var(nat_le_add_sub_cancel_left)
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
         nat_lt_right_left_implies_nat_lt_zero_sub_source_theorem(),
         crate::forall_where(
             nat_lt_sub_positive_left,
@@ -2371,6 +2419,11 @@ fn checked_theory_contains_nat_theorems() {
         &theory,
         "nat_le_implies_sub_zero",
         nat_le_implies_sub_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_add_sub_cancel",
+        nat_le_add_sub_cancel_source_theorem(),
     );
     assert_theory_has_theorem(
         &theory,
