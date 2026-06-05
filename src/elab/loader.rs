@@ -622,6 +622,17 @@ mod tests {
                   (by
                     (intro condition)
                     (simp only condition)))
+                (theorem simpa_uses_local_proof
+                  (forall value (is-value value)
+                    (implies
+                      (computes-to value nil)
+                      (computes-to
+                        (if (quote :true) value (error 0))
+                        nil)))
+                  (by
+                    (intro value)
+                    (intro value_nil)
+                    (simpa only using value_nil)))
                 ",
             )
             .expect("source simp theorem should load");
@@ -630,6 +641,7 @@ mod tests {
         assert!(loaded.theorem("simp_rewrites_value_nil").is_some());
         assert!(loaded.theorem("simp_uses_local_condition").is_some());
         assert!(loaded.theorem("simp_uses_conjunction_condition").is_some());
+        assert!(loaded.theorem("simpa_uses_local_proof").is_some());
     }
 
     #[test]

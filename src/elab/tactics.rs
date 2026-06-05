@@ -76,6 +76,10 @@ fn tactic_steps_to_proof(
             ensure_no_more_tactics(rest, "simp")?;
             tactic_simp(rules, theory, goal)
         }
+        TacticExpr::Simpa { rules, proof } => {
+            ensure_no_more_tactics(rest, "simpa")?;
+            tactic_simpa(rules, proof.as_deref(), theory, goal)
+        }
         TacticExpr::Apply { theorem, arguments } => {
             ensure_no_more_tactics(rest, "apply")?;
             tactic_apply(*theorem, arguments, theory, goal)
@@ -386,19 +390,70 @@ fn tactic_simp(
         return Err(tactic_failed("simp", "goal is not an equality"));
     };
 
-    let left_result = simplify_computation(left.clone(), rules, theory, &goal.context)?;
-    let right_result = simplify_computation(right.clone(), rules, theory, &goal.context)?;
+    let goal_result = simplify_equality(left, right, rules, theory, &goal.context)?;
 
-    if !alpha_eq_computation(&left_result.result, &right_result.result) {
+    if !alpha_eq_computation(&goal_result.left.result, &goal_result.right.result) {
         return Err(tactic_failed(
             "simp",
-            simp_failure_message(left, &left_result, right, &right_result),
+            simp_failure_message(left, &goal_result.left, right, &goal_result.right),
         ));
     }
 
-    Ok(Proof::Trans(
-        Box::new(left_result.proof),
-        Box::new(Proof::Symm(Box::new(right_result.proof))),
+    Ok(goal_equality_proof_from_simplified(goal_result))
+}
+
+fn tactic_simpa(
+    rules: &[ProofExpr],
+    proof_expr: Option<&ProofExpr>,
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let Prop::Equal(goal_left, goal_right) = &goal.target else {
+        return Err(tactic_failed("simpa", "goal is not an equality"));
+    };
+
+    let goal_result = simplify_equality(goal_left, goal_right, rules, theory, &goal.context)?;
+    let Some(proof_expr) = proof_expr else {
+        if !alpha_eq_computation(&goal_result.left.result, &goal_result.right.result) {
+            return Err(tactic_failed(
+                "simpa",
+                simp_failure_message(goal_left, &goal_result.left, goal_right, &goal_result.right),
+            ));
+        }
+        return Ok(goal_equality_proof_from_simplified(goal_result));
+    };
+
+    let proof = proof_expr_to_proof_in_context(proof_expr, theory, &goal.context)?;
+    let prop = theory
+        .proven_prop_in_context(&proof, &goal.context)
+        .ok_or_else(|| tactic_failed("simpa", "using proof proves no proposition"))?;
+    let (proof, prop) = finish_available_implications("simpa", proof, prop, theory, &goal.context)?;
+    let Prop::Equal(proof_left, proof_right) = prop else {
+        return Err(tactic_failed(
+            "simpa",
+            format!("using proof proves {:?}, not an equality", prop),
+        ));
+    };
+    let proof_result = simplify_equality(&proof_left, &proof_right, rules, theory, &goal.context)?;
+
+    if alpha_eq_computation(&goal_result.left.result, &proof_result.left.result)
+        && alpha_eq_computation(&goal_result.right.result, &proof_result.right.result)
+    {
+        return Ok(simpa_using_proof(goal_result, proof_result, proof));
+    }
+
+    Err(tactic_failed(
+        "simpa",
+        simpa_failure_message(
+            goal_left,
+            &goal_result.left,
+            goal_right,
+            &goal_result.right,
+            &proof_left,
+            &proof_result.left,
+            &proof_right,
+            &proof_result.right,
+        ),
     ))
 }
 
@@ -438,6 +493,53 @@ impl SimpTrace {
         }
         self.omitted_steps += other.omitted_steps;
     }
+}
+
+struct SimpEqualityResult {
+    left: SimpResult,
+    right: SimpResult,
+}
+
+fn simplify_equality(
+    left: &Computation,
+    right: &Computation,
+    rules: &[ProofExpr],
+    theory: &Theory,
+    context: &Context,
+) -> Result<SimpEqualityResult, ProofElaborationError> {
+    Ok(SimpEqualityResult {
+        left: simplify_computation(left.clone(), rules, theory, context)?,
+        right: simplify_computation(right.clone(), rules, theory, context)?,
+    })
+}
+
+fn goal_equality_proof_from_simplified(result: SimpEqualityResult) -> Proof {
+    Proof::Trans(
+        Box::new(result.left.proof),
+        Box::new(Proof::Symm(Box::new(result.right.proof))),
+    )
+}
+
+fn simpa_using_proof(
+    goal_result: SimpEqualityResult,
+    proof_result: SimpEqualityResult,
+    proof: Proof,
+) -> Proof {
+    let simplified_proof = Proof::Trans(
+        Box::new(Proof::Symm(Box::new(proof_result.left.proof))),
+        Box::new(Proof::Trans(
+            Box::new(proof),
+            Box::new(proof_result.right.proof),
+        )),
+    );
+
+    Proof::Trans(
+        Box::new(goal_result.left.proof),
+        Box::new(Proof::Trans(
+            Box::new(simplified_proof),
+            Box::new(Proof::Symm(Box::new(goal_result.right.proof))),
+        )),
+    )
 }
 
 fn simplify_computation(
@@ -842,6 +944,45 @@ fn simp_failure_message(
         compact_debug(right_original),
         compact_debug(&right_result.result),
         format_simp_trace(&right_result.trace)
+    )
+}
+
+fn simpa_failure_message(
+    goal_left_original: &Computation,
+    goal_left_result: &SimpResult,
+    goal_right_original: &Computation,
+    goal_right_result: &SimpResult,
+    proof_left_original: &Computation,
+    proof_left_result: &SimpResult,
+    proof_right_original: &Computation,
+    proof_right_result: &SimpResult,
+) -> String {
+    format!(
+        "simplified goal and using proof, but they do not match\n\
+         goal left original: {}\n\
+         goal left result: {}\n\
+         goal left steps:\n{}\n\
+         goal right original: {}\n\
+         goal right result: {}\n\
+         goal right steps:\n{}\n\
+         using left original: {}\n\
+         using left result: {}\n\
+         using left steps:\n{}\n\
+         using right original: {}\n\
+         using right result: {}\n\
+         using right steps:\n{}",
+        compact_debug(goal_left_original),
+        compact_debug(&goal_left_result.result),
+        format_simp_trace(&goal_left_result.trace),
+        compact_debug(goal_right_original),
+        compact_debug(&goal_right_result.result),
+        format_simp_trace(&goal_right_result.trace),
+        compact_debug(proof_left_original),
+        compact_debug(&proof_left_result.result),
+        format_simp_trace(&proof_left_result.trace),
+        compact_debug(proof_right_original),
+        compact_debug(&proof_right_result.result),
+        format_simp_trace(&proof_right_result.trace)
     )
 }
 

@@ -318,6 +318,10 @@ pub(crate) enum TacticExpr {
     Simp {
         rules: Vec<ProofExpr>,
     },
+    Simpa {
+        rules: Vec<ProofExpr>,
+        proof: Option<Box<ProofExpr>>,
+    },
     Apply {
         theorem: Name,
         arguments: Vec<Computation>,
@@ -1247,6 +1251,7 @@ impl<'a> SourceParser<'a> {
             "have" => self.tactic_have(items),
             "eval" => self.tactic_eval(items),
             "simp" => self.tactic_simp(items),
+            "simpa" => self.tactic_simpa(items),
             "apply" => self.tactic_apply(items),
             "specialize" => self.tactic_specialize(items),
             "split" | "constructor" => self.tactic_split(form, items),
@@ -1354,6 +1359,52 @@ impl<'a> SourceParser<'a> {
         }
 
         Ok(TacticExpr::Simp { rules })
+    }
+
+    fn tactic_simpa(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        if items.len() < 2 {
+            return Err(ParseError::new(
+                "`simpa` currently expects `only` followed by zero or more rules and optional `using <proof>`",
+            ));
+        }
+        let mode = atom(&items[1])?;
+        if mode != "only" {
+            return Err(ParseError::new(format!(
+                "`simpa` currently supports only explicit rules: expected `only`, got `{mode}`"
+            )));
+        }
+
+        let mut using_index = None;
+        for (index, item) in items.iter().enumerate().skip(2) {
+            if atom(item).ok() == Some("using") {
+                if using_index.is_some() {
+                    return Err(ParseError::new("`simpa` got more than one `using`"));
+                }
+                using_index = Some(index);
+            }
+        }
+
+        let (rule_items, proof) = match using_index {
+            Some(index) => {
+                if items.len() != index + 2 {
+                    return Err(ParseError::new(
+                        "`simpa using` expects exactly one proof expression after `using`",
+                    ));
+                }
+                (
+                    &items[2..index],
+                    Some(Box::new(self.proof_expr_or_ref(&items[index + 1])?)),
+                )
+            }
+            None => (&items[2..], None),
+        };
+
+        let mut rules = Vec::new();
+        for item in rule_items {
+            rules.push(self.proof_expr_or_ref(item)?);
+        }
+
+        Ok(TacticExpr::Simpa { rules, proof })
     }
 
     fn tactic_apply(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
@@ -2507,6 +2558,47 @@ mod tests {
         assert!(matches!(
             tactics.as_slice(),
             [TacticExpr::Simp { rules }] if rules == &vec![ProofExpr::Known(Name(1))]
+        ));
+    }
+
+    #[test]
+    fn parses_simpa_tactic_scripts() {
+        let theorems = [
+            NameBinding {
+                spelling: "nil_self",
+                name: Name(1),
+            },
+            NameBinding {
+                spelling: "nil_self_by_simpa",
+                name: Name(2),
+            },
+        ];
+
+        let module = parse_module(
+            "
+            (theorem nil_self
+              (computes-to nil nil)
+              (by
+                (eval)))
+            (theorem nil_self_by_simpa
+              (computes-to nil nil)
+              (by
+                (simpa only nil_self using nil_self)))
+            ",
+            &[],
+            &theorems,
+            &[],
+        )
+        .expect("simpa tactic source should parse");
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[1].proof else {
+            panic!("expected a tactic proof script");
+        };
+        assert!(matches!(
+            tactics.as_slice(),
+            [TacticExpr::Simpa { rules, proof: Some(proof) }]
+                if rules == &vec![ProofExpr::Known(Name(1))]
+                    && **proof == ProofExpr::Known(Name(1))
         ));
     }
 

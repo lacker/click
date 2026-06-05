@@ -56,8 +56,9 @@ They can also use goal-directed tactic scripts with `(by ...)`. Tactics inspect
 the current goal and local context, then elaborate to ordinary kernel `Proof`
 values that are checked by the kernel. The initial tactic set is intentionally
 small and deterministic: `intro`, `assumption`, `exact`, `eval`, `apply`,
-`have`, `specialize`, `obtain`, `cases`, `rewrite`, `or-elim`, `list-induction`,
-`value-induction`, `calc`, `split`/`constructor`, `exists`, `left`, and `right`.
+`have`, `specialize`, `obtain`, `cases`, `rewrite`, `simp`, `simpa`,
+`or-elim`, `list-induction`, `value-induction`, `calc`, `split`/`constructor`,
+`exists`, `left`, and `right`.
 Continuation tactics such as `have`, `specialize`, `obtain`, and `cases` can
 either scope over the remaining tactic script or take an explicit final
 `(by ...)` body to make the scope boundary visible in source.
@@ -74,6 +75,11 @@ Simp rewrites left-to-right, infers forall arguments by matching the rule's
 left-hand side, discharges available premises from the local context, and
 rewrites inside subcomputations before falling back to reduction. It does not
 yet have global `[simp]`-style rule tags.
+
+The related `(simpa only rule ... using proof)` tactic simplifies the equality
+goal and the equality proven by `proof`, then closes the goal if the simplified
+sides match. `(simpa only rule ...)` is the proof-free form and behaves like a
+terminal simplification proof.
 
 Propositions can talk about arbitrary computations. Kernel quantifiers are
 plain binders. Source syntax may attach a predicate to a quantifier as
