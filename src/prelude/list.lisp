@@ -1487,43 +1487,7 @@
     (intro value)
     (intro value_is_symbol)
     (specialize value_not_lambda is_symbol_true_implies_is_lambda_false value)
-    (calc
-      (value-eq-comparable value)
-      (==
-        (if
-          (is-lambda value)
-          (quote :false)
-          (if
-            (is-symbol value)
-            (quote :true)
-            (list-case value
-              (quote :true)
-              cell
-              (if
-                (value-eq-comparable (head cell))
-                (value-eq-comparable (tail cell))
-                (quote :false)))))
-        (by
-          (eval)))
-      (==
-        (if
-          (is-symbol value)
-          (quote :true)
-          (list-case value
-            (quote :true)
-            cell
-            (if
-              (value-eq-comparable (head cell))
-              (value-eq-comparable (tail cell))
-              (quote :false))))
-        (by
-          (rewrite value_not_lambda)
-          (eval)))
-      (==
-        (quote :true)
-        (by
-          (rewrite value_is_symbol)
-          (eval))))))
+    (simp only value_not_lambda value_is_symbol)))
 
 (theorem value_eq_comparable_nil
   (computes-to (value-eq-comparable nil) (quote :true))
@@ -1545,31 +1509,7 @@
     (intro tail)
     (intro head_comparable)
     (intro tail_comparable)
-    (calc
-      (value-eq-comparable (cons head tail))
-      (==
-        (if
-          (value-eq-comparable head)
-          (value-eq-comparable (tail (cons head tail)))
-          (quote :false))
-        (by
-          (eval)))
-      (==
-        (if
-          (quote :true)
-          (value-eq-comparable (tail (cons head tail)))
-          (quote :false))
-        (by
-          (rewrite head_comparable)
-          (eval)))
-      (==
-        (value-eq-comparable tail)
-        (by
-          (eval)))
-      (==
-        (quote :true)
-        (by
-          (exact tail_comparable))))))
+    (simp only head_comparable tail_comparable)))
 
 (theorem value_eq_true_implies_not_lambdas
   (forall left (is-value left)
@@ -2792,17 +2732,7 @@
     (intro values_equal)
     (specialize left_comparable value_eq_true_implies_comparable_left left right)
     (specialize values_same value_eq_sound left right)
-    (calc
-      (value-eq-comparable right)
-      (==
-        (value-eq-comparable left)
-        (by
-          (rewrite (symm values_same))
-          (eval)))
-      (==
-        (quote :true)
-        (by
-          (exact left_comparable))))))
+    (simp only (symm values_same) left_comparable)))
 
 (theorem value_eq_symm
   (forall left (is-value left)
@@ -2817,17 +2747,7 @@
     (specialize right_comparable value_eq_true_implies_comparable_right left right)
     (specialize values_same value_eq_sound left right)
     (specialize right_refl value_eq_refl right)
-    (calc
-      (value-eq right left)
-      (==
-        (value-eq right right)
-        (by
-          (rewrite values_same)
-          (eval)))
-      (==
-        (quote :true)
-        (by
-          (exact right_refl))))))
+    (simp only values_same right_refl)))
 
 (theorem member_nil
   (forall value (is-value value)

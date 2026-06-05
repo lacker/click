@@ -611,6 +611,17 @@ mod tests {
                     (intro condition)
                     (intro condition_true)
                     (simp only condition_true)))
+                (theorem simp_uses_conjunction_condition
+                  (forall condition
+                    (and
+                      (is-value condition)
+                      (computes-to condition (quote :true)))
+                    (computes-to
+                      (if condition nil (error 0))
+                      nil))
+                  (by
+                    (intro condition)
+                    (simp only condition)))
                 ",
             )
             .expect("source simp theorem should load");
@@ -618,6 +629,7 @@ mod tests {
         assert!(loaded.theorem("rewrite_value_nil").is_some());
         assert!(loaded.theorem("simp_rewrites_value_nil").is_some());
         assert!(loaded.theorem("simp_uses_local_condition").is_some());
+        assert!(loaded.theorem("simp_uses_conjunction_condition").is_some());
     }
 
     #[test]

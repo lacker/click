@@ -480,40 +480,67 @@ fn simp_rewrite_with_rule(
     let prop = theory
         .proven_prop_in_context(&proof, context)
         .ok_or_else(|| tactic_failed("simp", "simp rule proves no proposition"))?;
-    let simp_rule = parse_simp_rule(rule, &prop)?;
-    let mut substitutions = HashMap::new();
-    let matchable = simp_rule.binders.iter().copied().collect::<HashSet<_>>();
-    if !match_simp_pattern(&simp_rule.lhs, target, &matchable, &mut substitutions) {
-        return Ok(None);
+
+    let candidates = simp_rule_candidates(proof, prop);
+    let mut saw_rewrite_rule = false;
+
+    for (proof, prop) in candidates {
+        let Ok(simp_rule) = parse_simp_rule(rule, &prop) else {
+            continue;
+        };
+        saw_rewrite_rule = true;
+
+        let mut substitutions = HashMap::new();
+        let matchable = simp_rule.binders.iter().copied().collect::<HashSet<_>>();
+        if !match_simp_pattern(&simp_rule.lhs, target, &matchable, &mut substitutions) {
+            continue;
+        }
+
+        let Some((proof, proven)) =
+            instantiate_simp_rule(rule, proof, prop, &substitutions, theory, context)?
+        else {
+            continue;
+        };
+
+        match proven {
+            Prop::Equal(left, right) => {
+                if !alpha_eq_computation(&left, target) {
+                    continue;
+                }
+                if alpha_eq_computation(&right, target) {
+                    continue;
+                }
+                return Ok(Some(SimpRewrite {
+                    result: right,
+                    proof,
+                }));
+            }
+            Prop::Implies(_, _) => continue,
+            _ => {}
+        }
     }
 
-    let Some((proof, proven)) =
-        instantiate_simp_rule(rule, proof, prop, &substitutions, theory, context)?
-    else {
-        return Ok(None);
-    };
+    if saw_rewrite_rule {
+        Ok(None)
+    } else {
+        Err(tactic_failed(
+            "simp",
+            format!("rule {rule:?} is not an equality rewrite rule"),
+        ))
+    }
+}
 
-    match proven {
-        Prop::Equal(left, right) => {
-            if !alpha_eq_computation(&left, target) {
-                return Ok(None);
-            }
-            if alpha_eq_computation(&right, target) {
-                return Ok(None);
-            }
-            Ok(Some(SimpRewrite {
-                result: right,
-                proof,
-            }))
+fn simp_rule_candidates(proof: Proof, prop: Prop) -> Vec<(Proof, Prop)> {
+    match prop {
+        Prop::And(left, right) => {
+            let left_proof = Proof::AndElimLeft(Box::new(proof.clone()));
+            let right_proof = Proof::AndElimRight(Box::new(proof));
+
+            let mut candidates = simp_rule_candidates(left_proof, *left);
+            candidates.extend(simp_rule_candidates(right_proof, *right));
+            candidates
         }
-        Prop::Implies(premise, _) => Err(tactic_failed(
-            "simp",
-            unavailable_premise_message(&premise, context),
-        )),
-        _ => Err(tactic_failed(
-            "simp",
-            format!("rule {rule:?} did not produce an equality after instantiation"),
-        )),
+        _ => vec![(proof, prop)],
     }
 }
 
@@ -2229,6 +2256,10 @@ mod tests {
     use crate::forall_where;
 
     const THEOREM: Name = Name(1);
+    const ALIAS_A: Name = Name(2);
+    const ALIAS_B: Name = Name(3);
+    const NIL_TO_ALIAS_A: Name = Name(4);
+    const NIL_TO_ALIAS_B: Name = Name(5);
     const VALUE: Symbol = Symbol(10);
     const ASSUMED_EQUAL: Symbol = Symbol(11);
     const TARGET_VALUE: Symbol = Symbol(20);
@@ -2260,6 +2291,28 @@ mod tests {
             .expect("test rule should be a valid theorem");
 
         (theory, prop)
+    }
+
+    fn nil_to_ref_theory() -> Theory {
+        let mut theory = Theory::new();
+        theory
+            .define_computation_result(ALIAS_A, &Computation::Nil)
+            .expect("alias A should be a closed computation");
+        theory
+            .define_computation_result(ALIAS_B, &Computation::Nil)
+            .expect("alias B should be a closed computation");
+
+        for (theorem, alias) in [(NIL_TO_ALIAS_A, ALIAS_A), (NIL_TO_ALIAS_B, ALIAS_B)] {
+            theory
+                .define_theorem_from_proof_result(
+                    theorem,
+                    Proof::Symm(Box::new(Proof::Step(Computation::Ref(alias)))),
+                    equal(Computation::Nil, Computation::Ref(alias)),
+                )
+                .expect("nil should equal either nil alias by one unfolding step");
+        }
+
+        theory
     }
 
     #[test]
@@ -2307,5 +2360,23 @@ mod tests {
             ),
             Ok(None)
         );
+    }
+
+    #[test]
+    fn simp_rewrite_uses_first_matching_rule() {
+        let theory = nil_to_ref_theory();
+        let rewrite = simp_rewrite(
+            &Computation::Nil,
+            &[
+                ProofExpr::Known(NIL_TO_ALIAS_A),
+                ProofExpr::Known(NIL_TO_ALIAS_B),
+            ],
+            &theory,
+            &Context::new(),
+        )
+        .expect("simp rewrite should not fail")
+        .expect("the first rule should match");
+
+        assert_eq!(rewrite.result, Computation::Ref(ALIAS_A));
     }
 }

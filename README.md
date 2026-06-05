@@ -65,6 +65,16 @@ Raw proof scripts still accept lower-level kernel proof forms such as
 `forall-elim` and `exists-elim`; these are escape hatches for direct proof terms,
 not goal-directed tactics.
 
+The simplifier tactic is deliberately explicit for now: `(simp only rule ...)`
+uses only the listed proof expressions as rewrite rules, plus kernel reduction.
+Rules are tried in source order. A rule may be a theorem, a local proof
+assumption, or a proof expression; if it proves a conjunction, equality-bearing
+conjuncts are tried as rewrite rules and non-equality conjuncts are ignored.
+Simp rewrites left-to-right, infers forall arguments by matching the rule's
+left-hand side, discharges available premises from the local context, and
+rewrites inside subcomputations before falling back to reduction. It does not
+yet have global `[simp]`-style rule tags.
+
 Propositions can talk about arbitrary computations. Kernel quantifiers are
 plain binders. Source syntax may attach a predicate to a quantifier as
 shorthand: `(forall x P Q)` elaborates to `forall x. P -> Q`, and
