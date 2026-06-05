@@ -98,6 +98,15 @@
     (intro nat)
     (eval)))
 
+(theorem is_zero_pred_succ
+  (forall nat (is-list nat)
+    (computes-to
+      (is-zero (pred (succ nat)))
+      (is-zero nat)))
+  (by
+    (intro nat)
+    (eval)))
+
 (theorem pred_computes_to_list
   (forall nat (is-list nat)
     (computes-to-list result (pred nat)))
@@ -289,6 +298,63 @@
           (rewrite (symm sum_proof))
           (eval))))))
 
+(theorem pred_add_succ_left
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (computes-to
+        (pred (add (succ left) right))
+        (add left right))))
+  (by
+    (intro left)
+    (intro right)
+    (obtain sum sum_proof
+      (add_computes_to_list left right))
+    (calc
+      (pred (add (succ left) right))
+      (==
+        (pred (succ (add left right)))
+        (by
+          (rewrite (add_succ_left left right))
+          (eval)))
+      (==
+        (pred (succ sum))
+        (by
+          (rewrite sum_proof)
+          (eval)))
+      (==
+        sum
+        (by
+          (exact pred_succ sum)))
+      (==
+        (add left right)
+        (by
+          (rewrite (symm sum_proof))
+          (eval))))))
+
+(theorem is_zero_add_succ_left
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (computes-to
+        (is-zero (add (succ left) right))
+        (quote :false))))
+  (by
+    (intro left)
+    (intro right)
+    (obtain sum sum_proof
+      (add_computes_to_list left right))
+    (calc
+      (is-zero (add (succ left) right))
+      (==
+        (is-zero (succ sum))
+        (by
+          (rewrite (add_succ_left left right))
+          (rewrite sum_proof)
+          (eval)))
+      (==
+        (quote :false)
+        (by
+          (eval))))))
+
 (theorem add_cons_unit_right
   (forall left (is-list left)
     (forall right (is-list right)
@@ -382,6 +448,75 @@
         (succ (add left right))
         (by
           (exact add_cons_unit_right_step))))))
+
+(theorem pred_add_succ_right
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (is-nat-value left) (quote :true))
+        (computes-to
+          (pred (add left (succ right)))
+          (add left right)))))
+  (by
+    (intro left)
+    (intro right)
+    (intro left_is_nat)
+    (obtain sum sum_proof
+      (add_computes_to_list left right))
+    (specialize left_succ add_succ_right left right)
+    (calc
+      (pred (add left (succ right)))
+      (==
+        (pred (succ (add left right)))
+        (by
+          (rewrite left_succ)
+          (eval)))
+      (==
+        (pred (succ sum))
+        (by
+          (rewrite sum_proof)
+          (eval)))
+      (==
+        sum
+        (by
+          (exact pred_succ sum)))
+      (==
+        (add left right)
+        (by
+          (rewrite (symm sum_proof))
+          (eval))))))
+
+(theorem is_zero_add_succ_right
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (is-nat-value left) (quote :true))
+        (computes-to
+          (is-zero (add left (succ right)))
+          (quote :false)))))
+  (by
+    (intro left)
+    (intro right)
+    (intro left_is_nat)
+    (obtain sum sum_proof
+      (add_computes_to_list left right))
+    (specialize left_succ add_succ_right left right)
+    (calc
+      (is-zero (add left (succ right)))
+      (==
+        (is-zero (succ (add left right)))
+        (by
+          (rewrite left_succ)
+          (eval)))
+      (==
+        (is-zero (succ sum))
+        (by
+          (rewrite sum_proof)
+          (eval)))
+      (==
+        (quote :false)
+        (by
+          (eval))))))
 
 (theorem add_zero_right
   (forall nat (is-list nat)
@@ -690,6 +825,15 @@
     (intro right)
     (eval)))
 
+(theorem is_zero_mul_zero_left
+  (forall right (is-list right)
+    (computes-to
+      (is-zero (mul zero right))
+      (quote :true)))
+  (by
+    (intro right)
+    (eval)))
+
 (theorem mul_cons
   (forall head (is-value head)
     (forall tail (is-list tail)
@@ -823,6 +967,96 @@
         (add right (mul left right))
         (by
           (exact mul_cons (quote unit) left right))))))
+
+(theorem is_zero_mul_succ_succ
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (computes-to
+        (is-zero (mul (succ left) (succ right)))
+        (quote :false))))
+  (by
+    (intro left)
+    (intro right)
+    (obtain right_succ right_succ_proof
+      (succ_computes_to_list right))
+    (obtain tail_product tail_product_proof
+      (mul_computes_to_list left right_succ))
+    (calc
+      (is-zero (mul (succ left) (succ right)))
+      (==
+        (is-zero (mul (succ left) right_succ))
+        (by
+          (rewrite right_succ_proof)
+          (eval)))
+      (==
+        (is-zero (add right_succ (mul left right_succ)))
+        (by
+          (rewrite (mul_succ_left left right_succ))
+          (eval)))
+      (==
+        (is-zero (add right_succ tail_product))
+        (by
+          (rewrite tail_product_proof)
+          (eval)))
+      (==
+        (is-zero (add (succ right) tail_product))
+        (by
+          (rewrite (symm right_succ_proof))
+          (eval)))
+      (==
+        (quote :false)
+        (by
+          (exact is_zero_add_succ_left right tail_product))))))
+
+(theorem pred_mul_succ_succ
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (computes-to
+        (pred (mul (succ left) (succ right)))
+        (add right (mul left (succ right))))))
+  (by
+    (intro left)
+    (intro right)
+    (obtain right_succ right_succ_proof
+      (succ_computes_to_list right))
+    (obtain tail_product tail_product_proof
+      (mul_computes_to_list left right_succ))
+    (calc
+      (pred (mul (succ left) (succ right)))
+      (==
+        (pred (mul (succ left) right_succ))
+        (by
+          (rewrite right_succ_proof)
+          (eval)))
+      (==
+        (pred (add right_succ (mul left right_succ)))
+        (by
+          (rewrite (mul_succ_left left right_succ))
+          (eval)))
+      (==
+        (pred (add right_succ tail_product))
+        (by
+          (rewrite tail_product_proof)
+          (eval)))
+      (==
+        (pred (add (succ right) tail_product))
+        (by
+          (rewrite (symm right_succ_proof))
+          (eval)))
+      (==
+        (add right tail_product)
+        (by
+          (exact pred_add_succ_left right tail_product)))
+      (==
+        (add right (mul left right_succ))
+        (by
+          (rewrite (symm tail_product_proof))
+          (eval)))
+      (==
+        (add right (mul left (succ right)))
+        (by
+          (rewrite (symm right_succ_proof))
+          (eval))))))
 
 (theorem mul_succ_right
   (forall left (is-list left)
@@ -1009,6 +1243,25 @@
             zero
             (by
               (exact induction_hypothesis))))))))
+
+(theorem is_zero_mul_zero_right
+  (forall nat (is-list nat)
+    (computes-to
+      (is-zero (mul nat zero))
+      (quote :true)))
+  (by
+    (intro nat)
+    (calc
+      (is-zero (mul nat zero))
+      (==
+        (is-zero zero)
+        (by
+          (rewrite (mul_zero_right nat))
+          (eval)))
+      (==
+        (quote :true)
+        (by
+          (eval))))))
 
 (theorem mul_one_left
   (forall right (is-list right)
