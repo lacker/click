@@ -5205,7 +5205,7 @@
           (==
             (mul tail zero)
             (by
-              (rewrite (symm (eval-to zero nil)))
+              (fold zero)
               (eval)))
           (==
             zero
@@ -5250,7 +5250,7 @@
       (==
         (add right (mul zero right))
         (by
-          (rewrite (symm (eval-to zero nil)))
+          (fold zero)
           (eval)))
       (==
         (add right zero)
@@ -5335,7 +5335,8 @@
           (==
             zero
             (by
-              (exact (symm (eval-to zero nil)))))
+              (fold zero)
+              (eval)))
           (==
             (mul right zero)
             (by
@@ -5503,7 +5504,8 @@
           (==
             zero
             (by
-              (exact (symm (eval-to zero nil)))))
+              (fold zero)
+              (eval)))
           (==
             (mul zero middle_right)
             (by
