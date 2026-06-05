@@ -102,6 +102,11 @@
     (intro right)
     (eval)))
 
+(theorem zero_eq_nil
+  (computes-to zero nil)
+  (by
+    (eval)))
+
 (theorem zero_computes_to_list
   (computes-to-list result zero)
   (by

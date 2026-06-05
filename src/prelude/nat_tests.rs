@@ -157,6 +157,10 @@ pub fn add_is_append_source_theorem() -> Prop {
     theorem_prop("add_is_append")
 }
 
+pub fn zero_eq_nil_source_theorem() -> Prop {
+    theorem_prop("zero_eq_nil")
+}
+
 pub fn zero_computes_to_list_source_theorem() -> Prop {
     theorem_prop("zero_computes_to_list")
 }
@@ -801,6 +805,7 @@ fn nat_theorem_statements_load_from_source() {
         zero_computes_to_list_source_theorem(),
         computes_to_list(zero_result, zero())
     );
+    assert_eq!(zero_eq_nil_source_theorem(), computes_to(zero(), nil()));
     assert_eq!(
         zero_is_nat_value_source_theorem(),
         computes_to(is_nat_value_call(zero()), true_value())
@@ -2067,6 +2072,7 @@ fn checked_theory_contains_nat_theorems() {
     let theory = super::theory();
 
     assert_theory_has_theorem(&theory, "add_is_append", add_is_append_source_theorem());
+    assert_theory_has_theorem(&theory, "zero_eq_nil", zero_eq_nil_source_theorem());
     assert_theory_has_theorem(
         &theory,
         "zero_computes_to_list",
