@@ -576,6 +576,39 @@ mod tests {
     }
 
     #[test]
+    fn load_str_checks_simp_tactic_theorems() {
+        let mut loaded = LoadedSource::new();
+
+        loaded
+            .load_str(
+                "
+                (theorem rewrite_value_nil
+                  (forall value (is-value value)
+                    (implies
+                      (computes-to value nil)
+                      (computes-to value nil)))
+                  (by
+                    (intro value)
+                    (intro value_nil)
+                    (exact value_nil)))
+                (theorem simp_rewrites_value_nil
+                  (forall value (is-value value)
+                    (implies
+                      (computes-to value nil)
+                      (computes-to value nil)))
+                  (by
+                    (intro value)
+                    (intro value_nil)
+                    (simp only rewrite_value_nil)))
+                ",
+            )
+            .expect("source simp theorem should load");
+
+        assert!(loaded.theorem("rewrite_value_nil").is_some());
+        assert!(loaded.theorem("simp_rewrites_value_nil").is_some());
+    }
+
+    #[test]
     fn load_str_checks_absurd_and_if_condition_bool_theorems() {
         let mut loaded = LoadedSource::new();
 

@@ -315,6 +315,9 @@ pub(crate) enum TacticExpr {
     Eval {
         limit: usize,
     },
+    Simp {
+        rules: Vec<Name>,
+    },
     Apply {
         theorem: Name,
         arguments: Vec<Computation>,
@@ -1243,6 +1246,7 @@ impl<'a> SourceParser<'a> {
             "assumption" => self.tactic_assumption(items),
             "have" => self.tactic_have(items),
             "eval" => self.tactic_eval(items),
+            "simp" => self.tactic_simp(items),
             "apply" => self.tactic_apply(items),
             "specialize" => self.tactic_specialize(items),
             "split" | "constructor" => self.tactic_split(form, items),
@@ -1329,6 +1333,31 @@ impl<'a> SourceParser<'a> {
                 items.len().saturating_sub(1)
             ))),
         }
+    }
+
+    fn tactic_simp(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        if items.len() < 2 {
+            return Err(ParseError::new(
+                "`simp` currently expects `only` followed by zero or more theorem names",
+            ));
+        }
+        let mode = atom(&items[1])?;
+        if mode != "only" {
+            return Err(ParseError::new(format!(
+                "`simp` currently supports only explicit rules: expected `only`, got `{mode}`"
+            )));
+        }
+
+        let mut rules = Vec::new();
+        for item in &items[2..] {
+            let spelling = atom(item)?;
+            let Some(theorem) = self.theorem(spelling) else {
+                return Err(ParseError::new(format!("unknown theorem `{spelling}`")));
+            };
+            rules.push(theorem);
+        }
+
+        Ok(TacticExpr::Simp { rules })
     }
 
     fn tactic_apply(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
@@ -2443,6 +2472,45 @@ mod tests {
         assert!(matches!(
             tactics.as_slice(),
             [TacticExpr::Calc { steps, .. }] if steps.len() == 2
+        ));
+    }
+
+    #[test]
+    fn parses_simp_tactic_scripts() {
+        let theorems = [
+            NameBinding {
+                spelling: "nil_self",
+                name: Name(1),
+            },
+            NameBinding {
+                spelling: "nil_self_by_simp",
+                name: Name(2),
+            },
+        ];
+
+        let module = parse_module(
+            "
+            (theorem nil_self
+              (computes-to nil nil)
+              (by
+                (eval)))
+            (theorem nil_self_by_simp
+              (computes-to nil nil)
+              (by
+                (simp only nil_self)))
+            ",
+            &[],
+            &theorems,
+            &[],
+        )
+        .expect("simp tactic source should parse");
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[1].proof else {
+            panic!("expected a tactic proof script");
+        };
+        assert!(matches!(
+            tactics.as_slice(),
+            [TacticExpr::Simp { rules }] if rules == &vec![Name(1)]
         ));
     }
 

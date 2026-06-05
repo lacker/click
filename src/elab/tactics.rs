@@ -1,12 +1,12 @@
 //! Tactic-script elaboration into kernel proofs.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::kernel::{primitive_prop_holds, structural_primitive_prop_holds};
 use crate::{
-    Computation, Context, LAMBDA_KIND_SYMBOL, ListCase, Name, Proof, Prop, SYMBOL_KIND_SYMBOL,
-    Symbol, TRUE_SYMBOL, Theory, alpha_eq_computation, alpha_eq_prop, equal, free_symbols, is_list,
-    is_value, substitute_prop, symbol_eq, value_kind,
+    Computation, Context, LAMBDA_KIND_SYMBOL, Lambda, ListCase, Name, Proof, Prop,
+    SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL, Theory, alpha_eq_computation, alpha_eq_prop, equal,
+    free_symbols, is_list, is_value, substitute_prop, symbol_eq, value_kind,
 };
 
 use super::proof::{
@@ -71,6 +71,10 @@ fn tactic_steps_to_proof(
         TacticExpr::Eval { limit } => {
             ensure_no_more_tactics(rest, "eval")?;
             tactic_eval(*limit, theory, goal)
+        }
+        TacticExpr::Simp { rules } => {
+            ensure_no_more_tactics(rest, "simp")?;
+            tactic_simp(rules, theory, goal)
         }
         TacticExpr::Apply { theorem, arguments } => {
             ensure_no_more_tactics(rest, "apply")?;
@@ -367,6 +371,363 @@ fn tactic_eval(limit: usize, theory: &Theory, goal: &Goal) -> Result<Proof, Proo
         )
     })
     .map_err(ProofElaborationError::EvaluationFailed)
+}
+
+const SIMP_STEP_LIMIT: usize = 128;
+
+fn tactic_simp(
+    rules: &[Name],
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let Prop::Equal(left, right) = &goal.target else {
+        return Err(tactic_failed("simp", "goal is not an equality"));
+    };
+
+    let (simplified_left, left_proof) =
+        simplify_top_level(left.clone(), rules, theory, &goal.context)?;
+    let (simplified_right, right_proof) =
+        simplify_top_level(right.clone(), rules, theory, &goal.context)?;
+
+    if !alpha_eq_computation(&simplified_left, &simplified_right) {
+        return Err(tactic_failed(
+            "simp",
+            format!(
+                "simplified goal to {:?} equals {:?}, but the sides still differ",
+                simplified_left, simplified_right
+            ),
+        ));
+    }
+
+    Ok(Proof::Trans(
+        Box::new(left_proof),
+        Box::new(Proof::Symm(Box::new(right_proof))),
+    ))
+}
+
+fn simplify_top_level(
+    original: Computation,
+    rules: &[Name],
+    theory: &Theory,
+    context: &Context,
+) -> Result<(Computation, Proof), ProofElaborationError> {
+    let mut current = original.clone();
+    let mut proofs = Vec::new();
+
+    for _ in 0..SIMP_STEP_LIMIT {
+        match theory.reduce_in_context(&current, context) {
+            crate::Step::Reduced(next) => {
+                proofs.push(Proof::Step(current));
+                current = next;
+                continue;
+            }
+            crate::Step::Normal => {}
+        }
+
+        if let Some(rewrite) = simp_rewrite(&current, rules, theory, context)? {
+            proofs.push(rewrite.proof);
+            current = rewrite.result;
+            continue;
+        }
+
+        return Ok((current, equality_chain_or_refl(original, proofs)));
+    }
+
+    Err(tactic_failed(
+        "simp",
+        format!("simplification exceeded {SIMP_STEP_LIMIT} steps"),
+    ))
+}
+
+struct SimpRewrite {
+    result: Computation,
+    proof: Proof,
+}
+
+fn simp_rewrite(
+    target: &Computation,
+    rules: &[Name],
+    theory: &Theory,
+    context: &Context,
+) -> Result<Option<SimpRewrite>, ProofElaborationError> {
+    for rule in rules {
+        if let Some(rewrite) = simp_rewrite_with_rule(*rule, target, theory, context)? {
+            return Ok(Some(rewrite));
+        }
+    }
+
+    Ok(None)
+}
+
+struct SimpRule {
+    binders: Vec<Symbol>,
+    lhs: Computation,
+}
+
+fn simp_rewrite_with_rule(
+    theorem: Name,
+    target: &Computation,
+    theory: &Theory,
+    context: &Context,
+) -> Result<Option<SimpRewrite>, ProofElaborationError> {
+    let Some(prop) = theory.theorem(theorem).cloned() else {
+        return Err(ProofElaborationError::UnknownTheorem(theorem));
+    };
+    let rule = parse_simp_rule(theorem, &prop)?;
+    let mut substitutions = HashMap::new();
+    let matchable = rule.binders.iter().copied().collect::<HashSet<_>>();
+    if !match_simp_pattern(&rule.lhs, target, &matchable, &mut substitutions) {
+        return Ok(None);
+    }
+
+    let Some((proof, proven)) =
+        instantiate_simp_rule(theorem, prop, &substitutions, theory, context)?
+    else {
+        return Ok(None);
+    };
+
+    match proven {
+        Prop::Equal(left, right) => {
+            if !alpha_eq_computation(&left, target) {
+                return Ok(None);
+            }
+            if alpha_eq_computation(&right, target) {
+                return Ok(None);
+            }
+            Ok(Some(SimpRewrite {
+                result: right,
+                proof,
+            }))
+        }
+        Prop::Implies(premise, _) => Err(tactic_failed(
+            "simp",
+            unavailable_premise_message(&premise, context),
+        )),
+        _ => Err(tactic_failed(
+            "simp",
+            format!("theorem {theorem:?} did not produce an equality after instantiation"),
+        )),
+    }
+}
+
+fn instantiate_simp_rule(
+    theorem: Name,
+    mut prop: Prop,
+    substitutions: &HashMap<Symbol, Computation>,
+    theory: &Theory,
+    context: &Context,
+) -> Result<Option<(Proof, Prop)>, ProofElaborationError> {
+    let mut proof = Proof::Known(theorem);
+
+    loop {
+        match prop {
+            Prop::ForAll { variable, body } => {
+                let Some(argument) = substitutions.get(&variable).cloned() else {
+                    return Err(tactic_failed(
+                        "simp",
+                        format!("could not infer argument {variable:?} for theorem {theorem:?}"),
+                    ));
+                };
+                let expected = substitute_prop(&body, variable, &argument);
+                proof = Proof::ForAllElim {
+                    forall: Box::new(proof),
+                    argument,
+                };
+                prop = theory
+                    .proven_prop_in_context(&proof, context)
+                    .ok_or_else(|| {
+                        tactic_failed("simp", "forall elimination produced no proposition")
+                    })?;
+                if alpha_eq_prop(&prop, &expected) {
+                    prop = expected;
+                }
+            }
+            Prop::Implies(premise, conclusion) => {
+                let Ok(premise_proof) = available_prop_proof(&premise, context) else {
+                    return Ok(None);
+                };
+                proof = Proof::ImpliesElim {
+                    implication: Box::new(proof),
+                    premise: Box::new(premise_proof),
+                };
+                prop = theory
+                    .proven_prop_in_context(&proof, context)
+                    .ok_or_else(|| {
+                        tactic_failed("simp", "applying premise produced no proposition")
+                    })?;
+                if alpha_eq_prop(&prop, &conclusion) {
+                    prop = *conclusion;
+                }
+            }
+            _ => return Ok(Some((proof, prop))),
+        }
+    }
+}
+
+fn parse_simp_rule(theorem: Name, prop: &Prop) -> Result<SimpRule, ProofElaborationError> {
+    let mut binders = Vec::new();
+    let mut prop = prop.clone();
+
+    loop {
+        match prop {
+            Prop::ForAll { variable, body } => {
+                binders.push(variable);
+                prop = *body;
+            }
+            Prop::Implies(_, conclusion) => {
+                prop = *conclusion;
+            }
+            Prop::Equal(left, _right) => {
+                return Ok(SimpRule { binders, lhs: left });
+            }
+            _ => {
+                return Err(tactic_failed(
+                    "simp",
+                    format!("theorem {theorem:?} is not an equality rewrite rule"),
+                ));
+            }
+        }
+    }
+}
+
+fn match_simp_pattern(
+    pattern: &Computation,
+    target: &Computation,
+    matchable: &HashSet<Symbol>,
+    substitutions: &mut HashMap<Symbol, Computation>,
+) -> bool {
+    if let Computation::Var(symbol) = pattern {
+        if matchable.contains(symbol) {
+            return match substitutions.get(symbol) {
+                Some(existing) => alpha_eq_computation(existing, target),
+                None => {
+                    substitutions.insert(*symbol, target.clone());
+                    true
+                }
+            };
+        }
+    }
+
+    match (pattern, target) {
+        (
+            Computation::Apply {
+                function: pattern_function,
+                argument: pattern_argument,
+            },
+            Computation::Apply {
+                function: target_function,
+                argument: target_argument,
+            },
+        ) => {
+            match_simp_pattern(pattern_function, target_function, matchable, substitutions)
+                && match_simp_pattern(pattern_argument, target_argument, matchable, substitutions)
+        }
+        (Computation::Lambda(pattern), Computation::Lambda(target)) => {
+            match_lambda_pattern(pattern, target, matchable, substitutions)
+        }
+        (Computation::Nil, Computation::Nil) => true,
+        (
+            Computation::Cons {
+                head: pattern_head,
+                tail: pattern_tail,
+            },
+            Computation::Cons {
+                head: target_head,
+                tail: target_tail,
+            },
+        ) => {
+            match_simp_pattern(pattern_head, target_head, matchable, substitutions)
+                && match_simp_pattern(pattern_tail, target_tail, matchable, substitutions)
+        }
+        (Computation::Head(pattern), Computation::Head(target))
+        | (Computation::Tail(pattern), Computation::Tail(target))
+        | (Computation::ValueKind(pattern), Computation::ValueKind(target)) => {
+            match_simp_pattern(pattern, target, matchable, substitutions)
+        }
+        (Computation::ListCase(pattern), Computation::ListCase(target)) => {
+            match_list_case_pattern(pattern, target, matchable, substitutions)
+        }
+        (
+            Computation::If {
+                condition: pattern_condition,
+                then_branch: pattern_then,
+                else_branch: pattern_else,
+            },
+            Computation::If {
+                condition: target_condition,
+                then_branch: target_then,
+                else_branch: target_else,
+            },
+        ) => {
+            match_simp_pattern(
+                pattern_condition,
+                target_condition,
+                matchable,
+                substitutions,
+            ) && match_simp_pattern(pattern_then, target_then, matchable, substitutions)
+                && match_simp_pattern(pattern_else, target_else, matchable, substitutions)
+        }
+        (
+            Computation::SymbolEq {
+                left: pattern_left,
+                right: pattern_right,
+            },
+            Computation::SymbolEq {
+                left: target_left,
+                right: target_right,
+            },
+        ) => {
+            match_simp_pattern(pattern_left, target_left, matchable, substitutions)
+                && match_simp_pattern(pattern_right, target_right, matchable, substitutions)
+        }
+        (Computation::Ref(pattern), Computation::Ref(target)) => pattern == target,
+        (Computation::Error(pattern), Computation::Error(target)) => pattern == target,
+        (Computation::Diverge, Computation::Diverge) => true,
+        (Computation::Var(pattern), Computation::Var(target)) => pattern == target,
+        (Computation::Quote(pattern), Computation::Quote(target)) => pattern == target,
+        _ => false,
+    }
+}
+
+fn match_lambda_pattern(
+    pattern: &Lambda,
+    target: &Lambda,
+    matchable: &HashSet<Symbol>,
+    substitutions: &mut HashMap<Symbol, Computation>,
+) -> bool {
+    if pattern.parameter != target.parameter {
+        return false;
+    }
+
+    let mut matchable = matchable.clone();
+    matchable.remove(&pattern.parameter);
+    match_simp_pattern(&pattern.body, &target.body, &matchable, substitutions)
+}
+
+fn match_list_case_pattern(
+    pattern: &ListCase,
+    target: &ListCase,
+    matchable: &HashSet<Symbol>,
+    substitutions: &mut HashMap<Symbol, Computation>,
+) -> bool {
+    if pattern.cons != target.cons {
+        return false;
+    }
+
+    let mut cons_case_matchable = matchable.clone();
+    cons_case_matchable.remove(&pattern.cons);
+    match_simp_pattern(&pattern.list, &target.list, matchable, substitutions)
+        && match_simp_pattern(&pattern.nil, &target.nil, matchable, substitutions)
+        && match_simp_pattern(
+            &pattern.cons_case,
+            &target.cons_case,
+            &cons_case_matchable,
+            substitutions,
+        )
+}
+
+fn equality_chain_or_refl(original: Computation, proofs: Vec<Proof>) -> Proof {
+    trans_chain(proofs).unwrap_or(Proof::Refl(original))
 }
 
 fn tactic_apply(
@@ -1618,5 +1979,79 @@ fn add_all_symbols_computation(computation: &Computation, symbols: &mut HashSet<
             symbols.insert(*symbol);
         }
         Computation::Nil | Computation::Ref(_) | Computation::Error(_) | Computation::Diverge => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::forall_where;
+
+    const THEOREM: Name = Name(1);
+    const VALUE: Symbol = Symbol(10);
+    const ASSUMED_EQUAL: Symbol = Symbol(11);
+    const TARGET_VALUE: Symbol = Symbol(20);
+    const TARGET_EQUAL: Symbol = Symbol(21);
+
+    fn value_nil_rule() -> (Theory, Prop) {
+        let premise = equal(Computation::Var(VALUE), Computation::Nil);
+        let prop = forall_where(
+            VALUE,
+            is_value(Computation::Var(VALUE)),
+            Prop::Implies(Box::new(premise.clone()), Box::new(premise.clone())),
+        );
+        let proof = Proof::ForAllIntro {
+            variable: VALUE,
+            proof: Box::new(Proof::ImpliesIntro {
+                assumption: VALUE,
+                premise: is_value(Computation::Var(VALUE)),
+                proof: Box::new(Proof::ImpliesIntro {
+                    assumption: ASSUMED_EQUAL,
+                    premise,
+                    proof: Box::new(Proof::Assume(ASSUMED_EQUAL)),
+                }),
+            }),
+        };
+
+        let mut theory = Theory::new();
+        theory
+            .define_theorem_from_proof_result(THEOREM, proof, prop.clone())
+            .expect("test rule should be a valid theorem");
+
+        (theory, prop)
+    }
+
+    #[test]
+    fn instantiate_simp_rule_infers_arguments_and_uses_available_premises() {
+        let (theory, prop) = value_nil_rule();
+        let target = Computation::Var(TARGET_VALUE);
+        let substitutions = HashMap::from([(VALUE, target.clone())]);
+        let mut context = Context::new();
+        context.insert(TARGET_VALUE, is_value(target.clone()));
+        context.insert(TARGET_EQUAL, equal(target.clone(), Computation::Nil));
+
+        let (_proof, proven) =
+            instantiate_simp_rule(THEOREM, prop, &substitutions, &theory, &context)
+                .expect("rule instantiation should not fail")
+                .expect("rule premises should be available");
+
+        assert_eq!(
+            proven,
+            equal(Computation::Var(TARGET_VALUE), Computation::Nil)
+        );
+    }
+
+    #[test]
+    fn instantiate_simp_rule_skips_unavailable_premises() {
+        let (theory, prop) = value_nil_rule();
+        let target = Computation::Var(TARGET_VALUE);
+        let substitutions = HashMap::from([(VALUE, target.clone())]);
+        let mut context = Context::new();
+        context.insert(TARGET_VALUE, is_value(target));
+
+        assert_eq!(
+            instantiate_simp_rule(THEOREM, prop, &substitutions, &theory, &context),
+            Ok(None)
+        );
     }
 }
