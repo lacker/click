@@ -322,6 +322,9 @@ pub(crate) enum TacticExpr {
         rules: Vec<ProofExpr>,
         proof: Option<Box<ProofExpr>>,
     },
+    Fold {
+        definition: Name,
+    },
     Apply {
         theorem: Name,
         arguments: Vec<Computation>,
@@ -1252,6 +1255,7 @@ impl<'a> SourceParser<'a> {
             "eval" => self.tactic_eval(items),
             "simp" => self.tactic_simp(items),
             "simpa" => self.tactic_simpa(items),
+            "fold" => self.tactic_fold(items),
             "apply" => self.tactic_apply(items),
             "specialize" => self.tactic_specialize(items),
             "split" | "constructor" => self.tactic_split(form, items),
@@ -1405,6 +1409,18 @@ impl<'a> SourceParser<'a> {
         }
 
         Ok(TacticExpr::Simpa { rules, proof })
+    }
+
+    fn tactic_fold(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        expect_len("fold", items, 2)?;
+        let spelling = atom(&items[1])?;
+        let Some(definition) = self.definition(spelling) else {
+            return Err(ParseError::new(format!(
+                "`fold` expected a computation definition, got `{spelling}`"
+            )));
+        };
+
+        Ok(TacticExpr::Fold { definition })
     }
 
     fn tactic_apply(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
@@ -2599,6 +2615,46 @@ mod tests {
             [TacticExpr::Simpa { rules, proof: Some(proof) }]
                 if rules == &vec![ProofExpr::Known(Name(1))]
                     && **proof == ProofExpr::Known(Name(1))
+        ));
+    }
+
+    #[test]
+    fn parses_fold_tactic_scripts() {
+        let computations = [NameBinding {
+            spelling: "alias",
+            name: Name(1),
+        }];
+        let theorems = [NameBinding {
+            spelling: "fold_alias_nil",
+            name: Name(2),
+        }];
+
+        let module = parse_module(
+            "
+            (def alias nil)
+            (theorem fold_alias_nil
+              (equal nil alias)
+              (by
+                (fold alias)
+                (eval)))
+            ",
+            &computations,
+            &theorems,
+            &[],
+        )
+        .expect("fold tactic source should parse");
+
+        let ProofScript::By(TacticScript { tactics }) = &module.theorems[0].proof else {
+            panic!("expected a tactic proof script");
+        };
+        assert!(matches!(
+            tactics.as_slice(),
+            [
+                TacticExpr::Fold {
+                    definition: Name(1)
+                },
+                TacticExpr::Eval { limit: 128 }
+            ]
         ));
     }
 

@@ -645,6 +645,26 @@ mod tests {
     }
 
     #[test]
+    fn load_str_checks_fold_tactic_theorems() {
+        let mut loaded = LoadedSource::new();
+
+        loaded
+            .load_str(
+                "
+                (def alias nil)
+                (theorem fold_alias_nil
+                  (equal nil alias)
+                  (by
+                    (fold alias)
+                    (eval)))
+                ",
+            )
+            .expect("source fold theorem should load");
+
+        assert!(loaded.theorem("fold_alias_nil").is_some());
+    }
+
+    #[test]
     fn failing_simp_reports_simplification_steps() {
         let mut loaded = LoadedSource::new();
 
@@ -680,7 +700,7 @@ mod tests {
     }
 
     #[test]
-    fn failing_simp_reports_simplification_cycles() {
+    fn failing_simp_reports_expansion_oriented_rules() {
         let mut loaded = LoadedSource::new();
 
         let error = loaded
@@ -697,7 +717,7 @@ mod tests {
                     (simp only (symm alias_nil))))
                 ",
             )
-            .expect_err("expansion-oriented simp rule should report a cycle");
+            .expect_err("expansion-oriented simp rule should be rejected");
 
         let SourceLoadError::Theorem(SourceTheoremError::ProofElaborationFailed {
             error: proof::ProofElaborationError::TacticFailed { tactic, message },
@@ -708,16 +728,17 @@ mod tests {
         };
 
         assert_eq!(tactic, "simp");
-        assert!(message.contains("simplification cycle detected"));
-        assert!(message.contains("repeated term"));
         assert!(message.contains("oriented as an expansion"));
+        assert!(message.contains("immediately undone by kernel reduction"));
+        assert!(message.contains("fold <definition>"));
         assert!(message.contains("rewrite`/`eval"));
-        assert!(message.contains("rewrite with rule"));
+        assert!(message.contains("canonical forms"));
+        assert!(message.contains("Symm"));
         assert!(message.contains("kernel reduction"));
     }
 
     #[test]
-    fn failing_simpa_reports_simplification_cycles_as_simpa() {
+    fn failing_simpa_reports_expansion_oriented_rules_as_simpa() {
         let mut loaded = LoadedSource::new();
 
         let error = loaded
@@ -734,7 +755,7 @@ mod tests {
                     (simpa only (symm alias_nil))))
                 ",
             )
-            .expect_err("expansion-oriented simpa rule should report a cycle");
+            .expect_err("expansion-oriented simpa rule should be rejected");
 
         let SourceLoadError::Theorem(SourceTheoremError::ProofElaborationFailed {
             error: proof::ProofElaborationError::TacticFailed { tactic, message },
@@ -745,8 +766,9 @@ mod tests {
         };
 
         assert_eq!(tactic, "simpa");
-        assert!(message.contains("simplification cycle detected"));
         assert!(message.contains("oriented as an expansion"));
+        assert!(message.contains("fold <definition>"));
+        assert!(message.contains("immediately undone by kernel reduction"));
         assert!(message.contains("canonical forms"));
     }
 

@@ -80,6 +80,7 @@ fn tactic_steps_to_proof(
             ensure_no_more_tactics(rest, "simpa")?;
             tactic_simpa(rules, proof.as_deref(), theory, goal)
         }
+        TacticExpr::Fold { definition } => tactic_fold(*definition, rest, theory, goal),
         TacticExpr::Apply { theorem, arguments } => {
             ensure_no_more_tactics(rest, "apply")?;
             tactic_apply(*theorem, arguments, theory, goal)
@@ -682,6 +683,14 @@ fn simp_rewrite_with_rule(
                 if alpha_eq_computation(&right, target) {
                     continue;
                 }
+                if let crate::Step::Reduced(reduced) = theory.reduce_in_context(&right, context) {
+                    if alpha_eq_computation(&reduced, target) {
+                        return Err(tactic_failed(
+                            tactic,
+                            simp_expansion_rule_message(rule_index, rule, target, &right),
+                        ));
+                    }
+                }
                 let mut trace = SimpTrace::default();
                 trace.push_change(
                     format!(
@@ -1053,11 +1062,34 @@ fn simp_cycle_message(first_seen_step: usize, repeated: &Computation, trace: &Si
         "simplification cycle detected after {} steps\n\
          repeated term first seen after {first_seen_step} steps: {}\n\
          this usually means a simp rule is oriented as an expansion that kernel reduction can undo; \
-         use explicit `rewrite`/`eval` for one-shot expansion, or orient simp rules toward canonical forms\n\
+         use explicit `rewrite`, `eval`, or `fold` for one-shot expansion, or orient simp rules toward canonical forms\n\
          steps:\n{}",
         trace.total_steps(),
         compact_debug(repeated),
         format_simp_trace(trace)
+    )
+}
+
+fn simp_expansion_rule_message(
+    rule_index: usize,
+    rule: &ProofExpr,
+    target: &Computation,
+    expanded: &Computation,
+) -> String {
+    let fold_hint = match expanded {
+        Computation::Ref(_) => " use `(fold <definition>)` for this source-level name,".to_string(),
+        _ => " use `fold` for named definitions,".to_string(),
+    };
+
+    format!(
+        "simp rule {} ({}) is oriented as an expansion\n\
+         rewriting {} to {} is immediately undone by kernel reduction;{} \
+         or use explicit `rewrite`/`eval` for one-shot expansion; simp rules should move toward canonical forms",
+        rule_index + 1,
+        compact_debug(rule),
+        compact_debug(target),
+        compact_debug(expanded),
+        fold_hint
     )
 }
 
@@ -1952,6 +1984,39 @@ fn tactic_rewrite(
     })
 }
 
+fn tactic_fold(
+    definition: Name,
+    rest: &[TacticExpr],
+    theory: &Theory,
+    goal: &Goal,
+) -> Result<Proof, ProofElaborationError> {
+    let body = theory
+        .computation(definition)
+        .cloned()
+        .ok_or_else(|| tactic_failed("fold", format!("unknown definition {definition:?}")))?;
+    let folded = Computation::Ref(definition);
+    let placeholder = fresh_rewrite_symbol(&goal.target, &body, &folded);
+    let Some(template) = rewrite_template(&goal.target, &body, placeholder) else {
+        return Err(tactic_failed(
+            "fold",
+            format!("goal does not contain the definition body {:?}", body),
+        ));
+    };
+
+    let folded_goal = Goal {
+        context: goal.context.clone(),
+        target: substitute_prop(&template, placeholder, &folded),
+    };
+    let proof = tactic_steps_to_proof(rest, theory, &folded_goal)?;
+
+    Ok(Proof::Rewrite {
+        equality: Box::new(Proof::Step(folded)),
+        proof: Box::new(proof),
+        variable: placeholder,
+        template,
+    })
+}
+
 fn tactic_list_induction(
     variable: Symbol,
     base: &TacticScript,
@@ -2590,8 +2655,8 @@ mod tests {
     const THEOREM: Name = Name(1);
     const ALIAS_A: Name = Name(2);
     const ALIAS_B: Name = Name(3);
-    const NIL_TO_ALIAS_A: Name = Name(4);
-    const NIL_TO_ALIAS_B: Name = Name(5);
+    const ALIAS_A_TO_NIL: Name = Name(4);
+    const ALIAS_A_TO_ALIAS_B: Name = Name(5);
     const VALUE: Symbol = Symbol(10);
     const ASSUMED_EQUAL: Symbol = Symbol(11);
     const TARGET_VALUE: Symbol = Symbol(20);
@@ -2625,7 +2690,7 @@ mod tests {
         (theory, prop)
     }
 
-    fn nil_to_ref_theory() -> Theory {
+    fn alias_rewrite_theory() -> Theory {
         let mut theory = Theory::new();
         theory
             .define_computation_result(ALIAS_A, &Computation::Nil)
@@ -2634,15 +2699,25 @@ mod tests {
             .define_computation_result(ALIAS_B, &Computation::Nil)
             .expect("alias B should be a closed computation");
 
-        for (theorem, alias) in [(NIL_TO_ALIAS_A, ALIAS_A), (NIL_TO_ALIAS_B, ALIAS_B)] {
-            theory
-                .define_theorem_from_proof_result(
-                    theorem,
-                    Proof::Symm(Box::new(Proof::Step(Computation::Ref(alias)))),
-                    equal(Computation::Nil, Computation::Ref(alias)),
-                )
-                .expect("nil should equal either nil alias by one unfolding step");
-        }
+        theory
+            .define_theorem_from_proof_result(
+                ALIAS_A_TO_NIL,
+                Proof::Step(Computation::Ref(ALIAS_A)),
+                equal(Computation::Ref(ALIAS_A), Computation::Nil),
+            )
+            .expect("alias A should equal nil by one unfolding step");
+        theory
+            .define_theorem_from_proof_result(
+                ALIAS_A_TO_ALIAS_B,
+                Proof::Trans(
+                    Box::new(Proof::Step(Computation::Ref(ALIAS_A))),
+                    Box::new(Proof::Symm(Box::new(Proof::Step(Computation::Ref(
+                        ALIAS_B,
+                    ))))),
+                ),
+                equal(Computation::Ref(ALIAS_A), Computation::Ref(ALIAS_B)),
+            )
+            .expect("alias A should equal alias B through nil");
 
         theory
     }
@@ -2698,13 +2773,13 @@ mod tests {
 
     #[test]
     fn simp_rewrite_uses_first_matching_rule() {
-        let theory = nil_to_ref_theory();
+        let theory = alias_rewrite_theory();
         let rewrite = simp_rewrite(
             "simp",
-            &Computation::Nil,
+            &Computation::Ref(ALIAS_A),
             &[
-                ProofExpr::Known(NIL_TO_ALIAS_A),
-                ProofExpr::Known(NIL_TO_ALIAS_B),
+                ProofExpr::Known(ALIAS_A_TO_NIL),
+                ProofExpr::Known(ALIAS_A_TO_ALIAS_B),
             ],
             &theory,
             &Context::new(),
@@ -2712,6 +2787,6 @@ mod tests {
         .expect("simp rewrite should not fail")
         .expect("the first rule should match");
 
-        assert_eq!(rewrite.result, Computation::Ref(ALIAS_A));
+        assert_eq!(rewrite.result, Computation::Nil);
     }
 }

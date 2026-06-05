@@ -56,7 +56,7 @@ They can also use goal-directed tactic scripts with `(by ...)`. Tactics inspect
 the current goal and local context, then elaborate to ordinary kernel `Proof`
 values that are checked by the kernel. The initial tactic set is intentionally
 small and deterministic: `intro`, `assumption`, `exact`, `eval`, `apply`,
-`have`, `specialize`, `obtain`, `cases`, `rewrite`, `simp`, `simpa`,
+`have`, `specialize`, `obtain`, `cases`, `rewrite`, `fold`, `simp`, `simpa`,
 `or-elim`, `list-induction`, `value-induction`, `calc`, `split`/`constructor`,
 `exists`, `left`, and `right`.
 Continuation tactics such as `have`, `specialize`, `obtain`, and `cases` can
@@ -80,8 +80,12 @@ By convention, simp rules should be oriented toward canonical forms. Avoid
 using expansion rules with `simp`, especially reverse-direction rules that
 introduce a reducible definition or alias. Since simplification interleaves
 rewriting with kernel reduction, an expansion can immediately reduce back to
-the original term and form a cycle. Use explicit `rewrite` followed by `eval`
-for one-shot expansion steps.
+the original term and form a cycle. Use `fold` when a proof should present a
+kernel-normal term using a source-level definition name, and use explicit
+`rewrite` followed by `eval` for other one-shot expansion steps. For example,
+`zero` computes to `nil`, so `zero_eq_nil` is naturally a simp rule in the
+`zero -> nil` direction; the reverse direction should be written as `(fold
+zero)` rather than as a simp rule.
 
 The related `(simpa only rule ... using proof)` tactic simplifies the equality
 goal and the equality proven by `proof`, then closes the goal if the simplified
