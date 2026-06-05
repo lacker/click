@@ -376,7 +376,7 @@ fn tactic_eval(limit: usize, theory: &Theory, goal: &Goal) -> Result<Proof, Proo
 const SIMP_STEP_LIMIT: usize = 128;
 
 fn tactic_simp(
-    rules: &[Name],
+    rules: &[ProofExpr],
     theory: &Theory,
     goal: &Goal,
 ) -> Result<Proof, ProofElaborationError> {
@@ -385,9 +385,9 @@ fn tactic_simp(
     };
 
     let (simplified_left, left_proof) =
-        simplify_top_level(left.clone(), rules, theory, &goal.context)?;
+        simplify_computation(left.clone(), rules, theory, &goal.context)?;
     let (simplified_right, right_proof) =
-        simplify_top_level(right.clone(), rules, theory, &goal.context)?;
+        simplify_computation(right.clone(), rules, theory, &goal.context)?;
 
     if !alpha_eq_computation(&simplified_left, &simplified_right) {
         return Err(tactic_failed(
@@ -405,9 +405,9 @@ fn tactic_simp(
     ))
 }
 
-fn simplify_top_level(
+fn simplify_computation(
     original: Computation,
-    rules: &[Name],
+    rules: &[ProofExpr],
     theory: &Theory,
     context: &Context,
 ) -> Result<(Computation, Proof), ProofElaborationError> {
@@ -415,6 +415,18 @@ fn simplify_top_level(
     let mut proofs = Vec::new();
 
     for _ in 0..SIMP_STEP_LIMIT {
+        if let Some(rewrite) = simp_rewrite(&current, rules, theory, context)? {
+            proofs.push(rewrite.proof);
+            current = rewrite.result;
+            continue;
+        }
+
+        if let Some(rewrite) = simp_child(&current, rules, theory, context)? {
+            proofs.push(rewrite.proof);
+            current = rewrite.result;
+            continue;
+        }
+
         match theory.reduce_in_context(&current, context) {
             crate::Step::Reduced(next) => {
                 proofs.push(Proof::Step(current));
@@ -422,12 +434,6 @@ fn simplify_top_level(
                 continue;
             }
             crate::Step::Normal => {}
-        }
-
-        if let Some(rewrite) = simp_rewrite(&current, rules, theory, context)? {
-            proofs.push(rewrite.proof);
-            current = rewrite.result;
-            continue;
         }
 
         return Ok((current, equality_chain_or_refl(original, proofs)));
@@ -446,12 +452,12 @@ struct SimpRewrite {
 
 fn simp_rewrite(
     target: &Computation,
-    rules: &[Name],
+    rules: &[ProofExpr],
     theory: &Theory,
     context: &Context,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
     for rule in rules {
-        if let Some(rewrite) = simp_rewrite_with_rule(*rule, target, theory, context)? {
+        if let Some(rewrite) = simp_rewrite_with_rule(rule, target, theory, context)? {
             return Ok(Some(rewrite));
         }
     }
@@ -465,23 +471,24 @@ struct SimpRule {
 }
 
 fn simp_rewrite_with_rule(
-    theorem: Name,
+    rule: &ProofExpr,
     target: &Computation,
     theory: &Theory,
     context: &Context,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
-    let Some(prop) = theory.theorem(theorem).cloned() else {
-        return Err(ProofElaborationError::UnknownTheorem(theorem));
-    };
-    let rule = parse_simp_rule(theorem, &prop)?;
+    let proof = proof_expr_to_proof_in_context(rule, theory, context)?;
+    let prop = theory
+        .proven_prop_in_context(&proof, context)
+        .ok_or_else(|| tactic_failed("simp", "simp rule proves no proposition"))?;
+    let simp_rule = parse_simp_rule(rule, &prop)?;
     let mut substitutions = HashMap::new();
-    let matchable = rule.binders.iter().copied().collect::<HashSet<_>>();
-    if !match_simp_pattern(&rule.lhs, target, &matchable, &mut substitutions) {
+    let matchable = simp_rule.binders.iter().copied().collect::<HashSet<_>>();
+    if !match_simp_pattern(&simp_rule.lhs, target, &matchable, &mut substitutions) {
         return Ok(None);
     }
 
     let Some((proof, proven)) =
-        instantiate_simp_rule(theorem, prop, &substitutions, theory, context)?
+        instantiate_simp_rule(rule, proof, prop, &substitutions, theory, context)?
     else {
         return Ok(None);
     };
@@ -505,27 +512,26 @@ fn simp_rewrite_with_rule(
         )),
         _ => Err(tactic_failed(
             "simp",
-            format!("theorem {theorem:?} did not produce an equality after instantiation"),
+            format!("rule {rule:?} did not produce an equality after instantiation"),
         )),
     }
 }
 
 fn instantiate_simp_rule(
-    theorem: Name,
+    rule: &ProofExpr,
+    mut proof: Proof,
     mut prop: Prop,
     substitutions: &HashMap<Symbol, Computation>,
     theory: &Theory,
     context: &Context,
 ) -> Result<Option<(Proof, Prop)>, ProofElaborationError> {
-    let mut proof = Proof::Known(theorem);
-
     loop {
         match prop {
             Prop::ForAll { variable, body } => {
                 let Some(argument) = substitutions.get(&variable).cloned() else {
                     return Err(tactic_failed(
                         "simp",
-                        format!("could not infer argument {variable:?} for theorem {theorem:?}"),
+                        format!("could not infer argument {variable:?} for rule {rule:?}"),
                     ));
                 };
                 let expected = substitute_prop(&body, variable, &argument);
@@ -564,7 +570,7 @@ fn instantiate_simp_rule(
     }
 }
 
-fn parse_simp_rule(theorem: Name, prop: &Prop) -> Result<SimpRule, ProofElaborationError> {
+fn parse_simp_rule(rule: &ProofExpr, prop: &Prop) -> Result<SimpRule, ProofElaborationError> {
     let mut binders = Vec::new();
     let mut prop = prop.clone();
 
@@ -583,7 +589,7 @@ fn parse_simp_rule(theorem: Name, prop: &Prop) -> Result<SimpRule, ProofElaborat
             _ => {
                 return Err(tactic_failed(
                     "simp",
-                    format!("theorem {theorem:?} is not an equality rewrite rule"),
+                    format!("rule {rule:?} is not an equality rewrite rule"),
                 ));
             }
         }
@@ -728,6 +734,241 @@ fn match_list_case_pattern(
 
 fn equality_chain_or_refl(original: Computation, proofs: Vec<Proof>) -> Proof {
     trans_chain(proofs).unwrap_or(Proof::Refl(original))
+}
+
+fn simp_child(
+    computation: &Computation,
+    rules: &[ProofExpr],
+    theory: &Theory,
+    context: &Context,
+) -> Result<Option<SimpRewrite>, ProofElaborationError> {
+    match computation {
+        Computation::Apply { function, argument } => simplify_child(
+            computation,
+            argument,
+            |argument| Computation::Apply {
+                function: function.clone(),
+                argument: Box::new(argument),
+            },
+            rules,
+            theory,
+            context,
+        )?
+        .map_or_else(
+            || {
+                simplify_child(
+                    computation,
+                    function,
+                    |function| Computation::Apply {
+                        function: Box::new(function),
+                        argument: argument.clone(),
+                    },
+                    rules,
+                    theory,
+                    context,
+                )
+            },
+            |rewrite| Ok(Some(rewrite)),
+        ),
+        Computation::Cons { head, tail } => simplify_child(
+            computation,
+            head,
+            |head| Computation::Cons {
+                head: Box::new(head),
+                tail: tail.clone(),
+            },
+            rules,
+            theory,
+            context,
+        )?
+        .map_or_else(
+            || {
+                simplify_child(
+                    computation,
+                    tail,
+                    |tail| Computation::Cons {
+                        head: head.clone(),
+                        tail: Box::new(tail),
+                    },
+                    rules,
+                    theory,
+                    context,
+                )
+            },
+            |rewrite| Ok(Some(rewrite)),
+        ),
+        Computation::Head(child) => simplify_child(
+            computation,
+            child,
+            |child| Computation::Head(Box::new(child)),
+            rules,
+            theory,
+            context,
+        ),
+        Computation::Tail(child) => simplify_child(
+            computation,
+            child,
+            |child| Computation::Tail(Box::new(child)),
+            rules,
+            theory,
+            context,
+        ),
+        Computation::ListCase(list_case) => simplify_child(
+            computation,
+            &list_case.list,
+            |list| {
+                let mut list_case = list_case.clone();
+                list_case.list = Box::new(list);
+                Computation::ListCase(list_case)
+            },
+            rules,
+            theory,
+            context,
+        )?
+        .map_or_else(
+            || {
+                simplify_child(
+                    computation,
+                    &list_case.nil,
+                    |nil| {
+                        let mut list_case = list_case.clone();
+                        list_case.nil = Box::new(nil);
+                        Computation::ListCase(list_case)
+                    },
+                    rules,
+                    theory,
+                    context,
+                )
+            },
+            |rewrite| Ok(Some(rewrite)),
+        ),
+        Computation::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => simplify_child(
+            computation,
+            condition,
+            |condition| Computation::If {
+                condition: Box::new(condition),
+                then_branch: then_branch.clone(),
+                else_branch: else_branch.clone(),
+            },
+            rules,
+            theory,
+            context,
+        )?
+        .map_or_else(
+            || {
+                simplify_child(
+                    computation,
+                    then_branch,
+                    |then_branch| Computation::If {
+                        condition: condition.clone(),
+                        then_branch: Box::new(then_branch),
+                        else_branch: else_branch.clone(),
+                    },
+                    rules,
+                    theory,
+                    context,
+                )?
+                .map_or_else(
+                    || {
+                        simplify_child(
+                            computation,
+                            else_branch,
+                            |else_branch| Computation::If {
+                                condition: condition.clone(),
+                                then_branch: then_branch.clone(),
+                                else_branch: Box::new(else_branch),
+                            },
+                            rules,
+                            theory,
+                            context,
+                        )
+                    },
+                    |rewrite| Ok(Some(rewrite)),
+                )
+            },
+            |rewrite| Ok(Some(rewrite)),
+        ),
+        Computation::SymbolEq { left, right } => simplify_child(
+            computation,
+            left,
+            |left| Computation::SymbolEq {
+                left: Box::new(left),
+                right: right.clone(),
+            },
+            rules,
+            theory,
+            context,
+        )?
+        .map_or_else(
+            || {
+                simplify_child(
+                    computation,
+                    right,
+                    |right| Computation::SymbolEq {
+                        left: left.clone(),
+                        right: Box::new(right),
+                    },
+                    rules,
+                    theory,
+                    context,
+                )
+            },
+            |rewrite| Ok(Some(rewrite)),
+        ),
+        Computation::ValueKind(child) => simplify_child(
+            computation,
+            child,
+            |child| Computation::ValueKind(Box::new(child)),
+            rules,
+            theory,
+            context,
+        ),
+        Computation::Lambda(_)
+        | Computation::Nil
+        | Computation::Ref(_)
+        | Computation::Error(_)
+        | Computation::Diverge
+        | Computation::Var(_)
+        | Computation::Quote(_) => Ok(None),
+    }
+}
+
+fn simplify_child(
+    parent: &Computation,
+    child: &Computation,
+    rebuild: impl Fn(Computation) -> Computation,
+    rules: &[ProofExpr],
+    theory: &Theory,
+    context: &Context,
+) -> Result<Option<SimpRewrite>, ProofElaborationError> {
+    let (simplified_child, child_proof) =
+        simplify_computation(child.clone(), rules, theory, context)?;
+    if alpha_eq_computation(child, &simplified_child) {
+        return Ok(None);
+    }
+
+    let parent = parent.clone();
+    let result = rebuild(simplified_child.clone());
+    let placeholder = fresh_rewrite_symbol(
+        &Prop::Equal(parent.clone(), result.clone()),
+        child,
+        &simplified_child,
+    );
+    let template = Prop::Equal(parent.clone(), rebuild(Computation::Var(placeholder)));
+
+    Ok(Some(SimpRewrite {
+        result,
+        proof: Proof::Rewrite {
+            equality: Box::new(child_proof),
+            proof: Box::new(Proof::Refl(parent)),
+            variable: placeholder,
+            template,
+        },
+    }))
 }
 
 fn tactic_apply(
@@ -2030,10 +2271,16 @@ mod tests {
         context.insert(TARGET_VALUE, is_value(target.clone()));
         context.insert(TARGET_EQUAL, equal(target.clone(), Computation::Nil));
 
-        let (_proof, proven) =
-            instantiate_simp_rule(THEOREM, prop, &substitutions, &theory, &context)
-                .expect("rule instantiation should not fail")
-                .expect("rule premises should be available");
+        let (_proof, proven) = instantiate_simp_rule(
+            &ProofExpr::Known(THEOREM),
+            Proof::Known(THEOREM),
+            prop,
+            &substitutions,
+            &theory,
+            &context,
+        )
+        .expect("rule instantiation should not fail")
+        .expect("rule premises should be available");
 
         assert_eq!(
             proven,
@@ -2050,7 +2297,14 @@ mod tests {
         context.insert(TARGET_VALUE, is_value(target));
 
         assert_eq!(
-            instantiate_simp_rule(THEOREM, prop, &substitutions, &theory, &context),
+            instantiate_simp_rule(
+                &ProofExpr::Known(THEOREM),
+                Proof::Known(THEOREM),
+                prop,
+                &substitutions,
+                &theory,
+                &context,
+            ),
             Ok(None)
         );
     }

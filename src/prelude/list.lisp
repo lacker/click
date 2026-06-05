@@ -1074,31 +1074,7 @@
     (intro head)
     (intro tail)
     (intro predicate_true)
-    (calc
-      (filter predicate (cons head tail))
-      (==
-        (if
-          (predicate head)
-          (cons
-            (head (cons head tail))
-            (filter predicate (tail (cons head tail))))
-          (filter predicate (tail (cons head tail))))
-        (by
-          (eval)))
-      (==
-        (if
-          (quote :true)
-          (cons
-            (head (cons head tail))
-            (filter predicate (tail (cons head tail))))
-          (filter predicate (tail (cons head tail))))
-        (by
-          (rewrite predicate_true)
-          (eval)))
-      (==
-        (cons head (filter predicate tail))
-        (by
-          (eval))))))
+    (simp only predicate_true)))
 
 (theorem filter_cons_false
   (forall predicate (is-value predicate)
@@ -1114,31 +1090,7 @@
     (intro head)
     (intro tail)
     (intro predicate_false)
-    (calc
-      (filter predicate (cons head tail))
-      (==
-        (if
-          (predicate head)
-          (cons
-            (head (cons head tail))
-            (filter predicate (tail (cons head tail))))
-          (filter predicate (tail (cons head tail))))
-        (by
-          (eval)))
-      (==
-        (if
-          (quote :false)
-          (cons
-            (head (cons head tail))
-            (filter predicate (tail (cons head tail))))
-          (filter predicate (tail (cons head tail))))
-        (by
-          (rewrite predicate_false)
-          (eval)))
-      (==
-        (filter predicate tail)
-        (by
-          (eval))))))
+    (simp only predicate_false)))
 
 (theorem any_nil
   (forall predicate (is-value predicate)
@@ -1161,27 +1113,7 @@
     (intro head)
     (intro tail)
     (intro predicate_true)
-    (calc
-      (any predicate (cons head tail))
-      (==
-        (if
-          (predicate head)
-          (quote :true)
-          (any predicate (tail (cons head tail))))
-        (by
-          (eval)))
-      (==
-        (if
-          (quote :true)
-          (quote :true)
-          (any predicate (tail (cons head tail))))
-        (by
-          (rewrite predicate_true)
-          (eval)))
-      (==
-        (quote :true)
-        (by
-          (eval))))))
+    (simp only predicate_true)))
 
 (theorem any_cons_false
   (forall predicate (is-value predicate)
@@ -1197,27 +1129,7 @@
     (intro head)
     (intro tail)
     (intro predicate_false)
-    (calc
-      (any predicate (cons head tail))
-      (==
-        (if
-          (predicate head)
-          (quote :true)
-          (any predicate (tail (cons head tail))))
-        (by
-          (eval)))
-      (==
-        (if
-          (quote :false)
-          (quote :true)
-          (any predicate (tail (cons head tail))))
-        (by
-          (rewrite predicate_false)
-          (eval)))
-      (==
-        (any predicate tail)
-        (by
-          (eval))))))
+    (simp only predicate_false)))
 
 (theorem all_nil
   (forall predicate (is-value predicate)
@@ -1240,27 +1152,7 @@
     (intro head)
     (intro tail)
     (intro predicate_true)
-    (calc
-      (all predicate (cons head tail))
-      (==
-        (if
-          (predicate head)
-          (all predicate (tail (cons head tail)))
-          (quote :false))
-        (by
-          (eval)))
-      (==
-        (if
-          (quote :true)
-          (all predicate (tail (cons head tail)))
-          (quote :false))
-        (by
-          (rewrite predicate_true)
-          (eval)))
-      (==
-        (all predicate tail)
-        (by
-          (eval))))))
+    (simp only predicate_true)))
 
 (theorem all_cons_false
   (forall predicate (is-value predicate)
@@ -1276,27 +1168,7 @@
     (intro head)
     (intro tail)
     (intro predicate_false)
-    (calc
-      (all predicate (cons head tail))
-      (==
-        (if
-          (predicate head)
-          (all predicate (tail (cons head tail)))
-          (quote :false))
-        (by
-          (eval)))
-      (==
-        (if
-          (quote :false)
-          (all predicate (tail (cons head tail)))
-          (quote :false))
-        (by
-          (rewrite predicate_false)
-          (eval)))
-      (==
-        (quote :false)
-        (by
-          (eval))))))
+    (simp only predicate_false)))
 
 (theorem filter_computes_to_list
   (forall predicate (is-value predicate)
@@ -2978,27 +2850,7 @@
     (intro head)
     (intro tail)
     (intro value_eq_true)
-    (calc
-      (member value (cons head tail))
-      (==
-        (if
-          (value-eq value head)
-          (quote :true)
-          (member value (tail (cons head tail))))
-        (by
-          (eval)))
-      (==
-        (if
-          (quote :true)
-          (quote :true)
-          (member value (tail (cons head tail))))
-        (by
-          (rewrite value_eq_true)
-          (eval)))
-      (==
-        (quote :true)
-        (by
-          (eval))))))
+    (simp only value_eq_true)))
 
 (theorem member_cons_false
   (forall value (is-value value)
@@ -3014,27 +2866,7 @@
     (intro head)
     (intro tail)
     (intro value_eq_false)
-    (calc
-      (member value (cons head tail))
-      (==
-        (if
-          (value-eq value head)
-          (quote :true)
-          (member value (tail (cons head tail))))
-        (by
-          (eval)))
-      (==
-        (if
-          (quote :false)
-          (quote :true)
-          (member value (tail (cons head tail))))
-        (by
-          (rewrite value_eq_false)
-          (eval)))
-      (==
-        (member value tail)
-        (by
-          (eval))))))
+    (simp only value_eq_false)))
 
 (theorem map_identity
   (forall list (is-list list)
@@ -3049,23 +2881,7 @@
       tail
       induction_hypothesis
       (by
-        (calc
-          (map (lambda value value) (cons head tail))
-          (==
-            (cons
-              ((lambda value value) head)
-              (map (lambda value value) tail))
-            (by
-              (apply map_cons (lambda value value) head tail)))
-          (==
-            (cons head (map (lambda value value) tail))
-            (by
-              (eval)))
-          (==
-            (cons head tail)
-            (by
-              (rewrite induction_hypothesis)
-              (eval))))))))
+        (simp only map_cons induction_hypothesis)))))
 
 (theorem concat_map_singleton
   (forall list (is-list list)
@@ -3080,29 +2896,7 @@
       tail
       induction_hypothesis
       (by
-        (calc
-          (concat-map (lambda value (cons value nil)) (cons head tail))
-          (==
-            (append
-              ((lambda value (cons value nil)) head)
-              (concat-map (lambda value (cons value nil)) tail))
-            (by
-              (apply concat_map_cons (lambda value (cons value nil)) head tail)))
-          (==
-            (append
-              (cons head nil)
-              (concat-map (lambda value (cons value nil)) tail))
-            (by
-              (eval)))
-          (==
-            (append (cons head nil) tail)
-            (by
-              (rewrite induction_hypothesis)
-              (eval)))
-          (==
-            (cons head tail)
-            (by
-              (apply append_singleton head tail))))))))
+        (simp only concat_map_cons induction_hypothesis append_singleton)))))
 
 (theorem fold_right_cons_nil
   (forall list (is-list list)
@@ -3122,46 +2916,7 @@
       tail
       induction_hypothesis
       (by
-        (calc
-          (fold-right
-            (lambda value
-              (lambda accumulator
-                (cons value accumulator)))
-            nil
-            (cons head tail))
-          (==
-            ((lambda value
-               (lambda accumulator
-                 (cons value accumulator)))
-             head
-             (fold-right
-               (lambda value
-                 (lambda accumulator
-                   (cons value accumulator)))
-               nil
-               tail))
-            (by
-              (apply
-                fold_right_cons
-                (lambda value
-                  (lambda accumulator
-                    (cons value accumulator)))
-                nil
-                head
-                tail)))
-          (==
-            ((lambda value
-               (lambda accumulator
-                 (cons value accumulator)))
-             head
-             tail)
-            (by
-              (rewrite induction_hypothesis)
-              (eval)))
-          (==
-            (cons head tail)
-            (by
-              (eval))))))))
+        (simp only fold_right_cons induction_hypothesis)))))
 
 (theorem fold_left_reverse_acc
   (forall list (is-list list)

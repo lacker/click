@@ -316,7 +316,7 @@ pub(crate) enum TacticExpr {
         limit: usize,
     },
     Simp {
-        rules: Vec<Name>,
+        rules: Vec<ProofExpr>,
     },
     Apply {
         theorem: Name,
@@ -1350,11 +1350,7 @@ impl<'a> SourceParser<'a> {
 
         let mut rules = Vec::new();
         for item in &items[2..] {
-            let spelling = atom(item)?;
-            let Some(theorem) = self.theorem(spelling) else {
-                return Err(ParseError::new(format!("unknown theorem `{spelling}`")));
-            };
-            rules.push(theorem);
+            rules.push(self.proof_expr_or_ref(item)?);
         }
 
         Ok(TacticExpr::Simp { rules })
@@ -2510,7 +2506,7 @@ mod tests {
         };
         assert!(matches!(
             tactics.as_slice(),
-            [TacticExpr::Simp { rules }] if rules == &vec![Name(1)]
+            [TacticExpr::Simp { rules }] if rules == &vec![ProofExpr::Known(Name(1))]
         ));
     }
 

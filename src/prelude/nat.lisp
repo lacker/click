@@ -251,21 +251,7 @@
     (intro head)
     (intro tail)
     (intro right)
-    (calc
-      (add (cons head tail) right)
-      (==
-        (append (cons head tail) right)
-        (by
-          (eval)))
-      (==
-        (cons head (append tail right))
-        (by
-          (exact append_cons head tail right)))
-      (==
-        (cons head (add tail right))
-        (by
-          (rewrite (symm (add_is_append tail right)))
-          (eval))))))
+    (simp only append_cons)))
 
 (theorem add_succ_left
   (forall left (is-list left)
