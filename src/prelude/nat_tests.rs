@@ -317,6 +317,26 @@ pub fn nat_lt_trans_source_theorem() -> Prop {
     theorem_prop("nat_lt_trans")
 }
 
+pub fn nat_eq_symm_source_theorem() -> Prop {
+    theorem_prop("nat_eq_symm")
+}
+
+pub fn nat_eq_trans_source_theorem() -> Prop {
+    theorem_prop("nat_eq_trans")
+}
+
+pub fn nat_eq_implies_nat_le_left_right_source_theorem() -> Prop {
+    theorem_prop("nat_eq_implies_nat_le_left_right")
+}
+
+pub fn nat_eq_implies_nat_le_right_left_source_theorem() -> Prop {
+    theorem_prop("nat_eq_implies_nat_le_right_left")
+}
+
+pub fn nat_le_antisymm_source_theorem() -> Prop {
+    theorem_prop("nat_le_antisymm")
+}
+
 pub fn add_zero_left_source_theorem() -> Prop {
     theorem_prop("add_zero_left")
 }
@@ -563,6 +583,17 @@ fn nat_theorem_statements_load_from_source() {
     let nat_lt_trans_left = theorem_symbol("nat_lt_trans", "left");
     let nat_lt_trans_middle = theorem_symbol("nat_lt_trans", "middle");
     let nat_lt_trans_right = theorem_symbol("nat_lt_trans", "right");
+    let nat_eq_symm_left = theorem_symbol("nat_eq_symm", "left");
+    let nat_eq_symm_right = theorem_symbol("nat_eq_symm", "right");
+    let nat_eq_trans_left = theorem_symbol("nat_eq_trans", "left");
+    let nat_eq_trans_middle = theorem_symbol("nat_eq_trans", "middle");
+    let nat_eq_trans_right = theorem_symbol("nat_eq_trans", "right");
+    let nat_eq_le_lr_left = theorem_symbol("nat_eq_implies_nat_le_left_right", "left");
+    let nat_eq_le_lr_right = theorem_symbol("nat_eq_implies_nat_le_left_right", "right");
+    let nat_eq_le_rl_left = theorem_symbol("nat_eq_implies_nat_le_right_left", "left");
+    let nat_eq_le_rl_right = theorem_symbol("nat_eq_implies_nat_le_right_left", "right");
+    let nat_le_antisymm_left = theorem_symbol("nat_le_antisymm", "left");
+    let nat_le_antisymm_right = theorem_symbol("nat_le_antisymm", "right");
     let add_zero_left_right = theorem_symbol("add_zero_left", "right");
     let add_zero_right_nat = theorem_symbol("add_zero_right", "nat");
     let nat_le_left_add_left = theorem_symbol("nat_le_left_add", "left");
@@ -820,6 +851,121 @@ fn nat_theorem_statements_load_from_source() {
                                 nat_lt_call(var(nat_lt_trans_left), var(nat_lt_trans_right)),
                                 true_value()
                             )
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_eq_symm_source_theorem(),
+        crate::forall_where(
+            nat_eq_symm_left,
+            is_list(var(nat_eq_symm_left)),
+            crate::forall_where(
+                nat_eq_symm_right,
+                is_list(var(nat_eq_symm_right)),
+                computes_to(
+                    nat_eq_call(var(nat_eq_symm_left), var(nat_eq_symm_right)),
+                    nat_eq_call(var(nat_eq_symm_right), var(nat_eq_symm_left))
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_eq_trans_source_theorem(),
+        crate::forall_where(
+            nat_eq_trans_left,
+            is_list(var(nat_eq_trans_left)),
+            crate::forall_where(
+                nat_eq_trans_middle,
+                is_list(var(nat_eq_trans_middle)),
+                crate::forall_where(
+                    nat_eq_trans_right,
+                    is_list(var(nat_eq_trans_right)),
+                    implies(
+                        computes_to(
+                            nat_eq_call(var(nat_eq_trans_left), var(nat_eq_trans_middle)),
+                            true_value()
+                        ),
+                        implies(
+                            computes_to(
+                                nat_eq_call(var(nat_eq_trans_middle), var(nat_eq_trans_right)),
+                                true_value()
+                            ),
+                            computes_to(
+                                nat_eq_call(var(nat_eq_trans_left), var(nat_eq_trans_right)),
+                                true_value()
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_eq_implies_nat_le_left_right_source_theorem(),
+        crate::forall_where(
+            nat_eq_le_lr_left,
+            is_list(var(nat_eq_le_lr_left)),
+            crate::forall_where(
+                nat_eq_le_lr_right,
+                is_list(var(nat_eq_le_lr_right)),
+                implies(
+                    computes_to(
+                        nat_eq_call(var(nat_eq_le_lr_left), var(nat_eq_le_lr_right)),
+                        true_value()
+                    ),
+                    computes_to(
+                        nat_le_call(var(nat_eq_le_lr_left), var(nat_eq_le_lr_right)),
+                        true_value()
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_eq_implies_nat_le_right_left_source_theorem(),
+        crate::forall_where(
+            nat_eq_le_rl_left,
+            is_list(var(nat_eq_le_rl_left)),
+            crate::forall_where(
+                nat_eq_le_rl_right,
+                is_list(var(nat_eq_le_rl_right)),
+                implies(
+                    computes_to(
+                        nat_eq_call(var(nat_eq_le_rl_left), var(nat_eq_le_rl_right)),
+                        true_value()
+                    ),
+                    computes_to(
+                        nat_le_call(var(nat_eq_le_rl_right), var(nat_eq_le_rl_left)),
+                        true_value()
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_le_antisymm_source_theorem(),
+        crate::forall_where(
+            nat_le_antisymm_left,
+            is_list(var(nat_le_antisymm_left)),
+            crate::forall_where(
+                nat_le_antisymm_right,
+                is_list(var(nat_le_antisymm_right)),
+                implies(
+                    computes_to(
+                        nat_le_call(var(nat_le_antisymm_left), var(nat_le_antisymm_right)),
+                        true_value()
+                    ),
+                    implies(
+                        computes_to(
+                            nat_le_call(var(nat_le_antisymm_right), var(nat_le_antisymm_left)),
+                            true_value()
+                        ),
+                        computes_to(
+                            nat_eq_call(var(nat_le_antisymm_left), var(nat_le_antisymm_right)),
+                            true_value()
                         )
                     )
                 )
@@ -1120,6 +1266,19 @@ fn checked_theory_contains_nat_theorems() {
     );
     assert_theory_has_theorem(&theory, "nat_le_trans", nat_le_trans_source_theorem());
     assert_theory_has_theorem(&theory, "nat_lt_trans", nat_lt_trans_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_eq_symm", nat_eq_symm_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_eq_trans", nat_eq_trans_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_implies_nat_le_left_right",
+        nat_eq_implies_nat_le_left_right_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_implies_nat_le_right_left",
+        nat_eq_implies_nat_le_right_left_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "nat_le_antisymm", nat_le_antisymm_source_theorem());
     assert_theory_has_theorem(&theory, "add_zero_left", add_zero_left_source_theorem());
     assert_theory_has_theorem(
         &theory,
