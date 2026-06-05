@@ -65,6 +65,10 @@ pub fn add_definition() -> Computation {
     definition("add")
 }
 
+pub fn sub() -> Computation {
+    computation_ref("sub")
+}
+
 pub fn mul() -> Computation {
     computation_ref("mul")
 }
@@ -103,6 +107,10 @@ pub fn pred_call(nat: Computation) -> Computation {
 
 pub fn add_call(left: Computation, right: Computation) -> Computation {
     apply(apply(add(), left), right)
+}
+
+pub fn sub_call(left: Computation, right: Computation) -> Computation {
+    apply(apply(sub(), left), right)
 }
 
 pub fn mul_call(left: Computation, right: Computation) -> Computation {
@@ -461,6 +469,50 @@ pub fn add_swap_source_theorem() -> Prop {
     theorem_prop("add_swap")
 }
 
+pub fn sub_zero_right_source_theorem() -> Prop {
+    theorem_prop("sub_zero_right")
+}
+
+pub fn sub_zero_left_source_theorem() -> Prop {
+    theorem_prop("sub_zero_left")
+}
+
+pub fn sub_succ_succ_source_theorem() -> Prop {
+    theorem_prop("sub_succ_succ")
+}
+
+pub fn sub_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("sub_computes_to_list")
+}
+
+pub fn add_sub_cancel_left_source_theorem() -> Prop {
+    theorem_prop("add_sub_cancel_left")
+}
+
+pub fn add_sub_cancel_right_source_theorem() -> Prop {
+    theorem_prop("add_sub_cancel_right")
+}
+
+pub fn sub_self_source_theorem() -> Prop {
+    theorem_prop("sub_self")
+}
+
+pub fn nat_le_sub_left_source_theorem() -> Prop {
+    theorem_prop("nat_le_sub_left")
+}
+
+pub fn nat_le_implies_sub_zero_source_theorem() -> Prop {
+    theorem_prop("nat_le_implies_sub_zero")
+}
+
+pub fn nat_lt_right_left_implies_nat_lt_zero_sub_source_theorem() -> Prop {
+    theorem_prop("nat_lt_right_left_implies_nat_lt_zero_sub")
+}
+
+pub fn nat_lt_zero_sub_implies_nat_lt_right_left_source_theorem() -> Prop {
+    theorem_prop("nat_lt_zero_sub_implies_nat_lt_right_left")
+}
+
 pub fn mul_zero_left_source_theorem() -> Prop {
     theorem_prop("mul_zero_left")
 }
@@ -605,6 +657,10 @@ fn nat_definitions_load_from_source() {
         Computation::Ref(super::computation_name("add").unwrap())
     );
     assert_eq!(
+        sub(),
+        Computation::Ref(super::computation_name("sub").unwrap())
+    );
+    assert_eq!(
         mul(),
         Computation::Ref(super::computation_name("mul").unwrap())
     );
@@ -699,6 +755,30 @@ fn nat_theorem_statements_load_from_source() {
     let nat_lt_add_left_mono_left = theorem_symbol("nat_lt_add_left_mono", "left");
     let nat_lt_add_left_mono_right = theorem_symbol("nat_lt_add_left_mono", "right");
     let nat_lt_add_left_mono_prefix = theorem_symbol("nat_lt_add_left_mono", "prefix");
+    let sub_zero_right_left = theorem_symbol("sub_zero_right", "left");
+    let sub_zero_left_right = theorem_symbol("sub_zero_left", "right");
+    let sub_succ_succ_left = theorem_symbol("sub_succ_succ", "left");
+    let sub_succ_succ_right = theorem_symbol("sub_succ_succ", "right");
+    let sub_result = theorem_symbol("sub_computes_to_list", "result");
+    let sub_left = theorem_symbol("sub_computes_to_list", "left");
+    let sub_right = theorem_symbol("sub_computes_to_list", "right");
+    let add_sub_cancel_left_left = theorem_symbol("add_sub_cancel_left", "left");
+    let add_sub_cancel_left_right = theorem_symbol("add_sub_cancel_left", "right");
+    let add_sub_cancel_right_left = theorem_symbol("add_sub_cancel_right", "left");
+    let add_sub_cancel_right_right = theorem_symbol("add_sub_cancel_right", "right");
+    let sub_self_nat = theorem_symbol("sub_self", "nat");
+    let nat_le_sub_left_left = theorem_symbol("nat_le_sub_left", "left");
+    let nat_le_sub_left_right = theorem_symbol("nat_le_sub_left", "right");
+    let nat_le_implies_sub_zero_left = theorem_symbol("nat_le_implies_sub_zero", "left");
+    let nat_le_implies_sub_zero_right = theorem_symbol("nat_le_implies_sub_zero", "right");
+    let nat_lt_sub_positive_left =
+        theorem_symbol("nat_lt_right_left_implies_nat_lt_zero_sub", "left");
+    let nat_lt_sub_positive_right =
+        theorem_symbol("nat_lt_right_left_implies_nat_lt_zero_sub", "right");
+    let nat_lt_sub_positive_elim_left =
+        theorem_symbol("nat_lt_zero_sub_implies_nat_lt_right_left", "left");
+    let nat_lt_sub_positive_elim_right =
+        theorem_symbol("nat_lt_zero_sub_implies_nat_lt_right_left", "right");
     let mul_result = theorem_symbol("mul_computes_to_list", "result");
     let mul_left = theorem_symbol("mul_computes_to_list", "left");
     let mul_right = theorem_symbol("mul_computes_to_list", "right");
@@ -1508,6 +1588,222 @@ fn nat_theorem_statements_load_from_source() {
         )
     );
     assert_eq!(
+        sub_zero_right_source_theorem(),
+        crate::forall_where(
+            sub_zero_right_left,
+            is_list(var(sub_zero_right_left)),
+            computes_to(
+                sub_call(var(sub_zero_right_left), zero()),
+                var(sub_zero_right_left)
+            )
+        )
+    );
+    assert_eq!(
+        sub_zero_left_source_theorem(),
+        crate::forall_where(
+            sub_zero_left_right,
+            is_list(var(sub_zero_left_right)),
+            computes_to(sub_call(zero(), var(sub_zero_left_right)), zero())
+        )
+    );
+    assert_eq!(
+        sub_succ_succ_source_theorem(),
+        crate::forall_where(
+            sub_succ_succ_left,
+            is_list(var(sub_succ_succ_left)),
+            crate::forall_where(
+                sub_succ_succ_right,
+                is_list(var(sub_succ_succ_right)),
+                computes_to(
+                    sub_call(
+                        succ_call(var(sub_succ_succ_left)),
+                        succ_call(var(sub_succ_succ_right))
+                    ),
+                    sub_call(var(sub_succ_succ_left), var(sub_succ_succ_right))
+                )
+            )
+        )
+    );
+    assert_eq!(
+        sub_computes_to_list_source_theorem(),
+        crate::forall_where(
+            sub_left,
+            is_list(var(sub_left)),
+            crate::forall_where(
+                sub_right,
+                is_list(var(sub_right)),
+                computes_to_list(sub_result, sub_call(var(sub_left), var(sub_right)))
+            )
+        )
+    );
+    assert_eq!(
+        add_sub_cancel_left_source_theorem(),
+        crate::forall_where(
+            add_sub_cancel_left_left,
+            is_list(var(add_sub_cancel_left_left)),
+            crate::forall_where(
+                add_sub_cancel_left_right,
+                is_list(var(add_sub_cancel_left_right)),
+                computes_to(
+                    sub_call(
+                        add_call(
+                            var(add_sub_cancel_left_left),
+                            var(add_sub_cancel_left_right)
+                        ),
+                        var(add_sub_cancel_left_left)
+                    ),
+                    var(add_sub_cancel_left_right)
+                )
+            )
+        )
+    );
+    assert_eq!(
+        add_sub_cancel_right_source_theorem(),
+        crate::forall_where(
+            add_sub_cancel_right_left,
+            is_list(var(add_sub_cancel_right_left)),
+            crate::forall_where(
+                add_sub_cancel_right_right,
+                is_list(var(add_sub_cancel_right_right)),
+                implies(
+                    computes_to(
+                        is_nat_value_call(var(add_sub_cancel_right_left)),
+                        true_value()
+                    ),
+                    implies(
+                        computes_to(
+                            is_nat_value_call(var(add_sub_cancel_right_right)),
+                            true_value()
+                        ),
+                        computes_to(
+                            sub_call(
+                                add_call(
+                                    var(add_sub_cancel_right_left),
+                                    var(add_sub_cancel_right_right)
+                                ),
+                                var(add_sub_cancel_right_right)
+                            ),
+                            var(add_sub_cancel_right_left)
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        sub_self_source_theorem(),
+        crate::forall_where(
+            sub_self_nat,
+            is_list(var(sub_self_nat)),
+            computes_to(sub_call(var(sub_self_nat), var(sub_self_nat)), zero())
+        )
+    );
+    assert_eq!(
+        nat_le_sub_left_source_theorem(),
+        crate::forall_where(
+            nat_le_sub_left_left,
+            is_list(var(nat_le_sub_left_left)),
+            crate::forall_where(
+                nat_le_sub_left_right,
+                is_list(var(nat_le_sub_left_right)),
+                computes_to(
+                    nat_le_call(
+                        sub_call(var(nat_le_sub_left_left), var(nat_le_sub_left_right)),
+                        var(nat_le_sub_left_left)
+                    ),
+                    true_value()
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_le_implies_sub_zero_source_theorem(),
+        crate::forall_where(
+            nat_le_implies_sub_zero_left,
+            is_list(var(nat_le_implies_sub_zero_left)),
+            crate::forall_where(
+                nat_le_implies_sub_zero_right,
+                is_list(var(nat_le_implies_sub_zero_right)),
+                implies(
+                    computes_to(
+                        nat_le_call(
+                            var(nat_le_implies_sub_zero_left),
+                            var(nat_le_implies_sub_zero_right)
+                        ),
+                        true_value()
+                    ),
+                    computes_to(
+                        sub_call(
+                            var(nat_le_implies_sub_zero_left),
+                            var(nat_le_implies_sub_zero_right)
+                        ),
+                        zero()
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_right_left_implies_nat_lt_zero_sub_source_theorem(),
+        crate::forall_where(
+            nat_lt_sub_positive_left,
+            is_list(var(nat_lt_sub_positive_left)),
+            crate::forall_where(
+                nat_lt_sub_positive_right,
+                is_list(var(nat_lt_sub_positive_right)),
+                implies(
+                    computes_to(
+                        nat_lt_call(
+                            var(nat_lt_sub_positive_right),
+                            var(nat_lt_sub_positive_left)
+                        ),
+                        true_value()
+                    ),
+                    computes_to(
+                        nat_lt_call(
+                            zero(),
+                            sub_call(
+                                var(nat_lt_sub_positive_left),
+                                var(nat_lt_sub_positive_right)
+                            )
+                        ),
+                        true_value()
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_zero_sub_implies_nat_lt_right_left_source_theorem(),
+        crate::forall_where(
+            nat_lt_sub_positive_elim_left,
+            is_list(var(nat_lt_sub_positive_elim_left)),
+            crate::forall_where(
+                nat_lt_sub_positive_elim_right,
+                is_list(var(nat_lt_sub_positive_elim_right)),
+                implies(
+                    computes_to(
+                        nat_lt_call(
+                            zero(),
+                            sub_call(
+                                var(nat_lt_sub_positive_elim_left),
+                                var(nat_lt_sub_positive_elim_right)
+                            )
+                        ),
+                        true_value()
+                    ),
+                    computes_to(
+                        nat_lt_call(
+                            var(nat_lt_sub_positive_elim_right),
+                            var(nat_lt_sub_positive_elim_left)
+                        ),
+                        true_value()
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
         mul_computes_to_list_source_theorem(),
         crate::forall_where(
             mul_left,
@@ -1710,6 +2006,10 @@ fn constructors_evaluate_to_unary_lists() {
     assert_evaluates_to(pred_call(three_value()), two_value());
     assert_evaluates_to(add_call(two_value(), one_value()), three_value());
     assert_evaluates_to(add_call(two_value(), zero()), two_value());
+    assert_evaluates_to(sub_call(three_value(), one_value()), two_value());
+    assert_evaluates_to(sub_call(one_value(), three_value()), nil());
+    assert_evaluates_to(sub_call(three_value(), zero()), three_value());
+    assert_evaluates_to(sub_call(zero(), three_value()), nil());
     assert_evaluates_to(
         add_call(add_call(one_value(), two_value()), one_value()),
         four_value(),
@@ -2041,6 +2341,41 @@ fn checked_theory_contains_nat_theorems() {
     assert_theory_has_theorem(&theory, "add_assoc", add_assoc_source_theorem());
     assert_theory_has_theorem(&theory, "add_comm", add_comm_source_theorem());
     assert_theory_has_theorem(&theory, "add_swap", add_swap_source_theorem());
+    assert_theory_has_theorem(&theory, "sub_zero_right", sub_zero_right_source_theorem());
+    assert_theory_has_theorem(&theory, "sub_zero_left", sub_zero_left_source_theorem());
+    assert_theory_has_theorem(&theory, "sub_succ_succ", sub_succ_succ_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "sub_computes_to_list",
+        sub_computes_to_list_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "add_sub_cancel_left",
+        add_sub_cancel_left_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "add_sub_cancel_right",
+        add_sub_cancel_right_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "sub_self", sub_self_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_le_sub_left", nat_le_sub_left_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_implies_sub_zero",
+        nat_le_implies_sub_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_right_left_implies_nat_lt_zero_sub",
+        nat_lt_right_left_implies_nat_lt_zero_sub_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_zero_sub_implies_nat_lt_right_left",
+        nat_lt_zero_sub_implies_nat_lt_right_left_source_theorem(),
+    );
     assert_theory_has_theorem(&theory, "mul_zero_left", mul_zero_left_source_theorem());
     assert_theory_has_theorem(
         &theory,
