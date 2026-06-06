@@ -379,6 +379,7 @@ fn tactic_eval(limit: usize, theory: &Theory, goal: &Goal) -> Result<Proof, Proo
 }
 
 const SIMP_STEP_LIMIT: usize = 128;
+const SIMP_RECURSION_LIMIT: usize = 256;
 const SIMP_TRACE_LIMIT: usize = 32;
 const SIMP_TRACE_VALUE_LIMIT: usize = 240;
 
@@ -521,10 +522,61 @@ fn simplify_equality(
     theory: &Theory,
     context: &Context,
 ) -> Result<SimpEqualityResult, ProofElaborationError> {
+    let mut left_budget = SimpBudget::new();
+    let mut right_budget = SimpBudget::new();
     Ok(SimpEqualityResult {
-        left: simplify_computation(tactic, left.clone(), rules, theory, context)?,
-        right: simplify_computation(tactic, right.clone(), rules, theory, context)?,
+        left: simplify_computation(
+            tactic,
+            left.clone(),
+            rules,
+            theory,
+            context,
+            &mut left_budget,
+        )?,
+        right: simplify_computation(
+            tactic,
+            right.clone(),
+            rules,
+            theory,
+            context,
+            &mut right_budget,
+        )?,
     })
+}
+
+struct SimpBudget {
+    remaining_recursions: usize,
+}
+
+impl SimpBudget {
+    fn new() -> Self {
+        Self {
+            remaining_recursions: SIMP_RECURSION_LIMIT,
+        }
+    }
+
+    fn consume(
+        &mut self,
+        tactic: &'static str,
+        current: &Computation,
+    ) -> Result<(), ProofElaborationError> {
+        let Some(remaining) = self.remaining_recursions.checked_sub(1) else {
+            return Err(tactic_failed(
+                tactic,
+                format!(
+                    "simplification recursion exceeded {SIMP_RECURSION_LIMIT} recursive calls \
+                     while simplifying {}\n\
+                     this usually means a simp rule is oriented as an expansion that keeps \
+                     introducing another reducible subterm; use explicit `rewrite`, `eval`, or \
+                     `fold` for one-shot expansion, or orient simp rules toward canonical forms",
+                    compact_debug(current)
+                ),
+            ));
+        };
+
+        self.remaining_recursions = remaining;
+        Ok(())
+    }
 }
 
 fn goal_equality_proof_from_simplified(result: SimpEqualityResult) -> Proof {
@@ -562,7 +614,10 @@ fn simplify_computation(
     rules: &[ProofExpr],
     theory: &Theory,
     context: &Context,
+    budget: &mut SimpBudget,
 ) -> Result<SimpResult, ProofElaborationError> {
+    budget.consume(tactic, &original)?;
+
     let mut current = original.clone();
     let mut proofs = Vec::new();
     let mut trace = SimpTrace::default();
@@ -577,7 +632,7 @@ fn simplify_computation(
             continue;
         }
 
-        if let Some(rewrite) = simp_child(tactic, &current, rules, theory, context)? {
+        if let Some(rewrite) = simp_child(tactic, &current, rules, theory, context, budget)? {
             trace.extend(rewrite.trace);
             proofs.push(rewrite.proof);
             current = rewrite.result;
@@ -1115,6 +1170,7 @@ fn simp_child(
     rules: &[ProofExpr],
     theory: &Theory,
     context: &Context,
+    budget: &mut SimpBudget,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
     match computation {
         Computation::Apply { function, argument } => simplify_child(
@@ -1128,6 +1184,7 @@ fn simp_child(
             rules,
             theory,
             context,
+            budget,
         )?
         .map_or_else(
             || {
@@ -1142,6 +1199,7 @@ fn simp_child(
                     rules,
                     theory,
                     context,
+                    budget,
                 )
             },
             |rewrite| Ok(Some(rewrite)),
@@ -1157,6 +1215,7 @@ fn simp_child(
             rules,
             theory,
             context,
+            budget,
         )?
         .map_or_else(
             || {
@@ -1171,6 +1230,7 @@ fn simp_child(
                     rules,
                     theory,
                     context,
+                    budget,
                 )
             },
             |rewrite| Ok(Some(rewrite)),
@@ -1183,6 +1243,7 @@ fn simp_child(
             rules,
             theory,
             context,
+            budget,
         ),
         Computation::Tail(child) => simplify_child(
             tactic,
@@ -1192,6 +1253,7 @@ fn simp_child(
             rules,
             theory,
             context,
+            budget,
         ),
         Computation::ListCase(list_case) => simplify_child(
             tactic,
@@ -1205,6 +1267,7 @@ fn simp_child(
             rules,
             theory,
             context,
+            budget,
         )?
         .map_or_else(
             || {
@@ -1220,6 +1283,7 @@ fn simp_child(
                     rules,
                     theory,
                     context,
+                    budget,
                 )
             },
             |rewrite| Ok(Some(rewrite)),
@@ -1240,6 +1304,7 @@ fn simp_child(
             rules,
             theory,
             context,
+            budget,
         )?
         .map_or_else(
             || {
@@ -1255,6 +1320,7 @@ fn simp_child(
                     rules,
                     theory,
                     context,
+                    budget,
                 )?
                 .map_or_else(
                     || {
@@ -1270,6 +1336,7 @@ fn simp_child(
                             rules,
                             theory,
                             context,
+                            budget,
                         )
                     },
                     |rewrite| Ok(Some(rewrite)),
@@ -1288,6 +1355,7 @@ fn simp_child(
             rules,
             theory,
             context,
+            budget,
         )?
         .map_or_else(
             || {
@@ -1302,6 +1370,7 @@ fn simp_child(
                     rules,
                     theory,
                     context,
+                    budget,
                 )
             },
             |rewrite| Ok(Some(rewrite)),
@@ -1314,6 +1383,7 @@ fn simp_child(
             rules,
             theory,
             context,
+            budget,
         ),
         Computation::Lambda(_)
         | Computation::Nil
@@ -1333,8 +1403,9 @@ fn simplify_child(
     rules: &[ProofExpr],
     theory: &Theory,
     context: &Context,
+    budget: &mut SimpBudget,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
-    let child_result = simplify_computation(tactic, child.clone(), rules, theory, context)?;
+    let child_result = simplify_computation(tactic, child.clone(), rules, theory, context, budget)?;
     if alpha_eq_computation(child, &child_result.result) {
         return Ok(None);
     }
@@ -2718,6 +2789,7 @@ mod tests {
     const ASSUMED_EQUAL: Symbol = Symbol(11);
     const TARGET_VALUE: Symbol = Symbol(20);
     const TARGET_EQUAL: Symbol = Symbol(21);
+    const RECURSIVE_EXPANSION_RULE: Symbol = Symbol(22);
 
     fn value_nil_rule() -> (Theory, Prop) {
         let premise = equal(Computation::Var(VALUE), Computation::Nil);
@@ -2845,5 +2917,39 @@ mod tests {
         .expect("the first rule should match");
 
         assert_eq!(rewrite.result, Computation::Nil);
+    }
+
+    #[test]
+    fn simp_reports_recursive_expansion_before_stack_overflow() {
+        let target = Computation::Var(TARGET_VALUE);
+        let expansion = Computation::Cons {
+            head: Box::new(Computation::Nil),
+            tail: Box::new(target.clone()),
+        };
+        let mut context = Context::new();
+        context.insert(RECURSIVE_EXPANSION_RULE, equal(target.clone(), expansion));
+
+        let mut budget = SimpBudget::new();
+        let result = simplify_computation(
+            "simp",
+            target,
+            &[ProofExpr::Assume(RECURSIVE_EXPANSION_RULE)],
+            &Theory::new(),
+            &context,
+            &mut budget,
+        );
+
+        let Err(ProofElaborationError::TacticFailed { tactic, message }) = result else {
+            panic!("recursive expansion should fail as a tactic error");
+        };
+
+        assert_eq!(tactic, "simp");
+        assert!(message.contains("simplification recursion exceeded"));
+        assert!(message.contains("recursive calls"));
+        assert!(message.contains("oriented as an expansion"));
+        assert!(message.contains("rewrite"));
+        assert!(message.contains("eval"));
+        assert!(message.contains("fold"));
+        assert!(message.contains("canonical forms"));
     }
 }
