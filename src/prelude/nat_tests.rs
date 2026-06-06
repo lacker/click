@@ -537,6 +537,10 @@ pub fn nat_le_add_sub_cancel_source_theorem() -> Prop {
     theorem_prop("nat_le_add_sub_cancel")
 }
 
+pub fn nat_le_add_sub_cancel_right_source_theorem() -> Prop {
+    theorem_prop("nat_le_add_sub_cancel_right")
+}
+
 pub fn nat_le_of_add_sub_cancel_source_theorem() -> Prop {
     theorem_prop("nat_le_of_add_sub_cancel")
 }
@@ -825,6 +829,10 @@ fn nat_theorem_statements_load_from_source() {
     let nat_le_of_sub_zero_right = theorem_symbol("nat_le_of_sub_zero", "right");
     let nat_le_add_sub_cancel_left = theorem_symbol("nat_le_add_sub_cancel", "left");
     let nat_le_add_sub_cancel_right = theorem_symbol("nat_le_add_sub_cancel", "right");
+    let nat_le_add_sub_cancel_right_theorem_left =
+        theorem_symbol("nat_le_add_sub_cancel_right", "left");
+    let nat_le_add_sub_cancel_right_theorem_right =
+        theorem_symbol("nat_le_add_sub_cancel_right", "right");
     let nat_le_of_add_sub_cancel_left = theorem_symbol("nat_le_of_add_sub_cancel", "left");
     let nat_le_of_add_sub_cancel_right = theorem_symbol("nat_le_of_add_sub_cancel", "right");
     let nat_lt_sub_positive_left =
@@ -2078,6 +2086,48 @@ fn nat_theorem_statements_load_from_source() {
         )
     );
     assert_eq!(
+        nat_le_add_sub_cancel_right_source_theorem(),
+        crate::forall_where(
+            nat_le_add_sub_cancel_right_theorem_left,
+            is_list(var(nat_le_add_sub_cancel_right_theorem_left)),
+            crate::forall_where(
+                nat_le_add_sub_cancel_right_theorem_right,
+                is_list(var(nat_le_add_sub_cancel_right_theorem_right)),
+                implies(
+                    computes_to(
+                        is_nat_value_call(var(nat_le_add_sub_cancel_right_theorem_left)),
+                        true_value()
+                    ),
+                    implies(
+                        computes_to(
+                            is_nat_value_call(var(nat_le_add_sub_cancel_right_theorem_right)),
+                            true_value()
+                        ),
+                        implies(
+                            computes_to(
+                                nat_le_call(
+                                    var(nat_le_add_sub_cancel_right_theorem_right),
+                                    var(nat_le_add_sub_cancel_right_theorem_left)
+                                ),
+                                true_value()
+                            ),
+                            computes_to(
+                                add_call(
+                                    sub_call(
+                                        var(nat_le_add_sub_cancel_right_theorem_left),
+                                        var(nat_le_add_sub_cancel_right_theorem_right)
+                                    ),
+                                    var(nat_le_add_sub_cancel_right_theorem_right)
+                                ),
+                                var(nat_le_add_sub_cancel_right_theorem_left)
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
         nat_le_of_add_sub_cancel_source_theorem(),
         crate::forall_where(
             nat_le_of_add_sub_cancel_left,
@@ -2765,6 +2815,11 @@ fn checked_theory_contains_nat_theorems() {
         &theory,
         "nat_le_add_sub_cancel",
         nat_le_add_sub_cancel_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_add_sub_cancel_right",
+        nat_le_add_sub_cancel_right_source_theorem(),
     );
     assert_theory_has_theorem(
         &theory,

@@ -4390,6 +4390,62 @@
                       (simpa only (symm left_head_unit))))))))))))
 )
 
+(theorem nat_le_add_sub_cancel_right
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (is-nat-value left) (quote :true))
+        (implies
+          (computes-to (is-nat-value right) (quote :true))
+          (implies
+            (computes-to (nat-le right left) (quote :true))
+            (computes-to
+              (add (sub left right) right)
+              left))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro left_is_nat)
+    (intro right_is_nat)
+    (intro right_le_left)
+    (obtain difference difference_proof
+      (sub_computes_to_list left right))
+    (have difference_is_nat
+      (computes-to (is-nat-value difference) (quote :true))
+      (by
+        (calc
+          (is-nat-value difference)
+          (==
+            (is-nat-value (sub left right))
+            (by
+              (simpa only (symm difference_proof))))
+          (==
+            (quote :true)
+            (by
+              (exact sub_preserves_nat_value left right)))))
+      (by
+        (specialize commuted add_comm difference right)
+        (specialize left_cancel nat_le_add_sub_cancel left right)
+        (calc
+          (add (sub left right) right)
+          (==
+            (add difference right)
+            (by
+              (simpa only difference_proof)))
+          (==
+            (add right difference)
+            (by
+              (exact commuted)))
+          (==
+            (add right (sub left right))
+            (by
+              (simpa only (symm difference_proof))))
+          (==
+            left
+            (by
+              (exact left_cancel)))))))
+)
+
 (theorem nat_le_of_add_sub_cancel
   (forall left (is-list left)
     (forall right (is-list right)
