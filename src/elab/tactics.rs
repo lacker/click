@@ -1481,7 +1481,12 @@ pub(super) fn apply_arguments_and_implications(
                         prop = conclusion.as_ref().clone();
                     }
                 }
-                _ => return Err(tactic_failed(tactic, "too many explicit arguments")),
+                other => {
+                    return Err(tactic_failed(
+                        tactic,
+                        explicit_argument_error_message(&other, argument, context),
+                    ));
+                }
             }
         }
     }
@@ -1584,6 +1589,58 @@ fn finish_implications(
         if alpha_eq_prop(&prop, &conclusion) {
             prop = conclusion;
         }
+    }
+}
+
+fn explicit_argument_error_message(
+    prop: &Prop,
+    argument: &Computation,
+    context: &Context,
+) -> String {
+    let argument_is_local_fact =
+        matches!(argument, Computation::Var(symbol) if context.contains_key(symbol));
+    let local_fact = match argument {
+        Computation::Var(symbol) => context.get(symbol).map(|prop| {
+            format!("\nargument {symbol:?} is a local proof/fact with proposition: {prop:?}")
+        }),
+        _ => None,
+    }
+    .unwrap_or_default();
+    let local_fact_hint = if argument_is_local_fact {
+        "\nif this local fact is an implication premise, do not pass it as an explicit argument; premises are applied automatically when available"
+    } else {
+        ""
+    };
+
+    match prop {
+        Prop::Implies(premise, _) => format!(
+            concat!(
+                "too many explicit computation arguments; the proof is waiting for an ",
+                "implication premise, not another forall argument\n",
+                "next explicit argument: {argument:?}{local_fact}\n",
+                "remaining premise: {premise:?}\n",
+                "explicit proof-application arguments instantiate forall-bound computations only; ",
+                "implication premises are taken from local assumptions and applied automatically ",
+                "when available. Put the premise in scope with `intro`/`have`, then use `exact` ",
+                "or `specialize` without passing that proof as an argument"
+            ),
+            argument = argument,
+            local_fact = local_fact,
+            premise = premise
+        ),
+        _ => format!(
+            concat!(
+                "too many explicit computation arguments; proof has no remaining forall binder ",
+                "for argument {argument:?}{local_fact}\n",
+                "current proposition: {prop:?}\n",
+                "explicit proof-application arguments instantiate forall-bound computations only",
+                "{local_fact_hint}"
+            ),
+            argument = argument,
+            local_fact = local_fact,
+            prop = prop,
+            local_fact_hint = local_fact_hint
+        ),
     }
 }
 

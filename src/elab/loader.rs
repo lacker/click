@@ -981,6 +981,47 @@ mod tests {
     }
 
     #[test]
+    fn proof_application_rejects_explicit_proof_premise_with_hint() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (theorem implication
+                  (implies
+                    (equal nil nil)
+                    (equal nil nil))
+                  (by
+                    (intro nil_self)
+                    (exact nil_self)))
+                (theorem bad_exact
+                  (implies
+                    (equal nil nil)
+                    (equal nil nil))
+                  (by
+                    (intro nil_self)
+                    (exact implication nil_self)))
+                ",
+            )
+            .expect_err("proof application should reject explicit proof premise");
+
+        let SourceLoadError::Theorem(SourceTheoremError::ProofElaborationFailed {
+            error: proof::ProofElaborationError::TacticFailed { tactic, message },
+            ..
+        }) = error
+        else {
+            panic!("expected a proof application tactic failure");
+        };
+
+        assert_eq!(tactic, "proof application");
+        assert!(message.contains("explicit computation arguments"));
+        assert!(message.contains("implication premise"));
+        assert!(message.contains("forall-bound computations"));
+        assert!(message.contains("applied automatically"));
+        assert!(message.contains("local proof/fact"));
+    }
+
+    #[test]
     fn load_file_reads_source_from_disk() {
         let mut loaded = LoadedSource::new();
         let path = std::env::temp_dir().join(format!(

@@ -421,6 +421,10 @@ pub fn nat_lt_add_left_mono_source_theorem() -> Prop {
     theorem_prop("nat_lt_add_left_mono")
 }
 
+pub fn nat_le_add_left_cancel_source_theorem() -> Prop {
+    theorem_prop("nat_le_add_left_cancel")
+}
+
 pub fn add_succ_left_source_theorem() -> Prop {
     theorem_prop("add_succ_left")
 }
@@ -767,6 +771,9 @@ fn nat_theorem_statements_load_from_source() {
     let nat_lt_add_left_mono_left = theorem_symbol("nat_lt_add_left_mono", "left");
     let nat_lt_add_left_mono_right = theorem_symbol("nat_lt_add_left_mono", "right");
     let nat_lt_add_left_mono_prefix = theorem_symbol("nat_lt_add_left_mono", "prefix");
+    let nat_le_add_left_cancel_left = theorem_symbol("nat_le_add_left_cancel", "left");
+    let nat_le_add_left_cancel_right = theorem_symbol("nat_le_add_left_cancel", "right");
+    let nat_le_add_left_cancel_prefix = theorem_symbol("nat_le_add_left_cancel", "prefix");
     let sub_zero_right_left = theorem_symbol("sub_zero_right", "left");
     let sub_zero_left_right = theorem_symbol("sub_zero_left", "right");
     let sub_succ_succ_left = theorem_symbol("sub_succ_succ", "left");
@@ -1605,6 +1612,43 @@ fn nat_theorem_statements_load_from_source() {
         )
     );
     assert_eq!(
+        nat_le_add_left_cancel_source_theorem(),
+        crate::forall_where(
+            nat_le_add_left_cancel_left,
+            is_list(var(nat_le_add_left_cancel_left)),
+            crate::forall_where(
+                nat_le_add_left_cancel_right,
+                is_list(var(nat_le_add_left_cancel_right)),
+                crate::forall_where(
+                    nat_le_add_left_cancel_prefix,
+                    is_list(var(nat_le_add_left_cancel_prefix)),
+                    implies(
+                        computes_to(
+                            nat_le_call(
+                                add_call(
+                                    var(nat_le_add_left_cancel_prefix),
+                                    var(nat_le_add_left_cancel_left)
+                                ),
+                                add_call(
+                                    var(nat_le_add_left_cancel_prefix),
+                                    var(nat_le_add_left_cancel_right)
+                                )
+                            ),
+                            true_value()
+                        ),
+                        computes_to(
+                            nat_le_call(
+                                var(nat_le_add_left_cancel_left),
+                                var(nat_le_add_left_cancel_right)
+                            ),
+                            true_value()
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
         sub_zero_right_source_theorem(),
         crate::forall_where(
             sub_zero_right_left,
@@ -2389,6 +2433,11 @@ fn checked_theory_contains_nat_theorems() {
         &theory,
         "nat_lt_add_left_mono",
         nat_lt_add_left_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_add_left_cancel",
+        nat_le_add_left_cancel_source_theorem(),
     );
     assert_theory_has_theorem(&theory, "add_succ_left", add_succ_left_source_theorem());
     assert_theory_has_theorem(
