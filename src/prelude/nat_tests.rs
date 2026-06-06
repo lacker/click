@@ -505,6 +505,10 @@ pub fn sub_computes_to_list_source_theorem() -> Prop {
     theorem_prop("sub_computes_to_list")
 }
 
+pub fn sub_preserves_nat_value_source_theorem() -> Prop {
+    theorem_prop("sub_preserves_nat_value")
+}
+
 pub fn add_sub_cancel_left_source_theorem() -> Prop {
     theorem_prop("add_sub_cancel_left")
 }
@@ -806,6 +810,8 @@ fn nat_theorem_statements_load_from_source() {
     let sub_result = theorem_symbol("sub_computes_to_list", "result");
     let sub_left = theorem_symbol("sub_computes_to_list", "left");
     let sub_right = theorem_symbol("sub_computes_to_list", "right");
+    let sub_preserves_nat_value_left = theorem_symbol("sub_preserves_nat_value", "left");
+    let sub_preserves_nat_value_right = theorem_symbol("sub_preserves_nat_value", "right");
     let add_sub_cancel_left_left = theorem_symbol("add_sub_cancel_left", "left");
     let add_sub_cancel_left_right = theorem_symbol("add_sub_cancel_left", "right");
     let add_sub_cancel_right_left = theorem_symbol("add_sub_cancel_right", "left");
@@ -1872,6 +1878,36 @@ fn nat_theorem_statements_load_from_source() {
         )
     );
     assert_eq!(
+        sub_preserves_nat_value_source_theorem(),
+        crate::forall_where(
+            sub_preserves_nat_value_left,
+            is_list(var(sub_preserves_nat_value_left)),
+            crate::forall_where(
+                sub_preserves_nat_value_right,
+                is_list(var(sub_preserves_nat_value_right)),
+                implies(
+                    computes_to(
+                        is_nat_value_call(var(sub_preserves_nat_value_left)),
+                        true_value()
+                    ),
+                    implies(
+                        computes_to(
+                            is_nat_value_call(var(sub_preserves_nat_value_right)),
+                            true_value()
+                        ),
+                        computes_to(
+                            is_nat_value_call(sub_call(
+                                var(sub_preserves_nat_value_left),
+                                var(sub_preserves_nat_value_right)
+                            )),
+                            true_value()
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
         add_sub_cancel_left_source_theorem(),
         crate::forall_where(
             add_sub_cancel_left_left,
@@ -2697,6 +2733,11 @@ fn checked_theory_contains_nat_theorems() {
         &theory,
         "sub_computes_to_list",
         sub_computes_to_list_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "sub_preserves_nat_value",
+        sub_preserves_nat_value_source_theorem(),
     );
     assert_theory_has_theorem(
         &theory,

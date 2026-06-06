@@ -3839,6 +3839,80 @@
                       (exact difference_proof)))))))))))
 )
 
+(theorem sub_preserves_nat_value
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (is-nat-value left) (quote :true))
+        (implies
+          (computes-to (is-nat-value right) (quote :true))
+          (computes-to
+            (is-nat-value (sub left right))
+            (quote :true))))))
+  (by
+    (list-induction left
+      (by
+        (list-induction right
+          (by
+            (intro left_is_nat)
+            (intro right_is_nat)
+            (eval))
+          zero_right_head
+          zero_right_tail
+          zero_right_induction_hypothesis
+          (by
+            (intro left_is_nat)
+            (intro right_is_nat)
+            (eval))))
+      left_head
+      left_tail
+      induction_hypothesis
+      (by
+        (list-induction right
+          (by
+            (intro left_is_nat)
+            (intro right_is_nat)
+            (calc
+              (is-nat-value (sub (cons left_head left_tail) nil))
+              (==
+                (is-nat-value (cons left_head left_tail))
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact left_is_nat)))))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (intro left_is_nat)
+            (intro right_is_nat)
+            (specialize left_parts
+              is_nat_value_cons_true_elim
+              left_head
+              left_tail)
+            (cases left_parts left_head_unit left_tail_is_nat)
+            (specialize right_parts
+              is_nat_value_cons_true_elim
+              right_head
+              right_tail)
+            (cases right_parts right_head_unit right_tail_is_nat)
+            (specialize tail_sub_is_nat induction_hypothesis right_tail)
+            (calc
+              (is-nat-value
+                (sub
+                  (cons left_head left_tail)
+                  (cons right_head right_tail)))
+              (==
+                (is-nat-value (sub left_tail right_tail))
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact tail_sub_is_nat))))))))))
+
 (theorem add_sub_cancel_left
   (forall left (is-list left)
     (forall right (is-list right)
