@@ -509,6 +509,10 @@ pub fn sub_preserves_nat_value_source_theorem() -> Prop {
     theorem_prop("sub_preserves_nat_value")
 }
 
+pub fn sub_add_right_source_theorem() -> Prop {
+    theorem_prop("sub_add_right")
+}
+
 pub fn add_sub_cancel_left_source_theorem() -> Prop {
     theorem_prop("add_sub_cancel_left")
 }
@@ -543,6 +547,50 @@ pub fn nat_le_add_sub_cancel_right_source_theorem() -> Prop {
 
 pub fn nat_le_of_add_sub_cancel_source_theorem() -> Prop {
     theorem_prop("nat_le_of_add_sub_cancel")
+}
+
+pub fn nat_le_of_add_sub_cancel_right_source_theorem() -> Prop {
+    theorem_prop("nat_le_of_add_sub_cancel_right")
+}
+
+pub fn sub_add_cancel_source_theorem() -> Prop {
+    theorem_prop("sub_add_cancel")
+}
+
+pub fn sub_add_left_source_theorem() -> Prop {
+    theorem_prop("sub_add_left")
+}
+
+pub fn nat_le_sub_right_mono_source_theorem() -> Prop {
+    theorem_prop("nat_le_sub_right_mono")
+}
+
+pub fn nat_le_sub_left_anti_source_theorem() -> Prop {
+    theorem_prop("nat_le_sub_left_anti")
+}
+
+pub fn nat_lt_sub_right_mono_source_theorem() -> Prop {
+    theorem_prop("nat_lt_sub_right_mono")
+}
+
+pub fn nat_eq_of_le_and_sub_zero_source_theorem() -> Prop {
+    theorem_prop("nat_eq_of_le_and_sub_zero")
+}
+
+pub fn sub_eq_zero_of_nat_le_source_theorem() -> Prop {
+    theorem_prop("sub_eq_zero_of_nat_le")
+}
+
+pub fn nat_le_of_sub_eq_zero_source_theorem() -> Prop {
+    theorem_prop("nat_le_of_sub_eq_zero")
+}
+
+pub fn nat_le_implies_exists_add_source_theorem() -> Prop {
+    theorem_prop("nat_le_implies_exists_add")
+}
+
+pub fn nat_le_of_exists_add_source_theorem() -> Prop {
+    theorem_prop("nat_le_of_exists_add")
 }
 
 pub fn nat_lt_right_left_implies_nat_lt_zero_sub_source_theorem() -> Prop {
@@ -2789,6 +2837,7 @@ fn checked_theory_contains_nat_theorems() {
         "sub_preserves_nat_value",
         sub_preserves_nat_value_source_theorem(),
     );
+    assert_theory_has_theorem(&theory, "sub_add_right", sub_add_right_source_theorem());
     assert_theory_has_theorem(
         &theory,
         "add_sub_cancel_left",
@@ -2825,6 +2874,53 @@ fn checked_theory_contains_nat_theorems() {
         &theory,
         "nat_le_of_add_sub_cancel",
         nat_le_of_add_sub_cancel_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_of_add_sub_cancel_right",
+        nat_le_of_add_sub_cancel_right_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "sub_add_cancel", sub_add_cancel_source_theorem());
+    assert_theory_has_theorem(&theory, "sub_add_left", sub_add_left_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_sub_right_mono",
+        nat_le_sub_right_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_sub_left_anti",
+        nat_le_sub_left_anti_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_sub_right_mono",
+        nat_lt_sub_right_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_of_le_and_sub_zero",
+        nat_eq_of_le_and_sub_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "sub_eq_zero_of_nat_le",
+        sub_eq_zero_of_nat_le_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_of_sub_eq_zero",
+        nat_le_of_sub_eq_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_implies_exists_add",
+        nat_le_implies_exists_add_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_of_exists_add",
+        nat_le_of_exists_add_source_theorem(),
     );
     assert_theory_has_theorem(
         &theory,

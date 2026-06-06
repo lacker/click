@@ -3913,6 +3913,98 @@
                 (by
                   (exact tail_sub_is_nat))))))))))
 
+(theorem sub_add_right
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall middle (is-list middle)
+        (computes-to
+          (sub (sub left right) middle)
+          (sub left (add right middle))))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (intro middle)
+        (obtain sum sum_proof
+          (add_computes_to_list right middle))
+        (calc
+          (sub (sub nil right) middle)
+          (==
+            (sub zero middle)
+            (by
+              (fold zero)
+              (simpa only (sub_zero_left right))))
+          (==
+            zero
+            (by
+              (exact sub_zero_left middle)))
+          (==
+            (sub zero sum)
+            (by
+              (exact (symm (sub_zero_left sum)))))
+          (==
+            (sub nil sum)
+            (by
+              (eval)))
+          (==
+            (sub nil (add right middle))
+            (by
+              (simpa only (symm sum_proof))))))
+      left_head
+      left_tail
+      induction_hypothesis
+      (by
+        (list-induction right
+          (by
+            (intro middle)
+            (eval))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (intro middle)
+            (specialize tail_result induction_hypothesis right_tail middle)
+            (obtain right_tail_middle right_tail_middle_proof
+              (add_computes_to_list right_tail middle))
+            (calc
+              (sub
+                (sub
+                  (cons left_head left_tail)
+                  (cons right_head right_tail))
+                middle)
+              (==
+                (sub (sub left_tail right_tail) middle)
+                (by
+                  (eval)))
+              (==
+                (sub left_tail (add right_tail middle))
+                (by
+                  (exact tail_result)))
+              (==
+                (sub left_tail right_tail_middle)
+                (by
+                  (simpa only right_tail_middle_proof)))
+              (==
+                (sub
+                  (cons left_head left_tail)
+                  (cons right_head right_tail_middle))
+                (by
+                  (eval)))
+              (==
+                (sub
+                  (cons left_head left_tail)
+                  (cons right_head (add right_tail middle)))
+                (by
+                  (simpa only (symm right_tail_middle_proof))))
+              (==
+                (sub
+                  (cons left_head left_tail)
+                  (add (cons right_head right_tail) middle))
+                (by
+                  (simpa only (add_cons right_head right_tail middle)))))))))
+)
+)
+
 (theorem add_sub_cancel_left
   (forall left (is-list left)
     (forall right (is-list right)
@@ -4476,6 +4568,741 @@
         (quote :true)
         (by
           (exact nat_le_left_add right difference))))))
+
+(theorem nat_le_of_add_sub_cancel_right
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (is-nat-value left) (quote :true))
+        (implies
+          (computes-to (is-nat-value right) (quote :true))
+          (implies
+            (computes-to
+              (add (sub left right) right)
+              left)
+            (computes-to (nat-le right left) (quote :true)))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro left_is_nat)
+    (intro right_is_nat)
+    (intro right_sub_left)
+    (obtain difference difference_proof
+      (sub_computes_to_list left right))
+    (have difference_is_nat
+      (computes-to (is-nat-value difference) (quote :true))
+      (by
+        (calc
+          (is-nat-value difference)
+          (==
+            (is-nat-value (sub left right))
+            (by
+              (simpa only (symm difference_proof))))
+          (==
+            (quote :true)
+            (by
+              (exact sub_preserves_nat_value left right)))))
+      (by
+        (specialize commuted add_comm difference right)
+        (have left_sub_right
+          (computes-to
+            (add right (sub left right))
+            left)
+          (by
+            (calc
+              (add right (sub left right))
+              (==
+                (add right difference)
+                (by
+                  (simpa only difference_proof)))
+              (==
+                (add difference right)
+                (by
+                  (exact (symm commuted))))
+              (==
+                (add (sub left right) right)
+                (by
+                  (simpa only (symm difference_proof))))
+              (==
+                left
+                (by
+                  (exact right_sub_left)))))
+          (by
+            (specialize result nat_le_of_add_sub_cancel left right)
+            (exact result))))))
+)
+
+(theorem sub_add_cancel
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall middle (is-list middle)
+        (implies
+          (computes-to (is-nat-value left) (quote :true))
+          (implies
+            (computes-to (is-nat-value right) (quote :true))
+            (implies
+              (computes-to (nat-le right left) (quote :true))
+              (computes-to
+                (sub (add left middle) right)
+                (add (sub left right) middle))))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro middle)
+    (intro left_is_nat)
+    (intro right_is_nat)
+    (intro right_le_left)
+    (obtain difference difference_proof
+      (sub_computes_to_list left right))
+    (obtain rest rest_proof
+      (add_computes_to_list difference middle))
+    (specialize cancel nat_le_add_sub_cancel left right)
+    (calc
+      (sub (add left middle) right)
+      (==
+        (sub (add (add right (sub left right)) middle) right)
+        (by
+          (rewrite (symm cancel))
+          (eval)))
+      (==
+        (sub (add (add right difference) middle) right)
+        (by
+          (simpa only difference_proof)))
+      (==
+        (sub (add right (add difference middle)) right)
+        (by
+          (simpa only (add_assoc right difference middle))))
+      (==
+        (sub (add right rest) right)
+        (by
+          (simpa only rest_proof)))
+      (==
+        rest
+        (by
+          (exact add_sub_cancel_left right rest)))
+      (==
+        (add difference middle)
+        (by
+          (simpa only (symm rest_proof))))
+      (==
+        (add (sub left right) middle)
+        (by
+          (simpa only (symm difference_proof)))))))
+
+(theorem sub_add_left
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall middle (is-list middle)
+        (implies
+          (computes-to (is-nat-value left) (quote :true))
+          (implies
+            (computes-to (is-nat-value right) (quote :true))
+            (implies
+              (computes-to (is-nat-value middle) (quote :true))
+              (implies
+                (computes-to (nat-le right left) (quote :true))
+                (computes-to
+                  (sub (add middle left) right)
+                  (add middle (sub left right))))))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro middle)
+    (intro left_is_nat)
+    (intro right_is_nat)
+    (intro middle_is_nat)
+    (intro right_le_left)
+    (obtain difference difference_proof
+      (sub_computes_to_list left right))
+    (have difference_is_nat
+      (computes-to (is-nat-value difference) (quote :true))
+      (by
+        (calc
+          (is-nat-value difference)
+          (==
+            (is-nat-value (sub left right))
+            (by
+              (simpa only (symm difference_proof))))
+          (==
+            (quote :true)
+            (by
+              (exact sub_preserves_nat_value left right)))))
+      (by
+        (specialize middle_left_comm add_comm middle left)
+        (specialize cancel sub_add_cancel left right middle)
+        (specialize difference_middle_comm add_comm difference middle)
+        (calc
+          (sub (add middle left) right)
+          (==
+            (sub (add left middle) right)
+            (by
+              (simpa only middle_left_comm)))
+          (==
+            (add (sub left right) middle)
+            (by
+              (exact cancel)))
+          (==
+            (add difference middle)
+            (by
+              (simpa only difference_proof)))
+          (==
+            (add middle difference)
+            (by
+              (exact difference_middle_comm)))
+          (==
+            (add middle (sub left right))
+            (by
+              (simpa only (symm difference_proof))))))))
+)
+
+(theorem nat_le_sub_right_mono
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall middle (is-list middle)
+        (implies
+          (computes-to (nat-le left right) (quote :true))
+          (computes-to
+            (nat-le (sub left middle) (sub right middle))
+            (quote :true))))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (intro middle)
+        (intro left_le_right)
+        (obtain right_difference right_difference_proof
+          (sub_computes_to_list right middle))
+        (calc
+          (nat-le (sub nil middle) (sub right middle))
+          (==
+            (nat-le zero (sub right middle))
+            (by
+              (fold zero)
+              (simpa only (sub_zero_left middle))))
+          (==
+            (nat-le zero right_difference)
+            (by
+              (simpa only right_difference_proof)))
+          (==
+            (quote :true)
+            (by
+              (exact nat_le_zero_left right_difference)))))
+      left_head
+      left_tail
+      induction_hypothesis
+      (by
+        (list-induction right
+          (by
+            (intro middle)
+            (intro left_le_right)
+            (have impossible_eq
+              (computes-to (quote :false) (quote :true))
+              (by
+                (calc
+                  (quote :false)
+                  (==
+                    (nat-le (cons left_head left_tail) nil)
+                    (by
+                      (eval)))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact left_le_right)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to
+                      (nat-le
+                        (sub (cons left_head left_tail) middle)
+                        (sub nil middle))
+                      (quote :true)))))))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (list-induction middle
+              (by
+                (intro left_le_right)
+                (calc
+                  (nat-le
+                    (sub (cons left_head left_tail) nil)
+                    (sub (cons right_head right_tail) nil))
+                  (==
+                    (nat-le
+                      (cons left_head left_tail)
+                      (cons right_head right_tail))
+                    (by
+                      (eval)))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact left_le_right)))))
+              middle_head
+              middle_tail
+              middle_induction_hypothesis
+              (by
+                (intro left_le_right)
+                (have tail_le_right
+                  (computes-to (nat-le left_tail right_tail) (quote :true))
+                  (by
+                    (calc
+                      (nat-le left_tail right_tail)
+                      (==
+                        (nat-le
+                          (cons left_head left_tail)
+                          (cons right_head right_tail))
+                        (by
+                          (eval)))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact left_le_right)))))
+                  (by
+                    (specialize tail_mono
+                      induction_hypothesis
+                      right_tail
+                      middle_tail)
+                    (calc
+                      (nat-le
+                        (sub
+                          (cons left_head left_tail)
+                          (cons middle_head middle_tail))
+                        (sub
+                          (cons right_head right_tail)
+                          (cons middle_head middle_tail)))
+                      (==
+                        (nat-le
+                          (sub left_tail middle_tail)
+                          (sub right_tail middle_tail))
+                        (by
+                          (eval)))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact tail_mono)))))))))))))
+)
+
+(theorem nat_le_sub_left_anti
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall middle (is-list middle)
+        (implies
+          (computes-to (nat-le left right) (quote :true))
+          (computes-to
+            (nat-le (sub middle right) (sub middle left))
+            (quote :true))))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (intro middle)
+        (intro left_le_right)
+        (calc
+          (nat-le (sub middle right) (sub middle nil))
+          (==
+            (nat-le (sub middle right) middle)
+            (by
+              (eval)))
+          (==
+            (quote :true)
+            (by
+              (exact nat_le_sub_left middle right)))))
+      left_head
+      left_tail
+      induction_hypothesis
+      (by
+        (list-induction right
+          (by
+            (intro middle)
+            (intro left_le_right)
+            (have impossible_eq
+              (computes-to (quote :false) (quote :true))
+              (by
+                (calc
+                  (quote :false)
+                  (==
+                    (nat-le (cons left_head left_tail) nil)
+                    (by
+                      (eval)))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact left_le_right)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to
+                      (nat-le
+                        (sub middle nil)
+                        (sub middle (cons left_head left_tail)))
+                      (quote :true)))))))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (list-induction middle
+              (by
+                (intro left_le_right)
+                (eval))
+              middle_head
+              middle_tail
+              middle_induction_hypothesis
+              (by
+                (intro left_le_right)
+                (have tail_le_right
+                  (computes-to (nat-le left_tail right_tail) (quote :true))
+                  (by
+                    (calc
+                      (nat-le left_tail right_tail)
+                      (==
+                        (nat-le
+                          (cons left_head left_tail)
+                          (cons right_head right_tail))
+                        (by
+                          (eval)))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact left_le_right)))))
+                  (by
+                    (specialize tail_anti
+                      induction_hypothesis
+                      right_tail
+                      middle_tail)
+                    (calc
+                      (nat-le
+                        (sub
+                          (cons middle_head middle_tail)
+                          (cons right_head right_tail))
+                        (sub
+                          (cons middle_head middle_tail)
+                          (cons left_head left_tail)))
+                      (==
+                        (nat-le
+                          (sub middle_tail right_tail)
+                          (sub middle_tail left_tail))
+                        (by
+                          (eval)))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact tail_anti)))))))))))))
+)
+
+(theorem nat_lt_sub_right_mono
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall middle (is-list middle)
+        (implies
+          (computes-to (nat-lt left right) (quote :true))
+          (implies
+            (computes-to (nat-le middle left) (quote :true))
+            (computes-to
+              (nat-lt (sub left middle) (sub right middle))
+              (quote :true)))))))
+  (by
+    (list-induction left
+      (by
+        (list-induction right
+          (by
+            (intro middle)
+            (intro left_lt_right)
+            (intro middle_le_left)
+            (have impossible_eq
+              (computes-to (quote :false) (quote :true))
+              (by
+                (calc
+                  (quote :false)
+                  (==
+                    (nat-lt nil nil)
+                    (by
+                      (eval)))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact left_lt_right)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to
+                      (nat-lt
+                        (sub nil middle)
+                        (sub nil middle))
+                      (quote :true)))))))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (list-induction middle
+              (by
+                (intro left_lt_right)
+                (intro middle_le_left)
+                (eval))
+              middle_head
+              middle_tail
+              middle_induction_hypothesis
+              (by
+                (intro left_lt_right)
+                (intro middle_le_left)
+                (have impossible_eq
+                  (computes-to (quote :false) (quote :true))
+                  (by
+                    (calc
+                      (quote :false)
+                      (==
+                        (nat-le (cons middle_head middle_tail) nil)
+                        (by
+                          (eval)))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact middle_le_left)))))
+                  (by
+                    (exact
+                      (absurd-elim
+                        (distinct-outcomes impossible_eq)
+                        (computes-to
+                          (nat-lt
+                            (sub nil (cons middle_head middle_tail))
+                            (sub
+                              (cons right_head right_tail)
+                              (cons middle_head middle_tail)))
+                          (quote :true)))))))))))
+      left_head
+      left_tail
+      induction_hypothesis
+      (by
+        (list-induction right
+          (by
+            (intro middle)
+            (intro left_lt_right)
+            (intro middle_le_left)
+            (have impossible_eq
+              (computes-to (quote :false) (quote :true))
+              (by
+                (calc
+                  (quote :false)
+                  (==
+                    (nat-lt (cons left_head left_tail) nil)
+                    (by
+                      (eval)))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact left_lt_right)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to
+                      (nat-lt
+                        (sub (cons left_head left_tail) middle)
+                        (sub nil middle))
+                      (quote :true)))))))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (list-induction middle
+              (by
+                (intro left_lt_right)
+                (intro middle_le_left)
+                (calc
+                  (nat-lt
+                    (sub (cons left_head left_tail) nil)
+                    (sub (cons right_head right_tail) nil))
+                  (==
+                    (nat-lt
+                      (cons left_head left_tail)
+                      (cons right_head right_tail))
+                    (by
+                      (eval)))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact left_lt_right)))))
+              middle_head
+              middle_tail
+              middle_induction_hypothesis
+              (by
+                (intro left_lt_right)
+                (intro middle_le_left)
+                (have tail_lt_right
+                  (computes-to (nat-lt left_tail right_tail) (quote :true))
+                  (by
+                    (calc
+                      (nat-lt left_tail right_tail)
+                      (==
+                        (nat-lt
+                          (cons left_head left_tail)
+                          (cons right_head right_tail))
+                        (by
+                          (eval)))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact left_lt_right)))))
+                  (by
+                    (have middle_tail_le_left_tail
+                      (computes-to
+                        (nat-le middle_tail left_tail)
+                        (quote :true))
+                      (by
+                        (calc
+                          (nat-le middle_tail left_tail)
+                          (==
+                            (nat-le
+                              (cons middle_head middle_tail)
+                              (cons left_head left_tail))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact middle_le_left)))))
+                      (by
+                        (specialize tail_mono
+                          induction_hypothesis
+                          right_tail
+                          middle_tail)
+                        (calc
+                          (nat-lt
+                            (sub
+                              (cons left_head left_tail)
+                              (cons middle_head middle_tail))
+                            (sub
+                              (cons right_head right_tail)
+                              (cons middle_head middle_tail)))
+                          (==
+                            (nat-lt
+                              (sub left_tail middle_tail)
+                              (sub right_tail middle_tail))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact tail_mono)))))))))))))
+)
+)
+)
+
+(theorem nat_eq_of_le_and_sub_zero
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (is-nat-value left) (quote :true))
+        (implies
+          (computes-to (is-nat-value right) (quote :true))
+          (implies
+            (computes-to (nat-le left right) (quote :true))
+            (implies
+              (computes-to (sub right left) zero)
+              (computes-to left right)))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro left_is_nat)
+    (intro right_is_nat)
+    (intro left_le_right)
+    (intro sub_right_left_zero)
+    (have right_le_left
+      (computes-to (nat-le right left) (quote :true))
+      (by
+        (exact nat_le_of_sub_zero right left))
+      (by
+        (have eq_true
+          (computes-to (nat-eq left right) (quote :true))
+          (by
+            (exact nat_le_antisymm left right))
+          (by
+            (exact nat_eq_sound left right))))))
+)
+
+(theorem sub_eq_zero_of_nat_le
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (nat-le left right) (quote :true))
+        (computes-to (sub left right) zero))))
+  (by
+    (intro left)
+    (intro right)
+    (intro left_le_right)
+    (exact nat_le_implies_sub_zero left right)))
+
+(theorem nat_le_of_sub_eq_zero
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (sub left right) zero)
+        (computes-to (nat-le left right) (quote :true)))))
+  (by
+    (intro left)
+    (intro right)
+    (intro sub_left_right_zero)
+    (exact nat_le_of_sub_zero left right)))
+
+(theorem nat_le_implies_exists_add
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (is-nat-value left) (quote :true))
+        (implies
+          (computes-to (is-nat-value right) (quote :true))
+          (implies
+            (computes-to (nat-le left right) (quote :true))
+            (exists difference (is-list difference)
+              (computes-to (add left difference) right)))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro left_is_nat)
+    (intro right_is_nat)
+    (intro left_le_right)
+    (obtain difference difference_proof
+      (sub_computes_to_list right left))
+    (exists difference
+      (by
+        (specialize cancel nat_le_add_sub_cancel right left)
+        (calc
+          (add left difference)
+          (==
+            (add left (sub right left))
+            (by
+              (simpa only (symm difference_proof))))
+          (==
+            right
+            (by
+              (exact cancel)))))))
+)
+
+(theorem nat_le_of_exists_add
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (exists difference (is-list difference)
+          (computes-to (add left difference) right))
+        (computes-to (nat-le left right) (quote :true)))))
+  (by
+    (intro left)
+    (intro right)
+    (intro left_prefixes_right)
+    (obtain difference add_left_difference left_prefixes_right)
+    (calc
+      (nat-le left right)
+      (==
+        (nat-le left (add left difference))
+        (by
+          (simpa only (symm add_left_difference))))
+      (==
+        (quote :true)
+        (by
+          (exact nat_le_left_add left difference)))))
+)
 
 (theorem nat_lt_right_left_implies_nat_lt_zero_sub
   (forall left (is-list left)
