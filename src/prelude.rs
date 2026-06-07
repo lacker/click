@@ -25,7 +25,8 @@ pub use crate::elab::{
     SourceLoadError, SourceTheoremError,
 };
 
-const SOURCES: &[&str] = &[list::SOURCE, nat::SOURCE];
+#[cfg(test)]
+const NAT_MODULE_START_INDEX: usize = 1;
 static LOADED_PRELUDE: OnceLock<Result<LoadedSource, SourceLoadError>> = OnceLock::new();
 static LOADED_PRELUDE_COMPUTATIONS: OnceLock<Result<LoadedSource, SourceComputationError>> =
     OnceLock::new();
@@ -116,18 +117,23 @@ pub(crate) fn parsed_list_module() -> Result<&'static source::ParsedModule, Sour
 }
 
 #[cfg(test)]
-pub(crate) fn parsed_nat_module() -> Result<&'static source::ParsedModule, SourceComputationError> {
+pub(crate) fn parsed_nat_modules() -> Result<&'static [source::ParsedModule], SourceComputationError>
+{
     loaded_computation_source().map(|loaded| {
-        loaded
-            .module(1)
-            .expect("prelude should contain the nat module")
+        let modules = loaded.modules();
+
+        modules
+            .get(NAT_MODULE_START_INDEX..)
+            .expect("prelude should contain nat modules")
     })
 }
 
 fn load_prelude_source() -> Result<LoadedSource, SourceLoadError> {
     let mut loaded = LoadedSource::with_env(prelude_env());
 
-    for source in SOURCES {
+    loaded.load_str(list::SOURCE)?;
+
+    for source in nat::SOURCES {
         loaded.load_str(source)?;
     }
 
@@ -137,7 +143,9 @@ fn load_prelude_source() -> Result<LoadedSource, SourceLoadError> {
 fn load_prelude_computation_source() -> Result<LoadedSource, SourceComputationError> {
     let mut loaded = LoadedSource::with_env(prelude_env());
 
-    for source in SOURCES {
+    loaded.load_computations_str(list::SOURCE)?;
+
+    for source in nat::SOURCES {
         loaded.load_computations_str(source)?;
     }
 

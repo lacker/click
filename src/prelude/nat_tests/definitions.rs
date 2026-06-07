@@ -1,0 +1,46 @@
+use super::*;
+
+#[test]
+fn nat_definitions_load_from_source() {
+    assert_eq!(zero_definition(), nil());
+    assert_eq!(
+        succ(),
+        Computation::Ref(super::super::computation_name("succ").unwrap())
+    );
+    assert_eq!(
+        is_nat_value(),
+        Computation::Ref(super::super::computation_name("is-nat-value").unwrap())
+    );
+    assert_eq!(
+        is_zero(),
+        Computation::Ref(super::super::computation_name("is-zero").unwrap())
+    );
+    assert_eq!(
+        pred(),
+        Computation::Ref(super::super::computation_name("pred").unwrap())
+    );
+    assert_eq!(
+        add(),
+        Computation::Ref(super::super::computation_name("add").unwrap())
+    );
+    assert_eq!(
+        sub(),
+        Computation::Ref(super::super::computation_name("sub").unwrap())
+    );
+    assert_eq!(
+        mul(),
+        Computation::Ref(super::super::computation_name("mul").unwrap())
+    );
+    assert_eq!(
+        nat_eq(),
+        Computation::Ref(super::super::computation_name("nat-eq").unwrap())
+    );
+    assert_eq!(
+        nat_le(),
+        Computation::Ref(super::super::computation_name("nat-le").unwrap())
+    );
+    assert_eq!(
+        nat_lt(),
+        Computation::Ref(super::super::computation_name("nat-lt").unwrap())
+    );
+}

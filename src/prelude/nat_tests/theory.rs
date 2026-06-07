@@ -1,0 +1,486 @@
+use super::*;
+
+#[test]
+fn checked_theory_contains_nat_theorems() {
+    let theory = super::super::theory();
+
+    assert_theory_has_theorem(&theory, "add_is_append", add_is_append_source_theorem());
+    assert_theory_has_theorem(&theory, "zero_eq_nil", zero_eq_nil_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "zero_computes_to_list",
+        zero_computes_to_list_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "zero_is_nat_value",
+        zero_is_nat_value_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "succ_zero", succ_zero_source_theorem());
+    assert_theory_has_theorem(&theory, "is_zero_zero", is_zero_zero_source_theorem());
+    assert_theory_has_theorem(&theory, "is_zero_succ", is_zero_succ_source_theorem());
+    assert_theory_has_theorem(&theory, "is_zero_is_bool", is_zero_is_bool_source_theorem());
+    assert_theory_has_theorem(&theory, "pred_zero", pred_zero_source_theorem());
+    assert_theory_has_theorem(&theory, "pred_succ", pred_succ_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "is_zero_pred_succ",
+        is_zero_pred_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "pred_computes_to_list",
+        pred_computes_to_list_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "succ_computes_to_list",
+        succ_computes_to_list_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "succ_preserves_nat_value",
+        succ_preserves_nat_value_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "is_nat_value_cons",
+        is_nat_value_cons_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "is_nat_value_cons_true_elim",
+        is_nat_value_cons_true_elim_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_zero_zero",
+        nat_eq_zero_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_zero_succ",
+        nat_eq_zero_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_succ_zero",
+        nat_eq_succ_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_succ_succ",
+        nat_eq_succ_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_zero_left",
+        nat_eq_zero_left_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_zero_right",
+        nat_eq_zero_right_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "nat_eq_refl", nat_eq_refl_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_eq_is_bool", nat_eq_is_bool_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_pred_succ",
+        nat_eq_pred_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_zero_left",
+        nat_le_zero_left_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_zero_right",
+        nat_le_zero_right_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_succ_zero",
+        nat_le_succ_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_succ_succ",
+        nat_le_succ_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "nat_le_refl", nat_le_refl_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_le_is_bool", nat_le_is_bool_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_zero_zero",
+        nat_lt_zero_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_zero_succ",
+        nat_lt_zero_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_succ_zero",
+        nat_lt_succ_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_succ_succ",
+        nat_lt_succ_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "nat_lt_irrefl", nat_lt_irrefl_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_lt_is_bool", nat_lt_is_bool_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_list_suffix_cons",
+        nat_le_list_suffix_cons_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_list_suffix_cons",
+        nat_lt_list_suffix_cons_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_self_succ",
+        nat_le_self_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_self_succ",
+        nat_lt_self_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_implies_nat_le",
+        nat_lt_implies_nat_le_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_false_implies_nat_lt_right_left",
+        nat_le_false_implies_nat_lt_right_left_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_false_implies_nat_le_right_left",
+        nat_lt_false_implies_nat_le_right_left_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "nat_le_trans", nat_le_trans_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_lt_trans", nat_lt_trans_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_le_lt_trans", nat_le_lt_trans_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_lt_le_trans", nat_lt_le_trans_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_eq_symm", nat_eq_symm_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_eq_trans", nat_eq_trans_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_eq_sound", nat_eq_sound_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_false_implies_nat_lt_or_nat_lt",
+        nat_eq_false_implies_nat_lt_or_nat_lt_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_implies_nat_le_left_right",
+        nat_eq_implies_nat_le_left_right_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_implies_nat_le_right_left",
+        nat_eq_implies_nat_le_right_left_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "nat_le_antisymm", nat_le_antisymm_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_implies_nat_lt_cons_right",
+        nat_le_implies_nat_lt_cons_right_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "add_zero_left", add_zero_left_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "add_computes_to_list",
+        add_computes_to_list_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "add_cons", add_cons_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_le_left_add", nat_le_left_add_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_left_add_succ_right",
+        nat_lt_left_add_succ_right_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_right_add",
+        nat_le_right_add_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_nil_left_add",
+        nat_lt_nil_left_add_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_add_right_mono",
+        nat_le_add_right_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_add_right_mono",
+        nat_lt_add_right_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_add_left_mono",
+        nat_le_add_left_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_add_left_mono",
+        nat_lt_add_left_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_add_left_cancel",
+        nat_le_add_left_cancel_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_add_left_cancel",
+        nat_lt_add_left_cancel_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "add_succ_left", add_succ_left_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "pred_add_succ_left",
+        pred_add_succ_left_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "is_zero_add_succ_left",
+        is_zero_add_succ_left_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "add_cons_unit_right",
+        add_cons_unit_right_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "add_succ_right", add_succ_right_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "pred_add_succ_right",
+        pred_add_succ_right_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "is_zero_add_succ_right",
+        is_zero_add_succ_right_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "add_zero_right", add_zero_right_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "add_nat_suffix_preserves_nat_value",
+        add_nat_suffix_preserves_nat_value_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "add_preserves_nat_value",
+        add_preserves_nat_value_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "add_assoc", add_assoc_source_theorem());
+    assert_theory_has_theorem(&theory, "add_comm", add_comm_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_add_right_cancel",
+        nat_le_add_right_cancel_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_add_right_cancel",
+        nat_lt_add_right_cancel_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "add_swap", add_swap_source_theorem());
+    assert_theory_has_theorem(&theory, "sub_zero_right", sub_zero_right_source_theorem());
+    assert_theory_has_theorem(&theory, "sub_zero_left", sub_zero_left_source_theorem());
+    assert_theory_has_theorem(&theory, "sub_succ_succ", sub_succ_succ_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "sub_computes_to_list",
+        sub_computes_to_list_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "sub_preserves_nat_value",
+        sub_preserves_nat_value_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "sub_add_right", sub_add_right_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "add_sub_cancel_left",
+        add_sub_cancel_left_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "add_sub_cancel_right",
+        add_sub_cancel_right_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "sub_self", sub_self_source_theorem());
+    assert_theory_has_theorem(&theory, "nat_le_sub_left", nat_le_sub_left_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_implies_sub_zero",
+        nat_le_implies_sub_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_of_sub_zero",
+        nat_le_of_sub_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_add_sub_cancel",
+        nat_le_add_sub_cancel_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_add_sub_cancel_right",
+        nat_le_add_sub_cancel_right_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_of_add_sub_cancel",
+        nat_le_of_add_sub_cancel_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_of_add_sub_cancel_right",
+        nat_le_of_add_sub_cancel_right_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "sub_add_cancel", sub_add_cancel_source_theorem());
+    assert_theory_has_theorem(&theory, "sub_add_left", sub_add_left_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_sub_right_mono",
+        nat_le_sub_right_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_sub_left_anti",
+        nat_le_sub_left_anti_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_sub_right_mono",
+        nat_lt_sub_right_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_of_le_and_sub_zero",
+        nat_eq_of_le_and_sub_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "sub_eq_zero_of_nat_le",
+        sub_eq_zero_of_nat_le_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_of_sub_eq_zero",
+        nat_le_of_sub_eq_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_implies_exists_add",
+        nat_le_implies_exists_add_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_of_exists_add",
+        nat_le_of_exists_add_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_right_left_implies_nat_lt_zero_sub",
+        nat_lt_right_left_implies_nat_lt_zero_sub_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_zero_sub_implies_nat_lt_right_left",
+        nat_lt_zero_sub_implies_nat_lt_right_left_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "mul_zero_left", mul_zero_left_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "is_zero_mul_zero_left",
+        is_zero_mul_zero_left_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "mul_cons", mul_cons_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "mul_computes_to_list",
+        mul_computes_to_list_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_mul_right_mono",
+        nat_le_mul_right_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_mul_right_mono",
+        nat_lt_mul_right_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_mul_left_mono",
+        nat_le_mul_left_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_mul_left_mono",
+        nat_lt_mul_left_mono_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "mul_preserves_nat_value",
+        mul_preserves_nat_value_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "mul_succ_left", mul_succ_left_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "is_zero_mul_succ_succ",
+        is_zero_mul_succ_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "pred_mul_succ_succ",
+        pred_mul_succ_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "mul_succ_right", mul_succ_right_source_theorem());
+    assert_theory_has_theorem(&theory, "mul_zero_right", mul_zero_right_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "is_zero_mul_zero_right",
+        is_zero_mul_zero_right_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "mul_one_left", mul_one_left_source_theorem());
+    assert_theory_has_theorem(&theory, "mul_one_right", mul_one_right_source_theorem());
+    assert_theory_has_theorem(&theory, "mul_comm", mul_comm_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "mul_add_left_distrib",
+        mul_add_left_distrib_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "mul_assoc", mul_assoc_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "mul_add_right_distrib",
+        mul_add_right_distrib_source_theorem(),
+    );
+}
+
+fn assert_theory_has_theorem(theory: &Theory, spelling: &str, prop: Prop) {
+    let name = super::super::theorem_name(spelling).expect("prelude should define theorem name");
+
+    assert_eq!(theory.theorem(name), Some(&prop));
+}
