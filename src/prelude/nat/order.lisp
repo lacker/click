@@ -504,6 +504,74 @@
     (intro right)
     (eval)))
 
+(theorem nat_lt_zero_implies_is_zero_false
+  (forall nat (is-list nat)
+    (implies
+      (computes-to (nat-lt zero nat) (quote :true))
+      (computes-to (is-zero nat) (quote :false))))
+  (by
+    (list-induction nat
+      (by
+        (intro nat_positive)
+        (have impossible_eq
+          (computes-to (quote :false) (quote :true))
+          (by
+            (calc
+              (quote :false)
+              (==
+                (nat-lt zero nil)
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact nat_positive)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (computes-to (is-zero nil) (quote :false)))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro nat_positive)
+        (eval)))))
+
+(theorem is_zero_false_implies_nat_lt_zero
+  (forall nat (is-list nat)
+    (implies
+      (computes-to (is-zero nat) (quote :false))
+      (computes-to (nat-lt zero nat) (quote :true))))
+  (by
+    (list-induction nat
+      (by
+        (intro nat_not_zero)
+        (have impossible_eq
+          (computes-to (quote :true) (quote :false))
+          (by
+            (calc
+              (quote :true)
+              (==
+                (is-zero nil)
+                (by
+                  (eval)))
+              (==
+                (quote :false)
+                (by
+                  (exact nat_not_zero)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (computes-to (nat-lt zero nil) (quote :true)))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro nat_not_zero)
+        (eval)))))
+
 (theorem nat_lt_succ_zero
   (forall left (is-list left)
     (computes-to (nat-lt (succ left) zero) (quote :false)))

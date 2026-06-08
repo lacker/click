@@ -123,6 +123,16 @@ fn checked_theory_contains_nat_theorems() {
     );
     assert_theory_has_theorem(
         &theory,
+        "nat_lt_zero_implies_is_zero_false",
+        nat_lt_zero_implies_is_zero_false_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "is_zero_false_implies_nat_lt_zero",
+        is_zero_false_implies_nat_lt_zero_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
         "nat_lt_succ_zero",
         nat_lt_succ_zero_source_theorem(),
     );
@@ -453,10 +463,25 @@ fn checked_theory_contains_nat_theorems() {
     );
     assert_theory_has_theorem(
         &theory,
+        "nat_lt_zero_mul_succ_left",
+        nat_lt_zero_mul_succ_left_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_zero_mul_succ_succ",
+        nat_lt_zero_mul_succ_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
         "pred_mul_succ_succ",
         pred_mul_succ_succ_source_theorem(),
     );
     assert_theory_has_theorem(&theory, "mul_succ_right", mul_succ_right_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_zero_mul_succ_right",
+        nat_lt_zero_mul_succ_right_source_theorem(),
+    );
     assert_theory_has_theorem(&theory, "mul_zero_right", mul_zero_right_source_theorem());
     assert_theory_has_theorem(
         &theory,

@@ -285,6 +285,14 @@ pub fn nat_lt_zero_succ_source_theorem() -> Prop {
     theorem_prop("nat_lt_zero_succ")
 }
 
+pub fn nat_lt_zero_implies_is_zero_false_source_theorem() -> Prop {
+    theorem_prop("nat_lt_zero_implies_is_zero_false")
+}
+
+pub fn is_zero_false_implies_nat_lt_zero_source_theorem() -> Prop {
+    theorem_prop("is_zero_false_implies_nat_lt_zero")
+}
+
 pub fn nat_lt_succ_zero_source_theorem() -> Prop {
     theorem_prop("nat_lt_succ_zero")
 }
@@ -645,12 +653,24 @@ pub fn is_zero_mul_succ_succ_source_theorem() -> Prop {
     theorem_prop("is_zero_mul_succ_succ")
 }
 
+pub fn nat_lt_zero_mul_succ_left_source_theorem() -> Prop {
+    theorem_prop("nat_lt_zero_mul_succ_left")
+}
+
+pub fn nat_lt_zero_mul_succ_succ_source_theorem() -> Prop {
+    theorem_prop("nat_lt_zero_mul_succ_succ")
+}
+
 pub fn pred_mul_succ_succ_source_theorem() -> Prop {
     theorem_prop("pred_mul_succ_succ")
 }
 
 pub fn mul_succ_right_source_theorem() -> Prop {
     theorem_prop("mul_succ_right")
+}
+
+pub fn nat_lt_zero_mul_succ_right_source_theorem() -> Prop {
+    theorem_prop("nat_lt_zero_mul_succ_right")
 }
 
 pub fn mul_zero_right_source_theorem() -> Prop {

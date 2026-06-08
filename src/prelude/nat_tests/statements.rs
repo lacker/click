@@ -15,6 +15,10 @@ fn nat_theorem_statements_load_from_source() {
     let nat_le_is_bool_right = theorem_symbol("nat_le_is_bool", "right");
     let nat_lt_succ_succ_left = theorem_symbol("nat_lt_succ_succ", "left");
     let nat_lt_succ_succ_right = theorem_symbol("nat_lt_succ_succ", "right");
+    let nat_lt_zero_implies_is_zero_false_nat =
+        theorem_symbol("nat_lt_zero_implies_is_zero_false", "nat");
+    let is_zero_false_implies_nat_lt_zero_nat =
+        theorem_symbol("is_zero_false_implies_nat_lt_zero", "nat");
     let nat_le_suffix_tail = theorem_symbol("nat_le_list_suffix_cons", "tail");
     let nat_le_suffix_head = theorem_symbol("nat_le_list_suffix_cons", "head");
     let nat_lt_suffix_tail = theorem_symbol("nat_lt_list_suffix_cons", "tail");
@@ -175,6 +179,12 @@ fn nat_theorem_statements_load_from_source() {
     let nat_lt_mul_left_mono_left = theorem_symbol("nat_lt_mul_left_mono", "left");
     let nat_lt_mul_left_mono_right = theorem_symbol("nat_lt_mul_left_mono", "right");
     let nat_lt_mul_left_mono_factor = theorem_symbol("nat_lt_mul_left_mono", "factor");
+    let nat_lt_zero_mul_succ_left_left = theorem_symbol("nat_lt_zero_mul_succ_left", "left");
+    let nat_lt_zero_mul_succ_left_right = theorem_symbol("nat_lt_zero_mul_succ_left", "right");
+    let nat_lt_zero_mul_succ_succ_left = theorem_symbol("nat_lt_zero_mul_succ_succ", "left");
+    let nat_lt_zero_mul_succ_succ_right = theorem_symbol("nat_lt_zero_mul_succ_succ", "right");
+    let nat_lt_zero_mul_succ_right_left = theorem_symbol("nat_lt_zero_mul_succ_right", "left");
+    let nat_lt_zero_mul_succ_right_right = theorem_symbol("nat_lt_zero_mul_succ_right", "right");
     let mul_zero_right_nat = theorem_symbol("mul_zero_right", "nat");
     let mul_one_left_right = theorem_symbol("mul_one_left", "right");
 
@@ -281,6 +291,38 @@ fn nat_theorem_statements_load_from_source() {
                         succ_call(var(nat_lt_succ_succ_right))
                     ),
                     nat_lt_call(var(nat_lt_succ_succ_left), var(nat_lt_succ_succ_right))
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_zero_implies_is_zero_false_source_theorem(),
+        forall_list(
+            nat_lt_zero_implies_is_zero_false_nat,
+            implies(
+                computes_to(
+                    nat_lt_call(zero(), var(nat_lt_zero_implies_is_zero_false_nat)),
+                    true_value()
+                ),
+                computes_to(
+                    is_zero_call(var(nat_lt_zero_implies_is_zero_false_nat)),
+                    false_value()
+                )
+            )
+        )
+    );
+    assert_eq!(
+        is_zero_false_implies_nat_lt_zero_source_theorem(),
+        forall_list(
+            is_zero_false_implies_nat_lt_zero_nat,
+            implies(
+                computes_to(
+                    is_zero_call(var(is_zero_false_implies_nat_lt_zero_nat)),
+                    false_value()
+                ),
+                computes_to(
+                    nat_lt_call(zero(), var(is_zero_false_implies_nat_lt_zero_nat)),
+                    true_value()
                 )
             )
         )
@@ -2040,6 +2082,81 @@ fn nat_theorem_statements_load_from_source() {
                                     mul_call(
                                         var(nat_lt_mul_left_mono_factor),
                                         var(nat_lt_mul_left_mono_right)
+                                    )
+                                ),
+                                true_value()
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_zero_mul_succ_left_source_theorem(),
+        forall_list(
+            nat_lt_zero_mul_succ_left_left,
+            forall_list(
+                nat_lt_zero_mul_succ_left_right,
+                implies(
+                    computes_to(
+                        nat_lt_call(zero(), var(nat_lt_zero_mul_succ_left_right)),
+                        true_value()
+                    ),
+                    computes_to(
+                        nat_lt_call(
+                            zero(),
+                            mul_call(
+                                succ_call(var(nat_lt_zero_mul_succ_left_left)),
+                                var(nat_lt_zero_mul_succ_left_right)
+                            )
+                        ),
+                        true_value()
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_zero_mul_succ_succ_source_theorem(),
+        forall_list(
+            nat_lt_zero_mul_succ_succ_left,
+            forall_list(
+                nat_lt_zero_mul_succ_succ_right,
+                computes_to(
+                    nat_lt_call(
+                        zero(),
+                        mul_call(
+                            succ_call(var(nat_lt_zero_mul_succ_succ_left)),
+                            succ_call(var(nat_lt_zero_mul_succ_succ_right))
+                        )
+                    ),
+                    true_value()
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_zero_mul_succ_right_source_theorem(),
+        forall_list(
+            nat_lt_zero_mul_succ_right_left,
+            forall_list(
+                nat_lt_zero_mul_succ_right_right,
+                implies(
+                    nat_value_true(nat_lt_zero_mul_succ_right_left),
+                    implies(
+                        nat_value_true(nat_lt_zero_mul_succ_right_right),
+                        implies(
+                            computes_to(
+                                nat_lt_call(zero(), var(nat_lt_zero_mul_succ_right_left)),
+                                true_value()
+                            ),
+                            computes_to(
+                                nat_lt_call(
+                                    zero(),
+                                    mul_call(
+                                        var(nat_lt_zero_mul_succ_right_left),
+                                        succ_call(var(nat_lt_zero_mul_succ_right_right))
                                     )
                                 ),
                                 true_value()

@@ -814,6 +814,97 @@
         (by
           (exact is_zero_add_succ_left right tail_product))))))
 
+(theorem nat_lt_zero_mul_succ_left
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (nat-lt zero right) (quote :true))
+        (computes-to
+          (nat-lt zero (mul (succ left) right))
+          (quote :true)))))
+  (by
+    (intro left)
+    (intro right)
+    (intro right_positive)
+    (have right_positive_nil
+      (computes-to (nat-lt nil right) (quote :true))
+      (by
+        (calc
+          (nat-lt nil right)
+          (==
+            (nat-lt zero right)
+            (by
+              (fold zero)
+              (eval)))
+          (==
+            (quote :true)
+            (by
+              (exact right_positive)))))
+      (by
+        (obtain tail_product tail_product_proof
+          (mul_computes_to_list left right))
+        (specialize sum_positive nat_lt_nil_left_add right tail_product)
+        (calc
+          (nat-lt zero (mul (succ left) right))
+          (==
+            (nat-lt zero (add right (mul left right)))
+            (by
+              (simpa only (mul_succ_left left right))))
+          (==
+            (nat-lt zero (add right tail_product))
+            (by
+              (simpa only tail_product_proof)))
+          (==
+            (nat-lt nil (add right tail_product))
+            (by
+              (simpa only zero_eq_nil)))
+          (==
+            (quote :true)
+            (by
+              (exact sum_positive)))))))
+)
+
+(theorem nat_lt_zero_mul_succ_succ
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (computes-to
+        (nat-lt zero (mul (succ left) (succ right)))
+        (quote :true))))
+  (by
+    (intro left)
+    (intro right)
+    (obtain right_succ right_succ_proof
+      (succ_computes_to_list right))
+    (have right_succ_positive
+      (computes-to (nat-lt zero right_succ) (quote :true))
+      (by
+        (calc
+          (nat-lt zero right_succ)
+          (==
+            (nat-lt zero (succ right))
+            (by
+              (simpa only (symm right_succ_proof))))
+          (==
+            (quote :true)
+            (by
+              (exact nat_lt_zero_succ right)))))
+      (by
+        (specialize product_positive
+          nat_lt_zero_mul_succ_left
+          left
+          right_succ)
+        (calc
+          (nat-lt zero (mul (succ left) (succ right)))
+          (==
+            (nat-lt zero (mul (succ left) right_succ))
+            (by
+              (simpa only right_succ_proof)))
+          (==
+            (quote :true)
+            (by
+              (exact product_positive)))))))
+)
+
 (theorem pred_mul_succ_succ
   (forall left (is-list left)
     (forall right (is-list right)
@@ -987,6 +1078,62 @@
             (add (cons head tail) (mul (cons head tail) right))
             (by
               (simpa only (symm cons_product)))))))))
+
+(theorem nat_lt_zero_mul_succ_right
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (is-nat-value left) (quote :true))
+        (implies
+          (computes-to (is-nat-value right) (quote :true))
+          (implies
+            (computes-to (nat-lt zero left) (quote :true))
+            (computes-to
+              (nat-lt zero (mul left (succ right)))
+              (quote :true)))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro left_is_nat)
+    (intro right_is_nat)
+    (intro left_positive)
+    (have left_positive_nil
+      (computes-to (nat-lt nil left) (quote :true))
+      (by
+        (calc
+          (nat-lt nil left)
+          (==
+            (nat-lt zero left)
+            (by
+              (fold zero)
+              (eval)))
+          (==
+            (quote :true)
+            (by
+              (exact left_positive)))))
+      (by
+        (obtain product product_proof
+          (mul_computes_to_list left right))
+        (specialize sum_positive nat_lt_nil_left_add left product)
+        (calc
+          (nat-lt zero (mul left (succ right)))
+          (==
+            (nat-lt zero (add left (mul left right)))
+            (by
+              (simpa only (mul_succ_right left right))))
+          (==
+            (nat-lt zero (add left product))
+            (by
+              (simpa only product_proof)))
+          (==
+            (nat-lt nil (add left product))
+            (by
+              (simpa only zero_eq_nil)))
+          (==
+            (quote :true)
+            (by
+              (exact sum_positive)))))))
+)
 
 (theorem mul_zero_right
   (forall nat (is-list nat)
