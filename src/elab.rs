@@ -7,4 +7,4 @@ pub(crate) mod tactics;
 
 pub use loader::{LoadedSource, SourceComputationError, SourceFileLoadError, SourceLoadError};
 pub use proof::{EvaluationProofError, ProofElaborationError, SourceTheoremError};
-pub use source::{ElabEnv, ParseError};
+pub use source::{ElabEnv, ParseError, SourceSection};

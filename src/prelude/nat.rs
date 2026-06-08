@@ -6,10 +6,10 @@ pub(super) const ADD_SOURCE: &str = include_str!("nat/add.lisp");
 pub(super) const SUB_SOURCE: &str = include_str!("nat/sub.lisp");
 pub(super) const MUL_SOURCE: &str = include_str!("nat/mul.lisp");
 
-pub(super) const SOURCES: &[&str] = &[
-    CORE_SOURCE,
-    ORDER_SOURCE,
-    ADD_SOURCE,
-    SUB_SOURCE,
-    MUL_SOURCE,
+pub(super) const SOURCES: &[(&str, &str)] = &[
+    ("nat/core", CORE_SOURCE),
+    ("nat/order", ORDER_SOURCE),
+    ("nat/add", ADD_SOURCE),
+    ("nat/sub", SUB_SOURCE),
+    ("nat/mul", MUL_SOURCE),
 ];

@@ -9,13 +9,17 @@ use crate::{ComputationDefinitionError, Name, Symbol, Theory};
 
 use super::{
     proof::{self, SourceTheoremError},
-    source::{ElabEnv, ParseError, ParsedModule},
+    source::{ElabEnv, ParseError, ParsedModule, SourceSection},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceComputationError {
-    ModuleParseFailed(ParseError),
+    ModuleParseFailed {
+        section: Option<SourceSection>,
+        error: ParseError,
+    },
     ComputationRejected {
+        section: Option<SourceSection>,
         computation: Name,
         error: ComputationDefinitionError,
     },
@@ -23,7 +27,10 @@ pub enum SourceComputationError {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceLoadError {
-    ModuleParseFailed(ParseError),
+    ModuleParseFailed {
+        section: Option<SourceSection>,
+        error: ParseError,
+    },
     Computation(SourceComputationError),
     Theorem(SourceTheoremError),
 }
@@ -38,7 +45,27 @@ pub enum SourceFileLoadError {
 pub struct LoadedSource {
     theory: Theory,
     env: ElabEnv,
-    modules: Vec<ParsedModule>,
+    modules: Vec<LoadedModule>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LoadedModule {
+    section: Option<SourceSection>,
+    module: ParsedModule,
+}
+
+impl LoadedModule {
+    fn new(section: Option<SourceSection>, module: ParsedModule) -> Self {
+        Self { section, module }
+    }
+
+    pub(crate) fn section(&self) -> Option<&SourceSection> {
+        self.section.as_ref()
+    }
+
+    pub(crate) fn parsed(&self) -> &ParsedModule {
+        &self.module
+    }
 }
 
 impl Default for LoadedSource {
@@ -85,19 +112,39 @@ impl LoadedSource {
     }
 
     pub fn load_str(&mut self, source: &str) -> Result<(), SourceLoadError> {
+        self.load_str_in_section(None, source)
+    }
+
+    pub fn load_section(
+        &mut self,
+        section: impl Into<SourceSection>,
+        source: &str,
+    ) -> Result<(), SourceLoadError> {
+        self.load_str_in_section(Some(section.into()), source)
+    }
+
+    fn load_str_in_section(
+        &mut self,
+        section: Option<SourceSection>,
+        source: &str,
+    ) -> Result<(), SourceLoadError> {
         let mut env = self.env.clone();
-        let module = env
-            .parse_module(source)
-            .map_err(SourceLoadError::ModuleParseFailed)?;
+        let module =
+            env.parse_module(source)
+                .map_err(|error| SourceLoadError::ModuleParseFailed {
+                    section: section.clone(),
+                    error,
+                })?;
         let mut theory = self.theory.clone();
 
-        define_module_computations_result(&mut theory, &module)
+        define_module_computations_result_in_section(&mut theory, &module, section.as_ref())
             .map_err(SourceLoadError::Computation)?;
-        define_module_theorems_result(&mut theory, &module).map_err(SourceLoadError::Theorem)?;
+        define_module_theorems_result_in_section(&mut theory, &module, section.as_ref())
+            .map_err(SourceLoadError::Theorem)?;
 
         self.env = env;
         self.theory = theory;
-        self.modules.push(module);
+        self.modules.push(LoadedModule::new(section, module));
 
         Ok(())
     }
@@ -109,39 +156,69 @@ impl LoadedSource {
             error,
         })?;
 
-        self.load_str(&source)
+        let section = SourceSection::new(path.display().to_string());
+        self.load_section(section, &source)
             .map_err(SourceFileLoadError::SourceLoadFailed)
     }
 
     pub fn load_computations_str(&mut self, source: &str) -> Result<(), SourceComputationError> {
+        self.load_computations_str_in_section(None, source)
+    }
+
+    pub fn load_computations_section(
+        &mut self,
+        section: impl Into<SourceSection>,
+        source: &str,
+    ) -> Result<(), SourceComputationError> {
+        self.load_computations_str_in_section(Some(section.into()), source)
+    }
+
+    fn load_computations_str_in_section(
+        &mut self,
+        section: Option<SourceSection>,
+        source: &str,
+    ) -> Result<(), SourceComputationError> {
         let mut env = self.env.clone();
-        let module = env
-            .parse_module(source)
-            .map_err(SourceComputationError::ModuleParseFailed)?;
+        let module = env.parse_module(source).map_err(|error| {
+            SourceComputationError::ModuleParseFailed {
+                section: section.clone(),
+                error,
+            }
+        })?;
         let mut theory = self.theory.clone();
 
-        define_module_computations_result(&mut theory, &module)?;
+        define_module_computations_result_in_section(&mut theory, &module, section.as_ref())?;
 
         self.env = env;
         self.theory = theory;
-        self.modules.push(module);
+        self.modules.push(LoadedModule::new(section, module));
 
         Ok(())
     }
 
-    pub(crate) fn modules(&self) -> &[ParsedModule] {
+    pub(crate) fn modules(&self) -> &[LoadedModule] {
         &self.modules
     }
 }
 
+#[cfg(test)]
 pub(crate) fn define_module_computations_result(
     theory: &mut Theory,
     module: &ParsedModule,
+) -> Result<(), SourceComputationError> {
+    define_module_computations_result_in_section(theory, module, None)
+}
+
+pub(crate) fn define_module_computations_result_in_section(
+    theory: &mut Theory,
+    module: &ParsedModule,
+    section: Option<&SourceSection>,
 ) -> Result<(), SourceComputationError> {
     for (name, computation) in &module.computations {
         theory
             .define_computation_result(*name, computation)
             .map_err(|error| SourceComputationError::ComputationRejected {
+                section: section.cloned(),
                 computation: *name,
                 error,
             })?;
@@ -150,12 +227,21 @@ pub(crate) fn define_module_computations_result(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn define_module_theorems_result(
     theory: &mut Theory,
     module: &ParsedModule,
 ) -> Result<(), SourceTheoremError> {
+    define_module_theorems_result_in_section(theory, module, None)
+}
+
+pub(crate) fn define_module_theorems_result_in_section(
+    theory: &mut Theory,
+    module: &ParsedModule,
+    section: Option<&SourceSection>,
+) -> Result<(), SourceTheoremError> {
     for theorem in &module.theorems {
-        proof::define_source_theorem(theorem, theory)?;
+        proof::define_source_theorem_with_section(theorem, theory, section)?;
     }
 
     Ok(())
@@ -207,6 +293,46 @@ mod tests {
                 Computation::Nil
             ))
         );
+    }
+
+    #[test]
+    fn load_section_records_section_and_reports_failures() {
+        let mut loaded = LoadedSource::new();
+
+        loaded
+            .load_section(
+                "test/good",
+                "
+                (def id (lambda x x))
+                ",
+            )
+            .expect("named source section should load");
+
+        assert_eq!(
+            loaded.modules()[0].section(),
+            Some(&SourceSection::new("test/good"))
+        );
+
+        let error = loaded
+            .load_section(
+                "test/bad",
+                "
+                (theorem bad
+                  (equal nil (quote unit))
+                  (proof (eval-to nil nil)))
+                ",
+            )
+            .expect_err("bad source section should report its name");
+
+        let SourceLoadError::Theorem(SourceTheoremError::TheoremRejected {
+            section, error, ..
+        }) = error
+        else {
+            panic!("expected a sectioned theorem rejection");
+        };
+
+        assert_eq!(section, Some(SourceSection::new("test/bad")));
+        assert_eq!(error, crate::TheoremError::InvalidProof);
     }
 
     #[test]

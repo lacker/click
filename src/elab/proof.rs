@@ -10,7 +10,7 @@ use crate::{Outcome, computes_to_outcome};
 
 #[cfg(test)]
 use super::source::ParsedModule;
-use super::source::{ParseError, ParsedTheorem, ProofExpr, ProofScript};
+use super::source::{ParseError, ParsedTheorem, ProofExpr, ProofScript, SourceSection};
 use super::tactics::{self, Goal};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -40,8 +40,12 @@ pub enum ProofElaborationError {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceTheoremError {
-    ModuleParseFailed(ParseError),
+    ModuleParseFailed {
+        section: Option<SourceSection>,
+        error: ParseError,
+    },
     ProofElaborationFailed {
+        section: Option<SourceSection>,
         theorem: Name,
         error: ProofElaborationError,
     },
@@ -49,31 +53,44 @@ pub enum SourceTheoremError {
         theorem: Name,
     },
     TheoremRejected {
+        section: Option<SourceSection>,
         theorem: Name,
         error: TheoremError,
     },
 }
 
+#[cfg(test)]
 pub(crate) fn define_source_theorem(
     theorem: &ParsedTheorem,
     theory: &mut Theory,
 ) -> Result<Theorem, SourceTheoremError> {
-    let proof = proof_for_theorem_result(theorem, theory)?;
+    define_source_theorem_with_section(theorem, theory, None)
+}
+
+pub(crate) fn define_source_theorem_with_section(
+    theorem: &ParsedTheorem,
+    theory: &mut Theory,
+    section: Option<&SourceSection>,
+) -> Result<Theorem, SourceTheoremError> {
+    let proof = proof_for_theorem_result_with_section(theorem, theory, section)?;
     theory
         .define_theorem_from_proof_result(theorem.name, proof, theorem.prop.clone())
         .map_err(|error| SourceTheoremError::TheoremRejected {
+            section: section.cloned(),
             theorem: theorem.name,
             error,
         })
 }
 
-pub(crate) fn proof_for_theorem_result(
+pub(crate) fn proof_for_theorem_result_with_section(
     theorem: &ParsedTheorem,
     theory: &Theory,
+    section: Option<&SourceSection>,
 ) -> Result<Proof, SourceTheoremError> {
     match &theorem.proof {
         ProofScript::Proof(proof) => proof_expr_to_proof(proof, theory).map_err(|error| {
             SourceTheoremError::ProofElaborationFailed {
+                section: section.cloned(),
                 theorem: theorem.name,
                 error,
             }
@@ -81,6 +98,7 @@ pub(crate) fn proof_for_theorem_result(
         ProofScript::By(script) => {
             tactics::tactic_script_to_proof(script, theory, &Goal::new(theorem.prop.clone()))
                 .map_err(|error| SourceTheoremError::ProofElaborationFailed {
+                    section: section.cloned(),
                     theorem: theorem.name,
                     error,
                 })

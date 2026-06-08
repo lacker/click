@@ -15,14 +15,22 @@ use crate::{
     Name, Symbol, Theory,
     elab::{
         ElabEnv, LoadedSource,
-        loader::{define_module_computations_result, define_module_theorems_result},
-        source,
+        loader::{
+            LoadedModule, define_module_computations_result_in_section,
+            define_module_theorems_result_in_section,
+        },
     },
+};
+
+#[cfg(test)]
+use crate::elab::{
+    loader::{define_module_computations_result, define_module_theorems_result},
+    source,
 };
 
 pub use crate::elab::{
     ParseError, ProofElaborationError, SourceComputationError, SourceFileLoadError,
-    SourceLoadError, SourceTheoremError,
+    SourceLoadError, SourceSection, SourceTheoremError,
 };
 
 static LOADED_PRELUDE: OnceLock<Result<LoadedSource, SourceLoadError>> = OnceLock::new();
@@ -106,37 +114,43 @@ pub(crate) fn parsed_prelude_env() -> Result<&'static ElabEnv, SourceComputation
 
 #[cfg(test)]
 pub(crate) fn parsed_list_modules()
--> Result<&'static [source::ParsedModule], SourceComputationError> {
+-> Result<Vec<&'static source::ParsedModule>, SourceComputationError> {
     loaded_computation_source().map(|loaded| {
         let modules = loaded.modules();
 
         modules
             .get(..list::SOURCES.len())
             .expect("prelude should contain list modules")
+            .iter()
+            .map(LoadedModule::parsed)
+            .collect()
     })
 }
 
 #[cfg(test)]
-pub(crate) fn parsed_nat_modules() -> Result<&'static [source::ParsedModule], SourceComputationError>
-{
+pub(crate) fn parsed_nat_modules()
+-> Result<Vec<&'static source::ParsedModule>, SourceComputationError> {
     loaded_computation_source().map(|loaded| {
         let modules = loaded.modules();
 
         modules
             .get(list::SOURCES.len()..)
             .expect("prelude should contain nat modules")
+            .iter()
+            .map(LoadedModule::parsed)
+            .collect()
     })
 }
 
 fn load_prelude_source() -> Result<LoadedSource, SourceLoadError> {
     let mut loaded = LoadedSource::with_env(prelude_env());
 
-    for source in list::SOURCES {
-        loaded.load_str(source)?;
+    for (section, source) in list::SOURCES {
+        loaded.load_section(*section, source)?;
     }
 
-    for source in nat::SOURCES {
-        loaded.load_str(source)?;
+    for (section, source) in nat::SOURCES {
+        loaded.load_section(*section, source)?;
     }
 
     Ok(loaded)
@@ -145,12 +159,12 @@ fn load_prelude_source() -> Result<LoadedSource, SourceLoadError> {
 fn load_prelude_computation_source() -> Result<LoadedSource, SourceComputationError> {
     let mut loaded = LoadedSource::with_env(prelude_env());
 
-    for source in list::SOURCES {
-        loaded.load_computations_str(source)?;
+    for (section, source) in list::SOURCES {
+        loaded.load_computations_section(*section, source)?;
     }
 
-    for source in nat::SOURCES {
-        loaded.load_computations_str(source)?;
+    for (section, source) in nat::SOURCES {
+        loaded.load_computations_section(*section, source)?;
     }
 
     Ok(loaded)
@@ -166,14 +180,16 @@ pub(crate) fn prelude_env() -> ElabEnv {
 
 fn define_modules_in_theory_result(
     theory: &mut Theory,
-    modules: &[source::ParsedModule],
+    modules: &[LoadedModule],
 ) -> Result<(), SourceLoadError> {
     for module in modules {
-        define_module_computations_result(theory, module).map_err(SourceLoadError::Computation)?;
+        define_module_computations_result_in_section(theory, module.parsed(), module.section())
+            .map_err(SourceLoadError::Computation)?;
     }
 
     for module in modules {
-        define_module_theorems_result(theory, module).map_err(SourceLoadError::Theorem)?;
+        define_module_theorems_result_in_section(theory, module.parsed(), module.section())
+            .map_err(SourceLoadError::Theorem)?;
     }
 
     Ok(())
@@ -184,7 +200,10 @@ fn define_module_in_theory_result(
     theory: &mut Theory,
     module: &source::ParsedModule,
 ) -> Result<(), SourceLoadError> {
-    define_modules_in_theory_result(theory, std::slice::from_ref(module))
+    define_module_computations_result(theory, module).map_err(SourceLoadError::Computation)?;
+    define_module_theorems_result(theory, module).map_err(SourceLoadError::Theorem)?;
+
+    Ok(())
 }
 
 pub fn define_computations_in_theory(theory: &mut Theory) -> bool {
@@ -197,7 +216,7 @@ pub fn try_define_computations_in_theory(
     let loaded = loaded_computation_source()?;
 
     for module in loaded.modules() {
-        define_module_computations_result(theory, module)?;
+        define_module_computations_result_in_section(theory, module.parsed(), module.section())?;
     }
 
     Ok(())
@@ -209,8 +228,8 @@ pub fn define_theorems_in_theory(theory: &mut Theory) -> bool {
 
 pub fn try_define_theorems_in_theory(theory: &mut Theory) -> Result<(), SourceTheoremError> {
     let loaded = loaded_computation_source().map_err(|error| match error {
-        SourceComputationError::ModuleParseFailed(error) => {
-            SourceTheoremError::ModuleParseFailed(error)
+        SourceComputationError::ModuleParseFailed { section, error } => {
+            SourceTheoremError::ModuleParseFailed { section, error }
         }
         SourceComputationError::ComputationRejected { .. } => {
             unreachable!("fresh prelude computation loading should not reject definitions")
@@ -218,7 +237,7 @@ pub fn try_define_theorems_in_theory(theory: &mut Theory) -> Result<(), SourceTh
     })?;
 
     for module in loaded.modules() {
-        define_module_theorems_result(theory, module)?;
+        define_module_theorems_result_in_section(theory, module.parsed(), module.section())?;
     }
 
     Ok(())

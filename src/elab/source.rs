@@ -423,6 +423,39 @@ impl ParsedModule {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceSection {
+    name: String,
+}
+
+impl SourceSection {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into() }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl From<&str> for SourceSection {
+    fn from(name: &str) -> Self {
+        Self::new(name)
+    }
+}
+
+impl From<String> for SourceSection {
+    fn from(name: String) -> Self {
+        Self::new(name)
+    }
+}
+
+impl std::fmt::Display for SourceSection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.name.fmt(f)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParseError {
     message: String,
 }

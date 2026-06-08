@@ -315,6 +315,27 @@ fn prelude_theorem_names() -> Vec<Name> {
 #[test]
 fn loaded_prelude_exposes_theory_and_source_environment() {
     let loaded = loaded();
+    let sections: Vec<_> = loaded
+        .modules()
+        .iter()
+        .map(|module| module.section().map(SourceSection::name))
+        .collect();
+
+    assert_eq!(
+        sections,
+        vec![
+            Some("list/core"),
+            Some("list/booleans"),
+            Some("list/operations"),
+            Some("list/value_eq"),
+            Some("list/derived"),
+            Some("nat/core"),
+            Some("nat/order"),
+            Some("nat/add"),
+            Some("nat/sub"),
+            Some("nat/mul"),
+        ]
+    );
 
     assert_eq!(loaded.computation("append"), Some(computation("append")));
     assert_eq!(loaded.computation("zero"), Some(computation("zero")));
@@ -719,6 +740,7 @@ fn computation_definition_diagnostics_report_kernel_rejection() {
     assert_eq!(
         try_define_computations_in_theory(&mut theory),
         Err(SourceComputationError::ComputationRejected {
+            section: Some(SourceSection::new("list/core")),
             computation: computation("reverse_acc"),
             error: ComputationDefinitionError::ComputationNameAlreadyDefined(computation(
                 "reverse_acc"
@@ -737,6 +759,7 @@ fn full_source_load_diagnostics_report_computation_failures() {
         try_define_in_theory(&mut theory),
         Err(SourceLoadError::Computation(
             SourceComputationError::ComputationRejected {
+                section: Some(SourceSection::new("list/core")),
                 computation: computation("reverse_acc"),
                 error: ComputationDefinitionError::ComputationNameAlreadyDefined(computation(
                     "reverse_acc"
@@ -755,6 +778,7 @@ fn theorem_definitions_require_computations() {
 
     let theorem_result = try_define_theorems_in_theory(&mut theory);
     let Err(SourceTheoremError::ProofElaborationFailed {
+        section,
         theorem: failed_theorem,
         error,
     }) = theorem_result
@@ -766,6 +790,7 @@ fn theorem_definitions_require_computations() {
         theorem("reverse_acc_computes_to_list"),
         "{error:?}"
     );
+    assert_eq!(section, Some(SourceSection::new("list/operations")));
     assert!(proof_error_contains_evaluation_failure(&error));
 
     let computation_independent_theorems = [
@@ -809,6 +834,7 @@ fn full_source_load_diagnostics_report_theorem_failures() {
         define_module_in_theory_result(&mut theory, &module),
         Err(SourceLoadError::Theorem(
             SourceTheoremError::TheoremRejected {
+                section: None,
                 theorem: bad,
                 error: TheoremError::InvalidProof,
             }
@@ -843,6 +869,7 @@ fn source_theorem_diagnostics_report_kernel_rejection() {
     assert_eq!(
         proof::source_theorem_result(module, bad, Theory::new()),
         Err(SourceTheoremError::TheoremRejected {
+            section: None,
             theorem: bad,
             error: TheoremError::InvalidProof,
         })
@@ -871,6 +898,7 @@ fn source_theorem_diagnostics_report_unknown_known_theorem() {
     assert_eq!(
         proof::source_theorem_result(module, bad, Theory::new()),
         Err(SourceTheoremError::ProofElaborationFailed {
+            section: None,
             theorem: bad,
             error: ProofElaborationError::UnknownTheorem(later),
         })

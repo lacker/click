@@ -50,6 +50,9 @@ proofs. `ElabEnv` owns the mapping from source spellings to opaque kernel
 public API; callers resolve source spellings through the elaborator environment.
 General source loading uses `LoadedSource`, which can load source strings or
 files into a checked `Theory` while maintaining the shared `ElabEnv`.
+Source loading can attach a section name to each parsed module; prelude loading
+uses names such as `list/value_eq` and `nat/sub`, and diagnostics for parse,
+computation, and theorem failures carry that section when one is available.
 
 Source theorems can still use raw kernel-like proof terms with `(proof ...)`.
 They can also use goal-directed tactic scripts with `(by ...)`. Tactics inspect
