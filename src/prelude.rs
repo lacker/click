@@ -25,8 +25,6 @@ pub use crate::elab::{
     SourceLoadError, SourceTheoremError,
 };
 
-#[cfg(test)]
-const NAT_MODULE_START_INDEX: usize = 1;
 static LOADED_PRELUDE: OnceLock<Result<LoadedSource, SourceLoadError>> = OnceLock::new();
 static LOADED_PRELUDE_COMPUTATIONS: OnceLock<Result<LoadedSource, SourceComputationError>> =
     OnceLock::new();
@@ -107,12 +105,14 @@ pub(crate) fn parsed_prelude_env() -> Result<&'static ElabEnv, SourceComputation
 }
 
 #[cfg(test)]
-pub(crate) fn parsed_list_module() -> Result<&'static source::ParsedModule, SourceComputationError>
-{
+pub(crate) fn parsed_list_modules()
+-> Result<&'static [source::ParsedModule], SourceComputationError> {
     loaded_computation_source().map(|loaded| {
-        loaded
-            .module(0)
-            .expect("prelude should contain the list module")
+        let modules = loaded.modules();
+
+        modules
+            .get(..list::SOURCES.len())
+            .expect("prelude should contain list modules")
     })
 }
 
@@ -123,7 +123,7 @@ pub(crate) fn parsed_nat_modules() -> Result<&'static [source::ParsedModule], So
         let modules = loaded.modules();
 
         modules
-            .get(NAT_MODULE_START_INDEX..)
+            .get(list::SOURCES.len()..)
             .expect("prelude should contain nat modules")
     })
 }
@@ -131,7 +131,9 @@ pub(crate) fn parsed_nat_modules() -> Result<&'static [source::ParsedModule], So
 fn load_prelude_source() -> Result<LoadedSource, SourceLoadError> {
     let mut loaded = LoadedSource::with_env(prelude_env());
 
-    loaded.load_str(list::SOURCE)?;
+    for source in list::SOURCES {
+        loaded.load_str(source)?;
+    }
 
     for source in nat::SOURCES {
         loaded.load_str(source)?;
@@ -143,7 +145,9 @@ fn load_prelude_source() -> Result<LoadedSource, SourceLoadError> {
 fn load_prelude_computation_source() -> Result<LoadedSource, SourceComputationError> {
     let mut loaded = LoadedSource::with_env(prelude_env());
 
-    loaded.load_computations_str(list::SOURCE)?;
+    for source in list::SOURCES {
+        loaded.load_computations_str(source)?;
+    }
 
     for source in nat::SOURCES {
         loaded.load_computations_str(source)?;

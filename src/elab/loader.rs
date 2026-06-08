@@ -129,11 +129,6 @@ impl LoadedSource {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) fn module(&self, index: usize) -> Option<&ParsedModule> {
-        self.modules.get(index)
-    }
-
     pub(crate) fn modules(&self) -> &[ParsedModule] {
         &self.modules
     }
