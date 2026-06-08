@@ -293,6 +293,14 @@ pub fn is_zero_false_implies_nat_lt_zero_source_theorem() -> Prop {
     theorem_prop("is_zero_false_implies_nat_lt_zero")
 }
 
+pub fn nat_lt_zero_implies_nat_le_zero_false_source_theorem() -> Prop {
+    theorem_prop("nat_lt_zero_implies_nat_le_zero_false")
+}
+
+pub fn nat_lt_zero_implies_nat_lt_nat_zero_false_source_theorem() -> Prop {
+    theorem_prop("nat_lt_zero_implies_nat_lt_nat_zero_false")
+}
+
 pub fn nat_lt_succ_zero_source_theorem() -> Prop {
     theorem_prop("nat_lt_succ_zero")
 }
@@ -673,8 +681,32 @@ pub fn nat_lt_zero_mul_succ_right_source_theorem() -> Prop {
     theorem_prop("nat_lt_zero_mul_succ_right")
 }
 
+pub fn nat_lt_zero_mul_source_theorem() -> Prop {
+    theorem_prop("nat_lt_zero_mul")
+}
+
+pub fn nat_lt_zero_mul_implies_left_source_theorem() -> Prop {
+    theorem_prop("nat_lt_zero_mul_implies_left")
+}
+
+pub fn is_zero_mul_implies_is_zero_or_is_zero_source_theorem() -> Prop {
+    theorem_prop("is_zero_mul_implies_is_zero_or_is_zero")
+}
+
 pub fn mul_zero_right_source_theorem() -> Prop {
     theorem_prop("mul_zero_right")
+}
+
+pub fn nat_lt_zero_mul_implies_right_source_theorem() -> Prop {
+    theorem_prop("nat_lt_zero_mul_implies_right")
+}
+
+pub fn nat_le_mul_right_cancel_source_theorem() -> Prop {
+    theorem_prop("nat_le_mul_right_cancel")
+}
+
+pub fn nat_lt_mul_right_cancel_source_theorem() -> Prop {
+    theorem_prop("nat_lt_mul_right_cancel")
 }
 
 pub fn is_zero_mul_zero_right_source_theorem() -> Prop {
@@ -691,6 +723,14 @@ pub fn mul_one_right_source_theorem() -> Prop {
 
 pub fn mul_comm_source_theorem() -> Prop {
     theorem_prop("mul_comm")
+}
+
+pub fn nat_le_mul_left_cancel_source_theorem() -> Prop {
+    theorem_prop("nat_le_mul_left_cancel")
+}
+
+pub fn nat_lt_mul_left_cancel_source_theorem() -> Prop {
+    theorem_prop("nat_lt_mul_left_cancel")
 }
 
 pub fn mul_add_left_distrib_source_theorem() -> Prop {

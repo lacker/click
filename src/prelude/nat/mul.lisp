@@ -1135,6 +1135,227 @@
               (exact sum_positive)))))))
 )
 
+(theorem nat_lt_zero_mul
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (nat-lt zero left) (quote :true))
+        (implies
+          (computes-to (nat-lt zero right) (quote :true))
+          (computes-to
+            (nat-lt zero (mul left right))
+            (quote :true))))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (intro left_positive)
+        (intro right_positive)
+        (have impossible_eq
+          (computes-to (quote :false) (quote :true))
+          (by
+            (calc
+              (quote :false)
+              (==
+                (nat-lt zero nil)
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact left_positive)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (computes-to (nat-lt zero (mul nil right)) (quote :true)))))))
+      left_head
+      left_tail
+      induction_hypothesis
+      (by
+        (intro right)
+        (intro left_positive)
+        (intro right_positive)
+        (have right_positive_nil
+          (computes-to (nat-lt nil right) (quote :true))
+          (by
+            (calc
+              (nat-lt nil right)
+              (==
+                (nat-lt zero right)
+                (by
+                  (fold zero)
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact right_positive)))))
+          (by
+            (obtain tail_product tail_product_proof
+              (mul_computes_to_list left_tail right))
+            (specialize sum_positive nat_lt_nil_left_add right tail_product)
+            (calc
+              (nat-lt zero (mul (cons left_head left_tail) right))
+              (==
+                (nat-lt zero (add right (mul left_tail right)))
+                (by
+                  (simpa only (mul_cons left_head left_tail right))))
+              (==
+                (nat-lt zero (add right tail_product))
+                (by
+                  (simpa only tail_product_proof)))
+              (==
+                (nat-lt nil (add right tail_product))
+                (by
+                  (simpa only zero_eq_nil)))
+              (==
+                (quote :true)
+                (by
+                  (exact sum_positive)))))))))
+)
+
+(theorem nat_lt_zero_mul_implies_left
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (nat-lt zero (mul left right)) (quote :true))
+        (computes-to (nat-lt zero left) (quote :true)))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (intro product_positive)
+        (have impossible_eq
+          (computes-to (quote :false) (quote :true))
+          (by
+            (calc
+              (quote :false)
+              (==
+                (nat-lt zero (mul nil right))
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact product_positive)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (computes-to (nat-lt zero nil) (quote :true)))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro right)
+        (intro product_positive)
+        (eval)))))
+
+(theorem is_zero_mul_implies_is_zero_or_is_zero
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (is-zero (mul left right)) (quote :true))
+        (or
+          (computes-to (is-zero left) (quote :true))
+          (computes-to (is-zero right) (quote :true))))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (intro product_zero)
+        (left
+          (by
+            (eval))))
+      left_head
+      left_tail
+      induction_hypothesis
+      (by
+        (list-induction right
+          (by
+            (intro product_zero)
+            (right
+              (by
+                (eval))))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (intro product_zero)
+            (obtain tail_product tail_product_proof
+              (mul_computes_to_list left_tail (cons right_head right_tail)))
+            (obtain tail_sum tail_sum_proof
+              (add_computes_to_list right_tail tail_product))
+            (have product_zero_false
+              (computes-to
+                (is-zero
+                  (mul
+                    (cons left_head left_tail)
+                    (cons right_head right_tail)))
+                (quote :false))
+              (by
+                (calc
+                  (is-zero
+                    (mul
+                      (cons left_head left_tail)
+                      (cons right_head right_tail)))
+                  (==
+                    (is-zero
+                      (add
+                        (cons right_head right_tail)
+                        (mul left_tail (cons right_head right_tail))))
+                    (by
+                      (simpa only (mul_cons left_head left_tail (cons right_head right_tail)))))
+                  (==
+                    (is-zero
+                      (add
+                        (cons right_head right_tail)
+                        tail_product))
+                    (by
+                      (simpa only tail_product_proof)))
+                  (==
+                    (is-zero
+                      (cons right_head (add right_tail tail_product)))
+                    (by
+                      (simpa only (add_cons right_head right_tail tail_product))))
+                  (==
+                    (is-zero (cons right_head tail_sum))
+                    (by
+                      (simpa only tail_sum_proof)))
+                  (==
+                    (quote :false)
+                    (by
+                      (eval)))))
+              (by
+                (have impossible_eq
+                  (computes-to (quote :false) (quote :true))
+                  (by
+                    (calc
+                      (quote :false)
+                      (==
+                        (is-zero
+                          (mul
+                            (cons left_head left_tail)
+                            (cons right_head right_tail)))
+                        (by
+                          (exact (symm product_zero_false))))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact product_zero)))))
+                  (by
+                    (exact
+                      (absurd-elim
+                        (distinct-outcomes impossible_eq)
+                        (or
+                          (computes-to
+                            (is-zero (cons left_head left_tail))
+                            (quote :true))
+                          (computes-to
+                            (is-zero (cons right_head right_tail))
+                            (quote :true)))))))))))))
+))
+
 (theorem mul_zero_right
   (forall nat (is-list nat)
     (computes-to (mul nat zero) zero))
@@ -1179,6 +1400,563 @@
             zero
             (by
               (exact induction_hypothesis))))))))
+
+(theorem nat_lt_zero_mul_implies_right
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (nat-lt zero (mul left right)) (quote :true))
+        (computes-to (nat-lt zero right) (quote :true)))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (intro product_positive)
+        (have impossible_eq
+          (computes-to (quote :false) (quote :true))
+          (by
+            (calc
+              (quote :false)
+              (==
+                (nat-lt zero (mul nil right))
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact product_positive)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (computes-to (nat-lt zero right) (quote :true)))))))
+      left_head
+      left_tail
+      induction_hypothesis
+      (by
+        (list-induction right
+          (by
+            (intro product_positive)
+            (obtain product product_proof
+              (mul_computes_to_list (cons left_head left_tail) nil))
+            (have product_positive_value
+              (computes-to (nat-lt zero product) (quote :true))
+              (by
+                (calc
+                  (nat-lt zero product)
+                  (==
+                    (nat-lt zero (mul (cons left_head left_tail) nil))
+                    (by
+                      (simpa only (symm product_proof))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact product_positive)))))
+              (by
+                (have product_not_zero
+                  (computes-to (is-zero product) (quote :false))
+                  (by
+                    (exact nat_lt_zero_implies_is_zero_false product))
+                  (by
+                    (have product_zero
+                      (computes-to (is-zero product) (quote :true))
+                      (by
+                        (calc
+                          (is-zero product)
+                          (==
+                            (is-zero (mul (cons left_head left_tail) nil))
+                            (by
+                              (simpa only (symm product_proof))))
+                          (==
+                            (is-zero (mul (cons left_head left_tail) zero))
+                            (by
+                              (fold zero)
+                              (eval)))
+                          (==
+                            (is-zero zero)
+                            (by
+                              (simpa only (mul_zero_right (cons left_head left_tail)))))
+                          (==
+                            (quote :true)
+                            (by
+                              (eval)))))
+                      (by
+                        (have impossible_eq
+                          (computes-to (quote :false) (quote :true))
+                          (by
+                            (calc
+                              (quote :false)
+                              (==
+                                (is-zero product)
+                                (by
+                                  (exact (symm product_not_zero))))
+                              (==
+                                (quote :true)
+                                (by
+                                  (exact product_zero)))))
+                          (by
+                            (exact
+                              (absurd-elim
+                                (distinct-outcomes impossible_eq)
+                                (computes-to (nat-lt zero nil) (quote :true)))))))))))
+))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (intro product_positive)
+            (eval))))))
+)
+
+(theorem nat_le_mul_right_cancel
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall factor (is-list factor)
+        (implies
+          (computes-to (nat-lt zero factor) (quote :true))
+          (implies
+            (computes-to
+              (nat-le (mul left factor) (mul right factor))
+              (quote :true))
+            (computes-to (nat-le left right) (quote :true)))))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (intro factor)
+        (intro factor_positive)
+        (intro products_le)
+        (eval))
+      left_head
+      left_tail
+      induction_hypothesis
+      (by
+        (list-induction right
+          (by
+            (intro factor)
+            (intro factor_positive)
+            (intro products_le)
+            (have left_positive
+              (computes-to (nat-lt zero (cons left_head left_tail)) (quote :true))
+              (by
+                (eval))
+              (by
+                (obtain left_product left_product_proof
+                  (mul_computes_to_list (cons left_head left_tail) factor))
+                (specialize product_positive
+                  nat_lt_zero_mul
+                  (cons left_head left_tail)
+                  factor)
+                (have left_product_positive
+                  (computes-to (nat-lt zero left_product) (quote :true))
+                  (by
+                    (calc
+                      (nat-lt zero left_product)
+                      (==
+                        (nat-lt zero (mul (cons left_head left_tail) factor))
+                        (by
+                          (simpa only (symm left_product_proof))))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact product_positive)))))
+                  (by
+                    (have left_product_not_le_zero
+                      (computes-to (nat-le left_product zero) (quote :false))
+                      (by
+                        (exact nat_lt_zero_implies_nat_le_zero_false left_product))
+                      (by
+                        (have products_le_false
+                          (computes-to
+                            (nat-le
+                              (mul (cons left_head left_tail) factor)
+                              (mul nil factor))
+                            (quote :false))
+                          (by
+                            (calc
+                              (nat-le
+                                (mul (cons left_head left_tail) factor)
+                                (mul nil factor))
+                              (==
+                                (nat-le left_product (mul nil factor))
+                                (by
+                                  (simpa only left_product_proof)))
+                              (==
+                                (nat-le left_product nil)
+                                (by
+                                  (eval)))
+                              (==
+                                (nat-le left_product zero)
+                                (by
+                                  (fold zero)
+                                  (eval)))
+                              (==
+                                (quote :false)
+                                (by
+                                  (exact left_product_not_le_zero)))))
+                          (by
+                            (have impossible_eq
+                              (computes-to (quote :true) (quote :false))
+                              (by
+                                (calc
+                                  (quote :true)
+                                  (==
+                                    (nat-le
+                                      (mul (cons left_head left_tail) factor)
+                                      (mul nil factor))
+                                    (by
+                                      (exact (symm products_le))))
+                                  (==
+                                    (quote :false)
+                                    (by
+                                      (exact products_le_false)))))
+                              (by
+                                (exact
+                                  (absurd-elim
+                                    (distinct-outcomes impossible_eq)
+                                    (computes-to
+                                      (nat-le (cons left_head left_tail) nil)
+                                      (quote :true)))))))))))))
+))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (intro factor)
+            (intro factor_positive)
+            (intro products_le)
+            (obtain left_tail_product left_tail_product_proof
+              (mul_computes_to_list left_tail factor))
+            (obtain right_tail_product right_tail_product_proof
+              (mul_computes_to_list right_tail factor))
+            (have prefixed_products_le
+              (computes-to
+                (nat-le
+                  (add factor left_tail_product)
+                  (add factor right_tail_product))
+                (quote :true))
+              (by
+                (calc
+                  (nat-le
+                    (add factor left_tail_product)
+                    (add factor right_tail_product))
+                  (==
+                    (nat-le
+                      (add factor (mul left_tail factor))
+                      (add factor right_tail_product))
+                    (by
+                      (simpa only (symm left_tail_product_proof))))
+                  (==
+                    (nat-le
+                      (add factor (mul left_tail factor))
+                      (add factor (mul right_tail factor)))
+                    (by
+                      (simpa only (symm right_tail_product_proof))))
+                  (==
+                    (nat-le
+                      (mul (cons left_head left_tail) factor)
+                      (add factor (mul right_tail factor)))
+                    (by
+                      (simpa only (symm (mul_cons left_head left_tail factor)))))
+                  (==
+                    (nat-le
+                      (mul (cons left_head left_tail) factor)
+                      (mul (cons right_head right_tail) factor))
+                    (by
+                      (simpa only (symm (mul_cons right_head right_tail factor)))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact products_le)))))
+              (by
+                (specialize add_cancel
+                  nat_le_add_left_cancel
+                  left_tail_product
+                  right_tail_product
+                  factor)
+                (have tail_products_le
+                  (computes-to
+                    (nat-le left_tail_product right_tail_product)
+                    (quote :true))
+                  (by
+                    (exact add_cancel))
+                  (by
+                    (have tail_product_exprs_le
+                      (computes-to
+                        (nat-le
+                          (mul left_tail factor)
+                          (mul right_tail factor))
+                        (quote :true))
+                      (by
+                        (calc
+                          (nat-le
+                            (mul left_tail factor)
+                            (mul right_tail factor))
+                          (==
+                            (nat-le left_tail_product (mul right_tail factor))
+                            (by
+                              (simpa only left_tail_product_proof)))
+                          (==
+                            (nat-le left_tail_product right_tail_product)
+                            (by
+                              (simpa only right_tail_product_proof)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact tail_products_le)))))
+                      (by
+                        (specialize tail_cancel induction_hypothesis right_tail factor)
+                        (calc
+                          (nat-le
+                            (cons left_head left_tail)
+                            (cons right_head right_tail))
+                          (==
+                            (nat-le left_tail right_tail)
+                            (by
+                              (eval)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact tail_cancel)))))))))))))
+)))
+
+(theorem nat_lt_mul_right_cancel
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall factor (is-list factor)
+        (implies
+          (computes-to (nat-lt zero factor) (quote :true))
+          (implies
+            (computes-to
+              (nat-lt (mul left factor) (mul right factor))
+              (quote :true))
+            (computes-to (nat-lt left right) (quote :true)))))))
+  (by
+    (list-induction left
+      (by
+        (list-induction right
+          (by
+            (intro factor)
+            (intro factor_positive)
+            (intro products_lt)
+            (have impossible_eq
+              (computes-to (quote :false) (quote :true))
+              (by
+                (calc
+                  (quote :false)
+                  (==
+                    (nat-lt (mul nil factor) (mul nil factor))
+                    (by
+                      (eval)))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact products_lt)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to (nat-lt nil nil) (quote :true)))))))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (intro factor)
+            (intro factor_positive)
+            (intro products_lt)
+            (eval))))
+      left_head
+      left_tail
+      induction_hypothesis
+      (by
+        (list-induction right
+          (by
+            (intro factor)
+            (intro factor_positive)
+            (intro products_lt)
+            (have left_positive
+              (computes-to (nat-lt zero (cons left_head left_tail)) (quote :true))
+              (by
+                (eval))
+              (by
+                (obtain left_product left_product_proof
+                  (mul_computes_to_list (cons left_head left_tail) factor))
+                (specialize product_positive
+                  nat_lt_zero_mul
+                  (cons left_head left_tail)
+                  factor)
+                (have left_product_positive
+                  (computes-to (nat-lt zero left_product) (quote :true))
+                  (by
+                    (calc
+                      (nat-lt zero left_product)
+                      (==
+                        (nat-lt zero (mul (cons left_head left_tail) factor))
+                        (by
+                          (simpa only (symm left_product_proof))))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact product_positive)))))
+                  (by
+                    (have left_product_not_lt_zero
+                      (computes-to (nat-lt left_product zero) (quote :false))
+                      (by
+                        (exact nat_lt_zero_implies_nat_lt_nat_zero_false left_product))
+                      (by
+                        (have products_lt_false
+                          (computes-to
+                            (nat-lt
+                              (mul (cons left_head left_tail) factor)
+                              (mul nil factor))
+                            (quote :false))
+                          (by
+                            (calc
+                              (nat-lt
+                                (mul (cons left_head left_tail) factor)
+                                (mul nil factor))
+                              (==
+                                (nat-lt left_product (mul nil factor))
+                                (by
+                                  (simpa only left_product_proof)))
+                              (==
+                                (nat-lt left_product nil)
+                                (by
+                                  (eval)))
+                              (==
+                                (nat-lt left_product zero)
+                                (by
+                                  (fold zero)
+                                  (eval)))
+                              (==
+                                (quote :false)
+                                (by
+                                  (exact left_product_not_lt_zero)))))
+                          (by
+                            (have impossible_eq
+                              (computes-to (quote :true) (quote :false))
+                              (by
+                                (calc
+                                  (quote :true)
+                                  (==
+                                    (nat-lt
+                                      (mul (cons left_head left_tail) factor)
+                                      (mul nil factor))
+                                    (by
+                                      (exact (symm products_lt))))
+                                  (==
+                                    (quote :false)
+                                    (by
+                                      (exact products_lt_false)))))
+                              (by
+                                (exact
+                                  (absurd-elim
+                                    (distinct-outcomes impossible_eq)
+                                    (computes-to
+                                      (nat-lt (cons left_head left_tail) nil)
+                                      (quote :true)))))))))))))
+))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (intro factor)
+            (intro factor_positive)
+            (intro products_lt)
+            (obtain left_tail_product left_tail_product_proof
+              (mul_computes_to_list left_tail factor))
+            (obtain right_tail_product right_tail_product_proof
+              (mul_computes_to_list right_tail factor))
+            (have prefixed_products_lt
+              (computes-to
+                (nat-lt
+                  (add factor left_tail_product)
+                  (add factor right_tail_product))
+                (quote :true))
+              (by
+                (calc
+                  (nat-lt
+                    (add factor left_tail_product)
+                    (add factor right_tail_product))
+                  (==
+                    (nat-lt
+                      (add factor (mul left_tail factor))
+                      (add factor right_tail_product))
+                    (by
+                      (simpa only (symm left_tail_product_proof))))
+                  (==
+                    (nat-lt
+                      (add factor (mul left_tail factor))
+                      (add factor (mul right_tail factor)))
+                    (by
+                      (simpa only (symm right_tail_product_proof))))
+                  (==
+                    (nat-lt
+                      (mul (cons left_head left_tail) factor)
+                      (add factor (mul right_tail factor)))
+                    (by
+                      (simpa only (symm (mul_cons left_head left_tail factor)))))
+                  (==
+                    (nat-lt
+                      (mul (cons left_head left_tail) factor)
+                      (mul (cons right_head right_tail) factor))
+                    (by
+                      (simpa only (symm (mul_cons right_head right_tail factor)))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact products_lt)))))
+              (by
+                (specialize add_cancel
+                  nat_lt_add_left_cancel
+                  left_tail_product
+                  right_tail_product
+                  factor)
+                (have tail_products_lt
+                  (computes-to
+                    (nat-lt left_tail_product right_tail_product)
+                    (quote :true))
+                  (by
+                    (exact add_cancel))
+                  (by
+                    (have tail_product_exprs_lt
+                      (computes-to
+                        (nat-lt
+                          (mul left_tail factor)
+                          (mul right_tail factor))
+                        (quote :true))
+                      (by
+                        (calc
+                          (nat-lt
+                            (mul left_tail factor)
+                            (mul right_tail factor))
+                          (==
+                            (nat-lt left_tail_product (mul right_tail factor))
+                            (by
+                              (simpa only left_tail_product_proof)))
+                          (==
+                            (nat-lt left_tail_product right_tail_product)
+                            (by
+                              (simpa only right_tail_product_proof)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact tail_products_lt)))))
+                      (by
+                        (specialize tail_cancel induction_hypothesis right_tail factor)
+                        (calc
+                          (nat-lt
+                            (cons left_head left_tail)
+                            (cons right_head right_tail))
+                          (==
+                            (nat-lt left_tail right_tail)
+                            (by
+                              (eval)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact tail_cancel)))))))))))))
+)))
 
 (theorem is_zero_mul_zero_right
   (forall nat (is-list nat)
@@ -1346,6 +2124,108 @@
             (mul right (cons head tail))
             (by
               (simpa only (symm head_unit)))))))))
+
+(theorem nat_le_mul_left_cancel
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall factor (is-list factor)
+        (implies
+          (computes-to (is-nat-value left) (quote :true))
+          (implies
+            (computes-to (is-nat-value right) (quote :true))
+            (implies
+              (computes-to (is-nat-value factor) (quote :true))
+              (implies
+                (computes-to (nat-lt zero factor) (quote :true))
+                (implies
+                  (computes-to
+                    (nat-le (mul factor left) (mul factor right))
+                    (quote :true))
+                  (computes-to (nat-le left right) (quote :true))))))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro factor)
+    (intro left_is_nat)
+    (intro right_is_nat)
+    (intro factor_is_nat)
+    (intro factor_positive)
+    (intro products_le)
+    (specialize left_factor_comm mul_comm left factor)
+    (specialize right_factor_comm mul_comm right factor)
+    (have right_products_le
+      (computes-to
+        (nat-le (mul left factor) (mul right factor))
+        (quote :true))
+      (by
+        (calc
+          (nat-le (mul left factor) (mul right factor))
+          (==
+            (nat-le (mul factor left) (mul right factor))
+            (by
+              (simpa only left_factor_comm)))
+          (==
+            (nat-le (mul factor left) (mul factor right))
+            (by
+              (simpa only right_factor_comm)))
+          (==
+            (quote :true)
+            (by
+              (exact products_le)))))
+      (by
+        (specialize cancel nat_le_mul_right_cancel left right factor)
+        (exact cancel)))))
+
+(theorem nat_lt_mul_left_cancel
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall factor (is-list factor)
+        (implies
+          (computes-to (is-nat-value left) (quote :true))
+          (implies
+            (computes-to (is-nat-value right) (quote :true))
+            (implies
+              (computes-to (is-nat-value factor) (quote :true))
+              (implies
+                (computes-to (nat-lt zero factor) (quote :true))
+                (implies
+                  (computes-to
+                    (nat-lt (mul factor left) (mul factor right))
+                    (quote :true))
+                  (computes-to (nat-lt left right) (quote :true))))))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro factor)
+    (intro left_is_nat)
+    (intro right_is_nat)
+    (intro factor_is_nat)
+    (intro factor_positive)
+    (intro products_lt)
+    (specialize left_factor_comm mul_comm left factor)
+    (specialize right_factor_comm mul_comm right factor)
+    (have right_products_lt
+      (computes-to
+        (nat-lt (mul left factor) (mul right factor))
+        (quote :true))
+      (by
+        (calc
+          (nat-lt (mul left factor) (mul right factor))
+          (==
+            (nat-lt (mul factor left) (mul right factor))
+            (by
+              (simpa only left_factor_comm)))
+          (==
+            (nat-lt (mul factor left) (mul factor right))
+            (by
+              (simpa only right_factor_comm)))
+          (==
+            (quote :true)
+            (by
+              (exact products_lt)))))
+      (by
+        (specialize cancel nat_lt_mul_right_cancel left right factor)
+        (exact cancel)))))
 
 (theorem mul_add_left_distrib
   (forall left (is-list left)

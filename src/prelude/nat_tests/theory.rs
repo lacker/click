@@ -133,6 +133,16 @@ fn checked_theory_contains_nat_theorems() {
     );
     assert_theory_has_theorem(
         &theory,
+        "nat_lt_zero_implies_nat_le_zero_false",
+        nat_lt_zero_implies_nat_le_zero_false_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_zero_implies_nat_lt_nat_zero_false",
+        nat_lt_zero_implies_nat_lt_nat_zero_false_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
         "nat_lt_succ_zero",
         nat_lt_succ_zero_source_theorem(),
     );
@@ -482,7 +492,33 @@ fn checked_theory_contains_nat_theorems() {
         "nat_lt_zero_mul_succ_right",
         nat_lt_zero_mul_succ_right_source_theorem(),
     );
+    assert_theory_has_theorem(&theory, "nat_lt_zero_mul", nat_lt_zero_mul_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_zero_mul_implies_left",
+        nat_lt_zero_mul_implies_left_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "is_zero_mul_implies_is_zero_or_is_zero",
+        is_zero_mul_implies_is_zero_or_is_zero_source_theorem(),
+    );
     assert_theory_has_theorem(&theory, "mul_zero_right", mul_zero_right_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_zero_mul_implies_right",
+        nat_lt_zero_mul_implies_right_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_mul_right_cancel",
+        nat_le_mul_right_cancel_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_mul_right_cancel",
+        nat_lt_mul_right_cancel_source_theorem(),
+    );
     assert_theory_has_theorem(
         &theory,
         "is_zero_mul_zero_right",
@@ -491,6 +527,16 @@ fn checked_theory_contains_nat_theorems() {
     assert_theory_has_theorem(&theory, "mul_one_left", mul_one_left_source_theorem());
     assert_theory_has_theorem(&theory, "mul_one_right", mul_one_right_source_theorem());
     assert_theory_has_theorem(&theory, "mul_comm", mul_comm_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_mul_left_cancel",
+        nat_le_mul_left_cancel_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_mul_left_cancel",
+        nat_lt_mul_left_cancel_source_theorem(),
+    );
     assert_theory_has_theorem(
         &theory,
         "mul_add_left_distrib",

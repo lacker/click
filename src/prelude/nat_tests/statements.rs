@@ -19,6 +19,10 @@ fn nat_theorem_statements_load_from_source() {
         theorem_symbol("nat_lt_zero_implies_is_zero_false", "nat");
     let is_zero_false_implies_nat_lt_zero_nat =
         theorem_symbol("is_zero_false_implies_nat_lt_zero", "nat");
+    let nat_lt_zero_implies_nat_le_zero_false_nat =
+        theorem_symbol("nat_lt_zero_implies_nat_le_zero_false", "nat");
+    let nat_lt_zero_implies_nat_lt_nat_zero_false_nat =
+        theorem_symbol("nat_lt_zero_implies_nat_lt_nat_zero_false", "nat");
     let nat_le_suffix_tail = theorem_symbol("nat_le_list_suffix_cons", "tail");
     let nat_le_suffix_head = theorem_symbol("nat_le_list_suffix_cons", "head");
     let nat_lt_suffix_tail = theorem_symbol("nat_lt_list_suffix_cons", "tail");
@@ -185,8 +189,33 @@ fn nat_theorem_statements_load_from_source() {
     let nat_lt_zero_mul_succ_succ_right = theorem_symbol("nat_lt_zero_mul_succ_succ", "right");
     let nat_lt_zero_mul_succ_right_left = theorem_symbol("nat_lt_zero_mul_succ_right", "left");
     let nat_lt_zero_mul_succ_right_right = theorem_symbol("nat_lt_zero_mul_succ_right", "right");
+    let nat_lt_zero_mul_left = theorem_symbol("nat_lt_zero_mul", "left");
+    let nat_lt_zero_mul_right = theorem_symbol("nat_lt_zero_mul", "right");
+    let nat_lt_zero_mul_implies_left_left = theorem_symbol("nat_lt_zero_mul_implies_left", "left");
+    let nat_lt_zero_mul_implies_left_right =
+        theorem_symbol("nat_lt_zero_mul_implies_left", "right");
+    let is_zero_mul_implies_is_zero_left =
+        theorem_symbol("is_zero_mul_implies_is_zero_or_is_zero", "left");
+    let is_zero_mul_implies_is_zero_right =
+        theorem_symbol("is_zero_mul_implies_is_zero_or_is_zero", "right");
     let mul_zero_right_nat = theorem_symbol("mul_zero_right", "nat");
+    let nat_lt_zero_mul_implies_right_left =
+        theorem_symbol("nat_lt_zero_mul_implies_right", "left");
+    let nat_lt_zero_mul_implies_right_right =
+        theorem_symbol("nat_lt_zero_mul_implies_right", "right");
+    let nat_le_mul_right_cancel_left = theorem_symbol("nat_le_mul_right_cancel", "left");
+    let nat_le_mul_right_cancel_right = theorem_symbol("nat_le_mul_right_cancel", "right");
+    let nat_le_mul_right_cancel_factor = theorem_symbol("nat_le_mul_right_cancel", "factor");
+    let nat_lt_mul_right_cancel_left = theorem_symbol("nat_lt_mul_right_cancel", "left");
+    let nat_lt_mul_right_cancel_right = theorem_symbol("nat_lt_mul_right_cancel", "right");
+    let nat_lt_mul_right_cancel_factor = theorem_symbol("nat_lt_mul_right_cancel", "factor");
     let mul_one_left_right = theorem_symbol("mul_one_left", "right");
+    let nat_le_mul_left_cancel_left = theorem_symbol("nat_le_mul_left_cancel", "left");
+    let nat_le_mul_left_cancel_right = theorem_symbol("nat_le_mul_left_cancel", "right");
+    let nat_le_mul_left_cancel_factor = theorem_symbol("nat_le_mul_left_cancel", "factor");
+    let nat_lt_mul_left_cancel_left = theorem_symbol("nat_lt_mul_left_cancel", "left");
+    let nat_lt_mul_left_cancel_right = theorem_symbol("nat_lt_mul_left_cancel", "right");
+    let nat_lt_mul_left_cancel_factor = theorem_symbol("nat_lt_mul_left_cancel", "factor");
 
     assert_eq!(
         zero_computes_to_list_source_theorem(),
@@ -323,6 +352,38 @@ fn nat_theorem_statements_load_from_source() {
                 computes_to(
                     nat_lt_call(zero(), var(is_zero_false_implies_nat_lt_zero_nat)),
                     true_value()
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_zero_implies_nat_le_zero_false_source_theorem(),
+        forall_list(
+            nat_lt_zero_implies_nat_le_zero_false_nat,
+            implies(
+                computes_to(
+                    nat_lt_call(zero(), var(nat_lt_zero_implies_nat_le_zero_false_nat)),
+                    true_value()
+                ),
+                computes_to(
+                    nat_le_call(var(nat_lt_zero_implies_nat_le_zero_false_nat), zero()),
+                    false_value()
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_zero_implies_nat_lt_nat_zero_false_source_theorem(),
+        forall_list(
+            nat_lt_zero_implies_nat_lt_nat_zero_false_nat,
+            implies(
+                computes_to(
+                    nat_lt_call(zero(), var(nat_lt_zero_implies_nat_lt_nat_zero_false_nat)),
+                    true_value()
+                ),
+                computes_to(
+                    nat_lt_call(var(nat_lt_zero_implies_nat_lt_nat_zero_false_nat), zero()),
+                    false_value()
                 )
             )
         )
@@ -2168,11 +2229,194 @@ fn nat_theorem_statements_load_from_source() {
         )
     );
     assert_eq!(
+        nat_lt_zero_mul_source_theorem(),
+        forall_list(
+            nat_lt_zero_mul_left,
+            forall_list(
+                nat_lt_zero_mul_right,
+                implies(
+                    computes_to(nat_lt_call(zero(), var(nat_lt_zero_mul_left)), true_value()),
+                    implies(
+                        computes_to(
+                            nat_lt_call(zero(), var(nat_lt_zero_mul_right)),
+                            true_value()
+                        ),
+                        computes_to(
+                            nat_lt_call(
+                                zero(),
+                                mul_call(var(nat_lt_zero_mul_left), var(nat_lt_zero_mul_right))
+                            ),
+                            true_value()
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_zero_mul_implies_left_source_theorem(),
+        forall_list(
+            nat_lt_zero_mul_implies_left_left,
+            forall_list(
+                nat_lt_zero_mul_implies_left_right,
+                implies(
+                    computes_to(
+                        nat_lt_call(
+                            zero(),
+                            mul_call(
+                                var(nat_lt_zero_mul_implies_left_left),
+                                var(nat_lt_zero_mul_implies_left_right)
+                            )
+                        ),
+                        true_value()
+                    ),
+                    computes_to(
+                        nat_lt_call(zero(), var(nat_lt_zero_mul_implies_left_left)),
+                        true_value()
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        is_zero_mul_implies_is_zero_or_is_zero_source_theorem(),
+        forall_list(
+            is_zero_mul_implies_is_zero_left,
+            forall_list(
+                is_zero_mul_implies_is_zero_right,
+                implies(
+                    computes_to(
+                        is_zero_call(mul_call(
+                            var(is_zero_mul_implies_is_zero_left),
+                            var(is_zero_mul_implies_is_zero_right)
+                        )),
+                        true_value()
+                    ),
+                    or(
+                        computes_to(
+                            is_zero_call(var(is_zero_mul_implies_is_zero_left)),
+                            true_value()
+                        ),
+                        computes_to(
+                            is_zero_call(var(is_zero_mul_implies_is_zero_right)),
+                            true_value()
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
         mul_zero_right_source_theorem(),
         crate::forall_where(
             mul_zero_right_nat,
             is_list(var(mul_zero_right_nat)),
             computes_to(mul_call(var(mul_zero_right_nat), zero()), zero())
+        )
+    );
+    assert_eq!(
+        nat_lt_zero_mul_implies_right_source_theorem(),
+        forall_list(
+            nat_lt_zero_mul_implies_right_left,
+            forall_list(
+                nat_lt_zero_mul_implies_right_right,
+                implies(
+                    computes_to(
+                        nat_lt_call(
+                            zero(),
+                            mul_call(
+                                var(nat_lt_zero_mul_implies_right_left),
+                                var(nat_lt_zero_mul_implies_right_right)
+                            )
+                        ),
+                        true_value()
+                    ),
+                    computes_to(
+                        nat_lt_call(zero(), var(nat_lt_zero_mul_implies_right_right)),
+                        true_value()
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_le_mul_right_cancel_source_theorem(),
+        forall_list(
+            nat_le_mul_right_cancel_left,
+            forall_list(
+                nat_le_mul_right_cancel_right,
+                forall_list(
+                    nat_le_mul_right_cancel_factor,
+                    implies(
+                        computes_to(
+                            nat_lt_call(zero(), var(nat_le_mul_right_cancel_factor)),
+                            true_value()
+                        ),
+                        implies(
+                            computes_to(
+                                nat_le_call(
+                                    mul_call(
+                                        var(nat_le_mul_right_cancel_left),
+                                        var(nat_le_mul_right_cancel_factor)
+                                    ),
+                                    mul_call(
+                                        var(nat_le_mul_right_cancel_right),
+                                        var(nat_le_mul_right_cancel_factor)
+                                    )
+                                ),
+                                true_value()
+                            ),
+                            computes_to(
+                                nat_le_call(
+                                    var(nat_le_mul_right_cancel_left),
+                                    var(nat_le_mul_right_cancel_right)
+                                ),
+                                true_value()
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_mul_right_cancel_source_theorem(),
+        forall_list(
+            nat_lt_mul_right_cancel_left,
+            forall_list(
+                nat_lt_mul_right_cancel_right,
+                forall_list(
+                    nat_lt_mul_right_cancel_factor,
+                    implies(
+                        computes_to(
+                            nat_lt_call(zero(), var(nat_lt_mul_right_cancel_factor)),
+                            true_value()
+                        ),
+                        implies(
+                            computes_to(
+                                nat_lt_call(
+                                    mul_call(
+                                        var(nat_lt_mul_right_cancel_left),
+                                        var(nat_lt_mul_right_cancel_factor)
+                                    ),
+                                    mul_call(
+                                        var(nat_lt_mul_right_cancel_right),
+                                        var(nat_lt_mul_right_cancel_factor)
+                                    )
+                                ),
+                                true_value()
+                            ),
+                            computes_to(
+                                nat_lt_call(
+                                    var(nat_lt_mul_right_cancel_left),
+                                    var(nat_lt_mul_right_cancel_right)
+                                ),
+                                true_value()
+                            )
+                        )
+                    )
+                )
+            )
         )
     );
     assert_eq!(
@@ -2183,6 +2427,104 @@ fn nat_theorem_statements_load_from_source() {
             computes_to(
                 mul_call(succ_call(zero()), var(mul_one_left_right)),
                 var(mul_one_left_right)
+            )
+        )
+    );
+    assert_eq!(
+        nat_le_mul_left_cancel_source_theorem(),
+        forall_list(
+            nat_le_mul_left_cancel_left,
+            forall_list(
+                nat_le_mul_left_cancel_right,
+                forall_list(
+                    nat_le_mul_left_cancel_factor,
+                    implies(
+                        nat_value_true(nat_le_mul_left_cancel_left),
+                        implies(
+                            nat_value_true(nat_le_mul_left_cancel_right),
+                            implies(
+                                nat_value_true(nat_le_mul_left_cancel_factor),
+                                implies(
+                                    computes_to(
+                                        nat_lt_call(zero(), var(nat_le_mul_left_cancel_factor)),
+                                        true_value()
+                                    ),
+                                    implies(
+                                        computes_to(
+                                            nat_le_call(
+                                                mul_call(
+                                                    var(nat_le_mul_left_cancel_factor),
+                                                    var(nat_le_mul_left_cancel_left)
+                                                ),
+                                                mul_call(
+                                                    var(nat_le_mul_left_cancel_factor),
+                                                    var(nat_le_mul_left_cancel_right)
+                                                )
+                                            ),
+                                            true_value()
+                                        ),
+                                        computes_to(
+                                            nat_le_call(
+                                                var(nat_le_mul_left_cancel_left),
+                                                var(nat_le_mul_left_cancel_right)
+                                            ),
+                                            true_value()
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_mul_left_cancel_source_theorem(),
+        forall_list(
+            nat_lt_mul_left_cancel_left,
+            forall_list(
+                nat_lt_mul_left_cancel_right,
+                forall_list(
+                    nat_lt_mul_left_cancel_factor,
+                    implies(
+                        nat_value_true(nat_lt_mul_left_cancel_left),
+                        implies(
+                            nat_value_true(nat_lt_mul_left_cancel_right),
+                            implies(
+                                nat_value_true(nat_lt_mul_left_cancel_factor),
+                                implies(
+                                    computes_to(
+                                        nat_lt_call(zero(), var(nat_lt_mul_left_cancel_factor)),
+                                        true_value()
+                                    ),
+                                    implies(
+                                        computes_to(
+                                            nat_lt_call(
+                                                mul_call(
+                                                    var(nat_lt_mul_left_cancel_factor),
+                                                    var(nat_lt_mul_left_cancel_left)
+                                                ),
+                                                mul_call(
+                                                    var(nat_lt_mul_left_cancel_factor),
+                                                    var(nat_lt_mul_left_cancel_right)
+                                                )
+                                            ),
+                                            true_value()
+                                        ),
+                                        computes_to(
+                                            nat_lt_call(
+                                                var(nat_lt_mul_left_cancel_left),
+                                                var(nat_lt_mul_left_cancel_right)
+                                            ),
+                                            true_value()
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
             )
         )
     );

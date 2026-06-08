@@ -572,6 +572,74 @@
         (intro nat_not_zero)
         (eval)))))
 
+(theorem nat_lt_zero_implies_nat_le_zero_false
+  (forall nat (is-list nat)
+    (implies
+      (computes-to (nat-lt zero nat) (quote :true))
+      (computes-to (nat-le nat zero) (quote :false))))
+  (by
+    (list-induction nat
+      (by
+        (intro nat_positive)
+        (have impossible_eq
+          (computes-to (quote :false) (quote :true))
+          (by
+            (calc
+              (quote :false)
+              (==
+                (nat-lt zero nil)
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact nat_positive)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (computes-to (nat-le nil zero) (quote :false)))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro nat_positive)
+        (eval)))))
+
+(theorem nat_lt_zero_implies_nat_lt_nat_zero_false
+  (forall nat (is-list nat)
+    (implies
+      (computes-to (nat-lt zero nat) (quote :true))
+      (computes-to (nat-lt nat zero) (quote :false))))
+  (by
+    (list-induction nat
+      (by
+        (intro nat_positive)
+        (have impossible_eq
+          (computes-to (quote :false) (quote :true))
+          (by
+            (calc
+              (quote :false)
+              (==
+                (nat-lt zero nil)
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact nat_positive)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (computes-to (nat-lt nil zero) (quote :false)))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro nat_positive)
+        (eval)))))
+
 (theorem nat_lt_succ_zero
   (forall left (is-list left)
     (computes-to (nat-lt (succ left) zero) (quote :false)))
