@@ -1,5 +1,6 @@
 //! Source elaboration layered between surface syntax and the kernel.
 
+mod diagnostics;
 pub(crate) mod loader;
 pub(crate) mod proof;
 pub(crate) mod source;

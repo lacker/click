@@ -4,19 +4,22 @@ use std::collections::{HashMap, HashSet};
 
 use crate::kernel::{primitive_prop_holds, structural_primitive_prop_holds};
 use crate::{
-    Computation, Context, FALSE_SYMBOL, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Lambda, ListCase,
-    Name, Proof, Prop, RUNTIME_ERROR, SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL, Theory,
-    alpha_eq_computation, alpha_eq_prop, equal, free_symbols, is_list, is_value, substitute_prop,
-    symbol_eq, value_kind,
+    Computation, Context, LAMBDA_KIND_SYMBOL, Lambda, ListCase, Name, Proof, Prop,
+    SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL, Theory, alpha_eq_computation, alpha_eq_prop, equal,
+    free_symbols, is_list, is_value, substitute_prop, symbol_eq, value_kind,
 };
 
+use super::diagnostics::{
+    compact_computation_source, compact_debug, compact_prop_source, computation_diagnostic,
+    context_diagnostic, name_source, prop_diagnostic, symbol_source,
+};
 use super::proof::{
     ProofElaborationError, exists_elim_context, list_induction_step_context,
     proof_by_reduction_to_computation_in_theory_and_context,
     proof_by_same_normal_form_in_theory_and_context, proof_expr_to_proof_in_context,
     proof_expr_to_proof_in_context_with_target,
 };
-use super::source::{CalcStep, ProofExpr, ProofScript, TacticExpr, TacticScript};
+use super::source::{CalcStep, PrettyEnv, ProofExpr, ProofScript, TacticExpr, TacticScript};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Goal {
@@ -37,28 +40,30 @@ pub(super) fn tactic_script_to_proof(
     script: &TacticScript,
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
-    tactic_steps_to_proof(&script.tactics, theory, goal)
+    tactic_steps_to_proof(&script.tactics, theory, goal, pretty)
 }
 
 fn tactic_steps_to_proof(
     tactics: &[TacticExpr],
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     let Some((tactic, rest)) = tactics.split_first() else {
         return Err(tactic_failed("by", "tactic script left the goal unsolved"));
     };
 
     let result = match tactic {
-        TacticExpr::Intro(symbol) => tactic_intro(*symbol, rest, theory, goal),
+        TacticExpr::Intro(symbol) => tactic_intro(*symbol, rest, theory, goal, pretty),
         TacticExpr::Exact(proof) => {
             ensure_no_more_tactics(rest, "exact")?;
-            tactic_exact(proof, theory, goal)
+            tactic_exact(proof, theory, goal, pretty)
         }
         TacticExpr::Assumption => {
             ensure_no_more_tactics(rest, "assumption")?;
-            tactic_assumption(goal)
+            tactic_assumption(goal, pretty)
         }
         TacticExpr::Have {
             assumption,
@@ -67,24 +72,24 @@ fn tactic_steps_to_proof(
             body,
         } => {
             let rest = explicit_body_or_rest(body.as_ref(), rest, "have")?;
-            tactic_have(*assumption, prop, proof, rest, theory, goal)
+            tactic_have(*assumption, prop, proof, rest, theory, goal, pretty)
         }
         TacticExpr::Eval { limit } => {
             ensure_no_more_tactics(rest, "eval")?;
-            tactic_eval(*limit, theory, goal)
+            tactic_eval(*limit, theory, goal, pretty)
         }
         TacticExpr::Simp { rules } => {
             ensure_no_more_tactics(rest, "simp")?;
-            tactic_simp(rules, theory, goal)
+            tactic_simp(rules, theory, goal, pretty)
         }
         TacticExpr::Simpa { rules, proof } => {
             ensure_no_more_tactics(rest, "simpa")?;
-            tactic_simpa(rules, proof.as_deref(), theory, goal)
+            tactic_simpa(rules, proof.as_deref(), theory, goal, pretty)
         }
-        TacticExpr::Fold { definition } => tactic_fold(*definition, rest, theory, goal),
+        TacticExpr::Fold { definition } => tactic_fold(*definition, rest, theory, goal, pretty),
         TacticExpr::Apply { theorem, arguments } => {
             ensure_no_more_tactics(rest, "apply")?;
-            tactic_apply(*theorem, arguments, theory, goal)
+            tactic_apply(*theorem, arguments, theory, goal, pretty)
         }
         TacticExpr::Specialize {
             assumption,
@@ -93,15 +98,15 @@ fn tactic_steps_to_proof(
             body,
         } => {
             let rest = explicit_body_or_rest(body.as_ref(), rest, "specialize")?;
-            tactic_specialize(*assumption, proof, arguments, rest, theory, goal)
+            tactic_specialize(*assumption, proof, arguments, rest, theory, goal, pretty)
         }
         TacticExpr::Split { left, right } => {
             ensure_no_more_tactics(rest, "split")?;
-            tactic_split(left, right, theory, goal)
+            tactic_split(left, right, theory, goal, pretty)
         }
         TacticExpr::Exists { witness, proof } => {
             ensure_no_more_tactics(rest, "exists")?;
-            tactic_exists(witness, proof, theory, goal)
+            tactic_exists(witness, proof, theory, goal, pretty)
         }
         TacticExpr::Obtain {
             existential,
@@ -110,7 +115,15 @@ fn tactic_steps_to_proof(
             body,
         } => {
             let rest = explicit_body_or_rest(body.as_ref(), rest, "obtain")?;
-            tactic_obtain(existential, *witness, *assumption, rest, theory, goal)
+            tactic_obtain(
+                existential,
+                *witness,
+                *assumption,
+                rest,
+                theory,
+                goal,
+                pretty,
+            )
         }
         TacticExpr::Cases {
             conjunction,
@@ -126,6 +139,7 @@ fn tactic_steps_to_proof(
                 rest,
                 theory,
                 goal,
+                pretty,
             )
         }
         TacticExpr::OrElim {
@@ -144,17 +158,18 @@ fn tactic_steps_to_proof(
                 right,
                 theory,
                 goal,
+                pretty,
             )
         }
         TacticExpr::Left(proof) => {
             ensure_no_more_tactics(rest, "left")?;
-            tactic_left(proof, theory, goal)
+            tactic_left(proof, theory, goal, pretty)
         }
         TacticExpr::Right(proof) => {
             ensure_no_more_tactics(rest, "right")?;
-            tactic_right(proof, theory, goal)
+            tactic_right(proof, theory, goal, pretty)
         }
-        TacticExpr::Rewrite { equality } => tactic_rewrite(equality, rest, theory, goal),
+        TacticExpr::Rewrite { equality } => tactic_rewrite(equality, rest, theory, goal, pretty),
         TacticExpr::ListInduction {
             variable,
             base,
@@ -173,6 +188,7 @@ fn tactic_steps_to_proof(
                 step,
                 theory,
                 goal,
+                pretty,
             )
         }
         TacticExpr::ValueInduction {
@@ -203,15 +219,16 @@ fn tactic_steps_to_proof(
                 cons_case,
                 theory,
                 goal,
+                pretty,
             )
         }
         TacticExpr::Calc { start, steps } => {
             ensure_no_more_tactics(rest, "calc")?;
-            tactic_calc(start, steps, theory, goal)
+            tactic_calc(start, steps, theory, goal, pretty)
         }
     };
 
-    result.map_err(|error| add_goal_context(error, tactic, &goal.target))
+    result.map_err(|error| add_goal_context(error, tactic, &goal.target, pretty))
 }
 
 fn tactic_intro(
@@ -219,6 +236,7 @@ fn tactic_intro(
     rest: &[TacticExpr],
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     match &goal.target {
         Prop::ForAll { variable, body } if *variable == symbol => {
@@ -233,7 +251,7 @@ fn tactic_intro(
                     proof: Box::new(Proof::ImpliesIntro {
                         assumption: symbol,
                         premise: premise.as_ref().clone(),
-                        proof: Box::new(tactic_steps_to_proof(rest, theory, &next_goal)?),
+                        proof: Box::new(tactic_steps_to_proof(rest, theory, &next_goal, pretty)?),
                     }),
                 });
             }
@@ -247,6 +265,7 @@ fn tactic_intro(
                         context: goal.context.clone(),
                         target: body.as_ref().clone(),
                     },
+                    pretty,
                 )?),
             })
         }
@@ -259,12 +278,12 @@ fn tactic_intro(
                  actual_symbol.debug: {:?}\n\
                  {}\n\
                  {}",
-                symbol_source(*variable),
-                symbol_source(symbol),
+                symbol_source(*variable, pretty),
+                symbol_source(symbol, pretty),
                 variable,
                 symbol,
-                prop_diagnostic("goal", &goal.target),
-                context_diagnostic("context.locals", &goal.context)
+                prop_diagnostic("goal", &goal.target, pretty),
+                context_diagnostic("context.locals", &goal.context, pretty)
             ),
         )),
         Prop::Implies(premise, conclusion) => {
@@ -276,7 +295,7 @@ fn tactic_intro(
             Ok(Proof::ImpliesIntro {
                 assumption: symbol,
                 premise: premise.as_ref().clone(),
-                proof: Box::new(tactic_steps_to_proof(rest, theory, &next_goal)?),
+                proof: Box::new(tactic_steps_to_proof(rest, theory, &next_goal, pretty)?),
             })
         }
         _ => Err(tactic_failed(
@@ -286,8 +305,8 @@ fn tactic_intro(
                  reason: intro_goal_not_binder\n\
                  {}\n\
                  {}",
-                prop_diagnostic("goal", &goal.target),
-                context_diagnostic("context.locals", &goal.context)
+                prop_diagnostic("goal", &goal.target, pretty),
+                context_diagnostic("context.locals", &goal.context, pretty)
             ),
         )),
     }
@@ -297,12 +316,14 @@ fn tactic_exact(
     proof_expr: &ProofExpr,
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     let proof = proof_expr_to_proof_in_context_with_target(
         proof_expr,
         theory,
         &goal.context,
         Some(&goal.target),
+        pretty,
     )?;
     let Some(proven) = theory.proven_prop_in_context(&proof, &goal.context) else {
         return Err(tactic_failed(
@@ -314,8 +335,8 @@ fn tactic_exact(
                  {}\n\
                  {}",
                 compact_debug(proof_expr),
-                prop_diagnostic("goal", &goal.target),
-                context_diagnostic("context.locals", &goal.context)
+                prop_diagnostic("goal", &goal.target, pretty),
+                context_diagnostic("context.locals", &goal.context, pretty)
             ),
         ));
     };
@@ -325,12 +346,17 @@ fn tactic_exact(
     } else {
         Err(tactic_failed(
             "exact",
-            exact_mismatch_message(proof_expr, &proven, goal),
+            exact_mismatch_message(proof_expr, &proven, goal, pretty),
         ))
     }
 }
 
-fn exact_mismatch_message(proof_expr: &ProofExpr, proven: &Prop, goal: &Goal) -> String {
+fn exact_mismatch_message(
+    proof_expr: &ProofExpr,
+    proven: &Prop,
+    goal: &Goal,
+    pretty: &PrettyEnv,
+) -> String {
     format!(
         "proof proves {}, but goal is {}\n\
          reason: exact_mismatch\n\
@@ -338,27 +364,43 @@ fn exact_mismatch_message(proof_expr: &ProofExpr, proven: &Prop, goal: &Goal) ->
          {}\n\
          {}\n\
          {}",
-        compact_prop_source(proven),
-        compact_prop_source(&goal.target),
+        compact_prop_source(proven, pretty),
+        compact_prop_source(&goal.target, pretty),
         compact_debug(proof_expr),
-        prop_diagnostic("proof", proven),
-        prop_diagnostic("goal", &goal.target),
-        context_diagnostic("context.locals", &goal.context)
+        prop_diagnostic("proof", proven, pretty),
+        prop_diagnostic("goal", &goal.target, pretty),
+        context_diagnostic("context.locals", &goal.context, pretty)
     )
 }
 
-fn goal_not_equality_message(reason: &'static str, goal: &Goal) -> String {
+fn goal_not_equality_message(reason: &'static str, goal: &Goal, pretty: &PrettyEnv) -> String {
     format!(
         "goal is not an equality\n\
          reason: {reason}\n\
          {}\n\
          {}",
-        prop_diagnostic("goal", &goal.target),
-        context_diagnostic("context.locals", &goal.context)
+        prop_diagnostic("goal", &goal.target, pretty),
+        context_diagnostic("context.locals", &goal.context, pretty)
     )
 }
 
-fn tactic_assumption(goal: &Goal) -> Result<Proof, ProofElaborationError> {
+fn goal_shape_message(
+    reason: &'static str,
+    expected: &str,
+    goal: &Goal,
+    pretty: &PrettyEnv,
+) -> String {
+    format!(
+        "goal is not {expected}\n\
+         reason: {reason}\n\
+         {}\n\
+         {}",
+        prop_diagnostic("goal", &goal.target, pretty),
+        context_diagnostic("context.locals", &goal.context, pretty)
+    )
+}
+
+fn tactic_assumption(goal: &Goal, pretty: &PrettyEnv) -> Result<Proof, ProofElaborationError> {
     goal.context
         .iter()
         .find_map(|(symbol, prop)| {
@@ -372,8 +414,8 @@ fn tactic_assumption(goal: &Goal) -> Result<Proof, ProofElaborationError> {
                      reason: assumption_not_found\n\
                      {}\n\
                      {}",
-                    prop_diagnostic("goal", &goal.target),
-                    context_diagnostic("context.locals", &goal.context)
+                    prop_diagnostic("goal", &goal.target, pretty),
+                    context_diagnostic("context.locals", &goal.context, pretty)
                 ),
             )
         })
@@ -386,6 +428,7 @@ fn tactic_have(
     rest: &[TacticExpr],
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     if goal.context.contains_key(&assumption) {
         return Err(tactic_failed(
@@ -401,6 +444,7 @@ fn tactic_have(
             context: goal.context.clone(),
             target: prop.clone(),
         },
+        pretty,
     )?;
 
     let mut context = goal.context.clone();
@@ -415,6 +459,7 @@ fn tactic_have(
                 context,
                 target: goal.target.clone(),
             },
+            pretty,
         )?),
     };
 
@@ -424,11 +469,16 @@ fn tactic_have(
     })
 }
 
-fn tactic_eval(limit: usize, theory: &Theory, goal: &Goal) -> Result<Proof, ProofElaborationError> {
+fn tactic_eval(
+    limit: usize,
+    theory: &Theory,
+    goal: &Goal,
+    pretty: &PrettyEnv,
+) -> Result<Proof, ProofElaborationError> {
     let Prop::Equal(left, right) = &goal.target else {
         return Err(tactic_failed(
             "eval",
-            goal_not_equality_message("eval_goal_not_equality", goal),
+            goal_not_equality_message("eval_goal_not_equality", goal, pretty),
         ));
     };
 
@@ -454,26 +504,26 @@ fn tactic_eval(limit: usize, theory: &Theory, goal: &Goal) -> Result<Proof, Proo
 const SIMP_STEP_LIMIT: usize = 128;
 const SIMP_RECURSION_LIMIT: usize = 256;
 const SIMP_TRACE_LIMIT: usize = 32;
-const SIMP_TRACE_VALUE_LIMIT: usize = 240;
 
 fn tactic_simp(
     rules: &[ProofExpr],
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     let Prop::Equal(left, right) = &goal.target else {
         return Err(tactic_failed(
             "simp",
-            goal_not_equality_message("simp_goal_not_equality", goal),
+            goal_not_equality_message("simp_goal_not_equality", goal, pretty),
         ));
     };
 
-    let goal_result = simplify_equality("simp", left, right, rules, theory, &goal.context)?;
+    let goal_result = simplify_equality("simp", left, right, rules, theory, &goal.context, pretty)?;
 
     if !alpha_eq_computation(&goal_result.left.result, &goal_result.right.result) {
         return Err(tactic_failed(
             "simp",
-            simp_failure_message(left, &goal_result.left, right, &goal_result.right),
+            simp_failure_message(left, &goal_result.left, right, &goal_result.right, pretty),
         ));
     }
 
@@ -485,27 +535,41 @@ fn tactic_simpa(
     proof_expr: Option<&ProofExpr>,
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     let Prop::Equal(goal_left, goal_right) = &goal.target else {
         return Err(tactic_failed(
             "simpa",
-            goal_not_equality_message("simpa_goal_not_equality", goal),
+            goal_not_equality_message("simpa_goal_not_equality", goal, pretty),
         ));
     };
 
-    let goal_result =
-        simplify_equality("simpa", goal_left, goal_right, rules, theory, &goal.context)?;
+    let goal_result = simplify_equality(
+        "simpa",
+        goal_left,
+        goal_right,
+        rules,
+        theory,
+        &goal.context,
+        pretty,
+    )?;
     let Some(proof_expr) = proof_expr else {
         if !alpha_eq_computation(&goal_result.left.result, &goal_result.right.result) {
             return Err(tactic_failed(
                 "simpa",
-                simp_failure_message(goal_left, &goal_result.left, goal_right, &goal_result.right),
+                simp_failure_message(
+                    goal_left,
+                    &goal_result.left,
+                    goal_right,
+                    &goal_result.right,
+                    pretty,
+                ),
             ));
         }
         return Ok(goal_equality_proof_from_simplified(goal_result));
     };
 
-    let proof = proof_expr_to_proof_in_context(proof_expr, theory, &goal.context)?;
+    let proof = proof_expr_to_proof_in_context(proof_expr, theory, &goal.context, pretty)?;
     let prop = theory
         .proven_prop_in_context(&proof, &goal.context)
         .ok_or_else(|| {
@@ -518,12 +582,13 @@ fn tactic_simpa(
                      {}\n\
                      {}",
                     compact_debug(proof_expr),
-                    prop_diagnostic("goal", &goal.target),
-                    context_diagnostic("context.locals", &goal.context)
+                    prop_diagnostic("goal", &goal.target, pretty),
+                    context_diagnostic("context.locals", &goal.context, pretty)
                 ),
             )
         })?;
-    let (proof, prop) = finish_available_implications("simpa", proof, prop, theory, &goal.context)?;
+    let (proof, prop) =
+        finish_available_implications("simpa", proof, prop, theory, &goal.context, pretty)?;
     let Prop::Equal(proof_left, proof_right) = prop else {
         return Err(tactic_failed(
             "simpa",
@@ -534,11 +599,11 @@ fn tactic_simpa(
                  {}\n\
                  {}\n\
                  {}",
-                compact_prop_source(&prop),
+                compact_prop_source(&prop, pretty),
                 compact_debug(proof_expr),
-                prop_diagnostic("using_proof", &prop),
-                prop_diagnostic("goal", &goal.target),
-                context_diagnostic("context.locals", &goal.context)
+                prop_diagnostic("using_proof", &prop, pretty),
+                prop_diagnostic("goal", &goal.target, pretty),
+                context_diagnostic("context.locals", &goal.context, pretty)
             ),
         ));
     };
@@ -549,6 +614,7 @@ fn tactic_simpa(
         rules,
         theory,
         &goal.context,
+        pretty,
     )?;
 
     if alpha_eq_computation(&goal_result.left.result, &proof_result.left.result)
@@ -568,6 +634,7 @@ fn tactic_simpa(
             &proof_result.left,
             &proof_right,
             &proof_result.right,
+            pretty,
         ),
     ))
 }
@@ -593,12 +660,18 @@ impl SimpTrace {
         }
     }
 
-    fn push_change(&mut self, label: impl Into<String>, before: &Computation, after: &Computation) {
+    fn push_change(
+        &mut self,
+        label: impl Into<String>,
+        before: &Computation,
+        after: &Computation,
+        pretty: &PrettyEnv,
+    ) {
         self.push(format!(
             "{}: {} -> {}",
             label.into(),
-            compact_debug(before),
-            compact_debug(after)
+            compact_computation_source(before, pretty),
+            compact_computation_source(after, pretty)
         ));
     }
 
@@ -626,6 +699,7 @@ fn simplify_equality(
     rules: &[ProofExpr],
     theory: &Theory,
     context: &Context,
+    pretty: &PrettyEnv,
 ) -> Result<SimpEqualityResult, ProofElaborationError> {
     let mut left_budget = SimpBudget::new();
     let mut right_budget = SimpBudget::new();
@@ -637,6 +711,7 @@ fn simplify_equality(
             theory,
             context,
             &mut left_budget,
+            pretty,
         )?,
         right: simplify_computation(
             tactic,
@@ -645,6 +720,7 @@ fn simplify_equality(
             theory,
             context,
             &mut right_budget,
+            pretty,
         )?,
     })
 }
@@ -664,6 +740,7 @@ impl SimpBudget {
         &mut self,
         tactic: &'static str,
         current: &Computation,
+        pretty: &PrettyEnv,
     ) -> Result<(), ProofElaborationError> {
         let Some(remaining) = self.remaining_recursions.checked_sub(1) else {
             return Err(tactic_failed(
@@ -674,7 +751,7 @@ impl SimpBudget {
                      this usually means a simp rule is oriented as an expansion that keeps \
                      introducing another reducible subterm; use explicit `rewrite`, `eval`, or \
                      `fold` for one-shot expansion, or orient simp rules toward canonical forms",
-                    compact_debug(current)
+                    compact_computation_source(current, pretty)
                 ),
             ));
         };
@@ -720,8 +797,9 @@ fn simplify_computation(
     theory: &Theory,
     context: &Context,
     budget: &mut SimpBudget,
+    pretty: &PrettyEnv,
 ) -> Result<SimpResult, ProofElaborationError> {
-    budget.consume(tactic, &original)?;
+    budget.consume(tactic, &original, pretty)?;
 
     let mut current = original.clone();
     let mut proofs = Vec::new();
@@ -729,28 +807,29 @@ fn simplify_computation(
     let mut seen = vec![current.clone()];
 
     for _ in 0..SIMP_STEP_LIMIT {
-        if let Some(rewrite) = simp_rewrite(tactic, &current, rules, theory, context)? {
+        if let Some(rewrite) = simp_rewrite(tactic, &current, rules, theory, context, pretty)? {
             trace.extend(rewrite.trace);
             proofs.push(rewrite.proof);
             current = rewrite.result;
-            record_simp_state(tactic, &mut seen, &current, &trace)?;
+            record_simp_state(tactic, &mut seen, &current, &trace, pretty)?;
             continue;
         }
 
-        if let Some(rewrite) = simp_child(tactic, &current, rules, theory, context, budget)? {
+        if let Some(rewrite) = simp_child(tactic, &current, rules, theory, context, budget, pretty)?
+        {
             trace.extend(rewrite.trace);
             proofs.push(rewrite.proof);
             current = rewrite.result;
-            record_simp_state(tactic, &mut seen, &current, &trace)?;
+            record_simp_state(tactic, &mut seen, &current, &trace, pretty)?;
             continue;
         }
 
         match theory.reduce_in_context(&current, context) {
             crate::Step::Reduced(next) => {
-                trace.push_change("kernel reduction", &current, &next);
+                trace.push_change("kernel reduction", &current, &next, pretty);
                 proofs.push(Proof::Step(current));
                 current = next;
-                record_simp_state(tactic, &mut seen, &current, &trace)?;
+                record_simp_state(tactic, &mut seen, &current, &trace, pretty)?;
                 continue;
             }
             crate::Step::Normal => {}
@@ -784,10 +863,11 @@ fn simp_rewrite(
     rules: &[ProofExpr],
     theory: &Theory,
     context: &Context,
+    pretty: &PrettyEnv,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
     for (rule_index, rule) in rules.iter().enumerate() {
         if let Some(rewrite) =
-            simp_rewrite_with_rule(tactic, rule_index, rule, target, theory, context)?
+            simp_rewrite_with_rule(tactic, rule_index, rule, target, theory, context, pretty)?
         {
             return Ok(Some(rewrite));
         }
@@ -808,8 +888,9 @@ fn simp_rewrite_with_rule(
     target: &Computation,
     theory: &Theory,
     context: &Context,
+    pretty: &PrettyEnv,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
-    let proof = proof_expr_to_proof_in_context(rule, theory, context)?;
+    let proof = proof_expr_to_proof_in_context(rule, theory, context, pretty)?;
     let prop = theory
         .proven_prop_in_context(&proof, context)
         .ok_or_else(|| tactic_failed(tactic, "simp rule proves no proposition"))?;
@@ -829,8 +910,16 @@ fn simp_rewrite_with_rule(
             continue;
         }
 
-        let Some((proof, proven)) =
-            instantiate_simp_rule(tactic, rule, proof, prop, &substitutions, theory, context)?
+        let Some((proof, proven)) = instantiate_simp_rule(
+            tactic,
+            rule,
+            proof,
+            prop,
+            &substitutions,
+            theory,
+            context,
+            pretty,
+        )?
         else {
             continue;
         };
@@ -847,7 +936,7 @@ fn simp_rewrite_with_rule(
                     if alpha_eq_computation(&reduced, target) {
                         return Err(tactic_failed(
                             tactic,
-                            simp_expansion_rule_message(rule_index, rule, target, &right),
+                            simp_expansion_rule_message(rule_index, rule, target, &right, pretty),
                         ));
                     }
                 }
@@ -860,6 +949,7 @@ fn simp_rewrite_with_rule(
                     ),
                     target,
                     &right,
+                    pretty,
                 );
                 return Ok(Some(SimpRewrite {
                     result: right,
@@ -904,6 +994,7 @@ fn instantiate_simp_rule(
     substitutions: &HashMap<Symbol, Computation>,
     theory: &Theory,
     context: &Context,
+    pretty: &PrettyEnv,
 ) -> Result<Option<(Proof, Prop)>, ProofElaborationError> {
     loop {
         match prop {
@@ -911,7 +1002,13 @@ fn instantiate_simp_rule(
                 let Some(argument) = substitutions.get(&variable).cloned() else {
                     return Err(tactic_failed(
                         tactic,
-                        format!("could not infer argument {variable:?} for rule {rule:?}"),
+                        format!(
+                            "could not infer argument {} for rule {rule:?}\n\
+                             reason: simp_could_not_infer_argument\n\
+                             variable.debug: {:?}",
+                            symbol_source(variable, pretty),
+                            variable
+                        ),
                     ));
                 };
                 let expected = substitute_prop(&body, variable, &argument);
@@ -929,7 +1026,7 @@ fn instantiate_simp_rule(
                 }
             }
             Prop::Implies(premise, conclusion) => {
-                let Ok(premise_proof) = available_prop_proof(&premise, context) else {
+                let Ok(premise_proof) = available_prop_proof(&premise, context, pretty) else {
                     return Ok(None);
                 };
                 proof = Proof::ImpliesElim {
@@ -1125,6 +1222,7 @@ fn simp_failure_message(
     left_result: &SimpResult,
     right_original: &Computation,
     right_result: &SimpResult,
+    pretty: &PrettyEnv,
 ) -> String {
     format!(
         "simplified goal, but the sides still differ\n\
@@ -1143,17 +1241,17 @@ fn simp_failure_message(
          right.debug: {}\n\
          right.result.debug: {}\n\
          right steps:\n{}",
-        compact_computation_source(left_original),
-        compact_computation_source(&left_result.result),
-        compact_computation_source(left_original),
-        compact_computation_source(&left_result.result),
+        compact_computation_source(left_original, pretty),
+        compact_computation_source(&left_result.result, pretty),
+        compact_computation_source(left_original, pretty),
+        compact_computation_source(&left_result.result, pretty),
         compact_debug(left_original),
         compact_debug(&left_result.result),
         format_simp_trace(&left_result.trace),
-        compact_computation_source(right_original),
-        compact_computation_source(&right_result.result),
-        compact_computation_source(right_original),
-        compact_computation_source(&right_result.result),
+        compact_computation_source(right_original, pretty),
+        compact_computation_source(&right_result.result, pretty),
+        compact_computation_source(right_original, pretty),
+        compact_computation_source(&right_result.result, pretty),
         compact_debug(right_original),
         compact_debug(&right_result.result),
         format_simp_trace(&right_result.trace)
@@ -1169,6 +1267,7 @@ fn simpa_failure_message(
     proof_left_result: &SimpResult,
     proof_right_original: &Computation,
     proof_right_result: &SimpResult,
+    pretty: &PrettyEnv,
 ) -> String {
     format!(
         "simplified goal and using proof, but they do not match\n\
@@ -1201,31 +1300,31 @@ fn simpa_failure_message(
          using.right.debug: {}\n\
          using.right.result.debug: {}\n\
          using right steps:\n{}",
-        compact_computation_source(goal_left_original),
-        compact_computation_source(&goal_left_result.result),
-        compact_computation_source(goal_left_original),
-        compact_computation_source(&goal_left_result.result),
+        compact_computation_source(goal_left_original, pretty),
+        compact_computation_source(&goal_left_result.result, pretty),
+        compact_computation_source(goal_left_original, pretty),
+        compact_computation_source(&goal_left_result.result, pretty),
         compact_debug(goal_left_original),
         compact_debug(&goal_left_result.result),
         format_simp_trace(&goal_left_result.trace),
-        compact_computation_source(goal_right_original),
-        compact_computation_source(&goal_right_result.result),
-        compact_computation_source(goal_right_original),
-        compact_computation_source(&goal_right_result.result),
+        compact_computation_source(goal_right_original, pretty),
+        compact_computation_source(&goal_right_result.result, pretty),
+        compact_computation_source(goal_right_original, pretty),
+        compact_computation_source(&goal_right_result.result, pretty),
         compact_debug(goal_right_original),
         compact_debug(&goal_right_result.result),
         format_simp_trace(&goal_right_result.trace),
-        compact_computation_source(proof_left_original),
-        compact_computation_source(&proof_left_result.result),
-        compact_computation_source(proof_left_original),
-        compact_computation_source(&proof_left_result.result),
+        compact_computation_source(proof_left_original, pretty),
+        compact_computation_source(&proof_left_result.result, pretty),
+        compact_computation_source(proof_left_original, pretty),
+        compact_computation_source(&proof_left_result.result, pretty),
         compact_debug(proof_left_original),
         compact_debug(&proof_left_result.result),
         format_simp_trace(&proof_left_result.trace),
-        compact_computation_source(proof_right_original),
-        compact_computation_source(&proof_right_result.result),
-        compact_computation_source(proof_right_original),
-        compact_computation_source(&proof_right_result.result),
+        compact_computation_source(proof_right_original, pretty),
+        compact_computation_source(&proof_right_result.result, pretty),
+        compact_computation_source(proof_right_original, pretty),
+        compact_computation_source(&proof_right_result.result, pretty),
         compact_debug(proof_right_original),
         compact_debug(&proof_right_result.result),
         format_simp_trace(&proof_right_result.trace)
@@ -1252,6 +1351,7 @@ fn record_simp_state(
     seen: &mut Vec<Computation>,
     current: &Computation,
     trace: &SimpTrace,
+    pretty: &PrettyEnv,
 ) -> Result<(), ProofElaborationError> {
     if let Some(first_seen_step) = seen
         .iter()
@@ -1259,7 +1359,7 @@ fn record_simp_state(
     {
         return Err(tactic_failed(
             tactic,
-            simp_cycle_message(first_seen_step, current, trace),
+            simp_cycle_message(first_seen_step, current, trace, pretty),
         ));
     }
 
@@ -1267,7 +1367,12 @@ fn record_simp_state(
     Ok(())
 }
 
-fn simp_cycle_message(first_seen_step: usize, repeated: &Computation, trace: &SimpTrace) -> String {
+fn simp_cycle_message(
+    first_seen_step: usize,
+    repeated: &Computation,
+    trace: &SimpTrace,
+    pretty: &PrettyEnv,
+) -> String {
     format!(
         "simplification cycle detected after {} steps\n\
          reason: simp_cycle\n\
@@ -1278,8 +1383,8 @@ fn simp_cycle_message(first_seen_step: usize, repeated: &Computation, trace: &Si
          use explicit `rewrite`, `eval`, or `fold` for one-shot expansion, or orient simp rules toward canonical forms\n\
          steps:\n{}",
         trace.total_steps(),
-        compact_computation_source(repeated),
-        compact_computation_source(repeated),
+        compact_computation_source(repeated, pretty),
+        compact_computation_source(repeated, pretty),
         compact_debug(repeated),
         format_simp_trace(trace)
     )
@@ -1290,6 +1395,7 @@ fn simp_expansion_rule_message(
     rule: &ProofExpr,
     target: &Computation,
     expanded: &Computation,
+    pretty: &PrettyEnv,
 ) -> String {
     let fold_hint = match expanded {
         Computation::Ref(_) => " use `(fold <definition>)` for this source-level name,".to_string(),
@@ -1309,209 +1415,14 @@ fn simp_expansion_rule_message(
         rule_index + 1,
         compact_debug(rule),
         compact_debug(rule),
-        compact_computation_source(target),
+        compact_computation_source(target, pretty),
         compact_debug(target),
-        compact_computation_source(expanded),
+        compact_computation_source(expanded, pretty),
         compact_debug(expanded),
-        compact_computation_source(target),
-        compact_computation_source(expanded),
+        compact_computation_source(target, pretty),
+        compact_computation_source(expanded, pretty),
         fold_hint
     )
-}
-
-fn compact_debug(value: &impl std::fmt::Debug) -> String {
-    let mut text = format!("{value:?}");
-    if text.chars().count() <= SIMP_TRACE_VALUE_LIMIT {
-        return text;
-    }
-
-    let cutoff = text
-        .char_indices()
-        .nth(SIMP_TRACE_VALUE_LIMIT)
-        .map(|(index, _)| index)
-        .unwrap_or(text.len());
-    text.truncate(cutoff);
-    text.push_str("...");
-    text
-}
-
-fn compact_source(text: String) -> String {
-    if text.chars().count() <= SIMP_TRACE_VALUE_LIMIT {
-        return text;
-    }
-
-    let mut text = text;
-    let cutoff = text
-        .char_indices()
-        .nth(SIMP_TRACE_VALUE_LIMIT)
-        .map(|(index, _)| index)
-        .unwrap_or(text.len());
-    text.truncate(cutoff);
-    text.push_str("...");
-    text
-}
-
-fn symbol_source(symbol: Symbol) -> String {
-    match symbol {
-        TRUE_SYMBOL => ":true".to_owned(),
-        FALSE_SYMBOL => ":false".to_owned(),
-        SYMBOL_KIND_SYMBOL => ":symbol".to_owned(),
-        LAMBDA_KIND_SYMBOL => ":lambda".to_owned(),
-        LIST_KIND_SYMBOL => ":list".to_owned(),
-        _ => format!("%s{}", symbol.0),
-    }
-}
-
-fn name_source(name: Name) -> String {
-    format!("#n{}", name.0)
-}
-
-fn computation_source(computation: &Computation) -> String {
-    match computation {
-        Computation::Apply { function, argument } => {
-            format!(
-                "({} {})",
-                computation_source(function),
-                computation_source(argument)
-            )
-        }
-        Computation::Lambda(lambda) => {
-            format!(
-                "(lambda {} {})",
-                symbol_source(lambda.parameter),
-                computation_source(&lambda.body)
-            )
-        }
-        Computation::Nil => "nil".to_owned(),
-        Computation::Cons { head, tail } => {
-            format!(
-                "(cons {} {})",
-                computation_source(head),
-                computation_source(tail)
-            )
-        }
-        Computation::Head(list) => format!("(head {})", computation_source(list)),
-        Computation::Tail(list) => format!("(tail {})", computation_source(list)),
-        Computation::ListCase(list_case) => {
-            format!(
-                "(list-case {} {} {} {})",
-                computation_source(&list_case.list),
-                computation_source(&list_case.nil),
-                symbol_source(list_case.cons),
-                computation_source(&list_case.cons_case)
-            )
-        }
-        Computation::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            format!(
-                "(if {} {} {})",
-                computation_source(condition),
-                computation_source(then_branch),
-                computation_source(else_branch)
-            )
-        }
-        Computation::SymbolEq { left, right } => {
-            format!(
-                "(symbol-eq {} {})",
-                computation_source(left),
-                computation_source(right)
-            )
-        }
-        Computation::ValueKind(value) => format!("(value-kind {})", computation_source(value)),
-        Computation::Ref(name) => name_source(*name),
-        Computation::Error(error) if *error == RUNTIME_ERROR => "(error 0)".to_owned(),
-        Computation::Error(error) => format!("(error {})", error.0),
-        Computation::Diverge => "diverge".to_owned(),
-        Computation::Var(symbol) => symbol_source(*symbol),
-        Computation::Quote(symbol) => format!("(quote {})", symbol_source(*symbol)),
-    }
-}
-
-fn prop_source(prop: &Prop) -> String {
-    match prop {
-        Prop::Absurd => "(absurd)".to_owned(),
-        Prop::Equal(left, right) => {
-            format!(
-                "(equal {} {})",
-                computation_source(left),
-                computation_source(right)
-            )
-        }
-        Prop::IsValue(computation) => format!("(is-value {})", computation_source(computation)),
-        Prop::IsList(computation) => format!("(is-list {})", computation_source(computation)),
-        Prop::IsEffect(computation) => format!("(is-effect {})", computation_source(computation)),
-        Prop::IsOutcome(computation) => {
-            format!("(is-outcome {})", computation_source(computation))
-        }
-        Prop::Implies(premise, conclusion) => {
-            format!(
-                "(implies {} {})",
-                prop_source(premise),
-                prop_source(conclusion)
-            )
-        }
-        Prop::ForAll { variable, body } => {
-            format!(
-                "(forall {} {})",
-                symbol_source(*variable),
-                prop_source(body)
-            )
-        }
-        Prop::Exists { variable, body } => {
-            format!(
-                "(exists {} {})",
-                symbol_source(*variable),
-                prop_source(body)
-            )
-        }
-        Prop::And(left, right) => format!("(and {} {})", prop_source(left), prop_source(right)),
-        Prop::Or(left, right) => format!("(or {} {})", prop_source(left), prop_source(right)),
-    }
-}
-
-fn compact_computation_source(computation: &Computation) -> String {
-    compact_source(computation_source(computation))
-}
-
-fn compact_prop_source(prop: &Prop) -> String {
-    compact_source(prop_source(prop))
-}
-
-fn prop_diagnostic(label: &str, prop: &Prop) -> String {
-    format!(
-        "{label}.source: {}\n{label}.debug: {}",
-        compact_prop_source(prop),
-        compact_debug(prop)
-    )
-}
-
-fn computation_diagnostic(label: &str, computation: &Computation) -> String {
-    format!(
-        "{label}.source: {}\n{label}.debug: {}",
-        compact_computation_source(computation),
-        compact_debug(computation)
-    )
-}
-
-fn context_diagnostic(label: &str, context: &Context) -> String {
-    if context.is_empty() {
-        return format!("{label}: (empty)");
-    }
-
-    let mut facts = context.iter().collect::<Vec<_>>();
-    facts.sort_by_key(|(symbol, _)| symbol.0);
-    let mut lines = vec![format!("{label}:")];
-    for (symbol, prop) in facts {
-        lines.push(format!(
-            "  {}: {}",
-            symbol_source(*symbol),
-            compact_prop_source(prop)
-        ));
-    }
-    lines.join("\n")
 }
 
 fn simp_child(
@@ -1521,6 +1432,7 @@ fn simp_child(
     theory: &Theory,
     context: &Context,
     budget: &mut SimpBudget,
+    pretty: &PrettyEnv,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
     match computation {
         Computation::Apply { function, argument } => simplify_child(
@@ -1535,6 +1447,7 @@ fn simp_child(
             theory,
             context,
             budget,
+            pretty,
         )?
         .map_or_else(
             || {
@@ -1550,6 +1463,7 @@ fn simp_child(
                     theory,
                     context,
                     budget,
+                    pretty,
                 )
             },
             |rewrite| Ok(Some(rewrite)),
@@ -1566,6 +1480,7 @@ fn simp_child(
             theory,
             context,
             budget,
+            pretty,
         )?
         .map_or_else(
             || {
@@ -1581,6 +1496,7 @@ fn simp_child(
                     theory,
                     context,
                     budget,
+                    pretty,
                 )
             },
             |rewrite| Ok(Some(rewrite)),
@@ -1594,6 +1510,7 @@ fn simp_child(
             theory,
             context,
             budget,
+            pretty,
         ),
         Computation::Tail(child) => simplify_child(
             tactic,
@@ -1604,6 +1521,7 @@ fn simp_child(
             theory,
             context,
             budget,
+            pretty,
         ),
         Computation::ListCase(list_case) => simplify_child(
             tactic,
@@ -1618,6 +1536,7 @@ fn simp_child(
             theory,
             context,
             budget,
+            pretty,
         )?
         .map_or_else(
             || {
@@ -1634,6 +1553,7 @@ fn simp_child(
                     theory,
                     context,
                     budget,
+                    pretty,
                 )
             },
             |rewrite| Ok(Some(rewrite)),
@@ -1655,6 +1575,7 @@ fn simp_child(
             theory,
             context,
             budget,
+            pretty,
         )?
         .map_or_else(
             || {
@@ -1671,6 +1592,7 @@ fn simp_child(
                     theory,
                     context,
                     budget,
+                    pretty,
                 )?
                 .map_or_else(
                     || {
@@ -1687,6 +1609,7 @@ fn simp_child(
                             theory,
                             context,
                             budget,
+                            pretty,
                         )
                     },
                     |rewrite| Ok(Some(rewrite)),
@@ -1706,6 +1629,7 @@ fn simp_child(
             theory,
             context,
             budget,
+            pretty,
         )?
         .map_or_else(
             || {
@@ -1721,6 +1645,7 @@ fn simp_child(
                     theory,
                     context,
                     budget,
+                    pretty,
                 )
             },
             |rewrite| Ok(Some(rewrite)),
@@ -1734,6 +1659,7 @@ fn simp_child(
             theory,
             context,
             budget,
+            pretty,
         ),
         Computation::Lambda(_)
         | Computation::Nil
@@ -1754,8 +1680,17 @@ fn simplify_child(
     theory: &Theory,
     context: &Context,
     budget: &mut SimpBudget,
+    pretty: &PrettyEnv,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
-    let child_result = simplify_computation(tactic, child.clone(), rules, theory, context, budget)?;
+    let child_result = simplify_computation(
+        tactic,
+        child.clone(),
+        rules,
+        theory,
+        context,
+        budget,
+        pretty,
+    )?;
     if alpha_eq_computation(child, &child_result.result) {
         return Ok(None);
     }
@@ -1769,7 +1704,7 @@ fn simplify_child(
     );
     let template = Prop::Equal(parent.clone(), rebuild(Computation::Var(placeholder)));
     let mut trace = child_result.trace;
-    trace.push_change("lift subcomputation", &parent, &result);
+    trace.push_change("lift subcomputation", &parent, &result, pretty);
 
     Ok(Some(SimpRewrite {
         result,
@@ -1788,6 +1723,7 @@ fn tactic_apply(
     arguments: &[Computation],
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     let Some(mut prop) = theory.theorem(theorem).cloned() else {
         return Err(ProofElaborationError::UnknownTheorem(theorem));
@@ -1802,6 +1738,9 @@ fn tactic_apply(
         theory,
         &goal.context,
         Some(&goal.target),
+        pretty,
+        Some(theorem),
+        Some(arguments),
     )?;
 
     if alpha_eq_prop(&prop, &goal.target) {
@@ -1816,6 +1755,7 @@ fn tactic_apply(
                 &prop,
                 &goal.target,
                 &goal.context,
+                pretty,
             ),
         ))
     }
@@ -1828,6 +1768,7 @@ fn tactic_specialize(
     rest: &[TacticExpr],
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     if goal.context.contains_key(&assumption) {
         return Err(tactic_failed(
@@ -1836,7 +1777,7 @@ fn tactic_specialize(
         ));
     }
 
-    let proof = proof_expr_to_proof_in_context(proof_expr, theory, &goal.context)?;
+    let proof = proof_expr_to_proof_in_context(proof_expr, theory, &goal.context, pretty)?;
     let prop = theory
         .proven_prop_in_context(&proof, &goal.context)
         .ok_or_else(|| tactic_failed("specialize", "proof expression proves no proposition"))?;
@@ -1847,6 +1788,7 @@ fn tactic_specialize(
         arguments,
         theory,
         &goal.context,
+        pretty,
     )?;
 
     let mut context = goal.context.clone();
@@ -1861,6 +1803,7 @@ fn tactic_specialize(
                 context,
                 target: goal.target.clone(),
             },
+            pretty,
         )?),
     };
 
@@ -1878,6 +1821,9 @@ pub(super) fn apply_arguments_and_implications(
     theory: &Theory,
     context: &Context,
     target: Option<&Prop>,
+    pretty: &PrettyEnv,
+    mismatch_theorem: Option<Name>,
+    mismatch_arguments: Option<&[Computation]>,
 ) -> Result<(Proof, Prop), ProofElaborationError> {
     for argument in arguments {
         loop {
@@ -1899,7 +1845,8 @@ pub(super) fn apply_arguments_and_implications(
                     break;
                 }
                 Prop::Implies(premise, conclusion) => {
-                    proof = apply_available_premise(tactic, proof, premise.as_ref(), context)?;
+                    proof =
+                        apply_available_premise(tactic, proof, premise.as_ref(), context, pretty)?;
                     prop = theory
                         .proven_prop_in_context(&proof, context)
                         .ok_or_else(|| {
@@ -1912,14 +1859,24 @@ pub(super) fn apply_arguments_and_implications(
                 other => {
                     return Err(tactic_failed(
                         tactic,
-                        explicit_argument_error_message(&other, argument, context),
+                        explicit_argument_error_message(&other, argument, context, pretty),
                     ));
                 }
             }
         }
     }
 
-    finish_implications(tactic, proof, prop, theory, context, target)
+    finish_implications(
+        tactic,
+        proof,
+        prop,
+        theory,
+        context,
+        target,
+        pretty,
+        mismatch_theorem,
+        mismatch_arguments,
+    )
 }
 
 fn apply_arguments_and_available_implications(
@@ -1929,10 +1886,12 @@ fn apply_arguments_and_available_implications(
     arguments: &[Computation],
     theory: &Theory,
     context: &Context,
+    pretty: &PrettyEnv,
 ) -> Result<(Proof, Prop), ProofElaborationError> {
-    let (proof, prop) =
-        apply_arguments_and_implications(tactic, proof, prop, arguments, theory, context, None)?;
-    finish_available_implications(tactic, proof, prop, theory, context)
+    let (proof, prop) = apply_arguments_and_implications(
+        tactic, proof, prop, arguments, theory, context, None, pretty, None, None,
+    )?;
+    finish_available_implications(tactic, proof, prop, theory, context, pretty)
 }
 
 fn finish_available_implications(
@@ -1941,6 +1900,7 @@ fn finish_available_implications(
     mut prop: Prop,
     theory: &Theory,
     context: &Context,
+    pretty: &PrettyEnv,
 ) -> Result<(Proof, Prop), ProofElaborationError> {
     loop {
         let (premise, conclusion) = match &prop {
@@ -1952,7 +1912,8 @@ fn finish_available_implications(
             }
         };
 
-        let Ok(next_proof) = apply_available_premise(tactic, proof.clone(), &premise, context)
+        let Ok(next_proof) =
+            apply_available_premise(tactic, proof.clone(), &premise, context, pretty)
         else {
             return Ok((proof, prop));
         };
@@ -1974,6 +1935,9 @@ fn finish_implications(
     theory: &Theory,
     context: &Context,
     target: Option<&Prop>,
+    pretty: &PrettyEnv,
+    mismatch_theorem: Option<Name>,
+    mismatch_arguments: Option<&[Computation]>,
 ) -> Result<(Proof, Prop), ProofElaborationError> {
     loop {
         if target.is_some_and(|target| alpha_eq_prop(&prop, target)) {
@@ -1990,11 +1954,12 @@ fn finish_implications(
                         tactic,
                         proof_goal_mismatch_message(
                             "proof_goal_mismatch",
-                            None,
-                            None,
+                            mismatch_theorem,
+                            mismatch_arguments,
                             &prop,
                             target,
                             context,
+                            pretty,
                         ),
                     )),
                     None => Ok((proof, prop)),
@@ -2003,14 +1968,14 @@ fn finish_implications(
         };
 
         let next_proof = match target {
-            Some(_) => apply_available_premise(tactic, proof.clone(), &premise, context),
-            None => apply_structural_premise(tactic, proof.clone(), &premise, context),
+            Some(_) => apply_available_premise(tactic, proof.clone(), &premise, context, pretty),
+            None => apply_structural_premise(tactic, proof.clone(), &premise, context, pretty),
         };
         let Ok(next_proof) = next_proof else {
             return match target {
                 Some(_) => Err(tactic_failed(
                     tactic,
-                    unavailable_premise_message(&premise, context),
+                    unavailable_premise_message(&premise, context, pretty),
                 )),
                 None => Ok((proof, prop)),
             };
@@ -2031,6 +1996,7 @@ fn explicit_argument_error_message(
     prop: &Prop,
     argument: &Computation,
     context: &Context,
+    pretty: &PrettyEnv,
 ) -> String {
     let argument_is_local_fact =
         matches!(argument, Computation::Var(symbol) if context.contains_key(symbol));
@@ -2038,8 +2004,8 @@ fn explicit_argument_error_message(
         Computation::Var(symbol) => context.get(symbol).map(|prop| {
             format!(
                 "\nargument.local_fact.symbol: {}\nargument.local_fact.prop.source: {}\nargument.local_fact.prop.debug: {}",
-                symbol_source(*symbol),
-                compact_prop_source(prop),
+                symbol_source(*symbol, pretty),
+                compact_prop_source(prop, pretty),
                 compact_debug(prop)
             )
         }),
@@ -2070,12 +2036,12 @@ fn explicit_argument_error_message(
                 "when available. Put the premise in scope with `intro`/`have`, then use `exact` ",
                 "or `specialize` without passing that proof as an argument"
             ),
-            argument_source = compact_computation_source(argument),
+            argument_source = compact_computation_source(argument, pretty),
             argument_debug = compact_debug(argument),
             local_fact = local_fact,
-            premise_source = compact_prop_source(premise),
+            premise_source = compact_prop_source(premise, pretty),
             premise_debug = compact_debug(premise),
-            context = context_diagnostic("context.locals", context)
+            context = context_diagnostic("context.locals", context, pretty)
         ),
         _ => format!(
             concat!(
@@ -2091,12 +2057,12 @@ fn explicit_argument_error_message(
                 "explicit proof-application arguments instantiate forall-bound computations only",
                 "{local_fact_hint}"
             ),
-            argument_source = compact_computation_source(argument),
+            argument_source = compact_computation_source(argument, pretty),
             argument_debug = compact_debug(argument),
             local_fact = local_fact,
-            prop_source = compact_prop_source(prop),
+            prop_source = compact_prop_source(prop, pretty),
             prop_debug = compact_debug(prop),
-            context = context_diagnostic("context.locals", context),
+            context = context_diagnostic("context.locals", context, pretty),
             local_fact_hint = local_fact_hint
         ),
     }
@@ -2107,9 +2073,14 @@ fn apply_available_premise(
     implication: Proof,
     premise: &Prop,
     context: &Context,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
-    let premise_proof = available_prop_proof(premise, context)
-        .map_err(|_| tactic_failed(tactic, unavailable_premise_message(premise, context)))?;
+    let premise_proof = available_prop_proof(premise, context, pretty).map_err(|_| {
+        tactic_failed(
+            tactic,
+            unavailable_premise_message(premise, context, pretty),
+        )
+    })?;
 
     Ok(Proof::ImpliesElim {
         implication: Box::new(implication),
@@ -2117,32 +2088,36 @@ fn apply_available_premise(
     })
 }
 
-fn available_prop_proof(prop: &Prop, context: &Context) -> Result<Proof, ProofElaborationError> {
+fn available_prop_proof(
+    prop: &Prop,
+    context: &Context,
+    pretty: &PrettyEnv,
+) -> Result<Proof, ProofElaborationError> {
     let goal = Goal {
         context: context.clone(),
         target: prop.clone(),
     };
-    tactic_assumption(&goal).or_else(|_| {
+    tactic_assumption(&goal, pretty).or_else(|_| {
         primitive_prop_holds(prop, context)
             .then_some(Proof::Primitive(prop.clone()))
             .ok_or_else(|| tactic_failed("available", "proposition is not available"))
     })
 }
 
-fn unavailable_premise_message(premise: &Prop, context: &Context) -> String {
+fn unavailable_premise_message(premise: &Prop, context: &Context, pretty: &PrettyEnv) -> String {
     format!(
         "premise {} is not available; {}\n\
          reason: premise_not_available\n\
          {}\n\
          {}",
-        compact_prop_source(premise),
-        local_facts_message(context),
-        prop_diagnostic("premise", premise),
-        context_diagnostic("context.locals", context)
+        compact_prop_source(premise, pretty),
+        local_facts_message(context, pretty),
+        prop_diagnostic("premise", premise, pretty),
+        context_diagnostic("context.locals", context, pretty)
     )
 }
 
-fn local_facts_message(context: &Context) -> String {
+fn local_facts_message(context: &Context, pretty: &PrettyEnv) -> String {
     if context.is_empty() {
         return "no local facts are in scope".to_owned();
     }
@@ -2151,7 +2126,13 @@ fn local_facts_message(context: &Context) -> String {
     facts.sort_by_key(|(symbol, _)| symbol.0);
     let facts = facts
         .into_iter()
-        .map(|(symbol, prop)| format!("{}: {}", symbol_source(*symbol), compact_prop_source(prop)))
+        .map(|(symbol, prop)| {
+            format!(
+                "{}: {}",
+                symbol_source(*symbol, pretty),
+                compact_prop_source(prop, pretty)
+            )
+        })
         .collect::<Vec<_>>()
         .join("; ");
 
@@ -2165,15 +2146,16 @@ fn proof_goal_mismatch_message(
     proof_prop: &Prop,
     goal: &Prop,
     context: &Context,
+    pretty: &PrettyEnv,
 ) -> String {
     let theorem = theorem
-        .map(|theorem| format!("\ntheorem: {}", name_source(theorem)))
+        .map(|theorem| format!("\ntheorem: {}", name_source(theorem, pretty)))
         .unwrap_or_default();
     let arguments = arguments
         .map(|arguments| {
             let arguments = arguments
                 .iter()
-                .map(compact_computation_source)
+                .map(|argument| compact_computation_source(argument, pretty))
                 .collect::<Vec<_>>()
                 .join(" ");
             format!("\narguments.source: ({arguments})")
@@ -2186,11 +2168,37 @@ fn proof_goal_mismatch_message(
          {}\n\
          {}\n\
          {}",
-        compact_prop_source(proof_prop),
-        compact_prop_source(goal),
-        prop_diagnostic("proof", proof_prop),
-        prop_diagnostic("goal", goal),
-        context_diagnostic("context.locals", context)
+        compact_prop_source(proof_prop, pretty),
+        compact_prop_source(goal, pretty),
+        prop_diagnostic("proof", proof_prop, pretty),
+        prop_diagnostic("goal", goal, pretty),
+        context_diagnostic("context.locals", context, pretty)
+    )
+}
+
+fn proof_shape_message(
+    reason: &'static str,
+    expected: &str,
+    proof: &Proof,
+    theory: &Theory,
+    goal: &Goal,
+    pretty: &PrettyEnv,
+) -> String {
+    let proof_diagnostic = theory
+        .proven_prop_in_context(proof, &goal.context)
+        .as_ref()
+        .map(|prop| prop_diagnostic("proof", prop, pretty))
+        .unwrap_or_else(|| "proof: (proves no proposition)".to_owned());
+
+    format!(
+        "proof is not {expected}\n\
+         reason: {reason}\n\
+         {}\n\
+         {}\n\
+         {}",
+        proof_diagnostic,
+        prop_diagnostic("goal", &goal.target, pretty),
+        context_diagnostic("context.locals", &goal.context, pretty)
     )
 }
 
@@ -2199,11 +2207,20 @@ fn apply_structural_premise(
     implication: Proof,
     premise: &Prop,
     context: &Context,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     if !structural_primitive_prop_holds(premise, context) {
         return Err(tactic_failed(
             tactic,
-            format!("premise {:?} is not structurally available", premise),
+            format!(
+                "premise {} is not structurally available\n\
+                 reason: structural_premise_not_available\n\
+                 {}\n\
+                 {}",
+                compact_prop_source(premise, pretty),
+                prop_diagnostic("premise", premise, pretty),
+                context_diagnostic("context.locals", context, pretty)
+            ),
         ));
     }
 
@@ -2218,9 +2235,13 @@ fn tactic_split(
     right_script: &TacticScript,
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     let Prop::And(left, right) = &goal.target else {
-        return Err(tactic_failed("split", "goal is not a conjunction"));
+        return Err(tactic_failed(
+            "split",
+            goal_shape_message("split_goal_not_conjunction", "a conjunction", goal, pretty),
+        ));
     };
 
     Ok(Proof::AndIntro(
@@ -2231,6 +2252,7 @@ fn tactic_split(
                 context: goal.context.clone(),
                 target: left.as_ref().clone(),
             },
+            pretty,
         )?),
         Box::new(tactic_script_to_proof(
             right_script,
@@ -2239,6 +2261,7 @@ fn tactic_split(
                 context: goal.context.clone(),
                 target: right.as_ref().clone(),
             },
+            pretty,
         )?),
     ))
 }
@@ -2248,9 +2271,18 @@ fn tactic_exists(
     script: &TacticScript,
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     let Prop::Exists { variable, body } = &goal.target else {
-        return Err(tactic_failed("exists", "goal is not an existential"));
+        return Err(tactic_failed(
+            "exists",
+            goal_shape_message(
+                "exists_goal_not_existential",
+                "an existential",
+                goal,
+                pretty,
+            ),
+        ));
     };
 
     let (witness_goal, witness_predicate) =
@@ -2262,6 +2294,7 @@ fn tactic_exists(
             context: goal.context.clone(),
             target: witness_goal,
         },
+        pretty,
     )?;
     let proof = match witness_predicate {
         Some(witness_predicate) => Proof::AndIntro(
@@ -2307,8 +2340,10 @@ fn tactic_obtain(
     rest: &[TacticExpr],
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
-    let existential = proof_expr_to_proof_in_context(existential_expr, theory, &goal.context)?;
+    let existential =
+        proof_expr_to_proof_in_context(existential_expr, theory, &goal.context, pretty)?;
     let context = exists_elim_context(
         "obtain",
         &goal.context,
@@ -2329,6 +2364,7 @@ fn tactic_obtain(
                 context,
                 target: goal.target.clone(),
             },
+            pretty,
         )?),
     })
 }
@@ -2340,6 +2376,7 @@ fn tactic_cases(
     rest: &[TacticExpr],
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     if left_assumption == right_assumption {
         return Err(tactic_failed(
@@ -2366,10 +2403,21 @@ fn tactic_cases(
         ));
     }
 
-    let conjunction = proof_expr_to_proof_in_context(conjunction_expr, theory, &goal.context)?;
+    let conjunction =
+        proof_expr_to_proof_in_context(conjunction_expr, theory, &goal.context, pretty)?;
     let Some(Prop::And(left, right)) = theory.proven_prop_in_context(&conjunction, &goal.context)
     else {
-        return Err(tactic_failed("cases", "proof is not a conjunction"));
+        return Err(tactic_failed(
+            "cases",
+            proof_shape_message(
+                "cases_proof_not_conjunction",
+                "a conjunction",
+                &conjunction,
+                theory,
+                goal,
+                pretty,
+            ),
+        ));
     };
 
     let left = left.as_ref().clone();
@@ -2385,6 +2433,7 @@ fn tactic_cases(
             context,
             target: goal.target.clone(),
         },
+        pretty,
     )?;
     let implication = Proof::ImpliesIntro {
         assumption: left_assumption,
@@ -2414,6 +2463,7 @@ fn tactic_or_elim(
     right_script: &TacticScript,
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     if left_assumption == right_assumption {
         return Err(tactic_failed(
@@ -2428,10 +2478,21 @@ fn tactic_or_elim(
         ));
     }
 
-    let disjunction = proof_expr_to_proof_in_context(disjunction_expr, theory, &goal.context)?;
+    let disjunction =
+        proof_expr_to_proof_in_context(disjunction_expr, theory, &goal.context, pretty)?;
     let Some(Prop::Or(left, right)) = theory.proven_prop_in_context(&disjunction, &goal.context)
     else {
-        return Err(tactic_failed("or-elim", "proof is not a disjunction"));
+        return Err(tactic_failed(
+            "or-elim",
+            proof_shape_message(
+                "or_elim_proof_not_disjunction",
+                "a disjunction",
+                &disjunction,
+                theory,
+                goal,
+                pretty,
+            ),
+        ));
     };
 
     let mut left_context = goal.context.clone();
@@ -2449,6 +2510,7 @@ fn tactic_or_elim(
                 context: left_context,
                 target: goal.target.clone(),
             },
+            pretty,
         )?),
         right_assumption,
         right_proof: Box::new(tactic_script_to_proof(
@@ -2458,6 +2520,7 @@ fn tactic_or_elim(
                 context: right_context,
                 target: goal.target.clone(),
             },
+            pretty,
         )?),
     })
 }
@@ -2466,9 +2529,13 @@ fn tactic_left(
     script: &TacticScript,
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     let Prop::Or(left, right) = &goal.target else {
-        return Err(tactic_failed("left", "goal is not a disjunction"));
+        return Err(tactic_failed(
+            "left",
+            goal_shape_message("left_goal_not_disjunction", "a disjunction", goal, pretty),
+        ));
     };
 
     Ok(Proof::OrIntroLeft {
@@ -2479,6 +2546,7 @@ fn tactic_left(
                 context: goal.context.clone(),
                 target: left.as_ref().clone(),
             },
+            pretty,
         )?),
         right: right.as_ref().clone(),
     })
@@ -2488,9 +2556,13 @@ fn tactic_right(
     script: &TacticScript,
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     let Prop::Or(left, right) = &goal.target else {
-        return Err(tactic_failed("right", "goal is not a disjunction"));
+        return Err(tactic_failed(
+            "right",
+            goal_shape_message("right_goal_not_disjunction", "a disjunction", goal, pretty),
+        ));
     };
 
     Ok(Proof::OrIntroRight {
@@ -2502,6 +2574,7 @@ fn tactic_right(
                 context: goal.context.clone(),
                 target: right.as_ref().clone(),
             },
+            pretty,
         )?),
     })
 }
@@ -2511,18 +2584,19 @@ fn tactic_rewrite(
     rest: &[TacticExpr],
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
-    let equality = proof_expr_to_proof_in_context(equality_expr, theory, &goal.context)?;
+    let equality = proof_expr_to_proof_in_context(equality_expr, theory, &goal.context, pretty)?;
     let Some(proven) = theory.proven_prop_in_context(&equality, &goal.context) else {
         return Err(tactic_failed(
             "rewrite",
-            rewrite_missing_proven_prop_message(&goal.target),
+            rewrite_missing_proven_prop_message(&goal.target, pretty),
         ));
     };
     let Prop::Equal(left, right) = proven else {
         return Err(tactic_failed(
             "rewrite",
-            rewrite_non_equality_message(&goal.target, &proven),
+            rewrite_non_equality_message(&goal.target, &proven, pretty),
         ));
     };
 
@@ -2532,7 +2606,7 @@ fn tactic_rewrite(
         let right_occurs = rewrite_template(&goal.target, &right, reverse_placeholder).is_some();
         return Err(tactic_failed(
             "rewrite",
-            rewrite_missing_left_message(&goal.target, &left, &right, right_occurs),
+            rewrite_missing_left_message(&goal.target, &left, &right, right_occurs, pretty),
         ));
     };
 
@@ -2540,7 +2614,7 @@ fn tactic_rewrite(
         context: goal.context.clone(),
         target: substitute_prop(&template, placeholder, &right),
     };
-    let proof = tactic_steps_to_proof(rest, theory, &rewritten_goal)?;
+    let proof = tactic_steps_to_proof(rest, theory, &rewritten_goal, pretty)?;
 
     Ok(Proof::Rewrite {
         equality: Box::new(Proof::Symm(Box::new(equality))),
@@ -2550,16 +2624,16 @@ fn tactic_rewrite(
     })
 }
 
-fn rewrite_missing_proven_prop_message(goal: &Prop) -> String {
+fn rewrite_missing_proven_prop_message(goal: &Prop, pretty: &PrettyEnv) -> String {
     format!(
         "rewrite proof proves no proposition\n\
          reason: rewrite_proof_proves_no_proposition\n\
          {}",
-        prop_diagnostic("goal", goal)
+        prop_diagnostic("goal", goal, pretty)
     )
 }
 
-fn rewrite_non_equality_message(goal: &Prop, proven: &Prop) -> String {
+fn rewrite_non_equality_message(goal: &Prop, proven: &Prop, pretty: &PrettyEnv) -> String {
     format!(
         "rewrite proof is not an equality\n\
          reason: rewrite_proof_not_equality\n\
@@ -2568,10 +2642,10 @@ fn rewrite_non_equality_message(goal: &Prop, proven: &Prop) -> String {
          {}\n\
          {}\n\
          expected: an equality whose left side occurs in the current goal",
-        compact_prop_source(goal),
-        compact_prop_source(proven),
-        prop_diagnostic("goal", goal),
-        prop_diagnostic("proof", proven)
+        compact_prop_source(goal, pretty),
+        compact_prop_source(proven, pretty),
+        prop_diagnostic("goal", goal, pretty),
+        prop_diagnostic("proof", proven, pretty)
     )
 }
 
@@ -2580,6 +2654,7 @@ fn rewrite_missing_left_message(
     left: &Computation,
     right: &Computation,
     right_occurs: bool,
+    pretty: &PrettyEnv,
 ) -> String {
     let hint = if right_occurs {
         "\nhint: the right side appears in the goal; try `(rewrite (symm ...))` to rewrite in the reverse direction"
@@ -2596,12 +2671,12 @@ fn rewrite_missing_left_message(
          {}\n\
          {}\n\
          {}{}",
-        compact_prop_source(goal),
-        compact_computation_source(left),
-        compact_computation_source(right),
-        prop_diagnostic("goal", goal),
-        computation_diagnostic("rewrite.lhs", left),
-        computation_diagnostic("rewrite.rhs", right),
+        compact_prop_source(goal, pretty),
+        compact_computation_source(left, pretty),
+        compact_computation_source(right, pretty),
+        prop_diagnostic("goal", goal, pretty),
+        computation_diagnostic("rewrite.lhs", left, pretty),
+        computation_diagnostic("rewrite.rhs", right, pretty),
         hint
     )
 }
@@ -2611,6 +2686,7 @@ fn tactic_fold(
     rest: &[TacticExpr],
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     let body = theory
         .computation(definition)
@@ -2629,11 +2705,11 @@ fn tactic_fold(
                  {}\n\
                  folded.source: {}\n\
                  folded.debug: {}",
-                compact_computation_source(&body),
-                name_source(definition),
-                prop_diagnostic("goal", &goal.target),
-                computation_diagnostic("definition.body", &body),
-                compact_computation_source(&folded),
+                compact_computation_source(&body, pretty),
+                name_source(definition, pretty),
+                prop_diagnostic("goal", &goal.target, pretty),
+                computation_diagnostic("definition.body", &body, pretty),
+                compact_computation_source(&folded, pretty),
                 compact_debug(&folded)
             ),
         ));
@@ -2643,7 +2719,7 @@ fn tactic_fold(
         context: goal.context.clone(),
         target: substitute_prop(&template, placeholder, &folded),
     };
-    let proof = tactic_steps_to_proof(rest, theory, &folded_goal)?;
+    let proof = tactic_steps_to_proof(rest, theory, &folded_goal, pretty)?;
 
     Ok(Proof::Rewrite {
         equality: Box::new(Proof::Step(folded)),
@@ -2662,8 +2738,9 @@ fn tactic_list_induction(
     step: &TacticScript,
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
-    let (goal_variable, predicate, property) = list_induction_goal(&goal.target)?;
+    let (goal_variable, predicate, property) = list_induction_goal(goal, pretty)?;
 
     if variable != goal_variable {
         return Err(tactic_failed(
@@ -2679,7 +2756,16 @@ fn tactic_list_induction(
     if !alpha_eq_prop(&predicate, &expected_predicate) {
         return Err(tactic_failed(
             "list-induction",
-            "forall predicate is not an is-list predicate",
+            format!(
+                "forall predicate is not an is-list predicate\n\
+                 reason: list_induction_predicate_mismatch\n\
+                 {}\n\
+                 {}\n\
+                 {}",
+                prop_diagnostic("predicate", &predicate, pretty),
+                prop_diagnostic("expected", &expected_predicate, pretty),
+                prop_diagnostic("goal", &goal.target, pretty)
+            ),
         ));
     }
 
@@ -2709,11 +2795,11 @@ fn tactic_list_induction(
     Ok(Proof::ListInduction {
         variable,
         property,
-        base: Box::new(tactic_script_to_proof(base, theory, &base_goal)?),
+        base: Box::new(tactic_script_to_proof(base, theory, &base_goal, pretty)?),
         head,
         tail,
         induction_hypothesis_assumption,
-        step: Box::new(tactic_script_to_proof(step, theory, &step_goal)?),
+        step: Box::new(tactic_script_to_proof(step, theory, &step_goal, pretty)?),
     })
 }
 
@@ -2732,8 +2818,9 @@ fn tactic_value_induction(
     cons_case: &TacticScript,
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
-    let (goal_variable, predicate, property) = value_induction_goal(&goal.target)?;
+    let (goal_variable, predicate, property) = value_induction_goal(goal, pretty)?;
 
     if variable != goal_variable {
         return Err(tactic_failed(
@@ -2749,7 +2836,16 @@ fn tactic_value_induction(
     if !alpha_eq_prop(&predicate, &expected_predicate) {
         return Err(tactic_failed(
             "value-induction",
-            "forall predicate is not an is-value predicate",
+            format!(
+                "forall predicate is not an is-value predicate\n\
+                 reason: value_induction_predicate_mismatch\n\
+                 {}\n\
+                 {}\n\
+                 {}",
+                prop_diagnostic("predicate", &predicate, pretty),
+                prop_diagnostic("expected", &expected_predicate, pretty),
+                prop_diagnostic("goal", &goal.target, pretty)
+            ),
         ));
     }
 
@@ -2809,42 +2905,82 @@ fn tactic_value_induction(
         variable,
         property,
         symbol_assumption,
-        symbol_case: Box::new(tactic_script_to_proof(symbol_case, theory, &symbol_goal)?),
+        symbol_case: Box::new(tactic_script_to_proof(
+            symbol_case,
+            theory,
+            &symbol_goal,
+            pretty,
+        )?),
         lambda_assumption,
-        lambda_case: Box::new(tactic_script_to_proof(lambda_case, theory, &lambda_goal)?),
-        nil_case: Box::new(tactic_script_to_proof(nil_case, theory, &nil_goal)?),
+        lambda_case: Box::new(tactic_script_to_proof(
+            lambda_case,
+            theory,
+            &lambda_goal,
+            pretty,
+        )?),
+        nil_case: Box::new(tactic_script_to_proof(nil_case, theory, &nil_goal, pretty)?),
         head,
         tail,
         head_induction_hypothesis_assumption,
         tail_induction_hypothesis_assumption,
-        cons_case: Box::new(tactic_script_to_proof(cons_case, theory, &cons_goal)?),
+        cons_case: Box::new(tactic_script_to_proof(
+            cons_case, theory, &cons_goal, pretty,
+        )?),
     })
 }
 
-fn list_induction_goal(target: &Prop) -> Result<(Symbol, Prop, Prop), ProofElaborationError> {
+fn list_induction_goal(
+    goal: &Goal,
+    pretty: &PrettyEnv,
+) -> Result<(Symbol, Prop, Prop), ProofElaborationError> {
+    let target = &goal.target;
     let Prop::ForAll { variable, body } = target else {
-        return Err(tactic_failed("list-induction", "goal is not a forall"));
+        return Err(tactic_failed(
+            "list-induction",
+            goal_shape_message("list_induction_goal_not_forall", "a forall", goal, pretty),
+        ));
     };
 
     let Prop::Implies(predicate, body) = body.as_ref() else {
         return Err(tactic_failed(
             "list-induction",
-            "forall body is not a predicate implication",
+            format!(
+                "forall body is not a predicate implication\n\
+                 reason: list_induction_body_not_implication\n\
+                 {}\n\
+                 {}",
+                prop_diagnostic("goal", &goal.target, pretty),
+                context_diagnostic("context.locals", &goal.context, pretty)
+            ),
         ));
     };
 
     Ok((*variable, predicate.as_ref().clone(), body.as_ref().clone()))
 }
 
-fn value_induction_goal(target: &Prop) -> Result<(Symbol, Prop, Prop), ProofElaborationError> {
+fn value_induction_goal(
+    goal: &Goal,
+    pretty: &PrettyEnv,
+) -> Result<(Symbol, Prop, Prop), ProofElaborationError> {
+    let target = &goal.target;
     let Prop::ForAll { variable, body } = target else {
-        return Err(tactic_failed("value-induction", "goal is not a forall"));
+        return Err(tactic_failed(
+            "value-induction",
+            goal_shape_message("value_induction_goal_not_forall", "a forall", goal, pretty),
+        ));
     };
 
     let Prop::Implies(predicate, body) = body.as_ref() else {
         return Err(tactic_failed(
             "value-induction",
-            "forall body is not a predicate implication",
+            format!(
+                "forall body is not a predicate implication\n\
+                 reason: value_induction_body_not_implication\n\
+                 {}\n\
+                 {}",
+                prop_diagnostic("goal", &goal.target, pretty),
+                context_diagnostic("context.locals", &goal.context, pretty)
+            ),
         ));
     };
 
@@ -2863,11 +2999,12 @@ fn tactic_calc(
     steps: &[CalcStep],
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     let Prop::Equal(goal_left, goal_right) = &goal.target else {
         return Err(tactic_failed(
             "calc",
-            goal_not_equality_message("calc_goal_not_equality", goal),
+            goal_not_equality_message("calc_goal_not_equality", goal, pretty),
         ));
     };
 
@@ -2881,12 +3018,12 @@ fn tactic_calc(
                  {}\n\
                  {}\n\
                  {}",
-                compact_computation_source(start),
-                compact_computation_source(goal_left),
-                computation_diagnostic("calc.start", start),
-                computation_diagnostic("goal.left", goal_left),
-                prop_diagnostic("goal", &goal.target),
-                context_diagnostic("context.locals", &goal.context)
+                compact_computation_source(start, pretty),
+                compact_computation_source(goal_left, pretty),
+                computation_diagnostic("calc.start", start, pretty),
+                computation_diagnostic("goal.left", goal_left, pretty),
+                prop_diagnostic("goal", &goal.target, pretty),
+                context_diagnostic("context.locals", &goal.context, pretty)
             ),
         ));
     }
@@ -2903,6 +3040,7 @@ fn tactic_calc(
             &step.proof,
             theory,
             &step_goal,
+            pretty,
         )?);
         previous = step.target.clone();
     }
@@ -2917,12 +3055,12 @@ fn tactic_calc(
                  {}\n\
                  {}\n\
                  {}",
-                compact_computation_source(&previous),
-                compact_computation_source(goal_right),
-                computation_diagnostic("calc.end", &previous),
-                computation_diagnostic("goal.right", goal_right),
-                prop_diagnostic("goal", &goal.target),
-                context_diagnostic("context.locals", &goal.context)
+                compact_computation_source(&previous, pretty),
+                compact_computation_source(goal_right, pretty),
+                computation_diagnostic("calc.end", &previous, pretty),
+                computation_diagnostic("goal.right", goal_right, pretty),
+                prop_diagnostic("goal", &goal.target, pretty),
+                context_diagnostic("context.locals", &goal.context, pretty)
             ),
         ));
     }
@@ -2935,8 +3073,8 @@ fn tactic_calc(
                  reason: calc_empty\n\
                  {}\n\
                  {}",
-                prop_diagnostic("goal", &goal.target),
-                context_diagnostic("context.locals", &goal.context)
+                prop_diagnostic("goal", &goal.target, pretty),
+                context_diagnostic("context.locals", &goal.context, pretty)
             ),
         )
     })
@@ -2946,10 +3084,11 @@ fn proof_script_to_proof_for_goal(
     script: &ProofScript,
     theory: &Theory,
     goal: &Goal,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     match script {
-        ProofScript::Proof(proof) => tactic_exact(proof, theory, goal),
-        ProofScript::By(script) => tactic_script_to_proof(script, theory, goal),
+        ProofScript::Proof(proof) => tactic_exact(proof, theory, goal, pretty),
+        ProofScript::By(script) => tactic_script_to_proof(script, theory, goal, pretty),
     }
 }
 
@@ -3006,6 +3145,7 @@ fn add_goal_context(
     error: ProofElaborationError,
     tactic_expr: &TacticExpr,
     target: &Prop,
+    pretty: &PrettyEnv,
 ) -> ProofElaborationError {
     match error {
         ProofElaborationError::TacticFailed { tactic, message } => {
@@ -3017,14 +3157,14 @@ fn add_goal_context(
                      context.goal.source: {}\n\
                      context.goal.debug: {}",
                     compact_debug(tactic_expr),
-                    compact_prop_source(target),
+                    compact_prop_source(target, pretty),
                     compact_debug(target)
                 ),
             }
         }
         ProofElaborationError::InSubproof { form, error } => ProofElaborationError::InSubproof {
             form,
-            error: Box::new(add_goal_context(*error, tactic_expr, target)),
+            error: Box::new(add_goal_context(*error, tactic_expr, target, pretty)),
         },
         error => error,
     }
@@ -3408,6 +3548,7 @@ mod tests {
         let mut context = Context::new();
         context.insert(TARGET_VALUE, is_value(target.clone()));
         context.insert(TARGET_EQUAL, equal(target.clone(), Computation::Nil));
+        let pretty = PrettyEnv::new();
 
         let (_proof, proven) = instantiate_simp_rule(
             "simp",
@@ -3417,6 +3558,7 @@ mod tests {
             &substitutions,
             &theory,
             &context,
+            &pretty,
         )
         .expect("rule instantiation should not fail")
         .expect("rule premises should be available");
@@ -3434,6 +3576,7 @@ mod tests {
         let substitutions = HashMap::from([(VALUE, target.clone())]);
         let mut context = Context::new();
         context.insert(TARGET_VALUE, is_value(target));
+        let pretty = PrettyEnv::new();
 
         assert_eq!(
             instantiate_simp_rule(
@@ -3444,6 +3587,7 @@ mod tests {
                 &substitutions,
                 &theory,
                 &context,
+                &pretty,
             ),
             Ok(None)
         );
@@ -3452,6 +3596,7 @@ mod tests {
     #[test]
     fn simp_rewrite_uses_first_matching_rule() {
         let theory = alias_rewrite_theory();
+        let pretty = PrettyEnv::new();
         let rewrite = simp_rewrite(
             "simp",
             &Computation::Ref(ALIAS_A),
@@ -3461,6 +3606,7 @@ mod tests {
             ],
             &theory,
             &Context::new(),
+            &pretty,
         )
         .expect("simp rewrite should not fail")
         .expect("the first rule should match");
@@ -3477,6 +3623,7 @@ mod tests {
         };
         let mut context = Context::new();
         context.insert(RECURSIVE_EXPANSION_RULE, equal(target.clone(), expansion));
+        let pretty = PrettyEnv::new();
 
         let mut budget = SimpBudget::new();
         let result = simplify_computation(
@@ -3486,6 +3633,7 @@ mod tests {
             &Theory::new(),
             &context,
             &mut budget,
+            &pretty,
         );
 
         let Err(ProofElaborationError::TacticFailed { tactic, message }) = result else {

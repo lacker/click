@@ -120,6 +120,20 @@ impl ElabEnv {
         symbol
     }
 
+    pub(crate) fn pretty_env(&self) -> PrettyEnv {
+        let mut pretty = PrettyEnv::new();
+        for (spelling, name) in &self.computations {
+            pretty.insert_computation(*name, spelling.clone());
+        }
+        for (spelling, name) in &self.theorems {
+            pretty.insert_theorem(*name, spelling.clone());
+        }
+        for (spelling, symbol) in &self.symbols {
+            pretty.insert_symbol(*symbol, spelling.clone());
+        }
+        pretty
+    }
+
     fn register_top_level_names(&mut self, expressions: &[Expr]) -> Result<(), ParseError> {
         for expression in expressions {
             let form = top_level_form(expression)?;
@@ -159,6 +173,51 @@ impl ElabEnv {
         let name = Name(self.next_name);
         self.next_name += 1;
         name
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PrettyEnv {
+    computations: HashMap<Name, String>,
+    theorems: HashMap<Name, String>,
+    symbols: HashMap<Symbol, String>,
+}
+
+impl PrettyEnv {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn with_theorem_locals(&self, theorem: &ParsedTheorem) -> Self {
+        let mut pretty = self.clone();
+        for local in &theorem.local_symbols {
+            pretty.insert_symbol(local.symbol, local.spelling.clone());
+        }
+        pretty
+    }
+
+    pub(crate) fn computation(&self, name: Name) -> Option<&str> {
+        self.computations.get(&name).map(String::as_str)
+    }
+
+    pub(crate) fn theorem(&self, name: Name) -> Option<&str> {
+        self.theorems.get(&name).map(String::as_str)
+    }
+
+    pub(crate) fn symbol(&self, symbol: Symbol) -> Option<&str> {
+        self.symbols.get(&symbol).map(String::as_str)
+    }
+
+    fn insert_computation(&mut self, name: Name, spelling: String) {
+        self.computations.entry(name).or_insert(spelling);
+    }
+
+    fn insert_theorem(&mut self, name: Name, spelling: String) {
+        self.theorems.entry(name).or_insert(spelling);
+    }
+
+    fn insert_symbol(&mut self, symbol: Symbol, spelling: String) {
+        self.symbols.insert(symbol, spelling);
     }
 }
 

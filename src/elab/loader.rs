@@ -9,7 +9,7 @@ use crate::{ComputationDefinitionError, Name, Symbol, Theory};
 
 use super::{
     proof::{self, SourceTheoremError},
-    source::{ElabEnv, ParseError, ParsedModule, SourceSection},
+    source::{ElabEnv, ParseError, ParsedModule, PrettyEnv, SourceSection},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -139,7 +139,8 @@ impl LoadedSource {
 
         define_module_computations_result_in_section(&mut theory, &module, section.as_ref())
             .map_err(SourceLoadError::Computation)?;
-        define_module_theorems_result_in_section(&mut theory, &module, section.as_ref())
+        let pretty = env.pretty_env();
+        define_module_theorems_result_in_section(&mut theory, &module, section.as_ref(), &pretty)
             .map_err(SourceLoadError::Theorem)?;
 
         self.env = env;
@@ -232,16 +233,17 @@ pub(crate) fn define_module_theorems_result(
     theory: &mut Theory,
     module: &ParsedModule,
 ) -> Result<(), SourceTheoremError> {
-    define_module_theorems_result_in_section(theory, module, None)
+    define_module_theorems_result_in_section(theory, module, None, &PrettyEnv::new())
 }
 
 pub(crate) fn define_module_theorems_result_in_section(
     theory: &mut Theory,
     module: &ParsedModule,
     section: Option<&SourceSection>,
+    pretty: &PrettyEnv,
 ) -> Result<(), SourceTheoremError> {
     for theorem in &module.theorems {
-        proof::define_source_theorem_with_section(theorem, theory, section)?;
+        proof::define_source_theorem_with_section(theorem, theory, section, pretty)?;
     }
 
     Ok(())
@@ -859,6 +861,7 @@ mod tests {
         assert!(message.contains("current goal"));
         assert!(message.contains("equality left side searched for"));
         assert!(message.contains("equality right side"));
+        assert!(message.contains("rewrite.lhs.source: alias"));
         assert!(message.contains("rewrite.lhs.source"));
         assert!(message.contains("rewrite.rhs.debug"));
         assert!(message.contains("context.tactic_expr.debug"));
@@ -899,6 +902,40 @@ mod tests {
         assert!(message.contains("goal.source: (is-list nil)"));
         assert!(message.contains("context.locals"));
         assert!(message.contains("context.goal.source"));
+    }
+
+    #[test]
+    fn failing_apply_reports_source_theorem_name() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (theorem nil_is_value
+                  (is-value nil)
+                  (proof
+                    (primitive (is-value nil))))
+                (theorem bad_apply
+                  (is-list nil)
+                  (by
+                    (apply nil_is_value)))
+                ",
+            )
+            .expect_err("apply with the wrong theorem conclusion should fail");
+
+        let SourceLoadError::Theorem(SourceTheoremError::ProofElaborationFailed {
+            error: proof::ProofElaborationError::TacticFailed { tactic, message },
+            ..
+        }) = error
+        else {
+            panic!("expected an apply tactic failure");
+        };
+
+        assert_eq!(tactic, "apply");
+        assert!(message.contains("reason: proof_goal_mismatch"));
+        assert!(message.contains("theorem: nil_is_value"));
+        assert!(message.contains("proof.source: (is-value nil)"));
+        assert!(message.contains("goal.source: (is-list nil)"));
     }
 
     #[test]
@@ -1228,7 +1265,7 @@ mod tests {
         assert!(message.contains("premise.source"));
         assert!(message.contains("context.locals"));
         assert!(message.contains("local facts in scope"));
-        assert!(message.contains("nil_self") || message.contains("Symbol("));
+        assert!(message.contains("nil_self"));
     }
 
     #[test]
@@ -1274,6 +1311,7 @@ mod tests {
         assert!(message.contains("forall-bound computations"));
         assert!(message.contains("applied automatically"));
         assert!(message.contains("argument.local_fact"));
+        assert!(message.contains("argument.local_fact.symbol: nil_self"));
     }
 
     #[test]

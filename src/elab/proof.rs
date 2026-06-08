@@ -10,7 +10,7 @@ use crate::{Outcome, computes_to_outcome};
 
 #[cfg(test)]
 use super::source::ParsedModule;
-use super::source::{ParseError, ParsedTheorem, ProofExpr, ProofScript, SourceSection};
+use super::source::{ParseError, ParsedTheorem, PrettyEnv, ProofExpr, ProofScript, SourceSection};
 use super::tactics::{self, Goal};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,15 +64,16 @@ pub(crate) fn define_source_theorem(
     theorem: &ParsedTheorem,
     theory: &mut Theory,
 ) -> Result<Theorem, SourceTheoremError> {
-    define_source_theorem_with_section(theorem, theory, None)
+    define_source_theorem_with_section(theorem, theory, None, &PrettyEnv::new())
 }
 
 pub(crate) fn define_source_theorem_with_section(
     theorem: &ParsedTheorem,
     theory: &mut Theory,
     section: Option<&SourceSection>,
+    pretty: &PrettyEnv,
 ) -> Result<Theorem, SourceTheoremError> {
-    let proof = proof_for_theorem_result_with_section(theorem, theory, section)?;
+    let proof = proof_for_theorem_result_with_section(theorem, theory, section, pretty)?;
     theory
         .define_theorem_from_proof_result(theorem.name, proof, theorem.prop.clone())
         .map_err(|error| SourceTheoremError::TheoremRejected {
@@ -86,23 +87,28 @@ pub(crate) fn proof_for_theorem_result_with_section(
     theorem: &ParsedTheorem,
     theory: &Theory,
     section: Option<&SourceSection>,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, SourceTheoremError> {
+    let pretty = pretty.with_theorem_locals(theorem);
     match &theorem.proof {
-        ProofScript::Proof(proof) => proof_expr_to_proof(proof, theory).map_err(|error| {
+        ProofScript::Proof(proof) => proof_expr_to_proof(proof, theory, &pretty).map_err(|error| {
             SourceTheoremError::ProofElaborationFailed {
                 section: section.cloned(),
                 theorem: theorem.name,
                 error,
             }
         }),
-        ProofScript::By(script) => {
-            tactics::tactic_script_to_proof(script, theory, &Goal::new(theorem.prop.clone()))
-                .map_err(|error| SourceTheoremError::ProofElaborationFailed {
-                    section: section.cloned(),
-                    theorem: theorem.name,
-                    error,
-                })
-        }
+        ProofScript::By(script) => tactics::tactic_script_to_proof(
+            script,
+            theory,
+            &Goal::new(theorem.prop.clone()),
+            &pretty,
+        )
+        .map_err(|error| SourceTheoremError::ProofElaborationFailed {
+            section: section.cloned(),
+            theorem: theorem.name,
+            error,
+        }),
     }
 }
 
@@ -124,16 +130,21 @@ pub(crate) fn source_theorem_result(
     Err(SourceTheoremError::RequestedTheoremMissing { theorem: name })
 }
 
-fn proof_expr_to_proof(proof: &ProofExpr, theory: &Theory) -> Result<Proof, ProofElaborationError> {
-    proof_expr_to_proof_in_context(proof, theory, &Context::new())
+fn proof_expr_to_proof(
+    proof: &ProofExpr,
+    theory: &Theory,
+    pretty: &PrettyEnv,
+) -> Result<Proof, ProofElaborationError> {
+    proof_expr_to_proof_in_context(proof, theory, &Context::new(), pretty)
 }
 
 pub(super) fn proof_expr_to_proof_in_context(
     proof: &ProofExpr,
     theory: &Theory,
     context: &Context,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
-    proof_expr_to_proof_in_context_with_target(proof, theory, context, None)
+    proof_expr_to_proof_in_context_with_target(proof, theory, context, None, pretty)
 }
 
 pub(super) fn proof_expr_to_proof_in_context_with_target(
@@ -141,6 +152,7 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
     theory: &Theory,
     context: &Context,
     target: Option<&Prop>,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     match proof {
         ProofExpr::Known(name) => {
@@ -153,43 +165,50 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
         ProofExpr::Assume(symbol) => Ok(Proof::Assume(*symbol)),
         ProofExpr::Primitive(prop) => Ok(Proof::Primitive(prop.clone())),
         ProofExpr::Symm(proof) => Ok(Proof::Symm(Box::new(subproof(
-            "symm", proof, theory, context,
+            "symm", proof, theory, context, pretty,
         )?))),
         ProofExpr::Trans(first, second) => Ok(Proof::Trans(
-            Box::new(subproof("trans first", first, theory, context)?),
-            Box::new(subproof("trans second", second, theory, context)?),
+            Box::new(subproof("trans first", first, theory, context, pretty)?),
+            Box::new(subproof("trans second", second, theory, context, pretty)?),
         )),
         ProofExpr::SymbolEqTrue(proof) => Ok(Proof::SymbolEqTrueElim(Box::new(subproof(
             "symbol-eq-true",
             proof,
             theory,
             context,
+            pretty,
         )?))),
         ProofExpr::IfTrueCondition(proof) => Ok(Proof::IfTrueWithFalseElseCondition(Box::new(
-            subproof("if-true-condition", proof, theory, context)?,
+            subproof("if-true-condition", proof, theory, context, pretty)?,
         ))),
         ProofExpr::IfTrueThen(proof) => Ok(Proof::IfTrueWithFalseElseThen(Box::new(subproof(
             "if-true-then",
             proof,
             theory,
             context,
+            pretty,
         )?))),
-        ProofExpr::IfEffectThenConditionFalse(proof) => {
-            Ok(Proof::IfValueWithEffectThenConditionFalse(Box::new(
-                subproof("if-effect-then-condition-false", proof, theory, context)?,
-            )))
-        }
+        ProofExpr::IfEffectThenConditionFalse(proof) => Ok(
+            Proof::IfValueWithEffectThenConditionFalse(Box::new(subproof(
+                "if-effect-then-condition-false",
+                proof,
+                theory,
+                context,
+                pretty,
+            )?)),
+        ),
         ProofExpr::IfEffectThenElse(proof) => Ok(Proof::IfValueWithEffectThenElse(Box::new(
-            subproof("if-effect-then-else", proof, theory, context)?,
+            subproof("if-effect-then-else", proof, theory, context, pretty)?,
         ))),
         ProofExpr::IfValueConditionBool(proof) => Ok(Proof::IfValueConditionBool(Box::new(
-            subproof("if-value-condition-bool", proof, theory, context)?,
+            subproof("if-value-condition-bool", proof, theory, context, pretty)?,
         ))),
         ProofExpr::DistinctOutcomes(proof) => Ok(Proof::DistinctOutcomes(Box::new(subproof(
             "distinct-outcomes",
             proof,
             theory,
             context,
+            pretty,
         )?))),
         ProofExpr::ValueNonSymbolNonLambdaIsList {
             value,
@@ -201,22 +220,25 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
                 value,
                 theory,
                 context,
+                pretty,
             )?),
             not_symbol: Box::new(subproof(
                 "value-non-symbol-non-lambda-is-list not-symbol",
                 not_symbol,
                 theory,
                 context,
+                pretty,
             )?),
             not_lambda: Box::new(subproof(
                 "value-non-symbol-non-lambda-is-list not-lambda",
                 not_lambda,
                 theory,
                 context,
+                pretty,
             )?),
         }),
         ProofExpr::AbsurdElim { absurd, prop } => Ok(Proof::AbsurdElim {
-            absurd: Box::new(subproof("absurd-elim", absurd, theory, context)?),
+            absurd: Box::new(subproof("absurd-elim", absurd, theory, context, pretty)?),
             prop: prop.clone(),
         }),
         ProofExpr::EvalTo {
@@ -247,8 +269,14 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
             variable,
             template,
         } => Ok(Proof::Rewrite {
-            equality: Box::new(subproof("rewrite equality", equality, theory, context)?),
-            proof: Box::new(subproof("rewrite proof", proof, theory, context)?),
+            equality: Box::new(subproof(
+                "rewrite equality",
+                equality,
+                theory,
+                context,
+                pretty,
+            )?),
+            proof: Box::new(subproof("rewrite proof", proof, theory, context, pretty)?),
             variable: *variable,
             template: template.clone(),
         }),
@@ -262,7 +290,13 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
             Ok(Proof::ImpliesIntro {
                 assumption: *assumption,
                 premise: premise.clone(),
-                proof: Box::new(subproof("implies-intro proof", proof, theory, &context)?),
+                proof: Box::new(subproof(
+                    "implies-intro proof",
+                    proof,
+                    theory,
+                    &context,
+                    pretty,
+                )?),
             })
         }
         ProofExpr::ImpliesElim {
@@ -274,8 +308,15 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
                 implication,
                 theory,
                 context,
+                pretty,
             )?),
-            premise: Box::new(subproof("implies-elim premise", premise, theory, context)?),
+            premise: Box::new(subproof(
+                "implies-elim premise",
+                premise,
+                theory,
+                context,
+                pretty,
+            )?),
         }),
         ProofExpr::ExistsIntro {
             variable,
@@ -286,7 +327,13 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
             variable: *variable,
             body: body.clone(),
             witness: witness.clone(),
-            proof: Box::new(subproof("exists-intro proof", proof, theory, context)?),
+            proof: Box::new(subproof(
+                "exists-intro proof",
+                proof,
+                theory,
+                context,
+                pretty,
+            )?),
         }),
         ProofExpr::ExistsElim {
             existential,
@@ -294,8 +341,13 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
             assumption,
             proof,
         } => {
-            let existential_proof =
-                subproof("exists-elim existential", existential, theory, context)?;
+            let existential_proof = subproof(
+                "exists-elim existential",
+                existential,
+                theory,
+                context,
+                pretty,
+            )?;
             let context = exists_elim_context(
                 "exists-elim",
                 context,
@@ -309,32 +361,40 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
                 existential: Box::new(existential_proof),
                 witness: *witness,
                 assumption: *assumption,
-                proof: Box::new(subproof("exists-elim proof", proof, theory, &context)?),
+                proof: Box::new(subproof(
+                    "exists-elim proof",
+                    proof,
+                    theory,
+                    &context,
+                    pretty,
+                )?),
             })
         }
         ProofExpr::AndIntro(left, right) => Ok(Proof::AndIntro(
-            Box::new(subproof("and-intro left", left, theory, context)?),
-            Box::new(subproof("and-intro right", right, theory, context)?),
+            Box::new(subproof("and-intro left", left, theory, context, pretty)?),
+            Box::new(subproof("and-intro right", right, theory, context, pretty)?),
         )),
         ProofExpr::AndElimLeft(proof) => Ok(Proof::AndElimLeft(Box::new(subproof(
             "and-elim-left",
             proof,
             theory,
             context,
+            pretty,
         )?))),
         ProofExpr::AndElimRight(proof) => Ok(Proof::AndElimRight(Box::new(subproof(
             "and-elim-right",
             proof,
             theory,
             context,
+            pretty,
         )?))),
         ProofExpr::OrIntroLeft { proof, right } => Ok(Proof::OrIntroLeft {
-            proof: Box::new(subproof("or-intro-left", proof, theory, context)?),
+            proof: Box::new(subproof("or-intro-left", proof, theory, context, pretty)?),
             right: right.clone(),
         }),
         ProofExpr::OrIntroRight { left, proof } => Ok(Proof::OrIntroRight {
             left: left.clone(),
-            proof: Box::new(subproof("or-intro-right", proof, theory, context)?),
+            proof: Box::new(subproof("or-intro-right", proof, theory, context, pretty)?),
         }),
         ProofExpr::OrElim {
             disjunction,
@@ -348,11 +408,24 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
                 disjunction,
                 theory,
                 context,
+                pretty,
             )?),
             left_assumption: *left_assumption,
-            left_proof: Box::new(subproof("or-elim left", left_proof, theory, context)?),
+            left_proof: Box::new(subproof(
+                "or-elim left",
+                left_proof,
+                theory,
+                context,
+                pretty,
+            )?),
             right_assumption: *right_assumption,
-            right_proof: Box::new(subproof("or-elim right", right_proof, theory, context)?),
+            right_proof: Box::new(subproof(
+                "or-elim right",
+                right_proof,
+                theory,
+                context,
+                pretty,
+            )?),
         }),
         ProofExpr::ListInduction {
             variable,
@@ -365,7 +438,13 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
         } => Ok(Proof::ListInduction {
             variable: *variable,
             property: property.clone(),
-            base: Box::new(subproof("list-induction base", base, theory, context)?),
+            base: Box::new(subproof(
+                "list-induction base",
+                base,
+                theory,
+                context,
+                pretty,
+            )?),
             head: *head,
             tail: *tail,
             induction_hypothesis_assumption: *induction_hypothesis_assumption,
@@ -381,14 +460,21 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
                     *tail,
                     *induction_hypothesis_assumption,
                 ),
+                pretty,
             )?),
         }),
         ProofExpr::ForAllIntro { variable, proof } => Ok(Proof::ForAllIntro {
             variable: *variable,
-            proof: Box::new(subproof("forall-intro proof", proof, theory, context)?),
+            proof: Box::new(subproof(
+                "forall-intro proof",
+                proof,
+                theory,
+                context,
+                pretty,
+            )?),
         }),
         ProofExpr::ForAllElim { forall, argument } => {
-            let proof = subproof("forall-elim forall", forall, theory, context)?;
+            let proof = subproof("forall-elim forall", forall, theory, context, pretty)?;
             let prop = theory
                 .proven_prop_in_context(&proof, context)
                 .ok_or_else(|| {
@@ -402,11 +488,14 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
                 theory,
                 context,
                 target,
+                pretty,
+                None,
+                None,
             )
             .map(|(proof, _)| proof)
         }
         ProofExpr::Apply { proof, arguments } => {
-            let proof = subproof("proof application", proof, theory, context)?;
+            let proof = subproof("proof application", proof, theory, context, pretty)?;
             let prop = theory
                 .proven_prop_in_context(&proof, context)
                 .ok_or_else(|| {
@@ -420,6 +509,9 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
                 theory,
                 context,
                 target,
+                pretty,
+                None,
+                None,
             )
             .map(|(proof, _)| proof)
         }
@@ -483,8 +575,9 @@ fn subproof(
     proof: &ProofExpr,
     theory: &Theory,
     context: &Context,
+    pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
-    proof_expr_to_proof_in_context(proof, theory, context).map_err(|error| {
+    proof_expr_to_proof_in_context(proof, theory, context, pretty).map_err(|error| {
         ProofElaborationError::InSubproof {
             form,
             error: Box::new(error),

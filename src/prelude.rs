@@ -16,15 +16,14 @@ use crate::{
     elab::{
         ElabEnv, LoadedSource,
         loader::{
-            LoadedModule, define_module_computations_result_in_section,
-            define_module_theorems_result_in_section,
+            define_module_computations_result_in_section, define_module_theorems_result_in_section,
         },
     },
 };
 
 #[cfg(test)]
 use crate::elab::{
-    loader::{define_module_computations_result, define_module_theorems_result},
+    loader::{LoadedModule, define_module_computations_result, define_module_theorems_result},
     source,
 };
 
@@ -90,7 +89,7 @@ pub fn define_in_theory(theory: &mut Theory) -> bool {
 pub fn try_define_in_theory(theory: &mut Theory) -> Result<(), SourceLoadError> {
     let loaded = loaded_source()?;
 
-    define_modules_in_theory_result(theory, loaded.modules())
+    define_modules_in_theory_result(theory, loaded)
 }
 
 fn loaded_source() -> Result<&'static LoadedSource, SourceLoadError> {
@@ -180,16 +179,22 @@ pub(crate) fn prelude_env() -> ElabEnv {
 
 fn define_modules_in_theory_result(
     theory: &mut Theory,
-    modules: &[LoadedModule],
+    loaded: &LoadedSource,
 ) -> Result<(), SourceLoadError> {
-    for module in modules {
+    for module in loaded.modules() {
         define_module_computations_result_in_section(theory, module.parsed(), module.section())
             .map_err(SourceLoadError::Computation)?;
     }
 
-    for module in modules {
-        define_module_theorems_result_in_section(theory, module.parsed(), module.section())
-            .map_err(SourceLoadError::Theorem)?;
+    let pretty = loaded.env().pretty_env();
+    for module in loaded.modules() {
+        define_module_theorems_result_in_section(
+            theory,
+            module.parsed(),
+            module.section(),
+            &pretty,
+        )
+        .map_err(SourceLoadError::Theorem)?;
     }
 
     Ok(())
@@ -236,8 +241,14 @@ pub fn try_define_theorems_in_theory(theory: &mut Theory) -> Result<(), SourceTh
         }
     })?;
 
+    let pretty = loaded.env().pretty_env();
     for module in loaded.modules() {
-        define_module_theorems_result_in_section(theory, module.parsed(), module.section())?;
+        define_module_theorems_result_in_section(
+            theory,
+            module.parsed(),
+            module.section(),
+            &pretty,
+        )?;
     }
 
     Ok(())
