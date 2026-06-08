@@ -2085,16 +2085,26 @@ fn tactic_rewrite(
     goal: &Goal,
 ) -> Result<Proof, ProofElaborationError> {
     let equality = proof_expr_to_proof_in_context(equality_expr, theory, &goal.context)?;
-    let Some(Prop::Equal(left, right)) = theory.proven_prop_in_context(&equality, &goal.context)
-    else {
-        return Err(tactic_failed("rewrite", "proof is not an equality"));
+    let Some(proven) = theory.proven_prop_in_context(&equality, &goal.context) else {
+        return Err(tactic_failed(
+            "rewrite",
+            rewrite_missing_proven_prop_message(&goal.target),
+        ));
+    };
+    let Prop::Equal(left, right) = proven else {
+        return Err(tactic_failed(
+            "rewrite",
+            rewrite_non_equality_message(&goal.target, &proven),
+        ));
     };
 
     let placeholder = fresh_rewrite_symbol(&goal.target, &left, &right);
     let Some(template) = rewrite_template(&goal.target, &left, placeholder) else {
+        let reverse_placeholder = fresh_rewrite_symbol(&goal.target, &right, &left);
+        let right_occurs = rewrite_template(&goal.target, &right, reverse_placeholder).is_some();
         return Err(tactic_failed(
             "rewrite",
-            format!("goal does not contain the left side {:?}", left),
+            rewrite_missing_left_message(&goal.target, &left, &right, right_occurs),
         ));
     };
 
@@ -2110,6 +2120,49 @@ fn tactic_rewrite(
         variable: placeholder,
         template,
     })
+}
+
+fn rewrite_missing_proven_prop_message(goal: &Prop) -> String {
+    format!(
+        "rewrite proof proves no proposition\n\
+         current goal: {}",
+        compact_debug(goal)
+    )
+}
+
+fn rewrite_non_equality_message(goal: &Prop, proven: &Prop) -> String {
+    format!(
+        "rewrite proof is not an equality\n\
+         current goal: {}\n\
+         proof produced: {}\n\
+         expected: an equality whose left side occurs in the current goal",
+        compact_debug(goal),
+        compact_debug(proven)
+    )
+}
+
+fn rewrite_missing_left_message(
+    goal: &Prop,
+    left: &Computation,
+    right: &Computation,
+    right_occurs: bool,
+) -> String {
+    let hint = if right_occurs {
+        "\nhint: the right side appears in the goal; try `(rewrite (symm ...))` to rewrite in the reverse direction"
+    } else {
+        "\nhint: `rewrite` rewrites the first occurrence of the equality's left side"
+    };
+
+    format!(
+        "goal does not contain the rewrite left side\n\
+         current goal: {}\n\
+         equality left side searched for: {}\n\
+         equality right side: {}{}",
+        compact_debug(goal),
+        compact_debug(left),
+        compact_debug(right),
+        hint
+    )
 }
 
 fn tactic_fold(

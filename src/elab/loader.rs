@@ -786,6 +786,78 @@ mod tests {
     }
 
     #[test]
+    fn failing_rewrite_reports_non_equality_proof_and_goal() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (theorem nil_is_value
+                  (is-value nil)
+                  (proof
+                    (primitive (is-value nil))))
+                (theorem bad_rewrite
+                  (equal nil nil)
+                  (by
+                    (rewrite nil_is_value)
+                    (eval)))
+                ",
+            )
+            .expect_err("rewrite with a non-equality proof should fail");
+
+        let SourceLoadError::Theorem(SourceTheoremError::ProofElaborationFailed {
+            error: proof::ProofElaborationError::TacticFailed { tactic, message },
+            ..
+        }) = error
+        else {
+            panic!("expected a rewrite tactic failure");
+        };
+
+        assert_eq!(tactic, "rewrite");
+        assert!(message.contains("rewrite proof is not an equality"));
+        assert!(message.contains("current goal"));
+        assert!(message.contains("proof produced"));
+        assert!(message.contains("expected: an equality"));
+    }
+
+    #[test]
+    fn failing_rewrite_reports_reverse_direction_hint() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (def alias nil)
+                (theorem alias_nil
+                  (equal alias nil)
+                  (by
+                    (eval)))
+                (theorem bad_rewrite
+                  (equal nil nil)
+                  (by
+                    (rewrite alias_nil)
+                    (eval)))
+                ",
+            )
+            .expect_err("rewrite with the equality in the wrong direction should fail");
+
+        let SourceLoadError::Theorem(SourceTheoremError::ProofElaborationFailed {
+            error: proof::ProofElaborationError::TacticFailed { tactic, message },
+            ..
+        }) = error
+        else {
+            panic!("expected a rewrite tactic failure");
+        };
+
+        assert_eq!(tactic, "rewrite");
+        assert!(message.contains("goal does not contain the rewrite left side"));
+        assert!(message.contains("current goal"));
+        assert!(message.contains("equality left side searched for"));
+        assert!(message.contains("equality right side"));
+        assert!(message.contains("try `(rewrite (symm ...))`"));
+    }
+
+    #[test]
     fn failing_simp_reports_simplification_steps() {
         let mut loaded = LoadedSource::new();
 
