@@ -254,6 +254,35 @@ mod tests {
     use super::*;
     use crate::{Computation, computes_to};
 
+    fn tactic_failure(error: SourceLoadError) -> (&'static str, String) {
+        let SourceLoadError::Theorem(SourceTheoremError::ProofElaborationFailed {
+            error: proof::ProofElaborationError::TacticFailed { tactic, message },
+            ..
+        }) = error
+        else {
+            panic!("expected a tactic failure");
+        };
+
+        (tactic, message)
+    }
+
+    fn assert_goal_shape_diagnostic(message: &str, reason: &str) {
+        assert!(message.contains(reason));
+        assert!(message.contains("goal.source"));
+        assert!(message.contains("goal.debug"));
+        assert!(message.contains("context.locals"));
+        assert!(message.contains("context.goal.source"));
+    }
+
+    fn assert_proof_shape_diagnostic(message: &str, reason: &str) {
+        assert!(message.contains(reason));
+        assert!(message.contains("proof.source"));
+        assert!(message.contains("proof.debug"));
+        assert!(message.contains("goal.source"));
+        assert!(message.contains("context.locals"));
+        assert!(message.contains("context.goal.source"));
+    }
+
     #[test]
     fn load_str_defines_computations_and_theorems() {
         let mut loaded = LoadedSource::new();
@@ -1055,6 +1084,273 @@ mod tests {
         assert!(message.contains("fold <definition>"));
         assert!(message.contains("immediately undone by kernel reduction"));
         assert!(message.contains("canonical forms"));
+    }
+
+    #[test]
+    fn failing_split_reports_goal_shape() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (theorem bad_split
+                  (equal nil nil)
+                  (by
+                    (split
+                      (by
+                        (eval))
+                      (by
+                        (eval)))))
+                ",
+            )
+            .expect_err("split on a non-conjunction goal should fail");
+
+        let (tactic, message) = tactic_failure(error);
+
+        assert_eq!(tactic, "split");
+        assert!(message.contains("goal is not a conjunction"));
+        assert_goal_shape_diagnostic(&message, "reason: split_goal_not_conjunction");
+    }
+
+    #[test]
+    fn failing_exists_reports_goal_shape() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (theorem bad_exists
+                  (equal nil nil)
+                  (by
+                    (exists nil
+                      (by
+                        (eval)))))
+                ",
+            )
+            .expect_err("exists on a non-existential goal should fail");
+
+        let (tactic, message) = tactic_failure(error);
+
+        assert_eq!(tactic, "exists");
+        assert!(message.contains("goal is not an existential"));
+        assert_goal_shape_diagnostic(&message, "reason: exists_goal_not_existential");
+    }
+
+    #[test]
+    fn failing_cases_reports_proof_shape() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (theorem nil_self
+                  (equal nil nil)
+                  (by
+                    (eval)))
+                (theorem bad_cases
+                  (equal nil nil)
+                  (by
+                    (cases nil_self left_case right_case)
+                    (eval)))
+                ",
+            )
+            .expect_err("cases on a non-conjunction proof should fail");
+
+        let (tactic, message) = tactic_failure(error);
+
+        assert_eq!(tactic, "cases");
+        assert!(message.contains("proof is not a conjunction"));
+        assert_proof_shape_diagnostic(&message, "reason: cases_proof_not_conjunction");
+    }
+
+    #[test]
+    fn failing_or_elim_reports_proof_shape() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (theorem nil_self
+                  (equal nil nil)
+                  (by
+                    (eval)))
+                (theorem bad_or_elim
+                  (equal nil nil)
+                  (by
+                    (or-elim
+                      nil_self
+                      left_case
+                      (by
+                        (eval))
+                      right_case
+                      (by
+                        (eval)))))
+                ",
+            )
+            .expect_err("or-elim on a non-disjunction proof should fail");
+
+        let (tactic, message) = tactic_failure(error);
+
+        assert_eq!(tactic, "or-elim");
+        assert!(message.contains("proof is not a disjunction"));
+        assert_proof_shape_diagnostic(&message, "reason: or_elim_proof_not_disjunction");
+    }
+
+    #[test]
+    fn failing_left_and_right_report_goal_shape() {
+        for (side, reason) in [
+            ("left", "reason: left_goal_not_disjunction"),
+            ("right", "reason: right_goal_not_disjunction"),
+        ] {
+            let mut loaded = LoadedSource::new();
+            let source = format!(
+                "
+                (theorem bad_{side}
+                  (equal nil nil)
+                  (by
+                    ({side}
+                      (by
+                        (eval)))))
+                "
+            );
+
+            let error = loaded
+                .load_str(&source)
+                .expect_err("left/right on a non-disjunction goal should fail");
+            let (tactic, message) = tactic_failure(error);
+
+            assert_eq!(tactic, side);
+            assert!(message.contains("goal is not a disjunction"));
+            assert_goal_shape_diagnostic(&message, reason);
+        }
+    }
+
+    #[test]
+    fn failing_list_induction_reports_goal_shape_and_predicate_mismatch() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (theorem bad_list_induction_goal
+                  (equal nil nil)
+                  (by
+                    (list-induction list
+                      (by
+                        (eval))
+                      head
+                      tail
+                      ih
+                      (by
+                        (eval)))))
+                ",
+            )
+            .expect_err("list-induction on a non-forall goal should fail");
+        let (tactic, message) = tactic_failure(error);
+
+        assert_eq!(tactic, "list-induction");
+        assert!(message.contains("goal is not a forall"));
+        assert_goal_shape_diagnostic(&message, "reason: list_induction_goal_not_forall");
+
+        let mut loaded = LoadedSource::new();
+        let error = loaded
+            .load_str(
+                "
+                (theorem bad_list_induction_predicate
+                  (forall value (is-value value)
+                    (computes-to value value))
+                  (by
+                    (list-induction value
+                      (by
+                        (eval))
+                      head
+                      tail
+                      ih
+                      (by
+                        (eval)))))
+                ",
+            )
+            .expect_err("list-induction with a non-list predicate should fail");
+        let (tactic, message) = tactic_failure(error);
+
+        assert_eq!(tactic, "list-induction");
+        assert!(message.contains("forall predicate is not an is-list predicate"));
+        assert!(message.contains("reason: list_induction_predicate_mismatch"));
+        assert!(message.contains("predicate.source: (is-value value)"));
+        assert!(message.contains("expected.source: (is-list value)"));
+        assert!(message.contains("goal.source"));
+        assert!(message.contains("context.goal.source"));
+    }
+
+    #[test]
+    fn failing_value_induction_reports_goal_shape_and_predicate_mismatch() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (theorem bad_value_induction_goal
+                  (equal nil nil)
+                  (by
+                    (value-induction value
+                      value_is_symbol
+                      (by
+                        (eval))
+                      value_is_lambda
+                      (by
+                        (eval))
+                      (by
+                        (eval))
+                      head
+                      tail
+                      head_ih
+                      tail_ih
+                      (by
+                        (eval)))))
+                ",
+            )
+            .expect_err("value-induction on a non-forall goal should fail");
+        let (tactic, message) = tactic_failure(error);
+
+        assert_eq!(tactic, "value-induction");
+        assert!(message.contains("goal is not a forall"));
+        assert_goal_shape_diagnostic(&message, "reason: value_induction_goal_not_forall");
+
+        let mut loaded = LoadedSource::new();
+        let error = loaded
+            .load_str(
+                "
+                (theorem bad_value_induction_predicate
+                  (forall list (is-list list)
+                    (computes-to list list))
+                  (by
+                    (value-induction list
+                      value_is_symbol
+                      (by
+                        (eval))
+                      value_is_lambda
+                      (by
+                        (eval))
+                      (by
+                        (eval))
+                      head
+                      tail
+                      head_ih
+                      tail_ih
+                      (by
+                        (eval)))))
+                ",
+            )
+            .expect_err("value-induction with a non-value predicate should fail");
+        let (tactic, message) = tactic_failure(error);
+
+        assert_eq!(tactic, "value-induction");
+        assert!(message.contains("forall predicate is not an is-value predicate"));
+        assert!(message.contains("reason: value_induction_predicate_mismatch"));
+        assert!(message.contains("predicate.source: (is-list list)"));
+        assert!(message.contains("expected.source: (is-value list)"));
+        assert!(message.contains("goal.source"));
+        assert!(message.contains("context.goal.source"));
     }
 
     #[test]
