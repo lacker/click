@@ -815,8 +815,12 @@ mod tests {
 
         assert_eq!(tactic, "rewrite");
         assert!(message.contains("rewrite proof is not an equality"));
+        assert!(message.contains("reason: rewrite_proof_not_equality"));
         assert!(message.contains("current goal"));
         assert!(message.contains("proof produced"));
+        assert!(message.contains("goal.source"));
+        assert!(message.contains("proof.debug"));
+        assert!(message.contains("context.goal.source"));
         assert!(message.contains("expected: an equality"));
     }
 
@@ -851,10 +855,50 @@ mod tests {
 
         assert_eq!(tactic, "rewrite");
         assert!(message.contains("goal does not contain the rewrite left side"));
+        assert!(message.contains("reason: rewrite_left_side_missing"));
         assert!(message.contains("current goal"));
         assert!(message.contains("equality left side searched for"));
         assert!(message.contains("equality right side"));
+        assert!(message.contains("rewrite.lhs.source"));
+        assert!(message.contains("rewrite.rhs.debug"));
+        assert!(message.contains("context.tactic_expr.debug"));
         assert!(message.contains("try `(rewrite (symm ...))`"));
+    }
+
+    #[test]
+    fn failing_exact_reports_structured_goal_and_proof() {
+        let mut loaded = LoadedSource::new();
+
+        let error = loaded
+            .load_str(
+                "
+                (theorem nil_is_value
+                  (is-value nil)
+                  (proof
+                    (primitive (is-value nil))))
+                (theorem bad_exact
+                  (is-list nil)
+                  (by
+                    (exact nil_is_value)))
+                ",
+            )
+            .expect_err("exact with the wrong proposition should fail");
+
+        let SourceLoadError::Theorem(SourceTheoremError::ProofElaborationFailed {
+            error: proof::ProofElaborationError::TacticFailed { tactic, message },
+            ..
+        }) = error
+        else {
+            panic!("expected an exact tactic failure");
+        };
+
+        assert_eq!(tactic, "exact");
+        assert!(message.contains("reason: exact_mismatch"));
+        assert!(message.contains("proof_expr.debug"));
+        assert!(message.contains("proof.source: (is-value nil)"));
+        assert!(message.contains("goal.source: (is-list nil)"));
+        assert!(message.contains("context.locals"));
+        assert!(message.contains("context.goal.source"));
     }
 
     #[test]
@@ -884,10 +928,15 @@ mod tests {
 
         assert_eq!(tactic, "simp");
         assert!(message.contains("simplified goal, but the sides still differ"));
+        assert!(message.contains("reason: simp_normal_forms_differ"));
         assert!(message.contains("left original"));
         assert!(message.contains("left result"));
+        assert!(message.contains("left.source"));
+        assert!(message.contains("left.result.debug"));
         assert!(message.contains("left steps"));
         assert!(message.contains("kernel reduction"));
+        assert!(message.contains("right.source"));
+        assert!(message.contains("right.result.debug"));
         assert!(message.contains("right steps"));
         assert!(message.contains("(no simplification steps)"));
     }
@@ -922,6 +971,9 @@ mod tests {
 
         assert_eq!(tactic, "simp");
         assert!(message.contains("oriented as an expansion"));
+        assert!(message.contains("reason: simp_expansion_rule"));
+        assert!(message.contains("target.source"));
+        assert!(message.contains("expanded.debug"));
         assert!(message.contains("immediately undone by kernel reduction"));
         assert!(message.contains("fold <definition>"));
         assert!(message.contains("rewrite`/`eval"));
@@ -960,6 +1012,9 @@ mod tests {
 
         assert_eq!(tactic, "simpa");
         assert!(message.contains("oriented as an expansion"));
+        assert!(message.contains("reason: simp_expansion_rule"));
+        assert!(message.contains("target.source"));
+        assert!(message.contains("expanded.debug"));
         assert!(message.contains("fold <definition>"));
         assert!(message.contains("immediately undone by kernel reduction"));
         assert!(message.contains("canonical forms"));
@@ -1169,6 +1224,9 @@ mod tests {
         assert_eq!(tactic, "specialize");
         assert!(message.contains("premise"));
         assert!(message.contains("is not available"));
+        assert!(message.contains("reason: premise_not_available"));
+        assert!(message.contains("premise.source"));
+        assert!(message.contains("context.locals"));
         assert!(message.contains("local facts in scope"));
         assert!(message.contains("nil_self") || message.contains("Symbol("));
     }
@@ -1209,9 +1267,13 @@ mod tests {
         assert_eq!(tactic, "proof application");
         assert!(message.contains("explicit computation arguments"));
         assert!(message.contains("implication premise"));
+        assert!(message.contains("reason: explicit_argument_without_forall"));
+        assert!(message.contains("argument.source"));
+        assert!(message.contains("current_proposition.debug"));
+        assert!(message.contains("context.locals"));
         assert!(message.contains("forall-bound computations"));
         assert!(message.contains("applied automatically"));
-        assert!(message.contains("local proof/fact"));
+        assert!(message.contains("argument.local_fact"));
     }
 
     #[test]

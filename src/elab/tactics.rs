@@ -4,9 +4,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::kernel::{primitive_prop_holds, structural_primitive_prop_holds};
 use crate::{
-    Computation, Context, LAMBDA_KIND_SYMBOL, Lambda, ListCase, Name, Proof, Prop,
-    SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL, Theory, alpha_eq_computation, alpha_eq_prop, equal,
-    free_symbols, is_list, is_value, substitute_prop, symbol_eq, value_kind,
+    Computation, Context, FALSE_SYMBOL, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Lambda, ListCase,
+    Name, Proof, Prop, RUNTIME_ERROR, SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL, Theory,
+    alpha_eq_computation, alpha_eq_prop, equal, free_symbols, is_list, is_value, substitute_prop,
+    symbol_eq, value_kind,
 };
 
 use super::proof::{
@@ -251,7 +252,20 @@ fn tactic_intro(
         }
         Prop::ForAll { variable, .. } => Err(tactic_failed(
             "intro",
-            format!("expected theorem binder {:?}, got {:?}", variable, symbol),
+            format!(
+                "expected theorem binder {}, got {}\n\
+                 reason: intro_binder_mismatch\n\
+                 expected_symbol.debug: {:?}\n\
+                 actual_symbol.debug: {:?}\n\
+                 {}\n\
+                 {}",
+                symbol_source(*variable),
+                symbol_source(symbol),
+                variable,
+                symbol,
+                prop_diagnostic("goal", &goal.target),
+                context_diagnostic("context.locals", &goal.context)
+            ),
         )),
         Prop::Implies(premise, conclusion) => {
             let mut next_goal = Goal {
@@ -267,7 +281,14 @@ fn tactic_intro(
         }
         _ => Err(tactic_failed(
             "intro",
-            "goal is not a forall or implication",
+            format!(
+                "goal is not a forall or implication\n\
+                 reason: intro_goal_not_binder\n\
+                 {}\n\
+                 {}",
+                prop_diagnostic("goal", &goal.target),
+                context_diagnostic("context.locals", &goal.context)
+            ),
         )),
     }
 }
@@ -286,7 +307,16 @@ fn tactic_exact(
     let Some(proven) = theory.proven_prop_in_context(&proof, &goal.context) else {
         return Err(tactic_failed(
             "exact",
-            "proof expression proves no proposition",
+            format!(
+                "proof expression proves no proposition\n\
+                 reason: exact_proof_proves_no_proposition\n\
+                 proof_expr.debug: {}\n\
+                 {}\n\
+                 {}",
+                compact_debug(proof_expr),
+                prop_diagnostic("goal", &goal.target),
+                context_diagnostic("context.locals", &goal.context)
+            ),
         ));
     };
 
@@ -295,9 +325,37 @@ fn tactic_exact(
     } else {
         Err(tactic_failed(
             "exact",
-            format!("proof proves {:?}, but goal is {:?}", proven, goal.target),
+            exact_mismatch_message(proof_expr, &proven, goal),
         ))
     }
+}
+
+fn exact_mismatch_message(proof_expr: &ProofExpr, proven: &Prop, goal: &Goal) -> String {
+    format!(
+        "proof proves {}, but goal is {}\n\
+         reason: exact_mismatch\n\
+         proof_expr.debug: {}\n\
+         {}\n\
+         {}\n\
+         {}",
+        compact_prop_source(proven),
+        compact_prop_source(&goal.target),
+        compact_debug(proof_expr),
+        prop_diagnostic("proof", proven),
+        prop_diagnostic("goal", &goal.target),
+        context_diagnostic("context.locals", &goal.context)
+    )
+}
+
+fn goal_not_equality_message(reason: &'static str, goal: &Goal) -> String {
+    format!(
+        "goal is not an equality\n\
+         reason: {reason}\n\
+         {}\n\
+         {}",
+        prop_diagnostic("goal", &goal.target),
+        context_diagnostic("context.locals", &goal.context)
+    )
 }
 
 fn tactic_assumption(goal: &Goal) -> Result<Proof, ProofElaborationError> {
@@ -306,7 +364,19 @@ fn tactic_assumption(goal: &Goal) -> Result<Proof, ProofElaborationError> {
         .find_map(|(symbol, prop)| {
             alpha_eq_prop(prop, &goal.target).then_some(Proof::Assume(*symbol))
         })
-        .ok_or_else(|| tactic_failed("assumption", "no local assumption matches the goal"))
+        .ok_or_else(|| {
+            tactic_failed(
+                "assumption",
+                format!(
+                    "no local assumption matches the goal\n\
+                     reason: assumption_not_found\n\
+                     {}\n\
+                     {}",
+                    prop_diagnostic("goal", &goal.target),
+                    context_diagnostic("context.locals", &goal.context)
+                ),
+            )
+        })
 }
 
 fn tactic_have(
@@ -356,7 +426,10 @@ fn tactic_have(
 
 fn tactic_eval(limit: usize, theory: &Theory, goal: &Goal) -> Result<Proof, ProofElaborationError> {
     let Prop::Equal(left, right) = &goal.target else {
-        return Err(tactic_failed("eval", "goal is not an equality"));
+        return Err(tactic_failed(
+            "eval",
+            goal_not_equality_message("eval_goal_not_equality", goal),
+        ));
     };
 
     proof_by_reduction_to_computation_in_theory_and_context(
@@ -389,7 +462,10 @@ fn tactic_simp(
     goal: &Goal,
 ) -> Result<Proof, ProofElaborationError> {
     let Prop::Equal(left, right) = &goal.target else {
-        return Err(tactic_failed("simp", "goal is not an equality"));
+        return Err(tactic_failed(
+            "simp",
+            goal_not_equality_message("simp_goal_not_equality", goal),
+        ));
     };
 
     let goal_result = simplify_equality("simp", left, right, rules, theory, &goal.context)?;
@@ -411,7 +487,10 @@ fn tactic_simpa(
     goal: &Goal,
 ) -> Result<Proof, ProofElaborationError> {
     let Prop::Equal(goal_left, goal_right) = &goal.target else {
-        return Err(tactic_failed("simpa", "goal is not an equality"));
+        return Err(tactic_failed(
+            "simpa",
+            goal_not_equality_message("simpa_goal_not_equality", goal),
+        ));
     };
 
     let goal_result =
@@ -429,12 +508,38 @@ fn tactic_simpa(
     let proof = proof_expr_to_proof_in_context(proof_expr, theory, &goal.context)?;
     let prop = theory
         .proven_prop_in_context(&proof, &goal.context)
-        .ok_or_else(|| tactic_failed("simpa", "using proof proves no proposition"))?;
+        .ok_or_else(|| {
+            tactic_failed(
+                "simpa",
+                format!(
+                    "using proof proves no proposition\n\
+                     reason: simpa_using_proof_proves_no_proposition\n\
+                     using_proof_expr.debug: {}\n\
+                     {}\n\
+                     {}",
+                    compact_debug(proof_expr),
+                    prop_diagnostic("goal", &goal.target),
+                    context_diagnostic("context.locals", &goal.context)
+                ),
+            )
+        })?;
     let (proof, prop) = finish_available_implications("simpa", proof, prop, theory, &goal.context)?;
     let Prop::Equal(proof_left, proof_right) = prop else {
         return Err(tactic_failed(
             "simpa",
-            format!("using proof proves {:?}, not an equality", prop),
+            format!(
+                "using proof proves {}, not an equality\n\
+                 reason: simpa_using_proof_not_equality\n\
+                 using_proof_expr.debug: {}\n\
+                 {}\n\
+                 {}\n\
+                 {}",
+                compact_prop_source(&prop),
+                compact_debug(proof_expr),
+                prop_diagnostic("using_proof", &prop),
+                prop_diagnostic("goal", &goal.target),
+                context_diagnostic("context.locals", &goal.context)
+            ),
         ));
     };
     let proof_result = simplify_equality(
@@ -1023,15 +1128,32 @@ fn simp_failure_message(
 ) -> String {
     format!(
         "simplified goal, but the sides still differ\n\
+         reason: simp_normal_forms_differ\n\
          left original: {}\n\
          left result: {}\n\
+         left.source: {}\n\
+         left.result.source: {}\n\
+         left.debug: {}\n\
+         left.result.debug: {}\n\
          left steps:\n{}\n\
          right original: {}\n\
          right result: {}\n\
+         right.source: {}\n\
+         right.result.source: {}\n\
+         right.debug: {}\n\
+         right.result.debug: {}\n\
          right steps:\n{}",
+        compact_computation_source(left_original),
+        compact_computation_source(&left_result.result),
+        compact_computation_source(left_original),
+        compact_computation_source(&left_result.result),
         compact_debug(left_original),
         compact_debug(&left_result.result),
         format_simp_trace(&left_result.trace),
+        compact_computation_source(right_original),
+        compact_computation_source(&right_result.result),
+        compact_computation_source(right_original),
+        compact_computation_source(&right_result.result),
         compact_debug(right_original),
         compact_debug(&right_result.result),
         format_simp_trace(&right_result.trace)
@@ -1050,27 +1172,60 @@ fn simpa_failure_message(
 ) -> String {
     format!(
         "simplified goal and using proof, but they do not match\n\
+         reason: simpa_normal_forms_differ\n\
          goal left original: {}\n\
          goal left result: {}\n\
+         goal.left.source: {}\n\
+         goal.left.result.source: {}\n\
+         goal.left.debug: {}\n\
+         goal.left.result.debug: {}\n\
          goal left steps:\n{}\n\
          goal right original: {}\n\
          goal right result: {}\n\
+         goal.right.source: {}\n\
+         goal.right.result.source: {}\n\
+         goal.right.debug: {}\n\
+         goal.right.result.debug: {}\n\
          goal right steps:\n{}\n\
          using left original: {}\n\
          using left result: {}\n\
+         using.left.source: {}\n\
+         using.left.result.source: {}\n\
+         using.left.debug: {}\n\
+         using.left.result.debug: {}\n\
          using left steps:\n{}\n\
          using right original: {}\n\
          using right result: {}\n\
+         using.right.source: {}\n\
+         using.right.result.source: {}\n\
+         using.right.debug: {}\n\
+         using.right.result.debug: {}\n\
          using right steps:\n{}",
+        compact_computation_source(goal_left_original),
+        compact_computation_source(&goal_left_result.result),
+        compact_computation_source(goal_left_original),
+        compact_computation_source(&goal_left_result.result),
         compact_debug(goal_left_original),
         compact_debug(&goal_left_result.result),
         format_simp_trace(&goal_left_result.trace),
+        compact_computation_source(goal_right_original),
+        compact_computation_source(&goal_right_result.result),
+        compact_computation_source(goal_right_original),
+        compact_computation_source(&goal_right_result.result),
         compact_debug(goal_right_original),
         compact_debug(&goal_right_result.result),
         format_simp_trace(&goal_right_result.trace),
+        compact_computation_source(proof_left_original),
+        compact_computation_source(&proof_left_result.result),
+        compact_computation_source(proof_left_original),
+        compact_computation_source(&proof_left_result.result),
         compact_debug(proof_left_original),
         compact_debug(&proof_left_result.result),
         format_simp_trace(&proof_left_result.trace),
+        compact_computation_source(proof_right_original),
+        compact_computation_source(&proof_right_result.result),
+        compact_computation_source(proof_right_original),
+        compact_computation_source(&proof_right_result.result),
         compact_debug(proof_right_original),
         compact_debug(&proof_right_result.result),
         format_simp_trace(&proof_right_result.trace)
@@ -1115,11 +1270,16 @@ fn record_simp_state(
 fn simp_cycle_message(first_seen_step: usize, repeated: &Computation, trace: &SimpTrace) -> String {
     format!(
         "simplification cycle detected after {} steps\n\
+         reason: simp_cycle\n\
          repeated term first seen after {first_seen_step} steps: {}\n\
+         repeated.source: {}\n\
+         repeated.debug: {}\n\
          this usually means a simp rule is oriented as an expansion that kernel reduction can undo; \
          use explicit `rewrite`, `eval`, or `fold` for one-shot expansion, or orient simp rules toward canonical forms\n\
          steps:\n{}",
         trace.total_steps(),
+        compact_computation_source(repeated),
+        compact_computation_source(repeated),
         compact_debug(repeated),
         format_simp_trace(trace)
     )
@@ -1138,12 +1298,23 @@ fn simp_expansion_rule_message(
 
     format!(
         "simp rule {} ({}) is oriented as an expansion\n\
+         reason: simp_expansion_rule\n\
+         rule_expr.debug: {}\n\
+         target.source: {}\n\
+         target.debug: {}\n\
+         expanded.source: {}\n\
+         expanded.debug: {}\n\
          rewriting {} to {} is immediately undone by kernel reduction;{} \
          or use explicit `rewrite`/`eval` for one-shot expansion; simp rules should move toward canonical forms",
         rule_index + 1,
         compact_debug(rule),
+        compact_debug(rule),
+        compact_computation_source(target),
         compact_debug(target),
+        compact_computation_source(expanded),
         compact_debug(expanded),
+        compact_computation_source(target),
+        compact_computation_source(expanded),
         fold_hint
     )
 }
@@ -1162,6 +1333,185 @@ fn compact_debug(value: &impl std::fmt::Debug) -> String {
     text.truncate(cutoff);
     text.push_str("...");
     text
+}
+
+fn compact_source(text: String) -> String {
+    if text.chars().count() <= SIMP_TRACE_VALUE_LIMIT {
+        return text;
+    }
+
+    let mut text = text;
+    let cutoff = text
+        .char_indices()
+        .nth(SIMP_TRACE_VALUE_LIMIT)
+        .map(|(index, _)| index)
+        .unwrap_or(text.len());
+    text.truncate(cutoff);
+    text.push_str("...");
+    text
+}
+
+fn symbol_source(symbol: Symbol) -> String {
+    match symbol {
+        TRUE_SYMBOL => ":true".to_owned(),
+        FALSE_SYMBOL => ":false".to_owned(),
+        SYMBOL_KIND_SYMBOL => ":symbol".to_owned(),
+        LAMBDA_KIND_SYMBOL => ":lambda".to_owned(),
+        LIST_KIND_SYMBOL => ":list".to_owned(),
+        _ => format!("%s{}", symbol.0),
+    }
+}
+
+fn name_source(name: Name) -> String {
+    format!("#n{}", name.0)
+}
+
+fn computation_source(computation: &Computation) -> String {
+    match computation {
+        Computation::Apply { function, argument } => {
+            format!(
+                "({} {})",
+                computation_source(function),
+                computation_source(argument)
+            )
+        }
+        Computation::Lambda(lambda) => {
+            format!(
+                "(lambda {} {})",
+                symbol_source(lambda.parameter),
+                computation_source(&lambda.body)
+            )
+        }
+        Computation::Nil => "nil".to_owned(),
+        Computation::Cons { head, tail } => {
+            format!(
+                "(cons {} {})",
+                computation_source(head),
+                computation_source(tail)
+            )
+        }
+        Computation::Head(list) => format!("(head {})", computation_source(list)),
+        Computation::Tail(list) => format!("(tail {})", computation_source(list)),
+        Computation::ListCase(list_case) => {
+            format!(
+                "(list-case {} {} {} {})",
+                computation_source(&list_case.list),
+                computation_source(&list_case.nil),
+                symbol_source(list_case.cons),
+                computation_source(&list_case.cons_case)
+            )
+        }
+        Computation::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            format!(
+                "(if {} {} {})",
+                computation_source(condition),
+                computation_source(then_branch),
+                computation_source(else_branch)
+            )
+        }
+        Computation::SymbolEq { left, right } => {
+            format!(
+                "(symbol-eq {} {})",
+                computation_source(left),
+                computation_source(right)
+            )
+        }
+        Computation::ValueKind(value) => format!("(value-kind {})", computation_source(value)),
+        Computation::Ref(name) => name_source(*name),
+        Computation::Error(error) if *error == RUNTIME_ERROR => "(error 0)".to_owned(),
+        Computation::Error(error) => format!("(error {})", error.0),
+        Computation::Diverge => "diverge".to_owned(),
+        Computation::Var(symbol) => symbol_source(*symbol),
+        Computation::Quote(symbol) => format!("(quote {})", symbol_source(*symbol)),
+    }
+}
+
+fn prop_source(prop: &Prop) -> String {
+    match prop {
+        Prop::Absurd => "(absurd)".to_owned(),
+        Prop::Equal(left, right) => {
+            format!(
+                "(equal {} {})",
+                computation_source(left),
+                computation_source(right)
+            )
+        }
+        Prop::IsValue(computation) => format!("(is-value {})", computation_source(computation)),
+        Prop::IsList(computation) => format!("(is-list {})", computation_source(computation)),
+        Prop::IsEffect(computation) => format!("(is-effect {})", computation_source(computation)),
+        Prop::IsOutcome(computation) => {
+            format!("(is-outcome {})", computation_source(computation))
+        }
+        Prop::Implies(premise, conclusion) => {
+            format!(
+                "(implies {} {})",
+                prop_source(premise),
+                prop_source(conclusion)
+            )
+        }
+        Prop::ForAll { variable, body } => {
+            format!(
+                "(forall {} {})",
+                symbol_source(*variable),
+                prop_source(body)
+            )
+        }
+        Prop::Exists { variable, body } => {
+            format!(
+                "(exists {} {})",
+                symbol_source(*variable),
+                prop_source(body)
+            )
+        }
+        Prop::And(left, right) => format!("(and {} {})", prop_source(left), prop_source(right)),
+        Prop::Or(left, right) => format!("(or {} {})", prop_source(left), prop_source(right)),
+    }
+}
+
+fn compact_computation_source(computation: &Computation) -> String {
+    compact_source(computation_source(computation))
+}
+
+fn compact_prop_source(prop: &Prop) -> String {
+    compact_source(prop_source(prop))
+}
+
+fn prop_diagnostic(label: &str, prop: &Prop) -> String {
+    format!(
+        "{label}.source: {}\n{label}.debug: {}",
+        compact_prop_source(prop),
+        compact_debug(prop)
+    )
+}
+
+fn computation_diagnostic(label: &str, computation: &Computation) -> String {
+    format!(
+        "{label}.source: {}\n{label}.debug: {}",
+        compact_computation_source(computation),
+        compact_debug(computation)
+    )
+}
+
+fn context_diagnostic(label: &str, context: &Context) -> String {
+    if context.is_empty() {
+        return format!("{label}: (empty)");
+    }
+
+    let mut facts = context.iter().collect::<Vec<_>>();
+    facts.sort_by_key(|(symbol, _)| symbol.0);
+    let mut lines = vec![format!("{label}:")];
+    for (symbol, prop) in facts {
+        lines.push(format!(
+            "  {}: {}",
+            symbol_source(*symbol),
+            compact_prop_source(prop)
+        ));
+    }
+    lines.join("\n")
 }
 
 fn simp_child(
@@ -1459,7 +1809,14 @@ fn tactic_apply(
     } else {
         Err(tactic_failed(
             "apply",
-            format!("proof concludes {:?}, but goal is {:?}", prop, goal.target),
+            proof_goal_mismatch_message(
+                "apply_mismatch",
+                Some(theorem),
+                Some(arguments),
+                &prop,
+                &goal.target,
+                &goal.context,
+            ),
         ))
     }
 }
@@ -1631,7 +1988,14 @@ fn finish_implications(
                 return match target {
                     Some(target) => Err(tactic_failed(
                         tactic,
-                        format!("proof concludes {:?}, but goal is {:?}", prop, target),
+                        proof_goal_mismatch_message(
+                            "proof_goal_mismatch",
+                            None,
+                            None,
+                            &prop,
+                            target,
+                            context,
+                        ),
                     )),
                     None => Ok((proof, prop)),
                 };
@@ -1672,7 +2036,12 @@ fn explicit_argument_error_message(
         matches!(argument, Computation::Var(symbol) if context.contains_key(symbol));
     let local_fact = match argument {
         Computation::Var(symbol) => context.get(symbol).map(|prop| {
-            format!("\nargument {symbol:?} is a local proof/fact with proposition: {prop:?}")
+            format!(
+                "\nargument.local_fact.symbol: {}\nargument.local_fact.prop.source: {}\nargument.local_fact.prop.debug: {}",
+                symbol_source(*symbol),
+                compact_prop_source(prop),
+                compact_debug(prop)
+            )
         }),
         _ => None,
     }
@@ -1688,28 +2057,46 @@ fn explicit_argument_error_message(
             concat!(
                 "too many explicit computation arguments; the proof is waiting for an ",
                 "implication premise, not another forall argument\n",
-                "next explicit argument: {argument:?}{local_fact}\n",
-                "remaining premise: {premise:?}\n",
+                "reason: explicit_argument_hit_implication\n",
+                "next explicit argument: {argument_source}{local_fact}\n",
+                "argument.source: {argument_source}\n",
+                "argument.debug: {argument_debug}\n",
+                "remaining premise: {premise_source}\n",
+                "remaining_premise.source: {premise_source}\n",
+                "remaining_premise.debug: {premise_debug}\n",
+                "{context}\n",
                 "explicit proof-application arguments instantiate forall-bound computations only; ",
                 "implication premises are taken from local assumptions and applied automatically ",
                 "when available. Put the premise in scope with `intro`/`have`, then use `exact` ",
                 "or `specialize` without passing that proof as an argument"
             ),
-            argument = argument,
+            argument_source = compact_computation_source(argument),
+            argument_debug = compact_debug(argument),
             local_fact = local_fact,
-            premise = premise
+            premise_source = compact_prop_source(premise),
+            premise_debug = compact_debug(premise),
+            context = context_diagnostic("context.locals", context)
         ),
         _ => format!(
             concat!(
                 "too many explicit computation arguments; proof has no remaining forall binder ",
-                "for argument {argument:?}{local_fact}\n",
-                "current proposition: {prop:?}\n",
+                "for argument {argument_source}{local_fact}\n",
+                "reason: explicit_argument_without_forall\n",
+                "argument.source: {argument_source}\n",
+                "argument.debug: {argument_debug}\n",
+                "current proposition: {prop_source}\n",
+                "current_proposition.source: {prop_source}\n",
+                "current_proposition.debug: {prop_debug}\n",
+                "{context}\n",
                 "explicit proof-application arguments instantiate forall-bound computations only",
                 "{local_fact_hint}"
             ),
-            argument = argument,
+            argument_source = compact_computation_source(argument),
+            argument_debug = compact_debug(argument),
             local_fact = local_fact,
-            prop = prop,
+            prop_source = compact_prop_source(prop),
+            prop_debug = compact_debug(prop),
+            context = context_diagnostic("context.locals", context),
             local_fact_hint = local_fact_hint
         ),
     }
@@ -1744,9 +2131,14 @@ fn available_prop_proof(prop: &Prop, context: &Context) -> Result<Proof, ProofEl
 
 fn unavailable_premise_message(premise: &Prop, context: &Context) -> String {
     format!(
-        "premise {:?} is not available; {}",
-        premise,
-        local_facts_message(context)
+        "premise {} is not available; {}\n\
+         reason: premise_not_available\n\
+         {}\n\
+         {}",
+        compact_prop_source(premise),
+        local_facts_message(context),
+        prop_diagnostic("premise", premise),
+        context_diagnostic("context.locals", context)
     )
 }
 
@@ -1759,11 +2151,47 @@ fn local_facts_message(context: &Context) -> String {
     facts.sort_by_key(|(symbol, _)| symbol.0);
     let facts = facts
         .into_iter()
-        .map(|(symbol, prop)| format!("{symbol:?}: {prop:?}"))
+        .map(|(symbol, prop)| format!("{}: {}", symbol_source(*symbol), compact_prop_source(prop)))
         .collect::<Vec<_>>()
         .join("; ");
 
     format!("local facts in scope: {facts}")
+}
+
+fn proof_goal_mismatch_message(
+    reason: &'static str,
+    theorem: Option<Name>,
+    arguments: Option<&[Computation]>,
+    proof_prop: &Prop,
+    goal: &Prop,
+    context: &Context,
+) -> String {
+    let theorem = theorem
+        .map(|theorem| format!("\ntheorem: {}", name_source(theorem)))
+        .unwrap_or_default();
+    let arguments = arguments
+        .map(|arguments| {
+            let arguments = arguments
+                .iter()
+                .map(compact_computation_source)
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("\narguments.source: ({arguments})")
+        })
+        .unwrap_or_default();
+
+    format!(
+        "proof concludes {}, but goal is {}\n\
+         reason: {reason}{theorem}{arguments}\n\
+         {}\n\
+         {}\n\
+         {}",
+        compact_prop_source(proof_prop),
+        compact_prop_source(goal),
+        prop_diagnostic("proof", proof_prop),
+        prop_diagnostic("goal", goal),
+        context_diagnostic("context.locals", context)
+    )
 }
 
 fn apply_structural_premise(
@@ -2125,19 +2553,25 @@ fn tactic_rewrite(
 fn rewrite_missing_proven_prop_message(goal: &Prop) -> String {
     format!(
         "rewrite proof proves no proposition\n\
-         current goal: {}",
-        compact_debug(goal)
+         reason: rewrite_proof_proves_no_proposition\n\
+         {}",
+        prop_diagnostic("goal", goal)
     )
 }
 
 fn rewrite_non_equality_message(goal: &Prop, proven: &Prop) -> String {
     format!(
         "rewrite proof is not an equality\n\
+         reason: rewrite_proof_not_equality\n\
          current goal: {}\n\
          proof produced: {}\n\
+         {}\n\
+         {}\n\
          expected: an equality whose left side occurs in the current goal",
-        compact_debug(goal),
-        compact_debug(proven)
+        compact_prop_source(goal),
+        compact_prop_source(proven),
+        prop_diagnostic("goal", goal),
+        prop_diagnostic("proof", proven)
     )
 }
 
@@ -2155,12 +2589,19 @@ fn rewrite_missing_left_message(
 
     format!(
         "goal does not contain the rewrite left side\n\
+         reason: rewrite_left_side_missing\n\
          current goal: {}\n\
          equality left side searched for: {}\n\
-         equality right side: {}{}",
-        compact_debug(goal),
-        compact_debug(left),
-        compact_debug(right),
+         equality right side: {}\n\
+         {}\n\
+         {}\n\
+         {}{}",
+        compact_prop_source(goal),
+        compact_computation_source(left),
+        compact_computation_source(right),
+        prop_diagnostic("goal", goal),
+        computation_diagnostic("rewrite.lhs", left),
+        computation_diagnostic("rewrite.rhs", right),
         hint
     )
 }
@@ -2180,7 +2621,21 @@ fn tactic_fold(
     let Some(template) = rewrite_template(&goal.target, &body, placeholder) else {
         return Err(tactic_failed(
             "fold",
-            format!("goal does not contain the definition body {:?}", body),
+            format!(
+                "goal does not contain the definition body {}\n\
+                 reason: fold_definition_body_missing\n\
+                 definition: {}\n\
+                 {}\n\
+                 {}\n\
+                 folded.source: {}\n\
+                 folded.debug: {}",
+                compact_computation_source(&body),
+                name_source(definition),
+                prop_diagnostic("goal", &goal.target),
+                computation_diagnostic("definition.body", &body),
+                compact_computation_source(&folded),
+                compact_debug(&folded)
+            ),
         ));
     };
 
@@ -2410,15 +2865,28 @@ fn tactic_calc(
     goal: &Goal,
 ) -> Result<Proof, ProofElaborationError> {
     let Prop::Equal(goal_left, goal_right) = &goal.target else {
-        return Err(tactic_failed("calc", "goal is not an equality"));
+        return Err(tactic_failed(
+            "calc",
+            goal_not_equality_message("calc_goal_not_equality", goal),
+        ));
     };
 
     if !alpha_eq_computation(start, goal_left) {
         return Err(tactic_failed(
             "calc",
             format!(
-                "calc starts at {:?}, but goal starts at {:?}",
-                start, goal_left
+                "calc starts at {}, but goal starts at {}\n\
+                 reason: calc_start_mismatch\n\
+                 {}\n\
+                 {}\n\
+                 {}\n\
+                 {}",
+                compact_computation_source(start),
+                compact_computation_source(goal_left),
+                computation_diagnostic("calc.start", start),
+                computation_diagnostic("goal.left", goal_left),
+                prop_diagnostic("goal", &goal.target),
+                context_diagnostic("context.locals", &goal.context)
             ),
         ));
     }
@@ -2443,13 +2911,35 @@ fn tactic_calc(
         return Err(tactic_failed(
             "calc",
             format!(
-                "calc ends at {:?}, but goal ends at {:?}",
-                previous, goal_right
+                "calc ends at {}, but goal ends at {}\n\
+                 reason: calc_end_mismatch\n\
+                 {}\n\
+                 {}\n\
+                 {}\n\
+                 {}",
+                compact_computation_source(&previous),
+                compact_computation_source(goal_right),
+                computation_diagnostic("calc.end", &previous),
+                computation_diagnostic("goal.right", goal_right),
+                prop_diagnostic("goal", &goal.target),
+                context_diagnostic("context.locals", &goal.context)
             ),
         ));
     }
 
-    trans_chain(proofs).ok_or_else(|| tactic_failed("calc", "calc has no steps"))
+    trans_chain(proofs).ok_or_else(|| {
+        tactic_failed(
+            "calc",
+            format!(
+                "calc has no steps\n\
+                 reason: calc_empty\n\
+                 {}\n\
+                 {}",
+                prop_diagnostic("goal", &goal.target),
+                context_diagnostic("context.locals", &goal.context)
+            ),
+        )
+    })
 }
 
 fn proof_script_to_proof_for_goal(
@@ -2522,7 +3012,13 @@ fn add_goal_context(
             ProofElaborationError::TacticFailed {
                 tactic,
                 message: format!(
-                    "{message}; while running {tactic_expr:?}; while proving {target:?}"
+                    "{message}\n\
+                     context.tactic_expr.debug: {}\n\
+                     context.goal.source: {}\n\
+                     context.goal.debug: {}",
+                    compact_debug(tactic_expr),
+                    compact_prop_source(target),
+                    compact_debug(target)
                 ),
             }
         }
