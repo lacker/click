@@ -3,6 +3,7 @@
 mod diagnostics;
 pub(crate) mod loader;
 pub(crate) mod proof;
+mod simp;
 pub(crate) mod source;
 pub(crate) mod tactics;
 
