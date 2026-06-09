@@ -95,6 +95,21 @@ goal and the equality proven by `proof`, then closes the goal if the simplified
 sides match. `(simpa only rule ...)` is the proof-free form and behaves like a
 terminal simplification proof.
 
+When a proof needs the finalized result of a computation, use `obtain` to name
+that result and its computation proof. For example, `(obtain sum sum_proof
+(add_computes_to_list left right) ...)` introduces a value `sum` and a proof
+that `(add left right)` computes to `sum`. Later steps should use `sum_proof`
+directly with `exact` when that is the current goal, or with `rewrite`, `simp
+only`, or `simpa only` to move between the named witness and the original
+computation. This is the same proof shape as Lean code like `obtain <sum,
+hsum> := add_computes_to_list left right` followed by `exact hsum`, `rw
+[hsum]`, or `simpa [hsum] using ...`: it is just existential elimination plus
+rewriting, not a special Click-only proof concept.
+
+By convention, name the computation proof after the witness, such as
+`sum_proof` for `sum`; use a more specific proof name only when destructing an
+existential that carries additional semantic facts.
+
 Propositions can talk about arbitrary computations. Kernel quantifiers are
 plain binders. Source syntax may attach a predicate to a quantifier as
 shorthand: `(forall x P Q)` elaborates to `forall x. P -> Q`, and
