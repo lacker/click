@@ -151,6 +151,65 @@
                 (by
                   (exact else_branch))))))))))
 
+(theorem if_false_result_with_true_then
+  (forall condition
+    (forall else_branch
+      (implies
+        (computes-to
+          (if condition (quote :true) else_branch)
+          (quote :false))
+        (and
+          (computes-to condition (quote :false))
+          (computes-to else_branch (quote :false))))))
+  (by
+    (intro condition)
+    (intro else_branch)
+    (have condition_is_bool
+      (is-bool condition)
+      (proof
+        (if-value-condition-bool (assume else_branch)))
+      (by
+        (or-elim condition_is_bool
+          condition_true
+          (by
+            (have impossible_eq
+              (computes-to (quote :true) (quote :false))
+              (by
+                (calc
+                  (quote :true)
+                  (==
+                    (if condition (quote :true) else_branch)
+                    (by
+                      (simpa only condition_true)))
+                  (==
+                    (quote :false)
+                    (by
+                      (exact else_branch)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (and
+                      (computes-to condition (quote :false))
+                      (computes-to else_branch (quote :false))))))))
+          condition_false
+          (by
+            (split
+              (by
+                (exact condition_false))
+              (by
+                (calc
+                  else_branch
+                  (==
+                    (if condition (quote :true) else_branch)
+                    (by
+                      (simpa only condition_false)))
+                  (==
+                    (quote :false)
+                    (by
+                      (exact else_branch)))))))))))
+  )
+
 (theorem symbol_eq_unit_unit
   (computes-to
     (symbol-eq (quote unit) (quote unit))

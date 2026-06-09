@@ -290,6 +290,19 @@
             (filter predicate (tail cell)))
           (filter predicate (tail cell)))))))
 
+(def reject
+  (lambda predicate
+    (lambda list
+      (list-case list
+        nil
+        cell
+        (if
+          (predicate (head cell))
+          (reject predicate (tail cell))
+          (cons
+            (head cell)
+            (reject predicate (tail cell))))))))
+
 (def partition
   (lambda predicate
     (lambda list

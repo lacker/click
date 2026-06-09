@@ -1064,6 +1064,52 @@
     (intro value)
     (eval)))
 
+(theorem some_tag_from_computation
+  (forall computation
+    (forall value (is-value value)
+      (implies
+        (computes-to computation (some value))
+        (computes-to
+          (head computation)
+          (quote :some)))))
+  (by
+    (intro computation)
+    (intro value)
+    (intro computation_is_some)
+    (calc
+      (head computation)
+      (==
+        (head (some value))
+        (by
+          (simpa only computation_is_some)))
+      (==
+        (quote :some)
+        (by
+          (exact some_tag value))))))
+
+(theorem some_value_from_computation
+  (forall computation
+    (forall value (is-value value)
+      (implies
+        (computes-to computation (some value))
+        (computes-to
+          (head (tail computation))
+          value))))
+  (by
+    (intro computation)
+    (intro value)
+    (intro computation_is_some)
+    (calc
+      (head (tail computation))
+      (==
+        (head (tail (some value)))
+        (by
+          (simpa only computation_is_some)))
+      (==
+        value
+        (by
+          (exact some_value value))))))
+
 (theorem intercalate_cons_computes_to_list
   (forall separator (is-list separator)
     (forall tail (is-list tail)
@@ -1763,6 +1809,45 @@
     (intro predicate_false)
     (simp only predicate_false)))
 
+(theorem reject_nil
+  (forall predicate (is-value predicate)
+    (computes-to (reject predicate nil) nil))
+  (by
+    (intro predicate)
+    (eval)))
+
+(theorem reject_cons_true
+  (forall predicate (is-value predicate)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (predicate head) (quote :true))
+          (computes-to
+            (reject predicate (cons head tail))
+            (reject predicate tail))))))
+  (by
+    (intro predicate)
+    (intro head)
+    (intro tail)
+    (intro predicate_true)
+    (simp only predicate_true)))
+
+(theorem reject_cons_false
+  (forall predicate (is-value predicate)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (predicate head) (quote :false))
+          (computes-to
+            (reject predicate (cons head tail))
+            (cons head (reject predicate tail)))))))
+  (by
+    (intro predicate)
+    (intro head)
+    (intro tail)
+    (intro predicate_false)
+    (simp only predicate_false)))
+
 (theorem partition_nil
   (forall predicate (is-value predicate)
     (computes-to
@@ -2137,6 +2222,58 @@
                     filtered_tail
                     (by
                       (exact filtered_tail_proof))))))))))))
+
+(theorem reject_computes_to_list
+  (forall predicate (is-value predicate)
+    (implies
+      (forall value (is-value value)
+        (is-bool (predicate value)))
+      (forall list (is-list list)
+        (computes-to-list result (reject predicate list)))))
+  (by
+    (intro predicate)
+    (intro predicate_returns_bool)
+    (list-induction list
+      (by
+        (exists nil
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (or-elim
+          (predicate_returns_bool head)
+          predicate_true
+          (by
+            (obtain rejected_tail rejected_tail_proof induction_hypothesis)
+            (exists rejected_tail
+              (by
+                (calc
+                  (reject predicate (cons head tail))
+                  (==
+                    (reject predicate tail)
+                    (by
+                      (apply reject_cons_true predicate head tail)))
+                  (==
+                    rejected_tail
+                    (by
+                      (exact rejected_tail_proof)))))))
+          predicate_false
+          (by
+            (obtain rejected_tail rejected_tail_proof induction_hypothesis)
+            (exists (cons head rejected_tail)
+              (by
+                (calc
+                  (reject predicate (cons head tail))
+                  (==
+                    (cons head (reject predicate tail))
+                    (by
+                      (apply reject_cons_false predicate head tail)))
+                  (==
+                    (cons head rejected_tail)
+                    (by
+                      (simpa only rejected_tail_proof))))))))))))
 
 (theorem any_computes_to_bool
   (forall predicate (is-value predicate)
