@@ -137,6 +137,14 @@ pub fn drop_definition() -> Computation {
     definition("drop")
 }
 
+pub fn nth() -> Computation {
+    computation_ref("nth")
+}
+
+pub fn nth_definition() -> Computation {
+    definition("nth")
+}
+
 pub fn replicate() -> Computation {
     computation_ref("replicate")
 }
@@ -241,12 +249,52 @@ pub fn all_definition() -> Computation {
     definition("all")
 }
 
+pub fn find() -> Computation {
+    computation_ref("find")
+}
+
+pub fn find_definition() -> Computation {
+    definition("find")
+}
+
 pub fn all_lists() -> Computation {
     computation_ref("all-lists")
 }
 
 pub fn all_lists_definition() -> Computation {
     definition("all-lists")
+}
+
+pub fn none() -> Computation {
+    computation_ref("none")
+}
+
+pub fn none_definition() -> Computation {
+    definition("none")
+}
+
+pub fn some() -> Computation {
+    computation_ref("some")
+}
+
+pub fn some_definition() -> Computation {
+    definition("some")
+}
+
+pub fn is_none() -> Computation {
+    computation_ref("is-none")
+}
+
+pub fn is_none_definition() -> Computation {
+    definition("is-none")
+}
+
+pub fn is_some() -> Computation {
+    computation_ref("is-some")
+}
+
+pub fn is_some_definition() -> Computation {
+    definition("is-some")
 }
 
 pub fn is_symbol_definition() -> Computation {
@@ -523,6 +571,22 @@ pub fn drop_computes_to_list_source_theorem() -> Prop {
     theorem_prop("drop_computes_to_list")
 }
 
+pub fn nth_zero_nil_source_theorem() -> Prop {
+    theorem_prop("nth_zero_nil")
+}
+
+pub fn nth_zero_cons_source_theorem() -> Prop {
+    theorem_prop("nth_zero_cons")
+}
+
+pub fn nth_cons_nil_source_theorem() -> Prop {
+    theorem_prop("nth_cons_nil")
+}
+
+pub fn nth_cons_cons_source_theorem() -> Prop {
+    theorem_prop("nth_cons_cons")
+}
+
 pub fn replicate_zero_source_theorem() -> Prop {
     theorem_prop("replicate_zero")
 }
@@ -577,6 +641,22 @@ pub fn is_list_value_true_implies_is_list_source_theorem() -> Prop {
 
 pub fn all_lists_cons_true_source_theorem() -> Prop {
     theorem_prop("all_lists_cons_true")
+}
+
+pub fn none_is_none_source_theorem() -> Prop {
+    theorem_prop("none_is_none")
+}
+
+pub fn some_is_none_source_theorem() -> Prop {
+    theorem_prop("some_is_none")
+}
+
+pub fn none_is_some_source_theorem() -> Prop {
+    theorem_prop("none_is_some")
+}
+
+pub fn some_is_some_source_theorem() -> Prop {
+    theorem_prop("some_is_some")
 }
 
 pub fn intercalate_cons_computes_to_list_source_theorem() -> Prop {
@@ -709,6 +789,18 @@ pub fn any_cons_false_source_theorem() -> Prop {
 
 pub fn any_computes_to_bool_source_theorem() -> Prop {
     theorem_prop("any_computes_to_bool")
+}
+
+pub fn find_nil_source_theorem() -> Prop {
+    theorem_prop("find_nil")
+}
+
+pub fn find_cons_true_source_theorem() -> Prop {
+    theorem_prop("find_cons_true")
+}
+
+pub fn find_cons_false_source_theorem() -> Prop {
+    theorem_prop("find_cons_false")
 }
 
 pub fn value_eq_true_true_source_theorem() -> Prop {
@@ -918,6 +1010,10 @@ pub fn drop_call(count: Computation, list: Computation) -> Computation {
     apply(apply(drop(), count), list)
 }
 
+pub fn nth_call(index: Computation, list: Computation) -> Computation {
+    apply(apply(nth(), index), list)
+}
+
 pub fn replicate_call(count: Computation, value: Computation) -> Computation {
     apply(apply(replicate(), count), value)
 }
@@ -978,8 +1074,24 @@ pub fn all_call(predicate: Computation, list: Computation) -> Computation {
     apply(apply(all(), predicate), list)
 }
 
+pub fn find_call(predicate: Computation, list: Computation) -> Computation {
+    apply(apply(find(), predicate), list)
+}
+
 pub fn all_lists_call(lists: Computation) -> Computation {
     apply(all_lists(), lists)
+}
+
+pub fn some_call(value: Computation) -> Computation {
+    apply(some(), value)
+}
+
+pub fn is_none_call(option: Computation) -> Computation {
+    apply(is_none(), option)
+}
+
+pub fn is_some_call(option: Computation) -> Computation {
+    apply(is_some(), option)
 }
 
 pub fn is_symbol_call(value: Computation) -> Computation {
@@ -1571,6 +1683,75 @@ pub fn drop_computes_to_list_theorem(count: Symbol, list: Symbol, result: Symbol
     )
 }
 
+/// Indexing into `nil` with zero returns `none`.
+pub fn nth_zero_nil_theorem() -> Prop {
+    computes_to(nth_call(nil(), nil()), none())
+}
+
+/// Indexing zero into a cons returns `some` of the head.
+pub fn nth_zero_cons_theorem(head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            tail,
+            is_list(var(tail)),
+            computes_to(
+                nth_call(nil(), cons(var(head), var(tail))),
+                some_call(var(head)),
+            ),
+        ),
+    )
+}
+
+/// Indexing into `nil` with a cons index returns `none`.
+pub fn nth_cons_nil_theorem(index_head: Symbol, index_tail: Symbol) -> Prop {
+    forall_where(
+        index_head,
+        is_value(var(index_head)),
+        forall_where(
+            index_tail,
+            is_list(var(index_tail)),
+            computes_to(
+                nth_call(cons(var(index_head), var(index_tail)), nil()),
+                none(),
+            ),
+        ),
+    )
+}
+
+/// Indexing with a cons index into a cons list recurs on both tails.
+pub fn nth_cons_cons_theorem(
+    index_head: Symbol,
+    index_tail: Symbol,
+    head: Symbol,
+    tail: Symbol,
+) -> Prop {
+    forall_where(
+        index_head,
+        is_value(var(index_head)),
+        forall_where(
+            index_tail,
+            is_list(var(index_tail)),
+            forall_where(
+                head,
+                is_value(var(head)),
+                forall_where(
+                    tail,
+                    is_list(var(tail)),
+                    computes_to(
+                        nth_call(
+                            cons(var(index_head), var(index_tail)),
+                            cons(var(head), var(tail)),
+                        ),
+                        nth_call(var(index_tail), var(tail)),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
 /// Replicating a value zero times returns `nil`.
 pub fn replicate_zero_theorem(value: Symbol) -> Prop {
     forall_where(
@@ -1832,6 +2013,34 @@ pub fn all_lists_cons_true_theorem(head: Symbol, tail: Symbol) -> Prop {
                 ),
             ),
         ),
+    )
+}
+
+/// `none` is recognized as none.
+pub fn none_is_none_theorem() -> Prop {
+    computes_to(is_none_call(none()), true_value())
+}
+
+/// `some value` is not none.
+pub fn some_is_none_theorem(value: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        computes_to(is_none_call(some_call(var(value))), false_value()),
+    )
+}
+
+/// `none` is not some.
+pub fn none_is_some_theorem() -> Prop {
+    computes_to(is_some_call(none()), false_value())
+}
+
+/// `some value` is recognized as some.
+pub fn some_is_some_theorem(value: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        computes_to(is_some_call(some_call(var(value))), true_value()),
     )
 }
 
@@ -3205,6 +3414,61 @@ pub fn all_computes_to_bool_theorem(predicate: Symbol, value: Symbol, list: Symb
                 list,
                 is_list(var(list)),
                 is_bool(all_call(var(predicate), var(list))),
+            ),
+        ),
+    )
+}
+
+/// `find` over `nil` returns `none`.
+pub fn find_nil_theorem(predicate: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        computes_to(find_call(var(predicate), nil()), none()),
+    )
+}
+
+/// If the predicate returns true for the head, `find` returns that head.
+pub fn find_cons_true_theorem(predicate: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                implies(
+                    computes_to(apply(var(predicate), var(head)), true_value()),
+                    computes_to(
+                        find_call(var(predicate), cons(var(head), var(tail))),
+                        some_call(var(head)),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the predicate returns false for the head, `find` recurs on the tail.
+pub fn find_cons_false_theorem(predicate: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                implies(
+                    computes_to(apply(var(predicate), var(head)), false_value()),
+                    computes_to(
+                        find_call(var(predicate), cons(var(head), var(tail))),
+                        find_call(var(predicate), var(tail)),
+                    ),
+                ),
             ),
         ),
     )

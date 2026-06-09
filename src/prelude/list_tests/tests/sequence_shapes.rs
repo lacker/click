@@ -727,6 +727,101 @@ fn drop_source_theorems_have_expected_shape() {
 }
 
 #[test]
+fn nth_theorems_have_expected_shape() {
+    assert_eq!(
+        nth_zero_nil_theorem(),
+        computes_to(nth_call(nil(), nil()), none())
+    );
+    assert_eq!(
+        nth_zero_cons_theorem(HEAD, TAIL),
+        forall_where(
+            HEAD,
+            is_value(var(HEAD)),
+            forall_where(
+                TAIL,
+                is_list(var(TAIL)),
+                computes_to(
+                    nth_call(nil(), cons(var(HEAD), var(TAIL))),
+                    some_call(var(HEAD))
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        nth_cons_nil_theorem(COUNT_HEAD, COUNT_TAIL),
+        forall_where(
+            COUNT_HEAD,
+            is_value(var(COUNT_HEAD)),
+            forall_where(
+                COUNT_TAIL,
+                is_list(var(COUNT_TAIL)),
+                computes_to(
+                    nth_call(cons(var(COUNT_HEAD), var(COUNT_TAIL)), nil()),
+                    none()
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        nth_cons_cons_theorem(COUNT_HEAD, COUNT_TAIL, HEAD, TAIL),
+        forall_where(
+            COUNT_HEAD,
+            is_value(var(COUNT_HEAD)),
+            forall_where(
+                COUNT_TAIL,
+                is_list(var(COUNT_TAIL)),
+                forall_where(
+                    HEAD,
+                    is_value(var(HEAD)),
+                    forall_where(
+                        TAIL,
+                        is_list(var(TAIL)),
+                        computes_to(
+                            nth_call(
+                                cons(var(COUNT_HEAD), var(COUNT_TAIL)),
+                                cons(var(HEAD), var(TAIL)),
+                            ),
+                            nth_call(var(COUNT_TAIL), var(TAIL)),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    );
+}
+
+#[test]
+fn nth_source_theorems_have_expected_shape() {
+    let zero_cons_head = theorem_symbol("nth_zero_cons", "head");
+    let zero_cons_tail = theorem_symbol("nth_zero_cons", "tail");
+    let cons_nil_index_head = theorem_symbol("nth_cons_nil", "index_head");
+    let cons_nil_index_tail = theorem_symbol("nth_cons_nil", "index_tail");
+    let cons_cons_index_head = theorem_symbol("nth_cons_cons", "index_head");
+    let cons_cons_index_tail = theorem_symbol("nth_cons_cons", "index_tail");
+    let cons_cons_head = theorem_symbol("nth_cons_cons", "head");
+    let cons_cons_tail = theorem_symbol("nth_cons_cons", "tail");
+
+    assert_eq!(nth_zero_nil_source_theorem(), nth_zero_nil_theorem());
+    assert_eq!(
+        nth_zero_cons_source_theorem(),
+        nth_zero_cons_theorem(zero_cons_head, zero_cons_tail)
+    );
+    assert_eq!(
+        nth_cons_nil_source_theorem(),
+        nth_cons_nil_theorem(cons_nil_index_head, cons_nil_index_tail)
+    );
+    assert_eq!(
+        nth_cons_cons_source_theorem(),
+        nth_cons_cons_theorem(
+            cons_cons_index_head,
+            cons_cons_index_tail,
+            cons_cons_head,
+            cons_cons_tail,
+        )
+    );
+}
+
+#[test]
 fn replicate_theorems_have_expected_shape() {
     assert_eq!(
         replicate_zero_theorem(VALUE),
@@ -1032,6 +1127,30 @@ fn intercalate_theorems_have_expected_shape() {
         )
     );
     assert_eq!(
+        none_is_none_theorem(),
+        computes_to(is_none_call(none()), true_value())
+    );
+    assert_eq!(
+        some_is_none_theorem(VALUE),
+        forall_where(
+            VALUE,
+            is_value(var(VALUE)),
+            computes_to(is_none_call(some_call(var(VALUE))), false_value()),
+        )
+    );
+    assert_eq!(
+        none_is_some_theorem(),
+        computes_to(is_some_call(none()), false_value())
+    );
+    assert_eq!(
+        some_is_some_theorem(VALUE),
+        forall_where(
+            VALUE,
+            is_value(var(VALUE)),
+            computes_to(is_some_call(some_call(var(VALUE))), true_value()),
+        )
+    );
+    assert_eq!(
         intercalate_cons_computes_to_list_theorem(VALUE, TAIL, HEAD, RESULT),
         forall_where(
             VALUE,
@@ -1082,6 +1201,8 @@ fn intercalate_source_theorems_have_expected_shape() {
     let list_value = theorem_symbol("is_list_value_true_implies_is_list", "value");
     let all_lists_head = theorem_symbol("all_lists_cons_true", "head");
     let all_lists_tail = theorem_symbol("all_lists_cons_true", "tail");
+    let some_is_none_value = theorem_symbol("some_is_none", "value");
+    let some_is_some_value = theorem_symbol("some_is_some", "value");
     let cons_computes_separator = theorem_symbol("intercalate_cons_computes_to_list", "separator");
     let cons_computes_tail = theorem_symbol("intercalate_cons_computes_to_list", "tail");
     let cons_computes_head = theorem_symbol("intercalate_cons_computes_to_list", "head");
@@ -1109,6 +1230,16 @@ fn intercalate_source_theorems_have_expected_shape() {
     assert_eq!(
         all_lists_cons_true_source_theorem(),
         all_lists_cons_true_theorem(all_lists_head, all_lists_tail)
+    );
+    assert_eq!(none_is_none_source_theorem(), none_is_none_theorem());
+    assert_eq!(
+        some_is_none_source_theorem(),
+        some_is_none_theorem(some_is_none_value)
+    );
+    assert_eq!(none_is_some_source_theorem(), none_is_some_theorem());
+    assert_eq!(
+        some_is_some_source_theorem(),
+        some_is_some_theorem(some_is_some_value)
     );
     assert_eq!(
         intercalate_cons_computes_to_list_source_theorem(),

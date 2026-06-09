@@ -169,6 +169,56 @@ fn drop_past_end_returns_nil() {
 }
 
 #[test]
+fn option_primitives_encode_none_and_some() {
+    assert_evaluates(none(), Value::quote(prelude_symbol(":none")));
+    assert_evaluates(
+        some_call(quote(A)),
+        value(pair(quote(prelude_symbol(":some")), quote(A))),
+    );
+    assert_evaluates(is_none_call(none()), Value::quote(prelude_symbol(":true")));
+    assert_evaluates(
+        is_none_call(some_call(quote(A))),
+        Value::quote(prelude_symbol(":false")),
+    );
+    assert_evaluates(is_some_call(none()), Value::quote(prelude_symbol(":false")));
+    assert_evaluates(
+        is_some_call(some_call(quote(A))),
+        Value::quote(prelude_symbol(":true")),
+    );
+}
+
+#[test]
+fn is_some_rejects_malformed_some_lists() {
+    assert_evaluates(
+        is_some_call(singleton(quote(prelude_symbol(":some")))),
+        Value::quote(prelude_symbol(":false")),
+    );
+    assert_evaluates(
+        is_some_call(triple(quote(prelude_symbol(":some")), quote(A), quote(B))),
+        Value::quote(prelude_symbol(":false")),
+    );
+}
+
+#[test]
+fn nth_returns_some_at_index() {
+    assert_evaluates(
+        nth_call(
+            pair(unit(), unit()),
+            triple(quote(A), quote(B), quote(NOT_A_LIST)),
+        ),
+        value(pair(quote(prelude_symbol(":some")), quote(NOT_A_LIST))),
+    );
+}
+
+#[test]
+fn nth_returns_none_when_out_of_bounds() {
+    assert_evaluates(
+        nth_call(triple(unit(), unit(), unit()), pair(quote(A), quote(B))),
+        Value::quote(prelude_symbol(":none")),
+    );
+}
+
+#[test]
 fn append_take_drop_rebuilds_list() {
     let count = pair(unit(), unit());
     let list = triple(quote(A), quote(B), quote(NOT_A_LIST));
@@ -575,6 +625,30 @@ fn all_symbol_eq_returns_false_when_any_missing() {
     assert_evaluates(
         all_call(is_a_predicate(), triple(quote(A), quote(B), quote(A))),
         Value::quote(prelude_symbol(":false")),
+    );
+}
+
+#[test]
+fn find_nil_returns_none() {
+    assert_evaluates(
+        find_call(is_a_predicate(), nil()),
+        Value::quote(prelude_symbol(":none")),
+    );
+}
+
+#[test]
+fn find_returns_first_matching_value() {
+    assert_evaluates(
+        find_call(is_a_predicate(), triple(quote(B), quote(A), quote(A))),
+        value(pair(quote(prelude_symbol(":some")), quote(A))),
+    );
+}
+
+#[test]
+fn find_returns_none_for_miss() {
+    assert_evaluates(
+        find_call(is_a_predicate(), pair(quote(B), unit())),
+        Value::quote(prelude_symbol(":none")),
     );
 }
 

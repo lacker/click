@@ -114,6 +114,20 @@
           list_cell
           (drop (tail count_cell) (tail list_cell)))))))
 
+(def nth
+  (lambda index
+    (lambda list
+      (list-case index
+        (list-case list
+          (quote :none)
+          list_cell
+          (some (head list_cell)))
+        index_cell
+        (list-case list
+          (quote :none)
+          list_cell
+          (nth (tail index_cell) (tail list_cell)))))))
+
 (def replicate
   (lambda count
     (lambda value
@@ -291,6 +305,17 @@
           (all predicate (tail cell))
           (quote :false))))))
 
+(def find
+  (lambda predicate
+    (lambda list
+      (list-case list
+        (quote :none)
+        cell
+        (if
+          (predicate (head cell))
+          (some (head cell))
+          (find predicate (tail cell)))))))
+
 (def is-symbol
   (lambda value
     (symbol-eq (value-kind value) (quote :symbol))))
@@ -312,6 +337,32 @@
         (is-list-value (head cell))
         (all-lists (tail cell))
         (quote :false)))))
+
+(def none
+  (quote :none))
+
+(def some
+  (lambda value
+    (cons
+      (quote :some)
+      (cons value nil))))
+
+(def is-none
+  (lambda option
+    (symbol-eq option (quote :none))))
+
+(def is-some
+  (lambda option
+    (if
+      (is-list-value option)
+      (list-case option
+        (quote :false)
+        option_cell
+        (if
+          (symbol-eq (head option_cell) (quote :some))
+          (is-singleton (tail option_cell))
+          (quote :false)))
+      (quote :false))))
 
 (def value-eq
   (lambda left

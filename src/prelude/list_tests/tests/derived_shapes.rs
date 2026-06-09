@@ -114,6 +114,27 @@ fn filter_any_all_source_theorems_have_expected_shape() {
             all_computes_list,
         )
     );
+
+    let find_nil_predicate = theorem_symbol("find_nil", "predicate");
+    let find_true_predicate = theorem_symbol("find_cons_true", "predicate");
+    let find_true_head = theorem_symbol("find_cons_true", "head");
+    let find_true_tail = theorem_symbol("find_cons_true", "tail");
+    let find_false_predicate = theorem_symbol("find_cons_false", "predicate");
+    let find_false_head = theorem_symbol("find_cons_false", "head");
+    let find_false_tail = theorem_symbol("find_cons_false", "tail");
+
+    assert_eq!(
+        find_nil_source_theorem(),
+        find_nil_theorem(find_nil_predicate)
+    );
+    assert_eq!(
+        find_cons_true_source_theorem(),
+        find_cons_true_theorem(find_true_predicate, find_true_head, find_true_tail)
+    );
+    assert_eq!(
+        find_cons_false_source_theorem(),
+        find_cons_false_theorem(find_false_predicate, find_false_head, find_false_tail)
+    );
 }
 
 #[test]

@@ -460,6 +460,50 @@
                     (by
                       (exact dropped_tail_proof))))))))))))
 
+(theorem nth_zero_nil
+  (computes-to (nth nil nil) none)
+  (by
+    (eval)))
+
+(theorem nth_zero_cons
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (computes-to
+        (nth nil (cons head tail))
+        (some head))))
+  (by
+    (intro head)
+    (intro tail)
+    (eval)))
+
+(theorem nth_cons_nil
+  (forall index_head (is-value index_head)
+    (forall index_tail (is-list index_tail)
+      (computes-to
+        (nth (cons index_head index_tail) nil)
+        none)))
+  (by
+    (intro index_head)
+    (intro index_tail)
+    (eval)))
+
+(theorem nth_cons_cons
+  (forall index_head (is-value index_head)
+    (forall index_tail (is-list index_tail)
+      (forall head (is-value head)
+        (forall tail (is-list tail)
+          (computes-to
+            (nth
+              (cons index_head index_tail)
+              (cons head tail))
+            (nth index_tail tail))))))
+  (by
+    (intro index_head)
+    (intro index_tail)
+    (intro head)
+    (intro tail)
+    (eval)))
+
 (theorem replicate_zero
   (forall value (is-value value)
     (computes-to (replicate nil value) nil))
@@ -802,6 +846,30 @@
                 (quote :true)
                 (by
                   (exact tail_is_all_lists_through_cons))))))))))
+
+(theorem none_is_none
+  (computes-to (is-none none) (quote :true))
+  (by
+    (eval)))
+
+(theorem some_is_none
+  (forall value (is-value value)
+    (computes-to (is-none (some value)) (quote :false)))
+  (by
+    (intro value)
+    (eval)))
+
+(theorem none_is_some
+  (computes-to (is-some none) (quote :false))
+  (by
+    (eval)))
+
+(theorem some_is_some
+  (forall value (is-value value)
+    (computes-to (is-some (some value)) (quote :true)))
+  (by
+    (intro value)
+    (eval)))
 
 (theorem intercalate_cons_computes_to_list
   (forall separator (is-list separator)
@@ -1749,3 +1817,42 @@
             (right
               (by
                 (apply all_cons_false predicate head tail)))))))))
+
+(theorem find_nil
+  (forall predicate (is-value predicate)
+    (computes-to (find predicate nil) none))
+  (by
+    (intro predicate)
+    (eval)))
+
+(theorem find_cons_true
+  (forall predicate (is-value predicate)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (predicate head) (quote :true))
+          (computes-to
+            (find predicate (cons head tail))
+            (some head))))))
+  (by
+    (intro predicate)
+    (intro head)
+    (intro tail)
+    (intro predicate_true)
+    (simp only predicate_true)))
+
+(theorem find_cons_false
+  (forall predicate (is-value predicate)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (predicate head) (quote :false))
+          (computes-to
+            (find predicate (cons head tail))
+            (find predicate tail))))))
+  (by
+    (intro predicate)
+    (intro head)
+    (intro tail)
+    (intro predicate_false)
+    (simp only predicate_false)))

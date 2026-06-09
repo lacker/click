@@ -4,18 +4,15 @@ Candidate future list functions for the prelude. The rough goal is a
 Lisp/Haskell-style standard library, while keeping proof obligations close to
 the current `append`/`reverse` complexity.
 
-## Needs Equality, Predicates, Or Options
+## Needs Predicate Or Index Design
 
-These become much cleaner after we define predicates, options, or related helper
-machinery.
+These are mostly unblocked, but still need the exact theorem surface chosen.
 
-1. `elem-index` - return the first matching index. Also needs naturals/options.
-2. `find` - return the first element satisfying a predicate. Needs predicates/options.
-3. `partition` - split a list into elements that pass/fail a predicate.
+1. `elem-index` - return `some` first matching index or `none`.
+2. `partition` - split a list into elements that pass/fail a predicate.
 
-## Needs Naturals
+## Needs Nat/List Algebra
 
-These need a natural-number representation and basic arithmetic theorems.
+This should build on the existing natural-number/list arithmetic facts.
 
-4. `nth` - return the element at an index, with an error or option on out-of-bounds.
-5. `split-at` - pair of `take n list` and `drop n list`.
+3. `split-at` - pair of `take n list` and `drop n list`.

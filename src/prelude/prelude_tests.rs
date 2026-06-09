@@ -58,6 +58,10 @@ fn drop() -> Computation {
     computation_ref("drop")
 }
 
+fn nth() -> Computation {
+    computation_ref("nth")
+}
+
 fn replicate() -> Computation {
     computation_ref("replicate")
 }
@@ -110,8 +114,28 @@ fn all() -> Computation {
     computation_ref("all")
 }
 
+fn find() -> Computation {
+    computation_ref("find")
+}
+
 fn all_lists() -> Computation {
     computation_ref("all-lists")
+}
+
+fn none() -> Computation {
+    computation_ref("none")
+}
+
+fn some() -> Computation {
+    computation_ref("some")
+}
+
+fn is_none() -> Computation {
+    computation_ref("is-none")
+}
+
+fn is_some() -> Computation {
+    computation_ref("is-some")
 }
 
 fn is_symbol() -> Computation {
@@ -231,6 +255,10 @@ fn prelude_theorem_names() -> Vec<Name> {
         "drop_nil",
         "drop_cons",
         "drop_computes_to_list",
+        "nth_zero_nil",
+        "nth_zero_cons",
+        "nth_cons_nil",
+        "nth_cons_cons",
         "replicate_zero",
         "replicate_cons",
         "replicate_computes_to_list",
@@ -245,6 +273,10 @@ fn prelude_theorem_names() -> Vec<Name> {
         "intercalate_cons_cons",
         "is_list_value_true_implies_is_list",
         "all_lists_cons_true",
+        "none_is_none",
+        "some_is_none",
+        "none_is_some",
+        "some_is_some",
         "intercalate_cons_computes_to_list",
         "intercalate_computes_to_list",
         "map_nil",
@@ -278,6 +310,9 @@ fn prelude_theorem_names() -> Vec<Name> {
         "any_cons_true",
         "any_cons_false",
         "any_computes_to_bool",
+        "find_nil",
+        "find_cons_true",
+        "find_cons_false",
         "value_eq_true_true",
         "value_eq_true_false",
         "value_eq_nil",
@@ -624,6 +659,10 @@ fn theory_defines_reverse() {
         Some(&list_tests::drop_definition())
     );
     assert_eq!(
+        theory.computation(computation("nth")),
+        Some(&list_tests::nth_definition())
+    );
+    assert_eq!(
         theory.computation(computation("replicate")),
         Some(&list_tests::replicate_definition())
     );
@@ -676,8 +715,28 @@ fn theory_defines_reverse() {
         Some(&list_tests::all_definition())
     );
     assert_eq!(
+        theory.computation(computation("find")),
+        Some(&list_tests::find_definition())
+    );
+    assert_eq!(
         theory.computation(computation("all-lists")),
         Some(&list_tests::all_lists_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("none")),
+        Some(&list_tests::none_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("some")),
+        Some(&list_tests::some_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("is-none")),
+        Some(&list_tests::is_none_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("is-some")),
+        Some(&list_tests::is_some_definition())
     );
     assert_eq!(
         theory.computation(computation("is-symbol")),
@@ -759,6 +818,7 @@ fn theory_defines_reverse() {
     assert_eq!(length(), Computation::Ref(computation("length")));
     assert_eq!(take(), Computation::Ref(computation("take")));
     assert_eq!(drop(), Computation::Ref(computation("drop")));
+    assert_eq!(nth(), Computation::Ref(computation("nth")));
     assert_eq!(replicate(), Computation::Ref(computation("replicate")));
     assert_eq!(intersperse(), Computation::Ref(computation("intersperse")));
     assert_eq!(intercalate(), Computation::Ref(computation("intercalate")));
@@ -772,7 +832,12 @@ fn theory_defines_reverse() {
     assert_eq!(filter(), Computation::Ref(computation("filter")));
     assert_eq!(any(), Computation::Ref(computation("any")));
     assert_eq!(all(), Computation::Ref(computation("all")));
+    assert_eq!(find(), Computation::Ref(computation("find")));
     assert_eq!(all_lists(), Computation::Ref(computation("all-lists")));
+    assert_eq!(none(), Computation::Ref(computation("none")));
+    assert_eq!(some(), Computation::Ref(computation("some")));
+    assert_eq!(is_none(), Computation::Ref(computation("is-none")));
+    assert_eq!(is_some(), Computation::Ref(computation("is-some")));
     assert_eq!(is_symbol(), Computation::Ref(computation("is-symbol")));
     assert_eq!(is_lambda(), Computation::Ref(computation("is-lambda")));
     assert_eq!(
@@ -833,6 +898,10 @@ fn theory_defines_reverse() {
         Step::Reduced(list_tests::drop_definition())
     );
     assert_eq!(
+        theory.reduce(&nth()),
+        Step::Reduced(list_tests::nth_definition())
+    );
+    assert_eq!(
         theory.reduce(&replicate()),
         Step::Reduced(list_tests::replicate_definition())
     );
@@ -885,8 +954,28 @@ fn theory_defines_reverse() {
         Step::Reduced(list_tests::all_definition())
     );
     assert_eq!(
+        theory.reduce(&find()),
+        Step::Reduced(list_tests::find_definition())
+    );
+    assert_eq!(
         theory.reduce(&all_lists()),
         Step::Reduced(list_tests::all_lists_definition())
+    );
+    assert_eq!(
+        theory.reduce(&none()),
+        Step::Reduced(list_tests::none_definition())
+    );
+    assert_eq!(
+        theory.reduce(&some()),
+        Step::Reduced(list_tests::some_definition())
+    );
+    assert_eq!(
+        theory.reduce(&is_none()),
+        Step::Reduced(list_tests::is_none_definition())
+    );
+    assert_eq!(
+        theory.reduce(&is_some()),
+        Step::Reduced(list_tests::is_some_definition())
     );
     assert_eq!(
         theory.reduce(&is_symbol()),
@@ -1178,6 +1267,10 @@ fn theory_defines_reverse_theorems() {
     let drop_nil_prop = list_tests::drop_nil_source_theorem();
     let drop_cons_prop = list_tests::drop_cons_source_theorem();
     let drop_computes_to_list_prop = list_tests::drop_computes_to_list_source_theorem();
+    let nth_zero_nil_prop = list_tests::nth_zero_nil_source_theorem();
+    let nth_zero_cons_prop = list_tests::nth_zero_cons_source_theorem();
+    let nth_cons_nil_prop = list_tests::nth_cons_nil_source_theorem();
+    let nth_cons_cons_prop = list_tests::nth_cons_cons_source_theorem();
     let replicate_zero_prop = list_tests::replicate_zero_source_theorem();
     let replicate_cons_prop = list_tests::replicate_cons_source_theorem();
     let replicate_computes_to_list_prop = list_tests::replicate_computes_to_list_source_theorem();
@@ -1195,6 +1288,10 @@ fn theory_defines_reverse_theorems() {
     let is_list_value_true_implies_is_list_prop =
         list_tests::is_list_value_true_implies_is_list_source_theorem();
     let all_lists_cons_true_prop = list_tests::all_lists_cons_true_source_theorem();
+    let none_is_none_prop = list_tests::none_is_none_source_theorem();
+    let some_is_none_prop = list_tests::some_is_none_source_theorem();
+    let none_is_some_prop = list_tests::none_is_some_source_theorem();
+    let some_is_some_prop = list_tests::some_is_some_source_theorem();
     let intercalate_cons_computes_to_list_prop =
         list_tests::intercalate_cons_computes_to_list_source_theorem();
     let intercalate_computes_to_list_prop =
@@ -1232,6 +1329,9 @@ fn theory_defines_reverse_theorems() {
     let any_cons_true_prop = list_tests::any_cons_true_source_theorem();
     let any_cons_false_prop = list_tests::any_cons_false_source_theorem();
     let any_computes_to_bool_prop = list_tests::any_computes_to_bool_source_theorem();
+    let find_nil_prop = list_tests::find_nil_source_theorem();
+    let find_cons_true_prop = list_tests::find_cons_true_source_theorem();
+    let find_cons_false_prop = list_tests::find_cons_false_source_theorem();
     let value_eq_true_true_prop = list_tests::value_eq_true_true_source_theorem();
     let value_eq_true_false_prop = list_tests::value_eq_true_false_source_theorem();
     let value_eq_nil_prop = list_tests::value_eq_nil_source_theorem();
@@ -1384,6 +1484,22 @@ fn theory_defines_reverse_theorems() {
         Some(&drop_computes_to_list_prop)
     );
     assert_eq!(
+        theory.theorem(theorem("nth_zero_nil")),
+        Some(&nth_zero_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("nth_zero_cons")),
+        Some(&nth_zero_cons_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("nth_cons_nil")),
+        Some(&nth_cons_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("nth_cons_cons")),
+        Some(&nth_cons_cons_prop)
+    );
+    assert_eq!(
         theory.theorem(theorem("replicate_zero")),
         Some(&replicate_zero_prop)
     );
@@ -1438,6 +1554,22 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("all_lists_cons_true")),
         Some(&all_lists_cons_true_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("none_is_none")),
+        Some(&none_is_none_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("some_is_none")),
+        Some(&some_is_none_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("none_is_some")),
+        Some(&none_is_some_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("some_is_some")),
+        Some(&some_is_some_prop)
     );
     assert_eq!(
         theory.theorem(theorem("intercalate_cons_computes_to_list")),
@@ -1555,6 +1687,15 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("any_computes_to_bool")),
         Some(&any_computes_to_bool_prop)
+    );
+    assert_eq!(theory.theorem(theorem("find_nil")), Some(&find_nil_prop));
+    assert_eq!(
+        theory.theorem(theorem("find_cons_true")),
+        Some(&find_cons_true_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("find_cons_false")),
+        Some(&find_cons_false_prop)
     );
     assert_eq!(
         theory.theorem(theorem("value_eq_true_true")),
@@ -1897,6 +2038,54 @@ fn theory_defines_reverse_theorems() {
         &append_assoc_prop,
     );
     assert_eq!(
+        checked_theorem("nth_zero_nil")
+            .expect("nth zero nil theorem source proof should check with dependencies")
+            .prop(),
+        &nth_zero_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("nth_zero_cons")
+            .expect("nth zero cons theorem source proof should check with dependencies")
+            .prop(),
+        &nth_zero_cons_prop,
+    );
+    assert_eq!(
+        checked_theorem("nth_cons_nil")
+            .expect("nth cons nil theorem source proof should check with dependencies")
+            .prop(),
+        &nth_cons_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("nth_cons_cons")
+            .expect("nth cons cons theorem source proof should check with dependencies")
+            .prop(),
+        &nth_cons_cons_prop,
+    );
+    assert_eq!(
+        checked_theorem("none_is_none")
+            .expect("none is none theorem source proof should check with dependencies")
+            .prop(),
+        &none_is_none_prop,
+    );
+    assert_eq!(
+        checked_theorem("some_is_none")
+            .expect("some is none theorem source proof should check with dependencies")
+            .prop(),
+        &some_is_none_prop,
+    );
+    assert_eq!(
+        checked_theorem("none_is_some")
+            .expect("none is some theorem source proof should check with dependencies")
+            .prop(),
+        &none_is_some_prop,
+    );
+    assert_eq!(
+        checked_theorem("some_is_some")
+            .expect("some is some theorem source proof should check with dependencies")
+            .prop(),
+        &some_is_some_prop,
+    );
+    assert_eq!(
         checked_theorem("map_nil")
             .expect("map nil theorem source proof should check with dependencies")
             .prop(),
@@ -2075,6 +2264,24 @@ fn theory_defines_reverse_theorems() {
             .expect("any computes theorem source proof should check with dependencies")
             .prop(),
         &any_computes_to_bool_prop,
+    );
+    assert_eq!(
+        checked_theorem("find_nil")
+            .expect("find nil theorem source proof should check with dependencies")
+            .prop(),
+        &find_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("find_cons_true")
+            .expect("find true cons theorem source proof should check with dependencies")
+            .prop(),
+        &find_cons_true_prop,
+    );
+    assert_eq!(
+        checked_theorem("find_cons_false")
+            .expect("find false cons theorem source proof should check with dependencies")
+            .prop(),
+        &find_cons_false_prop,
     );
     assert_eq!(
         checked_theorem("value_eq_true_true")
