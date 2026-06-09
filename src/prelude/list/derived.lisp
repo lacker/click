@@ -276,6 +276,92 @@
             (by
               (simpa only (symm middle_right_proof)))))))))
 
+(theorem append_take_drop
+  (forall count (is-list count)
+    (forall list (is-list list)
+      (computes-to
+        (append (take count list) (drop count list))
+        list)))
+  (by
+    (list-induction count
+      (by
+        (intro list)
+        (calc
+          (append (take nil list) (drop nil list))
+          (==
+            (append nil (drop nil list))
+            (by
+              (simpa only (take_zero list))))
+          (==
+            (append nil list)
+            (by
+              (simpa only (drop_zero list))))
+          (==
+            list
+            (by
+              (exact append_nil_returns_right list)))))
+      count_head
+      count_tail
+      induction_hypothesis
+      (by
+        (list-induction list
+          (by
+            (eval))
+          head
+          tail
+          list_induction_hypothesis
+          (by
+            (obtain taken_tail taken_tail_proof
+              (take_computes_to_list count_tail tail))
+            (obtain dropped_tail dropped_tail_proof
+              (drop_computes_to_list count_tail tail))
+            (calc
+              (append
+                (take (cons count_head count_tail) (cons head tail))
+                (drop (cons count_head count_tail) (cons head tail)))
+              (==
+                (append
+                  (cons head (take count_tail tail))
+                  (drop count_tail tail))
+                (by
+                  (simpa only
+                    (take_cons count_head count_tail head tail)
+                    (drop_cons count_head count_tail head tail))))
+              (==
+                (append
+                  (cons head taken_tail)
+                  (drop count_tail tail))
+                (by
+                  (simpa only taken_tail_proof)))
+              (==
+                (append (cons head taken_tail) dropped_tail)
+                (by
+                  (simpa only dropped_tail_proof)))
+              (==
+                (cons head (append taken_tail dropped_tail))
+                (by
+                  (exact
+                    append_cons
+                    head
+                    taken_tail
+                    dropped_tail)))
+              (==
+                (cons
+                  head
+                  (append (take count_tail tail) dropped_tail))
+                (by
+                  (simpa only (symm taken_tail_proof))))
+              (==
+                (cons
+                  head
+                  (append (take count_tail tail) (drop count_tail tail)))
+                (by
+                  (simpa only (symm dropped_tail_proof))))
+              (==
+                (cons head tail)
+                (by
+                  (simpa only (induction_hypothesis tail)))))))))))
+
 (theorem reverse_acc_append
   (forall list (is-list list)
     (forall acc (is-list acc)

@@ -508,3 +508,33 @@ fn append_assoc_source_theorem_has_expected_shape() {
         append_assoc_theorem(left, middle, right)
     );
 }
+
+#[test]
+fn append_take_drop_theorem_has_expected_shape() {
+    assert_eq!(
+        append_take_drop_theorem(COUNT, X),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            forall_where(
+                X,
+                is_list(var(X)),
+                computes_to(
+                    append_call(take_call(var(COUNT), var(X)), drop_call(var(COUNT), var(X))),
+                    var(X),
+                ),
+            ),
+        )
+    );
+}
+
+#[test]
+fn append_take_drop_source_theorem_has_expected_shape() {
+    let count = theorem_symbol("append_take_drop", "count");
+    let list = theorem_symbol("append_take_drop", "list");
+
+    assert_eq!(
+        append_take_drop_source_theorem(),
+        append_take_drop_theorem(count, list)
+    );
+}

@@ -18,18 +18,16 @@ machinery.
 These need a natural-number representation and basic arithmetic theorems.
 
 4. `nth` - return the element at an index, with an error or option on out-of-bounds.
-5. `take` - first `n` elements.
-6. `drop` - remove first `n` elements.
-7. `split-at` - pair of `take n list` and `drop n list`.
-8. `replicate` - build a list with `n` copies of a value.
-9. `range` - build a list of natural numbers.
+5. `split-at` - pair of `take n list` and `drop n list`.
+6. `replicate` - build a list with `n` copies of a value.
+7. `range` - build a list of natural numbers.
 
 ## Pair/List Shape Utilities
 
 These use Lisp-style pairs encoded as two-element lists or cons cells. We should
 pick the representation before adding them.
 
-10. `zip` - combine two lists into a list of pairs.
-11. `unzip` - split a list of pairs into a pair of lists.
-12. `intersperse` - place a separator between list elements.
-13. `intercalate` - concatenate a list of lists with a separator list.
+8. `zip` - combine two lists into a list of pairs.
+9. `unzip` - split a list of pairs into a pair of lists.
+10. `intersperse` - place a separator between list elements.
+11. `intercalate` - concatenate a list of lists with a separator list.

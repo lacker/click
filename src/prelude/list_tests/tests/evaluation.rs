@@ -114,6 +114,75 @@ fn length_map_preserves_length() {
 }
 
 #[test]
+fn take_zero_returns_nil() {
+    assert_evaluates(
+        take_call(nil(), triple(quote(A), quote(B), unit())),
+        Value::nil(),
+    );
+}
+
+#[test]
+fn take_two_returns_prefix() {
+    assert_evaluates(
+        take_call(
+            pair(unit(), unit()),
+            triple(quote(A), quote(B), quote(NOT_A_LIST)),
+        ),
+        value(pair(quote(A), quote(B))),
+    );
+}
+
+#[test]
+fn take_past_end_returns_whole_list() {
+    let list = pair(quote(A), quote(B));
+
+    assert_evaluates(
+        take_call(triple(unit(), unit(), unit()), list.clone()),
+        value(list),
+    );
+}
+
+#[test]
+fn drop_zero_returns_input() {
+    let list = triple(quote(A), quote(B), unit());
+
+    assert_evaluates(drop_call(nil(), list.clone()), value(list));
+}
+
+#[test]
+fn drop_two_returns_suffix() {
+    assert_evaluates(
+        drop_call(
+            pair(unit(), unit()),
+            triple(quote(A), quote(B), quote(NOT_A_LIST)),
+        ),
+        value(singleton(quote(NOT_A_LIST))),
+    );
+}
+
+#[test]
+fn drop_past_end_returns_nil() {
+    assert_evaluates(
+        drop_call(triple(unit(), unit(), unit()), pair(quote(A), quote(B))),
+        Value::nil(),
+    );
+}
+
+#[test]
+fn append_take_drop_rebuilds_list() {
+    let count = pair(unit(), unit());
+    let list = triple(quote(A), quote(B), quote(NOT_A_LIST));
+
+    assert_evaluates(
+        append_call(
+            take_call(count.clone(), list.clone()),
+            drop_call(count, list.clone()),
+        ),
+        value(list),
+    );
+}
+
+#[test]
 fn map_nil_returns_nil() {
     let identity = lambda(X, var(X));
 

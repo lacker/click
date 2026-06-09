@@ -90,6 +90,30 @@
         (quote unit)
         (length (tail cell))))))
 
+(def take
+  (lambda count
+    (lambda list
+      (list-case count
+        nil
+        count_cell
+        (list-case list
+          nil
+          list_cell
+          (cons
+            (head list_cell)
+            (take (tail count_cell) (tail list_cell))))))))
+
+(def drop
+  (lambda count
+    (lambda list
+      (list-case count
+        list
+        count_cell
+        (list-case list
+          nil
+          list_cell
+          (drop (tail count_cell) (tail list_cell)))))))
+
 (def map
   ((lambda fixed_point_function
      ((lambda fixed_point_self

@@ -121,6 +121,22 @@ pub fn length_definition() -> Computation {
     definition("length")
 }
 
+pub fn take() -> Computation {
+    computation_ref("take")
+}
+
+pub fn take_definition() -> Computation {
+    definition("take")
+}
+
+pub fn drop() -> Computation {
+    computation_ref("drop")
+}
+
+pub fn drop_definition() -> Computation {
+    definition("drop")
+}
+
 pub fn map() -> Computation {
     computation_ref("map")
 }
@@ -403,6 +419,10 @@ pub fn append_assoc_source_theorem() -> Prop {
     theorem_prop("append_assoc")
 }
 
+pub fn append_take_drop_source_theorem() -> Prop {
+    theorem_prop("append_take_drop")
+}
+
 pub fn length_nil_source_theorem() -> Prop {
     theorem_prop("length_nil")
 }
@@ -421,6 +441,38 @@ pub fn length_computes_to_list_source_theorem() -> Prop {
 
 pub fn length_append_source_theorem() -> Prop {
     theorem_prop("length_append")
+}
+
+pub fn take_zero_source_theorem() -> Prop {
+    theorem_prop("take_zero")
+}
+
+pub fn take_nil_source_theorem() -> Prop {
+    theorem_prop("take_nil")
+}
+
+pub fn take_cons_source_theorem() -> Prop {
+    theorem_prop("take_cons")
+}
+
+pub fn take_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("take_computes_to_list")
+}
+
+pub fn drop_zero_source_theorem() -> Prop {
+    theorem_prop("drop_zero")
+}
+
+pub fn drop_nil_source_theorem() -> Prop {
+    theorem_prop("drop_nil")
+}
+
+pub fn drop_cons_source_theorem() -> Prop {
+    theorem_prop("drop_cons")
+}
+
+pub fn drop_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("drop_computes_to_list")
 }
 
 pub fn map_nil_source_theorem() -> Prop {
@@ -720,6 +772,14 @@ pub fn concat_call(lists: Computation) -> Computation {
 
 pub fn length_call(list: Computation) -> Computation {
     apply(length(), list)
+}
+
+pub fn take_call(count: Computation, list: Computation) -> Computation {
+    apply(apply(take(), count), list)
+}
+
+pub fn drop_call(count: Computation, list: Computation) -> Computation {
+    apply(apply(drop(), count), list)
 }
 
 pub fn map_call(function: Computation, list: Computation) -> Computation {
@@ -1219,6 +1279,153 @@ pub fn append_assoc_theorem(left: Symbol, middle: Symbol, right: Symbol) -> Prop
                     append_call(append_call(var(left), var(middle)), var(right)),
                     append_call(var(left), append_call(var(middle), var(right))),
                 ),
+            ),
+        ),
+    )
+}
+
+/// Taking a zero-length prefix returns `nil`.
+pub fn take_zero_theorem(list: Symbol) -> Prop {
+    forall_where(
+        list,
+        is_list(var(list)),
+        computes_to(take_call(nil(), var(list)), nil()),
+    )
+}
+
+/// Taking from `nil` returns `nil`.
+pub fn take_nil_theorem(count: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        computes_to(take_call(var(count), nil()), nil()),
+    )
+}
+
+/// Taking a cons count from a cons list preserves the list head and recurs on
+/// both tails.
+pub fn take_cons_theorem(
+    count_head: Symbol,
+    count_tail: Symbol,
+    head: Symbol,
+    tail: Symbol,
+) -> Prop {
+    forall_where(
+        count_head,
+        is_value(var(count_head)),
+        forall_where(
+            count_tail,
+            is_list(var(count_tail)),
+            forall_where(
+                head,
+                is_value(var(head)),
+                forall_where(
+                    tail,
+                    is_list(var(tail)),
+                    computes_to(
+                        take_call(
+                            cons(var(count_head), var(count_tail)),
+                            cons(var(head), var(tail)),
+                        ),
+                        cons(var(head), take_call(var(count_tail), var(tail))),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the count and input are lists, then `take` computes to a list.
+pub fn take_computes_to_list_theorem(count: Symbol, list: Symbol, result: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        forall_where(
+            list,
+            is_list(var(list)),
+            computes_to_list(result, take_call(var(count), var(list))),
+        ),
+    )
+}
+
+/// Dropping zero elements returns the input list.
+pub fn drop_zero_theorem(list: Symbol) -> Prop {
+    forall_where(
+        list,
+        is_list(var(list)),
+        computes_to(drop_call(nil(), var(list)), var(list)),
+    )
+}
+
+/// Dropping from `nil` returns `nil`.
+pub fn drop_nil_theorem(count: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        computes_to(drop_call(var(count), nil()), nil()),
+    )
+}
+
+/// Dropping a cons count from a cons list recurs on both tails.
+pub fn drop_cons_theorem(
+    count_head: Symbol,
+    count_tail: Symbol,
+    head: Symbol,
+    tail: Symbol,
+) -> Prop {
+    forall_where(
+        count_head,
+        is_value(var(count_head)),
+        forall_where(
+            count_tail,
+            is_list(var(count_tail)),
+            forall_where(
+                head,
+                is_value(var(head)),
+                forall_where(
+                    tail,
+                    is_list(var(tail)),
+                    computes_to(
+                        drop_call(
+                            cons(var(count_head), var(count_tail)),
+                            cons(var(head), var(tail)),
+                        ),
+                        drop_call(var(count_tail), var(tail)),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the count and input are lists, then `drop` computes to a list.
+pub fn drop_computes_to_list_theorem(count: Symbol, list: Symbol, result: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        forall_where(
+            list,
+            is_list(var(list)),
+            computes_to_list(result, drop_call(var(count), var(list))),
+        ),
+    )
+}
+
+/// Appending the prefix taken by a count to the suffix dropped by that count
+/// rebuilds the original list.
+pub fn append_take_drop_theorem(count: Symbol, list: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        forall_where(
+            list,
+            is_list(var(list)),
+            computes_to(
+                append_call(
+                    take_call(var(count), var(list)),
+                    drop_call(var(count), var(list)),
+                ),
+                var(list),
             ),
         ),
     )
@@ -2613,6 +2820,9 @@ mod tests {
     const LEFT_VALUE: Symbol = Symbol(217);
     const RIGHT_VALUE: Symbol = Symbol(218);
     const ZIPPED_VALUE: Symbol = Symbol(219);
+    const COUNT: Symbol = Symbol(220);
+    const COUNT_HEAD: Symbol = Symbol(221);
+    const COUNT_TAIL: Symbol = Symbol(222);
 
     fn prove_evaluation(computation: Computation, expected: impl Into<Outcome>) -> Proof {
         proof_by_evaluation(computation, expected, 512).expect("example should evaluate")

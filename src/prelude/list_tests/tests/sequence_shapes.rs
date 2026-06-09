@@ -563,6 +563,170 @@ fn length_map_source_theorem_has_expected_shape() {
 }
 
 #[test]
+fn take_theorems_have_expected_shape() {
+    assert_eq!(
+        take_zero_theorem(X),
+        forall_where(
+            X,
+            is_list(var(X)),
+            computes_to(take_call(nil(), var(X)), nil()),
+        )
+    );
+    assert_eq!(
+        take_nil_theorem(COUNT),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            computes_to(take_call(var(COUNT), nil()), nil()),
+        )
+    );
+    assert_eq!(
+        take_cons_theorem(COUNT_HEAD, COUNT_TAIL, HEAD, TAIL),
+        forall_where(
+            COUNT_HEAD,
+            is_value(var(COUNT_HEAD)),
+            forall_where(
+                COUNT_TAIL,
+                is_list(var(COUNT_TAIL)),
+                forall_where(
+                    HEAD,
+                    is_value(var(HEAD)),
+                    forall_where(
+                        TAIL,
+                        is_list(var(TAIL)),
+                        computes_to(
+                            take_call(
+                                cons(var(COUNT_HEAD), var(COUNT_TAIL)),
+                                cons(var(HEAD), var(TAIL)),
+                            ),
+                            cons(var(HEAD), take_call(var(COUNT_TAIL), var(TAIL))),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        take_computes_to_list_theorem(COUNT, X, RESULT),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            forall_where(
+                X,
+                is_list(var(X)),
+                computes_to_list(RESULT, take_call(var(COUNT), var(X))),
+            ),
+        )
+    );
+}
+
+#[test]
+fn take_source_theorems_have_expected_shape() {
+    let zero_list = theorem_symbol("take_zero", "list");
+    let nil_count = theorem_symbol("take_nil", "count");
+    let cons_count_head = theorem_symbol("take_cons", "count_head");
+    let cons_count_tail = theorem_symbol("take_cons", "count_tail");
+    let cons_head = theorem_symbol("take_cons", "head");
+    let cons_tail = theorem_symbol("take_cons", "tail");
+    let computes_count = theorem_symbol("take_computes_to_list", "count");
+    let computes_list = theorem_symbol("take_computes_to_list", "list");
+    let computes_result = theorem_symbol("take_computes_to_list", "result");
+
+    assert_eq!(take_zero_source_theorem(), take_zero_theorem(zero_list));
+    assert_eq!(take_nil_source_theorem(), take_nil_theorem(nil_count));
+    assert_eq!(
+        take_cons_source_theorem(),
+        take_cons_theorem(cons_count_head, cons_count_tail, cons_head, cons_tail)
+    );
+    assert_eq!(
+        take_computes_to_list_source_theorem(),
+        take_computes_to_list_theorem(computes_count, computes_list, computes_result)
+    );
+}
+
+#[test]
+fn drop_theorems_have_expected_shape() {
+    assert_eq!(
+        drop_zero_theorem(X),
+        forall_where(
+            X,
+            is_list(var(X)),
+            computes_to(drop_call(nil(), var(X)), var(X)),
+        )
+    );
+    assert_eq!(
+        drop_nil_theorem(COUNT),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            computes_to(drop_call(var(COUNT), nil()), nil()),
+        )
+    );
+    assert_eq!(
+        drop_cons_theorem(COUNT_HEAD, COUNT_TAIL, HEAD, TAIL),
+        forall_where(
+            COUNT_HEAD,
+            is_value(var(COUNT_HEAD)),
+            forall_where(
+                COUNT_TAIL,
+                is_list(var(COUNT_TAIL)),
+                forall_where(
+                    HEAD,
+                    is_value(var(HEAD)),
+                    forall_where(
+                        TAIL,
+                        is_list(var(TAIL)),
+                        computes_to(
+                            drop_call(
+                                cons(var(COUNT_HEAD), var(COUNT_TAIL)),
+                                cons(var(HEAD), var(TAIL)),
+                            ),
+                            drop_call(var(COUNT_TAIL), var(TAIL)),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        drop_computes_to_list_theorem(COUNT, X, RESULT),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            forall_where(
+                X,
+                is_list(var(X)),
+                computes_to_list(RESULT, drop_call(var(COUNT), var(X))),
+            ),
+        )
+    );
+}
+
+#[test]
+fn drop_source_theorems_have_expected_shape() {
+    let zero_list = theorem_symbol("drop_zero", "list");
+    let nil_count = theorem_symbol("drop_nil", "count");
+    let cons_count_head = theorem_symbol("drop_cons", "count_head");
+    let cons_count_tail = theorem_symbol("drop_cons", "count_tail");
+    let cons_head = theorem_symbol("drop_cons", "head");
+    let cons_tail = theorem_symbol("drop_cons", "tail");
+    let computes_count = theorem_symbol("drop_computes_to_list", "count");
+    let computes_list = theorem_symbol("drop_computes_to_list", "list");
+    let computes_result = theorem_symbol("drop_computes_to_list", "result");
+
+    assert_eq!(drop_zero_source_theorem(), drop_zero_theorem(zero_list));
+    assert_eq!(drop_nil_source_theorem(), drop_nil_theorem(nil_count));
+    assert_eq!(
+        drop_cons_source_theorem(),
+        drop_cons_theorem(cons_count_head, cons_count_tail, cons_head, cons_tail)
+    );
+    assert_eq!(
+        drop_computes_to_list_source_theorem(),
+        drop_computes_to_list_theorem(computes_count, computes_list, computes_result)
+    );
+}
+
+#[test]
 fn concat_map_theorems_have_expected_shape() {
     assert_eq!(
         concat_map_nil_theorem(FUNCTION),

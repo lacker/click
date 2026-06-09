@@ -50,6 +50,14 @@ fn length() -> Computation {
     computation_ref("length")
 }
 
+fn take() -> Computation {
+    computation_ref("take")
+}
+
+fn drop() -> Computation {
+    computation_ref("drop")
+}
+
 fn map() -> Computation {
     computation_ref("map")
 }
@@ -187,6 +195,14 @@ fn prelude_theorem_names() -> Vec<Name> {
         "length_singleton",
         "length_computes_to_list",
         "length_append",
+        "take_zero",
+        "take_nil",
+        "take_cons",
+        "take_computes_to_list",
+        "drop_zero",
+        "drop_nil",
+        "drop_cons",
+        "drop_computes_to_list",
         "map_nil",
         "map_cons",
         "map_computes_to_list",
@@ -248,6 +264,7 @@ fn prelude_theorem_names() -> Vec<Name> {
         "fold_right_cons_nil",
         "fold_left_reverse_acc",
         "fold_left_reverse",
+        "append_take_drop",
         "last_nil_errors",
         "last_singleton",
         "last_cons",
@@ -348,6 +365,7 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
     );
 
     assert_eq!(loaded.computation("append"), Some(computation("append")));
+    assert_eq!(loaded.computation("take"), Some(computation("take")));
     assert_eq!(loaded.computation("zero"), Some(computation("zero")));
     assert_eq!(
         loaded.theorem("append_assoc"),
@@ -370,6 +388,10 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         Some(&list_tests::append_definition())
     );
     assert_eq!(
+        loaded.theory().computation(computation("take")),
+        Some(&list_tests::take_definition())
+    );
+    assert_eq!(
         loaded.theory().computation(computation("zero")),
         Some(&nat_tests::zero_definition())
     );
@@ -385,6 +407,7 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         loaded.env().computation("reverse_acc"),
         Some(computation("reverse_acc"))
     );
+    assert_eq!(loaded.env().computation("take"), Some(computation("take")));
 
     assert_eq!(
         computation_name("is-singleton"),
@@ -410,6 +433,7 @@ fn loaded_computation_prelude_keeps_env_without_defining_theorems() {
     let loaded = loaded_computations();
 
     assert_eq!(loaded.computation("reverse"), Some(computation("reverse")));
+    assert_eq!(loaded.computation("take"), Some(computation("take")));
     assert_eq!(loaded.computation("add"), Some(computation("add")));
     assert_eq!(
         loaded.theorem("append_assoc"),
@@ -422,6 +446,10 @@ fn loaded_computation_prelude_keeps_env_without_defining_theorems() {
     assert_eq!(
         loaded.theory().computation(computation("reverse")),
         Some(&list_tests::reverse_definition())
+    );
+    assert_eq!(
+        loaded.theory().computation(computation("take")),
+        Some(&list_tests::take_definition())
     );
     assert_eq!(
         loaded.theory().computation(computation("add")),
@@ -472,6 +500,14 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.computation(computation("length")),
         Some(&list_tests::length_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("take")),
+        Some(&list_tests::take_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("drop")),
+        Some(&list_tests::drop_definition())
     );
     assert_eq!(
         theory.computation(computation("map")),
@@ -579,6 +615,8 @@ fn theory_defines_reverse() {
     assert_eq!(snoc(), Computation::Ref(computation("snoc")));
     assert_eq!(concat(), Computation::Ref(computation("concat")));
     assert_eq!(length(), Computation::Ref(computation("length")));
+    assert_eq!(take(), Computation::Ref(computation("take")));
+    assert_eq!(drop(), Computation::Ref(computation("drop")));
     assert_eq!(map(), Computation::Ref(computation("map")));
     assert_eq!(concat_map(), Computation::Ref(computation("concat-map")));
     assert_eq!(fold_right(), Computation::Ref(computation("fold-right")));
@@ -636,6 +674,14 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&length()),
         Step::Reduced(list_tests::length_definition())
+    );
+    assert_eq!(
+        theory.reduce(&take()),
+        Step::Reduced(list_tests::take_definition())
+    );
+    assert_eq!(
+        theory.reduce(&drop()),
+        Step::Reduced(list_tests::drop_definition())
     );
     assert_eq!(
         theory.reduce(&map()),
@@ -947,6 +993,14 @@ fn theory_defines_reverse_theorems() {
     let length_singleton_prop = list_tests::length_singleton_source_theorem();
     let length_computes_to_list_prop = list_tests::length_computes_to_list_source_theorem();
     let length_append_prop = list_tests::length_append_source_theorem();
+    let take_zero_prop = list_tests::take_zero_source_theorem();
+    let take_nil_prop = list_tests::take_nil_source_theorem();
+    let take_cons_prop = list_tests::take_cons_source_theorem();
+    let take_computes_to_list_prop = list_tests::take_computes_to_list_source_theorem();
+    let drop_zero_prop = list_tests::drop_zero_source_theorem();
+    let drop_nil_prop = list_tests::drop_nil_source_theorem();
+    let drop_cons_prop = list_tests::drop_cons_source_theorem();
+    let drop_computes_to_list_prop = list_tests::drop_computes_to_list_source_theorem();
     let map_nil_prop = list_tests::map_nil_source_theorem();
     let map_cons_prop = list_tests::map_cons_source_theorem();
     let map_computes_to_list_prop = list_tests::map_computes_to_list_source_theorem();
@@ -961,6 +1015,7 @@ fn theory_defines_reverse_theorems() {
     let fold_left_nil_prop = list_tests::fold_left_nil_source_theorem();
     let fold_left_cons_prop = list_tests::fold_left_cons_source_theorem();
     let fold_left_computes_to_value_prop = list_tests::fold_left_computes_to_value_source_theorem();
+    let append_take_drop_prop = list_tests::append_take_drop_source_theorem();
     let zip_with_left_nil_prop = list_tests::zip_with_left_nil_source_theorem();
     let zip_with_right_nil_prop = list_tests::zip_with_right_nil_source_theorem();
     let zip_with_cons_prop = list_tests::zip_with_cons_source_theorem();
@@ -1109,6 +1164,20 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("length_append")),
         Some(&length_append_prop)
+    );
+    assert_eq!(theory.theorem(theorem("take_zero")), Some(&take_zero_prop));
+    assert_eq!(theory.theorem(theorem("take_nil")), Some(&take_nil_prop));
+    assert_eq!(theory.theorem(theorem("take_cons")), Some(&take_cons_prop));
+    assert_eq!(
+        theory.theorem(theorem("take_computes_to_list")),
+        Some(&take_computes_to_list_prop)
+    );
+    assert_eq!(theory.theorem(theorem("drop_zero")), Some(&drop_zero_prop));
+    assert_eq!(theory.theorem(theorem("drop_nil")), Some(&drop_nil_prop));
+    assert_eq!(theory.theorem(theorem("drop_cons")), Some(&drop_cons_prop));
+    assert_eq!(
+        theory.theorem(theorem("drop_computes_to_list")),
+        Some(&drop_computes_to_list_prop)
     );
     assert_eq!(theory.theorem(theorem("map_nil")), Some(&map_nil_prop));
     assert_eq!(theory.theorem(theorem("map_cons")), Some(&map_cons_prop));
@@ -1271,6 +1340,10 @@ fn theory_defines_reverse_theorems() {
         Some(&fold_left_reverse_prop)
     );
     assert_eq!(
+        theory.theorem(theorem("append_take_drop")),
+        Some(&append_take_drop_prop)
+    );
+    assert_eq!(
         theory.theorem(theorem("last_nil_errors")),
         Some(&last_nil_errors_prop)
     );
@@ -1329,6 +1402,10 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("append_assoc")),
         Some(&append_assoc_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("append_take_drop")),
+        Some(&append_take_drop_prop)
     );
     assert_eq!(
         theory
@@ -1900,6 +1977,12 @@ fn theory_defines_reverse_theorems() {
             .expect("fold-left reverse theorem source proof should check with dependencies")
             .prop(),
         &fold_left_reverse_prop,
+    );
+    assert_eq!(
+        checked_theorem("append_take_drop")
+            .expect("append take/drop theorem source proof should check with dependencies")
+            .prop(),
+        &append_take_drop_prop,
     );
 }
 

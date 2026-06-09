@@ -312,6 +312,154 @@
             (by
               (simpa only (symm (length_cons head tail))))))))))
 
+(theorem take_zero
+  (forall list (is-list list)
+    (computes-to (take nil list) nil))
+  (by
+    (intro list)
+    (eval)))
+
+(theorem take_nil
+  (forall count (is-list count)
+    (computes-to (take count nil) nil))
+  (by
+    (list-induction count
+      (by
+        (eval))
+      count_head
+      count_tail
+      induction_hypothesis
+      (by
+        (eval)))))
+
+(theorem take_cons
+  (forall count_head (is-value count_head)
+    (forall count_tail (is-list count_tail)
+      (forall head (is-value head)
+        (forall tail (is-list tail)
+          (computes-to
+            (take (cons count_head count_tail) (cons head tail))
+            (cons head (take count_tail tail)))))))
+  (by
+    (intro count_head)
+    (intro count_tail)
+    (intro head)
+    (intro tail)
+    (eval)))
+
+(theorem take_computes_to_list
+  (forall count (is-list count)
+    (forall list (is-list list)
+      (computes-to-list result (take count list))))
+  (by
+    (list-induction count
+      (by
+        (intro list)
+        (exists nil
+          (by
+            (eval))))
+      count_head
+      count_tail
+      count_induction_hypothesis
+      (by
+        (list-induction list
+          (by
+            (exists nil
+              (by
+                (eval))))
+          head
+          tail
+          list_induction_hypothesis
+          (by
+            (obtain taken_tail taken_tail_proof
+              (count_induction_hypothesis tail))
+            (exists (cons head taken_tail)
+              (by
+                (calc
+                  (take (cons count_head count_tail) (cons head tail))
+                  (==
+                    (cons head (take count_tail tail))
+                    (by
+                      (exact take_cons count_head count_tail head tail)))
+                  (==
+                    (cons head taken_tail)
+                    (by
+                      (simpa only taken_tail_proof))))))))))))
+
+(theorem drop_zero
+  (forall list (is-list list)
+    (computes-to (drop nil list) list))
+  (by
+    (intro list)
+    (eval)))
+
+(theorem drop_nil
+  (forall count (is-list count)
+    (computes-to (drop count nil) nil))
+  (by
+    (list-induction count
+      (by
+        (eval))
+      count_head
+      count_tail
+      induction_hypothesis
+      (by
+        (eval)))))
+
+(theorem drop_cons
+  (forall count_head (is-value count_head)
+    (forall count_tail (is-list count_tail)
+      (forall head (is-value head)
+        (forall tail (is-list tail)
+          (computes-to
+            (drop (cons count_head count_tail) (cons head tail))
+            (drop count_tail tail))))))
+  (by
+    (intro count_head)
+    (intro count_tail)
+    (intro head)
+    (intro tail)
+    (eval)))
+
+(theorem drop_computes_to_list
+  (forall count (is-list count)
+    (forall list (is-list list)
+      (computes-to-list result (drop count list))))
+  (by
+    (list-induction count
+      (by
+        (intro list)
+        (exists list
+          (by
+            (eval))))
+      count_head
+      count_tail
+      count_induction_hypothesis
+      (by
+        (list-induction list
+          (by
+            (exists nil
+              (by
+                (eval))))
+          head
+          tail
+          list_induction_hypothesis
+          (by
+            (obtain dropped_tail dropped_tail_proof
+              (count_induction_hypothesis tail))
+            (exists dropped_tail
+              (by
+                (calc
+                  (drop (cons count_head count_tail) (cons head tail))
+                  (==
+                    (drop count_tail tail)
+                    (by
+                      (exact drop_cons count_head count_tail head tail)))
+                  (==
+                    dropped_tail
+                    (by
+                      (exact dropped_tail_proof))))))))))))
+
 (theorem map_nil
   (forall function (is-value function)
     (computes-to (map function nil) nil))
