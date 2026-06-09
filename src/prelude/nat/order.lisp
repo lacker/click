@@ -111,6 +111,65 @@
       (by
         (eval)))))
 
+(theorem range_zero
+  (computes-to (range zero) nil)
+  (by
+    (eval)))
+
+(theorem range_cons
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (computes-to
+        (range (cons head tail))
+        (snoc (range tail) tail))))
+  (by
+    (intro head)
+    (intro tail)
+    (eval)))
+
+(theorem range_succ
+  (forall nat (is-list nat)
+    (computes-to
+      (range (succ nat))
+      (snoc (range nat) nat)))
+  (by
+    (intro nat)
+    (eval)))
+
+(theorem range_computes_to_list
+  (forall count (is-list count)
+    (computes-to-list result (range count)))
+  (by
+    (list-induction count
+      (by
+        (exists nil
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (obtain tail_range tail_range_proof
+          induction_hypothesis)
+        (obtain snoc_range snoc_range_proof
+          (snoc_computes_to_list tail_range tail))
+        (exists snoc_range
+          (by
+            (calc
+              (range (cons head tail))
+              (==
+                (snoc (range tail) tail)
+                (by
+                  (exact range_cons head tail)))
+              (==
+                (snoc tail_range tail)
+                (by
+                  (simpa only tail_range_proof)))
+              (==
+                snoc_range
+                (by
+                  (exact snoc_range_proof))))))))))
+
 (theorem succ_preserves_nat_value
   (forall nat (is-list nat)
     (implies

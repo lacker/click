@@ -6,8 +6,8 @@ use crate::{
 };
 
 use super::list_tests::{
-    apply, check_evaluates_to, cons, false_value, nil, proof_by_evaluation, quote, true_value,
-    unit, var,
+    apply, check_evaluates_to, cons, false_value, nil, proof_by_evaluation, quote, snoc_call,
+    true_value, unit, var,
 };
 
 const NAT: Symbol = Symbol(2_100);
@@ -57,6 +57,14 @@ pub fn pred_definition() -> Computation {
     definition("pred")
 }
 
+pub fn range() -> Computation {
+    computation_ref("range")
+}
+
+pub fn range_definition() -> Computation {
+    definition("range")
+}
+
 pub fn add() -> Computation {
     computation_ref("add")
 }
@@ -103,6 +111,10 @@ pub fn is_zero_call(nat: Computation) -> Computation {
 
 pub fn pred_call(nat: Computation) -> Computation {
     apply(pred(), nat)
+}
+
+pub fn range_call(count: Computation) -> Computation {
+    apply(range(), count)
 }
 
 pub fn add_call(left: Computation, right: Computation) -> Computation {
@@ -207,6 +219,22 @@ pub fn pred_computes_to_list_source_theorem() -> Prop {
 
 pub fn succ_computes_to_list_source_theorem() -> Prop {
     theorem_prop("succ_computes_to_list")
+}
+
+pub fn range_zero_source_theorem() -> Prop {
+    theorem_prop("range_zero")
+}
+
+pub fn range_cons_source_theorem() -> Prop {
+    theorem_prop("range_cons")
+}
+
+pub fn range_succ_source_theorem() -> Prop {
+    theorem_prop("range_succ")
+}
+
+pub fn range_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("range_computes_to_list")
 }
 
 pub fn succ_preserves_nat_value_source_theorem() -> Prop {

@@ -206,6 +206,9 @@ contains list definitions such as `reverse_acc`, `reverse`, `append`, `snoc`,
 `value-eq-comparable`, `member`, `last`, `init`, `null`, and `is-singleton`,
 plus theorems about those definitions. Prelude booleans use the kernel's
 reserved quoted symbols.
+It also contains unary natural-number definitions such as `zero`, `succ`,
+`is-nat-value`, `is-zero`, `pred`, `range`, `add`, `sub`, `mul`, `nat-eq`,
+`nat-le`, and `nat-lt`, with arithmetic and comparison theorems.
 The list prelude itself lives in ordered source sections under
 `src/prelude/list/`; the corresponding Rust module only includes those source
 files, with list-specific Rust helpers kept as test support.

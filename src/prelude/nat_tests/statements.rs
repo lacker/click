@@ -7,6 +7,11 @@ fn nat_theorem_statements_load_from_source() {
     let pred_succ_nat = theorem_symbol("pred_succ", "nat");
     let pred_result = theorem_symbol("pred_computes_to_list", "result");
     let pred_nat = theorem_symbol("pred_computes_to_list", "nat");
+    let range_cons_head = theorem_symbol("range_cons", "head");
+    let range_cons_tail = theorem_symbol("range_cons", "tail");
+    let range_succ_nat = theorem_symbol("range_succ", "nat");
+    let range_result = theorem_symbol("range_computes_to_list", "result");
+    let range_count = theorem_symbol("range_computes_to_list", "count");
     let nat_eq_refl_nat = theorem_symbol("nat_eq_refl", "nat");
     let nat_eq_is_bool_left = theorem_symbol("nat_eq_is_bool", "left");
     let nat_eq_is_bool_right = theorem_symbol("nat_eq_is_bool", "right");
@@ -245,6 +250,42 @@ fn nat_theorem_statements_load_from_source() {
     assert_eq!(
         succ_zero_source_theorem(),
         computes_to(succ_call(zero()), one_value())
+    );
+    assert_eq!(
+        range_zero_source_theorem(),
+        computes_to(range_call(zero()), nil())
+    );
+    assert_eq!(
+        range_cons_source_theorem(),
+        crate::forall_where(
+            range_cons_head,
+            is_value(var(range_cons_head)),
+            crate::forall_where(
+                range_cons_tail,
+                is_list(var(range_cons_tail)),
+                computes_to(
+                    range_call(cons(var(range_cons_head), var(range_cons_tail))),
+                    snoc_call(range_call(var(range_cons_tail)), var(range_cons_tail))
+                )
+            )
+        )
+    );
+    assert_eq!(
+        range_succ_source_theorem(),
+        forall_list(
+            range_succ_nat,
+            computes_to(
+                range_call(succ_call(var(range_succ_nat))),
+                snoc_call(range_call(var(range_succ_nat)), var(range_succ_nat))
+            )
+        )
+    );
+    assert_eq!(
+        range_computes_to_list_source_theorem(),
+        forall_list(
+            range_count,
+            computes_to_list(range_result, range_call(var(range_count)))
+        )
     );
     assert_eq!(
         is_zero_cons_false_source_theorem(),

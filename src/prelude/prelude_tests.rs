@@ -154,6 +154,10 @@ fn pred() -> Computation {
     computation_ref("pred")
 }
 
+fn range() -> Computation {
+    computation_ref("range")
+}
+
 fn add() -> Computation {
     computation_ref("add")
 }
@@ -305,6 +309,10 @@ fn prelude_theorem_names() -> Vec<Name> {
         "is_zero_pred_succ",
         "pred_computes_to_list",
         "succ_computes_to_list",
+        "range_zero",
+        "range_cons",
+        "range_succ",
+        "range_computes_to_list",
         "succ_preserves_nat_value",
         "is_nat_value_cons",
         "is_nat_value_cons_true_elim",
@@ -634,6 +642,10 @@ fn theory_defines_reverse() {
         Some(&nat_tests::pred_definition())
     );
     assert_eq!(
+        theory.computation(computation("range")),
+        Some(&nat_tests::range_definition())
+    );
+    assert_eq!(
         theory.computation(computation("add")),
         Some(&nat_tests::add_definition())
     );
@@ -683,6 +695,7 @@ fn theory_defines_reverse() {
         is_nat_value(),
         Computation::Ref(computation("is-nat-value"))
     );
+    assert_eq!(range(), Computation::Ref(computation("range")));
     assert_eq!(add(), Computation::Ref(computation("add")));
     assert_eq!(
         theory.reduce(&reverse_acc()),
@@ -811,6 +824,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&pred()),
         Step::Reduced(nat_tests::pred_definition())
+    );
+    assert_eq!(
+        theory.reduce(&range()),
+        Step::Reduced(nat_tests::range_definition())
     );
     assert_eq!(
         theory.reduce(&add()),

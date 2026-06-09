@@ -8,6 +8,12 @@ fn constructors_evaluate_to_unary_lists() {
     assert_evaluates_to(is_zero_call(one_value()), false_value());
     assert_evaluates_to(pred_call(zero()), nil());
     assert_evaluates_to(pred_call(three_value()), two_value());
+    assert_evaluates_to(range_call(zero()), nil());
+    assert_evaluates_to(range_call(one_value()), cons(nil(), nil()));
+    assert_evaluates_to(
+        range_call(three_value()),
+        cons(nil(), cons(one_value(), cons(two_value(), nil()))),
+    );
     assert_evaluates_to(add_call(two_value(), one_value()), three_value());
     assert_evaluates_to(add_call(two_value(), zero()), two_value());
     assert_evaluates_to(sub_call(three_value(), one_value()), two_value());

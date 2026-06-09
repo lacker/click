@@ -42,6 +42,14 @@ fn checked_theory_contains_nat_theorems() {
         "succ_computes_to_list",
         succ_computes_to_list_source_theorem(),
     );
+    assert_theory_has_theorem(&theory, "range_zero", range_zero_source_theorem());
+    assert_theory_has_theorem(&theory, "range_cons", range_cons_source_theorem());
+    assert_theory_has_theorem(&theory, "range_succ", range_succ_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "range_computes_to_list",
+        range_computes_to_list_source_theorem(),
+    );
     assert_theory_has_theorem(
         &theory,
         "succ_preserves_nat_value",

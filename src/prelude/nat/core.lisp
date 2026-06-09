@@ -31,6 +31,15 @@
       cell
       (tail cell))))
 
+(def range
+  (lambda count
+    (list-case count
+      nil
+      cell
+      (snoc
+        (range (tail cell))
+        (tail cell)))))
+
 (def add
   (lambda left
     (lambda right
@@ -90,4 +99,3 @@
           (quote :false)
           right_cell
           (nat-lt (tail left_cell) (tail right_cell)))))))
-

@@ -20,6 +20,10 @@ fn nat_definitions_load_from_source() {
         Computation::Ref(super::super::computation_name("pred").unwrap())
     );
     assert_eq!(
+        range(),
+        Computation::Ref(super::super::computation_name("range").unwrap())
+    );
+    assert_eq!(
         add(),
         Computation::Ref(super::super::computation_name("add").unwrap())
     );
