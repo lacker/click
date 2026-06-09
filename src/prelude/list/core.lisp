@@ -139,6 +139,21 @@
               separator
               (intersperse separator (tail cell)))))))))
 
+(def intercalate
+  (lambda separator
+    (lambda lists
+      (list-case lists
+        nil
+        cell
+        (list-case (tail cell)
+          (head cell)
+          tail_cell
+          (append
+            (head cell)
+            (append
+              separator
+              (intercalate separator (tail cell)))))))))
+
 (def map
   ((lambda fixed_point_function
      ((lambda fixed_point_self
@@ -255,6 +270,16 @@
 (def is-list-value
   (lambda value
     (symbol-eq (value-kind value) (quote :list))))
+
+(def all-lists
+  (lambda lists
+    (list-case lists
+      (quote :true)
+      cell
+      (if
+        (is-list-value (head cell))
+        (all-lists (tail cell))
+        (quote :false)))))
 
 (def value-eq
   (lambda left

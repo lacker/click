@@ -240,6 +240,63 @@ fn intersperse_triple_inserts_separator_between_elements() {
 }
 
 #[test]
+fn intercalate_nil_returns_nil() {
+    assert_evaluates(intercalate_call(singleton(unit()), nil()), Value::nil());
+}
+
+#[test]
+fn intercalate_singleton_returns_only_list() {
+    let list = pair(quote(A), quote(B));
+
+    assert_evaluates(
+        intercalate_call(singleton(unit()), singleton(list.clone())),
+        value(list),
+    );
+}
+
+#[test]
+fn intercalate_triple_inserts_separator_between_lists() {
+    let lists = triple(
+        singleton(quote(A)),
+        pair(quote(B), quote(NOT_A_LIST)),
+        singleton(quote(B)),
+    );
+    let expected = cons(
+        quote(A),
+        cons(
+            unit(),
+            cons(
+                quote(B),
+                cons(quote(NOT_A_LIST), cons(unit(), singleton(quote(B)))),
+            ),
+        ),
+    );
+
+    assert_evaluates(intercalate_call(singleton(unit()), lists), value(expected));
+}
+
+#[test]
+fn all_lists_nil_returns_true() {
+    assert_evaluates(all_lists_call(nil()), Value::quote(prelude_symbol(":true")));
+}
+
+#[test]
+fn all_lists_accepts_lists_of_lists() {
+    assert_evaluates(
+        all_lists_call(pair(singleton(quote(A)), pair(quote(B), quote(NOT_A_LIST)))),
+        Value::quote(prelude_symbol(":true")),
+    );
+}
+
+#[test]
+fn all_lists_rejects_non_list_elements() {
+    assert_evaluates(
+        all_lists_call(pair(singleton(quote(A)), quote(B))),
+        Value::quote(prelude_symbol(":false")),
+    );
+}
+
+#[test]
 fn map_nil_returns_nil() {
     let identity = lambda(X, var(X));
 

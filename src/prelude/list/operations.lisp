@@ -647,6 +647,247 @@
       (by
         (exact intersperse_cons_computes_to_list separator tail head)))))
 
+(theorem intercalate_nil
+  (forall separator (is-list separator)
+    (computes-to (intercalate separator nil) nil))
+  (by
+    (intro separator)
+    (eval)))
+
+(theorem intercalate_singleton
+  (forall separator (is-list separator)
+    (forall list (is-list list)
+      (computes-to
+        (intercalate separator (cons list nil))
+        list)))
+  (by
+    (intro separator)
+    (intro list)
+    (eval)))
+
+(theorem intercalate_cons_cons
+  (forall separator (is-list separator)
+    (forall head (is-list head)
+      (forall next (is-list next)
+        (forall tail (is-list tail)
+          (computes-to
+            (intercalate separator (cons head (cons next tail)))
+            (append
+              head
+              (append
+                separator
+                (intercalate separator (cons next tail)))))))))
+  (by
+    (intro separator)
+    (intro head)
+    (intro next)
+    (intro tail)
+    (eval)))
+
+(theorem is_list_value_true_implies_is_list
+  (forall value (is-value value)
+    (implies
+      (computes-to (is-list-value value) (quote :true))
+      (is-list value)))
+  (proof
+    (forall-intro value
+      (implies-intro value_is_value
+        (is-value value)
+        (implies-intro value_is_list_value
+          (computes-to (is-list-value value) (quote :true))
+          (value-non-symbol-non-lambda-is-list
+            (assume value_is_value)
+            (trans
+              (eval-same
+                (is-symbol value)
+                (symbol-eq (value-kind value) (quote :symbol)))
+              (rewrite
+                (symm
+                  (implies-elim
+                    (forall-elim
+                      (forall-elim
+                        (known symbol_eq_true)
+                        (value-kind value))
+                      (quote :list))
+                    (trans
+                      (eval-same
+                        (symbol-eq (value-kind value) (quote :list))
+                        (is-list-value value))
+                      (assume value_is_list_value))))
+                (eval-to
+                  (symbol-eq (quote :list) (quote :symbol))
+                  (quote :false))
+                kind
+                (computes-to
+                  (symbol-eq kind (quote :symbol))
+                  (quote :false))))
+            (trans
+              (eval-same
+                (is-lambda value)
+                (symbol-eq (value-kind value) (quote :lambda)))
+              (rewrite
+                (symm
+                  (implies-elim
+                    (forall-elim
+                      (forall-elim
+                        (known symbol_eq_true)
+                        (value-kind value))
+                      (quote :list))
+                    (trans
+                      (eval-same
+                        (symbol-eq (value-kind value) (quote :list))
+                        (is-list-value value))
+                      (assume value_is_list_value))))
+                (eval-to
+                  (symbol-eq (quote :list) (quote :lambda))
+                  (quote :false))
+                kind
+                (computes-to
+                  (symbol-eq kind (quote :lambda))
+                  (quote :false))))))))))
+
+(theorem all_lists_cons_true
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (implies
+        (computes-to
+          (all-lists (cons head tail))
+          (quote :true))
+        (and
+          (is-list head)
+          (computes-to
+            (all-lists tail)
+            (quote :true))))))
+  (by
+    (intro head)
+    (intro tail)
+    (intro lists_are_lists)
+    (have unfolded_all_lists
+      (computes-to
+        (if
+          (is-list-value head)
+          (all-lists (tail (cons head tail)))
+          (quote :false))
+        (quote :true))
+      (by
+        (calc
+          (if
+            (is-list-value head)
+            (all-lists (tail (cons head tail)))
+            (quote :false))
+          (==
+            (all-lists (cons head tail))
+            (by
+              (eval)))
+          (==
+            (quote :true)
+            (by
+              (exact lists_are_lists)))))
+      (by
+        (specialize all_parts if_true_result_with_false_else
+          (is-list-value head)
+          (all-lists (tail (cons head tail))))
+        (cases all_parts head_is_list_value tail_is_all_lists_through_cons)
+        (split
+          (by
+            (apply is_list_value_true_implies_is_list head))
+          (by
+            (calc
+              (all-lists tail)
+              (==
+                (all-lists (tail (cons head tail)))
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact tail_is_all_lists_through_cons))))))))))
+
+(theorem intercalate_cons_computes_to_list
+  (forall separator (is-list separator)
+    (forall tail (is-list tail)
+      (forall head (is-value head)
+        (implies
+          (computes-to
+            (all-lists (cons head tail))
+            (quote :true))
+          (computes-to-list result (intercalate separator (cons head tail)))))))
+  (by
+    (intro separator)
+    (list-induction tail
+      (by
+        (intro head)
+        (intro lists_are_lists)
+        (specialize all_parts all_lists_cons_true head nil)
+        (cases all_parts head_is_list tail_is_all_lists)
+        (exists head
+          (by
+            (exact intercalate_singleton separator head))))
+      next
+      rest
+      induction_hypothesis
+      (by
+        (intro head)
+        (intro lists_are_lists)
+        (specialize all_parts all_lists_cons_true
+          head
+          (cons next rest))
+        (cases all_parts head_is_list tail_is_all_lists)
+        (specialize tail_parts all_lists_cons_true next rest)
+        (cases tail_parts next_is_list rest_is_all_lists)
+        (specialize intercalated_tail_exists induction_hypothesis next)
+        (obtain intercalated_tail intercalated_tail_proof
+          intercalated_tail_exists)
+        (obtain separator_tail separator_tail_proof
+          (append_computes_to_list separator intercalated_tail))
+        (obtain result result_proof
+          (append_computes_to_list head separator_tail))
+        (exists result
+          (by
+            (calc
+              (intercalate separator (cons head (cons next rest)))
+              (==
+                (append
+                  head
+                  (append
+                    separator
+                    (intercalate separator (cons next rest))))
+                (by
+                  (exact intercalate_cons_cons separator head next rest)))
+              (==
+                (append head (append separator intercalated_tail))
+                (by
+                  (simpa only intercalated_tail_proof)))
+              (==
+                (append head separator_tail)
+                (by
+                  (simpa only separator_tail_proof)))
+              (==
+                result
+                (by
+                  (exact result_proof))))))))))
+
+(theorem intercalate_computes_to_list
+  (forall separator (is-list separator)
+    (forall lists (is-list lists)
+      (implies
+        (computes-to (all-lists lists) (quote :true))
+        (computes-to-list result (intercalate separator lists)))))
+  (by
+    (intro separator)
+    (list-induction lists
+      (by
+        (intro lists_are_lists)
+        (exists nil
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro lists_are_lists)
+        (exact intercalate_cons_computes_to_list separator tail head)))))
+
 (theorem map_nil
   (forall function (is-value function)
     (computes-to (map function nil) nil))

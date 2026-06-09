@@ -153,6 +153,14 @@ pub fn intersperse_definition() -> Computation {
     definition("intersperse")
 }
 
+pub fn intercalate() -> Computation {
+    computation_ref("intercalate")
+}
+
+pub fn intercalate_definition() -> Computation {
+    definition("intercalate")
+}
+
 pub fn map() -> Computation {
     computation_ref("map")
 }
@@ -215,6 +223,14 @@ pub fn all() -> Computation {
 
 pub fn all_definition() -> Computation {
     definition("all")
+}
+
+pub fn all_lists() -> Computation {
+    computation_ref("all-lists")
+}
+
+pub fn all_lists_definition() -> Computation {
+    definition("all-lists")
 }
 
 pub fn is_symbol_definition() -> Computation {
@@ -525,6 +541,34 @@ pub fn intersperse_cons_computes_to_list_source_theorem() -> Prop {
 
 pub fn intersperse_computes_to_list_source_theorem() -> Prop {
     theorem_prop("intersperse_computes_to_list")
+}
+
+pub fn intercalate_nil_source_theorem() -> Prop {
+    theorem_prop("intercalate_nil")
+}
+
+pub fn intercalate_singleton_source_theorem() -> Prop {
+    theorem_prop("intercalate_singleton")
+}
+
+pub fn intercalate_cons_cons_source_theorem() -> Prop {
+    theorem_prop("intercalate_cons_cons")
+}
+
+pub fn is_list_value_true_implies_is_list_source_theorem() -> Prop {
+    theorem_prop("is_list_value_true_implies_is_list")
+}
+
+pub fn all_lists_cons_true_source_theorem() -> Prop {
+    theorem_prop("all_lists_cons_true")
+}
+
+pub fn intercalate_cons_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("intercalate_cons_computes_to_list")
+}
+
+pub fn intercalate_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("intercalate_computes_to_list")
 }
 
 pub fn map_nil_source_theorem() -> Prop {
@@ -842,6 +886,10 @@ pub fn intersperse_call(separator: Computation, list: Computation) -> Computatio
     apply(apply(intersperse(), separator), list)
 }
 
+pub fn intercalate_call(separator: Computation, lists: Computation) -> Computation {
+    apply(apply(intercalate(), separator), lists)
+}
+
 pub fn map_call(function: Computation, list: Computation) -> Computation {
     apply(apply(map(), function), list)
 }
@@ -880,6 +928,10 @@ pub fn any_call(predicate: Computation, list: Computation) -> Computation {
 
 pub fn all_call(predicate: Computation, list: Computation) -> Computation {
     apply(apply(all(), predicate), list)
+}
+
+pub fn all_lists_call(lists: Computation) -> Computation {
+    apply(all_lists(), lists)
 }
 
 pub fn is_symbol_call(value: Computation) -> Computation {
@@ -1635,6 +1687,152 @@ pub fn intersperse_computes_to_list_theorem(
             list,
             is_list(var(list)),
             computes_to_list(result, intersperse_call(var(separator), var(list))),
+        ),
+    )
+}
+
+/// Intercalating an empty list of lists returns `nil`.
+pub fn intercalate_nil_theorem(separator: Symbol) -> Prop {
+    forall_where(
+        separator,
+        is_list(var(separator)),
+        computes_to(intercalate_call(var(separator), nil()), nil()),
+    )
+}
+
+/// Intercalating a singleton list of lists returns the only list.
+pub fn intercalate_singleton_theorem(separator: Symbol, list: Symbol) -> Prop {
+    forall_where(
+        separator,
+        is_list(var(separator)),
+        forall_where(
+            list,
+            is_list(var(list)),
+            computes_to(
+                intercalate_call(var(separator), singleton(var(list))),
+                var(list),
+            ),
+        ),
+    )
+}
+
+/// Intercalating a list with at least two elements appends the head list, the
+/// separator list, and then recurs on the tail.
+pub fn intercalate_cons_cons_theorem(
+    separator: Symbol,
+    head: Symbol,
+    next: Symbol,
+    tail: Symbol,
+) -> Prop {
+    forall_where(
+        separator,
+        is_list(var(separator)),
+        forall_where(
+            head,
+            is_list(var(head)),
+            forall_where(
+                next,
+                is_list(var(next)),
+                forall_where(
+                    tail,
+                    is_list(var(tail)),
+                    computes_to(
+                        intercalate_call(
+                            var(separator),
+                            cons(var(head), cons(var(next), var(tail))),
+                        ),
+                        append_call(
+                            var(head),
+                            append_call(
+                                var(separator),
+                                intercalate_call(var(separator), cons(var(next), var(tail))),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// A value whose list-kind predicate returns true is a list.
+pub fn is_list_value_true_implies_is_list_theorem(value: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        implies(
+            computes_to(is_list_value_call(var(value)), true_value()),
+            is_list(var(value)),
+        ),
+    )
+}
+
+/// If `all-lists` returns true on a cons, then the head is a list and the
+/// tail also satisfies `all-lists`.
+pub fn all_lists_cons_true_theorem(head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            tail,
+            is_list(var(tail)),
+            implies(
+                computes_to(all_lists_call(cons(var(head), var(tail))), true_value()),
+                and(
+                    is_list(var(head)),
+                    computes_to(all_lists_call(var(tail)), true_value()),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If a cons input satisfies `all-lists`, then `intercalate` computes to a
+/// list on that cons input.
+pub fn intercalate_cons_computes_to_list_theorem(
+    separator: Symbol,
+    tail: Symbol,
+    head: Symbol,
+    result: Symbol,
+) -> Prop {
+    forall_where(
+        separator,
+        is_list(var(separator)),
+        forall_where(
+            tail,
+            is_list(var(tail)),
+            forall_where(
+                head,
+                is_value(var(head)),
+                implies(
+                    computes_to(all_lists_call(cons(var(head), var(tail))), true_value()),
+                    computes_to_list(
+                        result,
+                        intercalate_call(var(separator), cons(var(head), var(tail))),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the separator is a list and the input list contains only lists, then
+/// `intercalate` computes to a list.
+pub fn intercalate_computes_to_list_theorem(
+    separator: Symbol,
+    lists: Symbol,
+    result: Symbol,
+) -> Prop {
+    forall_where(
+        separator,
+        is_list(var(separator)),
+        forall_where(
+            lists,
+            is_list(var(lists)),
+            implies(
+                computes_to(all_lists_call(var(lists)), true_value()),
+                computes_to_list(result, intercalate_call(var(separator), var(lists))),
+            ),
         ),
     )
 }

@@ -949,6 +949,183 @@ fn intersperse_source_theorems_have_expected_shape() {
 }
 
 #[test]
+fn intercalate_theorems_have_expected_shape() {
+    assert_eq!(
+        intercalate_nil_theorem(VALUE),
+        forall_where(
+            VALUE,
+            is_list(var(VALUE)),
+            computes_to(intercalate_call(var(VALUE), nil()), nil()),
+        )
+    );
+    assert_eq!(
+        intercalate_singleton_theorem(VALUE, X),
+        forall_where(
+            VALUE,
+            is_list(var(VALUE)),
+            forall_where(
+                X,
+                is_list(var(X)),
+                computes_to(intercalate_call(var(VALUE), singleton(var(X))), var(X),),
+            ),
+        )
+    );
+    assert_eq!(
+        intercalate_cons_cons_theorem(VALUE, HEAD, NEXT, TAIL),
+        forall_where(
+            VALUE,
+            is_list(var(VALUE)),
+            forall_where(
+                HEAD,
+                is_list(var(HEAD)),
+                forall_where(
+                    NEXT,
+                    is_list(var(NEXT)),
+                    forall_where(
+                        TAIL,
+                        is_list(var(TAIL)),
+                        computes_to(
+                            intercalate_call(
+                                var(VALUE),
+                                cons(var(HEAD), cons(var(NEXT), var(TAIL))),
+                            ),
+                            append_call(
+                                var(HEAD),
+                                append_call(
+                                    var(VALUE),
+                                    intercalate_call(var(VALUE), cons(var(NEXT), var(TAIL)),),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        is_list_value_true_implies_is_list_theorem(VALUE),
+        forall_where(
+            VALUE,
+            is_value(var(VALUE)),
+            implies(
+                computes_to(is_list_value_call(var(VALUE)), true_value()),
+                is_list(var(VALUE)),
+            ),
+        )
+    );
+    assert_eq!(
+        all_lists_cons_true_theorem(HEAD, TAIL),
+        forall_where(
+            HEAD,
+            is_value(var(HEAD)),
+            forall_where(
+                TAIL,
+                is_list(var(TAIL)),
+                implies(
+                    computes_to(all_lists_call(cons(var(HEAD), var(TAIL))), true_value()),
+                    and(
+                        is_list(var(HEAD)),
+                        computes_to(all_lists_call(var(TAIL)), true_value()),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        intercalate_cons_computes_to_list_theorem(VALUE, TAIL, HEAD, RESULT),
+        forall_where(
+            VALUE,
+            is_list(var(VALUE)),
+            forall_where(
+                TAIL,
+                is_list(var(TAIL)),
+                forall_where(
+                    HEAD,
+                    is_value(var(HEAD)),
+                    implies(
+                        computes_to(all_lists_call(cons(var(HEAD), var(TAIL))), true_value()),
+                        computes_to_list(
+                            RESULT,
+                            intercalate_call(var(VALUE), cons(var(HEAD), var(TAIL))),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        intercalate_computes_to_list_theorem(VALUE, X, RESULT),
+        forall_where(
+            VALUE,
+            is_list(var(VALUE)),
+            forall_where(
+                X,
+                is_list(var(X)),
+                implies(
+                    computes_to(all_lists_call(var(X)), true_value()),
+                    computes_to_list(RESULT, intercalate_call(var(VALUE), var(X))),
+                ),
+            ),
+        )
+    );
+}
+
+#[test]
+fn intercalate_source_theorems_have_expected_shape() {
+    let nil_separator = theorem_symbol("intercalate_nil", "separator");
+    let singleton_separator = theorem_symbol("intercalate_singleton", "separator");
+    let singleton_list = theorem_symbol("intercalate_singleton", "list");
+    let cons_separator = theorem_symbol("intercalate_cons_cons", "separator");
+    let cons_head = theorem_symbol("intercalate_cons_cons", "head");
+    let cons_next = theorem_symbol("intercalate_cons_cons", "next");
+    let cons_tail = theorem_symbol("intercalate_cons_cons", "tail");
+    let list_value = theorem_symbol("is_list_value_true_implies_is_list", "value");
+    let all_lists_head = theorem_symbol("all_lists_cons_true", "head");
+    let all_lists_tail = theorem_symbol("all_lists_cons_true", "tail");
+    let cons_computes_separator = theorem_symbol("intercalate_cons_computes_to_list", "separator");
+    let cons_computes_tail = theorem_symbol("intercalate_cons_computes_to_list", "tail");
+    let cons_computes_head = theorem_symbol("intercalate_cons_computes_to_list", "head");
+    let cons_computes_result = theorem_symbol("intercalate_cons_computes_to_list", "result");
+    let computes_separator = theorem_symbol("intercalate_computes_to_list", "separator");
+    let computes_lists = theorem_symbol("intercalate_computes_to_list", "lists");
+    let computes_result = theorem_symbol("intercalate_computes_to_list", "result");
+
+    assert_eq!(
+        intercalate_nil_source_theorem(),
+        intercalate_nil_theorem(nil_separator)
+    );
+    assert_eq!(
+        intercalate_singleton_source_theorem(),
+        intercalate_singleton_theorem(singleton_separator, singleton_list)
+    );
+    assert_eq!(
+        intercalate_cons_cons_source_theorem(),
+        intercalate_cons_cons_theorem(cons_separator, cons_head, cons_next, cons_tail)
+    );
+    assert_eq!(
+        is_list_value_true_implies_is_list_source_theorem(),
+        is_list_value_true_implies_is_list_theorem(list_value)
+    );
+    assert_eq!(
+        all_lists_cons_true_source_theorem(),
+        all_lists_cons_true_theorem(all_lists_head, all_lists_tail)
+    );
+    assert_eq!(
+        intercalate_cons_computes_to_list_source_theorem(),
+        intercalate_cons_computes_to_list_theorem(
+            cons_computes_separator,
+            cons_computes_tail,
+            cons_computes_head,
+            cons_computes_result
+        )
+    );
+    assert_eq!(
+        intercalate_computes_to_list_source_theorem(),
+        intercalate_computes_to_list_theorem(computes_separator, computes_lists, computes_result)
+    );
+}
+
+#[test]
 fn concat_map_theorems_have_expected_shape() {
     assert_eq!(
         concat_map_nil_theorem(FUNCTION),

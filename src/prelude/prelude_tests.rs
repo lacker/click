@@ -66,6 +66,10 @@ fn intersperse() -> Computation {
     computation_ref("intersperse")
 }
 
+fn intercalate() -> Computation {
+    computation_ref("intercalate")
+}
+
 fn map() -> Computation {
     computation_ref("map")
 }
@@ -96,6 +100,10 @@ fn any() -> Computation {
 
 fn all() -> Computation {
     computation_ref("all")
+}
+
+fn all_lists() -> Computation {
+    computation_ref("all-lists")
 }
 
 fn is_symbol() -> Computation {
@@ -224,6 +232,13 @@ fn prelude_theorem_names() -> Vec<Name> {
         "intersperse_cons_cons",
         "intersperse_cons_computes_to_list",
         "intersperse_computes_to_list",
+        "intercalate_nil",
+        "intercalate_singleton",
+        "intercalate_cons_cons",
+        "is_list_value_true_implies_is_list",
+        "all_lists_cons_true",
+        "intercalate_cons_computes_to_list",
+        "intercalate_computes_to_list",
         "map_nil",
         "map_cons",
         "map_computes_to_list",
@@ -399,6 +414,10 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         loaded.computation("intersperse"),
         Some(computation("intersperse"))
     );
+    assert_eq!(
+        loaded.computation("intercalate"),
+        Some(computation("intercalate"))
+    );
     assert_eq!(loaded.computation("zero"), Some(computation("zero")));
     assert_eq!(
         loaded.theorem("append_assoc"),
@@ -433,6 +452,10 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         Some(&list_tests::intersperse_definition())
     );
     assert_eq!(
+        loaded.theory().computation(computation("intercalate")),
+        Some(&list_tests::intercalate_definition())
+    );
+    assert_eq!(
         loaded.theory().computation(computation("zero")),
         Some(&nat_tests::zero_definition())
     );
@@ -456,6 +479,10 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
     assert_eq!(
         loaded.env().computation("intersperse"),
         Some(computation("intersperse"))
+    );
+    assert_eq!(
+        loaded.env().computation("intercalate"),
+        Some(computation("intercalate"))
     );
 
     assert_eq!(
@@ -491,6 +518,10 @@ fn loaded_computation_prelude_keeps_env_without_defining_theorems() {
         loaded.computation("intersperse"),
         Some(computation("intersperse"))
     );
+    assert_eq!(
+        loaded.computation("intercalate"),
+        Some(computation("intercalate"))
+    );
     assert_eq!(loaded.computation("add"), Some(computation("add")));
     assert_eq!(
         loaded.theorem("append_assoc"),
@@ -515,6 +546,10 @@ fn loaded_computation_prelude_keeps_env_without_defining_theorems() {
     assert_eq!(
         loaded.theory().computation(computation("intersperse")),
         Some(&list_tests::intersperse_definition())
+    );
+    assert_eq!(
+        loaded.theory().computation(computation("intercalate")),
+        Some(&list_tests::intercalate_definition())
     );
     assert_eq!(
         loaded.theory().computation(computation("add")),
@@ -583,6 +618,10 @@ fn theory_defines_reverse() {
         Some(&list_tests::intersperse_definition())
     );
     assert_eq!(
+        theory.computation(computation("intercalate")),
+        Some(&list_tests::intercalate_definition())
+    );
+    assert_eq!(
         theory.computation(computation("map")),
         Some(&list_tests::map_definition())
     );
@@ -613,6 +652,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.computation(computation("all")),
         Some(&list_tests::all_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("all-lists")),
+        Some(&list_tests::all_lists_definition())
     );
     assert_eq!(
         theory.computation(computation("is-symbol")),
@@ -696,6 +739,7 @@ fn theory_defines_reverse() {
     assert_eq!(drop(), Computation::Ref(computation("drop")));
     assert_eq!(replicate(), Computation::Ref(computation("replicate")));
     assert_eq!(intersperse(), Computation::Ref(computation("intersperse")));
+    assert_eq!(intercalate(), Computation::Ref(computation("intercalate")));
     assert_eq!(map(), Computation::Ref(computation("map")));
     assert_eq!(concat_map(), Computation::Ref(computation("concat-map")));
     assert_eq!(fold_right(), Computation::Ref(computation("fold-right")));
@@ -704,6 +748,7 @@ fn theory_defines_reverse() {
     assert_eq!(filter(), Computation::Ref(computation("filter")));
     assert_eq!(any(), Computation::Ref(computation("any")));
     assert_eq!(all(), Computation::Ref(computation("all")));
+    assert_eq!(all_lists(), Computation::Ref(computation("all-lists")));
     assert_eq!(is_symbol(), Computation::Ref(computation("is-symbol")));
     assert_eq!(is_lambda(), Computation::Ref(computation("is-lambda")));
     assert_eq!(
@@ -772,6 +817,10 @@ fn theory_defines_reverse() {
         Step::Reduced(list_tests::intersperse_definition())
     );
     assert_eq!(
+        theory.reduce(&intercalate()),
+        Step::Reduced(list_tests::intercalate_definition())
+    );
+    assert_eq!(
         theory.reduce(&map()),
         Step::Reduced(list_tests::map_definition())
     );
@@ -802,6 +851,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&all()),
         Step::Reduced(list_tests::all_definition())
+    );
+    assert_eq!(
+        theory.reduce(&all_lists()),
+        Step::Reduced(list_tests::all_lists_definition())
     );
     assert_eq!(
         theory.reduce(&is_symbol()),
@@ -1104,6 +1157,16 @@ fn theory_defines_reverse_theorems() {
         list_tests::intersperse_cons_computes_to_list_source_theorem();
     let intersperse_computes_to_list_prop =
         list_tests::intersperse_computes_to_list_source_theorem();
+    let intercalate_nil_prop = list_tests::intercalate_nil_source_theorem();
+    let intercalate_singleton_prop = list_tests::intercalate_singleton_source_theorem();
+    let intercalate_cons_cons_prop = list_tests::intercalate_cons_cons_source_theorem();
+    let is_list_value_true_implies_is_list_prop =
+        list_tests::is_list_value_true_implies_is_list_source_theorem();
+    let all_lists_cons_true_prop = list_tests::all_lists_cons_true_source_theorem();
+    let intercalate_cons_computes_to_list_prop =
+        list_tests::intercalate_cons_computes_to_list_source_theorem();
+    let intercalate_computes_to_list_prop =
+        list_tests::intercalate_computes_to_list_source_theorem();
     let map_nil_prop = list_tests::map_nil_source_theorem();
     let map_cons_prop = list_tests::map_cons_source_theorem();
     let map_computes_to_list_prop = list_tests::map_computes_to_list_source_theorem();
@@ -1317,6 +1380,34 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("intersperse_computes_to_list")),
         Some(&intersperse_computes_to_list_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("intercalate_nil")),
+        Some(&intercalate_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("intercalate_singleton")),
+        Some(&intercalate_singleton_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("intercalate_cons_cons")),
+        Some(&intercalate_cons_cons_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("is_list_value_true_implies_is_list")),
+        Some(&is_list_value_true_implies_is_list_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("all_lists_cons_true")),
+        Some(&all_lists_cons_true_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("intercalate_cons_computes_to_list")),
+        Some(&intercalate_cons_computes_to_list_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("intercalate_computes_to_list")),
+        Some(&intercalate_computes_to_list_prop)
     );
     assert_eq!(theory.theorem(theorem("map_nil")), Some(&map_nil_prop));
     assert_eq!(theory.theorem(theorem("map_cons")), Some(&map_cons_prop));
