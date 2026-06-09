@@ -181,6 +181,10 @@ pub fn is_zero_succ_source_theorem() -> Prop {
     theorem_prop("is_zero_succ")
 }
 
+pub fn is_zero_cons_false_source_theorem() -> Prop {
+    theorem_prop("is_zero_cons_false")
+}
+
 pub fn is_zero_is_bool_source_theorem() -> Prop {
     theorem_prop("is_zero_is_bool")
 }
@@ -283,6 +287,18 @@ pub fn nat_lt_zero_zero_source_theorem() -> Prop {
 
 pub fn nat_lt_zero_succ_source_theorem() -> Prop {
     theorem_prop("nat_lt_zero_succ")
+}
+
+pub fn nat_lt_zero_cons_true_source_theorem() -> Prop {
+    theorem_prop("nat_lt_zero_cons_true")
+}
+
+pub fn nat_le_cons_zero_false_source_theorem() -> Prop {
+    theorem_prop("nat_le_cons_zero_false")
+}
+
+pub fn nat_lt_cons_zero_false_source_theorem() -> Prop {
+    theorem_prop("nat_lt_cons_zero_false")
 }
 
 pub fn nat_lt_zero_implies_is_zero_false_source_theorem() -> Prop {

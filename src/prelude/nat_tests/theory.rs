@@ -19,6 +19,11 @@ fn checked_theory_contains_nat_theorems() {
     assert_theory_has_theorem(&theory, "succ_zero", succ_zero_source_theorem());
     assert_theory_has_theorem(&theory, "is_zero_zero", is_zero_zero_source_theorem());
     assert_theory_has_theorem(&theory, "is_zero_succ", is_zero_succ_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "is_zero_cons_false",
+        is_zero_cons_false_source_theorem(),
+    );
     assert_theory_has_theorem(&theory, "is_zero_is_bool", is_zero_is_bool_source_theorem());
     assert_theory_has_theorem(&theory, "pred_zero", pred_zero_source_theorem());
     assert_theory_has_theorem(&theory, "pred_succ", pred_succ_source_theorem());
@@ -120,6 +125,21 @@ fn checked_theory_contains_nat_theorems() {
         &theory,
         "nat_lt_zero_succ",
         nat_lt_zero_succ_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_zero_cons_true",
+        nat_lt_zero_cons_true_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_cons_zero_false",
+        nat_le_cons_zero_false_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_cons_zero_false",
+        nat_lt_cons_zero_false_source_theorem(),
     );
     assert_theory_has_theorem(
         &theory,

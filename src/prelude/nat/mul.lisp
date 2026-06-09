@@ -1249,7 +1249,7 @@
       (by
         (intro right)
         (intro product_positive)
-        (eval)))))
+        (exact nat_lt_zero_cons_true head tail)))))
 
 (theorem is_zero_mul_implies_is_zero_or_is_zero
   (forall left (is-list left)
@@ -1325,7 +1325,7 @@
                   (==
                     (quote :false)
                     (by
-                      (eval)))))
+                      (exact is_zero_cons_false right_head tail_sum)))))
               (by
                 (have impossible_eq
                   (computes-to (quote :false) (quote :true))
@@ -1505,8 +1505,8 @@
           right_induction_hypothesis
           (by
             (intro product_positive)
-            (eval))))))
-)
+            (exact nat_lt_zero_cons_true right_head right_tail)))))
+))
 
 (theorem nat_le_mul_right_cancel
   (forall left (is-list left)
@@ -1539,7 +1539,7 @@
             (have left_positive
               (computes-to (nat-lt zero (cons left_head left_tail)) (quote :true))
               (by
-                (eval))
+                (exact nat_lt_zero_cons_true left_head left_tail))
               (by
                 (obtain left_product left_product_proof
                   (mul_computes_to_list (cons left_head left_tail) factor))
@@ -1777,7 +1777,7 @@
             (have left_positive
               (computes-to (nat-lt zero (cons left_head left_tail)) (quote :true))
               (by
-                (eval))
+                (exact nat_lt_zero_cons_true left_head left_tail))
               (by
                 (obtain left_product left_product_proof
                   (mul_computes_to_list (cons left_head left_tail) factor))

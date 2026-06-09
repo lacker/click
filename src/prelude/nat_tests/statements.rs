@@ -15,6 +15,14 @@ fn nat_theorem_statements_load_from_source() {
     let nat_le_is_bool_right = theorem_symbol("nat_le_is_bool", "right");
     let nat_lt_succ_succ_left = theorem_symbol("nat_lt_succ_succ", "left");
     let nat_lt_succ_succ_right = theorem_symbol("nat_lt_succ_succ", "right");
+    let is_zero_cons_false_head = theorem_symbol("is_zero_cons_false", "head");
+    let is_zero_cons_false_tail = theorem_symbol("is_zero_cons_false", "tail");
+    let nat_lt_zero_cons_true_head = theorem_symbol("nat_lt_zero_cons_true", "head");
+    let nat_lt_zero_cons_true_tail = theorem_symbol("nat_lt_zero_cons_true", "tail");
+    let nat_le_cons_zero_false_head = theorem_symbol("nat_le_cons_zero_false", "head");
+    let nat_le_cons_zero_false_tail = theorem_symbol("nat_le_cons_zero_false", "tail");
+    let nat_lt_cons_zero_false_head = theorem_symbol("nat_lt_cons_zero_false", "head");
+    let nat_lt_cons_zero_false_tail = theorem_symbol("nat_lt_cons_zero_false", "tail");
     let nat_lt_zero_implies_is_zero_false_nat =
         theorem_symbol("nat_lt_zero_implies_is_zero_false", "nat");
     let is_zero_false_implies_nat_lt_zero_nat =
@@ -239,6 +247,24 @@ fn nat_theorem_statements_load_from_source() {
         computes_to(succ_call(zero()), one_value())
     );
     assert_eq!(
+        is_zero_cons_false_source_theorem(),
+        crate::forall_where(
+            is_zero_cons_false_head,
+            is_value(var(is_zero_cons_false_head)),
+            crate::forall_where(
+                is_zero_cons_false_tail,
+                is_list(var(is_zero_cons_false_tail)),
+                computes_to(
+                    is_zero_call(cons(
+                        var(is_zero_cons_false_head),
+                        var(is_zero_cons_false_tail)
+                    )),
+                    false_value()
+                )
+            )
+        )
+    );
+    assert_eq!(
         pred_succ_source_theorem(),
         crate::forall_where(
             pred_succ_nat,
@@ -320,6 +346,69 @@ fn nat_theorem_statements_load_from_source() {
                         succ_call(var(nat_lt_succ_succ_right))
                     ),
                     nat_lt_call(var(nat_lt_succ_succ_left), var(nat_lt_succ_succ_right))
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_zero_cons_true_source_theorem(),
+        crate::forall_where(
+            nat_lt_zero_cons_true_head,
+            is_value(var(nat_lt_zero_cons_true_head)),
+            crate::forall_where(
+                nat_lt_zero_cons_true_tail,
+                is_list(var(nat_lt_zero_cons_true_tail)),
+                computes_to(
+                    nat_lt_call(
+                        zero(),
+                        cons(
+                            var(nat_lt_zero_cons_true_head),
+                            var(nat_lt_zero_cons_true_tail)
+                        )
+                    ),
+                    true_value()
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_le_cons_zero_false_source_theorem(),
+        crate::forall_where(
+            nat_le_cons_zero_false_head,
+            is_value(var(nat_le_cons_zero_false_head)),
+            crate::forall_where(
+                nat_le_cons_zero_false_tail,
+                is_list(var(nat_le_cons_zero_false_tail)),
+                computes_to(
+                    nat_le_call(
+                        cons(
+                            var(nat_le_cons_zero_false_head),
+                            var(nat_le_cons_zero_false_tail)
+                        ),
+                        zero()
+                    ),
+                    false_value()
+                )
+            )
+        )
+    );
+    assert_eq!(
+        nat_lt_cons_zero_false_source_theorem(),
+        crate::forall_where(
+            nat_lt_cons_zero_false_head,
+            is_value(var(nat_lt_cons_zero_false_head)),
+            crate::forall_where(
+                nat_lt_cons_zero_false_tail,
+                is_list(var(nat_lt_cons_zero_false_tail)),
+                computes_to(
+                    nat_lt_call(
+                        cons(
+                            var(nat_lt_cons_zero_false_head),
+                            var(nat_lt_cons_zero_false_tail)
+                        ),
+                        zero()
+                    ),
+                    false_value()
                 )
             )
         )

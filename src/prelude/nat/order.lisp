@@ -36,6 +36,17 @@
     (intro nat)
     (eval)))
 
+(theorem is_zero_cons_false
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (computes-to
+        (is-zero (cons head tail))
+        (quote :false))))
+  (by
+    (intro head)
+    (intro tail)
+    (eval)))
+
 (theorem is_zero_is_bool
   (forall nat (is-list nat)
     (is-bool (is-zero nat)))
@@ -504,6 +515,39 @@
     (intro right)
     (eval)))
 
+(theorem nat_lt_zero_cons_true
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (computes-to
+        (nat-lt zero (cons head tail))
+        (quote :true))))
+  (by
+    (intro head)
+    (intro tail)
+    (eval)))
+
+(theorem nat_le_cons_zero_false
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (computes-to
+        (nat-le (cons head tail) zero)
+        (quote :false))))
+  (by
+    (intro head)
+    (intro tail)
+    (eval)))
+
+(theorem nat_lt_cons_zero_false
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (computes-to
+        (nat-lt (cons head tail) zero)
+        (quote :false))))
+  (by
+    (intro head)
+    (intro tail)
+    (eval)))
+
 (theorem nat_lt_zero_implies_is_zero_false
   (forall nat (is-list nat)
     (implies
@@ -536,7 +580,7 @@
       induction_hypothesis
       (by
         (intro nat_positive)
-        (eval)))))
+        (exact is_zero_cons_false head tail)))))
 
 (theorem is_zero_false_implies_nat_lt_zero
   (forall nat (is-list nat)
@@ -570,7 +614,7 @@
       induction_hypothesis
       (by
         (intro nat_not_zero)
-        (eval)))))
+        (exact nat_lt_zero_cons_true head tail)))))
 
 (theorem nat_lt_zero_implies_nat_le_zero_false
   (forall nat (is-list nat)
@@ -604,7 +648,7 @@
       induction_hypothesis
       (by
         (intro nat_positive)
-        (eval)))))
+        (exact nat_le_cons_zero_false head tail)))))
 
 (theorem nat_lt_zero_implies_nat_lt_nat_zero_false
   (forall nat (is-list nat)
@@ -638,7 +682,7 @@
       induction_hypothesis
       (by
         (intro nat_positive)
-        (eval)))))
+        (exact nat_lt_cons_zero_false head tail)))))
 
 (theorem nat_lt_succ_zero
   (forall left (is-list left)
