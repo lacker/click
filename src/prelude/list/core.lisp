@@ -114,6 +114,13 @@
           list_cell
           (drop (tail count_cell) (tail list_cell)))))))
 
+(def split-at
+  (lambda count
+    (lambda list
+      (cons
+        (take count list)
+        (cons (drop count list) nil)))))
+
 (def nth
   (lambda index
     (lambda list
@@ -283,6 +290,29 @@
             (filter predicate (tail cell)))
           (filter predicate (tail cell)))))))
 
+(def partition
+  (lambda predicate
+    (lambda list
+      (list-case list
+        (cons nil (cons nil nil))
+        cell
+        (if
+          (predicate (head cell))
+          (cons
+            (cons
+              (head cell)
+              (head (partition predicate (tail cell))))
+            (cons
+              (head (tail (partition predicate (tail cell))))
+              nil))
+          (cons
+            (head (partition predicate (tail cell)))
+            (cons
+              (cons
+                (head cell)
+                (head (tail (partition predicate (tail cell)))))
+              nil)))))))
+
 (def any
   (lambda predicate
     (lambda list
@@ -419,6 +449,25 @@
           (value-eq value (head cell))
           (quote :true)
           (member value (tail cell)))))))
+
+(def elem-index
+  (lambda value
+    (lambda list
+      (list-case list
+        none
+        cell
+        (if
+          (value-eq value (head cell))
+          (some nil)
+          ((lambda tail_result
+             (if
+               (is-some tail_result)
+               (some
+                 (cons
+                   (quote unit)
+                   (head (tail tail_result))))
+               none))
+           (elem-index value (tail cell))))))))
 
 (def last
   ((lambda fixed_point_function

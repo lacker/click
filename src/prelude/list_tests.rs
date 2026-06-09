@@ -137,6 +137,14 @@ pub fn drop_definition() -> Computation {
     definition("drop")
 }
 
+pub fn split_at() -> Computation {
+    computation_ref("split-at")
+}
+
+pub fn split_at_definition() -> Computation {
+    definition("split-at")
+}
+
 pub fn nth() -> Computation {
     computation_ref("nth")
 }
@@ -231,6 +239,14 @@ pub fn filter() -> Computation {
 
 pub fn filter_definition() -> Computation {
     definition("filter")
+}
+
+pub fn partition() -> Computation {
+    computation_ref("partition")
+}
+
+pub fn partition_definition() -> Computation {
+    definition("partition")
 }
 
 pub fn any() -> Computation {
@@ -331,6 +347,14 @@ pub fn member() -> Computation {
 
 pub fn member_definition() -> Computation {
     definition("member")
+}
+
+pub fn elem_index() -> Computation {
+    computation_ref("elem-index")
+}
+
+pub fn elem_index_definition() -> Computation {
+    definition("elem-index")
 }
 
 pub fn last() -> Computation {
@@ -571,6 +595,22 @@ pub fn drop_computes_to_list_source_theorem() -> Prop {
     theorem_prop("drop_computes_to_list")
 }
 
+pub fn split_at_def_source_theorem() -> Prop {
+    theorem_prop("split_at_def")
+}
+
+pub fn split_at_zero_source_theorem() -> Prop {
+    theorem_prop("split_at_zero")
+}
+
+pub fn split_at_nil_source_theorem() -> Prop {
+    theorem_prop("split_at_nil")
+}
+
+pub fn split_at_cons_source_theorem() -> Prop {
+    theorem_prop("split_at_cons")
+}
+
 pub fn nth_zero_nil_source_theorem() -> Prop {
     theorem_prop("nth_zero_nil")
 }
@@ -775,6 +815,18 @@ pub fn filter_computes_to_list_source_theorem() -> Prop {
     theorem_prop("filter_computes_to_list")
 }
 
+pub fn partition_nil_source_theorem() -> Prop {
+    theorem_prop("partition_nil")
+}
+
+pub fn partition_cons_true_source_theorem() -> Prop {
+    theorem_prop("partition_cons_true")
+}
+
+pub fn partition_cons_false_source_theorem() -> Prop {
+    theorem_prop("partition_cons_false")
+}
+
 pub fn any_nil_source_theorem() -> Prop {
     theorem_prop("any_nil")
 }
@@ -801,6 +853,22 @@ pub fn find_cons_true_source_theorem() -> Prop {
 
 pub fn find_cons_false_source_theorem() -> Prop {
     theorem_prop("find_cons_false")
+}
+
+pub fn elem_index_nil_source_theorem() -> Prop {
+    theorem_prop("elem_index_nil")
+}
+
+pub fn elem_index_cons_true_source_theorem() -> Prop {
+    theorem_prop("elem_index_cons_true")
+}
+
+pub fn elem_index_cons_false_none_source_theorem() -> Prop {
+    theorem_prop("elem_index_cons_false_none")
+}
+
+pub fn elem_index_cons_false_some_source_theorem() -> Prop {
+    theorem_prop("elem_index_cons_false_some")
 }
 
 pub fn value_eq_true_true_source_theorem() -> Prop {
@@ -1010,6 +1078,10 @@ pub fn drop_call(count: Computation, list: Computation) -> Computation {
     apply(apply(drop(), count), list)
 }
 
+pub fn split_at_call(count: Computation, list: Computation) -> Computation {
+    apply(apply(split_at(), count), list)
+}
+
 pub fn nth_call(index: Computation, list: Computation) -> Computation {
     apply(apply(nth(), index), list)
 }
@@ -1064,6 +1136,10 @@ pub fn zip_with_call(function: Computation, left: Computation, right: Computatio
 
 pub fn filter_call(predicate: Computation, list: Computation) -> Computation {
     apply(apply(filter(), predicate), list)
+}
+
+pub fn partition_call(predicate: Computation, list: Computation) -> Computation {
+    apply(apply(partition(), predicate), list)
 }
 
 pub fn any_call(predicate: Computation, list: Computation) -> Computation {
@@ -1136,6 +1212,10 @@ pub fn if_call(
 
 pub fn member_call(value: Computation, list: Computation) -> Computation {
     apply(apply(member(), value), list)
+}
+
+pub fn elem_index_call(value: Computation, list: Computation) -> Computation {
+    apply(apply(elem_index(), value), list)
 }
 
 pub fn last_call(list: Computation) -> Computation {
@@ -1679,6 +1759,79 @@ pub fn drop_computes_to_list_theorem(count: Symbol, list: Symbol, result: Symbol
             list,
             is_list(var(list)),
             computes_to_list(result, drop_call(var(count), var(list))),
+        ),
+    )
+}
+
+/// Splitting is definitionally the pair of `take` and `drop`.
+pub fn split_at_def_theorem(count: Symbol, list: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        forall_where(
+            list,
+            is_list(var(list)),
+            computes_to(
+                split_at_call(var(count), var(list)),
+                pair(
+                    take_call(var(count), var(list)),
+                    drop_call(var(count), var(list)),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Splitting at zero returns an empty prefix and the full suffix.
+pub fn split_at_zero_theorem(list: Symbol) -> Prop {
+    forall_where(
+        list,
+        is_list(var(list)),
+        computes_to(split_at_call(nil(), var(list)), pair(nil(), var(list))),
+    )
+}
+
+/// Splitting `nil` returns two empty lists.
+pub fn split_at_nil_theorem(count: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        computes_to(split_at_call(var(count), nil()), pair(nil(), nil())),
+    )
+}
+
+/// Splitting cons count and cons list puts the head in the prefix and recurs on
+/// the tails through `take` and `drop`.
+pub fn split_at_cons_theorem(
+    count_head: Symbol,
+    count_tail: Symbol,
+    head: Symbol,
+    tail: Symbol,
+) -> Prop {
+    forall_where(
+        count_head,
+        is_value(var(count_head)),
+        forall_where(
+            count_tail,
+            is_list(var(count_tail)),
+            forall_where(
+                head,
+                is_value(var(head)),
+                forall_where(
+                    tail,
+                    is_list(var(tail)),
+                    computes_to(
+                        split_at_call(
+                            cons(var(count_head), var(count_tail)),
+                            cons(var(head), var(tail)),
+                        ),
+                        pair(
+                            cons(var(head), take_call(var(count_tail), var(tail))),
+                            drop_call(var(count_tail), var(tail)),
+                        ),
+                    ),
+                ),
+            ),
         ),
     )
 }
@@ -2806,6 +2959,75 @@ pub fn filter_computes_to_list_theorem(
     )
 }
 
+/// Partitioning `nil` returns a pair of empty lists.
+pub fn partition_nil_theorem(predicate: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        computes_to(partition_call(var(predicate), nil()), pair(nil(), nil())),
+    )
+}
+
+/// If the predicate returns true for the head, partition puts the head in the
+/// first returned list.
+pub fn partition_cons_true_theorem(predicate: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                implies(
+                    computes_to(apply(var(predicate), var(head)), true_value()),
+                    computes_to(
+                        partition_call(var(predicate), cons(var(head), var(tail))),
+                        pair(
+                            cons(
+                                var(head),
+                                head_call(partition_call(var(predicate), var(tail))),
+                            ),
+                            head_call(tail_call(partition_call(var(predicate), var(tail)))),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the predicate returns false for the head, partition puts the head in the
+/// second returned list.
+pub fn partition_cons_false_theorem(predicate: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                implies(
+                    computes_to(apply(var(predicate), var(head)), false_value()),
+                    computes_to(
+                        partition_call(var(predicate), cons(var(head), var(tail))),
+                        pair(
+                            head_call(partition_call(var(predicate), var(tail))),
+                            cons(
+                                var(head),
+                                head_call(tail_call(partition_call(var(predicate), var(tail)))),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
 /// `any` over `nil` returns false.
 pub fn any_nil_theorem(predicate: Symbol) -> Prop {
     forall_where(
@@ -3467,6 +3689,103 @@ pub fn find_cons_false_theorem(predicate: Symbol, head: Symbol, tail: Symbol) ->
                     computes_to(
                         find_call(var(predicate), cons(var(head), var(tail))),
                         find_call(var(predicate), var(tail)),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Searching `nil` for an element returns `none`.
+pub fn elem_index_nil_theorem(value: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        computes_to(elem_index_call(var(value), nil()), none()),
+    )
+}
+
+/// If the head equals the searched value, `elem-index` returns zero.
+pub fn elem_index_cons_true_theorem(value: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                implies(
+                    computes_to(value_eq_call(var(value), var(head)), true_value()),
+                    computes_to(
+                        elem_index_call(var(value), cons(var(head), var(tail))),
+                        some_call(nil()),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the head misses and the tail misses, `elem-index` returns `none`.
+pub fn elem_index_cons_false_none_theorem(value: Symbol, head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                implies(
+                    computes_to(value_eq_call(var(value), var(head)), false_value()),
+                    implies(
+                        computes_to(elem_index_call(var(value), var(tail)), none()),
+                        computes_to(
+                            elem_index_call(var(value), cons(var(head), var(tail))),
+                            none(),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the head misses and the tail finds index `i`, `elem-index` returns
+/// `succ i`.
+pub fn elem_index_cons_false_some_theorem(
+    value: Symbol,
+    head: Symbol,
+    tail: Symbol,
+    index: Symbol,
+) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                forall_where(
+                    index,
+                    is_list(var(index)),
+                    implies(
+                        computes_to(value_eq_call(var(value), var(head)), false_value()),
+                        implies(
+                            computes_to(
+                                elem_index_call(var(value), var(tail)),
+                                some_call(var(index)),
+                            ),
+                            computes_to(
+                                elem_index_call(var(value), cons(var(head), var(tail))),
+                                some_call(cons(unit(), var(index))),
+                            ),
+                        ),
                     ),
                 ),
             ),

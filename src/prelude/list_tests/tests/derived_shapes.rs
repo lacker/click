@@ -36,6 +36,35 @@ fn filter_any_all_source_theorems_have_expected_shape() {
         )
     );
 
+    let partition_nil_predicate = theorem_symbol("partition_nil", "predicate");
+    let partition_true_predicate = theorem_symbol("partition_cons_true", "predicate");
+    let partition_true_head = theorem_symbol("partition_cons_true", "head");
+    let partition_true_tail = theorem_symbol("partition_cons_true", "tail");
+    let partition_false_predicate = theorem_symbol("partition_cons_false", "predicate");
+    let partition_false_head = theorem_symbol("partition_cons_false", "head");
+    let partition_false_tail = theorem_symbol("partition_cons_false", "tail");
+
+    assert_eq!(
+        partition_nil_source_theorem(),
+        partition_nil_theorem(partition_nil_predicate)
+    );
+    assert_eq!(
+        partition_cons_true_source_theorem(),
+        partition_cons_true_theorem(
+            partition_true_predicate,
+            partition_true_head,
+            partition_true_tail,
+        )
+    );
+    assert_eq!(
+        partition_cons_false_source_theorem(),
+        partition_cons_false_theorem(
+            partition_false_predicate,
+            partition_false_head,
+            partition_false_tail,
+        )
+    );
+
     let any_nil_predicate = theorem_symbol("any_nil", "predicate");
     let any_true_predicate = theorem_symbol("any_cons_true", "predicate");
     let any_true_head = theorem_symbol("any_cons_true", "head");
@@ -134,6 +163,48 @@ fn filter_any_all_source_theorems_have_expected_shape() {
     assert_eq!(
         find_cons_false_source_theorem(),
         find_cons_false_theorem(find_false_predicate, find_false_head, find_false_tail)
+    );
+
+    let elem_index_nil_value = theorem_symbol("elem_index_nil", "value");
+    let elem_index_true_value = theorem_symbol("elem_index_cons_true", "value");
+    let elem_index_true_head = theorem_symbol("elem_index_cons_true", "head");
+    let elem_index_true_tail = theorem_symbol("elem_index_cons_true", "tail");
+    let elem_index_none_value = theorem_symbol("elem_index_cons_false_none", "value");
+    let elem_index_none_head = theorem_symbol("elem_index_cons_false_none", "head");
+    let elem_index_none_tail = theorem_symbol("elem_index_cons_false_none", "tail");
+    let elem_index_some_value = theorem_symbol("elem_index_cons_false_some", "value");
+    let elem_index_some_head = theorem_symbol("elem_index_cons_false_some", "head");
+    let elem_index_some_tail = theorem_symbol("elem_index_cons_false_some", "tail");
+    let elem_index_some_index = theorem_symbol("elem_index_cons_false_some", "index");
+
+    assert_eq!(
+        elem_index_nil_source_theorem(),
+        elem_index_nil_theorem(elem_index_nil_value)
+    );
+    assert_eq!(
+        elem_index_cons_true_source_theorem(),
+        elem_index_cons_true_theorem(
+            elem_index_true_value,
+            elem_index_true_head,
+            elem_index_true_tail,
+        )
+    );
+    assert_eq!(
+        elem_index_cons_false_none_source_theorem(),
+        elem_index_cons_false_none_theorem(
+            elem_index_none_value,
+            elem_index_none_head,
+            elem_index_none_tail,
+        )
+    );
+    assert_eq!(
+        elem_index_cons_false_some_source_theorem(),
+        elem_index_cons_false_some_theorem(
+            elem_index_some_value,
+            elem_index_some_head,
+            elem_index_some_tail,
+            elem_index_some_index,
+        )
     );
 }
 

@@ -169,6 +169,34 @@ fn drop_past_end_returns_nil() {
 }
 
 #[test]
+fn split_at_zero_returns_empty_prefix_and_input_suffix() {
+    let list = triple(quote(A), quote(B), unit());
+
+    assert_evaluates(split_at_call(nil(), list.clone()), value(pair(nil(), list)));
+}
+
+#[test]
+fn split_at_two_returns_prefix_and_suffix() {
+    assert_evaluates(
+        split_at_call(
+            pair(unit(), unit()),
+            triple(quote(A), quote(B), quote(NOT_A_LIST)),
+        ),
+        value(pair(pair(quote(A), quote(B)), singleton(quote(NOT_A_LIST)))),
+    );
+}
+
+#[test]
+fn split_at_past_end_returns_input_prefix_and_empty_suffix() {
+    let list = pair(quote(A), quote(B));
+
+    assert_evaluates(
+        split_at_call(triple(unit(), unit(), unit()), list.clone()),
+        value(pair(list, nil())),
+    );
+}
+
+#[test]
 fn option_primitives_encode_none_and_some() {
     assert_evaluates(none(), Value::quote(prelude_symbol(":none")));
     assert_evaluates(
@@ -581,6 +609,42 @@ fn filter_symbol_eq_keeps_matching_symbols() {
 }
 
 #[test]
+fn partition_nil_returns_pair_of_nil() {
+    assert_evaluates(
+        partition_call(always_true_predicate(), nil()),
+        value(pair(nil(), nil())),
+    );
+}
+
+#[test]
+fn partition_true_predicate_puts_everything_on_left() {
+    let list = pair(quote(A), quote(B));
+
+    assert_evaluates(
+        partition_call(always_true_predicate(), list.clone()),
+        value(pair(list, nil())),
+    );
+}
+
+#[test]
+fn partition_false_predicate_puts_everything_on_right() {
+    let list = pair(quote(A), quote(B));
+
+    assert_evaluates(
+        partition_call(always_false_predicate(), list.clone()),
+        value(pair(nil(), list)),
+    );
+}
+
+#[test]
+fn partition_symbol_eq_splits_matching_and_missing_values() {
+    assert_evaluates(
+        partition_call(is_a_predicate(), triple(quote(A), quote(B), quote(A))),
+        value(pair(pair(quote(A), quote(A)), singleton(quote(B)))),
+    );
+}
+
+#[test]
 fn any_nil_returns_false() {
     assert_evaluates(
         any_call(always_true_predicate(), nil()),
@@ -648,6 +712,38 @@ fn find_returns_first_matching_value() {
 fn find_returns_none_for_miss() {
     assert_evaluates(
         find_call(is_a_predicate(), pair(quote(B), unit())),
+        Value::quote(prelude_symbol(":none")),
+    );
+}
+
+#[test]
+fn elem_index_nil_returns_none() {
+    assert_evaluates(
+        elem_index_call(quote(A), nil()),
+        Value::quote(prelude_symbol(":none")),
+    );
+}
+
+#[test]
+fn elem_index_returns_zero_for_head_match() {
+    assert_evaluates(
+        elem_index_call(quote(A), pair(quote(A), quote(B))),
+        value(pair(quote(prelude_symbol(":some")), nil())),
+    );
+}
+
+#[test]
+fn elem_index_returns_first_matching_index() {
+    assert_evaluates(
+        elem_index_call(quote(A), triple(quote(B), quote(B), quote(A))),
+        value(pair(quote(prelude_symbol(":some")), pair(unit(), unit()))),
+    );
+}
+
+#[test]
+fn elem_index_returns_none_for_miss() {
+    assert_evaluates(
+        elem_index_call(quote(A), pair(quote(B), unit())),
         Value::quote(prelude_symbol(":none")),
     );
 }

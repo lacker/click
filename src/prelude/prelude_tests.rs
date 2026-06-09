@@ -58,6 +58,10 @@ fn drop() -> Computation {
     computation_ref("drop")
 }
 
+fn split_at() -> Computation {
+    computation_ref("split-at")
+}
+
 fn nth() -> Computation {
     computation_ref("nth")
 }
@@ -104,6 +108,10 @@ fn zip_with() -> Computation {
 
 fn filter() -> Computation {
     computation_ref("filter")
+}
+
+fn partition() -> Computation {
+    computation_ref("partition")
 }
 
 fn any() -> Computation {
@@ -160,6 +168,10 @@ fn value_eq_comparable() -> Computation {
 
 fn member() -> Computation {
     computation_ref("member")
+}
+
+fn elem_index() -> Computation {
+    computation_ref("elem-index")
 }
 
 fn last() -> Computation {
@@ -659,6 +671,10 @@ fn theory_defines_reverse() {
         Some(&list_tests::drop_definition())
     );
     assert_eq!(
+        theory.computation(computation("split-at")),
+        Some(&list_tests::split_at_definition())
+    );
+    assert_eq!(
         theory.computation(computation("nth")),
         Some(&list_tests::nth_definition())
     );
@@ -705,6 +721,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.computation(computation("filter")),
         Some(&list_tests::filter_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("partition")),
+        Some(&list_tests::partition_definition())
     );
     assert_eq!(
         theory.computation(computation("any")),
@@ -763,6 +783,10 @@ fn theory_defines_reverse() {
         Some(&list_tests::member_definition())
     );
     assert_eq!(
+        theory.computation(computation("elem-index")),
+        Some(&list_tests::elem_index_definition())
+    );
+    assert_eq!(
         theory.computation(computation("last")),
         Some(&list_tests::last_definition())
     );
@@ -818,6 +842,7 @@ fn theory_defines_reverse() {
     assert_eq!(length(), Computation::Ref(computation("length")));
     assert_eq!(take(), Computation::Ref(computation("take")));
     assert_eq!(drop(), Computation::Ref(computation("drop")));
+    assert_eq!(split_at(), Computation::Ref(computation("split-at")));
     assert_eq!(nth(), Computation::Ref(computation("nth")));
     assert_eq!(replicate(), Computation::Ref(computation("replicate")));
     assert_eq!(intersperse(), Computation::Ref(computation("intersperse")));
@@ -830,6 +855,7 @@ fn theory_defines_reverse() {
     assert_eq!(unzip(), Computation::Ref(computation("unzip")));
     assert_eq!(zip_with(), Computation::Ref(computation("zip-with")));
     assert_eq!(filter(), Computation::Ref(computation("filter")));
+    assert_eq!(partition(), Computation::Ref(computation("partition")));
     assert_eq!(any(), Computation::Ref(computation("any")));
     assert_eq!(all(), Computation::Ref(computation("all")));
     assert_eq!(find(), Computation::Ref(computation("find")));
@@ -850,6 +876,7 @@ fn theory_defines_reverse() {
         Computation::Ref(computation("value-eq-comparable"))
     );
     assert_eq!(member(), Computation::Ref(computation("member")));
+    assert_eq!(elem_index(), Computation::Ref(computation("elem-index")));
     assert_eq!(last(), Computation::Ref(computation("last")));
     assert_eq!(init(), Computation::Ref(computation("init")));
     assert_eq!(null(), Computation::Ref(computation("null")));
@@ -898,6 +925,10 @@ fn theory_defines_reverse() {
         Step::Reduced(list_tests::drop_definition())
     );
     assert_eq!(
+        theory.reduce(&split_at()),
+        Step::Reduced(list_tests::split_at_definition())
+    );
+    assert_eq!(
         theory.reduce(&nth()),
         Step::Reduced(list_tests::nth_definition())
     );
@@ -944,6 +975,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&filter()),
         Step::Reduced(list_tests::filter_definition())
+    );
+    assert_eq!(
+        theory.reduce(&partition()),
+        Step::Reduced(list_tests::partition_definition())
     );
     assert_eq!(
         theory.reduce(&any()),
@@ -1000,6 +1035,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&member()),
         Step::Reduced(list_tests::member_definition())
+    );
+    assert_eq!(
+        theory.reduce(&elem_index()),
+        Step::Reduced(list_tests::elem_index_definition())
     );
     assert_eq!(
         theory.reduce(&last()),
@@ -1267,6 +1306,10 @@ fn theory_defines_reverse_theorems() {
     let drop_nil_prop = list_tests::drop_nil_source_theorem();
     let drop_cons_prop = list_tests::drop_cons_source_theorem();
     let drop_computes_to_list_prop = list_tests::drop_computes_to_list_source_theorem();
+    let split_at_def_prop = list_tests::split_at_def_source_theorem();
+    let split_at_zero_prop = list_tests::split_at_zero_source_theorem();
+    let split_at_nil_prop = list_tests::split_at_nil_source_theorem();
+    let split_at_cons_prop = list_tests::split_at_cons_source_theorem();
     let nth_zero_nil_prop = list_tests::nth_zero_nil_source_theorem();
     let nth_zero_cons_prop = list_tests::nth_zero_cons_source_theorem();
     let nth_cons_nil_prop = list_tests::nth_cons_nil_source_theorem();
@@ -1325,6 +1368,9 @@ fn theory_defines_reverse_theorems() {
     let filter_cons_true_prop = list_tests::filter_cons_true_source_theorem();
     let filter_cons_false_prop = list_tests::filter_cons_false_source_theorem();
     let filter_computes_to_list_prop = list_tests::filter_computes_to_list_source_theorem();
+    let partition_nil_prop = list_tests::partition_nil_source_theorem();
+    let partition_cons_true_prop = list_tests::partition_cons_true_source_theorem();
+    let partition_cons_false_prop = list_tests::partition_cons_false_source_theorem();
     let any_nil_prop = list_tests::any_nil_source_theorem();
     let any_cons_true_prop = list_tests::any_cons_true_source_theorem();
     let any_cons_false_prop = list_tests::any_cons_false_source_theorem();
@@ -1332,6 +1378,10 @@ fn theory_defines_reverse_theorems() {
     let find_nil_prop = list_tests::find_nil_source_theorem();
     let find_cons_true_prop = list_tests::find_cons_true_source_theorem();
     let find_cons_false_prop = list_tests::find_cons_false_source_theorem();
+    let elem_index_nil_prop = list_tests::elem_index_nil_source_theorem();
+    let elem_index_cons_true_prop = list_tests::elem_index_cons_true_source_theorem();
+    let elem_index_cons_false_none_prop = list_tests::elem_index_cons_false_none_source_theorem();
+    let elem_index_cons_false_some_prop = list_tests::elem_index_cons_false_some_source_theorem();
     let value_eq_true_true_prop = list_tests::value_eq_true_true_source_theorem();
     let value_eq_true_false_prop = list_tests::value_eq_true_false_source_theorem();
     let value_eq_nil_prop = list_tests::value_eq_nil_source_theorem();
@@ -1482,6 +1532,22 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("drop_computes_to_list")),
         Some(&drop_computes_to_list_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("split_at_def")),
+        Some(&split_at_def_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("split_at_zero")),
+        Some(&split_at_zero_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("split_at_nil")),
+        Some(&split_at_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("split_at_cons")),
+        Some(&split_at_cons_prop)
     );
     assert_eq!(
         theory.theorem(theorem("nth_zero_nil")),
@@ -1675,6 +1741,18 @@ fn theory_defines_reverse_theorems() {
         theory.theorem(theorem("filter_computes_to_list")),
         Some(&filter_computes_to_list_prop)
     );
+    assert_eq!(
+        theory.theorem(theorem("partition_nil")),
+        Some(&partition_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("partition_cons_true")),
+        Some(&partition_cons_true_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("partition_cons_false")),
+        Some(&partition_cons_false_prop)
+    );
     assert_eq!(theory.theorem(theorem("any_nil")), Some(&any_nil_prop));
     assert_eq!(
         theory.theorem(theorem("any_cons_true")),
@@ -1696,6 +1774,22 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("find_cons_false")),
         Some(&find_cons_false_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("elem_index_nil")),
+        Some(&elem_index_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("elem_index_cons_true")),
+        Some(&elem_index_cons_true_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("elem_index_cons_false_none")),
+        Some(&elem_index_cons_false_none_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("elem_index_cons_false_some")),
+        Some(&elem_index_cons_false_some_prop)
     );
     assert_eq!(
         theory.theorem(theorem("value_eq_true_true")),

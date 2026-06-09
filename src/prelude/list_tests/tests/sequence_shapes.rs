@@ -727,6 +727,35 @@ fn drop_source_theorems_have_expected_shape() {
 }
 
 #[test]
+fn split_at_source_theorems_have_expected_shape() {
+    let def_count = theorem_symbol("split_at_def", "count");
+    let def_list = theorem_symbol("split_at_def", "list");
+    let zero_list = theorem_symbol("split_at_zero", "list");
+    let nil_count = theorem_symbol("split_at_nil", "count");
+    let cons_count_head = theorem_symbol("split_at_cons", "count_head");
+    let cons_count_tail = theorem_symbol("split_at_cons", "count_tail");
+    let cons_head = theorem_symbol("split_at_cons", "head");
+    let cons_tail = theorem_symbol("split_at_cons", "tail");
+
+    assert_eq!(
+        split_at_def_source_theorem(),
+        split_at_def_theorem(def_count, def_list)
+    );
+    assert_eq!(
+        split_at_zero_source_theorem(),
+        split_at_zero_theorem(zero_list)
+    );
+    assert_eq!(
+        split_at_nil_source_theorem(),
+        split_at_nil_theorem(nil_count)
+    );
+    assert_eq!(
+        split_at_cons_source_theorem(),
+        split_at_cons_theorem(cons_count_head, cons_count_tail, cons_head, cons_tail)
+    );
+}
+
+#[test]
 fn nth_theorems_have_expected_shape() {
     assert_eq!(
         nth_zero_nil_theorem(),

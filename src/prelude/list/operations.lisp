@@ -460,6 +460,93 @@
                     (by
                       (exact dropped_tail_proof))))))))))))
 
+(theorem split_at_def
+  (forall count (is-list count)
+    (forall list (is-list list)
+      (computes-to
+        (split-at count list)
+        (cons
+          (take count list)
+          (cons (drop count list) nil)))))
+  (by
+    (intro count)
+    (intro list)
+    (eval)))
+
+(theorem split_at_zero
+  (forall list (is-list list)
+    (computes-to
+      (split-at nil list)
+      (cons nil (cons list nil))))
+  (by
+    (intro list)
+    (eval)))
+
+(theorem split_at_nil
+  (forall count (is-list count)
+    (computes-to
+      (split-at count nil)
+      (cons nil (cons nil nil))))
+  (by
+    (intro count)
+    (calc
+      (split-at count nil)
+      (==
+        (cons
+          (take count nil)
+          (cons (drop count nil) nil))
+        (by
+          (exact split_at_def count nil)))
+      (==
+        (cons nil (cons nil nil))
+        (by
+          (simpa only (take_nil count) (drop_nil count)))))))
+
+(theorem split_at_cons
+  (forall count_head (is-value count_head)
+    (forall count_tail (is-list count_tail)
+      (forall head (is-value head)
+        (forall tail (is-list tail)
+          (computes-to
+            (split-at
+              (cons count_head count_tail)
+              (cons head tail))
+            (cons
+              (cons head (take count_tail tail))
+              (cons (drop count_tail tail) nil)))))))
+  (by
+    (intro count_head)
+    (intro count_tail)
+    (intro head)
+    (intro tail)
+    (calc
+      (split-at
+        (cons count_head count_tail)
+        (cons head tail))
+      (==
+        (cons
+          (take
+            (cons count_head count_tail)
+            (cons head tail))
+          (cons
+            (drop
+              (cons count_head count_tail)
+              (cons head tail))
+            nil))
+        (by
+          (exact
+            split_at_def
+            (cons count_head count_tail)
+            (cons head tail))))
+      (==
+        (cons
+          (cons head (take count_tail tail))
+          (cons (drop count_tail tail) nil))
+        (by
+          (simpa only
+            (take_cons count_head count_tail head tail)
+            (drop_cons count_head count_tail head tail)))))))
+
 (theorem nth_zero_nil
   (computes-to (nth nil nil) none)
   (by
@@ -1570,6 +1657,251 @@
     (intro predicate_false)
     (simp only predicate_false)))
 
+(theorem partition_nil
+  (forall predicate (is-value predicate)
+    (computes-to
+      (partition predicate nil)
+      (cons nil (cons nil nil))))
+  (by
+    (intro predicate)
+    (eval)))
+
+(theorem partition_cons_true
+  (forall predicate (is-value predicate)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (predicate head) (quote :true))
+          (computes-to
+            (partition predicate (cons head tail))
+            (cons
+              (cons
+                head
+                (head (partition predicate tail)))
+              (cons
+                (head (tail (partition predicate tail)))
+                nil)))))))
+  (by
+    (intro predicate)
+    (intro head)
+    (intro tail)
+    (intro predicate_true)
+    (have predicate_head_true
+      (computes-to
+        (predicate (head (cons head tail)))
+        (quote :true))
+      (by
+        (calc
+          (predicate (head (cons head tail)))
+          (==
+            (predicate head)
+            (by
+              (eval)))
+          (==
+            (quote :true)
+            (by
+              (exact predicate_true)))))
+      (by
+        (calc
+          (partition predicate (cons head tail))
+          (==
+            (if
+              (predicate (head (cons head tail)))
+              (cons
+                (cons
+                  (head (cons head tail))
+                  (head
+                    (partition predicate (tail (cons head tail)))))
+                (cons
+                  (head
+                    (tail
+                      (partition
+                        predicate
+                        (tail (cons head tail)))))
+                  nil))
+              (cons
+                (head
+                  (partition predicate (tail (cons head tail))))
+                (cons
+                  (cons
+                    (head (cons head tail))
+                    (head
+                      (tail
+                        (partition
+                          predicate
+                          (tail (cons head tail))))))
+                  nil)))
+            (by
+              (eval)))
+          (==
+            (cons
+              (cons
+                (head (cons head tail))
+                (head
+                  (partition predicate (tail (cons head tail)))))
+              (cons
+                (head
+                  (tail
+                    (partition
+                      predicate
+                      (tail (cons head tail)))))
+                nil))
+            (by
+              (exact
+                if_condition_true
+                (predicate (head (cons head tail)))
+                (cons
+                  (cons
+                    (head (cons head tail))
+                    (head
+                      (partition predicate (tail (cons head tail)))))
+                  (cons
+                    (head
+                      (tail
+                        (partition
+                          predicate
+                          (tail (cons head tail)))))
+                    nil))
+                (cons
+                  (head
+                    (partition predicate (tail (cons head tail))))
+                  (cons
+                    (cons
+                      (head (cons head tail))
+                      (head
+                        (tail
+                          (partition
+                            predicate
+                            (tail (cons head tail))))))
+                    nil)))))
+          (==
+            (cons
+              (cons
+                head
+                (head (partition predicate tail)))
+              (cons
+                (head (tail (partition predicate tail)))
+                nil))
+            (by
+              (eval))))))))
+(theorem partition_cons_false
+  (forall predicate (is-value predicate)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (predicate head) (quote :false))
+          (computes-to
+            (partition predicate (cons head tail))
+            (cons
+              (head (partition predicate tail))
+              (cons
+                (cons
+                  head
+                  (head (tail (partition predicate tail))))
+                nil)))))))
+  (by
+    (intro predicate)
+    (intro head)
+    (intro tail)
+    (intro predicate_false)
+    (have predicate_head_false
+      (computes-to
+        (predicate (head (cons head tail)))
+        (quote :false))
+      (by
+        (calc
+          (predicate (head (cons head tail)))
+          (==
+            (predicate head)
+            (by
+              (eval)))
+          (==
+            (quote :false)
+            (by
+              (exact predicate_false)))))
+      (by
+        (calc
+          (partition predicate (cons head tail))
+          (==
+            (if
+              (predicate (head (cons head tail)))
+              (cons
+                (cons
+                  (head (cons head tail))
+                  (head
+                    (partition predicate (tail (cons head tail)))))
+                (cons
+                  (head
+                    (tail
+                      (partition
+                        predicate
+                        (tail (cons head tail)))))
+                  nil))
+              (cons
+                (head
+                  (partition predicate (tail (cons head tail))))
+                (cons
+                  (cons
+                    (head (cons head tail))
+                    (head
+                      (tail
+                        (partition
+                          predicate
+                          (tail (cons head tail))))))
+                  nil)))
+            (by
+              (eval)))
+          (==
+            (cons
+              (head
+                (partition predicate (tail (cons head tail))))
+              (cons
+                (cons
+                  (head (cons head tail))
+                  (head
+                    (tail
+                      (partition
+                        predicate
+                        (tail (cons head tail))))))
+                nil))
+            (by
+              (exact
+                if_condition_false
+                (predicate (head (cons head tail)))
+                (cons
+                  (cons
+                    (head (cons head tail))
+                    (head
+                      (partition predicate (tail (cons head tail)))))
+                  (cons
+                    (head
+                      (tail
+                        (partition
+                          predicate
+                          (tail (cons head tail)))))
+                    nil))
+                (cons
+                  (head
+                    (partition predicate (tail (cons head tail))))
+                  (cons
+                    (cons
+                      (head (cons head tail))
+                      (head
+                        (tail
+                          (partition
+                            predicate
+                            (tail (cons head tail))))))
+                    nil)))))
+          (==
+            (cons
+              (head (partition predicate tail))
+              (cons
+                (cons
+                  head
+                  (head (tail (partition predicate tail))))
+                nil))
+            (by
+              (eval))))))))
 (theorem any_nil
   (forall predicate (is-value predicate)
     (computes-to (any predicate nil) (quote :false)))
@@ -1856,3 +2188,66 @@
     (intro tail)
     (intro predicate_false)
     (simp only predicate_false)))
+
+(theorem elem_index_nil
+  (forall value (is-value value)
+    (computes-to (elem-index value nil) none))
+  (by
+    (intro value)
+    (eval)))
+
+(theorem elem_index_cons_true
+  (forall value (is-value value)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (value-eq value head) (quote :true))
+          (computes-to
+            (elem-index value (cons head tail))
+            (some nil))))))
+  (by
+    (intro value)
+    (intro head)
+    (intro tail)
+    (intro values_equal)
+    (simp only values_equal)))
+
+(theorem elem_index_cons_false_none
+  (forall value (is-value value)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (value-eq value head) (quote :false))
+          (implies
+            (computes-to (elem-index value tail) none)
+            (computes-to
+              (elem-index value (cons head tail))
+              none))))))
+  (by
+    (intro value)
+    (intro head)
+    (intro tail)
+    (intro values_not_equal)
+    (intro tail_missing)
+    (simp only values_not_equal tail_missing none_is_some)))
+
+(theorem elem_index_cons_false_some
+  (forall value (is-value value)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (forall index (is-list index)
+          (implies
+            (computes-to (value-eq value head) (quote :false))
+            (implies
+              (computes-to (elem-index value tail) (some index))
+              (computes-to
+                (elem-index value (cons head tail))
+                (some (cons (quote unit) index)))))))))
+  (by
+    (intro value)
+    (intro head)
+    (intro tail)
+    (intro index)
+    (intro values_not_equal)
+    (intro tail_found)
+    (simp only values_not_equal tail_found (some_is_some index))))
