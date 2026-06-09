@@ -124,6 +124,21 @@
           value
           (replicate (tail count_cell) value))))))
 
+(def intersperse
+  (lambda separator
+    (lambda list
+      (list-case list
+        nil
+        cell
+        (list-case (tail cell)
+          (cons (head cell) nil)
+          tail_cell
+          (cons
+            (head cell)
+            (cons
+              separator
+              (intersperse separator (tail cell)))))))))
+
 (def map
   ((lambda fixed_point_function
      ((lambda fixed_point_self

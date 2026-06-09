@@ -214,6 +214,32 @@ fn length_replicate_matches_count_length() {
 }
 
 #[test]
+fn intersperse_nil_returns_nil() {
+    assert_evaluates(intersperse_call(unit(), nil()), Value::nil());
+}
+
+#[test]
+fn intersperse_singleton_returns_same_list() {
+    let list = singleton(quote(A));
+
+    assert_evaluates(intersperse_call(unit(), list.clone()), value(list));
+}
+
+#[test]
+fn intersperse_triple_inserts_separator_between_elements() {
+    assert_evaluates(
+        intersperse_call(unit(), triple(quote(A), quote(B), quote(NOT_A_LIST))),
+        value(cons(
+            quote(A),
+            cons(
+                unit(),
+                cons(quote(B), cons(unit(), singleton(quote(NOT_A_LIST)))),
+            ),
+        )),
+    );
+}
+
+#[test]
 fn map_nil_returns_nil() {
     let identity = lambda(X, var(X));
 

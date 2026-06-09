@@ -556,6 +556,97 @@
             (by
               (exact (symm (length_cons count_head count_tail))))))))))
 
+(theorem intersperse_nil
+  (forall separator (is-value separator)
+    (computes-to (intersperse separator nil) nil))
+  (by
+    (intro separator)
+    (eval)))
+
+(theorem intersperse_singleton
+  (forall separator (is-value separator)
+    (forall head (is-value head)
+      (computes-to
+        (intersperse separator (cons head nil))
+        (cons head nil))))
+  (by
+    (intro separator)
+    (intro head)
+    (eval)))
+
+(theorem intersperse_cons_cons
+  (forall separator (is-value separator)
+    (forall head (is-value head)
+      (forall next (is-value next)
+        (forall tail (is-list tail)
+          (computes-to
+            (intersperse separator (cons head (cons next tail)))
+            (cons
+              head
+              (cons
+                separator
+                (intersperse separator (cons next tail)))))))))
+  (by
+    (intro separator)
+    (intro head)
+    (intro next)
+    (intro tail)
+    (eval)))
+
+(theorem intersperse_cons_computes_to_list
+  (forall separator (is-value separator)
+    (forall tail (is-list tail)
+      (forall head (is-value head)
+        (computes-to-list result (intersperse separator (cons head tail))))))
+  (by
+    (intro separator)
+    (list-induction tail
+      (by
+        (intro head)
+        (exists (cons head nil)
+          (by
+            (exact intersperse_singleton separator head))))
+      next
+      rest
+      induction_hypothesis
+      (by
+        (intro head)
+        (obtain interspersed_tail interspersed_tail_proof
+          (induction_hypothesis next))
+        (exists (cons head (cons separator interspersed_tail))
+          (by
+            (calc
+              (intersperse separator (cons head (cons next rest)))
+              (==
+                (cons
+                  head
+                  (cons
+                    separator
+                    (intersperse separator (cons next rest))))
+                (by
+                  (exact intersperse_cons_cons separator head next rest)))
+              (==
+                (cons head (cons separator interspersed_tail))
+                (by
+                  (simpa only interspersed_tail_proof))))))))))
+
+(theorem intersperse_computes_to_list
+  (forall separator (is-value separator)
+    (forall list (is-list list)
+      (computes-to-list result (intersperse separator list))))
+  (by
+    (intro separator)
+    (list-induction list
+      (by
+        (exists nil
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (exact intersperse_cons_computes_to_list separator tail head)))))
+
 (theorem map_nil
   (forall function (is-value function)
     (computes-to (map function nil) nil))

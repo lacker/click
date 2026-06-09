@@ -62,6 +62,10 @@ fn replicate() -> Computation {
     computation_ref("replicate")
 }
 
+fn intersperse() -> Computation {
+    computation_ref("intersperse")
+}
+
 fn map() -> Computation {
     computation_ref("map")
 }
@@ -215,6 +219,11 @@ fn prelude_theorem_names() -> Vec<Name> {
         "replicate_cons",
         "replicate_computes_to_list",
         "length_replicate",
+        "intersperse_nil",
+        "intersperse_singleton",
+        "intersperse_cons_cons",
+        "intersperse_cons_computes_to_list",
+        "intersperse_computes_to_list",
         "map_nil",
         "map_cons",
         "map_computes_to_list",
@@ -386,6 +395,10 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         loaded.computation("replicate"),
         Some(computation("replicate"))
     );
+    assert_eq!(
+        loaded.computation("intersperse"),
+        Some(computation("intersperse"))
+    );
     assert_eq!(loaded.computation("zero"), Some(computation("zero")));
     assert_eq!(
         loaded.theorem("append_assoc"),
@@ -416,6 +429,10 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         Some(&list_tests::replicate_definition())
     );
     assert_eq!(
+        loaded.theory().computation(computation("intersperse")),
+        Some(&list_tests::intersperse_definition())
+    );
+    assert_eq!(
         loaded.theory().computation(computation("zero")),
         Some(&nat_tests::zero_definition())
     );
@@ -435,6 +452,10 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
     assert_eq!(
         loaded.env().computation("replicate"),
         Some(computation("replicate"))
+    );
+    assert_eq!(
+        loaded.env().computation("intersperse"),
+        Some(computation("intersperse"))
     );
 
     assert_eq!(
@@ -466,6 +487,10 @@ fn loaded_computation_prelude_keeps_env_without_defining_theorems() {
         loaded.computation("replicate"),
         Some(computation("replicate"))
     );
+    assert_eq!(
+        loaded.computation("intersperse"),
+        Some(computation("intersperse"))
+    );
     assert_eq!(loaded.computation("add"), Some(computation("add")));
     assert_eq!(
         loaded.theorem("append_assoc"),
@@ -486,6 +511,10 @@ fn loaded_computation_prelude_keeps_env_without_defining_theorems() {
     assert_eq!(
         loaded.theory().computation(computation("replicate")),
         Some(&list_tests::replicate_definition())
+    );
+    assert_eq!(
+        loaded.theory().computation(computation("intersperse")),
+        Some(&list_tests::intersperse_definition())
     );
     assert_eq!(
         loaded.theory().computation(computation("add")),
@@ -548,6 +577,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.computation(computation("replicate")),
         Some(&list_tests::replicate_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("intersperse")),
+        Some(&list_tests::intersperse_definition())
     );
     assert_eq!(
         theory.computation(computation("map")),
@@ -662,6 +695,7 @@ fn theory_defines_reverse() {
     assert_eq!(take(), Computation::Ref(computation("take")));
     assert_eq!(drop(), Computation::Ref(computation("drop")));
     assert_eq!(replicate(), Computation::Ref(computation("replicate")));
+    assert_eq!(intersperse(), Computation::Ref(computation("intersperse")));
     assert_eq!(map(), Computation::Ref(computation("map")));
     assert_eq!(concat_map(), Computation::Ref(computation("concat-map")));
     assert_eq!(fold_right(), Computation::Ref(computation("fold-right")));
@@ -732,6 +766,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&replicate()),
         Step::Reduced(list_tests::replicate_definition())
+    );
+    assert_eq!(
+        theory.reduce(&intersperse()),
+        Step::Reduced(list_tests::intersperse_definition())
     );
     assert_eq!(
         theory.reduce(&map()),
@@ -1059,6 +1097,13 @@ fn theory_defines_reverse_theorems() {
     let replicate_cons_prop = list_tests::replicate_cons_source_theorem();
     let replicate_computes_to_list_prop = list_tests::replicate_computes_to_list_source_theorem();
     let length_replicate_prop = list_tests::length_replicate_source_theorem();
+    let intersperse_nil_prop = list_tests::intersperse_nil_source_theorem();
+    let intersperse_singleton_prop = list_tests::intersperse_singleton_source_theorem();
+    let intersperse_cons_cons_prop = list_tests::intersperse_cons_cons_source_theorem();
+    let intersperse_cons_computes_to_list_prop =
+        list_tests::intersperse_cons_computes_to_list_source_theorem();
+    let intersperse_computes_to_list_prop =
+        list_tests::intersperse_computes_to_list_source_theorem();
     let map_nil_prop = list_tests::map_nil_source_theorem();
     let map_cons_prop = list_tests::map_cons_source_theorem();
     let map_computes_to_list_prop = list_tests::map_computes_to_list_source_theorem();
@@ -1252,6 +1297,26 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("length_replicate")),
         Some(&length_replicate_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("intersperse_nil")),
+        Some(&intersperse_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("intersperse_singleton")),
+        Some(&intersperse_singleton_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("intersperse_cons_cons")),
+        Some(&intersperse_cons_cons_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("intersperse_cons_computes_to_list")),
+        Some(&intersperse_cons_computes_to_list_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("intersperse_computes_to_list")),
+        Some(&intersperse_computes_to_list_prop)
     );
     assert_eq!(theory.theorem(theorem("map_nil")), Some(&map_nil_prop));
     assert_eq!(theory.theorem(theorem("map_cons")), Some(&map_cons_prop));

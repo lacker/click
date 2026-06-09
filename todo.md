@@ -27,5 +27,4 @@ pick the representation before adding them.
 
 6. `zip` - combine two lists into a list of pairs.
 7. `unzip` - split a list of pairs into a pair of lists.
-8. `intersperse` - place a separator between list elements.
-9. `intercalate` - concatenate a list of lists with a separator list.
+8. `intercalate` - concatenate a list of lists with a separator list.

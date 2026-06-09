@@ -145,6 +145,14 @@ pub fn replicate_definition() -> Computation {
     definition("replicate")
 }
 
+pub fn intersperse() -> Computation {
+    computation_ref("intersperse")
+}
+
+pub fn intersperse_definition() -> Computation {
+    definition("intersperse")
+}
+
 pub fn map() -> Computation {
     computation_ref("map")
 }
@@ -499,6 +507,26 @@ pub fn length_replicate_source_theorem() -> Prop {
     theorem_prop("length_replicate")
 }
 
+pub fn intersperse_nil_source_theorem() -> Prop {
+    theorem_prop("intersperse_nil")
+}
+
+pub fn intersperse_singleton_source_theorem() -> Prop {
+    theorem_prop("intersperse_singleton")
+}
+
+pub fn intersperse_cons_cons_source_theorem() -> Prop {
+    theorem_prop("intersperse_cons_cons")
+}
+
+pub fn intersperse_cons_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("intersperse_cons_computes_to_list")
+}
+
+pub fn intersperse_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("intersperse_computes_to_list")
+}
+
 pub fn map_nil_source_theorem() -> Prop {
     theorem_prop("map_nil")
 }
@@ -808,6 +836,10 @@ pub fn drop_call(count: Computation, list: Computation) -> Computation {
 
 pub fn replicate_call(count: Computation, value: Computation) -> Computation {
     apply(apply(replicate(), count), value)
+}
+
+pub fn intersperse_call(separator: Computation, list: Computation) -> Computation {
+    apply(apply(intersperse(), separator), list)
 }
 
 pub fn map_call(function: Computation, list: Computation) -> Computation {
@@ -1495,6 +1527,114 @@ pub fn length_replicate_theorem(count: Symbol, value: Symbol) -> Prop {
                 length_call(replicate_call(var(count), var(value))),
                 length_call(var(count)),
             ),
+        ),
+    )
+}
+
+/// Interspersing into an empty list returns `nil`.
+pub fn intersperse_nil_theorem(separator: Symbol) -> Prop {
+    forall_where(
+        separator,
+        is_value(var(separator)),
+        computes_to(intersperse_call(var(separator), nil()), nil()),
+    )
+}
+
+/// Interspersing into a singleton list leaves it unchanged.
+pub fn intersperse_singleton_theorem(separator: Symbol, head: Symbol) -> Prop {
+    forall_where(
+        separator,
+        is_value(var(separator)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            computes_to(
+                intersperse_call(var(separator), singleton(var(head))),
+                singleton(var(head)),
+            ),
+        ),
+    )
+}
+
+/// Interspersing into a list with at least two elements keeps the head,
+/// inserts the separator, and recurs on the tail.
+pub fn intersperse_cons_cons_theorem(
+    separator: Symbol,
+    head: Symbol,
+    next: Symbol,
+    tail: Symbol,
+) -> Prop {
+    forall_where(
+        separator,
+        is_value(var(separator)),
+        forall_where(
+            head,
+            is_value(var(head)),
+            forall_where(
+                next,
+                is_value(var(next)),
+                forall_where(
+                    tail,
+                    is_list(var(tail)),
+                    computes_to(
+                        intersperse_call(
+                            var(separator),
+                            cons(var(head), cons(var(next), var(tail))),
+                        ),
+                        cons(
+                            var(head),
+                            cons(
+                                var(separator),
+                                intersperse_call(var(separator), cons(var(next), var(tail))),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the tail is a list, the head and separator are values, then
+/// `intersperse` computes to a list on a cons input.
+pub fn intersperse_cons_computes_to_list_theorem(
+    separator: Symbol,
+    tail: Symbol,
+    head: Symbol,
+    result: Symbol,
+) -> Prop {
+    forall_where(
+        separator,
+        is_value(var(separator)),
+        forall_where(
+            tail,
+            is_list(var(tail)),
+            forall_where(
+                head,
+                is_value(var(head)),
+                computes_to_list(
+                    result,
+                    intersperse_call(var(separator), cons(var(head), var(tail))),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the input is a list and the separator is a value, then `intersperse`
+/// computes to a list.
+pub fn intersperse_computes_to_list_theorem(
+    separator: Symbol,
+    list: Symbol,
+    result: Symbol,
+) -> Prop {
+    forall_where(
+        separator,
+        is_value(var(separator)),
+        forall_where(
+            list,
+            is_list(var(list)),
+            computes_to_list(result, intersperse_call(var(separator), var(list))),
         ),
     )
 }

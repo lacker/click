@@ -815,6 +815,140 @@ fn replicate_source_theorems_have_expected_shape() {
 }
 
 #[test]
+fn intersperse_theorems_have_expected_shape() {
+    assert_eq!(
+        intersperse_nil_theorem(VALUE),
+        forall_where(
+            VALUE,
+            is_value(var(VALUE)),
+            computes_to(intersperse_call(var(VALUE), nil()), nil()),
+        )
+    );
+    assert_eq!(
+        intersperse_singleton_theorem(VALUE, HEAD),
+        forall_where(
+            VALUE,
+            is_value(var(VALUE)),
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                computes_to(
+                    intersperse_call(var(VALUE), singleton(var(HEAD))),
+                    singleton(var(HEAD)),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        intersperse_cons_cons_theorem(VALUE, HEAD, NEXT, TAIL),
+        forall_where(
+            VALUE,
+            is_value(var(VALUE)),
+            forall_where(
+                HEAD,
+                is_value(var(HEAD)),
+                forall_where(
+                    NEXT,
+                    is_value(var(NEXT)),
+                    forall_where(
+                        TAIL,
+                        is_list(var(TAIL)),
+                        computes_to(
+                            intersperse_call(
+                                var(VALUE),
+                                cons(var(HEAD), cons(var(NEXT), var(TAIL))),
+                            ),
+                            cons(
+                                var(HEAD),
+                                cons(
+                                    var(VALUE),
+                                    intersperse_call(var(VALUE), cons(var(NEXT), var(TAIL)),),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        intersperse_cons_computes_to_list_theorem(VALUE, TAIL, HEAD, RESULT),
+        forall_where(
+            VALUE,
+            is_value(var(VALUE)),
+            forall_where(
+                TAIL,
+                is_list(var(TAIL)),
+                forall_where(
+                    HEAD,
+                    is_value(var(HEAD)),
+                    computes_to_list(
+                        RESULT,
+                        intersperse_call(var(VALUE), cons(var(HEAD), var(TAIL))),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        intersperse_computes_to_list_theorem(VALUE, X, RESULT),
+        forall_where(
+            VALUE,
+            is_value(var(VALUE)),
+            forall_where(
+                X,
+                is_list(var(X)),
+                computes_to_list(RESULT, intersperse_call(var(VALUE), var(X))),
+            ),
+        )
+    );
+}
+
+#[test]
+fn intersperse_source_theorems_have_expected_shape() {
+    let nil_separator = theorem_symbol("intersperse_nil", "separator");
+    let singleton_separator = theorem_symbol("intersperse_singleton", "separator");
+    let singleton_head = theorem_symbol("intersperse_singleton", "head");
+    let cons_separator = theorem_symbol("intersperse_cons_cons", "separator");
+    let cons_head = theorem_symbol("intersperse_cons_cons", "head");
+    let cons_next = theorem_symbol("intersperse_cons_cons", "next");
+    let cons_tail = theorem_symbol("intersperse_cons_cons", "tail");
+    let cons_computes_separator = theorem_symbol("intersperse_cons_computes_to_list", "separator");
+    let cons_computes_tail = theorem_symbol("intersperse_cons_computes_to_list", "tail");
+    let cons_computes_head = theorem_symbol("intersperse_cons_computes_to_list", "head");
+    let cons_computes_result = theorem_symbol("intersperse_cons_computes_to_list", "result");
+    let computes_separator = theorem_symbol("intersperse_computes_to_list", "separator");
+    let computes_list = theorem_symbol("intersperse_computes_to_list", "list");
+    let computes_result = theorem_symbol("intersperse_computes_to_list", "result");
+
+    assert_eq!(
+        intersperse_nil_source_theorem(),
+        intersperse_nil_theorem(nil_separator)
+    );
+    assert_eq!(
+        intersperse_singleton_source_theorem(),
+        intersperse_singleton_theorem(singleton_separator, singleton_head)
+    );
+    assert_eq!(
+        intersperse_cons_cons_source_theorem(),
+        intersperse_cons_cons_theorem(cons_separator, cons_head, cons_next, cons_tail)
+    );
+    assert_eq!(
+        intersperse_cons_computes_to_list_source_theorem(),
+        intersperse_cons_computes_to_list_theorem(
+            cons_computes_separator,
+            cons_computes_tail,
+            cons_computes_head,
+            cons_computes_result
+        )
+    );
+    assert_eq!(
+        intersperse_computes_to_list_source_theorem(),
+        intersperse_computes_to_list_theorem(computes_separator, computes_list, computes_result)
+    );
+}
+
+#[test]
 fn concat_map_theorems_have_expected_shape() {
     assert_eq!(
         concat_map_nil_theorem(FUNCTION),
