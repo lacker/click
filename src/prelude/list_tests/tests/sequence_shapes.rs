@@ -358,6 +358,112 @@ fn concat_nil_source_theorem_has_expected_shape() {
 }
 
 #[test]
+fn length_theorems_have_expected_shape() {
+    assert_eq!(length_nil_theorem(), computes_to(length_call(nil()), nil()));
+    assert_eq!(
+        length_cons_theorem(HEAD, TAIL),
+        forall_where(
+            HEAD,
+            is_value(var(HEAD)),
+            forall_where(
+                TAIL,
+                is_list(var(TAIL)),
+                computes_to(
+                    length_call(cons(var(HEAD), var(TAIL))),
+                    cons(unit(), length_call(var(TAIL))),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        length_singleton_theorem(HEAD),
+        forall_where(
+            HEAD,
+            is_value(var(HEAD)),
+            computes_to(length_call(singleton(var(HEAD))), singleton(unit())),
+        )
+    );
+    assert_eq!(
+        length_computes_to_list_theorem(X, RESULT),
+        forall_where(
+            X,
+            is_list(var(X)),
+            computes_to_list(RESULT, length_call(var(X))),
+        )
+    );
+    assert_eq!(
+        length_append_theorem(X, RIGHT_LIST),
+        forall_where(
+            X,
+            is_list(var(X)),
+            forall_where(
+                RIGHT_LIST,
+                is_list(var(RIGHT_LIST)),
+                computes_to(
+                    length_call(append_call(var(X), var(RIGHT_LIST))),
+                    append_call(length_call(var(X)), length_call(var(RIGHT_LIST))),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        length_map_theorem(FUNCTION, VALUE, MAPPED_VALUE, X),
+        forall_where(
+            FUNCTION,
+            is_value(var(FUNCTION)),
+            implies(
+                forall_where(
+                    VALUE,
+                    is_value(var(VALUE)),
+                    exists_where(
+                        MAPPED_VALUE,
+                        is_value(var(MAPPED_VALUE)),
+                        computes_to(apply(var(FUNCTION), var(VALUE)), var(MAPPED_VALUE)),
+                    ),
+                ),
+                forall_where(
+                    X,
+                    is_list(var(X)),
+                    computes_to(
+                        length_call(map_call(var(FUNCTION), var(X))),
+                        length_call(var(X)),
+                    ),
+                ),
+            ),
+        )
+    );
+}
+
+#[test]
+fn length_source_theorems_have_expected_shape() {
+    let cons_head = theorem_symbol("length_cons", "head");
+    let cons_tail = theorem_symbol("length_cons", "tail");
+    let singleton_head = theorem_symbol("length_singleton", "head");
+    let computes_list = theorem_symbol("length_computes_to_list", "list");
+    let computes_result = theorem_symbol("length_computes_to_list", "result");
+    let append_left = theorem_symbol("length_append", "left");
+    let append_right = theorem_symbol("length_append", "right");
+
+    assert_eq!(length_nil_source_theorem(), length_nil_theorem());
+    assert_eq!(
+        length_cons_source_theorem(),
+        length_cons_theorem(cons_head, cons_tail)
+    );
+    assert_eq!(
+        length_singleton_source_theorem(),
+        length_singleton_theorem(singleton_head)
+    );
+    assert_eq!(
+        length_computes_to_list_source_theorem(),
+        length_computes_to_list_theorem(computes_list, computes_result)
+    );
+    assert_eq!(
+        length_append_source_theorem(),
+        length_append_theorem(append_left, append_right)
+    );
+}
+
+#[test]
 fn map_theorems_have_expected_shape() {
     assert_eq!(
         map_nil_theorem(FUNCTION),
@@ -440,6 +546,19 @@ fn map_source_theorems_have_expected_shape() {
             computes_list,
             computes_result,
         )
+    );
+}
+
+#[test]
+fn length_map_source_theorem_has_expected_shape() {
+    let function = theorem_symbol("length_map", "function");
+    let value = theorem_symbol("length_map", "value");
+    let mapped_value = theorem_symbol("length_map", "mapped_value");
+    let list = theorem_symbol("length_map", "list");
+
+    assert_eq!(
+        length_map_source_theorem(),
+        length_map_theorem(function, value, mapped_value, list)
     );
 }
 

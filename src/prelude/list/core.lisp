@@ -81,6 +81,15 @@
         ((append (head cell))
          (self (tail cell))))))))
 
+(def length
+  (lambda list
+    (list-case list
+      nil
+      cell
+      (cons
+        (quote unit)
+        (length (tail cell))))))
+
 (def map
   ((lambda fixed_point_function
      ((lambda fixed_point_self

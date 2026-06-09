@@ -46,6 +46,10 @@ fn concat() -> Computation {
     computation_ref("concat")
 }
 
+fn length() -> Computation {
+    computation_ref("length")
+}
+
 fn map() -> Computation {
     computation_ref("map")
 }
@@ -178,9 +182,15 @@ fn prelude_theorem_names() -> Vec<Name> {
         "snoc_nil",
         "snoc_cons",
         "concat_nil",
+        "length_nil",
+        "length_cons",
+        "length_singleton",
+        "length_computes_to_list",
+        "length_append",
         "map_nil",
         "map_cons",
         "map_computes_to_list",
+        "length_map",
         "concat_map_nil",
         "concat_map_cons",
         "concat_map_computes_to_list",
@@ -460,6 +470,10 @@ fn theory_defines_reverse() {
         Some(&list_tests::concat_definition())
     );
     assert_eq!(
+        theory.computation(computation("length")),
+        Some(&list_tests::length_definition())
+    );
+    assert_eq!(
         theory.computation(computation("map")),
         Some(&list_tests::map_definition())
     );
@@ -564,6 +578,7 @@ fn theory_defines_reverse() {
     assert_eq!(append(), Computation::Ref(computation("append")));
     assert_eq!(snoc(), Computation::Ref(computation("snoc")));
     assert_eq!(concat(), Computation::Ref(computation("concat")));
+    assert_eq!(length(), Computation::Ref(computation("length")));
     assert_eq!(map(), Computation::Ref(computation("map")));
     assert_eq!(concat_map(), Computation::Ref(computation("concat-map")));
     assert_eq!(fold_right(), Computation::Ref(computation("fold-right")));
@@ -617,6 +632,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&concat()),
         Step::Reduced(list_tests::concat_definition())
+    );
+    assert_eq!(
+        theory.reduce(&length()),
+        Step::Reduced(list_tests::length_definition())
     );
     assert_eq!(
         theory.reduce(&map()),
@@ -923,9 +942,15 @@ fn theory_defines_reverse_theorems() {
     let snoc_nil_prop = list_tests::snoc_nil_source_theorem();
     let snoc_cons_prop = list_tests::snoc_cons_source_theorem();
     let concat_nil_prop = list_tests::concat_nil_source_theorem();
+    let length_nil_prop = list_tests::length_nil_source_theorem();
+    let length_cons_prop = list_tests::length_cons_source_theorem();
+    let length_singleton_prop = list_tests::length_singleton_source_theorem();
+    let length_computes_to_list_prop = list_tests::length_computes_to_list_source_theorem();
+    let length_append_prop = list_tests::length_append_source_theorem();
     let map_nil_prop = list_tests::map_nil_source_theorem();
     let map_cons_prop = list_tests::map_cons_source_theorem();
     let map_computes_to_list_prop = list_tests::map_computes_to_list_source_theorem();
+    let length_map_prop = list_tests::length_map_source_theorem();
     let concat_map_nil_prop = list_tests::concat_map_nil_source_theorem();
     let concat_map_cons_prop = list_tests::concat_map_cons_source_theorem();
     let concat_map_computes_to_list_prop = list_tests::concat_map_computes_to_list_source_theorem();
@@ -1065,11 +1090,35 @@ fn theory_defines_reverse_theorems() {
         theory.theorem(theorem("concat_nil")),
         Some(&concat_nil_prop)
     );
+    assert_eq!(
+        theory.theorem(theorem("length_nil")),
+        Some(&length_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("length_cons")),
+        Some(&length_cons_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("length_singleton")),
+        Some(&length_singleton_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("length_computes_to_list")),
+        Some(&length_computes_to_list_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("length_append")),
+        Some(&length_append_prop)
+    );
     assert_eq!(theory.theorem(theorem("map_nil")), Some(&map_nil_prop));
     assert_eq!(theory.theorem(theorem("map_cons")), Some(&map_cons_prop));
     assert_eq!(
         theory.theorem(theorem("map_computes_to_list")),
         Some(&map_computes_to_list_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("length_map")),
+        Some(&length_map_prop)
     );
     assert_eq!(
         theory.theorem(theorem("concat_map_nil")),

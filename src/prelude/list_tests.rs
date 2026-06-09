@@ -113,6 +113,14 @@ pub fn concat_definition() -> Computation {
     definition("concat")
 }
 
+pub fn length() -> Computation {
+    computation_ref("length")
+}
+
+pub fn length_definition() -> Computation {
+    definition("length")
+}
+
 pub fn map() -> Computation {
     computation_ref("map")
 }
@@ -395,6 +403,26 @@ pub fn append_assoc_source_theorem() -> Prop {
     theorem_prop("append_assoc")
 }
 
+pub fn length_nil_source_theorem() -> Prop {
+    theorem_prop("length_nil")
+}
+
+pub fn length_cons_source_theorem() -> Prop {
+    theorem_prop("length_cons")
+}
+
+pub fn length_singleton_source_theorem() -> Prop {
+    theorem_prop("length_singleton")
+}
+
+pub fn length_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("length_computes_to_list")
+}
+
+pub fn length_append_source_theorem() -> Prop {
+    theorem_prop("length_append")
+}
+
 pub fn map_nil_source_theorem() -> Prop {
     theorem_prop("map_nil")
 }
@@ -405,6 +433,10 @@ pub fn map_cons_source_theorem() -> Prop {
 
 pub fn map_computes_to_list_source_theorem() -> Prop {
     theorem_prop("map_computes_to_list")
+}
+
+pub fn length_map_source_theorem() -> Prop {
+    theorem_prop("length_map")
 }
 
 pub fn concat_map_nil_source_theorem() -> Prop {
@@ -684,6 +716,10 @@ pub fn snoc_call(list: Computation, value: Computation) -> Computation {
 
 pub fn concat_call(lists: Computation) -> Computation {
     apply(concat(), lists)
+}
+
+pub fn length_call(list: Computation) -> Computation {
+    apply(length(), list)
 }
 
 pub fn map_call(function: Computation, list: Computation) -> Computation {
@@ -1188,6 +1224,61 @@ pub fn append_assoc_theorem(left: Symbol, middle: Symbol, right: Symbol) -> Prop
     )
 }
 
+/// The length of `nil` is zero, represented as `nil`.
+pub fn length_nil_theorem() -> Prop {
+    computes_to(length_call(nil()), nil())
+}
+
+/// The length of a cons is one plus the length of its tail.
+pub fn length_cons_theorem(head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            tail,
+            is_list(var(tail)),
+            computes_to(
+                length_call(cons(var(head), var(tail))),
+                cons(unit(), length_call(var(tail))),
+            ),
+        ),
+    )
+}
+
+/// The length of a singleton is one.
+pub fn length_singleton_theorem(head: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        computes_to(length_call(singleton(var(head))), singleton(unit())),
+    )
+}
+
+/// If `list` is a list, then `length(list)` computes to a list-shaped nat.
+pub fn length_computes_to_list_theorem(list: Symbol, result: Symbol) -> Prop {
+    forall_where(
+        list,
+        is_list(var(list)),
+        computes_to_list(result, length_call(var(list))),
+    )
+}
+
+/// Length distributes over append, with unary addition represented by append.
+pub fn length_append_theorem(left: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_list(var(left)),
+        forall_where(
+            right,
+            is_list(var(right)),
+            computes_to(
+                length_call(append_call(var(left), var(right))),
+                append_call(length_call(var(left)), length_call(var(right))),
+            ),
+        ),
+    )
+}
+
 /// Mapping over `nil` returns `nil`.
 pub fn map_nil_theorem(function: Symbol) -> Prop {
     forall_where(
@@ -1245,6 +1336,38 @@ pub fn map_computes_to_list_theorem(
                 list,
                 is_list(var(list)),
                 computes_to_list(result, map_call(var(function), var(list))),
+            ),
+        ),
+    )
+}
+
+/// Mapping a value-producing function preserves length.
+pub fn length_map_theorem(
+    function: Symbol,
+    value: Symbol,
+    mapped_value: Symbol,
+    list: Symbol,
+) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        implies(
+            forall_where(
+                value,
+                is_value(var(value)),
+                exists_where(
+                    mapped_value,
+                    is_value(var(mapped_value)),
+                    computes_to(apply(var(function), var(value)), var(mapped_value)),
+                ),
+            ),
+            forall_where(
+                list,
+                is_list(var(list)),
+                computes_to(
+                    length_call(map_call(var(function), var(list))),
+                    length_call(var(list)),
+                ),
             ),
         ),
     )

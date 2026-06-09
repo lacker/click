@@ -83,6 +83,37 @@ fn concat_list_of_lists_terminates_without_error() {
 }
 
 #[test]
+fn length_nil_returns_nil() {
+    assert_evaluates(length_call(nil()), Value::nil());
+}
+
+#[test]
+fn length_triple_returns_three() {
+    assert_evaluates(
+        length_call(triple(quote(A), quote(B), unit())),
+        value(triple(unit(), unit(), unit())),
+    );
+}
+
+#[test]
+fn length_append_adds_lengths() {
+    assert_evaluates(
+        length_call(append_call(singleton(quote(A)), pair(quote(B), unit()))),
+        value(triple(unit(), unit(), unit())),
+    );
+}
+
+#[test]
+fn length_map_preserves_length() {
+    let constant_unit = lambda(X, unit());
+
+    assert_evaluates(
+        length_call(map_call(constant_unit, pair(quote(A), quote(B)))),
+        value(pair(unit(), unit())),
+    );
+}
+
+#[test]
 fn map_nil_returns_nil() {
     let identity = lambda(X, var(X));
 

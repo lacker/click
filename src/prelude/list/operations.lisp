@@ -147,6 +147,171 @@
     (intro right)
     (eval)))
 
+(theorem length_nil
+  (computes-to (length nil) nil)
+  (by
+    (eval)))
+
+(theorem length_cons
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (computes-to
+        (length (cons head tail))
+        (cons (quote unit) (length tail)))))
+  (by
+    (intro head)
+    (intro tail)
+    (eval)))
+
+(theorem length_singleton
+  (forall head (is-value head)
+    (computes-to
+      (length (cons head nil))
+      (cons (quote unit) nil)))
+  (by
+    (intro head)
+    (eval)))
+
+(theorem length_computes_to_list
+  (forall list (is-list list)
+    (computes-to-list result (length list)))
+  (by
+    (list-induction list
+      (by
+        (exists nil
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (obtain tail_length tail_length_proof induction_hypothesis)
+        (exists (cons (quote unit) tail_length)
+          (by
+            (calc
+              (length (cons head tail))
+              (==
+                (cons (quote unit) (length tail))
+                (by
+                  (exact length_cons head tail)))
+              (==
+                (cons (quote unit) tail_length)
+                (by
+                  (simpa only tail_length_proof))))))))))
+
+(theorem length_append
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (computes-to
+        (length (append left right))
+        (append (length left) (length right)))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (obtain right_length right_length_proof
+          (length_computes_to_list right))
+        (calc
+          (length (append nil right))
+          (==
+            (length right)
+            (by
+              (eval)))
+          (==
+            right_length
+            (by
+              (exact right_length_proof)))
+          (==
+            (append nil right_length)
+            (by
+              (exact (symm (append_nil_returns_right right_length)))))
+          (==
+            (append (length nil) right_length)
+            (by
+              (rewrite (symm length_nil))
+              (eval)))
+          (==
+            (append (length nil) (length right))
+            (by
+              (simpa only (symm right_length_proof))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro right)
+        (obtain tail_right tail_right_proof
+          (append_computes_to_list tail right))
+        (obtain tail_length tail_length_proof
+          (length_computes_to_list tail))
+        (obtain right_length right_length_proof
+          (length_computes_to_list right))
+        (obtain tail_sum tail_sum_proof
+          (append_computes_to_list tail_length right_length))
+        (calc
+          (length (append (cons head tail) right))
+          (==
+            (length (cons head (append tail right)))
+            (by
+              (simpa only (append_cons head tail right))))
+          (==
+            (length (cons head tail_right))
+            (by
+              (simpa only tail_right_proof)))
+          (==
+            (cons (quote unit) (length tail_right))
+            (by
+              (exact length_cons head tail_right)))
+          (==
+            (cons (quote unit) (length (append tail right)))
+            (by
+              (simpa only (symm tail_right_proof))))
+          (==
+            (cons
+              (quote unit)
+              (append (length tail) (length right)))
+            (by
+              (simpa only (induction_hypothesis right))))
+          (==
+            (cons
+              (quote unit)
+              (append tail_length right_length))
+            (by
+              (simpa only tail_length_proof right_length_proof)))
+          (==
+            (cons (quote unit) tail_sum)
+            (by
+              (simpa only tail_sum_proof)))
+          (==
+            (cons
+              (quote unit)
+              (append tail_length right_length))
+            (by
+              (simpa only (symm tail_sum_proof))))
+          (==
+            (append
+              (cons (quote unit) tail_length)
+              right_length)
+            (by
+              (exact (symm (append_cons (quote unit) tail_length right_length)))))
+          (==
+            (append
+              (cons (quote unit) (length tail))
+              right_length)
+            (by
+              (simpa only (symm tail_length_proof))))
+          (==
+            (append
+              (cons (quote unit) (length tail))
+              (length right))
+            (by
+              (simpa only (symm right_length_proof))))
+          (==
+            (append
+              (length (cons head tail))
+              (length right))
+            (by
+              (simpa only (symm (length_cons head tail))))))))))
+
 (theorem map_nil
   (forall function (is-value function)
     (computes-to (map function nil) nil))
@@ -206,6 +371,61 @@
                 (cons mapped_head mapped_tail)
                 (by
                   (simpa only mapped_tail_proof))))))))))
+
+(theorem length_map
+  (forall function (is-value function)
+    (implies
+      (forall value (is-value value)
+        (exists mapped_value (is-value mapped_value)
+          (computes-to (function value) mapped_value)))
+      (forall list (is-list list)
+        (computes-to
+          (length (map function list))
+          (length list)))))
+  (by
+    (intro function)
+    (intro maps_values)
+    (list-induction list
+      (by
+        (eval))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (obtain mapped_head mapped_head_proof
+          (maps_values head))
+        (obtain mapped_tail mapped_tail_proof
+          (map_computes_to_list function tail))
+        (calc
+          (length (map function (cons head tail)))
+          (==
+            (length (cons (function head) (map function tail)))
+            (by
+              (simpa only (map_cons function head tail))))
+          (==
+            (length (cons mapped_head (map function tail)))
+            (by
+              (simpa only mapped_head_proof)))
+          (==
+            (length (cons mapped_head mapped_tail))
+            (by
+              (simpa only mapped_tail_proof)))
+          (==
+            (cons (quote unit) (length mapped_tail))
+            (by
+              (exact length_cons mapped_head mapped_tail)))
+          (==
+            (cons (quote unit) (length (map function tail)))
+            (by
+              (simpa only (symm mapped_tail_proof))))
+          (==
+            (cons (quote unit) (length tail))
+            (by
+              (simpa only induction_hypothesis)))
+          (==
+            (length (cons head tail))
+            (by
+              (exact (symm (length_cons head tail))))))))))
 
 (theorem concat_map_nil
   (forall function (is-value function)
