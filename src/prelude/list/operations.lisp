@@ -460,6 +460,85 @@
                     (by
                       (exact dropped_tail_proof))))))))))))
 
+(theorem pair_first
+  (forall first (is-value first)
+    (forall second (is-value second)
+      (computes-to
+        (head (cons first (cons second nil)))
+        first)))
+  (by
+    (intro first)
+    (intro second)
+    (eval)))
+
+(theorem pair_tail
+  (forall first (is-value first)
+    (forall second (is-value second)
+      (computes-to
+        (tail (cons first (cons second nil)))
+        (cons second nil))))
+  (by
+    (intro first)
+    (intro second)
+    (eval)))
+
+(theorem pair_second
+  (forall first (is-value first)
+    (forall second (is-value second)
+      (computes-to
+        (head (tail (cons first (cons second nil))))
+        second)))
+  (by
+    (intro first)
+    (intro second)
+    (eval)))
+
+(theorem list_pair_first_from_computation
+  (forall computation
+    (forall first (is-list first)
+      (forall second (is-list second)
+        (implies
+          (computes-to computation (cons first (cons second nil)))
+          (computes-to (head computation) first)))))
+  (by
+    (intro computation)
+    (intro first)
+    (intro second)
+    (intro computation_is_pair)
+    (calc
+      (head computation)
+      (==
+        (head (cons first (cons second nil)))
+        (by
+          (simpa only computation_is_pair)))
+      (==
+        first
+        (by
+          (eval))))))
+
+(theorem list_pair_second_from_computation
+  (forall computation
+    (forall first (is-list first)
+      (forall second (is-list second)
+        (implies
+          (computes-to computation (cons first (cons second nil)))
+          (computes-to (head (tail computation)) second)))))
+  (by
+    (intro computation)
+    (intro first)
+    (intro second)
+    (intro computation_is_pair)
+    (calc
+      (head (tail computation))
+      (==
+        (head (tail (cons first (cons second nil))))
+        (by
+          (simpa only computation_is_pair)))
+      (==
+        second
+        (by
+          (eval))))))
+
 (theorem split_at_def
   (forall count (is-list count)
     (forall list (is-list list)
@@ -954,6 +1033,33 @@
 (theorem some_is_some
   (forall value (is-value value)
     (computes-to (is-some (some value)) (quote :true)))
+  (by
+    (intro value)
+    (eval)))
+
+(theorem some_tag
+  (forall value (is-value value)
+    (computes-to
+      (head (some value))
+      (quote :some)))
+  (by
+    (intro value)
+    (eval)))
+
+(theorem some_tail
+  (forall value (is-value value)
+    (computes-to
+      (tail (some value))
+      (cons value nil)))
+  (by
+    (intro value)
+    (eval)))
+
+(theorem some_value
+  (forall value (is-value value)
+    (computes-to
+      (head (tail (some value)))
+      value))
   (by
     (intro value)
     (eval)))

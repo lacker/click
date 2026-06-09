@@ -39,6 +39,433 @@
     (intro value_eq_false)
     (simp only value_eq_false)))
 
+(theorem partition_computes_to_pair
+  (forall predicate (is-value predicate)
+    (implies
+      (forall value (is-value value)
+        (is-bool (predicate value)))
+      (forall list (is-list list)
+        (exists left (is-list left)
+          (exists right (is-list right)
+            (computes-to
+              (partition predicate list)
+              (cons left (cons right nil))))))))
+  (by
+    (intro predicate)
+    (intro predicate_returns_bool)
+    (list-induction list
+      (by
+        (exists nil
+          (by
+            (exists nil
+              (by
+                (exact partition_nil predicate))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (obtain tail_left tail_right_exists induction_hypothesis)
+        (obtain tail_right tail_partition tail_right_exists)
+        (or-elim
+          (predicate_returns_bool head)
+          predicate_true
+          (by
+            (exists (cons head tail_left)
+              (by
+                (exists tail_right
+                  (by
+                    (calc
+                      (partition predicate (cons head tail))
+                      (==
+                        (cons
+                          (cons
+                            head
+                            (head (partition predicate tail)))
+                          (cons
+                            (head (tail (partition predicate tail)))
+                            nil))
+                        (by
+                          (apply partition_cons_true predicate head tail)))
+                      (==
+                        (cons
+                          (cons
+                            head
+                            (head
+                              (cons tail_left (cons tail_right nil))))
+                          (cons
+                            (head
+                              (tail
+                                (cons tail_left (cons tail_right nil))))
+                            nil))
+                        (by
+                          (simpa only tail_partition)))
+                      (==
+                        (cons
+                          (cons head tail_left)
+                          (cons tail_right nil))
+                        (by
+                          (eval)))))))))
+          predicate_false
+          (by
+            (exists tail_left
+              (by
+                (exists (cons head tail_right)
+                  (by
+                    (calc
+                      (partition predicate (cons head tail))
+                      (==
+                        (cons
+                          (head (partition predicate tail))
+                          (cons
+                            (cons
+                              head
+                              (head
+                                (tail (partition predicate tail))))
+                            nil))
+                        (by
+                          (apply partition_cons_false predicate head tail)))
+                      (==
+                        (cons
+                          (head
+                            (cons tail_left (cons tail_right nil)))
+                          (cons
+                            (cons
+                              head
+                              (head
+                                (tail
+                                  (cons
+                                    tail_left
+                                    (cons tail_right nil)))))
+                            nil))
+                        (by
+                          (simpa only tail_partition)))
+                      (==
+                        (cons
+                          tail_left
+                          (cons (cons head tail_right) nil))
+                        (by
+                          (eval)))))))))))))
+)
+
+(theorem partition_first_filter
+  (forall predicate (is-value predicate)
+    (implies
+      (forall value (is-value value)
+        (is-bool (predicate value)))
+      (forall list (is-list list)
+        (computes-to
+          (head (partition predicate list))
+          (filter predicate list)))))
+  (by
+    (intro predicate)
+    (intro predicate_returns_bool)
+    (list-induction list
+      (by
+        (have partition_pair
+          (computes-to
+            (partition predicate nil)
+            (cons nil (cons nil nil)))
+          (by
+            (exact partition_nil predicate))
+          (by
+            (calc
+              (head (partition predicate nil))
+              (==
+                nil
+                (by
+                  (apply
+                    list_pair_first_from_computation
+                    (partition predicate nil)
+                    nil
+                    nil)))
+              (==
+                (filter predicate nil)
+                (by
+                  (exact (symm (filter_nil predicate)))))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (obtain tail_left tail_right_exists
+          (partition_computes_to_pair predicate tail))
+        (obtain tail_right tail_partition tail_right_exists)
+        (have tail_first
+          (computes-to
+            (head (partition predicate tail))
+            tail_left)
+          (by
+            (apply
+              list_pair_first_from_computation
+              (partition predicate tail)
+              tail_left
+              tail_right))
+          (by
+            (have tail_left_filter
+              (computes-to tail_left (filter predicate tail))
+              (by
+                (calc
+                  tail_left
+                  (==
+                    (head (partition predicate tail))
+                    (by
+                      (exact (symm tail_first))))
+                  (==
+                    (filter predicate tail)
+                    (by
+                      (exact induction_hypothesis)))))
+              (by
+                (or-elim
+                  (predicate_returns_bool head)
+                  predicate_true
+                  (by
+                    (have current_partition
+                      (computes-to
+                        (partition predicate (cons head tail))
+                        (cons
+                          (cons head tail_left)
+                          (cons tail_right nil)))
+                      (by
+                        (calc
+                          (partition predicate (cons head tail))
+                          (==
+                            (cons
+                              (cons
+                                head
+                                (head (partition predicate tail)))
+                              (cons
+                                (head (tail (partition predicate tail)))
+                                nil))
+                            (by
+                              (apply
+                                partition_cons_true
+                                predicate
+                                head
+                                tail)))
+                          (==
+                            (cons
+                              (cons head tail_left)
+                              (cons tail_right nil))
+                            (by
+                              (simpa only tail_first tail_partition)))))
+                      (by
+                        (calc
+                          (head
+                            (partition
+                              predicate
+                              (cons head tail)))
+                          (==
+                            (cons head tail_left)
+                            (by
+                              (apply
+                                list_pair_first_from_computation
+                                (partition
+                                  predicate
+                                  (cons head tail))
+                                (cons head tail_left)
+                                tail_right)))
+                          (==
+                            (cons head (filter predicate tail))
+                            (by
+                              (simpa only tail_left_filter)))
+                          (==
+                            (filter
+                              predicate
+                              (cons head tail))
+                            (by
+                              (have filter_step
+                                (computes-to
+                                  (filter predicate (cons head tail))
+                                  (cons head (filter predicate tail)))
+                                (by
+                                  (apply
+                                    filter_cons_true
+                                    predicate
+                                    head
+                                    tail))
+                                (by
+                                  (exact (symm filter_step))))))))))
+                  predicate_false
+                  (by
+                    (have current_partition
+                      (computes-to
+                        (partition predicate (cons head tail))
+                        (cons
+                          tail_left
+                          (cons (cons head tail_right) nil)))
+                      (by
+                        (calc
+                          (partition predicate (cons head tail))
+                          (==
+                            (cons
+                              (head (partition predicate tail))
+                              (cons
+                                (cons
+                                  head
+                                  (head
+                                    (tail
+                                      (partition predicate tail))))
+                                nil))
+                            (by
+                              (apply
+                                partition_cons_false
+                                predicate
+                                head
+                                tail)))
+                          (==
+                            (cons
+                              tail_left
+                              (cons (cons head tail_right) nil))
+                            (by
+                              (simpa only tail_first tail_partition)))))
+                      (by
+                        (calc
+                          (head
+                            (partition
+                              predicate
+                              (cons head tail)))
+                          (==
+                            tail_left
+                            (by
+                              (apply
+                                list_pair_first_from_computation
+                                (partition
+                                  predicate
+                                  (cons head tail))
+                                tail_left
+                                (cons head tail_right))))
+                          (==
+                            (filter predicate tail)
+                            (by
+                              (exact tail_left_filter)))
+                          (==
+                            (filter
+                              predicate
+                              (cons head tail))
+                            (by
+                              (have filter_step
+                                (computes-to
+                                  (filter predicate (cons head tail))
+                                  (filter predicate tail))
+                                (by
+                                  (apply
+                                    filter_cons_false
+                                    predicate
+                                    head
+                                    tail))
+                                (by
+                                  (exact (symm filter_step)))))))))))))))
+))))
+
+(theorem elem_index_cons_true_member_true
+  (forall value (is-value value)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (value-eq value head) (quote :true))
+          (and
+            (computes-to
+              (elem-index value (cons head tail))
+              (some nil))
+            (computes-to
+              (member value (cons head tail))
+              (quote :true)))))))
+  (by
+    (intro value)
+    (intro head)
+    (intro tail)
+    (intro values_equal)
+    (split
+      (by
+        (apply elem_index_cons_true value head tail))
+      (by
+        (apply member_cons_true value head tail)))))
+
+(theorem elem_index_cons_false_none_member_false
+  (forall value (is-value value)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (value-eq value head) (quote :false))
+          (implies
+            (computes-to (elem-index value tail) none)
+            (implies
+              (computes-to
+                (member value tail)
+                (quote :false))
+              (and
+                (computes-to
+                  (elem-index value (cons head tail))
+                  none)
+                (computes-to
+                  (member value (cons head tail))
+                  (quote :false)))))))))
+  (by
+    (intro value)
+    (intro head)
+    (intro tail)
+    (intro values_not_equal)
+    (intro tail_missing)
+    (intro tail_member_false)
+    (split
+      (by
+        (apply elem_index_cons_false_none value head tail))
+      (by
+        (calc
+          (member value (cons head tail))
+          (==
+            (member value tail)
+            (by
+              (apply member_cons_false value head tail)))
+          (==
+            (quote :false)
+            (by
+              (exact tail_member_false)))))))
+)
+
+(theorem elem_index_cons_false_some_member_true
+  (forall value (is-value value)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (forall index (is-list index)
+          (implies
+            (computes-to (value-eq value head) (quote :false))
+            (implies
+              (computes-to (elem-index value tail) (some index))
+              (implies
+                (computes-to
+                  (member value tail)
+                  (quote :true))
+                (and
+                  (computes-to
+                    (elem-index value (cons head tail))
+                    (some (cons (quote unit) index)))
+                  (computes-to
+                    (member value (cons head tail))
+                    (quote :true))))))))))
+  (by
+    (intro value)
+    (intro head)
+    (intro tail)
+    (intro index)
+    (intro values_not_equal)
+    (intro tail_found)
+    (intro tail_member_true)
+    (split
+      (by
+        (apply elem_index_cons_false_some value head tail index))
+      (by
+        (calc
+          (member value (cons head tail))
+          (==
+            (member value tail)
+            (by
+              (apply member_cons_false value head tail)))
+          (==
+            (quote :true)
+            (by
+              (exact tail_member_true)))))))
+)
+
 (theorem map_identity
   (forall list (is-list list)
     (computes-to
@@ -361,6 +788,165 @@
                 (cons head tail)
                 (by
                   (simpa only (induction_hypothesis tail)))))))))))
+
+(theorem split_at_computes_to_pair
+  (forall count (is-list count)
+    (forall list (is-list list)
+      (exists prefix (is-list prefix)
+        (exists suffix (is-list suffix)
+          (computes-to
+            (split-at count list)
+            (cons prefix (cons suffix nil)))))))
+  (by
+    (intro count)
+    (intro list)
+    (obtain prefix prefix_proof
+      (take_computes_to_list count list))
+    (obtain suffix suffix_proof
+      (drop_computes_to_list count list))
+    (exists prefix
+      (by
+        (exists suffix
+          (by
+            (calc
+              (split-at count list)
+              (==
+                (cons
+                  (take count list)
+                  (cons (drop count list) nil))
+                (by
+                  (exact split_at_def count list)))
+              (==
+                (cons prefix (cons suffix nil))
+                (by
+                  (simpa only prefix_proof suffix_proof)))))))))
+)
+
+(theorem split_at_first_take
+  (forall count (is-list count)
+    (forall list (is-list list)
+      (computes-to
+        (head (split-at count list))
+        (take count list))))
+  (by
+    (intro count)
+    (intro list)
+    (obtain prefix prefix_proof
+      (take_computes_to_list count list))
+    (obtain suffix suffix_proof
+      (drop_computes_to_list count list))
+    (have split_pair
+      (computes-to
+        (split-at count list)
+        (cons prefix (cons suffix nil)))
+      (by
+        (calc
+          (split-at count list)
+          (==
+            (cons
+              (take count list)
+              (cons (drop count list) nil))
+            (by
+              (exact split_at_def count list)))
+          (==
+            (cons prefix (cons suffix nil))
+            (by
+              (simpa only prefix_proof suffix_proof)))))
+      (by
+        (calc
+          (head (split-at count list))
+          (==
+            prefix
+            (by
+              (apply
+                list_pair_first_from_computation
+                (split-at count list)
+                prefix
+                suffix)))
+          (==
+            (take count list)
+            (by
+              (exact (symm prefix_proof))))))))
+)
+
+(theorem split_at_second_drop
+  (forall count (is-list count)
+    (forall list (is-list list)
+      (computes-to
+        (head (tail (split-at count list)))
+        (drop count list))))
+  (by
+    (intro count)
+    (intro list)
+    (obtain prefix prefix_proof
+      (take_computes_to_list count list))
+    (obtain suffix suffix_proof
+      (drop_computes_to_list count list))
+    (have split_pair
+      (computes-to
+        (split-at count list)
+        (cons prefix (cons suffix nil)))
+      (by
+        (calc
+          (split-at count list)
+          (==
+            (cons
+              (take count list)
+              (cons (drop count list) nil))
+            (by
+              (exact split_at_def count list)))
+          (==
+            (cons prefix (cons suffix nil))
+            (by
+              (simpa only prefix_proof suffix_proof)))))
+      (by
+        (calc
+          (head (tail (split-at count list)))
+          (==
+            suffix
+            (by
+              (apply
+                list_pair_second_from_computation
+                (split-at count list)
+                prefix
+                suffix)))
+          (==
+            (drop count list)
+            (by
+              (exact (symm suffix_proof))))))))
+)
+
+(theorem nth_zero_after_split_at_zero_second
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (computes-to
+        (nth
+          nil
+          (head (tail (split-at nil (cons head tail)))))
+        (some head))))
+  (by
+    (intro head)
+    (intro tail)
+    (calc
+      (nth
+        nil
+        (head (tail (split-at nil (cons head tail)))))
+      (==
+        (nth
+          nil
+          (head
+            (tail
+              (cons nil (cons (cons head tail) nil)))))
+        (by
+          (simpa only (split_at_zero (cons head tail)))))
+      (==
+        (nth nil (cons head tail))
+        (by
+          (eval)))
+      (==
+        (some head)
+        (by
+          (exact nth_zero_cons head tail))))))
 
 (theorem reverse_acc_append
   (forall list (is-list list)

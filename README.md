@@ -200,15 +200,23 @@ represented as a computation variable plus a proposition such as `is-value`.
 
 The standard prelude is just a theory built on top of the kernel. It currently
 contains list definitions such as `reverse_acc`, `reverse`, `append`, `snoc`,
-`concat`, `length`, `take`, `drop`, `replicate`, `map`, `concat-map`,
-`fold-right`, `fold-left`, `zip-with`, `filter`, `any`, `all`, `is-symbol`,
-`is-lambda`, `is-list-value`, `value-eq`,
-`value-eq-comparable`, `member`, `last`, `init`, `null`, and `is-singleton`,
-plus theorems about those definitions. Prelude booleans use the kernel's
-reserved quoted symbols.
+`concat`, `length`, `take`, `drop`, `split-at`, `nth`, `replicate`, `map`,
+`concat-map`, `fold-right`, `fold-left`, `zip`, `unzip`, `zip-with`, `filter`,
+`partition`, `any`, `all`, `find`, `is-symbol`, `is-lambda`, `is-list-value`,
+`value-eq`, `value-eq-comparable`, `member`, `elem-index`, `last`, `init`,
+`null`, and `is-singleton`, plus theorems about those definitions. Prelude
+booleans use the kernel's reserved quoted symbols.
 It also contains unary natural-number definitions such as `zero`, `succ`,
 `is-nat-value`, `is-zero`, `pred`, `range`, `add`, `sub`, `mul`, `nat-eq`,
 `nat-le`, and `nat-lt`, with arithmetic and comparison theorems.
 The list prelude itself lives in ordered source sections under
 `src/prelude/list/`; the corresponding Rust module only includes those source
 files, with list-specific Rust helpers kept as test support.
+
+Some prelude APIs use plain list encodings rather than extra kernel value
+variants. A pair is a two-element list `(cons first (cons second nil))`; its
+first projection is `head`, and its second projection is `head` after `tail`.
+Options use `none = :none` and `some value = (:some value)`. The predicates
+`is-none` and `is-some` recognize those conventions, including rejecting
+malformed `:some` lists. Unary natural numbers are lists of `unit`, so `nil` is
+zero and `(cons unit n)` is successor.
