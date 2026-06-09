@@ -207,6 +207,38 @@
             (function initial (head cell))
             (tail cell)))))))
 
+(def zip
+  (lambda left
+    (lambda right
+      (list-case left
+        nil
+        left_cell
+        (list-case right
+          nil
+          right_cell
+          (cons
+            (cons
+              (head left_cell)
+              (cons (head right_cell) nil))
+            (zip
+              (tail left_cell)
+              (tail right_cell))))))))
+
+(def unzip
+  (lambda pairs
+    (list-case pairs
+      (cons nil (cons nil nil))
+      cell
+      (cons
+        (cons
+          (head (head cell))
+          (head (unzip (tail cell))))
+        (cons
+          (cons
+            (head (tail (head cell)))
+            (head (tail (unzip (tail cell)))))
+          nil)))))
+
 (def zip-with
   (lambda function
     (lambda left

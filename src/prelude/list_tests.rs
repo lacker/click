@@ -193,6 +193,22 @@ pub fn fold_left_definition() -> Computation {
     definition("fold-left")
 }
 
+pub fn zip() -> Computation {
+    computation_ref("zip")
+}
+
+pub fn zip_definition() -> Computation {
+    definition("zip")
+}
+
+pub fn unzip() -> Computation {
+    computation_ref("unzip")
+}
+
+pub fn unzip_definition() -> Computation {
+    definition("unzip")
+}
+
 pub fn zip_with() -> Computation {
     computation_ref("zip-with")
 }
@@ -623,6 +639,30 @@ pub fn fold_left_computes_to_value_source_theorem() -> Prop {
     theorem_prop("fold_left_computes_to_value")
 }
 
+pub fn zip_left_nil_source_theorem() -> Prop {
+    theorem_prop("zip_left_nil")
+}
+
+pub fn zip_right_nil_source_theorem() -> Prop {
+    theorem_prop("zip_right_nil")
+}
+
+pub fn zip_cons_source_theorem() -> Prop {
+    theorem_prop("zip_cons")
+}
+
+pub fn zip_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("zip_computes_to_list")
+}
+
+pub fn unzip_nil_source_theorem() -> Prop {
+    theorem_prop("unzip_nil")
+}
+
+pub fn unzip_cons_source_theorem() -> Prop {
+    theorem_prop("unzip_cons")
+}
+
 pub fn zip_with_left_nil_source_theorem() -> Prop {
     theorem_prop("zip_with_left_nil")
 }
@@ -912,6 +952,14 @@ pub fn fold_left_call(
     list: Computation,
 ) -> Computation {
     apply(apply(apply(fold_left(), function), initial), list)
+}
+
+pub fn zip_call(left: Computation, right: Computation) -> Computation {
+    apply(apply(zip(), left), right)
+}
+
+pub fn unzip_call(pairs: Computation) -> Computation {
+    apply(unzip(), pairs)
 }
 
 pub fn zip_with_call(function: Computation, left: Computation, right: Computation) -> Computation {
@@ -2257,6 +2305,101 @@ pub fn fold_left_computes_to_value_theorem(
                             fold_left_call(var(function), var(initial), var(list)),
                             var(result),
                         ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Zipping with an empty left list returns `nil`.
+pub fn zip_left_nil_theorem(right: Symbol) -> Prop {
+    forall_where(
+        right,
+        is_list(var(right)),
+        computes_to(zip_call(nil(), var(right)), nil()),
+    )
+}
+
+/// Zipping with an empty right list returns `nil`.
+pub fn zip_right_nil_theorem(left: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_list(var(left)),
+        computes_to(zip_call(var(left), nil()), nil()),
+    )
+}
+
+/// Zipping two conses pairs the heads and recurs on the tails.
+pub fn zip_cons_theorem(
+    left_head: Symbol,
+    left_tail: Symbol,
+    right_head: Symbol,
+    right_tail: Symbol,
+) -> Prop {
+    forall_where(
+        left_head,
+        is_value(var(left_head)),
+        forall_where(
+            left_tail,
+            is_list(var(left_tail)),
+            forall_where(
+                right_head,
+                is_value(var(right_head)),
+                forall_where(
+                    right_tail,
+                    is_list(var(right_tail)),
+                    computes_to(
+                        zip_call(
+                            cons(var(left_head), var(left_tail)),
+                            cons(var(right_head), var(right_tail)),
+                        ),
+                        cons(
+                            pair(var(left_head), var(right_head)),
+                            zip_call(var(left_tail), var(right_tail)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Zipping two lists returns a list of two-element-list pairs.
+pub fn zip_computes_to_list_theorem(left: Symbol, right: Symbol, result: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_list(var(left)),
+        forall_where(
+            right,
+            is_list(var(right)),
+            computes_to_list(result, zip_call(var(left), var(right))),
+        ),
+    )
+}
+
+/// Unzipping an empty list returns a pair of empty lists.
+pub fn unzip_nil_theorem() -> Prop {
+    computes_to(unzip_call(nil()), pair(nil(), nil()))
+}
+
+/// Unzipping a cons whose head is a two-element-list pair splits that pair and
+/// recurs on the tail.
+pub fn unzip_cons_theorem(left: Symbol, right: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_value(var(left)),
+        forall_where(
+            right,
+            is_value(var(right)),
+            forall_where(
+                tail,
+                is_list(var(tail)),
+                computes_to(
+                    unzip_call(cons(pair(var(left), var(right)), var(tail))),
+                    pair(
+                        cons(var(left), head_call(unzip_call(var(tail)))),
+                        cons(var(right), head_call(tail_call(unzip_call(var(tail))))),
                     ),
                 ),
             ),

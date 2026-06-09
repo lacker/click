@@ -1226,6 +1226,129 @@
                 (by
                   (exact result_proof))))))))))
 
+(theorem zip_left_nil
+  (forall right (is-list right)
+    (computes-to (zip nil right) nil))
+  (by
+    (intro right)
+    (eval)))
+
+(theorem zip_right_nil
+  (forall left (is-list left)
+    (computes-to (zip left nil) nil))
+  (by
+    (list-induction left
+      (by
+        (eval))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (eval)))))
+
+(theorem zip_cons
+  (forall left_head (is-value left_head)
+    (forall left_tail (is-list left_tail)
+      (forall right_head (is-value right_head)
+        (forall right_tail (is-list right_tail)
+          (computes-to
+            (zip
+              (cons left_head left_tail)
+              (cons right_head right_tail))
+            (cons
+              (cons left_head (cons right_head nil))
+              (zip left_tail right_tail)))))))
+  (by
+    (intro left_head)
+    (intro left_tail)
+    (intro right_head)
+    (intro right_tail)
+    (eval)))
+
+(theorem zip_computes_to_list
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (computes-to-list result (zip left right))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (exists nil
+          (by
+            (eval))))
+      left_head
+      left_tail
+      left_induction_hypothesis
+      (by
+        (list-induction right
+          (by
+            (exists nil
+              (by
+                (eval))))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (obtain zipped_tail zipped_tail_proof
+              (left_induction_hypothesis right_tail))
+            (exists
+              (cons
+                (cons left_head (cons right_head nil))
+                zipped_tail)
+              (by
+                (calc
+                  (zip
+                    (cons left_head left_tail)
+                    (cons right_head right_tail))
+                  (==
+                    (cons
+                      (cons left_head (cons right_head nil))
+                      (zip left_tail right_tail))
+                    (by
+                      (exact
+                        zip_cons
+                        left_head
+                        left_tail
+                        right_head
+                        right_tail)))
+                  (==
+                    (cons
+                      (cons left_head (cons right_head nil))
+                      zipped_tail)
+                    (by
+                      (simpa only zipped_tail_proof))))))))))))
+
+(theorem unzip_nil
+  (computes-to
+    (unzip nil)
+    (cons nil (cons nil nil)))
+  (by
+    (eval)))
+
+(theorem unzip_cons
+  (forall left (is-value left)
+    (forall right (is-value right)
+      (forall tail (is-list tail)
+        (computes-to
+          (unzip
+            (cons
+              (cons left (cons right nil))
+              tail))
+          (cons
+            (cons
+              left
+              (head (unzip tail)))
+            (cons
+              (cons
+                right
+                (head (tail (unzip tail))))
+              nil))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro tail)
+    (eval)))
+
 (theorem zip_with_left_nil
   (forall function (is-value function)
     (forall right (is-list right)

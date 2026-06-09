@@ -86,6 +86,14 @@ fn fold_left() -> Computation {
     computation_ref("fold-left")
 }
 
+fn zip() -> Computation {
+    computation_ref("zip")
+}
+
+fn unzip() -> Computation {
+    computation_ref("unzip")
+}
+
 fn zip_with() -> Computation {
     computation_ref("zip-with")
 }
@@ -252,6 +260,12 @@ fn prelude_theorem_names() -> Vec<Name> {
         "fold_left_nil",
         "fold_left_cons",
         "fold_left_computes_to_value",
+        "zip_left_nil",
+        "zip_right_nil",
+        "zip_cons",
+        "zip_computes_to_list",
+        "unzip_nil",
+        "unzip_cons",
         "zip_with_left_nil",
         "zip_with_right_nil",
         "zip_with_cons",
@@ -638,6 +652,14 @@ fn theory_defines_reverse() {
         Some(&list_tests::fold_left_definition())
     );
     assert_eq!(
+        theory.computation(computation("zip")),
+        Some(&list_tests::zip_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("unzip")),
+        Some(&list_tests::unzip_definition())
+    );
+    assert_eq!(
         theory.computation(computation("zip-with")),
         Some(&list_tests::zip_with_definition())
     );
@@ -744,6 +766,8 @@ fn theory_defines_reverse() {
     assert_eq!(concat_map(), Computation::Ref(computation("concat-map")));
     assert_eq!(fold_right(), Computation::Ref(computation("fold-right")));
     assert_eq!(fold_left(), Computation::Ref(computation("fold-left")));
+    assert_eq!(zip(), Computation::Ref(computation("zip")));
+    assert_eq!(unzip(), Computation::Ref(computation("unzip")));
     assert_eq!(zip_with(), Computation::Ref(computation("zip-with")));
     assert_eq!(filter(), Computation::Ref(computation("filter")));
     assert_eq!(any(), Computation::Ref(computation("any")));
@@ -835,6 +859,14 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&fold_left()),
         Step::Reduced(list_tests::fold_left_definition())
+    );
+    assert_eq!(
+        theory.reduce(&zip()),
+        Step::Reduced(list_tests::zip_definition())
+    );
+    assert_eq!(
+        theory.reduce(&unzip()),
+        Step::Reduced(list_tests::unzip_definition())
     );
     assert_eq!(
         theory.reduce(&zip_with()),
@@ -1182,6 +1214,12 @@ fn theory_defines_reverse_theorems() {
     let fold_left_cons_prop = list_tests::fold_left_cons_source_theorem();
     let fold_left_computes_to_value_prop = list_tests::fold_left_computes_to_value_source_theorem();
     let append_take_drop_prop = list_tests::append_take_drop_source_theorem();
+    let zip_left_nil_prop = list_tests::zip_left_nil_source_theorem();
+    let zip_right_nil_prop = list_tests::zip_right_nil_source_theorem();
+    let zip_cons_prop = list_tests::zip_cons_source_theorem();
+    let zip_computes_to_list_prop = list_tests::zip_computes_to_list_source_theorem();
+    let unzip_nil_prop = list_tests::unzip_nil_source_theorem();
+    let unzip_cons_prop = list_tests::unzip_cons_source_theorem();
     let zip_with_left_nil_prop = list_tests::zip_with_left_nil_source_theorem();
     let zip_with_right_nil_prop = list_tests::zip_with_right_nil_source_theorem();
     let zip_with_cons_prop = list_tests::zip_with_cons_source_theorem();
@@ -1454,6 +1492,24 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("fold_left_computes_to_value")),
         Some(&fold_left_computes_to_value_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("zip_left_nil")),
+        Some(&zip_left_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("zip_right_nil")),
+        Some(&zip_right_nil_prop)
+    );
+    assert_eq!(theory.theorem(theorem("zip_cons")), Some(&zip_cons_prop));
+    assert_eq!(
+        theory.theorem(theorem("zip_computes_to_list")),
+        Some(&zip_computes_to_list_prop)
+    );
+    assert_eq!(theory.theorem(theorem("unzip_nil")), Some(&unzip_nil_prop));
+    assert_eq!(
+        theory.theorem(theorem("unzip_cons")),
+        Some(&unzip_cons_prop)
     );
     assert_eq!(
         theory.theorem(theorem("zip_with_left_nil")),
@@ -1911,6 +1967,42 @@ fn theory_defines_reverse_theorems() {
             .expect("fold-left computes theorem source proof should check with dependencies")
             .prop(),
         &fold_left_computes_to_value_prop,
+    );
+    assert_eq!(
+        checked_theorem("zip_left_nil")
+            .expect("zip left nil theorem source proof should check with dependencies")
+            .prop(),
+        &zip_left_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("zip_right_nil")
+            .expect("zip right nil theorem source proof should check with dependencies")
+            .prop(),
+        &zip_right_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("zip_cons")
+            .expect("zip cons theorem source proof should check with dependencies")
+            .prop(),
+        &zip_cons_prop,
+    );
+    assert_eq!(
+        checked_theorem("zip_computes_to_list")
+            .expect("zip computes theorem source proof should check with dependencies")
+            .prop(),
+        &zip_computes_to_list_prop,
+    );
+    assert_eq!(
+        checked_theorem("unzip_nil")
+            .expect("unzip nil theorem source proof should check with dependencies")
+            .prop(),
+        &unzip_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("unzip_cons")
+            .expect("unzip cons theorem source proof should check with dependencies")
+            .prop(),
+        &unzip_cons_prop,
     );
     assert_eq!(
         checked_theorem("zip_with_left_nil")

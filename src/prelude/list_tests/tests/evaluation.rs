@@ -409,6 +409,50 @@ fn fold_left_front_cons_with_accumulates_prefix() {
 }
 
 #[test]
+fn zip_left_nil_returns_nil() {
+    assert_evaluates(zip_call(nil(), pair(quote(A), quote(B))), Value::nil());
+}
+
+#[test]
+fn zip_right_nil_returns_nil() {
+    assert_evaluates(zip_call(pair(quote(A), quote(B)), nil()), Value::nil());
+}
+
+#[test]
+fn zip_truncates_to_shorter_list() {
+    let expected = pair(pair(quote(A), unit()), pair(quote(B), quote(A)));
+
+    assert_evaluates(
+        zip_call(
+            triple(quote(A), quote(B), quote(NOT_A_LIST)),
+            pair(unit(), quote(A)),
+        ),
+        value(expected),
+    );
+}
+
+#[test]
+fn unzip_nil_returns_pair_of_nil() {
+    assert_evaluates(unzip_call(nil()), value(pair(nil(), nil())));
+}
+
+#[test]
+fn unzip_splits_list_of_pairs() {
+    let pairs = pair(pair(quote(A), unit()), pair(quote(B), quote(A)));
+    let expected = pair(pair(quote(A), quote(B)), pair(unit(), quote(A)));
+
+    assert_evaluates(unzip_call(pairs), value(expected));
+}
+
+#[test]
+fn unzip_non_pair_head_errors() {
+    assert_evaluates(
+        unzip_call(singleton(quote(A))),
+        Effect::error(RUNTIME_ERROR),
+    );
+}
+
+#[test]
 fn zip_with_left_nil_returns_nil() {
     let pair_function = lambda(X, lambda(NEXT, pair(var(X), var(NEXT))));
 

@@ -1480,6 +1480,145 @@ fn fold_left_source_theorems_have_expected_shape() {
 }
 
 #[test]
+fn zip_theorems_have_expected_shape() {
+    assert_eq!(
+        zip_left_nil_theorem(RIGHT_LIST),
+        forall_where(
+            RIGHT_LIST,
+            is_list(var(RIGHT_LIST)),
+            computes_to(zip_call(nil(), var(RIGHT_LIST)), nil()),
+        )
+    );
+    assert_eq!(
+        zip_right_nil_theorem(X),
+        forall_where(
+            X,
+            is_list(var(X)),
+            computes_to(zip_call(var(X), nil()), nil()),
+        )
+    );
+    assert_eq!(
+        zip_cons_theorem(LEFT_HEAD, LEFT_TAIL, RIGHT_HEAD, RIGHT_TAIL),
+        forall_where(
+            LEFT_HEAD,
+            is_value(var(LEFT_HEAD)),
+            forall_where(
+                LEFT_TAIL,
+                is_list(var(LEFT_TAIL)),
+                forall_where(
+                    RIGHT_HEAD,
+                    is_value(var(RIGHT_HEAD)),
+                    forall_where(
+                        RIGHT_TAIL,
+                        is_list(var(RIGHT_TAIL)),
+                        computes_to(
+                            zip_call(
+                                cons(var(LEFT_HEAD), var(LEFT_TAIL)),
+                                cons(var(RIGHT_HEAD), var(RIGHT_TAIL)),
+                            ),
+                            cons(
+                                pair(var(LEFT_HEAD), var(RIGHT_HEAD)),
+                                zip_call(var(LEFT_TAIL), var(RIGHT_TAIL)),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        zip_computes_to_list_theorem(X, RIGHT_LIST, RESULT),
+        forall_where(
+            X,
+            is_list(var(X)),
+            forall_where(
+                RIGHT_LIST,
+                is_list(var(RIGHT_LIST)),
+                computes_to_list(RESULT, zip_call(var(X), var(RIGHT_LIST))),
+            ),
+        )
+    );
+}
+
+#[test]
+fn zip_source_theorems_have_expected_shape() {
+    let left_nil_right = theorem_symbol("zip_left_nil", "right");
+    let right_nil_left = theorem_symbol("zip_right_nil", "left");
+    let cons_left_head = theorem_symbol("zip_cons", "left_head");
+    let cons_left_tail = theorem_symbol("zip_cons", "left_tail");
+    let cons_right_head = theorem_symbol("zip_cons", "right_head");
+    let cons_right_tail = theorem_symbol("zip_cons", "right_tail");
+    let computes_left = theorem_symbol("zip_computes_to_list", "left");
+    let computes_right = theorem_symbol("zip_computes_to_list", "right");
+    let computes_result = theorem_symbol("zip_computes_to_list", "result");
+
+    assert_eq!(
+        zip_left_nil_source_theorem(),
+        zip_left_nil_theorem(left_nil_right)
+    );
+    assert_eq!(
+        zip_right_nil_source_theorem(),
+        zip_right_nil_theorem(right_nil_left)
+    );
+    assert_eq!(
+        zip_cons_source_theorem(),
+        zip_cons_theorem(
+            cons_left_head,
+            cons_left_tail,
+            cons_right_head,
+            cons_right_tail,
+        )
+    );
+    assert_eq!(
+        zip_computes_to_list_source_theorem(),
+        zip_computes_to_list_theorem(computes_left, computes_right, computes_result)
+    );
+}
+
+#[test]
+fn unzip_theorems_have_expected_shape() {
+    assert_eq!(
+        unzip_nil_theorem(),
+        computes_to(unzip_call(nil()), pair(nil(), nil()))
+    );
+    assert_eq!(
+        unzip_cons_theorem(LEFT_HEAD, RIGHT_HEAD, TAIL),
+        forall_where(
+            LEFT_HEAD,
+            is_value(var(LEFT_HEAD)),
+            forall_where(
+                RIGHT_HEAD,
+                is_value(var(RIGHT_HEAD)),
+                forall_where(
+                    TAIL,
+                    is_list(var(TAIL)),
+                    computes_to(
+                        unzip_call(cons(pair(var(LEFT_HEAD), var(RIGHT_HEAD)), var(TAIL))),
+                        pair(
+                            cons(var(LEFT_HEAD), head_call(unzip_call(var(TAIL)))),
+                            cons(var(RIGHT_HEAD), head_call(tail_call(unzip_call(var(TAIL)))),),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    );
+}
+
+#[test]
+fn unzip_source_theorems_have_expected_shape() {
+    let cons_left = theorem_symbol("unzip_cons", "left");
+    let cons_right = theorem_symbol("unzip_cons", "right");
+    let cons_tail = theorem_symbol("unzip_cons", "tail");
+
+    assert_eq!(unzip_nil_source_theorem(), unzip_nil_theorem());
+    assert_eq!(
+        unzip_cons_source_theorem(),
+        unzip_cons_theorem(cons_left, cons_right, cons_tail)
+    );
+}
+
+#[test]
 fn zip_with_theorems_have_expected_shape() {
     assert_eq!(
         zip_with_left_nil_theorem(FUNCTION, RIGHT_LIST),
