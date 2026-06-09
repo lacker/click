@@ -58,6 +58,10 @@ fn drop() -> Computation {
     computation_ref("drop")
 }
 
+fn replicate() -> Computation {
+    computation_ref("replicate")
+}
+
 fn map() -> Computation {
     computation_ref("map")
 }
@@ -203,6 +207,10 @@ fn prelude_theorem_names() -> Vec<Name> {
         "drop_nil",
         "drop_cons",
         "drop_computes_to_list",
+        "replicate_zero",
+        "replicate_cons",
+        "replicate_computes_to_list",
+        "length_replicate",
         "map_nil",
         "map_cons",
         "map_computes_to_list",
@@ -366,6 +374,10 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
 
     assert_eq!(loaded.computation("append"), Some(computation("append")));
     assert_eq!(loaded.computation("take"), Some(computation("take")));
+    assert_eq!(
+        loaded.computation("replicate"),
+        Some(computation("replicate"))
+    );
     assert_eq!(loaded.computation("zero"), Some(computation("zero")));
     assert_eq!(
         loaded.theorem("append_assoc"),
@@ -392,6 +404,10 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         Some(&list_tests::take_definition())
     );
     assert_eq!(
+        loaded.theory().computation(computation("replicate")),
+        Some(&list_tests::replicate_definition())
+    );
+    assert_eq!(
         loaded.theory().computation(computation("zero")),
         Some(&nat_tests::zero_definition())
     );
@@ -408,6 +424,10 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         Some(computation("reverse_acc"))
     );
     assert_eq!(loaded.env().computation("take"), Some(computation("take")));
+    assert_eq!(
+        loaded.env().computation("replicate"),
+        Some(computation("replicate"))
+    );
 
     assert_eq!(
         computation_name("is-singleton"),
@@ -434,6 +454,10 @@ fn loaded_computation_prelude_keeps_env_without_defining_theorems() {
 
     assert_eq!(loaded.computation("reverse"), Some(computation("reverse")));
     assert_eq!(loaded.computation("take"), Some(computation("take")));
+    assert_eq!(
+        loaded.computation("replicate"),
+        Some(computation("replicate"))
+    );
     assert_eq!(loaded.computation("add"), Some(computation("add")));
     assert_eq!(
         loaded.theorem("append_assoc"),
@@ -450,6 +474,10 @@ fn loaded_computation_prelude_keeps_env_without_defining_theorems() {
     assert_eq!(
         loaded.theory().computation(computation("take")),
         Some(&list_tests::take_definition())
+    );
+    assert_eq!(
+        loaded.theory().computation(computation("replicate")),
+        Some(&list_tests::replicate_definition())
     );
     assert_eq!(
         loaded.theory().computation(computation("add")),
@@ -508,6 +536,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.computation(computation("drop")),
         Some(&list_tests::drop_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("replicate")),
+        Some(&list_tests::replicate_definition())
     );
     assert_eq!(
         theory.computation(computation("map")),
@@ -617,6 +649,7 @@ fn theory_defines_reverse() {
     assert_eq!(length(), Computation::Ref(computation("length")));
     assert_eq!(take(), Computation::Ref(computation("take")));
     assert_eq!(drop(), Computation::Ref(computation("drop")));
+    assert_eq!(replicate(), Computation::Ref(computation("replicate")));
     assert_eq!(map(), Computation::Ref(computation("map")));
     assert_eq!(concat_map(), Computation::Ref(computation("concat-map")));
     assert_eq!(fold_right(), Computation::Ref(computation("fold-right")));
@@ -682,6 +715,10 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&drop()),
         Step::Reduced(list_tests::drop_definition())
+    );
+    assert_eq!(
+        theory.reduce(&replicate()),
+        Step::Reduced(list_tests::replicate_definition())
     );
     assert_eq!(
         theory.reduce(&map()),
@@ -1001,6 +1038,10 @@ fn theory_defines_reverse_theorems() {
     let drop_nil_prop = list_tests::drop_nil_source_theorem();
     let drop_cons_prop = list_tests::drop_cons_source_theorem();
     let drop_computes_to_list_prop = list_tests::drop_computes_to_list_source_theorem();
+    let replicate_zero_prop = list_tests::replicate_zero_source_theorem();
+    let replicate_cons_prop = list_tests::replicate_cons_source_theorem();
+    let replicate_computes_to_list_prop = list_tests::replicate_computes_to_list_source_theorem();
+    let length_replicate_prop = list_tests::length_replicate_source_theorem();
     let map_nil_prop = list_tests::map_nil_source_theorem();
     let map_cons_prop = list_tests::map_cons_source_theorem();
     let map_computes_to_list_prop = list_tests::map_computes_to_list_source_theorem();
@@ -1178,6 +1219,22 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("drop_computes_to_list")),
         Some(&drop_computes_to_list_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("replicate_zero")),
+        Some(&replicate_zero_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("replicate_cons")),
+        Some(&replicate_cons_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("replicate_computes_to_list")),
+        Some(&replicate_computes_to_list_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("length_replicate")),
+        Some(&length_replicate_prop)
     );
     assert_eq!(theory.theorem(theorem("map_nil")), Some(&map_nil_prop));
     assert_eq!(theory.theorem(theorem("map_cons")), Some(&map_cons_prop));

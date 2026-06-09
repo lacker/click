@@ -114,6 +114,16 @@
           list_cell
           (drop (tail count_cell) (tail list_cell)))))))
 
+(def replicate
+  (lambda count
+    (lambda value
+      (list-case count
+        nil
+        count_cell
+        (cons
+          value
+          (replicate (tail count_cell) value))))))
+
 (def map
   ((lambda fixed_point_function
      ((lambda fixed_point_self

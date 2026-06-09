@@ -200,9 +200,9 @@ represented as a computation variable plus a proposition such as `is-value`.
 
 The standard prelude is just a theory built on top of the kernel. It currently
 contains list definitions such as `reverse_acc`, `reverse`, `append`, `snoc`,
-`concat`, `length`, `take`, `drop`, `map`, `concat-map`, `fold-right`,
-`fold-left`, `zip-with`, `filter`, `any`, `all`, `is-symbol`, `is-lambda`,
-`is-list-value`, `value-eq`,
+`concat`, `length`, `take`, `drop`, `replicate`, `map`, `concat-map`,
+`fold-right`, `fold-left`, `zip-with`, `filter`, `any`, `all`, `is-symbol`,
+`is-lambda`, `is-list-value`, `value-eq`,
 `value-eq-comparable`, `member`, `last`, `init`, `null`, and `is-singleton`,
 plus theorems about those definitions. Prelude booleans use the kernel's
 reserved quoted symbols.

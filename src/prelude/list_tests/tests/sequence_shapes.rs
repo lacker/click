@@ -727,6 +727,94 @@ fn drop_source_theorems_have_expected_shape() {
 }
 
 #[test]
+fn replicate_theorems_have_expected_shape() {
+    assert_eq!(
+        replicate_zero_theorem(VALUE),
+        forall_where(
+            VALUE,
+            is_value(var(VALUE)),
+            computes_to(replicate_call(nil(), var(VALUE)), nil()),
+        )
+    );
+    assert_eq!(
+        replicate_cons_theorem(COUNT_HEAD, COUNT_TAIL, VALUE),
+        forall_where(
+            COUNT_HEAD,
+            is_value(var(COUNT_HEAD)),
+            forall_where(
+                COUNT_TAIL,
+                is_list(var(COUNT_TAIL)),
+                forall_where(
+                    VALUE,
+                    is_value(var(VALUE)),
+                    computes_to(
+                        replicate_call(cons(var(COUNT_HEAD), var(COUNT_TAIL)), var(VALUE)),
+                        cons(var(VALUE), replicate_call(var(COUNT_TAIL), var(VALUE))),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        replicate_computes_to_list_theorem(COUNT, VALUE, RESULT),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            forall_where(
+                VALUE,
+                is_value(var(VALUE)),
+                computes_to_list(RESULT, replicate_call(var(COUNT), var(VALUE))),
+            ),
+        )
+    );
+    assert_eq!(
+        length_replicate_theorem(COUNT, VALUE),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            forall_where(
+                VALUE,
+                is_value(var(VALUE)),
+                computes_to(
+                    length_call(replicate_call(var(COUNT), var(VALUE))),
+                    length_call(var(COUNT)),
+                ),
+            ),
+        )
+    );
+}
+
+#[test]
+fn replicate_source_theorems_have_expected_shape() {
+    let zero_value = theorem_symbol("replicate_zero", "value");
+    let cons_count_head = theorem_symbol("replicate_cons", "count_head");
+    let cons_count_tail = theorem_symbol("replicate_cons", "count_tail");
+    let cons_value = theorem_symbol("replicate_cons", "value");
+    let computes_count = theorem_symbol("replicate_computes_to_list", "count");
+    let computes_value = theorem_symbol("replicate_computes_to_list", "value");
+    let computes_result = theorem_symbol("replicate_computes_to_list", "result");
+    let length_count = theorem_symbol("length_replicate", "count");
+    let length_value = theorem_symbol("length_replicate", "value");
+
+    assert_eq!(
+        replicate_zero_source_theorem(),
+        replicate_zero_theorem(zero_value)
+    );
+    assert_eq!(
+        replicate_cons_source_theorem(),
+        replicate_cons_theorem(cons_count_head, cons_count_tail, cons_value)
+    );
+    assert_eq!(
+        replicate_computes_to_list_source_theorem(),
+        replicate_computes_to_list_theorem(computes_count, computes_value, computes_result)
+    );
+    assert_eq!(
+        length_replicate_source_theorem(),
+        length_replicate_theorem(length_count, length_value)
+    );
+}
+
+#[test]
 fn concat_map_theorems_have_expected_shape() {
     assert_eq!(
         concat_map_nil_theorem(FUNCTION),

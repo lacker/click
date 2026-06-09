@@ -137,6 +137,14 @@ pub fn drop_definition() -> Computation {
     definition("drop")
 }
 
+pub fn replicate() -> Computation {
+    computation_ref("replicate")
+}
+
+pub fn replicate_definition() -> Computation {
+    definition("replicate")
+}
+
 pub fn map() -> Computation {
     computation_ref("map")
 }
@@ -475,6 +483,22 @@ pub fn drop_computes_to_list_source_theorem() -> Prop {
     theorem_prop("drop_computes_to_list")
 }
 
+pub fn replicate_zero_source_theorem() -> Prop {
+    theorem_prop("replicate_zero")
+}
+
+pub fn replicate_cons_source_theorem() -> Prop {
+    theorem_prop("replicate_cons")
+}
+
+pub fn replicate_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("replicate_computes_to_list")
+}
+
+pub fn length_replicate_source_theorem() -> Prop {
+    theorem_prop("length_replicate")
+}
+
 pub fn map_nil_source_theorem() -> Prop {
     theorem_prop("map_nil")
 }
@@ -780,6 +804,10 @@ pub fn take_call(count: Computation, list: Computation) -> Computation {
 
 pub fn drop_call(count: Computation, list: Computation) -> Computation {
     apply(apply(drop(), count), list)
+}
+
+pub fn replicate_call(count: Computation, value: Computation) -> Computation {
+    apply(apply(replicate(), count), value)
 }
 
 pub fn map_call(function: Computation, list: Computation) -> Computation {
@@ -1407,6 +1435,66 @@ pub fn drop_computes_to_list_theorem(count: Symbol, list: Symbol, result: Symbol
             list,
             is_list(var(list)),
             computes_to_list(result, drop_call(var(count), var(list))),
+        ),
+    )
+}
+
+/// Replicating a value zero times returns `nil`.
+pub fn replicate_zero_theorem(value: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        computes_to(replicate_call(nil(), var(value)), nil()),
+    )
+}
+
+/// Replicating with a cons count preserves the value and recurs on the count
+/// tail.
+pub fn replicate_cons_theorem(count_head: Symbol, count_tail: Symbol, value: Symbol) -> Prop {
+    forall_where(
+        count_head,
+        is_value(var(count_head)),
+        forall_where(
+            count_tail,
+            is_list(var(count_tail)),
+            forall_where(
+                value,
+                is_value(var(value)),
+                computes_to(
+                    replicate_call(cons(var(count_head), var(count_tail)), var(value)),
+                    cons(var(value), replicate_call(var(count_tail), var(value))),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If the count is a list and the element is a value, then `replicate`
+/// computes to a list.
+pub fn replicate_computes_to_list_theorem(count: Symbol, value: Symbol, result: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        forall_where(
+            value,
+            is_value(var(value)),
+            computes_to_list(result, replicate_call(var(count), var(value))),
+        ),
+    )
+}
+
+/// The length of a replicated list is the length of the count list.
+pub fn length_replicate_theorem(count: Symbol, value: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        forall_where(
+            value,
+            is_value(var(value)),
+            computes_to(
+                length_call(replicate_call(var(count), var(value))),
+                length_call(var(count)),
+            ),
         ),
     )
 }

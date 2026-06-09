@@ -460,6 +460,102 @@
                     (by
                       (exact dropped_tail_proof))))))))))))
 
+(theorem replicate_zero
+  (forall value (is-value value)
+    (computes-to (replicate nil value) nil))
+  (by
+    (intro value)
+    (eval)))
+
+(theorem replicate_cons
+  (forall count_head (is-value count_head)
+    (forall count_tail (is-list count_tail)
+      (forall value (is-value value)
+        (computes-to
+          (replicate (cons count_head count_tail) value)
+          (cons value (replicate count_tail value))))))
+  (by
+    (intro count_head)
+    (intro count_tail)
+    (intro value)
+    (eval)))
+
+(theorem replicate_computes_to_list
+  (forall count (is-list count)
+    (forall value (is-value value)
+      (computes-to-list result (replicate count value))))
+  (by
+    (list-induction count
+      (by
+        (intro value)
+        (exists nil
+          (by
+            (eval))))
+      count_head
+      count_tail
+      induction_hypothesis
+      (by
+        (intro value)
+        (obtain replicated_tail replicated_tail_proof
+          (induction_hypothesis value))
+        (exists (cons value replicated_tail)
+          (by
+            (calc
+              (replicate (cons count_head count_tail) value)
+              (==
+                (cons value (replicate count_tail value))
+                (by
+                  (exact replicate_cons count_head count_tail value)))
+              (==
+                (cons value replicated_tail)
+                (by
+                  (simpa only replicated_tail_proof))))))))))
+
+(theorem length_replicate
+  (forall count (is-list count)
+    (forall value (is-value value)
+      (computes-to
+        (length (replicate count value))
+        (length count))))
+  (by
+    (list-induction count
+      (by
+        (intro value)
+        (eval))
+      count_head
+      count_tail
+      induction_hypothesis
+      (by
+        (intro value)
+        (obtain replicated_tail replicated_tail_proof
+          (replicate_computes_to_list count_tail value))
+        (calc
+          (length (replicate (cons count_head count_tail) value))
+          (==
+            (length (cons value (replicate count_tail value)))
+            (by
+              (simpa only (replicate_cons count_head count_tail value))))
+          (==
+            (length (cons value replicated_tail))
+            (by
+              (simpa only replicated_tail_proof)))
+          (==
+            (cons (quote unit) (length replicated_tail))
+            (by
+              (exact length_cons value replicated_tail)))
+          (==
+            (cons (quote unit) (length (replicate count_tail value)))
+            (by
+              (simpa only (symm replicated_tail_proof))))
+          (==
+            (cons (quote unit) (length count_tail))
+            (by
+              (simpa only (induction_hypothesis value))))
+          (==
+            (length (cons count_head count_tail))
+            (by
+              (exact (symm (length_cons count_head count_tail))))))))))
+
 (theorem map_nil
   (forall function (is-value function)
     (computes-to (map function nil) nil))

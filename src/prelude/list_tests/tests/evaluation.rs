@@ -183,6 +183,37 @@ fn append_take_drop_rebuilds_list() {
 }
 
 #[test]
+fn replicate_zero_returns_nil() {
+    assert_evaluates(replicate_call(nil(), quote(A)), Value::nil());
+}
+
+#[test]
+fn replicate_three_repeats_value() {
+    assert_evaluates(
+        replicate_call(triple(unit(), unit(), unit()), quote(A)),
+        value(triple(quote(A), quote(A), quote(A))),
+    );
+}
+
+#[test]
+fn replicate_uses_count_spine_not_count_elements() {
+    assert_evaluates(
+        replicate_call(pair(quote(A), quote(B)), unit()),
+        value(pair(unit(), unit())),
+    );
+}
+
+#[test]
+fn length_replicate_matches_count_length() {
+    let count = pair(quote(A), quote(B));
+
+    assert_evaluates(
+        length_call(replicate_call(count, unit())),
+        value(pair(unit(), unit())),
+    );
+}
+
+#[test]
 fn map_nil_returns_nil() {
     let identity = lambda(X, var(X));
 
