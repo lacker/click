@@ -2494,3 +2494,45 @@
     (intro values_not_equal)
     (intro tail_found)
     (simp only values_not_equal tail_found (some_is_some index))))
+
+(theorem elem_index_cons_branch
+  (forall value (is-value value)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (computes-to
+          (elem-index value (cons head tail))
+          (if
+            (value-eq value (head (cons head tail)))
+            (some nil)
+            ((lambda tail_result
+               (if
+                 (is-some tail_result)
+                 (some (cons (quote unit) (head (tail tail_result))))
+                 none))
+             (elem-index value (tail (cons head tail)))))))))
+  (by
+    (intro value)
+    (intro head)
+    (intro tail)
+    (eval)))
+
+(theorem elem_index_cons_false_branch
+  (forall value (is-value value)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to (value-eq value head) (quote :false))
+          (computes-to
+            (elem-index value (cons head tail))
+            ((lambda tail_result
+               (if
+                 (is-some tail_result)
+                 (some (cons (quote unit) (head (tail tail_result))))
+                 none))
+             (elem-index value (tail (cons head tail)))))))))
+  (by
+    (intro value)
+    (intro head)
+    (intro tail)
+    (intro values_not_equal)
+    (simp only values_not_equal)))

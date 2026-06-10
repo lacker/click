@@ -267,6 +267,10 @@ pub(crate) enum ProofExpr {
     IfEffectThenConditionFalse(Box<ProofExpr>),
     IfEffectThenElse(Box<ProofExpr>),
     IfValueConditionBool(Box<ProofExpr>),
+    ApplyValueArgument {
+        variable: Symbol,
+        proof: Box<ProofExpr>,
+    },
     DistinctOutcomes(Box<ProofExpr>),
     ValueNonSymbolNonLambdaIsList {
         value: Box<ProofExpr>,
@@ -1830,6 +1834,7 @@ impl<'a> SourceParser<'a> {
             "if-effect-then-condition-false" => self.proof_if_effect_then_condition_false(items),
             "if-effect-then-else" => self.proof_if_effect_then_else(items),
             "if-value-condition-bool" => self.proof_if_value_condition_bool(items),
+            "apply-value-argument" => self.proof_apply_value_argument(items),
             "distinct-outcomes" => self.proof_distinct_outcomes(items),
             "value-non-symbol-non-lambda-is-list" => {
                 self.proof_value_non_symbol_non_lambda_is_list(items)
@@ -1937,6 +1942,14 @@ impl<'a> SourceParser<'a> {
         Ok(ProofExpr::IfValueConditionBool(Box::new(
             self.proof_expr_or_ref(&items[1])?,
         )))
+    }
+
+    fn proof_apply_value_argument(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("apply-value-argument", items, 3)?;
+        Ok(ProofExpr::ApplyValueArgument {
+            variable: self.proof_symbol(atom(&items[1])?)?,
+            proof: Box::new(self.proof_expr_or_ref(&items[2])?),
+        })
     }
 
     fn proof_distinct_outcomes(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
@@ -3608,6 +3621,15 @@ mod tests {
                   (primitive (is-value nil))
                   (eval-to (is-symbol nil) (quote :false))
                   (eval-to (is-lambda nil) (quote :false)))))
+
+            (theorem application_argument
+              (exists result (is-value result)
+                (computes-to (quote unit) result))
+              (proof
+                (apply-value-argument result
+                  (eval-to
+                    ((lambda x nil) (quote unit))
+                    nil))))
             ",
             &[],
             &[
@@ -3634,6 +3656,10 @@ mod tests {
                 NameBinding {
                     spelling: "value_classification",
                     name: Name(6),
+                },
+                NameBinding {
+                    spelling: "application_argument",
+                    name: Name(7),
                 },
             ],
             &[
@@ -3684,6 +3710,10 @@ mod tests {
         assert!(matches!(
             &module.theorems[5].proof,
             ProofScript::Proof(ProofExpr::ValueNonSymbolNonLambdaIsList { .. })
+        ));
+        assert!(matches!(
+            &module.theorems[6].proof,
+            ProofScript::Proof(ProofExpr::ApplyValueArgument { .. })
         ));
     }
 

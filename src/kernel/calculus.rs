@@ -292,6 +292,10 @@ pub enum Proof {
     IfValueWithEffectThenConditionFalse(Box<Proof>),
     IfValueWithEffectThenElse(Box<Proof>),
     IfValueConditionBool(Box<Proof>),
+    ApplyValueArgument {
+        variable: Symbol,
+        proof: Box<Proof>,
+    },
     DistinctOutcomes(Box<Proof>),
     ValueNonSymbolNonLambdaIsList {
         value: Box<Proof>,

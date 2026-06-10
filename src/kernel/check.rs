@@ -264,10 +264,15 @@ fn proven_prop_in_context(proof: &Proof, bindings: &Bindings, context: &Context)
             if_value_with_effect_then_else(proven_prop_in_context(proof, bindings, context)?)
         }
         Proof::IfValueConditionBool(proof) => {
-            if_value_condition_bool(proven_prop_in_context(proof, bindings, context)?)
+            if_value_condition_bool(proven_prop_in_context(proof, bindings, context)?, context)
         }
+        Proof::ApplyValueArgument { variable, proof } => apply_value_argument(
+            *variable,
+            proven_prop_in_context(proof, bindings, context)?,
+            context,
+        ),
         Proof::DistinctOutcomes(proof) => {
-            distinct_outcomes(proven_prop_in_context(proof, bindings, context)?)
+            distinct_outcomes(proven_prop_in_context(proof, bindings, context)?, context)
         }
         Proof::ValueNonSymbolNonLambdaIsList {
             value,
@@ -579,7 +584,7 @@ fn if_value_with_effect_then_else(prop: Prop) -> Option<Prop> {
     }
 }
 
-fn if_value_condition_bool(prop: Prop) -> Option<Prop> {
+fn if_value_condition_bool(prop: Prop, context: &Context) -> Option<Prop> {
     match prop {
         Prop::Equal(
             Computation::If {
@@ -588,18 +593,78 @@ fn if_value_condition_bool(prop: Prop) -> Option<Prop> {
                 else_branch: _,
             },
             value,
-        ) if value.as_value().is_some() => Some(is_bool(*condition)),
+        ) if computation_is_known_value(&value, context) => Some(is_bool(*condition)),
         _ => None,
     }
 }
 
-fn distinct_outcomes(prop: Prop) -> Option<Prop> {
+fn apply_value_argument(variable: Symbol, prop: Prop, context: &Context) -> Option<Prop> {
+    match prop {
+        Prop::Equal(Computation::Apply { argument, .. }, value)
+            if computation_is_known_value(&value, context) =>
+        {
+            Some(terminates(variable, *argument))
+        }
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ValueConstructor {
+    Symbol,
+    Lambda,
+    Nil,
+    Cons,
+    List,
+}
+
+fn known_value_constructor(
+    computation: &Computation,
+    context: &Context,
+) -> Option<ValueConstructor> {
+    if !computation_is_known_value(computation, context) {
+        return None;
+    }
+
+    match computation {
+        Computation::Quote(_) => Some(ValueConstructor::Symbol),
+        Computation::Lambda(_) => Some(ValueConstructor::Lambda),
+        Computation::Nil => Some(ValueConstructor::Nil),
+        Computation::Cons { .. } => Some(ValueConstructor::Cons),
+        Computation::Var(_) if computation_is_list(computation, context) => {
+            Some(ValueConstructor::List)
+        }
+        _ => None,
+    }
+}
+
+fn value_constructors_are_distinct(left: ValueConstructor, right: ValueConstructor) -> bool {
+    use ValueConstructor::*;
+
+    matches!(
+        (left, right),
+        (Symbol, Lambda | Nil | Cons | List)
+            | (Lambda, Symbol | Nil | Cons | List)
+            | (Nil, Symbol | Lambda | Cons)
+            | (Cons, Symbol | Lambda | Nil)
+            | (List, Symbol | Lambda)
+    )
+}
+
+fn distinct_outcomes(prop: Prop, context: &Context) -> Option<Prop> {
     match prop {
         Prop::Equal(left, right)
             if left
                 .as_outcome()
                 .zip(right.as_outcome())
                 .is_some_and(|(left, right)| left != right) =>
+        {
+            Some(Prop::Absurd)
+        }
+        Prop::Equal(left, right)
+            if known_value_constructor(&left, context)
+                .zip(known_value_constructor(&right, context))
+                .is_some_and(|(left, right)| value_constructors_are_distinct(left, right)) =>
         {
             Some(Prop::Absurd)
         }

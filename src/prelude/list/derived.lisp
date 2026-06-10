@@ -825,6 +825,266 @@
               (exact tail_member_true)))))))
 )
 
+(theorem elem_index_computes_to_option
+  (forall value (is-value value)
+    (forall list (is-list list)
+      (forall result (is-value result)
+        (implies
+          (computes-to (elem-index value list) result)
+          (or
+            (computes-to result none)
+            (exists index (is-list index)
+              (computes-to result (some index))))))))
+  (by
+    (intro value)
+    (list-induction list
+      (by
+        (intro result)
+        (intro elem_result)
+        (left
+          (by
+            (calc
+              result
+              (==
+                (elem-index value nil)
+                (by
+                  (exact (symm elem_result))))
+              (==
+                none
+                (by
+                  (exact elem_index_nil value)))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro result)
+        (intro elem_result)
+        (have elem_branch_result
+          (computes-to
+            (if
+              (value-eq value (head (cons head tail)))
+              (some nil)
+              ((lambda branch_option
+                 (if
+                   (is-some branch_option)
+                   (some (cons (quote unit) (head (tail branch_option))))
+                   none))
+               (elem-index value (tail (cons head tail)))))
+            result)
+          (by
+            (calc
+              (if
+                (value-eq value (head (cons head tail)))
+                (some nil)
+                ((lambda branch_option
+                   (if
+                     (is-some branch_option)
+                     (some (cons (quote unit) (head (tail branch_option))))
+                     none))
+                 (elem-index value (tail (cons head tail)))))
+              (==
+                (elem-index value (cons head tail))
+                (by
+                  (exact (symm (elem_index_cons_branch value head tail)))))
+              (==
+                result
+                (by
+                  (exact elem_result)))))
+          (by
+            (have value_eq_bool
+              (is-bool
+                (value-eq value (head (cons head tail))))
+              (proof
+                (if-value-condition-bool
+                  (assume elem_branch_result)))
+              (by
+                (or-elim value_eq_bool
+                  values_equal_through_cons
+                  (by
+                    (have values_equal
+                      (computes-to
+                        (value-eq value head)
+                        (quote :true))
+                      (by
+                        (calc
+                          (value-eq value head)
+                          (==
+                            (value-eq
+                              value
+                              (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact values_equal_through_cons)))))
+                      (by
+                        (right
+                          (by
+                            (exists nil
+                              (by
+                                (calc
+                                  result
+                                  (==
+                                    (elem-index value (cons head tail))
+                                    (by
+                                      (exact (symm elem_result))))
+                                  (==
+                                    (some nil)
+                                    (by
+                                      (apply
+                                        elem_index_cons_true
+                                        value
+                                        head
+                                        tail)))))))))))
+                  values_not_equal_through_cons
+                  (by
+                    (have values_not_equal
+                      (computes-to
+                        (value-eq value head)
+                        (quote :false))
+                      (by
+                        (calc
+                          (value-eq value head)
+                          (==
+                            (value-eq
+                              value
+                              (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :false)
+                            (by
+                              (exact values_not_equal_through_cons)))))
+                      (by
+                        (have branch_application
+                          (computes-to
+                            ((lambda branch_option
+                               (if
+                                 (is-some branch_option)
+                                 (some (cons (quote unit) (head (tail branch_option))))
+                                 none))
+                             (elem-index value (tail (cons head tail))))
+                            result)
+                          (by
+                            (calc
+                              ((lambda branch_option
+                                 (if
+                                   (is-some branch_option)
+                                   (some (cons (quote unit) (head (tail branch_option))))
+                                   none))
+                               (elem-index value (tail (cons head tail))))
+                              (==
+                                (elem-index value (cons head tail))
+                                (by
+                                  (simpa only values_not_equal)))
+                              (==
+                                result
+                                (by
+                                  (exact elem_result)))))
+                          (by
+                            (obtain tail_result tail_result_proof
+                              (apply-value-argument
+                                tail_result
+                                (assume branch_application))
+                              (by
+                                (have tail_result_from_tail
+                                  (computes-to
+                                    (elem-index value tail)
+                                    tail_result)
+                                  (by
+                                    (calc
+                                      (elem-index value tail)
+                                      (==
+                                        (elem-index
+                                          value
+                                          (tail (cons head tail)))
+                                        (by
+                                          (eval)))
+                                      (==
+                                        tail_result
+                                        (by
+                                          (exact tail_result_proof)))))
+                                  (by
+                                    (specialize tail_option_imp
+                                      induction_hypothesis
+                                      tail_result)
+                                    (have tail_option
+                                      (or
+                                        (computes-to tail_result none)
+                                        (exists index (is-list index)
+                                          (computes-to
+                                            tail_result
+                                            (some index))))
+                                      (by
+                                        (exact tail_option_imp))
+                                      (by
+                                        (or-elim tail_option
+                                          tail_none
+                                          (by
+                                            (left
+                                              (by
+                                                (calc
+                                                  result
+                                                  (==
+                                                    ((lambda branch_option
+                                                       (if
+                                                         (is-some branch_option)
+                                                         (some
+                                                           (cons
+                                                             (quote unit)
+                                                             (head (tail branch_option))))
+                                                         none))
+                                                     (elem-index
+                                                       value
+                                                       (tail (cons head tail))))
+                                                    (by
+                                                      (exact
+                                                        (symm
+                                                          branch_application))))
+                                                  (==
+                                                    none
+                                                    (by
+                                                      (simpa only
+                                                        tail_result_proof
+                                                        tail_none
+                                                        none_is_some)))))))
+                                          tail_some_exists
+                                          (by
+                                            (obtain index tail_some tail_some_exists)
+                                            (right
+                                              (by
+                                                (exists
+                                                  (cons (quote unit) index)
+                                                  (by
+                                                    (calc
+                                                      result
+                                                      (==
+                                                        ((lambda branch_option
+                                                           (if
+                                                             (is-some branch_option)
+                                                             (some
+                                                               (cons
+                                                                 (quote unit)
+                                                                 (head (tail branch_option))))
+                                                             none))
+                                                         (elem-index
+                                                           value
+                                                           (tail (cons head tail))))
+                                                        (by
+                                                          (exact
+                                                            (symm
+                                                              branch_application))))
+                                                      (==
+                                                        (some
+                                                          (cons (quote unit) index))
+                                                        (by
+                                                          (simpa only
+                                                            tail_result_proof
+                                                            tail_some
+                                                            (some_is_some index)))))))))))))))))))))))))))))
+  ))
+
 (theorem member_false_implies_elem_index_none
   (forall value (is-value value)
     (forall list (is-list list)
@@ -1058,6 +1318,654 @@
                                   head
                                   tail
                                   index)))))))))))))))
+  ))
+
+(theorem elem_index_none_implies_member_false
+  (forall value (is-value value)
+    (forall list (is-list list)
+      (implies
+        (computes-to (elem-index value list) none)
+        (computes-to (member value list) (quote :false)))))
+  (by
+    (intro value)
+    (list-induction list
+      (by
+        (intro elem_missing)
+        (exact member_nil value))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro elem_missing)
+        (have elem_branch_result
+          (computes-to
+            (if
+              (value-eq value (head (cons head tail)))
+              (some nil)
+              ((lambda branch_option
+                 (if
+                   (is-some branch_option)
+                   (some (cons (quote unit) (head (tail branch_option))))
+                   none))
+               (elem-index value (tail (cons head tail)))))
+            (quote :none))
+          (by
+            (calc
+              (if
+                (value-eq value (head (cons head tail)))
+                (some nil)
+                ((lambda branch_option
+                   (if
+                     (is-some branch_option)
+                     (some (cons (quote unit) (head (tail branch_option))))
+                     none))
+                 (elem-index value (tail (cons head tail)))))
+              (==
+                (elem-index value (cons head tail))
+                (by
+                  (exact (symm (elem_index_cons_branch value head tail)))))
+              (==
+                none
+                (by
+                  (exact elem_missing)))
+              (==
+                (quote :none)
+                (by
+                  (eval)))))
+          (by
+            (have value_eq_bool
+              (is-bool
+                (value-eq value (head (cons head tail))))
+              (proof
+                (if-value-condition-bool
+                  (assume elem_branch_result)))
+              (by
+                (or-elim value_eq_bool
+                  values_equal_through_cons
+                  (by
+                    (have values_equal
+                      (computes-to
+                        (value-eq value head)
+                        (quote :true))
+                      (by
+                        (calc
+                          (value-eq value head)
+                          (==
+                            (value-eq
+                              value
+                              (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact values_equal_through_cons)))))
+                      (by
+                        (have impossible_eq
+                          (computes-to
+                            (cons (quote :some) (cons nil nil))
+                            (quote :none))
+                          (by
+                            (calc
+                              (cons (quote :some) (cons nil nil))
+                              (==
+                                (some nil)
+                                (by
+                                  (exact
+                                    (symm
+                                      (eval-to
+                                        (some nil)
+                                        (cons
+                                          (quote :some)
+                                          (cons nil nil)))))))
+                              (==
+                                (elem-index value (cons head tail))
+                                (by
+                                  (simpa only values_equal)))
+                              (==
+                                none
+                                (by
+                                  (exact elem_missing)))
+                              (==
+                                (quote :none)
+                                (by
+                                  (eval)))))
+                          (by
+                            (exact
+                              (absurd-elim
+                                (distinct-outcomes impossible_eq)
+                                (computes-to
+                                  (member value (cons head tail))
+                                  (quote :false)))))))))
+                  values_not_equal_through_cons
+                  (by
+                    (have values_not_equal
+                      (computes-to
+                        (value-eq value head)
+                        (quote :false))
+                      (by
+                        (calc
+                          (value-eq value head)
+                          (==
+                            (value-eq
+                              value
+                              (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :false)
+                            (by
+                              (exact values_not_equal_through_cons)))))
+                      (by
+                        (have branch_application
+                          (computes-to
+                            ((lambda branch_option
+                               (if
+                                 (is-some branch_option)
+                                 (some (cons (quote unit) (head (tail branch_option))))
+                                 none))
+                             (elem-index value (tail (cons head tail))))
+                            (quote :none))
+                          (by
+                            (calc
+                              ((lambda branch_option
+                                 (if
+                                   (is-some branch_option)
+                                   (some (cons (quote unit) (head (tail branch_option))))
+                                   none))
+                               (elem-index value (tail (cons head tail))))
+                              (==
+                                (elem-index value (cons head tail))
+                                (by
+                                  (simpa only values_not_equal)))
+                              (==
+                                none
+                                (by
+                                  (exact elem_missing)))
+                              (==
+                                (quote :none)
+                                (by
+                                  (eval)))))
+                          (by
+                            (obtain tail_result tail_result_proof
+                              (apply-value-argument
+                                tail_result
+                                (assume branch_application))
+                              (by
+                                (have tail_result_from_tail
+                                  (computes-to
+                                    (elem-index value tail)
+                                    tail_result)
+                                  (by
+                                    (calc
+                                      (elem-index value tail)
+                                      (==
+                                        (elem-index
+                                          value
+                                          (tail (cons head tail)))
+                                        (by
+                                          (eval)))
+                                      (==
+                                        tail_result
+                                        (by
+                                          (exact tail_result_proof)))))
+                                  (by
+                                    (specialize tail_option
+                                      elem_index_computes_to_option
+                                      value
+                                      tail
+                                      tail_result)
+                                    (or-elim tail_option
+                                      tail_none
+                                      (by
+                                        (have tail_missing
+                                          (computes-to
+                                            (elem-index value tail)
+                                            none)
+                                          (by
+                                            (calc
+                                              (elem-index value tail)
+                                              (==
+                                                tail_result
+                                                (by
+                                                  (exact
+                                                    tail_result_from_tail)))
+                                              (==
+                                                none
+                                                (by
+                                                  (exact tail_none)))))
+                                          (by
+                                            (specialize tail_member_false
+                                              induction_hypothesis)
+                                            (calc
+                                              (member value (cons head tail))
+                                              (==
+                                                (member value tail)
+                                                (by
+                                                  (apply
+                                                    member_cons_false
+                                                    value
+                                                    head
+                                                    tail)))
+                                              (==
+                                                (quote :false)
+                                                (by
+                                                  (exact
+                                                    tail_member_false)))))))
+                                      tail_some_exists
+                                      (by
+                                        (obtain tail_index tail_some tail_some_exists)
+                                        (have tail_found
+                                          (computes-to
+                                            (elem-index value tail)
+                                            (some tail_index))
+                                          (by
+                                            (calc
+                                              (elem-index value tail)
+                                              (==
+                                                tail_result
+                                                (by
+                                                  (exact
+                                                    tail_result_from_tail)))
+                                              (==
+                                                (some tail_index)
+                                                (by
+                                                  (exact tail_some)))))
+                                          (by
+                                            (have cons_found
+                                              (computes-to
+                                                (elem-index
+                                                  value
+                                                  (cons head tail))
+                                                (some
+                                                  (cons
+                                                    (quote unit)
+                                                    tail_index)))
+                                              (by
+                                                (apply
+                                                  elem_index_cons_false_some
+                                                  value
+                                                  head
+                                                  tail
+                                                  tail_index))
+                                              (by
+                                                (have impossible_eq
+                                                  (computes-to
+                                                    (cons
+                                                      (quote :some)
+                                                      (cons
+                                                        (cons
+                                                          (quote unit)
+                                                          tail_index)
+                                                        nil))
+                                                    (quote :none))
+                                                  (by
+                                                    (calc
+                                                      (cons
+                                                        (quote :some)
+                                                        (cons
+                                                          (cons
+                                                            (quote unit)
+                                                            tail_index)
+                                                          nil))
+                                                      (==
+                                                        (some
+                                                          (cons
+                                                            (quote unit)
+                                                            tail_index))
+                                                        (by
+                                                          (exact
+                                                            (symm
+                                                              (eval-to
+                                                                (some
+                                                                  (cons
+                                                                    (quote unit)
+                                                                    tail_index))
+                                                                (cons
+                                                                  (quote :some)
+                                                                  (cons
+                                                                    (cons
+                                                                      (quote unit)
+                                                                      tail_index)
+                                                                    nil)))))))
+                                                      (==
+                                                        (elem-index
+                                                          value
+                                                          (cons head tail))
+                                                        (by
+                                                          (exact
+                                                            (symm
+                                                              cons_found))))
+                                                      (==
+                                                        none
+                                                        (by
+                                                          (exact
+                                                            elem_missing)))
+                                                      (==
+                                                        (quote :none)
+                                                        (by
+                                                          (eval)))))
+                                                  (by
+                                                    (exact
+                                                      (absurd-elim
+                                                        (distinct-outcomes
+                                                          impossible_eq)
+                                                        (computes-to
+                                                          (member
+                                                            value
+                                                            (cons head tail))
+                                                          (quote :false)))))))))))))))))))))))))))))
+  )
+
+(theorem elem_index_some_implies_member_true
+  (forall value (is-value value)
+    (forall list (is-list list)
+      (forall index (is-list index)
+        (implies
+          (computes-to (elem-index value list) (some index))
+          (computes-to (member value list) (quote :true))))))
+  (by
+    (intro value)
+    (list-induction list
+      (by
+        (intro index)
+        (intro elem_found)
+        (have impossible_eq
+          (computes-to
+            (quote :none)
+            (cons (quote :some) (cons index nil)))
+          (by
+            (calc
+              (quote :none)
+              (==
+                none
+                (by
+                  (exact
+                    (symm
+                      (eval-to none (quote :none))))))
+              (==
+                (elem-index value nil)
+                (by
+                  (exact (symm (elem_index_nil value)))))
+              (==
+                (some index)
+                (by
+                  (exact elem_found)))
+              (==
+                (cons (quote :some) (cons index nil))
+                (by
+                  (eval)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (computes-to (member value nil) (quote :true)))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro index)
+        (intro elem_found)
+        (have elem_branch_result
+          (computes-to
+            (if
+              (value-eq value (head (cons head tail)))
+              (some nil)
+              ((lambda branch_option
+                 (if
+                   (is-some branch_option)
+                   (some (cons (quote unit) (head (tail branch_option))))
+                   none))
+               (elem-index value (tail (cons head tail)))))
+            (cons (quote :some) (cons index nil)))
+          (by
+            (calc
+              (if
+                (value-eq value (head (cons head tail)))
+                (some nil)
+                ((lambda branch_option
+                   (if
+                     (is-some branch_option)
+                     (some (cons (quote unit) (head (tail branch_option))))
+                     none))
+                 (elem-index value (tail (cons head tail)))))
+              (==
+                (elem-index value (cons head tail))
+                (by
+                  (exact (symm (elem_index_cons_branch value head tail)))))
+              (==
+                (some index)
+                (by
+                  (exact elem_found)))
+              (==
+                (cons (quote :some) (cons index nil))
+                (by
+                  (eval)))))
+          (by
+            (have value_eq_bool
+              (is-bool
+                (value-eq value (head (cons head tail))))
+              (proof
+                (if-value-condition-bool
+                  (assume elem_branch_result)))
+              (by
+                (or-elim value_eq_bool
+                  values_equal_through_cons
+                  (by
+                    (have values_equal
+                      (computes-to
+                        (value-eq value head)
+                        (quote :true))
+                      (by
+                        (calc
+                          (value-eq value head)
+                          (==
+                            (value-eq
+                              value
+                              (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact values_equal_through_cons)))))
+                      (by
+                        (apply member_cons_true value head tail))))
+                  values_not_equal_through_cons
+                  (by
+                    (have values_not_equal
+                      (computes-to
+                        (value-eq value head)
+                        (quote :false))
+                      (by
+                        (calc
+                          (value-eq value head)
+                          (==
+                            (value-eq
+                              value
+                              (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :false)
+                            (by
+                              (exact values_not_equal_through_cons)))))
+                      (by
+                        (have branch_application
+                          (computes-to
+                            ((lambda branch_option
+                               (if
+                                 (is-some branch_option)
+                                 (some (cons (quote unit) (head (tail branch_option))))
+                                 none))
+                             (elem-index value (tail (cons head tail))))
+                            (cons (quote :some) (cons index nil)))
+                          (by
+                            (calc
+                              ((lambda branch_option
+                                 (if
+                                   (is-some branch_option)
+                                   (some (cons (quote unit) (head (tail branch_option))))
+                                   none))
+                               (elem-index value (tail (cons head tail))))
+                              (==
+                                (elem-index value (cons head tail))
+                                (by
+                                  (simpa only values_not_equal)))
+                              (==
+                                (some index)
+                                (by
+                                  (exact elem_found)))
+                              (==
+                                (cons (quote :some) (cons index nil))
+                                (by
+                                  (eval)))))
+                          (by
+                            (obtain tail_result tail_result_proof
+                              (apply-value-argument
+                                tail_result
+                                (assume branch_application))
+                              (by
+                                (have tail_result_from_tail
+                                  (computes-to
+                                    (elem-index value tail)
+                                    tail_result)
+                                  (by
+                                    (calc
+                                      (elem-index value tail)
+                                      (==
+                                        (elem-index
+                                          value
+                                          (tail (cons head tail)))
+                                        (by
+                                          (eval)))
+                                      (==
+                                        tail_result
+                                        (by
+                                          (exact tail_result_proof)))))
+                                  (by
+                                    (specialize tail_option
+                                      elem_index_computes_to_option
+                                      value
+                                      tail
+                                      tail_result)
+                                    (or-elim tail_option
+                                      tail_none
+                                      (by
+                                        (have tail_missing
+                                          (computes-to
+                                            (elem-index value tail)
+                                            none)
+                                          (by
+                                            (calc
+                                              (elem-index value tail)
+                                              (==
+                                                tail_result
+                                                (by
+                                                  (exact
+                                                    tail_result_from_tail)))
+                                              (==
+                                                none
+                                                (by
+                                                  (exact tail_none)))))
+                                          (by
+                                            (have cons_missing
+                                              (computes-to
+                                                (elem-index
+                                                  value
+                                                  (cons head tail))
+                                                none)
+                                              (by
+                                                (apply
+                                                  elem_index_cons_false_none
+                                                  value
+                                                  head
+                                                  tail))
+                                              (by
+                                                (have impossible_eq
+                                                  (computes-to
+                                                    (quote :none)
+                                                    (cons
+                                                      (quote :some)
+                                                      (cons index nil)))
+                                                  (by
+                                                    (calc
+                                                      (quote :none)
+                                                      (==
+                                                        none
+                                                        (by
+                                                          (exact
+                                                            (symm
+                                                              (eval-to
+                                                                none
+                                                                (quote :none))))))
+                                                      (==
+                                                        (elem-index
+                                                          value
+                                                          (cons head tail))
+                                                        (by
+                                                          (exact
+                                                            (symm
+                                                              cons_missing))))
+                                                      (==
+                                                        (some index)
+                                                        (by
+                                                          (exact
+                                                            elem_found)))
+                                                      (==
+                                                        (cons
+                                                          (quote :some)
+                                                          (cons index nil))
+                                                        (by
+                                                          (eval)))))
+                                                  (by
+                                                    (exact
+                                                      (absurd-elim
+                                                        (distinct-outcomes
+                                                          impossible_eq)
+                                                        (computes-to
+                                                          (member
+                                                            value
+                                                            (cons head tail))
+                                                          (quote :true)))))))))))
+                                      tail_some_exists
+                                      (by
+                                        (obtain tail_index tail_some tail_some_exists)
+                                        (have tail_found
+                                          (computes-to
+                                            (elem-index value tail)
+                                            (some tail_index))
+                                          (by
+                                            (calc
+                                              (elem-index value tail)
+                                              (==
+                                                tail_result
+                                                (by
+                                                  (exact
+                                                    tail_result_from_tail)))
+                                              (==
+                                                (some tail_index)
+                                                (by
+                                                  (exact tail_some)))))
+                                          (by
+                                            (specialize tail_member_true
+                                              induction_hypothesis
+                                              tail_index)
+                                            (calc
+                                              (member value (cons head tail))
+                                              (==
+                                                (member value tail)
+                                                (by
+                                                  (apply
+                                                    member_cons_false
+                                                    value
+                                                    head
+                                                    tail)))
+                                              (==
+                                                (quote :true)
+                                                (by
+                                                  (exact
+                                                    tail_member_true))))))))))))))))))))))))
   ))
 
 (theorem map_identity

@@ -203,6 +203,16 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
         ProofExpr::IfValueConditionBool(proof) => Ok(Proof::IfValueConditionBool(Box::new(
             subproof("if-value-condition-bool", proof, theory, context, pretty)?,
         ))),
+        ProofExpr::ApplyValueArgument { variable, proof } => Ok(Proof::ApplyValueArgument {
+            variable: *variable,
+            proof: Box::new(subproof(
+                "apply-value-argument",
+                proof,
+                theory,
+                context,
+                pretty,
+            )?),
+        }),
         ProofExpr::DistinctOutcomes(proof) => Ok(Proof::DistinctOutcomes(Box::new(subproof(
             "distinct-outcomes",
             proof,

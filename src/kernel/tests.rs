@@ -1547,6 +1547,81 @@ fn if_value_condition_bool_extracts_boolean_condition() {
 }
 
 #[test]
+fn if_value_condition_bool_uses_contextual_value_facts() {
+    let condition = Computation::Quote(TRUE_SYMBOL);
+    let result = Computation::Var(Symbol(99));
+    let conditional = if_computation(condition.clone(), Computation::Nil, error(ErrorName(7)));
+    let mut context = Context::new();
+    context.insert(Symbol(99), is_value(result.clone()));
+    context.insert(Symbol(100), equal(conditional, result));
+
+    assert!(check_in_context(
+        &Proof::IfValueConditionBool(Box::new(Proof::Assume(Symbol(100)))),
+        &is_bool(condition),
+        &context,
+    ));
+}
+
+#[test]
+fn apply_value_argument_extracts_argument_termination() {
+    let witness = Symbol(99);
+    let argument = apply(
+        lambda(Symbol(1), Computation::Var(Symbol(1))),
+        Computation::Quote(Symbol(7)),
+    );
+    let application = apply(
+        lambda(Symbol(2), Computation::Quote(Symbol(8))),
+        argument.clone(),
+    );
+
+    assert!(check(
+        &Proof::ApplyValueArgument {
+            variable: witness,
+            proof: Box::new(Proof::Steps(vec![
+                application.clone(),
+                apply(
+                    lambda(Symbol(2), Computation::Quote(Symbol(8))),
+                    Computation::Quote(Symbol(7)),
+                ),
+                Computation::Quote(Symbol(8)),
+            ])),
+        },
+        &terminates(witness, argument)
+    ));
+
+    let result = Computation::Var(Symbol(100));
+    let mut context = Context::new();
+    context.insert(Symbol(100), is_value(result.clone()));
+    context.insert(Symbol(101), equal(application, result));
+    assert!(check_in_context(
+        &Proof::ApplyValueArgument {
+            variable: witness,
+            proof: Box::new(Proof::Assume(Symbol(101))),
+        },
+        &terminates(
+            witness,
+            apply(
+                lambda(Symbol(1), Computation::Var(Symbol(1))),
+                Computation::Quote(Symbol(7)),
+            )
+        ),
+        &context,
+    ));
+
+    let non_value_result = apply(
+        lambda(Symbol(2), Computation::Quote(Symbol(8))),
+        Computation::Quote(Symbol(7)),
+    );
+    assert!(!check(
+        &Proof::ApplyValueArgument {
+            variable: witness,
+            proof: Box::new(Proof::Refl(non_value_result)),
+        },
+        &terminates(witness, Computation::Quote(Symbol(7)))
+    ));
+}
+
+#[test]
 fn distinct_outcomes_prove_absurd_and_absurd_eliminates() {
     let assumption = Symbol(99);
     let contradiction = equal(
@@ -1570,6 +1645,22 @@ fn distinct_outcomes_prove_absurd_and_absurd_eliminates() {
 
     let matching_outcomes = Proof::DistinctOutcomes(Box::new(Proof::Refl(Computation::Nil)));
     assert!(!check(&matching_outcomes, &absurd()));
+}
+
+#[test]
+fn distinct_outcomes_uses_contextual_value_constructors() {
+    let tail_var = Computation::Var(Symbol(1));
+    let cons_value = cons(Computation::Quote(Symbol(2)), tail_var.clone());
+    let contradiction = equal(cons_value, Computation::Quote(Symbol(3)));
+    let mut context = Context::new();
+    context.insert(Symbol(1), is_list(tail_var));
+    context.insert(Symbol(4), contradiction);
+
+    assert!(check_in_context(
+        &Proof::DistinctOutcomes(Box::new(Proof::Assume(Symbol(4)))),
+        &absurd(),
+        &context,
+    ));
 }
 
 #[test]
