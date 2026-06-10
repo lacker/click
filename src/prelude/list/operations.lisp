@@ -1110,6 +1110,56 @@
         (by
           (exact some_value value))))))
 
+(theorem some_none_absurd
+  (forall value (is-value value)
+    (implies
+      (computes-to (some value) none)
+      (absurd)))
+  (by
+    (intro value)
+    (intro some_is_none_value)
+    (have impossible_eq
+      (computes-to
+        (cons (quote :some) (cons value nil))
+        (quote :none))
+      (by
+        (calc
+          (cons (quote :some) (cons value nil))
+          (==
+            (some value)
+            (by
+              (exact
+                (symm
+                  (eval-to
+                    (some value)
+                    (cons (quote :some) (cons value nil)))))))
+          (==
+            none
+            (by
+              (exact some_is_none_value)))
+          (==
+            (quote :none)
+            (by
+              (eval)))))
+      (by
+        (exact
+          (distinct-outcomes impossible_eq))))))
+
+(theorem none_some_absurd
+  (forall value (is-value value)
+    (implies
+      (computes-to none (some value))
+      (absurd)))
+  (by
+    (intro value)
+    (intro none_is_some_value)
+    (have some_is_none_value
+      (computes-to (some value) none)
+      (by
+        (exact (symm none_is_some_value)))
+      (by
+        (apply some_none_absurd value)))))
+
 (theorem intercalate_cons_computes_to_list
   (forall separator (is-list separator)
     (forall tail (is-list tail)
@@ -2431,6 +2481,22 @@
     (intro tail)
     (intro predicate_false)
     (simp only predicate_false)))
+
+(theorem find_cons_branch
+  (forall predicate (is-value predicate)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (computes-to
+          (find predicate (cons head tail))
+          (if
+            (predicate (head (cons head tail)))
+            (some (head (cons head tail)))
+            (find predicate (tail (cons head tail))))))))
+  (by
+    (intro predicate)
+    (intro head)
+    (intro tail)
+    (eval)))
 
 (theorem elem_index_nil
   (forall value (is-value value)

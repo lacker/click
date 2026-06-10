@@ -1402,22 +1402,10 @@
                               (exact values_equal_through_cons)))))
                       (by
                         (have impossible_eq
-                          (computes-to
-                            (cons (quote :some) (cons nil nil))
-                            (quote :none))
+                          (computes-to (some nil) none)
                           (by
                             (calc
-                              (cons (quote :some) (cons nil nil))
-                              (==
-                                (some nil)
-                                (by
-                                  (exact
-                                    (symm
-                                      (eval-to
-                                        (some nil)
-                                        (cons
-                                          (quote :some)
-                                          (cons nil nil)))))))
+                              (some nil)
                               (==
                                 (elem-index value (cons head tail))
                                 (by
@@ -1425,18 +1413,19 @@
                               (==
                                 none
                                 (by
-                                  (exact elem_missing)))
-                              (==
-                                (quote :none)
-                                (by
-                                  (eval)))))
+                                  (exact elem_missing)))))
                           (by
-                            (exact
-                              (absurd-elim
-                                (distinct-outcomes impossible_eq)
-                                (computes-to
-                                  (member value (cons head tail))
-                                  (quote :false)))))))))
+                            (have contradiction
+                              (absurd)
+                              (by
+                                (apply some_none_absurd nil))
+                              (by
+                                (exact
+                                  (absurd-elim
+                                    contradiction
+                                    (computes-to
+                                      (member value (cons head tail))
+                                      (quote :false)))))))))))
                   values_not_equal_through_cons
                   (by
                     (have values_not_equal
@@ -1591,43 +1580,17 @@
                                               (by
                                                 (have impossible_eq
                                                   (computes-to
-                                                    (cons
-                                                      (quote :some)
+                                                    (some
                                                       (cons
-                                                        (cons
-                                                          (quote unit)
-                                                          tail_index)
-                                                        nil))
-                                                    (quote :none))
+                                                        (quote unit)
+                                                        tail_index))
+                                                    none)
                                                   (by
                                                     (calc
-                                                      (cons
-                                                        (quote :some)
+                                                      (some
                                                         (cons
-                                                          (cons
-                                                            (quote unit)
-                                                            tail_index)
-                                                          nil))
-                                                      (==
-                                                        (some
-                                                          (cons
-                                                            (quote unit)
-                                                            tail_index))
-                                                        (by
-                                                          (exact
-                                                            (symm
-                                                              (eval-to
-                                                                (some
-                                                                  (cons
-                                                                    (quote unit)
-                                                                    tail_index))
-                                                                (cons
-                                                                  (quote :some)
-                                                                  (cons
-                                                                    (cons
-                                                                      (quote unit)
-                                                                      tail_index)
-                                                                    nil)))))))
+                                                          (quote unit)
+                                                          tail_index))
                                                       (==
                                                         (elem-index
                                                           value
@@ -1640,21 +1603,25 @@
                                                         none
                                                         (by
                                                           (exact
-                                                            elem_missing)))
-                                                      (==
-                                                        (quote :none)
-                                                        (by
-                                                          (eval)))))
+                                                            elem_missing)))))
                                                   (by
-                                                    (exact
-                                                      (absurd-elim
-                                                        (distinct-outcomes
-                                                          impossible_eq)
-                                                        (computes-to
-                                                          (member
-                                                            value
-                                                            (cons head tail))
-                                                          (quote :false)))))))))))))))))))))))))))))
+                                                    (have contradiction
+                                                      (absurd)
+                                                      (by
+                                                        (apply
+                                                          some_none_absurd
+                                                          (cons
+                                                            (quote unit)
+                                                            tail_index)))
+                                                      (by
+                                                        (exact
+                                                          (absurd-elim
+                                                            contradiction
+                                                            (computes-to
+                                                              (member
+                                                                value
+                                                                (cons head tail))
+                                                              (quote :false)))))))))))))))))))))))))))))))
   )
 
 (theorem elem_index_some_implies_member_true
@@ -1671,35 +1638,28 @@
         (intro index)
         (intro elem_found)
         (have impossible_eq
-          (computes-to
-            (quote :none)
-            (cons (quote :some) (cons index nil)))
+          (computes-to (some index) none)
           (by
             (calc
-              (quote :none)
-              (==
-                none
-                (by
-                  (exact
-                    (symm
-                      (eval-to none (quote :none))))))
+              (some index)
               (==
                 (elem-index value nil)
                 (by
-                  (exact (symm (elem_index_nil value)))))
+                  (exact (symm elem_found))))
               (==
-                (some index)
+                none
                 (by
-                  (exact elem_found)))
-              (==
-                (cons (quote :some) (cons index nil))
-                (by
-                  (eval)))))
+                  (exact (elem_index_nil value))))))
           (by
-            (exact
-              (absurd-elim
-                (distinct-outcomes impossible_eq)
-                (computes-to (member value nil) (quote :true)))))))
+            (have contradiction
+              (absurd)
+              (by
+                (apply some_none_absurd index))
+              (by
+                (exact
+                  (absurd-elim
+                    contradiction
+                    (computes-to (member value nil) (quote :true)))))))))
       head
       tail
       induction_hypothesis
@@ -1883,22 +1843,10 @@
                                                   tail))
                                               (by
                                                 (have impossible_eq
-                                                  (computes-to
-                                                    (quote :none)
-                                                    (cons
-                                                      (quote :some)
-                                                      (cons index nil)))
+                                                  (computes-to (some index) none)
                                                   (by
                                                     (calc
-                                                      (quote :none)
-                                                      (==
-                                                        none
-                                                        (by
-                                                          (exact
-                                                            (symm
-                                                              (eval-to
-                                                                none
-                                                                (quote :none))))))
+                                                      (some index)
                                                       (==
                                                         (elem-index
                                                           value
@@ -1906,28 +1854,28 @@
                                                         (by
                                                           (exact
                                                             (symm
-                                                              cons_missing))))
+                                                              elem_found))))
                                                       (==
-                                                        (some index)
+                                                        none
                                                         (by
                                                           (exact
-                                                            elem_found)))
-                                                      (==
-                                                        (cons
-                                                          (quote :some)
-                                                          (cons index nil))
-                                                        (by
-                                                          (eval)))))
+                                                            cons_missing)))))
                                                   (by
-                                                    (exact
-                                                      (absurd-elim
-                                                        (distinct-outcomes
-                                                          impossible_eq)
-                                                        (computes-to
-                                                          (member
-                                                            value
-                                                            (cons head tail))
-                                                          (quote :true)))))))))))
+                                                    (have contradiction
+                                                      (absurd)
+                                                      (by
+                                                        (apply
+                                                          some_none_absurd
+                                                          index))
+                                                      (by
+                                                        (exact
+                                                          (absurd-elim
+                                                            contradiction
+                                                            (computes-to
+                                                              (member
+                                                                value
+                                                                (cons head tail))
+                                                              (quote :true)))))))))))))
                                       tail_some_exists
                                       (by
                                         (obtain tail_index tail_some tail_some_exists)
@@ -1967,6 +1915,665 @@
                                                   (exact
                                                     tail_member_true))))))))))))))))))))))))
   ))
+
+(theorem find_computes_to_option
+  (forall predicate (is-value predicate)
+    (forall list (is-list list)
+      (forall result (is-value result)
+        (implies
+          (computes-to (find predicate list) result)
+          (or
+            (computes-to result none)
+            (exists value (is-value value)
+              (computes-to result (some value))))))))
+  (by
+    (intro predicate)
+    (list-induction list
+      (by
+        (intro result)
+        (intro find_result)
+        (left
+          (by
+            (calc
+              result
+              (==
+                (find predicate nil)
+                (by
+                  (exact (symm find_result))))
+              (==
+                none
+                (by
+                  (exact (find_nil predicate))))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro result)
+        (intro find_result)
+        (have find_branch_result
+          (computes-to
+            (if
+              (predicate (head (cons head tail)))
+              (some (head (cons head tail)))
+              (find predicate (tail (cons head tail))))
+            result)
+          (by
+            (calc
+              (if
+                (predicate (head (cons head tail)))
+                (some (head (cons head tail)))
+                (find predicate (tail (cons head tail))))
+              (==
+                (find predicate (cons head tail))
+                (by
+                  (exact (symm (find_cons_branch predicate head tail)))))
+              (==
+                result
+                (by
+                  (exact find_result)))))
+          (by
+            (have predicate_bool
+              (is-bool (predicate (head (cons head tail))))
+              (proof
+                (if-value-condition-bool
+                  (assume find_branch_result)))
+              (by
+                (or-elim predicate_bool
+                  predicate_true_through_cons
+                  (by
+                    (have predicate_true
+                      (computes-to (predicate head) (quote :true))
+                      (by
+                        (calc
+                          (predicate head)
+                          (==
+                            (predicate (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact predicate_true_through_cons)))))
+                      (by
+                        (right
+                          (by
+                            (exists head
+                              (by
+                                (calc
+                                  result
+                                  (==
+                                    (find predicate (cons head tail))
+                                    (by
+                                      (exact (symm find_result))))
+                                  (==
+                                    (some head)
+                                    (by
+                                      (apply
+                                        find_cons_true
+                                        predicate
+                                        head
+                                        tail)))))))))))
+                  predicate_false_through_cons
+                  (by
+                    (have predicate_false
+                      (computes-to (predicate head) (quote :false))
+                      (by
+                        (calc
+                          (predicate head)
+                          (==
+                            (predicate (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :false)
+                            (by
+                              (exact predicate_false_through_cons)))))
+                      (by
+                        (have tail_find_result
+                          (computes-to (find predicate tail) result)
+                          (by
+                            (calc
+                              (find predicate tail)
+                              (==
+                                (find predicate (cons head tail))
+                                (by
+                                  (simpa only predicate_false)))
+                              (==
+                                result
+                                (by
+                                  (exact find_result)))))
+                          (by
+                            (specialize tail_option
+                              induction_hypothesis
+                              result)
+                            (exact tail_option)))))))))))))))
+
+(theorem any_false_implies_find_none
+  (forall predicate (is-value predicate)
+    (forall list (is-list list)
+      (implies
+        (computes-to (any predicate list) (quote :false))
+        (computes-to (find predicate list) none))))
+  (by
+    (intro predicate)
+    (list-induction list
+      (by
+        (intro any_false)
+        (exact (find_nil predicate)))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro any_false)
+        (have any_branch_false
+          (computes-to
+            (if
+              (predicate (head (cons head tail)))
+              (quote :true)
+              (any predicate (tail (cons head tail))))
+            (quote :false))
+          (by
+            (calc
+              (if
+                (predicate (head (cons head tail)))
+                (quote :true)
+                (any predicate (tail (cons head tail))))
+              (==
+                (any predicate (cons head tail))
+                (by
+                  (eval)))
+              (==
+                (quote :false)
+                (by
+                  (exact any_false)))))
+          (by
+            (specialize branch_parts
+              if_false_result_with_true_then
+              (predicate (head (cons head tail)))
+              (any predicate (tail (cons head tail))))
+            (cases branch_parts
+              predicate_false_through_cons
+              tail_any_false_through_cons)
+            (have predicate_false
+              (computes-to (predicate head) (quote :false))
+              (by
+                (calc
+                  (predicate head)
+                  (==
+                    (predicate (head (cons head tail)))
+                    (by
+                      (eval)))
+                  (==
+                    (quote :false)
+                    (by
+                      (exact predicate_false_through_cons)))))
+              (by
+                (have tail_any_false
+                  (computes-to (any predicate tail) (quote :false))
+                  (by
+                    (calc
+                      (any predicate tail)
+                      (==
+                        (any predicate (tail (cons head tail)))
+                        (by
+                          (eval)))
+                      (==
+                        (quote :false)
+                        (by
+                          (exact tail_any_false_through_cons)))))
+                  (by
+                    (specialize tail_find_none induction_hypothesis)
+                    (calc
+                      (find predicate (cons head tail))
+                      (==
+                        (find predicate tail)
+                        (by
+                          (apply
+                            find_cons_false
+                            predicate
+                            head
+                            tail)))
+                      (==
+                        none
+                        (by
+                          (exact tail_find_none))))))))))))))
+
+(theorem any_true_implies_find_some
+  (forall predicate (is-value predicate)
+    (forall list (is-list list)
+      (implies
+        (computes-to (any predicate list) (quote :true))
+        (exists value (is-value value)
+          (computes-to (find predicate list) (some value))))))
+  (by
+    (intro predicate)
+    (list-induction list
+      (by
+        (intro any_true)
+        (have impossible_eq
+          (computes-to (quote :false) (quote :true))
+          (by
+            (calc
+              (quote :false)
+              (==
+                (any predicate nil)
+                (by
+                  (exact (symm (any_nil predicate)))))
+              (==
+                (quote :true)
+                (by
+                  (exact any_true)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (exists value (is-value value)
+                  (computes-to
+                    (find predicate nil)
+                    (some value))))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro any_true)
+        (have any_branch_true
+          (computes-to
+            (if
+              (predicate (head (cons head tail)))
+              (quote :true)
+              (any predicate (tail (cons head tail))))
+            (quote :true))
+          (by
+            (calc
+              (if
+                (predicate (head (cons head tail)))
+                (quote :true)
+                (any predicate (tail (cons head tail))))
+              (==
+                (any predicate (cons head tail))
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact any_true)))))
+          (by
+            (have predicate_bool
+              (is-bool (predicate (head (cons head tail))))
+              (proof
+                (if-value-condition-bool
+                  (assume any_branch_true)))
+              (by
+                (or-elim predicate_bool
+                  predicate_true_through_cons
+                  (by
+                    (have predicate_true
+                      (computes-to (predicate head) (quote :true))
+                      (by
+                        (calc
+                          (predicate head)
+                          (==
+                            (predicate (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact predicate_true_through_cons)))))
+                      (by
+                        (exists head
+                          (by
+                            (apply
+                              find_cons_true
+                              predicate
+                              head
+                              tail))))))
+                  predicate_false_through_cons
+                  (by
+                    (have predicate_false
+                      (computes-to (predicate head) (quote :false))
+                      (by
+                        (calc
+                          (predicate head)
+                          (==
+                            (predicate (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :false)
+                            (by
+                              (exact predicate_false_through_cons)))))
+                      (by
+                        (have tail_any_true
+                          (computes-to (any predicate tail) (quote :true))
+                          (by
+                            (calc
+                              (any predicate tail)
+                              (==
+                                (any predicate (tail (cons head tail)))
+                                (by
+                                  (eval)))
+                              (==
+                                (if
+                                  (predicate (head (cons head tail)))
+                                  (quote :true)
+                                  (any predicate (tail (cons head tail))))
+                                (by
+                                  (simpa only
+                                    predicate_false_through_cons)))
+                              (==
+                                (quote :true)
+                                (by
+                                  (exact any_branch_true)))))
+                          (by
+                            (specialize tail_exists induction_hypothesis)
+                            (obtain found tail_found tail_exists)
+                            (exists found
+                              (by
+                                (calc
+                                  (find predicate (cons head tail))
+                                  (==
+                                    (find predicate tail)
+                                    (by
+                                      (apply
+                                        find_cons_false
+                                        predicate
+                                        head
+                                        tail)))
+                                  (==
+                                    (some found)
+                                    (by
+                                      (exact tail_found))))))))))))))))))))
+
+(theorem find_none_implies_any_false
+  (forall predicate (is-value predicate)
+    (forall list (is-list list)
+      (implies
+        (computes-to (find predicate list) none)
+        (computes-to (any predicate list) (quote :false)))))
+  (by
+    (intro predicate)
+    (list-induction list
+      (by
+        (intro find_missing)
+        (exact (any_nil predicate)))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro find_missing)
+        (have find_branch_result
+          (computes-to
+            (if
+              (predicate (head (cons head tail)))
+              (some (head (cons head tail)))
+              (find predicate (tail (cons head tail))))
+            (quote :none))
+          (by
+            (calc
+              (if
+                (predicate (head (cons head tail)))
+                (some (head (cons head tail)))
+                (find predicate (tail (cons head tail))))
+              (==
+                (find predicate (cons head tail))
+                (by
+                  (exact (symm (find_cons_branch predicate head tail)))))
+              (==
+                none
+                (by
+                  (exact find_missing)))
+              (==
+                (quote :none)
+                (by
+                  (eval)))))
+          (by
+            (have predicate_bool
+              (is-bool (predicate (head (cons head tail))))
+              (proof
+                (if-value-condition-bool
+                  (assume find_branch_result)))
+              (by
+                (or-elim predicate_bool
+                  predicate_true_through_cons
+                  (by
+                    (have predicate_true
+                      (computes-to (predicate head) (quote :true))
+                      (by
+                        (calc
+                          (predicate head)
+                          (==
+                            (predicate (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact predicate_true_through_cons)))))
+                      (by
+                        (have cons_found
+                          (computes-to
+                            (find predicate (cons head tail))
+                            (some head))
+                          (by
+                            (apply
+                              find_cons_true
+                              predicate
+                              head
+                              tail))
+                          (by
+                            (have impossible_eq
+                              (computes-to (some head) none)
+                              (by
+                                (calc
+                                  (some head)
+                                  (==
+                                    (find predicate (cons head tail))
+                                    (by
+                                      (exact (symm cons_found))))
+                                  (==
+                                    none
+                                    (by
+                                      (exact find_missing)))))
+                              (by
+                                (have contradiction
+                                  (absurd)
+                                  (by
+                                    (apply some_none_absurd head))
+                                  (by
+                                    (exact
+                                      (absurd-elim
+                                        contradiction
+                                        (computes-to
+                                          (any predicate (cons head tail))
+                                          (quote :false)))))))))))))
+                  predicate_false_through_cons
+                  (by
+                    (have predicate_false
+                      (computes-to (predicate head) (quote :false))
+                      (by
+                        (calc
+                          (predicate head)
+                          (==
+                            (predicate (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :false)
+                            (by
+                              (exact predicate_false_through_cons)))))
+                      (by
+                        (have tail_missing
+                          (computes-to (find predicate tail) none)
+                          (by
+                            (calc
+                              (find predicate tail)
+                              (==
+                                (find predicate (cons head tail))
+                                (by
+                                  (simpa only predicate_false)))
+                              (==
+                                none
+                                (by
+                                  (exact find_missing)))))
+                          (by
+                            (specialize tail_any_false induction_hypothesis)
+                            (calc
+                              (any predicate (cons head tail))
+                              (==
+                                (any predicate tail)
+                                (by
+                                  (apply
+                                    any_cons_false
+                                    predicate
+                                    head
+                                    tail)))
+                              (==
+                                (quote :false)
+                                (by
+                                  (exact tail_any_false))))))))))))))))))
+
+(theorem find_some_implies_any_true
+  (forall predicate (is-value predicate)
+    (forall list (is-list list)
+      (forall found (is-value found)
+        (implies
+          (computes-to (find predicate list) (some found))
+          (computes-to (any predicate list) (quote :true))))))
+  (by
+    (intro predicate)
+    (list-induction list
+      (by
+        (intro found)
+        (intro find_found)
+        (have impossible_eq
+          (computes-to none (some found))
+          (by
+            (calc
+              none
+              (==
+                (find predicate nil)
+                (by
+                  (exact (symm (find_nil predicate)))))
+              (==
+                (some found)
+                (by
+                  (exact find_found)))))
+          (by
+            (have contradiction
+              (absurd)
+              (by
+                (apply none_some_absurd found))
+              (by
+                (exact
+                  (absurd-elim
+                    contradiction
+                    (computes-to
+                      (any predicate nil)
+                      (quote :true)))))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro found)
+        (intro find_found)
+        (have find_branch_result
+          (computes-to
+            (if
+              (predicate (head (cons head tail)))
+              (some (head (cons head tail)))
+              (find predicate (tail (cons head tail))))
+            (cons (quote :some) (cons found nil)))
+          (by
+            (calc
+              (if
+                (predicate (head (cons head tail)))
+                (some (head (cons head tail)))
+                (find predicate (tail (cons head tail))))
+              (==
+                (find predicate (cons head tail))
+                (by
+                  (exact (symm (find_cons_branch predicate head tail)))))
+              (==
+                (some found)
+                (by
+                  (exact find_found)))
+              (==
+                (cons (quote :some) (cons found nil))
+                (by
+                  (eval)))))
+          (by
+            (have predicate_bool
+              (is-bool (predicate (head (cons head tail))))
+              (proof
+                (if-value-condition-bool
+                  (assume find_branch_result)))
+              (by
+                (or-elim predicate_bool
+                  predicate_true_through_cons
+                  (by
+                    (have predicate_true
+                      (computes-to (predicate head) (quote :true))
+                      (by
+                        (calc
+                          (predicate head)
+                          (==
+                            (predicate (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact predicate_true_through_cons)))))
+                      (by
+                        (apply any_cons_true predicate head tail))))
+                  predicate_false_through_cons
+                  (by
+                    (have predicate_false
+                      (computes-to (predicate head) (quote :false))
+                      (by
+                        (calc
+                          (predicate head)
+                          (==
+                            (predicate (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :false)
+                            (by
+                              (exact predicate_false_through_cons)))))
+                      (by
+                        (have tail_found
+                          (computes-to (find predicate tail) (some found))
+                          (by
+                            (calc
+                              (find predicate tail)
+                              (==
+                                (find predicate (cons head tail))
+                                (by
+                                  (simpa only predicate_false)))
+                              (==
+                                (some found)
+                                (by
+                                  (exact find_found)))))
+                          (by
+                            (specialize tail_any_true
+                              induction_hypothesis
+                              found)
+                            (calc
+                              (any predicate (cons head tail))
+                              (==
+                                (any predicate tail)
+                                (by
+                                  (apply
+                                    any_cons_false
+                                    predicate
+                                    head
+                                    tail)))
+                              (==
+                                (quote :true)
+                                (by
+                                  (exact tail_any_true))))))))))))))))))
 
 (theorem map_identity
   (forall list (is-list list)
