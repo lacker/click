@@ -359,6 +359,26 @@
           (some (head cell))
           (find predicate (tail cell)))))))
 
+(def not
+  (lambda value
+    (if value
+      (quote :false)
+      (quote :true))))
+
+(def and
+  (lambda left
+    (lambda right
+      (if left
+        right
+        (quote :false)))))
+
+(def or
+  (lambda left
+    (lambda right
+      (if left
+        (quote :true)
+        right))))
+
 (def is-symbol
   (lambda value
     (symbol-eq (value-kind value) (quote :symbol))))

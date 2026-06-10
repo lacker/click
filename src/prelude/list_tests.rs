@@ -273,6 +273,30 @@ pub fn find_definition() -> Computation {
     definition("find")
 }
 
+pub fn bool_not() -> Computation {
+    computation_ref("not")
+}
+
+pub fn bool_not_definition() -> Computation {
+    definition("not")
+}
+
+pub fn bool_and() -> Computation {
+    computation_ref("and")
+}
+
+pub fn bool_and_definition() -> Computation {
+    definition("and")
+}
+
+pub fn bool_or() -> Computation {
+    computation_ref("or")
+}
+
+pub fn bool_or_definition() -> Computation {
+    definition("or")
+}
+
 pub fn all_lists() -> Computation {
     computation_ref("all-lists")
 }
@@ -1152,6 +1176,18 @@ pub fn all_call(predicate: Computation, list: Computation) -> Computation {
 
 pub fn find_call(predicate: Computation, list: Computation) -> Computation {
     apply(apply(find(), predicate), list)
+}
+
+pub fn bool_not_call(value: Computation) -> Computation {
+    apply(bool_not(), value)
+}
+
+pub fn bool_and_call(left: Computation, right: Computation) -> Computation {
+    apply(apply(bool_and(), left), right)
+}
+
+pub fn bool_or_call(left: Computation, right: Computation) -> Computation {
+    apply(apply(bool_or(), left), right)
 }
 
 pub fn all_lists_call(lists: Computation) -> Computation {

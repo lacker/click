@@ -126,6 +126,18 @@ fn find() -> Computation {
     computation_ref("find")
 }
 
+fn bool_not() -> Computation {
+    computation_ref("not")
+}
+
+fn bool_and() -> Computation {
+    computation_ref("and")
+}
+
+fn bool_or() -> Computation {
+    computation_ref("or")
+}
+
 fn all_lists() -> Computation {
     computation_ref("all-lists")
 }
@@ -338,10 +350,14 @@ fn prelude_theorem_names() -> Vec<Name> {
         "any_cons_true",
         "any_cons_false",
         "any_computes_to_bool",
+        "any_cons_false_parts",
+        "any_cons_true_cases",
         "find_nil",
         "find_cons_true",
         "find_cons_false",
         "find_cons_branch",
+        "find_cons_none_parts",
+        "find_cons_some_cases",
         "find_computes_to_option",
         "any_false_implies_find_none",
         "any_true_implies_find_some",
@@ -413,6 +429,15 @@ fn prelude_theorem_names() -> Vec<Name> {
         "symbol_eq_unit_unit",
         "symbol_eq_true_false",
         "symbol_eq_true",
+        "not_true",
+        "not_false",
+        "not_computes_to_bool",
+        "and_true_left",
+        "and_false_left",
+        "and_computes_to_bool",
+        "or_true_left",
+        "or_false_left",
+        "or_computes_to_bool",
         "add_is_append",
         "zero_computes_to_list",
         "zero_is_nat_value",
@@ -509,6 +534,9 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         loaded.computation("intercalate"),
         Some(computation("intercalate"))
     );
+    assert_eq!(loaded.computation("not"), Some(computation("not")));
+    assert_eq!(loaded.computation("and"), Some(computation("and")));
+    assert_eq!(loaded.computation("or"), Some(computation("or")));
     assert_eq!(loaded.computation("zero"), Some(computation("zero")));
     assert_eq!(
         loaded.theorem("append_assoc"),
@@ -517,6 +545,10 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
     assert_eq!(
         loaded.theorem("add_computes_to_list"),
         Some(theorem("add_computes_to_list"))
+    );
+    assert_eq!(
+        loaded.theorem("not_computes_to_bool"),
+        Some(theorem("not_computes_to_bool"))
     );
     assert_eq!(loaded.symbol(":true"), Some(symbol(":true")));
     assert_eq!(loaded.symbol(":false"), Some(symbol(":false")));
@@ -547,6 +579,18 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         Some(&list_tests::intercalate_definition())
     );
     assert_eq!(
+        loaded.theory().computation(computation("not")),
+        Some(&list_tests::bool_not_definition())
+    );
+    assert_eq!(
+        loaded.theory().computation(computation("and")),
+        Some(&list_tests::bool_and_definition())
+    );
+    assert_eq!(
+        loaded.theory().computation(computation("or")),
+        Some(&list_tests::bool_or_definition())
+    );
+    assert_eq!(
         loaded.theory().computation(computation("zero")),
         Some(&nat_tests::zero_definition())
     );
@@ -575,6 +619,9 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         loaded.env().computation("intercalate"),
         Some(computation("intercalate"))
     );
+    assert_eq!(loaded.env().computation("not"), Some(computation("not")));
+    assert_eq!(loaded.env().computation("and"), Some(computation("and")));
+    assert_eq!(loaded.env().computation("or"), Some(computation("or")));
 
     assert_eq!(
         computation_name("is-singleton"),
@@ -592,6 +639,10 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
     assert_eq!(
         theorem_name("add_computes_to_list"),
         Some(theorem("add_computes_to_list"))
+    );
+    assert_eq!(
+        theorem_name("not_computes_to_bool"),
+        Some(theorem("not_computes_to_bool"))
     );
 }
 
@@ -613,6 +664,9 @@ fn loaded_computation_prelude_keeps_env_without_defining_theorems() {
         loaded.computation("intercalate"),
         Some(computation("intercalate"))
     );
+    assert_eq!(loaded.computation("not"), Some(computation("not")));
+    assert_eq!(loaded.computation("and"), Some(computation("and")));
+    assert_eq!(loaded.computation("or"), Some(computation("or")));
     assert_eq!(loaded.computation("add"), Some(computation("add")));
     assert_eq!(
         loaded.theorem("append_assoc"),
@@ -641,6 +695,18 @@ fn loaded_computation_prelude_keeps_env_without_defining_theorems() {
     assert_eq!(
         loaded.theory().computation(computation("intercalate")),
         Some(&list_tests::intercalate_definition())
+    );
+    assert_eq!(
+        loaded.theory().computation(computation("not")),
+        Some(&list_tests::bool_not_definition())
+    );
+    assert_eq!(
+        loaded.theory().computation(computation("and")),
+        Some(&list_tests::bool_and_definition())
+    );
+    assert_eq!(
+        loaded.theory().computation(computation("or")),
+        Some(&list_tests::bool_or_definition())
     );
     assert_eq!(
         loaded.theory().computation(computation("add")),
@@ -769,6 +835,18 @@ fn theory_defines_reverse() {
         Some(&list_tests::find_definition())
     );
     assert_eq!(
+        theory.computation(computation("not")),
+        Some(&list_tests::bool_not_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("and")),
+        Some(&list_tests::bool_and_definition())
+    );
+    assert_eq!(
+        theory.computation(computation("or")),
+        Some(&list_tests::bool_or_definition())
+    );
+    assert_eq!(
         theory.computation(computation("all-lists")),
         Some(&list_tests::all_lists_definition())
     );
@@ -889,6 +967,9 @@ fn theory_defines_reverse() {
     assert_eq!(any(), Computation::Ref(computation("any")));
     assert_eq!(all(), Computation::Ref(computation("all")));
     assert_eq!(find(), Computation::Ref(computation("find")));
+    assert_eq!(bool_not(), Computation::Ref(computation("not")));
+    assert_eq!(bool_and(), Computation::Ref(computation("and")));
+    assert_eq!(bool_or(), Computation::Ref(computation("or")));
     assert_eq!(all_lists(), Computation::Ref(computation("all-lists")));
     assert_eq!(none(), Computation::Ref(computation("none")));
     assert_eq!(some(), Computation::Ref(computation("some")));
@@ -1021,6 +1102,18 @@ fn theory_defines_reverse() {
     assert_eq!(
         theory.reduce(&find()),
         Step::Reduced(list_tests::find_definition())
+    );
+    assert_eq!(
+        theory.reduce(&bool_not()),
+        Step::Reduced(list_tests::bool_not_definition())
+    );
+    assert_eq!(
+        theory.reduce(&bool_and()),
+        Step::Reduced(list_tests::bool_and_definition())
+    );
+    assert_eq!(
+        theory.reduce(&bool_or()),
+        Step::Reduced(list_tests::bool_or_definition())
     );
     assert_eq!(
         theory.reduce(&all_lists()),
@@ -1185,12 +1278,8 @@ fn theorem_definitions_require_computations() {
     else {
         panic!("theorem loading should report proof elaboration failure, got {theorem_result:?}");
     };
-    assert_eq!(
-        failed_theorem,
-        theorem("reverse_acc_computes_to_list"),
-        "{error:?}"
-    );
-    assert_eq!(section, Some(SourceSection::new("list/operations")));
+    assert_eq!(failed_theorem, theorem("not_true"), "{error:?}");
+    assert_eq!(section, Some(SourceSection::new("list/booleans")));
     assert!(proof_error_contains_evaluation_failure(&error));
 
     let computation_independent_theorems = [

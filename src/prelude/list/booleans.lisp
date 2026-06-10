@@ -240,3 +240,276 @@
             (symbol-eq left right)
             (quote :true))
           (symbol-eq-true (assume symbol_eq_is_true)))))))
+
+(theorem not_true
+  (forall value
+    (implies
+      (computes-to value (quote :true))
+      (computes-to (not value) (quote :false))))
+  (by
+    (intro value)
+    (calc
+      (not value)
+      (==
+        (not (quote :true))
+        (by
+          (simpa only value)))
+      (==
+        (quote :false)
+        (by
+          (eval))))))
+
+(theorem not_false
+  (forall value
+    (implies
+      (computes-to value (quote :false))
+      (computes-to (not value) (quote :true))))
+  (by
+    (intro value)
+    (calc
+      (not value)
+      (==
+        (not (quote :false))
+        (by
+          (simpa only value)))
+      (==
+        (quote :true)
+        (by
+          (eval))))))
+
+(theorem not_computes_to_bool
+  (forall value
+    (implies
+      (is-bool value)
+      (is-bool (not value))))
+  (by
+    (intro value)
+    (or-elim value
+      value_true
+      (by
+        (right
+          (by
+            (apply not_true value))))
+      value_false
+      (by
+        (left
+          (by
+            (apply not_false value)))))))
+
+(theorem and_true_left
+  (forall left
+    (implies
+      (computes-to left (quote :true))
+      (forall right
+        (implies
+          (is-bool right)
+          (computes-to
+            (and left right)
+            right)))))
+  (by
+    (intro left)
+    (intro right)
+    (or-elim right
+      right_true
+      (by
+        (calc
+          (and left right)
+          (==
+            (quote :true)
+            (by
+              (simpa only left right_true)))
+          (==
+            right
+            (by
+              (exact (symm right_true))))))
+      right_false
+      (by
+        (calc
+          (and left right)
+          (==
+            (quote :false)
+            (by
+              (simpa only left right_false)))
+          (==
+            right
+            (by
+              (exact (symm right_false)))))))))
+
+(theorem and_false_left
+  (forall left
+    (implies
+      (computes-to left (quote :false))
+      (forall right
+        (implies
+          (is-bool right)
+          (computes-to
+            (and left right)
+            (quote :false))))))
+  (by
+    (intro left)
+    (intro right)
+    (or-elim right
+      right_true
+      (by
+        (simpa only left right_true))
+      right_false
+      (by
+        (simpa only left right_false)))))
+
+(theorem and_computes_to_bool
+  (forall left
+    (implies
+      (is-bool left)
+      (forall right
+        (implies
+          (is-bool right)
+          (is-bool (and left right))))))
+  (by
+    (intro left)
+    (intro right)
+    (or-elim left
+      left_true
+      (by
+        (or-elim right
+          right_true
+          (by
+            (left
+              (by
+                (calc
+                  (and left right)
+                  (==
+                    right
+                    (by
+                      (apply and_true_left left right)))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact right_true)))))))
+          right_false
+          (by
+            (right
+              (by
+                (calc
+                  (and left right)
+                  (==
+                    right
+                    (by
+                      (apply and_true_left left right)))
+                  (==
+                    (quote :false)
+                    (by
+                      (exact right_false)))))))))
+      left_false
+      (by
+        (right
+          (by
+            (apply and_false_left left right)))))))
+
+(theorem or_true_left
+  (forall left
+    (implies
+      (computes-to left (quote :true))
+      (forall right
+        (implies
+          (is-bool right)
+          (computes-to
+            (or left right)
+            (quote :true))))))
+  (by
+    (intro left)
+    (intro right)
+    (or-elim right
+      right_true
+      (by
+        (simpa only left right_true))
+      right_false
+      (by
+        (simpa only left right_false)))))
+
+(theorem or_false_left
+  (forall left
+    (implies
+      (computes-to left (quote :false))
+      (forall right
+        (implies
+          (is-bool right)
+          (computes-to
+            (or left right)
+            right)))))
+  (by
+    (intro left)
+    (intro right)
+    (or-elim right
+      right_true
+      (by
+        (calc
+          (or left right)
+          (==
+            (quote :true)
+            (by
+              (simpa only left right_true)))
+          (==
+            right
+            (by
+              (exact (symm right_true))))))
+      right_false
+      (by
+        (calc
+          (or left right)
+          (==
+            (quote :false)
+            (by
+              (simpa only left right_false)))
+          (==
+            right
+            (by
+              (exact (symm right_false)))))))))
+
+(theorem or_computes_to_bool
+  (forall left
+    (implies
+      (is-bool left)
+      (forall right
+        (implies
+          (is-bool right)
+          (is-bool (or left right))))))
+  (by
+    (intro left)
+    (intro right)
+    (or-elim left
+      left_true
+      (by
+        (left
+          (by
+            (apply or_true_left left right))))
+      left_false
+      (by
+        (or-elim right
+          right_true
+          (by
+            (left
+              (by
+                (calc
+                  (or left right)
+                  (==
+                    right
+                    (by
+                      (apply or_false_left left right)))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact right_true)))))))
+          right_false
+          (by
+            (right
+              (by
+                (calc
+                  (or left right)
+                  (==
+                    right
+                    (by
+                      (apply or_false_left left right)))
+                  (==
+                    (quote :false)
+                    (by
+                      (exact right_false))))))))))))

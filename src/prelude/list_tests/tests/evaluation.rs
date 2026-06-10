@@ -1,6 +1,44 @@
 use super::*;
 
 #[test]
+fn bool_not_reduces_on_booleans() {
+    assert_evaluates(bool_not_call(true_value()), value(false_value()));
+    assert_evaluates(bool_not_call(false_value()), value(true_value()));
+}
+
+#[test]
+fn bool_and_reduces_on_booleans() {
+    assert_evaluates(
+        bool_and_call(true_value(), true_value()),
+        value(true_value()),
+    );
+    assert_evaluates(
+        bool_and_call(true_value(), false_value()),
+        value(false_value()),
+    );
+    assert_evaluates(
+        bool_and_call(false_value(), true_value()),
+        value(false_value()),
+    );
+}
+
+#[test]
+fn bool_or_reduces_on_booleans() {
+    assert_evaluates(
+        bool_or_call(true_value(), false_value()),
+        value(true_value()),
+    );
+    assert_evaluates(
+        bool_or_call(false_value(), true_value()),
+        value(true_value()),
+    );
+    assert_evaluates(
+        bool_or_call(false_value(), false_value()),
+        value(false_value()),
+    );
+}
+
+#[test]
 fn reverse_nil_terminates_without_error() {
     assert_evaluates(reverse_call(nil()), Value::nil());
 }
