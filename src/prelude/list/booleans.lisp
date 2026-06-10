@@ -513,3 +513,308 @@
                     (quote :false)
                     (by
                       (exact right_false))))))))))))
+
+(theorem not_not
+  (forall value
+    (implies
+      (is-bool value)
+      (computes-to (not (not value)) value)))
+  (by
+    (intro value)
+    (or-elim value
+      value_true
+      (by
+        (simpa only value_true))
+      value_false
+      (by
+        (simpa only value_false)))))
+
+(theorem and_true_right
+  (forall value
+    (implies
+      (is-bool value)
+      (computes-to
+        (and value (quote :true))
+        value)))
+  (by
+    (intro value)
+    (or-elim value
+      value_true
+      (by
+        (simpa only value_true))
+      value_false
+      (by
+        (simpa only value_false)))))
+
+(theorem and_false_right
+  (forall value
+    (implies
+      (is-bool value)
+      (computes-to
+        (and value (quote :false))
+        (quote :false))))
+  (by
+    (intro value)
+    (or-elim value
+      value_true
+      (by
+        (simpa only value_true))
+      value_false
+      (by
+        (simpa only value_false)))))
+
+(theorem or_true_right
+  (forall value
+    (implies
+      (is-bool value)
+      (computes-to
+        (or value (quote :true))
+        (quote :true))))
+  (by
+    (intro value)
+    (or-elim value
+      value_true
+      (by
+        (simpa only value_true))
+      value_false
+      (by
+        (simpa only value_false)))))
+
+(theorem or_false_right
+  (forall value
+    (implies
+      (is-bool value)
+      (computes-to
+        (or value (quote :false))
+        value)))
+  (by
+    (intro value)
+    (or-elim value
+      value_true
+      (by
+        (simpa only value_true))
+      value_false
+      (by
+        (simpa only value_false)))))
+
+(theorem and_comm
+  (forall left
+    (implies
+      (is-bool left)
+      (forall right
+        (implies
+          (is-bool right)
+          (computes-to
+            (and left right)
+            (and right left))))))
+  (by
+    (intro left)
+    (intro right)
+    (or-elim left
+      left_true
+      (by
+        (or-elim right
+          right_true
+          (by
+            (simpa only left_true right_true))
+          right_false
+          (by
+            (simpa only left_true right_false))))
+      left_false
+      (by
+        (or-elim right
+          right_true
+          (by
+            (simpa only left_false right_true))
+          right_false
+          (by
+            (simpa only left_false right_false)))))))
+
+(theorem and_assoc
+  (forall left
+    (implies
+      (is-bool left)
+      (forall middle
+        (implies
+          (is-bool middle)
+          (forall right
+            (implies
+              (is-bool right)
+              (computes-to
+                (and (and left middle) right)
+                (and left (and middle right)))))))))
+  (by
+    (intro left)
+    (intro middle)
+    (intro right)
+    (or-elim left
+      left_true
+      (by
+        (or-elim middle
+          middle_true
+          (by
+            (or-elim right
+              right_true
+              (by
+                (simpa only left_true middle_true right_true))
+              right_false
+              (by
+                (simpa only left_true middle_true right_false))))
+          middle_false
+          (by
+            (or-elim right
+              right_true
+              (by
+                (simpa only left_true middle_false right_true))
+              right_false
+              (by
+                (simpa only left_true middle_false right_false))))))
+      left_false
+      (by
+        (or-elim middle
+          middle_true
+          (by
+            (or-elim right
+              right_true
+              (by
+                (simpa only left_false middle_true right_true))
+              right_false
+              (by
+                (simpa only left_false middle_true right_false))))
+          middle_false
+          (by
+            (or-elim right
+              right_true
+              (by
+                (simpa only left_false middle_false right_true))
+              right_false
+              (by
+                (simpa only left_false middle_false right_false)))))))))
+
+(theorem and_idempotent
+  (forall value
+    (implies
+      (is-bool value)
+      (computes-to
+        (and value value)
+        value)))
+  (by
+    (intro value)
+    (or-elim value
+      value_true
+      (by
+        (simpa only value_true))
+      value_false
+      (by
+        (simpa only value_false)))))
+
+(theorem or_comm
+  (forall left
+    (implies
+      (is-bool left)
+      (forall right
+        (implies
+          (is-bool right)
+          (computes-to
+            (or left right)
+            (or right left))))))
+  (by
+    (intro left)
+    (intro right)
+    (or-elim left
+      left_true
+      (by
+        (or-elim right
+          right_true
+          (by
+            (simpa only left_true right_true))
+          right_false
+          (by
+            (simpa only left_true right_false))))
+      left_false
+      (by
+        (or-elim right
+          right_true
+          (by
+            (simpa only left_false right_true))
+          right_false
+          (by
+            (simpa only left_false right_false)))))))
+
+(theorem or_assoc
+  (forall left
+    (implies
+      (is-bool left)
+      (forall middle
+        (implies
+          (is-bool middle)
+          (forall right
+            (implies
+              (is-bool right)
+              (computes-to
+                (or (or left middle) right)
+                (or left (or middle right)))))))))
+  (by
+    (intro left)
+    (intro middle)
+    (intro right)
+    (or-elim left
+      left_true
+      (by
+        (or-elim middle
+          middle_true
+          (by
+            (or-elim right
+              right_true
+              (by
+                (simpa only left_true middle_true right_true))
+              right_false
+              (by
+                (simpa only left_true middle_true right_false))))
+          middle_false
+          (by
+            (or-elim right
+              right_true
+              (by
+                (simpa only left_true middle_false right_true))
+              right_false
+              (by
+                (simpa only left_true middle_false right_false))))))
+      left_false
+      (by
+        (or-elim middle
+          middle_true
+          (by
+            (or-elim right
+              right_true
+              (by
+                (simpa only left_false middle_true right_true))
+              right_false
+              (by
+                (simpa only left_false middle_true right_false))))
+          middle_false
+          (by
+            (or-elim right
+              right_true
+              (by
+                (simpa only left_false middle_false right_true))
+              right_false
+              (by
+                (simpa only left_false middle_false right_false)))))))))
+
+(theorem or_idempotent
+  (forall value
+    (implies
+      (is-bool value)
+      (computes-to
+        (or value value)
+        value)))
+  (by
+    (intro value)
+    (or-elim value
+      value_true
+      (by
+        (simpa only value_true))
+      value_false
+      (by
+        (simpa only value_false)))))
