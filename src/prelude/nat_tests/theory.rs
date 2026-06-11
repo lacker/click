@@ -72,7 +72,56 @@ fn checked_theory_contains_nat_theorems() {
         "range_computes_to_list",
         range_computes_to_list_source_theorem(),
     );
+    assert_theory_has_theorem(&theory, "range_all_lists", range_all_lists_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "range_all_nat_values",
+        range_all_nat_values_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "map_succ_computes_to_list",
+        map_succ_computes_to_list_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "map_succ_snoc", map_succ_snoc_source_theorem());
+    assert_theory_has_theorem(&theory, "map_succ_range", map_succ_range_source_theorem());
+    assert_theory_has_theorem(&theory, "min_zero_left", min_zero_left_source_theorem());
+    assert_theory_has_theorem(&theory, "min_zero_right", min_zero_right_source_theorem());
+    assert_theory_has_theorem(&theory, "min_succ_succ", min_succ_succ_source_theorem());
+    assert_theory_has_theorem(&theory, "min_cons", min_cons_source_theorem());
+    assert_theory_has_theorem(&theory, "max_zero_left", max_zero_left_source_theorem());
+    assert_theory_has_theorem(&theory, "max_zero_right", max_zero_right_source_theorem());
+    assert_theory_has_theorem(&theory, "max_succ_succ", max_succ_succ_source_theorem());
+    assert_theory_has_theorem(&theory, "max_cons", max_cons_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "min_computes_to_list",
+        min_computes_to_list_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "max_computes_to_list",
+        max_computes_to_list_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "min_le_left", min_le_left_source_theorem());
+    assert_theory_has_theorem(&theory, "min_le_right", min_le_right_source_theorem());
+    assert_theory_has_theorem(&theory, "left_le_max", left_le_max_source_theorem());
+    assert_theory_has_theorem(&theory, "right_le_max", right_le_max_source_theorem());
+    assert_theory_has_theorem(&theory, "min_comm", min_comm_source_theorem());
+    assert_theory_has_theorem(&theory, "max_comm", max_comm_source_theorem());
+    assert_theory_has_theorem(&theory, "min_assoc", min_assoc_source_theorem());
+    assert_theory_has_theorem(&theory, "max_assoc", max_assoc_source_theorem());
+    assert_theory_has_theorem(&theory, "min_left", min_left_source_theorem());
+    assert_theory_has_theorem(&theory, "min_right", min_right_source_theorem());
+    assert_theory_has_theorem(&theory, "max_left", max_left_source_theorem());
+    assert_theory_has_theorem(&theory, "max_right", max_right_source_theorem());
+    assert_theory_has_theorem(&theory, "length_zip_min", length_zip_min_source_theorem());
     assert_theory_has_theorem(&theory, "length_range", length_range_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "length_filter_le",
+        length_filter_le_source_theorem(),
+    );
     assert_theory_has_theorem(
         &theory,
         "succ_preserves_nat_value",
@@ -97,6 +146,17 @@ fn checked_theory_contains_nat_theorems() {
         &theory,
         "is_nat_value_tail",
         is_nat_value_tail_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "nat_induction", nat_induction_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "min_preserves_nat_value",
+        min_preserves_nat_value_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "max_preserves_nat_value",
+        max_preserves_nat_value_source_theorem(),
     );
     assert_theory_has_theorem(
         &theory,
@@ -134,6 +194,12 @@ fn checked_theory_contains_nat_theorems() {
         &theory,
         "nat_eq_computes_to_bool",
         nat_eq_computes_to_bool_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "value_eq_nat_eq", value_eq_nat_eq_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "is_nat_value_implies_value_eq_comparable",
+        is_nat_value_implies_value_eq_comparable_source_theorem(),
     );
     assert_theory_has_theorem(
         &theory,
@@ -199,6 +265,11 @@ fn checked_theory_contains_nat_theorems() {
     );
     assert_theory_has_theorem(
         &theory,
+        "nat_lt_zero_right_false",
+        nat_lt_zero_right_false_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
         "nat_lt_zero_implies_is_zero_false",
         nat_lt_zero_implies_is_zero_false_source_theorem(),
     );
@@ -227,6 +298,16 @@ fn checked_theory_contains_nat_theorems() {
         "nat_lt_succ_succ",
         nat_lt_succ_succ_source_theorem(),
     );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_succ_right_or_eq",
+        nat_lt_succ_right_or_eq_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "member_range_iff_lt",
+        member_range_iff_lt_source_theorem(),
+    );
     assert_theory_has_theorem(&theory, "nat_lt_irrefl", nat_lt_irrefl_source_theorem());
     assert_theory_has_theorem(&theory, "nat_lt_is_bool", nat_lt_is_bool_source_theorem());
     assert_theory_has_theorem(
@@ -234,6 +315,50 @@ fn checked_theory_contains_nat_theorems() {
         "nat_lt_computes_to_bool",
         nat_lt_computes_to_bool_source_theorem(),
     );
+    assert_theory_has_theorem(&theory, "succ_congr", succ_congr_source_theorem());
+    assert_theory_has_theorem(&theory, "pred_congr", pred_congr_source_theorem());
+    assert_theory_has_theorem(&theory, "add_congr_left", add_congr_left_source_theorem());
+    assert_theory_has_theorem(&theory, "add_congr_right", add_congr_right_source_theorem());
+    assert_theory_has_theorem(&theory, "add_congr", add_congr_source_theorem());
+    assert_theory_has_theorem(&theory, "sub_congr_left", sub_congr_left_source_theorem());
+    assert_theory_has_theorem(&theory, "sub_congr_right", sub_congr_right_source_theorem());
+    assert_theory_has_theorem(&theory, "sub_congr", sub_congr_source_theorem());
+    assert_theory_has_theorem(&theory, "mul_congr_left", mul_congr_left_source_theorem());
+    assert_theory_has_theorem(&theory, "mul_congr_right", mul_congr_right_source_theorem());
+    assert_theory_has_theorem(&theory, "mul_congr", mul_congr_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_congr_left",
+        nat_eq_congr_left_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_eq_congr_right",
+        nat_eq_congr_right_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "nat_eq_congr", nat_eq_congr_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_congr_left",
+        nat_le_congr_left_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_le_congr_right",
+        nat_le_congr_right_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "nat_le_congr", nat_le_congr_source_theorem());
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_congr_left",
+        nat_lt_congr_left_source_theorem(),
+    );
+    assert_theory_has_theorem(
+        &theory,
+        "nat_lt_congr_right",
+        nat_lt_congr_right_source_theorem(),
+    );
+    assert_theory_has_theorem(&theory, "nat_lt_congr", nat_lt_congr_source_theorem());
     assert_theory_has_theorem(
         &theory,
         "nat_le_list_suffix_cons",
@@ -452,6 +577,8 @@ fn checked_theory_contains_nat_theorems() {
         add_preserves_nat_value_source_theorem(),
     );
     assert_theory_has_theorem(&theory, "add_assoc", add_assoc_source_theorem());
+    assert_theory_has_theorem(&theory, "min_add_distrib", min_add_distrib_source_theorem());
+    assert_theory_has_theorem(&theory, "max_add_distrib", max_add_distrib_source_theorem());
     assert_theory_has_theorem(&theory, "add_comm", add_comm_source_theorem());
     assert_theory_has_theorem(&theory, "add_left_cancel", add_left_cancel_source_theorem());
     assert_theory_has_theorem(

@@ -607,3 +607,19 @@
         (quote :true)
         rest_cell
         (quote :false)))))
+
+(def is-pair
+  (lambda value
+    (if
+      (is-list-value value)
+      (list-case value
+        (quote :false)
+        first_cell
+        (list-case (tail first_cell)
+          (quote :false)
+          second_cell
+          (list-case (tail second_cell)
+            (quote :true)
+            extra_cell
+            (quote :false))))
+      (quote :false))))

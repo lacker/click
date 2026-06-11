@@ -13,6 +13,9 @@ fn nat_theorem_statements_load_from_source() {
     let range_result = theorem_symbol("range_computes_to_list", "result");
     let range_count = theorem_symbol("range_computes_to_list", "count");
     let length_range_count = theorem_symbol("length_range", "count");
+    let length_filter_predicate = theorem_symbol("length_filter_le", "predicate");
+    let length_filter_value = theorem_symbol("length_filter_le", "value");
+    let length_filter_list = theorem_symbol("length_filter_le", "list");
     let nat_eq_refl_nat = theorem_symbol("nat_eq_refl", "nat");
     let nat_eq_is_bool_left = theorem_symbol("nat_eq_is_bool", "left");
     let nat_eq_is_bool_right = theorem_symbol("nat_eq_is_bool", "right");
@@ -291,6 +294,14 @@ fn nat_theorem_statements_load_from_source() {
     assert_eq!(
         length_range_source_theorem(),
         length_range_theorem(length_range_count)
+    );
+    assert_eq!(
+        length_filter_le_source_theorem(),
+        length_filter_le_theorem(
+            length_filter_predicate,
+            length_filter_value,
+            length_filter_list,
+        )
     );
     assert_eq!(
         is_zero_cons_false_source_theorem(),

@@ -178,6 +178,31 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
             context,
             pretty,
         )?))),
+        ProofExpr::SymbolEqTrueLeftIsSymbol(proof) => {
+            Ok(Proof::SymbolEqTrueLeftIsSymbol(Box::new(subproof(
+                "symbol-eq-true-left-is-symbol",
+                proof,
+                theory,
+                context,
+                pretty,
+            )?)))
+        }
+        ProofExpr::SymbolEqTrueRightIsSymbol(proof) => {
+            Ok(Proof::SymbolEqTrueRightIsSymbol(Box::new(subproof(
+                "symbol-eq-true-right-is-symbol",
+                proof,
+                theory,
+                context,
+                pretty,
+            )?)))
+        }
+        ProofExpr::SymbolEqResultBool(proof) => Ok(Proof::SymbolEqResultBool(Box::new(subproof(
+            "symbol-eq-result-bool",
+            proof,
+            theory,
+            context,
+            pretty,
+        )?))),
         ProofExpr::IfTrueCondition(proof) => Ok(Proof::IfTrueWithFalseElseCondition(Box::new(
             subproof("if-true-condition", proof, theory, context, pretty)?,
         ))),

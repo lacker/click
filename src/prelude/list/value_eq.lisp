@@ -1115,6 +1115,105 @@
                 (by
                   (exact tail_equal))))))))))
 
+(theorem value_eq_cons_false_cases
+  (forall left_head (is-value left_head)
+    (forall left_tail (is-list left_tail)
+      (forall right_head (is-value right_head)
+        (forall right_tail (is-list right_tail)
+          (implies
+            (computes-to
+              (value-eq
+                (cons left_head left_tail)
+                (cons right_head right_tail))
+              (quote :false))
+            (or
+              (computes-to
+                (value-eq left_head right_head)
+                (quote :false))
+              (computes-to
+                (value-eq left_tail right_tail)
+                (quote :false))))))))
+  (by
+    (intro left_head)
+    (intro left_tail)
+    (intro right_head)
+    (intro right_tail)
+    (intro conses_not_equal)
+    (specialize cons_step value_eq_cons left_head left_tail right_head right_tail)
+    (have branch_false
+      (computes-to
+        (if
+          (value-eq
+            (head (cons left_head left_tail))
+            (head (cons right_head right_tail)))
+          (value-eq
+            (tail (cons left_head left_tail))
+            (tail (cons right_head right_tail)))
+          (quote :false))
+        (quote :false))
+      (by
+        (calc
+          (if
+            (value-eq
+              (head (cons left_head left_tail))
+              (head (cons right_head right_tail)))
+            (value-eq
+              (tail (cons left_head left_tail))
+              (tail (cons right_head right_tail)))
+            (quote :false))
+          (==
+            (value-eq
+              (cons left_head left_tail)
+              (cons right_head right_tail))
+            (by
+              (exact (symm cons_step))))
+          (==
+            (quote :false)
+            (by
+              (exact conses_not_equal)))))
+      (by
+        (specialize branch_parts if_false_result_with_false_else
+          (value-eq
+            (head (cons left_head left_tail))
+            (head (cons right_head right_tail)))
+          (value-eq
+            (tail (cons left_head left_tail))
+            (tail (cons right_head right_tail))))
+        (or-elim branch_parts
+          heads_not_equal
+          (by
+            (left
+              (by
+                (calc
+                  (value-eq left_head right_head)
+                  (==
+                    (value-eq
+                      (head (cons left_head left_tail))
+                      (head (cons right_head right_tail)))
+                    (by
+                      (eval)))
+                  (==
+                    (quote :false)
+                    (by
+                      (exact heads_not_equal)))))))
+          tails_case
+          (by
+            (cases tails_case heads_equal tails_not_equal)
+            (right
+              (by
+                (calc
+                  (value-eq left_tail right_tail)
+                  (==
+                    (value-eq
+                      (tail (cons left_head left_tail))
+                      (tail (cons right_head right_tail)))
+                    (by
+                      (eval)))
+                  (==
+                    (quote :false)
+                    (by
+                      (exact tails_not_equal))))))))))))
+
 (theorem cons_congr
   (forall left_head
     (forall left_tail

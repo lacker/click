@@ -422,6 +422,54 @@ fn length_theorems_have_expected_shape() {
         )
     );
     assert_eq!(
+        length_take_theorem(COUNT, X),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            forall_where(
+                X,
+                is_list(var(X)),
+                computes_to(
+                    length_call(take_call(var(COUNT), var(X))),
+                    take_call(var(COUNT), length_call(var(X))),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        length_drop_theorem(COUNT, X),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            forall_where(
+                X,
+                is_list(var(X)),
+                computes_to(
+                    length_call(drop_call(var(COUNT), var(X))),
+                    drop_call(var(COUNT), length_call(var(X))),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        length_take_add_length_drop_theorem(COUNT, X),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            forall_where(
+                X,
+                is_list(var(X)),
+                computes_to(
+                    append_call(
+                        length_call(take_call(var(COUNT), var(X))),
+                        length_call(drop_call(var(COUNT), var(X))),
+                    ),
+                    length_call(var(X)),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
         length_map_theorem(FUNCTION, VALUE, MAPPED_VALUE, X),
         forall_where(
             FUNCTION,
@@ -460,6 +508,12 @@ fn length_source_theorems_have_expected_shape() {
     let append_right = theorem_symbol("length_append", "right");
     let snoc_list = theorem_symbol("length_snoc", "list");
     let snoc_value = theorem_symbol("length_snoc", "value");
+    let take_count = theorem_symbol("length_take", "count");
+    let take_list = theorem_symbol("length_take", "list");
+    let drop_count = theorem_symbol("length_drop", "count");
+    let drop_list = theorem_symbol("length_drop", "list");
+    let add_count = theorem_symbol("length_take_add_length_drop", "count");
+    let add_list = theorem_symbol("length_take_add_length_drop", "list");
 
     assert_eq!(length_nil_source_theorem(), length_nil_theorem());
     assert_eq!(
@@ -481,6 +535,18 @@ fn length_source_theorems_have_expected_shape() {
     assert_eq!(
         length_snoc_source_theorem(),
         length_snoc_theorem(snoc_list, snoc_value)
+    );
+    assert_eq!(
+        length_take_source_theorem(),
+        length_take_theorem(take_count, take_list)
+    );
+    assert_eq!(
+        length_drop_source_theorem(),
+        length_drop_theorem(drop_count, drop_list)
+    );
+    assert_eq!(
+        length_take_add_length_drop_source_theorem(),
+        length_take_add_length_drop_theorem(add_count, add_list)
     );
 }
 
@@ -653,6 +719,48 @@ fn take_theorems_have_expected_shape() {
         )
     );
     assert_eq!(
+        take_congr_count_computation_theorem(COUNT, COUNT_VALUE, X),
+        forall(
+            COUNT,
+            forall_where(
+                COUNT_VALUE,
+                is_list(var(COUNT_VALUE)),
+                implies(
+                    computes_to(var(COUNT), var(COUNT_VALUE)),
+                    forall_where(
+                        X,
+                        is_list(var(X)),
+                        computes_to(
+                            take_call(var(COUNT), var(X)),
+                            take_call(var(COUNT_VALUE), var(X)),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        take_congr_list_computation_theorem(COUNT, X, LIST_VALUE),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            forall(
+                X,
+                forall_where(
+                    LIST_VALUE,
+                    is_list(var(LIST_VALUE)),
+                    implies(
+                        computes_to(var(X), var(LIST_VALUE)),
+                        computes_to(
+                            take_call(var(COUNT), var(X)),
+                            take_call(var(COUNT), var(LIST_VALUE)),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
         take_take_theorem(COUNT, X),
         forall_where(
             COUNT,
@@ -680,6 +788,12 @@ fn take_source_theorems_have_expected_shape() {
     let computes_count = theorem_symbol("take_computes_to_list", "count");
     let computes_list = theorem_symbol("take_computes_to_list", "list");
     let computes_result = theorem_symbol("take_computes_to_list", "result");
+    let congr_count = theorem_symbol("take_congr_count_computation", "count");
+    let congr_count_value = theorem_symbol("take_congr_count_computation", "count_value");
+    let congr_count_list = theorem_symbol("take_congr_count_computation", "list");
+    let congr_list_count = theorem_symbol("take_congr_list_computation", "count");
+    let congr_list = theorem_symbol("take_congr_list_computation", "list");
+    let congr_list_value = theorem_symbol("take_congr_list_computation", "list_value");
     let take_take_count = theorem_symbol("take_take", "count");
     let take_take_list = theorem_symbol("take_take", "list");
 
@@ -692,6 +806,14 @@ fn take_source_theorems_have_expected_shape() {
     assert_eq!(
         take_computes_to_list_source_theorem(),
         take_computes_to_list_theorem(computes_count, computes_list, computes_result)
+    );
+    assert_eq!(
+        take_congr_count_computation_source_theorem(),
+        take_congr_count_computation_theorem(congr_count, congr_count_value, congr_count_list)
+    );
+    assert_eq!(
+        take_congr_list_computation_source_theorem(),
+        take_congr_list_computation_theorem(congr_list_count, congr_list, congr_list_value)
     );
     assert_eq!(
         take_take_source_theorem(),
@@ -755,6 +877,89 @@ fn drop_theorems_have_expected_shape() {
             ),
         )
     );
+    assert_eq!(
+        drop_congr_count_computation_theorem(COUNT, COUNT_VALUE, X),
+        forall(
+            COUNT,
+            forall_where(
+                COUNT_VALUE,
+                is_list(var(COUNT_VALUE)),
+                implies(
+                    computes_to(var(COUNT), var(COUNT_VALUE)),
+                    forall_where(
+                        X,
+                        is_list(var(X)),
+                        computes_to(
+                            drop_call(var(COUNT), var(X)),
+                            drop_call(var(COUNT_VALUE), var(X)),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        drop_congr_list_computation_theorem(COUNT, X, LIST_VALUE),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            forall(
+                X,
+                forall_where(
+                    LIST_VALUE,
+                    is_list(var(LIST_VALUE)),
+                    implies(
+                        computes_to(var(X), var(LIST_VALUE)),
+                        computes_to(
+                            drop_call(var(COUNT), var(X)),
+                            drop_call(var(COUNT), var(LIST_VALUE)),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        drop_drop_theorem(LEFT_LIST, RIGHT_LIST, X),
+        forall_where(
+            LEFT_LIST,
+            is_list(var(LEFT_LIST)),
+            forall_where(
+                RIGHT_LIST,
+                is_list(var(RIGHT_LIST)),
+                forall_where(
+                    X,
+                    is_list(var(X)),
+                    computes_to(
+                        drop_call(var(RIGHT_LIST), drop_call(var(LEFT_LIST), var(X))),
+                        drop_call(append_call(var(LEFT_LIST), var(RIGHT_LIST)), var(X)),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        take_drop_commute_theorem(COUNT, RIGHT_LIST, X),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            forall_where(
+                RIGHT_LIST,
+                is_list(var(RIGHT_LIST)),
+                forall_where(
+                    X,
+                    is_list(var(X)),
+                    computes_to(
+                        take_call(var(COUNT), drop_call(var(RIGHT_LIST), var(X))),
+                        drop_call(
+                            var(RIGHT_LIST),
+                            take_call(append_call(var(RIGHT_LIST), var(COUNT)), var(X)),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    );
 }
 
 #[test]
@@ -768,6 +973,18 @@ fn drop_source_theorems_have_expected_shape() {
     let computes_count = theorem_symbol("drop_computes_to_list", "count");
     let computes_list = theorem_symbol("drop_computes_to_list", "list");
     let computes_result = theorem_symbol("drop_computes_to_list", "result");
+    let congr_count = theorem_symbol("drop_congr_count_computation", "count");
+    let congr_count_value = theorem_symbol("drop_congr_count_computation", "count_value");
+    let congr_count_list = theorem_symbol("drop_congr_count_computation", "list");
+    let congr_list_count = theorem_symbol("drop_congr_list_computation", "count");
+    let congr_list = theorem_symbol("drop_congr_list_computation", "list");
+    let congr_list_value = theorem_symbol("drop_congr_list_computation", "list_value");
+    let drop_drop_left = theorem_symbol("drop_drop", "left");
+    let drop_drop_right = theorem_symbol("drop_drop", "right");
+    let drop_drop_list = theorem_symbol("drop_drop", "list");
+    let take_drop_take_count = theorem_symbol("take_drop_commute", "take_count");
+    let take_drop_drop_count = theorem_symbol("take_drop_commute", "drop_count");
+    let take_drop_list = theorem_symbol("take_drop_commute", "list");
 
     assert_eq!(drop_zero_source_theorem(), drop_zero_theorem(zero_list));
     assert_eq!(drop_nil_source_theorem(), drop_nil_theorem(nil_count));
@@ -778,6 +995,22 @@ fn drop_source_theorems_have_expected_shape() {
     assert_eq!(
         drop_computes_to_list_source_theorem(),
         drop_computes_to_list_theorem(computes_count, computes_list, computes_result)
+    );
+    assert_eq!(
+        drop_congr_count_computation_source_theorem(),
+        drop_congr_count_computation_theorem(congr_count, congr_count_value, congr_count_list)
+    );
+    assert_eq!(
+        drop_congr_list_computation_source_theorem(),
+        drop_congr_list_computation_theorem(congr_list_count, congr_list, congr_list_value)
+    );
+    assert_eq!(
+        drop_drop_source_theorem(),
+        drop_drop_theorem(drop_drop_left, drop_drop_right, drop_drop_list)
+    );
+    assert_eq!(
+        take_drop_commute_source_theorem(),
+        take_drop_commute_theorem(take_drop_take_count, take_drop_drop_count, take_drop_list)
     );
 }
 
@@ -1795,6 +2028,21 @@ fn zip_theorems_have_expected_shape() {
             ),
         )
     );
+    assert_eq!(
+        zip_pair_shape_theorem(X, RIGHT_LIST),
+        forall_where(
+            X,
+            is_list(var(X)),
+            forall_where(
+                RIGHT_LIST,
+                is_list(var(RIGHT_LIST)),
+                computes_to(
+                    all_call(is_pair(), zip_call(var(X), var(RIGHT_LIST))),
+                    true_value()
+                ),
+            ),
+        )
+    );
 }
 
 #[test]
@@ -1808,6 +2056,8 @@ fn zip_source_theorems_have_expected_shape() {
     let computes_left = theorem_symbol("zip_computes_to_list", "left");
     let computes_right = theorem_symbol("zip_computes_to_list", "right");
     let computes_result = theorem_symbol("zip_computes_to_list", "result");
+    let pair_shape_left = theorem_symbol("zip_pair_shape", "left");
+    let pair_shape_right = theorem_symbol("zip_pair_shape", "right");
 
     assert_eq!(
         zip_left_nil_source_theorem(),
@@ -1829,6 +2079,10 @@ fn zip_source_theorems_have_expected_shape() {
     assert_eq!(
         zip_computes_to_list_source_theorem(),
         zip_computes_to_list_theorem(computes_left, computes_right, computes_result)
+    );
+    assert_eq!(
+        zip_pair_shape_source_theorem(),
+        zip_pair_shape_theorem(pair_shape_left, pair_shape_right)
     );
 }
 
@@ -1860,6 +2114,42 @@ fn unzip_theorems_have_expected_shape() {
             ),
         )
     );
+    assert_eq!(
+        unzip_pair_shape_theorem(X, ACCUMULATOR, RIGHT_LIST),
+        forall_where(
+            X,
+            is_list(var(X)),
+            implies(
+                computes_to(all_call(is_pair(), var(X)), true_value()),
+                exists_where(
+                    ACCUMULATOR,
+                    is_list(var(ACCUMULATOR)),
+                    exists_where(
+                        RIGHT_LIST,
+                        is_list(var(RIGHT_LIST)),
+                        computes_to(unzip_call(var(X)), pair(var(ACCUMULATOR), var(RIGHT_LIST))),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        zip_unzip_theorem(X),
+        forall_where(
+            X,
+            is_list(var(X)),
+            implies(
+                computes_to(all_call(is_pair(), var(X)), true_value()),
+                computes_to(
+                    zip_call(
+                        head_call(unzip_call(var(X))),
+                        head_call(tail_call(unzip_call(var(X)))),
+                    ),
+                    var(X),
+                ),
+            ),
+        )
+    );
 }
 
 #[test]
@@ -1867,11 +2157,23 @@ fn unzip_source_theorems_have_expected_shape() {
     let cons_left = theorem_symbol("unzip_cons", "left");
     let cons_right = theorem_symbol("unzip_cons", "right");
     let cons_tail = theorem_symbol("unzip_cons", "tail");
+    let shape_pairs = theorem_symbol("unzip_pair_shape", "pairs");
+    let shape_left = theorem_symbol("unzip_pair_shape", "left");
+    let shape_right = theorem_symbol("unzip_pair_shape", "right");
+    let zip_unzip_pairs = theorem_symbol("zip_unzip", "pairs");
 
     assert_eq!(unzip_nil_source_theorem(), unzip_nil_theorem());
     assert_eq!(
         unzip_cons_source_theorem(),
         unzip_cons_theorem(cons_left, cons_right, cons_tail)
+    );
+    assert_eq!(
+        unzip_pair_shape_source_theorem(),
+        unzip_pair_shape_theorem(shape_pairs, shape_left, shape_right)
+    );
+    assert_eq!(
+        zip_unzip_source_theorem(),
+        zip_unzip_theorem(zip_unzip_pairs)
     );
 }
 
@@ -1984,6 +2286,10 @@ fn zip_with_theorems_have_expected_shape() {
 
 #[test]
 fn zip_with_source_theorems_have_expected_shape() {
+    let as_map_function = theorem_symbol("zip_with_as_map_zip", "function");
+    let as_map_left = theorem_symbol("zip_with_as_map_zip", "left");
+    let as_map_right = theorem_symbol("zip_with_as_map_zip", "right");
+    let as_map_pair = theorem_symbol("zip_with_as_map_zip", "pair");
     let left_nil_function = theorem_symbol("zip_with_left_nil", "function");
     let left_nil_right = theorem_symbol("zip_with_left_nil", "right");
     let right_nil_function = theorem_symbol("zip_with_right_nil", "function");
@@ -2001,6 +2307,10 @@ fn zip_with_source_theorems_have_expected_shape() {
     let computes_right = theorem_symbol("zip_with_computes_to_list", "right");
     let computes_result = theorem_symbol("zip_with_computes_to_list", "result");
 
+    assert_eq!(
+        zip_with_as_map_zip_source_theorem(),
+        zip_with_as_map_zip_theorem(as_map_function, as_map_left, as_map_right, as_map_pair)
+    );
     assert_eq!(
         zip_with_left_nil_source_theorem(),
         zip_with_left_nil_theorem(left_nil_function, left_nil_right)

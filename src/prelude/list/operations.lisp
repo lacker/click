@@ -616,6 +616,38 @@
                     (by
                       (simpa only taken_tail_proof))))))))))))
 
+(theorem take_congr_count_computation
+  (forall count
+    (forall count_value (is-list count_value)
+      (implies
+        (computes-to count count_value)
+        (forall list (is-list list)
+          (computes-to
+            (take count list)
+            (take count_value list))))))
+  (by
+    (intro count)
+    (intro count_value)
+    (intro count_proof)
+    (intro list)
+    (simpa only count_proof)))
+
+(theorem take_congr_list_computation
+  (forall count (is-list count)
+    (forall list
+      (forall list_value (is-list list_value)
+        (implies
+          (computes-to list list_value)
+          (computes-to
+            (take count list)
+            (take count list_value))))))
+  (by
+    (intro count)
+    (intro list)
+    (intro list_value)
+    (intro list_proof)
+    (simpa only list_proof)))
+
 (theorem drop_zero
   (forall list (is-list list)
     (computes-to (drop nil list) list))
@@ -689,6 +721,38 @@
                     dropped_tail
                     (by
                       (exact dropped_tail_proof))))))))))))
+
+(theorem drop_congr_count_computation
+  (forall count
+    (forall count_value (is-list count_value)
+      (implies
+        (computes-to count count_value)
+        (forall list (is-list list)
+          (computes-to
+            (drop count list)
+            (drop count_value list))))))
+  (by
+    (intro count)
+    (intro count_value)
+    (intro count_proof)
+    (intro list)
+    (simpa only count_proof)))
+
+(theorem drop_congr_list_computation
+  (forall count (is-list count)
+    (forall list
+      (forall list_value (is-list list_value)
+        (implies
+          (computes-to list list_value)
+          (computes-to
+            (drop count list)
+            (drop count list_value))))))
+  (by
+    (intro count)
+    (intro list)
+    (intro list_value)
+    (intro list_proof)
+    (simpa only list_proof)))
 
 (theorem take_take
   (forall count (is-list count)
@@ -1719,6 +1783,56 @@
       (by
         (apply is_list_value_true_implies_is_list value)))))
 
+(theorem is_list_implies_is_list_value_true
+  (forall value (is-list value)
+    (computes-to (is-list-value value) (quote :true)))
+  (by
+    (list-induction value
+      (by
+        (eval))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (eval)))))
+
+(theorem all_lists_cons
+  (forall head (is-list head)
+    (forall tail (is-list tail)
+      (implies
+        (computes-to (all-lists tail) (quote :true))
+        (computes-to
+          (all-lists (cons head tail))
+          (quote :true)))))
+  (by
+    (intro head)
+    (intro tail)
+    (intro tail_all_lists)
+    (calc
+      (all-lists (cons head tail))
+      (==
+        (if
+          (is-list-value head)
+          (all-lists tail)
+          (quote :false))
+        (by
+          (eval)))
+      (==
+        (if
+          (quote :true)
+          (all-lists tail)
+          (quote :false))
+        (by
+          (simpa only (is_list_implies_is_list_value_true head))))
+      (==
+        (all-lists tail)
+        (by
+          (eval)))
+      (==
+        (quote :true)
+        (by
+          (exact tail_all_lists))))))
+
 (theorem all_lists_cons_true
   (forall head (is-value head)
     (forall tail (is-list tail)
@@ -2605,6 +2719,21 @@
     (intro options_equal)
     (simpa only options_equal)))
 
+(theorem option_map_congr_option_computation
+  (forall function (is-value function)
+    (forall option
+      (forall option_value
+        (implies
+          (computes-to option option_value)
+          (computes-to
+            (option-map function option)
+            (option-map function option_value))))))
+  (by
+    (intro function)
+    (intro option)
+    (intro option_value)
+    (simpa only option_value)))
+
 (theorem option_map_congr
   (forall left_function (is-value left_function)
     (forall right_function (is-value right_function)
@@ -2798,6 +2927,21 @@
     (intro right_option)
     (intro options_equal)
     (simpa only options_equal)))
+
+(theorem option_bind_congr_option_computation
+  (forall function (is-value function)
+    (forall option
+      (forall option_value
+        (implies
+          (computes-to option option_value)
+          (computes-to
+            (option-bind function option)
+            (option-bind function option_value))))))
+  (by
+    (intro function)
+    (intro option)
+    (intro option_value)
+    (simpa only option_value)))
 
 (theorem unwrap_or_congr_default
   (forall left_default (is-value left_default)

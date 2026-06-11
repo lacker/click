@@ -1428,6 +1428,262 @@
         (by
           (simpa only (symm middle_right_proof)))))))
 
+(theorem min_add_distrib
+  (forall prefix (is-list prefix)
+    (forall left (is-list left)
+      (forall right (is-list right)
+        (implies
+          (computes-to (is-nat-value prefix) (quote :true))
+          (computes-to
+            (min (add prefix left) (add prefix right))
+            (add prefix (min left right)))))))
+  (by
+    (list-induction prefix
+      (by
+        (intro left)
+        (intro right)
+        (intro prefix_is_nat)
+        (obtain inner_min inner_min_proof
+          (min_computes_to_list left right))
+        (calc
+          (min (add nil left) (add nil right))
+          (==
+            (min left right)
+            (by
+              (eval)))
+          (==
+            inner_min
+            (by
+              (exact inner_min_proof)))
+          (==
+            (add nil inner_min)
+            (by
+              (exact
+                (symm
+                  (eval-to (add nil inner_min) inner_min)))))
+          (==
+            (add nil (min left right))
+            (by
+              (simpa only (symm inner_min_proof))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro left)
+        (intro right)
+        (intro prefix_is_nat)
+        (specialize prefix_parts is_nat_value_cons_true_elim head tail)
+        (cases prefix_parts head_unit tail_is_nat)
+        (specialize tail_distrib induction_hypothesis left right)
+        (obtain tail_left tail_left_proof
+          (add_computes_to_list tail left))
+        (obtain tail_right tail_right_proof
+          (add_computes_to_list tail right))
+        (obtain inner_min inner_min_proof
+          (min_computes_to_list left right))
+        (obtain tail_inner tail_inner_proof
+          (add_computes_to_list tail inner_min))
+        (calc
+          (min
+            (add (cons head tail) left)
+            (add (cons head tail) right))
+          (==
+            (min
+              (cons head (add tail left))
+              (add (cons head tail) right))
+            (by
+              (simpa only (add_cons head tail left))))
+          (==
+            (min
+              (cons head tail_left)
+              (add (cons head tail) right))
+            (by
+              (simpa only tail_left_proof)))
+          (==
+            (min
+              (cons head tail_left)
+              (cons head (add tail right)))
+            (by
+              (simpa only (add_cons head tail right))))
+          (==
+            (min
+              (cons head tail_left)
+              (cons head tail_right))
+            (by
+              (simpa only tail_right_proof)))
+          (==
+            (succ (min tail_left tail_right))
+            (by
+              (exact min_cons head tail_left head tail_right)))
+          (==
+            (succ (min (add tail left) tail_right))
+            (by
+              (simpa only (symm tail_left_proof))))
+          (==
+            (succ (min (add tail left) (add tail right)))
+            (by
+              (simpa only (symm tail_right_proof))))
+          (==
+            (succ (add tail (min left right)))
+            (by
+              (simpa only tail_distrib)))
+          (==
+            (succ (add tail inner_min))
+            (by
+              (simpa only inner_min_proof)))
+          (==
+            (succ tail_inner)
+            (by
+              (simpa only tail_inner_proof)))
+          (==
+            (cons (quote unit) tail_inner)
+            (by
+              (eval)))
+          (==
+            (cons head tail_inner)
+            (by
+              (simpa only (symm head_unit))))
+          (==
+            (cons head (add tail inner_min))
+            (by
+              (simpa only (symm tail_inner_proof))))
+          (==
+            (add (cons head tail) inner_min)
+            (by
+              (exact (symm (add_cons head tail inner_min)))))
+          (==
+            (add (cons head tail) (min left right))
+            (by
+              (simpa only (symm inner_min_proof)))))))))
+
+(theorem max_add_distrib
+  (forall prefix (is-list prefix)
+    (forall left (is-list left)
+      (forall right (is-list right)
+        (implies
+          (computes-to (is-nat-value prefix) (quote :true))
+          (computes-to
+            (max (add prefix left) (add prefix right))
+            (add prefix (max left right)))))))
+  (by
+    (list-induction prefix
+      (by
+        (intro left)
+        (intro right)
+        (intro prefix_is_nat)
+        (obtain inner_max inner_max_proof
+          (max_computes_to_list left right))
+        (calc
+          (max (add nil left) (add nil right))
+          (==
+            (max left right)
+            (by
+              (eval)))
+          (==
+            inner_max
+            (by
+              (exact inner_max_proof)))
+          (==
+            (add nil inner_max)
+            (by
+              (exact
+                (symm
+                  (eval-to (add nil inner_max) inner_max)))))
+          (==
+            (add nil (max left right))
+            (by
+              (simpa only (symm inner_max_proof))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro left)
+        (intro right)
+        (intro prefix_is_nat)
+        (specialize prefix_parts is_nat_value_cons_true_elim head tail)
+        (cases prefix_parts head_unit tail_is_nat)
+        (specialize tail_distrib induction_hypothesis left right)
+        (obtain tail_left tail_left_proof
+          (add_computes_to_list tail left))
+        (obtain tail_right tail_right_proof
+          (add_computes_to_list tail right))
+        (obtain inner_max inner_max_proof
+          (max_computes_to_list left right))
+        (obtain tail_inner tail_inner_proof
+          (add_computes_to_list tail inner_max))
+        (calc
+          (max
+            (add (cons head tail) left)
+            (add (cons head tail) right))
+          (==
+            (max
+              (cons head (add tail left))
+              (add (cons head tail) right))
+            (by
+              (simpa only (add_cons head tail left))))
+          (==
+            (max
+              (cons head tail_left)
+              (add (cons head tail) right))
+            (by
+              (simpa only tail_left_proof)))
+          (==
+            (max
+              (cons head tail_left)
+              (cons head (add tail right)))
+            (by
+              (simpa only (add_cons head tail right))))
+          (==
+            (max
+              (cons head tail_left)
+              (cons head tail_right))
+            (by
+              (simpa only tail_right_proof)))
+          (==
+            (succ (max tail_left tail_right))
+            (by
+              (exact max_cons head tail_left head tail_right)))
+          (==
+            (succ (max (add tail left) tail_right))
+            (by
+              (simpa only (symm tail_left_proof))))
+          (==
+            (succ (max (add tail left) (add tail right)))
+            (by
+              (simpa only (symm tail_right_proof))))
+          (==
+            (succ (add tail (max left right)))
+            (by
+              (simpa only tail_distrib)))
+          (==
+            (succ (add tail inner_max))
+            (by
+              (simpa only inner_max_proof)))
+          (==
+            (succ tail_inner)
+            (by
+              (simpa only tail_inner_proof)))
+          (==
+            (cons (quote unit) tail_inner)
+            (by
+              (eval)))
+          (==
+            (cons head tail_inner)
+            (by
+              (simpa only (symm head_unit))))
+          (==
+            (cons head (add tail inner_max))
+            (by
+              (simpa only (symm tail_inner_proof))))
+          (==
+            (add (cons head tail) inner_max)
+            (by
+              (exact (symm (add_cons head tail inner_max)))))
+          (==
+            (add (cons head tail) (max left right))
+            (by
+              (simpa only (symm inner_max_proof)))))))))
+
 (theorem add_comm
   (forall left (is-list left)
     (forall right (is-list right)

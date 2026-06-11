@@ -35,6 +35,16 @@ fn nat_definitions_load_from_source() {
         mul(),
         Computation::Ref(super::super::computation_name("mul").unwrap())
     );
+    assert!(matches!(min_definition(), Computation::Lambda(_)));
+    assert_eq!(
+        min(),
+        Computation::Ref(super::super::computation_name("min").unwrap())
+    );
+    assert!(matches!(max_definition(), Computation::Lambda(_)));
+    assert_eq!(
+        max(),
+        Computation::Ref(super::super::computation_name("max").unwrap())
+    );
     assert_eq!(
         nat_eq(),
         Computation::Ref(super::super::computation_name("nat-eq").unwrap())

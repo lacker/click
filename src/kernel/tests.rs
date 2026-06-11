@@ -1428,6 +1428,76 @@ fn symbol_eq_true_elim_inverts_true_symbol_comparisons() {
 }
 
 #[test]
+fn symbol_eq_true_elims_expose_symbol_operands() {
+    let left = Computation::Quote(Symbol(8));
+    let right = Computation::Quote(Symbol(8));
+    let comparison = symbol_eq_computation(left.clone(), right.clone());
+
+    assert!(check(
+        &Proof::SymbolEqTrueLeftIsSymbol(Box::new(Proof::Step(comparison.clone()))),
+        &equal(
+            symbol_eq_computation(
+                value_kind_computation(left),
+                Computation::Quote(SYMBOL_KIND_SYMBOL),
+            ),
+            Computation::Quote(TRUE_SYMBOL),
+        )
+    ));
+    assert!(check(
+        &Proof::SymbolEqTrueRightIsSymbol(Box::new(Proof::Step(comparison))),
+        &equal(
+            symbol_eq_computation(
+                value_kind_computation(right),
+                Computation::Quote(SYMBOL_KIND_SYMBOL),
+            ),
+            Computation::Quote(TRUE_SYMBOL),
+        )
+    ));
+
+    let distinct =
+        symbol_eq_computation(Computation::Quote(Symbol(8)), Computation::Quote(Symbol(9)));
+    let invalid = Proof::SymbolEqTrueLeftIsSymbol(Box::new(Proof::Step(distinct)));
+    assert!(!check(
+        &invalid,
+        &equal(
+            symbol_eq_computation(
+                value_kind_computation(Computation::Quote(Symbol(8))),
+                Computation::Quote(SYMBOL_KIND_SYMBOL),
+            ),
+            Computation::Quote(TRUE_SYMBOL),
+        )
+    ));
+}
+
+#[test]
+fn symbol_eq_result_bool_extracts_boolean_result() {
+    let left = Computation::Quote(Symbol(8));
+    let right = Computation::Quote(Symbol(9));
+    let comparison = symbol_eq_computation(left, right);
+
+    assert!(check(
+        &Proof::SymbolEqResultBool(Box::new(Proof::Step(comparison))),
+        &is_bool(Computation::Quote(FALSE_SYMBOL))
+    ));
+}
+
+#[test]
+fn symbol_eq_result_bool_uses_contextual_value_facts() {
+    let comparison =
+        symbol_eq_computation(Computation::Var(Symbol(1)), Computation::Var(Symbol(2)));
+    let result = Computation::Var(Symbol(99));
+    let mut context = Context::new();
+    context.insert(Symbol(99), is_value(result.clone()));
+    context.insert(Symbol(100), equal(comparison, result.clone()));
+
+    assert!(check_in_context(
+        &Proof::SymbolEqResultBool(Box::new(Proof::Assume(Symbol(100)))),
+        &is_bool(result),
+        &context,
+    ));
+}
+
+#[test]
 fn symbol_eq_reduces_reflexive_open_symbol_in_context() {
     let value = Computation::Var(Symbol(1));
     let comparison = symbol_eq_computation(value.clone(), value.clone());
@@ -1435,7 +1505,6 @@ fn symbol_eq_reduces_reflexive_open_symbol_in_context() {
     assert!(!check(&Proof::Step(comparison.clone()), &expected));
 
     let mut context = Context::new();
-    context.insert(Symbol(9), is_value(value.clone()));
     context.insert(
         Symbol(10),
         equal(

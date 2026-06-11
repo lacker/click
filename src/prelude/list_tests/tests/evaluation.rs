@@ -1190,6 +1190,43 @@ fn is_singleton_pair_returns_false() {
 }
 
 #[test]
+fn is_pair_nil_returns_false() {
+    assert_evaluates(is_pair_call(nil()), Value::quote(prelude_symbol(":false")));
+}
+
+#[test]
+fn is_pair_singleton_returns_false() {
+    assert_evaluates(
+        is_pair_call(singleton(quote(A))),
+        Value::quote(prelude_symbol(":false")),
+    );
+}
+
+#[test]
+fn is_pair_pair_returns_true() {
+    assert_evaluates(
+        is_pair_call(pair(quote(A), quote(B))),
+        Value::quote(prelude_symbol(":true")),
+    );
+}
+
+#[test]
+fn is_pair_triple_returns_false() {
+    assert_evaluates(
+        is_pair_call(triple(quote(A), quote(B), unit())),
+        Value::quote(prelude_symbol(":false")),
+    );
+}
+
+#[test]
+fn is_pair_symbol_returns_false() {
+    assert_evaluates(
+        is_pair_call(quote(A)),
+        Value::quote(prelude_symbol(":false")),
+    );
+}
+
+#[test]
 fn loop_forever_diverges() {
     let theory = crate::prelude::theory();
     let computation = loop_forever_call();

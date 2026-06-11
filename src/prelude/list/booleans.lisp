@@ -94,6 +94,64 @@
             (if-effect-then-condition-false (assume if_is_true))
             (if-effect-then-else (assume if_is_true))))))))
 
+(theorem if_false_result_with_error_else
+  (forall condition
+    (forall then_value
+      (implies
+        (computes-to
+          (if condition then_value (error 0))
+          (quote :false))
+        (and
+          (computes-to condition (quote :true))
+          (computes-to then_value (quote :false))))))
+  (by
+    (intro condition)
+    (intro then_value)
+    (have condition_is_bool
+      (is-bool condition)
+      (proof
+        (if-value-condition-bool (assume then_value)))
+      (by
+        (or-elim condition_is_bool
+          condition_true
+          (by
+            (split
+              (by
+                (exact condition_true))
+              (by
+                (calc
+                  then_value
+                  (==
+                    (if condition then_value (error 0))
+                    (by
+                      (simpa only condition_true)))
+                  (==
+                    (quote :false)
+                    (by
+                      (exact then_value)))))))
+          condition_false
+          (by
+            (have impossible_eq
+              (computes-to (error 0) (quote :false))
+              (by
+                (calc
+                  (error 0)
+                  (==
+                    (if condition then_value (error 0))
+                    (by
+                      (simpa only condition_false)))
+                  (==
+                    (quote :false)
+                    (by
+                      (exact then_value)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (and
+                      (computes-to condition (quote :true))
+                      (computes-to then_value (quote :false)))))))))))))
+
 (theorem if_true_result_with_false_then
   (forall condition
     (forall else_branch
@@ -268,6 +326,186 @@
                       (computes-to condition (quote :true))
                       (computes-to then_branch (quote :false)))))))))))))
 
+(theorem if_false_result_with_false_else
+  (forall condition
+    (forall then_branch
+      (implies
+        (computes-to
+          (if condition then_branch (quote :false))
+          (quote :false))
+        (or
+          (computes-to condition (quote :false))
+          (and
+            (computes-to condition (quote :true))
+            (computes-to then_branch (quote :false)))))))
+  (by
+    (intro condition)
+    (intro then_branch)
+    (have condition_is_bool
+      (is-bool condition)
+      (proof
+        (if-value-condition-bool (assume then_branch)))
+      (by
+        (or-elim condition_is_bool
+          condition_true
+          (by
+            (right
+              (by
+                (split
+                  (by
+                    (exact condition_true))
+                  (by
+                    (calc
+                      then_branch
+                      (==
+                        (if condition then_branch (quote :false))
+                        (by
+                          (simpa only condition_true)))
+                      (==
+                        (quote :false)
+                        (by
+                          (exact then_branch)))))))))
+          condition_false
+          (by
+            (left
+              (by
+                (exact condition_false)))))))))
+
+(theorem if_true_result_with_true_then
+  (forall condition
+    (forall else_branch
+      (implies
+        (computes-to
+          (if condition (quote :true) else_branch)
+          (quote :true))
+        (or
+          (computes-to condition (quote :true))
+          (and
+            (computes-to condition (quote :false))
+            (computes-to else_branch (quote :true)))))))
+  (by
+    (intro condition)
+    (intro else_branch)
+    (have condition_is_bool
+      (is-bool condition)
+      (proof
+        (if-value-condition-bool (assume else_branch)))
+      (by
+        (or-elim condition_is_bool
+          condition_true
+          (by
+            (left
+              (by
+                (exact condition_true))))
+          condition_false
+          (by
+            (right
+              (by
+                (split
+                  (by
+                    (exact condition_false))
+                  (by
+                    (calc
+                      else_branch
+                      (==
+                        (if condition (quote :true) else_branch)
+                        (by
+                          (simpa only condition_false)))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact else_branch))))))))))))))
+
+(theorem if_true_result_with_true_else
+  (forall condition
+    (forall then_branch
+      (implies
+        (computes-to
+          (if condition then_branch (quote :true))
+          (quote :true))
+        (or
+          (computes-to condition (quote :false))
+          (and
+            (computes-to condition (quote :true))
+            (computes-to then_branch (quote :true)))))))
+  (by
+    (intro condition)
+    (intro then_branch)
+    (have condition_is_bool
+      (is-bool condition)
+      (proof
+        (if-value-condition-bool (assume then_branch)))
+      (by
+        (or-elim condition_is_bool
+          condition_true
+          (by
+            (right
+              (by
+                (split
+                  (by
+                    (exact condition_true))
+                  (by
+                    (calc
+                      then_branch
+                      (==
+                        (if condition then_branch (quote :true))
+                        (by
+                          (simpa only condition_true)))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact then_branch)))))))))
+          condition_false
+          (by
+            (left
+              (by
+                (exact condition_false)))))))))
+
+(theorem if_false_result_with_false_then
+  (forall condition
+    (forall else_branch
+      (implies
+        (computes-to
+          (if condition (quote :false) else_branch)
+          (quote :false))
+        (or
+          (computes-to condition (quote :true))
+          (and
+            (computes-to condition (quote :false))
+            (computes-to else_branch (quote :false)))))))
+  (by
+    (intro condition)
+    (intro else_branch)
+    (have condition_is_bool
+      (is-bool condition)
+      (proof
+        (if-value-condition-bool (assume else_branch)))
+      (by
+        (or-elim condition_is_bool
+          condition_true
+          (by
+            (left
+              (by
+                (exact condition_true))))
+          condition_false
+          (by
+            (right
+              (by
+                (split
+                  (by
+                    (exact condition_false))
+                  (by
+                    (calc
+                      else_branch
+                      (==
+                        (if condition (quote :false) else_branch)
+                        (by
+                          (simpa only condition_false)))
+                      (==
+                        (quote :false)
+                        (by
+                          (exact else_branch))))))))))))))
+
 (theorem symbol_eq_unit_unit
   (computes-to
     (symbol-eq (quote unit) (quote unit))
@@ -294,10 +532,128 @@
     (forall-intro left
       (forall-intro right
         (implies-intro symbol_eq_is_true
-          (computes-to
+        (computes-to
         (symbol-eq left right)
           (quote :true))
         (symbol-eq-true (assume symbol_eq_is_true)))))))
+
+(theorem symbol_eq_true_implies_is_symbol_left
+  (forall left
+    (forall right
+      (implies
+        (computes-to
+          (symbol-eq left right)
+          (quote :true))
+        (computes-to (is-symbol left) (quote :true)))))
+  (proof
+    (forall-intro left
+      (forall-intro right
+        (implies-intro symbols_equal
+          (computes-to
+            (symbol-eq left right)
+            (quote :true))
+          (trans
+            (eval-same
+              (is-symbol left)
+              (symbol-eq (value-kind left) (quote :symbol)))
+            (symbol-eq-true-left-is-symbol
+              (assume symbols_equal))))))))
+
+(theorem symbol_eq_true_implies_is_symbol_right
+  (forall left
+    (forall right
+      (implies
+        (computes-to
+          (symbol-eq left right)
+          (quote :true))
+        (computes-to (is-symbol right) (quote :true)))))
+  (proof
+    (forall-intro left
+      (forall-intro right
+        (implies-intro symbols_equal
+          (computes-to
+            (symbol-eq left right)
+            (quote :true))
+          (trans
+            (eval-same
+              (is-symbol right)
+              (symbol-eq (value-kind right) (quote :symbol)))
+            (symbol-eq-true-right-is-symbol
+              (assume symbols_equal))))))))
+
+(theorem symbol_eq_false_distinct
+  (forall left (computes-to (is-symbol left) (quote :true))
+    (forall right (computes-to (is-symbol right) (quote :true))
+      (implies
+        (computes-to
+          (symbol-eq left right)
+          (quote :false))
+        (implies
+          (computes-to left right)
+          (absurd)))))
+  (by
+    (intro left)
+    (intro right)
+    (intro symbols_distinct)
+    (intro values_same)
+    (have right_is_symbol_kind
+      (computes-to
+        (symbol-eq (value-kind right) (quote :symbol))
+        (quote :true))
+      (by
+        (calc
+          (symbol-eq (value-kind right) (quote :symbol))
+          (==
+            (is-symbol right)
+            (by
+              (eval)))
+          (==
+            (quote :true)
+            (by
+              (exact right))))))
+    (have symbols_equal
+      (computes-to
+        (symbol-eq left right)
+        (quote :true))
+      (by
+        (rewrite values_same)
+        (eval)))
+    (have false_is_true
+      (computes-to (quote :false) (quote :true))
+      (by
+        (calc
+          (quote :false)
+          (==
+            (symbol-eq left right)
+            (by
+              (exact (symm symbols_distinct))))
+          (==
+            (quote :true)
+            (by
+              (exact symbols_equal))))))
+    (exact (distinct-outcomes false_is_true))))
+
+(theorem symbol_eq_symm
+  (forall left
+    (forall right
+      (implies
+        (computes-to
+          (symbol-eq left right)
+          (quote :true))
+        (computes-to
+          (symbol-eq right left)
+          (quote :true)))))
+  (by
+    (intro left)
+    (intro right)
+    (have right_is_symbol_kind
+      (computes-to
+        (symbol-eq (value-kind right) (quote :symbol))
+        (quote :true))
+      (proof
+        (symbol-eq-true-right-is-symbol (assume right))))
+    (rewrite (symbol-eq-true right))
+    (eval)))
 
 (theorem symbol_eq_refl
   (forall value (is-value value)
@@ -310,6 +666,23 @@
     (intro value)
     (intro value_is_symbol)
     (eval)))
+
+(theorem symbol_eq_computes_to_bool
+  (forall left
+    (forall right
+      (forall result (is-value result)
+        (implies
+          (computes-to (symbol-eq left right) result)
+          (is-bool result)))))
+  (proof
+    (forall-intro left
+      (forall-intro right
+        (forall-intro result
+          (is-value result)
+          (implies-intro symbol_eq_result
+            (computes-to (symbol-eq left right) result)
+            (symbol-eq-result-bool
+              (assume symbol_eq_result))))))))
 
 (theorem true_is_bool
   (is-bool (quote :true))
@@ -407,6 +780,104 @@
     (intro left)
     (intro right)
     (simpa only right)))
+
+(theorem and_congr_left
+  (forall left_condition
+    (forall right_condition
+      (implies
+        (computes-to left_condition right_condition)
+        (forall right_operand
+          (computes-to
+            (and left_condition right_operand)
+            (and right_condition right_operand))))))
+  (by
+    (intro left_condition)
+    (intro right_condition)
+    (intro right_operand)
+    (simpa only right_condition)))
+
+(theorem and_congr_right
+  (forall condition
+    (forall left_operand
+      (forall right_operand
+        (implies
+          (computes-to left_operand right_operand)
+          (computes-to
+            (and condition left_operand)
+            (and condition right_operand))))))
+  (by
+    (intro condition)
+    (intro left_operand)
+    (intro right_operand)
+    (simpa only right_operand)))
+
+(theorem and_congr
+  (forall left_condition
+    (forall right_condition
+      (implies
+        (computes-to left_condition right_condition)
+        (forall left_operand
+          (forall right_operand
+            (implies
+              (computes-to left_operand right_operand)
+              (computes-to
+                (and left_condition left_operand)
+                (and right_condition right_operand))))))))
+  (by
+    (intro left_condition)
+    (intro right_condition)
+    (intro left_operand)
+    (intro right_operand)
+    (simpa only right_condition right_operand)))
+
+(theorem or_congr_left
+  (forall left_condition
+    (forall right_condition
+      (implies
+        (computes-to left_condition right_condition)
+        (forall right_operand
+          (computes-to
+            (or left_condition right_operand)
+            (or right_condition right_operand))))))
+  (by
+    (intro left_condition)
+    (intro right_condition)
+    (intro right_operand)
+    (simpa only right_condition)))
+
+(theorem or_congr_right
+  (forall condition
+    (forall left_operand
+      (forall right_operand
+        (implies
+          (computes-to left_operand right_operand)
+          (computes-to
+            (or condition left_operand)
+            (or condition right_operand))))))
+  (by
+    (intro condition)
+    (intro left_operand)
+    (intro right_operand)
+    (simpa only right_operand)))
+
+(theorem or_congr
+  (forall left_condition
+    (forall right_condition
+      (implies
+        (computes-to left_condition right_condition)
+        (forall left_operand
+          (forall right_operand
+            (implies
+              (computes-to left_operand right_operand)
+              (computes-to
+                (or left_condition left_operand)
+                (or right_condition right_operand))))))))
+  (by
+    (intro left_condition)
+    (intro right_condition)
+    (intro left_operand)
+    (intro right_operand)
+    (simpa only right_condition right_operand)))
 
 (theorem not_true_elim
   (forall condition (is-bool condition)

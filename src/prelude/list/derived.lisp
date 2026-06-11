@@ -39,6 +39,411 @@
     (intro value_eq_false)
     (simp only value_eq_false)))
 
+(theorem member_computes_to_bool
+  (forall value (is-value value)
+    (forall list (is-list list)
+      (forall result (is-value result)
+        (implies
+          (computes-to (member value list) result)
+          (is-bool result)))))
+  (by
+    (intro value)
+    (list-induction list
+      (by
+        (intro result)
+        (intro member_result)
+        (right
+          (by
+            (calc
+              result
+              (==
+                (member value nil)
+                (by
+                  (exact (symm member_result))))
+              (==
+                (quote :false)
+                (by
+                  (exact (member_nil value))))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro result)
+        (intro member_result)
+        (have member_branch_result
+          (computes-to
+            (if
+              (value-eq value (head (cons head tail)))
+              (quote :true)
+              (member value (tail (cons head tail))))
+            result)
+          (by
+            (calc
+              (if
+                (value-eq value (head (cons head tail)))
+                (quote :true)
+                (member value (tail (cons head tail))))
+              (==
+                (member value (cons head tail))
+                (by
+                  (eval)))
+              (==
+                result
+                (by
+                  (exact member_result)))))
+          (by
+            (have value_eq_bool
+              (is-bool
+                (value-eq value (head (cons head tail))))
+              (proof
+                (if-value-condition-bool
+                  (assume member_branch_result)))
+              (by
+                (or-elim value_eq_bool
+                  values_equal_through_cons
+                  (by
+                    (have values_equal
+                      (computes-to
+                        (value-eq value head)
+                        (quote :true))
+                      (by
+                        (calc
+                          (value-eq value head)
+                          (==
+                            (value-eq
+                              value
+                              (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact values_equal_through_cons)))))
+                      (by
+                        (left
+                          (by
+                            (calc
+                              result
+                              (==
+                                (member value (cons head tail))
+                                (by
+                                  (exact (symm member_result))))
+                              (==
+                                (quote :true)
+                                (by
+                                  (apply
+                                    member_cons_true
+                                    value
+                                    head
+                                    tail)))))))))
+                  values_distinct_through_cons
+                  (by
+                    (have values_distinct
+                      (computes-to
+                        (value-eq value head)
+                        (quote :false))
+                      (by
+                        (calc
+                          (value-eq value head)
+                          (==
+                            (value-eq
+                              value
+                              (head (cons head tail)))
+                            (by
+                              (eval)))
+                          (==
+                            (quote :false)
+                            (by
+                              (exact values_distinct_through_cons)))))
+                      (by
+                        (have tail_member_result
+                          (computes-to (member value tail) result)
+                          (by
+                            (calc
+                              (member value tail)
+                              (==
+                                (member value (cons head tail))
+                                (by
+                                  (simpa only values_distinct)))
+                              (==
+                                result
+                                (by
+                                  (exact member_result)))))
+                          (by
+                            (specialize tail_bool
+                              induction_hypothesis
+                              result)
+                            (exact tail_bool)))))))))))))))
+
+(theorem member_is_bool_for_comparable_value
+  (forall value (is-value value)
+    (implies
+      (forall element (is-value element)
+        (is-bool (value-eq value element)))
+      (forall list (is-list list)
+        (is-bool (member value list)))))
+  (by
+    (intro value)
+    (intro value_eq_returns_bool)
+    (list-induction list
+      (by
+        (right
+          (by
+            (exact member_nil value))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (or-elim
+          (value_eq_returns_bool head)
+          values_equal
+          (by
+            (left
+              (by
+                (apply member_cons_true value head tail))))
+          values_not_equal
+          (by
+            (or-elim
+              induction_hypothesis
+              tail_member_true
+              (by
+                (left
+                  (by
+                    (calc
+                      (member value (cons head tail))
+                      (==
+                        (member value tail)
+                        (by
+                          (apply member_cons_false value head tail)))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact tail_member_true)))))))
+              tail_member_false
+              (by
+                (right
+                  (by
+                    (calc
+                      (member value (cons head tail))
+                      (==
+                        (member value tail)
+                        (by
+                          (apply member_cons_false value head tail)))
+                      (==
+                        (quote :false)
+                        (by
+                          (exact tail_member_false)))))))))))))
+  )
+
+(theorem member_cons_or
+  (forall value (is-value value)
+    (implies
+      (forall element (is-value element)
+        (is-bool (value-eq value element)))
+      (forall head (is-value head)
+        (forall tail (is-list tail)
+          (computes-to
+            (member value (cons head tail))
+            (or (value-eq value head) (member value tail)))))))
+  (by
+    (intro value)
+    (intro value_eq_returns_bool)
+    (intro head)
+    (intro tail)
+    (have tail_member_bool
+      (is-bool (member value tail))
+      (by
+        (exact member_is_bool_for_comparable_value value tail))
+      (by
+        (or-elim
+          (value_eq_returns_bool head)
+          values_equal
+          (by
+            (have branch_true
+              (computes-to
+                (or (value-eq value head) (member value tail))
+                (quote :true))
+              (by
+                (apply
+                  or_true_left
+                  (value-eq value head)
+                  (member value tail)))
+              (by
+                (calc
+                  (member value (cons head tail))
+                  (==
+                    (quote :true)
+                    (by
+                      (apply member_cons_true value head tail)))
+                  (==
+                    (or (value-eq value head) (member value tail))
+                    (by
+                      (exact (symm branch_true))))))))
+          values_not_equal
+          (by
+            (have branch_false
+              (computes-to
+                (or (value-eq value head) (member value tail))
+                (member value tail))
+              (by
+                (apply
+                  or_false_left
+                  (value-eq value head)
+                  (member value tail)))
+              (by
+                (calc
+                  (member value (cons head tail))
+                  (==
+                    (member value tail)
+                    (by
+                      (apply member_cons_false value head tail)))
+                  (==
+                    (or (value-eq value head) (member value tail))
+                    (by
+                      (exact (symm branch_false)))))))))))
+  )
+  )
+
+(theorem member_append
+  (forall value (is-value value)
+    (implies
+      (forall element (is-value element)
+        (is-bool (value-eq value element)))
+      (forall left (is-list left)
+        (forall right (is-list right)
+          (computes-to
+            (member value (append left right))
+            (or (member value left) (member value right)))))))
+  (by
+    (intro value)
+    (intro value_eq_returns_bool)
+    (list-induction left
+      (by
+        (intro right)
+        (have right_member_bool
+          (is-bool (member value right))
+          (by
+            (exact
+              member_is_bool_for_comparable_value
+              value
+              right))
+          (by
+            (have nil_member_false
+              (computes-to (member value nil) (quote :false))
+              (by
+                (exact member_nil value))
+              (by
+                (have branch_false
+                  (computes-to
+                    (or (member value nil) (member value right))
+                    (member value right))
+                  (by
+                    (apply
+                      or_false_left
+                      (member value nil)
+                      (member value right)))
+                  (by
+                    (calc
+                      (member value (append nil right))
+                      (==
+                        (member value right)
+                        (by
+                          (simpa only (append_nil_returns_right right))))
+                      (==
+                        (or (member value nil) (member value right))
+                        (by
+                          (exact (symm branch_false))))))))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro right)
+        (obtain tail_right tail_right_proof
+          (append_computes_to_list tail right))
+        (have value_eq_bool
+          (is-bool (value-eq value head))
+          (by
+            (exact value_eq_returns_bool head))
+          (by
+            (have tail_member_bool
+              (is-bool (member value tail))
+              (by
+                (exact
+                  member_is_bool_for_comparable_value
+                  value
+                  tail))
+              (by
+                (have right_member_bool
+                  (is-bool (member value right))
+                  (by
+                    (exact
+                      member_is_bool_for_comparable_value
+                      value
+                      right))
+                  (by
+                    (have current_member_step
+                      (computes-to
+                        (member value (cons head tail))
+                        (or (value-eq value head) (member value tail)))
+                      (by
+                        (exact member_cons_or value head tail))
+                      (by
+                        (calc
+                          (member
+                            value
+                            (append (cons head tail) right))
+                          (==
+                            (member
+                              value
+                              (cons head (append tail right)))
+                            (by
+                              (simpa only (append_cons head tail right))))
+                          (==
+                            (member value (cons head tail_right))
+                            (by
+                              (simpa only tail_right_proof)))
+                          (==
+                            (or
+                              (value-eq value head)
+                              (member value tail_right))
+                            (by
+                              (exact member_cons_or value head tail_right)))
+                          (==
+                            (or
+                              (value-eq value head)
+                              (member value (append tail right)))
+                            (by
+                              (simpa only (symm tail_right_proof))))
+                          (==
+                            (or
+                              (value-eq value head)
+                              (or
+                                (member value tail)
+                                (member value right)))
+                            (by
+                              (simpa only (induction_hypothesis right))))
+                          (==
+                            (or
+                              (or
+                                (value-eq value head)
+                                (member value tail))
+                              (member value right))
+                            (by
+                              (simpa
+                                only
+                                (or_assoc
+                                  (value-eq value head)
+                                  (member value tail)
+                                  (member value right)))))
+                          (==
+                            (or
+                              (member value (cons head tail))
+                              (member value right))
+                            (by
+                              (rewrite (symm current_member_step))
+                              (eval)))))))))))))))
+  )
+
 (theorem partition_computes_to_pair
   (forall predicate (is-value predicate)
     (implies
@@ -1174,6 +1579,929 @@
                   (by
                     (specialize tail_missing induction_hypothesis)
                     (apply elem_index_cons_false_none value head tail))))))))))
+  )
+
+(theorem elem_index_cons_some_cases
+  (forall value (is-value value)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (forall index (is-list index)
+          (implies
+            (computes-to
+              (elem-index value (cons head tail))
+              (some index))
+            (or
+              (computes-to (value-eq value head) (quote :true))
+              (exists tail_index (is-list tail_index)
+                (and
+                  (computes-to (value-eq value head) (quote :false))
+                  (computes-to
+                    (elem-index value tail)
+                    (some tail_index))))))))))
+  (by
+    (intro value)
+    (intro head)
+    (intro tail)
+    (intro index)
+    (intro elem_found)
+    (have elem_branch_result
+      (computes-to
+        (if
+          (value-eq value (head (cons head tail)))
+          (some nil)
+          ((lambda branch_option
+             (if
+               (is-some branch_option)
+               (some (cons (quote unit) (head (tail branch_option))))
+               none))
+           (elem-index value (tail (cons head tail)))))
+        (cons (quote :some) (cons index nil)))
+      (by
+        (calc
+          (if
+            (value-eq value (head (cons head tail)))
+            (some nil)
+            ((lambda branch_option
+               (if
+                 (is-some branch_option)
+                 (some (cons (quote unit) (head (tail branch_option))))
+                 none))
+             (elem-index value (tail (cons head tail)))))
+          (==
+            (elem-index value (cons head tail))
+            (by
+              (exact (symm (elem_index_cons_branch value head tail)))))
+          (==
+            (some index)
+            (by
+              (exact elem_found)))
+          (==
+            (cons (quote :some) (cons index nil))
+            (by
+              (eval)))))
+      (by
+        (have value_eq_bool
+          (is-bool
+            (value-eq value (head (cons head tail))))
+          (proof
+            (if-value-condition-bool
+              (assume elem_branch_result)))
+          (by
+            (or-elim value_eq_bool
+              values_equal_through_cons
+              (by
+                (left
+                  (by
+                    (calc
+                      (value-eq value head)
+                      (==
+                        (value-eq value (head (cons head tail)))
+                        (by
+                          (eval)))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact values_equal_through_cons)))))))
+              values_not_equal_through_cons
+              (by
+                (have values_not_equal
+                  (computes-to
+                    (value-eq value head)
+                    (quote :false))
+                  (by
+                    (calc
+                      (value-eq value head)
+                      (==
+                        (value-eq value (head (cons head tail)))
+                        (by
+                          (eval)))
+                      (==
+                        (quote :false)
+                        (by
+                          (exact values_not_equal_through_cons)))))
+                  (by
+                    (have branch_application
+                      (computes-to
+                        ((lambda branch_option
+                           (if
+                             (is-some branch_option)
+                             (some
+                               (cons
+                                 (quote unit)
+                                 (head (tail branch_option))))
+                             none))
+                         (elem-index value (tail (cons head tail))))
+                        (cons (quote :some) (cons index nil)))
+                      (by
+                        (calc
+                          ((lambda branch_option
+                             (if
+                               (is-some branch_option)
+                               (some
+                                 (cons
+                                   (quote unit)
+                                   (head (tail branch_option))))
+                               none))
+                           (elem-index value (tail (cons head tail))))
+                          (==
+                            (elem-index value (cons head tail))
+                            (by
+                              (simpa only values_not_equal)))
+                          (==
+                            (some index)
+                            (by
+                              (exact elem_found)))
+                          (==
+                            (cons (quote :some) (cons index nil))
+                            (by
+                              (eval)))))
+                      (by
+                        (obtain tail_result tail_result_proof
+                          (apply-value-argument
+                            tail_result
+                            (assume branch_application))
+                          (by
+                            (have tail_result_from_tail
+                              (computes-to
+                                (elem-index value tail)
+                                tail_result)
+                              (by
+                                (calc
+                                  (elem-index value tail)
+                                  (==
+                                    (elem-index
+                                      value
+                                      (tail (cons head tail)))
+                                    (by
+                                      (eval)))
+                                  (==
+                                    tail_result
+                                    (by
+                                      (exact tail_result_proof)))))
+                              (by
+                                (specialize tail_option
+                                  elem_index_computes_to_option
+                                  value
+                                  tail
+                                  tail_result)
+                                (or-elim tail_option
+                                  tail_none
+                                  (by
+                                    (have tail_missing
+                                      (computes-to
+                                        (elem-index value tail)
+                                        none)
+                                      (by
+                                        (calc
+                                          (elem-index value tail)
+                                          (==
+                                            tail_result
+                                            (by
+                                              (exact tail_result_from_tail)))
+                                          (==
+                                            none
+                                            (by
+                                              (exact tail_none)))))
+                                      (by
+                                        (have cons_missing
+                                          (computes-to
+                                            (elem-index
+                                              value
+                                              (cons head tail))
+                                            none)
+                                          (by
+                                            (apply
+                                              elem_index_cons_false_none
+                                              value
+                                              head
+                                              tail))
+                                          (by
+                                            (have impossible_eq
+                                              (computes-to (some index) none)
+                                              (by
+                                                (calc
+                                                  (some index)
+                                                  (==
+                                                    (elem-index
+                                                      value
+                                                      (cons head tail))
+                                                    (by
+                                                      (exact
+                                                        (symm elem_found))))
+                                                  (==
+                                                    none
+                                                    (by
+                                                      (exact cons_missing)))))
+                                              (by
+                                                (have contradiction
+                                                  (absurd)
+                                                  (by
+                                                    (apply
+                                                      some_none_absurd
+                                                      index))
+                                                  (by
+                                                    (exact
+                                                      (absurd-elim
+                                                        contradiction
+                                                        (or
+                                                          (computes-to
+                                                            (value-eq
+                                                              value
+                                                              head)
+                                                            (quote :true))
+                                                          (exists tail_index
+                                                            (is-list
+                                                              tail_index)
+                                                            (and
+                                                              (computes-to
+                                                                (value-eq
+                                                                  value
+                                                                  head)
+                                                                (quote :false))
+                                                              (computes-to
+                                                                (elem-index
+                                                                  value
+                                                                  tail)
+                                                                (some
+                                                                  tail_index))))))))))))))))
+                                  tail_some_exists
+                                  (by
+                                    (obtain tail_index tail_some tail_some_exists)
+                                    (have tail_found
+                                      (computes-to
+                                        (elem-index value tail)
+                                        (some tail_index))
+                                      (by
+                                        (calc
+                                          (elem-index value tail)
+                                          (==
+                                            tail_result
+                                            (by
+                                              (exact tail_result_from_tail)))
+                                          (==
+                                            (some tail_index)
+                                            (by
+                                              (exact tail_some)))))
+                                      (by
+                                        (right
+                                          (by
+                                            (exists tail_index
+                                              (by
+                                                (split
+                                                  (by
+                                                    (exact
+                                                      values_not_equal))
+                                                  (by
+                                                    (exact
+                                                      tail_found)))))))))))))))))))))))))
+  )
+  )
+
+(theorem elem_index_append_left
+  (forall value (is-value value)
+    (forall left (is-list left)
+      (forall right (is-list right)
+        (forall index (is-list index)
+          (implies
+            (computes-to
+              (elem-index value left)
+              (some index))
+            (computes-to
+              (elem-index value (append left right))
+              (some index)))))))
+  (by
+    (intro value)
+    (list-induction left
+      (by
+        (intro right)
+        (intro index)
+        (intro elem_found)
+        (have impossible_eq
+          (computes-to (some index) none)
+          (by
+            (calc
+              (some index)
+              (==
+                (elem-index value nil)
+                (by
+                  (exact (symm elem_found))))
+              (==
+                none
+                (by
+                  (exact elem_index_nil value)))))
+          (by
+            (have contradiction
+              (absurd)
+              (by
+                (apply some_none_absurd index))
+              (by
+                (exact
+                  (absurd-elim
+                    contradiction
+                    (computes-to
+                      (elem-index value (append nil right))
+                      (some index)))))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro right)
+        (intro index)
+        (intro elem_found)
+        (obtain tail_right tail_right_proof
+          (append_computes_to_list tail right))
+        (specialize cons_cases
+          elem_index_cons_some_cases
+          value
+          head
+          tail
+          index)
+        (or-elim cons_cases
+          values_equal
+          (by
+            (have current_found
+              (computes-to
+                (elem-index value (cons head tail))
+                (some nil))
+              (by
+                (apply elem_index_cons_true value head tail))
+              (by
+                (calc
+                  (elem-index value (append (cons head tail) right))
+                  (==
+                    (elem-index value (cons head (append tail right)))
+                    (by
+                      (simpa only (append_cons head tail right))))
+                  (==
+                    (elem-index value (cons head tail_right))
+                    (by
+                      (simpa only tail_right_proof)))
+                  (==
+                    (some nil)
+                    (by
+                      (apply elem_index_cons_true value head tail_right)))
+                  (==
+                    (elem-index value (cons head tail))
+                    (by
+                      (exact (symm current_found))))
+                  (==
+                    (some index)
+                    (by
+                      (exact elem_found)))))))
+          tail_found_exists
+          (by
+            (obtain tail_index tail_parts tail_found_exists)
+            (cases tail_parts values_not_equal tail_found)
+            (specialize tail_appended_found
+              induction_hypothesis
+              right
+              tail_index)
+            (have current_found
+              (computes-to
+                (elem-index value (cons head tail))
+                (some (cons (quote unit) tail_index)))
+              (by
+                (apply
+                  elem_index_cons_false_some
+                  value
+                  head
+                  tail
+                  tail_index))
+              (by
+                (calc
+                  (elem-index value (append (cons head tail) right))
+                  (==
+                    (elem-index value (cons head (append tail right)))
+                    (by
+                      (simpa only (append_cons head tail right))))
+                  (==
+                    (elem-index value (cons head tail_right))
+                    (by
+                      (simpa only tail_right_proof)))
+                  (==
+                    ((lambda tail_result
+                       (if
+                         (is-some tail_result)
+                         (some
+                           (cons
+                             (quote unit)
+                             (head (tail tail_result))))
+                         none))
+                     (elem-index value tail_right))
+                    (by
+                      (simpa only
+                        (elem_index_cons_false_branch
+                          value
+                          head
+                          tail_right))))
+                  (==
+                    ((lambda tail_result
+                       (if
+                         (is-some tail_result)
+                         (some
+                           (cons
+                             (quote unit)
+                             (head (tail tail_result))))
+                         none))
+                     (elem-index value (append tail right)))
+                    (by
+                      (simpa only (symm tail_right_proof))))
+                  (==
+                    ((lambda tail_result
+                       (if
+                         (is-some tail_result)
+                         (some
+                           (cons
+                             (quote unit)
+                             (head (tail tail_result))))
+                         none))
+                     (some tail_index))
+                    (by
+                      (simpa only tail_appended_found)))
+                  (==
+                    (some (cons (quote unit) tail_index))
+                    (by
+                      (eval)))
+                  (==
+                    (elem-index value (cons head tail))
+                    (by
+                      (exact (symm current_found))))
+                  (==
+                    (some index)
+                    (by
+                      (exact elem_found)))))))))
+  )
+  )
+  )
+
+(theorem elem_index_cons_none_parts
+  (forall value (is-value value)
+    (forall head (is-value head)
+      (forall tail (is-list tail)
+        (implies
+          (computes-to
+            (elem-index value (cons head tail))
+            none)
+          (and
+            (computes-to (value-eq value head) (quote :false))
+            (computes-to (elem-index value tail) none))))))
+  (by
+    (intro value)
+    (intro head)
+    (intro tail)
+    (intro elem_missing)
+    (have elem_branch_result
+      (computes-to
+        (if
+          (value-eq value (head (cons head tail)))
+          (some nil)
+          ((lambda branch_option
+             (if
+               (is-some branch_option)
+               (some (cons (quote unit) (head (tail branch_option))))
+               none))
+           (elem-index value (tail (cons head tail)))))
+        (quote :none))
+      (by
+        (calc
+          (if
+            (value-eq value (head (cons head tail)))
+            (some nil)
+            ((lambda branch_option
+               (if
+                 (is-some branch_option)
+                 (some (cons (quote unit) (head (tail branch_option))))
+                 none))
+             (elem-index value (tail (cons head tail)))))
+          (==
+            (elem-index value (cons head tail))
+            (by
+              (exact (symm (elem_index_cons_branch value head tail)))))
+          (==
+            none
+            (by
+              (exact elem_missing)))
+          (==
+            (quote :none)
+            (by
+              (eval)))))
+      (by
+        (have value_eq_bool
+          (is-bool
+            (value-eq value (head (cons head tail))))
+          (proof
+            (if-value-condition-bool
+              (assume elem_branch_result)))
+          (by
+            (or-elim value_eq_bool
+              values_equal_through_cons
+              (by
+                (have values_equal
+                  (computes-to
+                    (value-eq value head)
+                    (quote :true))
+                  (by
+                    (calc
+                      (value-eq value head)
+                      (==
+                        (value-eq value (head (cons head tail)))
+                        (by
+                          (eval)))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact values_equal_through_cons)))))
+                  (by
+                    (have cons_found
+                      (computes-to
+                        (elem-index value (cons head tail))
+                        (some nil))
+                      (by
+                        (apply elem_index_cons_true value head tail))
+                      (by
+                        (have impossible_eq
+                          (computes-to (some nil) none)
+                          (by
+                            (calc
+                              (some nil)
+                              (==
+                                (elem-index value (cons head tail))
+                                (by
+                                  (exact (symm cons_found))))
+                              (==
+                                none
+                                (by
+                                  (exact elem_missing)))))
+                          (by
+                            (have contradiction
+                              (absurd)
+                              (by
+                                (apply some_none_absurd nil))
+                              (by
+                                (exact
+                                  (absurd-elim
+                                    contradiction
+                                    (and
+                                      (computes-to
+                                        (value-eq value head)
+                                        (quote :false))
+                                      (computes-to
+                                        (elem-index value tail)
+                                        none)))))))))))))
+              values_not_equal_through_cons
+              (by
+                (have values_not_equal
+                  (computes-to
+                    (value-eq value head)
+                    (quote :false))
+                  (by
+                    (calc
+                      (value-eq value head)
+                      (==
+                        (value-eq value (head (cons head tail)))
+                        (by
+                          (eval)))
+                      (==
+                        (quote :false)
+                        (by
+                          (exact values_not_equal_through_cons)))))
+                  (by
+                    (have branch_application
+                      (computes-to
+                        ((lambda branch_option
+                           (if
+                             (is-some branch_option)
+                             (some
+                               (cons
+                                 (quote unit)
+                                 (head (tail branch_option))))
+                             none))
+                         (elem-index value (tail (cons head tail))))
+                        (quote :none))
+                      (by
+                        (calc
+                          ((lambda branch_option
+                             (if
+                               (is-some branch_option)
+                               (some
+                                 (cons
+                                   (quote unit)
+                                   (head (tail branch_option))))
+                               none))
+                           (elem-index value (tail (cons head tail))))
+                          (==
+                            (elem-index value (cons head tail))
+                            (by
+                              (simpa only values_not_equal)))
+                          (==
+                            none
+                            (by
+                              (exact elem_missing)))
+                          (==
+                            (quote :none)
+                            (by
+                              (eval)))))
+                      (by
+                        (obtain tail_result tail_result_proof
+                          (apply-value-argument
+                            tail_result
+                            (assume branch_application))
+                          (by
+                            (have tail_result_from_tail
+                              (computes-to
+                                (elem-index value tail)
+                                tail_result)
+                              (by
+                                (calc
+                                  (elem-index value tail)
+                                  (==
+                                    (elem-index
+                                      value
+                                      (tail (cons head tail)))
+                                    (by
+                                      (eval)))
+                                  (==
+                                    tail_result
+                                    (by
+                                      (exact tail_result_proof)))))
+                              (by
+                                (specialize tail_option
+                                  elem_index_computes_to_option
+                                  value
+                                  tail
+                                  tail_result)
+                                (or-elim tail_option
+                                  tail_none
+                                  (by
+                                    (have tail_missing
+                                      (computes-to
+                                        (elem-index value tail)
+                                        none)
+                                      (by
+                                        (calc
+                                          (elem-index value tail)
+                                          (==
+                                            tail_result
+                                            (by
+                                              (exact tail_result_from_tail)))
+                                          (==
+                                            none
+                                            (by
+                                              (exact tail_none)))))
+                                      (by
+                                        (split
+                                          (by
+                                            (exact values_not_equal))
+                                          (by
+                                            (exact tail_missing))))))
+                                  tail_some_exists
+                                  (by
+                                    (obtain tail_index tail_some tail_some_exists)
+                                    (have tail_found
+                                      (computes-to
+                                        (elem-index value tail)
+                                        (some tail_index))
+                                      (by
+                                        (calc
+                                          (elem-index value tail)
+                                          (==
+                                            tail_result
+                                            (by
+                                              (exact tail_result_from_tail)))
+                                          (==
+                                            (some tail_index)
+                                            (by
+                                              (exact tail_some)))))
+                                      (by
+                                        (have cons_found
+                                          (computes-to
+                                            (elem-index
+                                              value
+                                              (cons head tail))
+                                            (some
+                                              (cons
+                                                (quote unit)
+                                                tail_index)))
+                                          (by
+                                            (apply
+                                              elem_index_cons_false_some
+                                              value
+                                              head
+                                              tail
+                                              tail_index))
+                                          (by
+                                            (have impossible_eq
+                                              (computes-to
+                                                (some
+                                                  (cons
+                                                    (quote unit)
+                                                    tail_index))
+                                                none)
+                                              (by
+                                                (calc
+                                                  (some
+                                                    (cons
+                                                      (quote unit)
+                                                      tail_index))
+                                                  (==
+                                                    (elem-index
+                                                      value
+                                                      (cons head tail))
+                                                    (by
+                                                      (exact
+                                                        (symm
+                                                          cons_found))))
+                                                  (==
+                                                    none
+                                                    (by
+                                                      (exact elem_missing)))))
+                                              (by
+                                                (have contradiction
+                                                  (absurd)
+                                                  (by
+                                                    (apply
+                                                      some_none_absurd
+                                                      (cons
+                                                        (quote unit)
+                                                        tail_index)))
+                                                  (by
+                                                    (exact
+                                                      (absurd-elim
+                                                        contradiction
+                                                        (and
+                                                          (computes-to
+                                                            (value-eq
+                                                              value
+                                                              head)
+                                                            (quote :false))
+                                                          (computes-to
+                                                            (elem-index
+                                                              value
+                                                              tail)
+                                                            none)))))))))))))))))))))))))))))
+  )
+
+(theorem elem_index_append_right
+  (forall value (is-value value)
+    (forall left (is-list left)
+      (forall right (is-list right)
+        (forall index (is-list index)
+          (implies
+            (computes-to (elem-index value left) none)
+            (implies
+              (computes-to (elem-index value right) (some index))
+              (computes-to
+                (elem-index value (append left right))
+                (some (append (length left) index)))))))))
+  (by
+    (intro value)
+    (list-induction left
+      (by
+        (intro right)
+        (intro index)
+        (intro left_missing)
+        (intro right_found)
+        (calc
+          (elem-index value (append nil right))
+          (==
+            (elem-index value right)
+            (by
+              (simpa only (append_nil_returns_right right))))
+          (==
+            (some index)
+            (by
+              (exact right_found)))
+          (==
+            (some (append nil index))
+            (by
+              (rewrite (symm (append_nil_returns_right index)))
+              (eval)))
+          (==
+            (some (append (length nil) index))
+            (by
+              (rewrite (symm length_nil))
+              (eval)))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro right)
+        (intro index)
+        (intro left_missing)
+        (intro right_found)
+        (specialize left_parts
+          elem_index_cons_none_parts
+          value
+          head
+          tail)
+        (cases left_parts values_not_equal tail_missing)
+        (specialize tail_appended_found
+          induction_hypothesis
+          right
+          index)
+        (obtain tail_right tail_right_proof
+          (append_computes_to_list tail right))
+        (obtain tail_length tail_length_proof
+          (length_computes_to_list tail))
+        (obtain shifted_index shifted_index_proof
+          (append_computes_to_list tail_length index))
+        (have tail_appended_shifted
+          (computes-to
+            (elem-index value (append tail right))
+            (some shifted_index))
+          (by
+            (calc
+              (elem-index value (append tail right))
+              (==
+                (some (append (length tail) index))
+                (by
+                  (exact tail_appended_found)))
+              (==
+                (some (append tail_length index))
+                (by
+                  (simpa only tail_length_proof)))
+              (==
+                (some shifted_index)
+                (by
+                  (simpa only shifted_index_proof))))))
+        (calc
+          (elem-index value (append (cons head tail) right))
+          (==
+            (elem-index value (cons head (append tail right)))
+            (by
+              (simpa only (append_cons head tail right))))
+          (==
+            (elem-index value (cons head tail_right))
+            (by
+              (simpa only tail_right_proof)))
+          (==
+            ((lambda tail_result
+               (if
+                 (is-some tail_result)
+                 (some
+                   (cons
+                     (quote unit)
+                     (head (tail tail_result))))
+                 none))
+             (elem-index value tail_right))
+            (by
+              (simpa only
+                (elem_index_cons_false_branch
+                  value
+                  head
+                  tail_right))))
+          (==
+            ((lambda tail_result
+               (if
+                 (is-some tail_result)
+                 (some
+                   (cons
+                     (quote unit)
+                     (head (tail tail_result))))
+                 none))
+             (elem-index value (append tail right)))
+            (by
+              (simpa only (symm tail_right_proof))))
+          (==
+            ((lambda tail_result
+               (if
+                 (is-some tail_result)
+                 (some
+                   (cons
+                     (quote unit)
+                     (head (tail tail_result))))
+                 none))
+             (some shifted_index))
+            (by
+              (simpa only tail_appended_shifted)))
+          (==
+            (some (cons (quote unit) shifted_index))
+            (by
+              (eval)))
+          (==
+            (some (cons (quote unit) (append tail_length index)))
+            (by
+              (simpa only (symm shifted_index_proof))))
+          (==
+            (some (append (cons (quote unit) tail_length) index))
+            (by
+              (simpa only
+                (symm
+                  (append_cons
+                    (quote unit)
+                    tail_length
+                    index)))))
+          (==
+            (some
+              (append
+                (cons (quote unit) (length tail))
+                index))
+            (by
+              (simpa only (symm tail_length_proof))))
+          (==
+            (some (append (length (cons head tail)) index))
+            (by
+              (simpa only (symm (length_cons head tail)))))))))
   )
 
 (theorem member_true_implies_elem_index_some
@@ -3761,6 +5089,620 @@
                 (by
                   (simpa only (induction_hypothesis tail)))))))))))
 
+(theorem drop_drop
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall list (is-list list)
+        (computes-to
+          (drop right (drop left list))
+          (drop (append left right) list)))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (intro list)
+        (have dropped_zero
+          (computes-to (drop nil list) list)
+          (by
+            (exact drop_zero list))
+          (by
+            (have append_nil_right
+              (computes-to (append nil right) right)
+              (by
+                (exact append_nil_returns_right right))
+              (by
+                (specialize append_count_forward
+                  drop_congr_count_computation
+                  (append nil right)
+                  right
+                  list)
+                (calc
+                  (drop right (drop nil list))
+                  (==
+                    (drop right list)
+                    (by
+                      (exact
+                        drop_congr_list_computation
+                        right
+                        (drop nil list)
+                        list)))
+                  (==
+                    (drop (append nil right) list)
+                    (by
+                      (exact
+                        (symm append_count_forward))))))))))
+      left_head
+      left_tail
+      induction_hypothesis
+      (by
+        (intro right)
+        (list-induction list
+          (by
+            (obtain appended_tail appended_tail_proof
+              (append_computes_to_list left_tail right))
+            (have appended_count_shape
+              (computes-to
+                (append (cons left_head left_tail) right)
+                (cons left_head appended_tail))
+              (by
+                (calc
+                  (append (cons left_head left_tail) right)
+                  (==
+                    (cons left_head (append left_tail right))
+                    (by
+                      (exact
+                        append_cons
+                        left_head
+                        left_tail
+                        right)))
+                  (==
+                    (cons left_head appended_tail)
+                    (by
+                      (simpa only appended_tail_proof)))))
+              (by
+                (have dropped_left
+                  (computes-to
+                    (drop (cons left_head left_tail) nil)
+                    nil)
+                  (by
+                    (exact drop_nil (cons left_head left_tail)))
+                  (by
+                    (specialize appended_count_forward
+                      drop_congr_count_computation
+                      (append (cons left_head left_tail) right)
+                      (cons left_head appended_tail)
+                      nil)
+                    (calc
+                      (drop right (drop (cons left_head left_tail) nil))
+                      (==
+                        (drop right nil)
+                        (by
+                          (exact
+                            drop_congr_list_computation
+                            right
+                            (drop (cons left_head left_tail) nil)
+                            nil)))
+                      (==
+                        nil
+                        (by
+                          (exact drop_nil right)))
+                      (==
+                        (drop (cons left_head appended_tail) nil)
+                        (by
+                          (exact
+                            (symm
+                              (drop_nil
+                                (cons left_head appended_tail))))))
+                      (==
+                        (drop
+                          (append (cons left_head left_tail) right)
+                          nil)
+                        (by
+                          (exact
+                            (symm appended_count_forward))))))))))
+          head
+          tail
+          list_induction_hypothesis
+          (by
+            (obtain appended_tail appended_tail_proof
+              (append_computes_to_list left_tail right))
+            (obtain dropped_tail dropped_tail_proof
+              (drop_computes_to_list left_tail tail))
+            (have appended_count_shape
+              (computes-to
+                (append (cons left_head left_tail) right)
+                (cons left_head appended_tail))
+              (by
+                (calc
+                  (append (cons left_head left_tail) right)
+                  (==
+                    (cons left_head (append left_tail right))
+                    (by
+                      (exact
+                        append_cons
+                        left_head
+                        left_tail
+                        right)))
+                  (==
+                    (cons left_head appended_tail)
+                    (by
+                      (simpa only appended_tail_proof)))))
+              (by
+                (have dropped_left_value
+                  (computes-to
+                    (drop
+                      (cons left_head left_tail)
+                      (cons head tail))
+                    dropped_tail)
+                  (by
+                    (calc
+                      (drop
+                        (cons left_head left_tail)
+                        (cons head tail))
+                      (==
+                        (drop left_tail tail)
+                        (by
+                          (exact
+                            drop_cons
+                            left_head
+                            left_tail
+                            head
+                            tail)))
+                      (==
+                        dropped_tail
+                          (by
+                            (exact dropped_tail_proof)))))
+                  (by
+                    (specialize dropped_tail_forward
+                      drop_congr_list_computation
+                      right
+                      (drop left_tail tail)
+                      dropped_tail)
+                    (specialize appended_count_forward
+                      drop_congr_count_computation
+                      (append (cons left_head left_tail) right)
+                      (cons left_head appended_tail)
+                      (cons head tail))
+                    (calc
+                      (drop
+                        right
+                        (drop
+                          (cons left_head left_tail)
+                          (cons head tail)))
+                      (==
+                        (drop right dropped_tail)
+                        (by
+                          (exact
+                            drop_congr_list_computation
+                            right
+                            (drop
+                              (cons left_head left_tail)
+                              (cons head tail))
+                            dropped_tail)))
+                      (==
+                        (drop right (drop left_tail tail))
+                        (by
+                          (exact
+                            (symm dropped_tail_forward))))
+                      (==
+                        (drop (append left_tail right) tail)
+                        (by
+                          (exact (induction_hypothesis right tail))))
+                      (==
+                        (drop appended_tail tail)
+                        (by
+                          (exact
+                            drop_congr_count_computation
+                            (append left_tail right)
+                            appended_tail
+                            tail)))
+                      (==
+                        (drop
+                          (cons left_head appended_tail)
+                          (cons head tail))
+                        (by
+                          (exact
+                            (symm
+                              (drop_cons
+                                left_head
+                                appended_tail
+                                head
+                                tail)))))
+                      (==
+                        (drop
+                          (append (cons left_head left_tail) right)
+                          (cons head tail))
+                        (by
+                          (exact
+                            (symm appended_count_forward)))))))))))
+  )
+)
+)
+)
+
+(theorem take_drop_commute
+  (forall take_count (is-list take_count)
+    (forall drop_count (is-list drop_count)
+      (forall list (is-list list)
+        (computes-to
+          (take take_count (drop drop_count list))
+          (drop
+            drop_count
+            (take (append drop_count take_count) list))))))
+  (by
+    (intro take_count)
+    (list-induction drop_count
+      (by
+        (intro list)
+        (obtain taken_list taken_list_proof
+          (take_computes_to_list take_count list))
+        (have append_nil_right
+          (computes-to (append nil take_count) take_count)
+          (by
+            (exact append_nil_returns_right take_count))
+          (by
+            (have take_appended
+              (computes-to
+                (take (append nil take_count) list)
+                taken_list)
+              (by
+                (specialize take_count_forward
+                  take_congr_count_computation
+                  (append nil take_count)
+                  take_count
+                  list)
+                (calc
+                  (take (append nil take_count) list)
+                  (==
+                    (take take_count list)
+                    (by
+                      (exact take_count_forward)))
+                  (==
+                    taken_list
+                    (by
+                      (exact taken_list_proof)))))
+              (by
+                (have dropped_zero
+                  (computes-to (drop nil list) list)
+                  (by
+                    (exact drop_zero list))
+                  (by
+                    (specialize rhs_drop_forward
+                      drop_congr_list_computation
+                      nil
+                      (take (append nil take_count) list)
+                      taken_list)
+                    (calc
+                      (take take_count (drop nil list))
+                      (==
+                        (take take_count list)
+                        (by
+                          (exact
+                            take_congr_list_computation
+                            take_count
+                            (drop nil list)
+                            list)))
+                      (==
+                        taken_list
+                        (by
+                          (exact taken_list_proof)))
+                      (==
+                        (drop nil taken_list)
+                        (by
+                          (exact (symm (drop_zero taken_list)))))
+                      (==
+                        (drop
+                          nil
+                          (take (append nil take_count) list))
+                        (by
+                          (exact (symm rhs_drop_forward))))))))))))
+      drop_head
+      drop_tail
+      induction_hypothesis
+      (by
+        (list-induction list
+          (by
+            (obtain appended_tail appended_tail_proof
+              (append_computes_to_list drop_tail take_count))
+            (have appended_count_shape
+              (computes-to
+                (append (cons drop_head drop_tail) take_count)
+                (cons drop_head appended_tail))
+              (by
+                (calc
+                  (append (cons drop_head drop_tail) take_count)
+                  (==
+                    (cons drop_head (append drop_tail take_count))
+                    (by
+                      (exact
+                        append_cons
+                        drop_head
+                        drop_tail
+                        take_count)))
+                  (==
+                    (cons drop_head appended_tail)
+                    (by
+                      (simpa only appended_tail_proof)))))
+              (by
+                (have take_appended_nil
+                  (computes-to
+                    (take
+                      (append (cons drop_head drop_tail) take_count)
+                      nil)
+                    nil)
+                  (by
+                    (specialize take_count_forward
+                      take_congr_count_computation
+                      (append (cons drop_head drop_tail) take_count)
+                      (cons drop_head appended_tail)
+                      nil)
+                    (calc
+                      (take
+                        (append (cons drop_head drop_tail) take_count)
+                        nil)
+                      (==
+                        (take (cons drop_head appended_tail) nil)
+                        (by
+                          (exact take_count_forward)))
+                      (==
+                        nil
+                        (by
+                          (exact
+                            take_nil
+                            (cons drop_head appended_tail))))))
+                  (by
+                    (specialize rhs_drop_forward
+                      drop_congr_list_computation
+                      (cons drop_head drop_tail)
+                      (take
+                        (append (cons drop_head drop_tail) take_count)
+                        nil)
+                      nil)
+                    (have dropped_nil
+                      (computes-to
+                        (drop (cons drop_head drop_tail) nil)
+                        nil)
+                      (by
+                        (exact
+                          drop_nil
+                          (cons drop_head drop_tail)))
+                      (by
+                        (calc
+                          (take
+                            take_count
+                            (drop (cons drop_head drop_tail) nil))
+                          (==
+                            (take take_count nil)
+                            (by
+                              (exact
+                                take_congr_list_computation
+                                take_count
+                                (drop (cons drop_head drop_tail) nil)
+                                nil)))
+                          (==
+                            nil
+                            (by
+                              (exact take_nil take_count)))
+                          (==
+                            (drop (cons drop_head drop_tail) nil)
+                            (by
+                              (exact
+                                (symm
+                                  (drop_nil
+                                    (cons drop_head drop_tail))))))
+                          (==
+                            (drop
+                              (cons drop_head drop_tail)
+                              (take
+                                (append
+                                  (cons drop_head drop_tail)
+                                  take_count)
+                                nil))
+                            (by
+                              (exact (symm rhs_drop_forward))))))))))))
+          head
+          tail
+          list_induction_hypothesis
+          (by
+            (obtain appended_tail appended_tail_proof
+              (append_computes_to_list drop_tail take_count))
+            (obtain dropped_tail dropped_tail_proof
+              (drop_computes_to_list drop_tail tail))
+            (obtain taken_tail taken_tail_proof
+              (take_computes_to_list appended_tail tail))
+            (have appended_count_shape
+              (computes-to
+                (append (cons drop_head drop_tail) take_count)
+                (cons drop_head appended_tail))
+              (by
+                (calc
+                  (append (cons drop_head drop_tail) take_count)
+                  (==
+                    (cons drop_head (append drop_tail take_count))
+                    (by
+                      (exact
+                        append_cons
+                        drop_head
+                        drop_tail
+                        take_count)))
+                  (==
+                    (cons drop_head appended_tail)
+                    (by
+                      (simpa only appended_tail_proof)))))
+              (by
+                (have dropped_left_value
+                  (computes-to
+                    (drop
+                      (cons drop_head drop_tail)
+                      (cons head tail))
+                    dropped_tail)
+                  (by
+                    (calc
+                      (drop
+                        (cons drop_head drop_tail)
+                        (cons head tail))
+                      (==
+                        (drop drop_tail tail)
+                        (by
+                          (exact
+                            drop_cons
+                            drop_head
+                            drop_tail
+                            head
+                            tail)))
+                      (==
+                        dropped_tail
+                        (by
+                          (exact dropped_tail_proof)))))
+                  (by
+                    (have take_tail_open
+                      (computes-to
+                        (take (append drop_tail take_count) tail)
+                        taken_tail)
+                      (by
+                        (specialize take_tail_count_forward
+                          take_congr_count_computation
+                          (append drop_tail take_count)
+                          appended_tail
+                          tail)
+                        (calc
+                          (take (append drop_tail take_count) tail)
+                          (==
+                            (take appended_tail tail)
+                            (by
+                              (exact take_tail_count_forward)))
+                          (==
+                            taken_tail
+                            (by
+                              (exact taken_tail_proof)))))
+                      (by
+                        (have taken_whole_value
+                          (computes-to
+                            (take
+                              (append
+                                (cons drop_head drop_tail)
+                                take_count)
+                              (cons head tail))
+                            (cons head taken_tail))
+                          (by
+                            (specialize take_count_forward
+                              take_congr_count_computation
+                              (append
+                                (cons drop_head drop_tail)
+                                take_count)
+                              (cons drop_head appended_tail)
+                              (cons head tail))
+                            (calc
+                              (take
+                                (append
+                                  (cons drop_head drop_tail)
+                                  take_count)
+                                (cons head tail))
+                              (==
+                                (take
+                                  (cons drop_head appended_tail)
+                                  (cons head tail))
+                                (by
+                                  (exact take_count_forward)))
+                              (==
+                                (cons head (take appended_tail tail))
+                                (by
+                                  (exact
+                                    take_cons
+                                    drop_head
+                                    appended_tail
+                                    head
+                                    tail)))
+                              (==
+                                (cons head taken_tail)
+                                (by
+                                  (simpa only taken_tail_proof)))))
+                          (by
+                            (specialize dropped_tail_forward
+                              take_congr_list_computation
+                              take_count
+                              (drop drop_tail tail)
+                              dropped_tail)
+                            (specialize drop_tail_taken_forward
+                              drop_congr_list_computation
+                              drop_tail
+                              (take
+                                (append drop_tail take_count)
+                                tail)
+                              taken_tail)
+                            (specialize rhs_drop_forward
+                              drop_congr_list_computation
+                              (cons drop_head drop_tail)
+                              (take
+                                (append
+                                  (cons drop_head drop_tail)
+                                  take_count)
+                                (cons head tail))
+                              (cons head taken_tail))
+                            (calc
+                              (take
+                                take_count
+                                (drop
+                                  (cons drop_head drop_tail)
+                                  (cons head tail)))
+                              (==
+                                (take take_count dropped_tail)
+                                (by
+                                  (exact
+                                    take_congr_list_computation
+                                    take_count
+                                    (drop
+                                      (cons drop_head drop_tail)
+                                      (cons head tail))
+                                    dropped_tail)))
+                              (==
+                                (take
+                                  take_count
+                                  (drop drop_tail tail))
+                                (by
+                                  (exact
+                                    (symm
+                                      dropped_tail_forward))))
+                              (==
+                                (drop
+                                  drop_tail
+                                  (take
+                                    (append drop_tail take_count)
+                                    tail))
+                                (by
+                                  (exact
+                                    (induction_hypothesis tail))))
+                              (==
+                                (drop drop_tail taken_tail)
+                                (by
+                                  (exact drop_tail_taken_forward)))
+                              (==
+                                (drop
+                                  (cons drop_head drop_tail)
+                                  (cons head taken_tail))
+                                (by
+                                  (exact
+                                    (symm
+                                      (drop_cons
+                                        drop_head
+                                        drop_tail
+                                        head
+                                        taken_tail)))))
+                              (==
+                                (drop
+                                  (cons drop_head drop_tail)
+                                  (take
+                                    (append
+                                      (cons drop_head drop_tail)
+                                      take_count)
+                                    (cons head tail)))
+                                (by
+                                  (exact
+                                    (symm rhs_drop_forward))))))))))))))))
+  )
+)
+)
+
 (theorem map_take
   (forall function (is-value function)
     (implies
@@ -4134,6 +6076,309 @@
                     (by
                       (simpa only (symm mapped_list)))))))))))))
 
+(theorem option_map_find
+  (forall function (is-value function)
+    (implies
+      (forall value (is-value value)
+        (exists mapped_value (is-value mapped_value)
+          (computes-to (function value) mapped_value)))
+      (forall predicate (is-value predicate)
+        (implies
+          (forall value (is-value value)
+            (is-bool (predicate value)))
+          (forall list (is-list list)
+            (computes-to
+              (option-map
+                function
+                (find
+                  (lambda find_value
+                    (predicate (function find_value)))
+                  list))
+              (find predicate (map function list))))))))
+  (by
+    (intro function)
+    (intro maps_values)
+    (intro predicate)
+    (intro predicate_returns_bool)
+    (list-induction list
+      (by
+        (simpa only
+          (find_nil
+            (lambda find_value_nil
+              (predicate (function find_value_nil))))
+          (option_map_none function)
+          (map_nil function)
+          (find_nil predicate)))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (obtain mapped_head mapped_head_proof
+          (maps_values head))
+        (obtain mapped_tail mapped_tail_proof
+          (map_computes_to_list function tail))
+        (have mapped_list
+          (computes-to
+            (map function (cons head tail))
+            (cons mapped_head mapped_tail))
+          (by
+            (calc
+              (map function (cons head tail))
+              (==
+                (cons (function head) (map function tail))
+                (by
+                  (exact map_cons function head tail)))
+              (==
+                (cons mapped_head (map function tail))
+                (by
+                  (simpa only mapped_head_proof)))
+              (==
+                (cons mapped_head mapped_tail)
+                (by
+                  (simpa only mapped_tail_proof)))))
+          (by
+            (or-elim
+              (predicate_returns_bool mapped_head)
+              predicate_true
+              (by
+                (have transformed_predicate_true
+                  (computes-to
+                    ((lambda find_value_true
+                       (predicate (function find_value_true)))
+                     head)
+                    (quote :true))
+                  (by
+                    (calc
+                      ((lambda find_value_true
+                         (predicate (function find_value_true)))
+                       head)
+                      (==
+                        (predicate (function head))
+                        (by
+                          (eval)))
+                      (==
+                        (predicate mapped_head)
+                        (by
+                          (simpa only mapped_head_proof)))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact predicate_true)))))
+                  (by
+                    (have transformed_find_head
+                      (computes-to
+                        (find
+                          (lambda find_value_true
+                            (predicate (function find_value_true)))
+                          (cons head tail))
+                        (some head))
+                      (by
+                        (apply
+                          find_cons_true
+                          (lambda find_value_true_cons
+                            (predicate (function find_value_true_cons)))
+                          head
+                          tail))
+                      (by
+                        (have mapped_find_head
+                          (computes-to
+                            (find predicate (cons mapped_head mapped_tail))
+                            (some mapped_head))
+                          (by
+                            (apply find_cons_true predicate mapped_head mapped_tail))
+                          (by
+                            (calc
+                              (option-map
+                                function
+                                (find
+                                  (lambda find_value_true
+                                    (predicate (function find_value_true)))
+                                  (cons head tail)))
+                              (==
+                                (option-map function (some head))
+                                (by
+                                  (apply
+                                    option_map_congr_option_computation
+                                    function
+                                    (find
+                                      (lambda find_value_true
+                                        (predicate (function find_value_true)))
+                                      (cons head tail))
+                                    (some head))))
+                              (==
+                                (some mapped_head)
+                                (by
+                                  (apply option_map_some function head mapped_head)))
+                              (==
+                                (find predicate (cons mapped_head mapped_tail))
+                                (by
+                                  (exact (symm mapped_find_head))))
+                              (==
+                                (find predicate (map function (cons head tail)))
+                                (by
+                                  (simpa only (symm mapped_list))))))))))))
+              predicate_false
+              (by
+                (have transformed_predicate_false
+                  (computes-to
+                    ((lambda find_value_false
+                       (predicate (function find_value_false)))
+                     head)
+                    (quote :false))
+                  (by
+                    (calc
+                      ((lambda find_value_false
+                         (predicate (function find_value_false)))
+                       head)
+                      (==
+                        (predicate (function head))
+                        (by
+                          (eval)))
+                      (==
+                        (predicate mapped_head)
+                        (by
+                          (simpa only mapped_head_proof)))
+                      (==
+                        (quote :false)
+                        (by
+                          (exact predicate_false)))))
+                  (by
+                    (have transformed_find_tail
+                      (computes-to
+                        (find
+                          (lambda find_value_false
+                            (predicate (function find_value_false)))
+                          (cons head tail))
+                        (find
+                          (lambda find_value_false_tail
+                            (predicate (function find_value_false_tail)))
+                          tail))
+                      (by
+                        (apply
+                          find_cons_false
+                          (lambda find_value_false_cons
+                            (predicate (function find_value_false_cons)))
+                          head
+                          tail))
+                      (by
+                        (have mapped_find_tail
+                          (computes-to
+                            (find predicate (cons mapped_head mapped_tail))
+                            (find predicate mapped_tail))
+                          (by
+                            (apply
+                              find_cons_false
+                              predicate
+                              mapped_head
+                              mapped_tail))
+                          (by
+                            (calc
+                              (option-map
+                                function
+                                (find
+                                  (lambda find_value_false
+                                    (predicate (function find_value_false)))
+                                  (cons head tail)))
+                              (==
+                                (option-map
+                                  function
+                                  (find
+                                    (lambda find_value_false_tail
+                                      (predicate
+                                        (function find_value_false_tail)))
+                                    tail))
+                                (by
+                                  (apply
+                                    option_map_congr_option_computation
+                                    function
+                                    (find
+                                      (lambda find_value_false
+                                        (predicate (function find_value_false)))
+                                      (cons head tail))
+                                    (find
+                                      (lambda find_value_false_tail
+                                        (predicate
+                                          (function find_value_false_tail)))
+                                      tail))))
+                              (==
+                                (find predicate (map function tail))
+                                (by
+                                  (exact induction_hypothesis)))
+                              (==
+                                (find predicate mapped_tail)
+                                (by
+                                  (simpa only mapped_tail_proof)))
+                              (==
+                                (find predicate (cons mapped_head mapped_tail))
+                                (by
+                                  (exact (symm mapped_find_tail))))
+                              (==
+                                (find
+                                  predicate
+                                  (map function (cons head tail)))
+                                (by
+                                  (simpa only (symm mapped_list)))))))))))))))))))
+
+(theorem option_bind_find_none
+  (forall function (is-value function)
+    (forall predicate (is-value predicate)
+      (forall list (is-list list)
+        (implies
+          (computes-to (find predicate list) none)
+          (computes-to
+            (option-bind function (find predicate list))
+            none)))))
+  (by
+    (intro function)
+    (intro predicate)
+    (intro list)
+    (intro find_none)
+    (calc
+      (option-bind function (find predicate list))
+      (==
+        (option-bind function none)
+        (by
+          (apply
+            option_bind_congr_option_computation
+            function
+            (find predicate list)
+            none)))
+      (==
+        none
+        (by
+          (exact option_bind_none function))))))
+
+(theorem option_bind_find_some
+  (forall function (is-value function)
+    (forall predicate (is-value predicate)
+      (forall list (is-list list)
+        (forall value (is-value value)
+          (implies
+            (computes-to (find predicate list) (some value))
+            (computes-to
+              (option-bind function (find predicate list))
+              (function value)))))))
+  (by
+    (intro function)
+    (intro predicate)
+    (intro list)
+    (intro value)
+    (intro find_some)
+    (calc
+      (option-bind function (find predicate list))
+      (==
+        (option-bind function (some value))
+        (by
+          (apply
+            option_bind_congr_option_computation
+            function
+            (find predicate list)
+            (some value))))
+      (==
+        (function value)
+        (by
+          (exact option_bind_left_identity function value))))))
+
 (theorem split_at_computes_to_pair
   (forall count (is-list count)
     (forall list (is-list list)
@@ -4459,6 +6704,230 @@
             nil
             (by
               (exact induction_hypothesis))))))))
+
+(theorem length_take
+  (forall count (is-list count)
+    (forall list (is-list list)
+      (computes-to
+        (length (take count list))
+        (take count (length list)))))
+  (by
+    (list-induction count
+      (by
+        (intro list)
+        (obtain list_length list_length_proof
+          (length_computes_to_list list))
+        (calc
+          (length (take nil list))
+          (==
+            (length nil)
+            (by
+              (simpa only (take_zero list))))
+          (==
+            nil
+            (by
+              (exact length_nil)))
+          (==
+            (take nil list_length)
+            (by
+              (exact (symm (take_zero list_length)))))
+          (==
+            (take nil (length list))
+            (by
+              (simpa only (symm list_length_proof))))))
+      count_head
+      count_tail
+      count_induction_hypothesis
+      (by
+        (list-induction list
+          (by
+            (eval))
+          head
+          tail
+          list_induction_hypothesis
+          (by
+            (obtain taken_tail taken_tail_proof
+              (take_computes_to_list count_tail tail))
+            (obtain tail_length tail_length_proof
+              (length_computes_to_list tail))
+            (calc
+              (length (take (cons count_head count_tail) (cons head tail)))
+              (==
+                (length (cons head (take count_tail tail)))
+                (by
+                  (simpa only (take_cons count_head count_tail head tail))))
+              (==
+                (length (cons head taken_tail))
+                (by
+                  (simpa only taken_tail_proof)))
+              (==
+                (cons (quote unit) (length taken_tail))
+                (by
+                  (exact length_cons head taken_tail)))
+              (==
+                (cons (quote unit) (length (take count_tail tail)))
+                (by
+                  (simpa only (symm taken_tail_proof))))
+              (==
+                (cons (quote unit) (take count_tail (length tail)))
+                (by
+                  (simpa only (count_induction_hypothesis tail))))
+              (==
+                (cons (quote unit) (take count_tail tail_length))
+                (by
+                  (simpa only tail_length_proof)))
+              (==
+                (take (cons count_head count_tail) (cons (quote unit) tail_length))
+                (by
+                  (exact
+                    (symm
+                      (take_cons
+                        count_head
+                        count_tail
+                        (quote unit)
+                        tail_length)))))
+              (==
+                (take
+                  (cons count_head count_tail)
+                  (cons (quote unit) (length tail)))
+                (by
+                  (simpa only (symm tail_length_proof))))
+              (==
+                (take
+                  (cons count_head count_tail)
+                  (length (cons head tail)))
+                (by
+                  (simpa only (symm (length_cons head tail))))))))))))
+
+(theorem length_drop
+  (forall count (is-list count)
+    (forall list (is-list list)
+      (computes-to
+        (length (drop count list))
+        (drop count (length list)))))
+  (by
+    (list-induction count
+      (by
+        (intro list)
+        (obtain list_length list_length_proof
+          (length_computes_to_list list))
+        (calc
+          (length (drop nil list))
+          (==
+            (length list)
+            (by
+              (simpa only (drop_zero list))))
+          (==
+            list_length
+            (by
+              (exact list_length_proof)))
+          (==
+            (drop nil list_length)
+            (by
+              (exact (symm (drop_zero list_length)))))
+          (==
+            (drop nil (length list))
+            (by
+              (simpa only (symm list_length_proof))))))
+      count_head
+      count_tail
+      count_induction_hypothesis
+      (by
+        (list-induction list
+          (by
+            (eval))
+          head
+          tail
+          list_induction_hypothesis
+          (by
+            (obtain tail_length tail_length_proof
+              (length_computes_to_list tail))
+            (calc
+              (length (drop (cons count_head count_tail) (cons head tail)))
+              (==
+                (length (drop count_tail tail))
+                (by
+                  (simpa only (drop_cons count_head count_tail head tail))))
+              (==
+                (drop count_tail (length tail))
+                (by
+                  (exact count_induction_hypothesis tail)))
+              (==
+                (drop count_tail tail_length)
+                (by
+                  (simpa only tail_length_proof)))
+              (==
+                (drop (cons count_head count_tail) (cons (quote unit) tail_length))
+                (by
+                  (exact
+                    (symm
+                      (drop_cons
+                        count_head
+                        count_tail
+                        (quote unit)
+                        tail_length)))))
+              (==
+                (drop
+                  (cons count_head count_tail)
+                  (cons (quote unit) (length tail)))
+                (by
+                  (simpa only (symm tail_length_proof))))
+              (==
+                (drop
+                  (cons count_head count_tail)
+                  (length (cons head tail)))
+                (by
+                  (simpa only (symm (length_cons head tail))))))))))))
+
+(theorem length_take_add_length_drop
+  (forall count (is-list count)
+    (forall list (is-list list)
+      (computes-to
+        (append
+          (length (take count list))
+          (length (drop count list)))
+        (length list))))
+  (by
+    (intro count)
+    (intro list)
+    (obtain list_length list_length_proof
+      (length_computes_to_list list))
+    (calc
+      (append
+        (length (take count list))
+        (length (drop count list)))
+      (==
+        (append
+          (take count (length list))
+          (length (drop count list)))
+        (by
+          (simpa only (length_take count list))))
+      (==
+        (append
+          (take count (length list))
+          (drop count (length list)))
+        (by
+          (simpa only (length_drop count list))))
+      (==
+        (append
+          (take count list_length)
+          (drop count (length list)))
+        (by
+          (simpa only list_length_proof)))
+      (==
+        (append
+          (take count list_length)
+          (drop count list_length))
+        (by
+          (simpa only list_length_proof)))
+      (==
+        list_length
+        (by
+          (exact append_take_drop count list_length)))
+      (==
+        (length list)
+        (by
+          (exact (symm list_length_proof)))))))
 
 (theorem nth_zero_after_drop
   (forall count (is-list count)
@@ -5154,6 +7623,563 @@
     (intro value)
     (eval)))
 
+(theorem member_snoc
+  (forall value (is-value value)
+    (implies
+      (forall element (is-value element)
+        (is-bool (value-eq value element)))
+      (forall list (is-list list)
+        (forall snoc_value (is-value snoc_value)
+          (computes-to
+            (member value (snoc list snoc_value))
+            (or
+              (member value list)
+              (value-eq value snoc_value)))))))
+  (by
+    (intro value)
+    (intro value_eq_returns_bool)
+    (list-induction list
+      (by
+        (intro snoc_value)
+        (have snoc_eq_bool
+          (is-bool (value-eq value snoc_value))
+          (by
+            (exact value_eq_returns_bool snoc_value))
+          (by
+            (have nil_member_bool
+              (is-bool (member value nil))
+              (by
+                (exact
+                  member_is_bool_for_comparable_value
+                  value
+                  nil))
+              (by
+                (calc
+                  (member value (snoc nil snoc_value))
+                  (==
+                    (member value (cons snoc_value nil))
+                    (by
+                      (simpa only (snoc_nil snoc_value))))
+                  (==
+                    (or
+                      (value-eq value snoc_value)
+                      (member value nil))
+                    (by
+                      (exact
+                        member_cons_or
+                        value
+                        snoc_value
+                        nil)))
+                  (==
+                    (or
+                      (member value nil)
+                      (value-eq value snoc_value))
+                    (by
+                      (exact
+                        or_comm
+                        (value-eq value snoc_value)
+                        (member value nil))))))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro snoc_value)
+        (obtain tail_snoc tail_snoc_proof
+          (snoc_computes_to_list tail snoc_value))
+        (have head_eq_bool
+          (is-bool (value-eq value head))
+          (by
+            (exact value_eq_returns_bool head))
+          (by
+            (have tail_member_bool
+              (is-bool (member value tail))
+              (by
+                (exact
+                  member_is_bool_for_comparable_value
+                  value
+                  tail))
+              (by
+                (have snoc_eq_bool
+                  (is-bool (value-eq value snoc_value))
+                  (by
+                    (exact value_eq_returns_bool snoc_value))
+                  (by
+                    (have current_member_step
+                      (computes-to
+                        (member value (cons head tail))
+                        (or
+                          (value-eq value head)
+                          (member value tail)))
+                      (by
+                        (exact member_cons_or value head tail))
+                      (by
+                        (calc
+                          (member
+                            value
+                            (snoc (cons head tail) snoc_value))
+                          (==
+                            (member
+                              value
+                              (cons head (snoc tail snoc_value)))
+                            (by
+                              (simpa only
+                                (snoc_cons
+                                  head
+                                  tail
+                                  snoc_value))))
+                          (==
+                            (member value (cons head tail_snoc))
+                            (by
+                              (simpa only tail_snoc_proof)))
+                          (==
+                            (or
+                              (value-eq value head)
+                              (member value tail_snoc))
+                            (by
+                              (exact
+                                member_cons_or
+                                value
+                                head
+                                tail_snoc)))
+                          (==
+                            (or
+                              (value-eq value head)
+                              (member
+                                value
+                                (snoc tail snoc_value)))
+                            (by
+                              (simpa only tail_snoc_proof)))
+                          (==
+                            (or
+                              (value-eq value head)
+                              (or
+                                (member value tail)
+                                (value-eq value snoc_value)))
+                            (by
+                              (rewrite
+                                (induction_hypothesis
+                                  snoc_value))
+                              (eval)))
+                          (==
+                            (or
+                              (or
+                                (value-eq value head)
+                                (member value tail))
+                              (value-eq value snoc_value))
+                            (by
+                              (have member_snoc_assoc
+                                (computes-to
+                                  (or
+                                    (or
+                                      (value-eq value head)
+                                      (member value tail))
+                                    (value-eq value snoc_value))
+                                  (or
+                                    (value-eq value head)
+                                    (or
+                                      (member value tail)
+                                      (value-eq value snoc_value))))
+                                (by
+                                  (apply
+                                    or_assoc
+                                    (value-eq value head)
+                                    (member value tail)
+                                    (value-eq value snoc_value)))
+                                (by
+                                  (exact
+                                    (symm member_snoc_assoc))))))
+                          (==
+                            (or
+                              (member value (cons head tail))
+                              (value-eq value snoc_value))
+                            (by
+                              (rewrite (symm current_member_step))
+                              (eval)))))))))))))
+  )
+  )
+  )
+
+(theorem tail_snoc_after_snoc
+  (forall list (is-list list)
+    (forall value (is-value value)
+      (forall next (is-value next)
+        (computes-to
+          (tail (snoc (snoc list value) next))
+          (snoc (tail (snoc list value)) next)))))
+  (by
+    (list-induction list
+      (by
+        (intro value)
+        (intro next)
+        (obtain nil_next nil_next_proof
+          (snoc_computes_to_list nil next))
+        (calc
+          (tail (snoc (snoc nil value) next))
+          (==
+            (tail (snoc (cons value nil) next))
+            (by
+              (simpa only (snoc_nil value))))
+          (==
+            (tail (cons value (snoc nil next)))
+            (by
+              (simpa only (snoc_cons value nil next))))
+          (==
+            (tail (cons value nil_next))
+            (by
+              (simpa only nil_next_proof)))
+          (==
+            nil_next
+            (by
+              (eval)))
+          (==
+            (snoc nil next)
+            (by
+              (simpa only (symm nil_next_proof))))
+          (==
+            (snoc (tail (cons value nil)) next)
+            (by
+              (eval)))
+          (==
+            (snoc (tail (snoc nil value)) next)
+            (by
+              (rewrite (symm (snoc_nil value)))
+              (eval)))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro value)
+        (intro next)
+        (obtain tail_snoc tail_snoc_proof
+          (snoc_computes_to_list tail value))
+        (obtain tail_snoc_next tail_snoc_next_proof
+          (snoc_computes_to_list tail_snoc next))
+        (calc
+          (tail (snoc (snoc (cons head tail) value) next))
+          (==
+            (tail (snoc (cons head (snoc tail value)) next))
+            (by
+              (simpa only (snoc_cons head tail value))))
+          (==
+            (tail (snoc (cons head tail_snoc) next))
+            (by
+              (simpa only tail_snoc_proof)))
+          (==
+            (tail (cons head (snoc tail_snoc next)))
+            (by
+              (simpa only (snoc_cons head tail_snoc next))))
+          (==
+            (tail (cons head tail_snoc_next))
+            (by
+              (simpa only tail_snoc_next_proof)))
+          (==
+            tail_snoc_next
+            (by
+              (eval)))
+          (==
+            (snoc tail_snoc next)
+            (by
+              (simpa only (symm tail_snoc_next_proof))))
+          (==
+            (snoc (tail (cons head tail_snoc)) next)
+            (by
+              (eval)))
+          (==
+            (snoc (tail (cons head (snoc tail value))) next)
+            (by
+              (simpa only (symm tail_snoc_proof))))
+          (==
+            (snoc (tail (snoc (cons head tail) value)) next)
+              (by
+                (simpa only (snoc_cons head tail value))))))))
+  )
+
+(theorem all_snoc_true
+  (forall predicate (is-value predicate)
+    (forall list (is-list list)
+      (implies
+        (computes-to (all predicate list) (quote :true))
+        (forall snoc_value (is-value snoc_value)
+          (implies
+            (computes-to (predicate snoc_value) (quote :true))
+            (computes-to
+              (all predicate (snoc list snoc_value))
+              (quote :true)))))))
+  (by
+    (intro predicate)
+    (list-induction list
+      (by
+        (intro list_all_true)
+        (intro snoc_value)
+        (intro snoc_value_satisfies_predicate)
+        (calc
+          (all predicate (snoc nil snoc_value))
+          (==
+            (all predicate (cons snoc_value nil))
+            (by
+              (simpa only (snoc_nil snoc_value))))
+          (==
+            (all predicate nil)
+            (by
+              (apply all_cons_true predicate snoc_value nil)))
+          (==
+            (quote :true)
+            (by
+              (exact all_nil predicate)))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro list_all_true)
+        (specialize list_parts all_cons_true_parts predicate head tail)
+        (cases list_parts head_satisfies_predicate tail_all_true)
+        (intro snoc_value)
+        (intro snoc_value_satisfies_predicate)
+        (obtain tail_snoc tail_snoc_proof
+          (snoc_computes_to_list tail snoc_value))
+        (have tail_snoc_all_true
+          (computes-to (all predicate tail_snoc) (quote :true))
+          (by
+            (calc
+              (all predicate tail_snoc)
+              (==
+                (all predicate (snoc tail snoc_value))
+                (by
+                  (simpa only (symm tail_snoc_proof))))
+              (==
+                (quote :true)
+                (by
+                  (exact induction_hypothesis snoc_value)))))
+          (by
+            (calc
+              (all predicate (snoc (cons head tail) snoc_value))
+              (==
+                (all predicate (cons head (snoc tail snoc_value)))
+                (by
+                  (simpa only (snoc_cons head tail snoc_value))))
+              (==
+                (all predicate (cons head tail_snoc))
+                (by
+                  (simpa only tail_snoc_proof)))
+              (==
+                (all predicate tail_snoc)
+                (by
+                  (apply all_cons_true predicate head tail_snoc)))
+              (==
+                (quote :true)
+                (by
+                  (exact tail_snoc_all_true))))))))))
+
+(theorem all_lists_snoc
+  (forall list (is-list list)
+    (implies
+      (computes-to (all-lists list) (quote :true))
+      (forall value (is-list value)
+        (computes-to
+          (all-lists (snoc list value))
+          (quote :true)))))
+  (by
+    (list-induction list
+      (by
+        (intro list_all_lists)
+        (intro value)
+        (have nil_all_lists
+          (computes-to (all-lists nil) (quote :true))
+          (by
+            (eval))
+          (by
+            (calc
+              (all-lists (snoc nil value))
+              (==
+                (all-lists (cons value nil))
+                (by
+                  (simpa only (snoc_nil value))))
+              (==
+                (quote :true)
+                (by
+                  (exact all_lists_cons value nil)))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro list_all_lists)
+        (intro value)
+        (specialize all_parts all_lists_cons_true head tail)
+        (cases all_parts head_is_list tail_all_lists)
+        (specialize tail_snoc_all induction_hypothesis value)
+        (obtain tail_snoc tail_snoc_proof
+          (snoc_computes_to_list tail value))
+        (have tail_snoc_all_value
+          (computes-to (all-lists tail_snoc) (quote :true))
+          (by
+            (calc
+              (all-lists tail_snoc)
+              (==
+                (all-lists (snoc tail value))
+                (by
+                  (simpa only (symm tail_snoc_proof))))
+              (==
+                (quote :true)
+                (by
+                  (exact tail_snoc_all)))))
+        (by
+          (calc
+            (all-lists (snoc (cons head tail) value))
+            (==
+              (all-lists (cons head (snoc tail value)))
+              (by
+                (simpa only (snoc_cons head tail value))))
+            (==
+              (all-lists (cons head tail_snoc))
+              (by
+                (simpa only tail_snoc_proof)))
+            (==
+              (quote :true)
+              (by
+                (exact all_lists_cons head tail_snoc))))))))))
+
+(theorem map_snoc
+  (forall function (is-value function)
+    (implies
+      (forall input_value (is-value input_value)
+        (exists mapped_value (is-value mapped_value)
+          (computes-to (function input_value) mapped_value)))
+      (forall list (is-list list)
+        (forall snoc_value (is-value snoc_value)
+          (computes-to
+            (map function (snoc list snoc_value))
+            (snoc (map function list) (function snoc_value)))))))
+  (by
+    (intro function)
+    (intro maps_values)
+    (list-induction list
+      (by
+        (intro snoc_value)
+        (obtain mapped_value mapped_value_proof
+          (maps_values snoc_value))
+        (calc
+          (map function (snoc nil snoc_value))
+          (==
+            (map function (cons snoc_value nil))
+            (by
+              (simpa only (snoc_nil snoc_value))))
+          (==
+            (cons (function snoc_value) (map function nil))
+            (by
+              (exact map_cons function snoc_value nil)))
+          (==
+            (cons mapped_value (map function nil))
+            (by
+              (simpa only mapped_value_proof)))
+          (==
+            (cons mapped_value nil)
+            (by
+              (simpa only (map_nil function))))
+          (==
+            (snoc nil mapped_value)
+            (by
+              (exact (symm (snoc_nil mapped_value)))))
+          (==
+            (snoc nil (function snoc_value))
+            (by
+              (simpa only (symm mapped_value_proof))))
+          (==
+            (snoc (map function nil) (function snoc_value))
+            (by
+              (rewrite (map_nil function))
+              (eval)))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro snoc_value)
+        (obtain mapped_head mapped_head_proof
+          (maps_values head))
+        (obtain mapped_value mapped_value_proof
+          (maps_values snoc_value))
+        (obtain tail_snoc tail_snoc_proof
+          (snoc_computes_to_list tail snoc_value))
+        (obtain mapped_tail mapped_tail_proof
+          (map_computes_to_list function tail))
+        (have mapped_current
+          (computes-to
+            (map function (cons head tail))
+            (cons mapped_head mapped_tail))
+          (by
+            (calc
+              (map function (cons head tail))
+              (==
+                (cons (function head) (map function tail))
+                (by
+                  (exact map_cons function head tail)))
+              (==
+                (cons mapped_head (map function tail))
+                (by
+                  (simpa only mapped_head_proof)))
+              (==
+                (cons mapped_head mapped_tail)
+                (by
+                  (simpa only mapped_tail_proof)))))
+          (by
+            (calc
+              (map function (snoc (cons head tail) snoc_value))
+              (==
+                (map function (cons head (snoc tail snoc_value)))
+                (by
+                  (simpa only (snoc_cons head tail snoc_value))))
+              (==
+                (map function (cons head tail_snoc))
+                (by
+                  (simpa only tail_snoc_proof)))
+              (==
+                (cons (function head) (map function tail_snoc))
+                (by
+                  (exact map_cons function head tail_snoc)))
+              (==
+                (cons
+                  (function head)
+                  (map function (snoc tail snoc_value)))
+                (by
+                  (simpa only (symm tail_snoc_proof))))
+              (==
+                (cons
+                  (function head)
+                  (snoc (map function tail) (function snoc_value)))
+                (by
+                  (simpa only (induction_hypothesis snoc_value))))
+              (==
+                (cons
+                  mapped_head
+                  (snoc (map function tail) (function snoc_value)))
+                (by
+                  (simpa only mapped_head_proof)))
+              (==
+                (cons mapped_head (snoc mapped_tail (function snoc_value)))
+                (by
+                  (simpa only mapped_tail_proof)))
+              (==
+                (cons mapped_head (snoc mapped_tail mapped_value))
+                (by
+                  (simpa only mapped_value_proof)))
+              (==
+                (snoc (cons mapped_head mapped_tail) mapped_value)
+                (by
+                  (exact
+                    (symm
+                      (snoc_cons mapped_head mapped_tail mapped_value)))))
+              (==
+                (snoc (map function (cons head tail)) mapped_value)
+                (by
+                  (rewrite mapped_current)
+                  (eval)))
+              (==
+                (snoc
+                  (map function (cons head tail))
+                  (function snoc_value))
+                (by
+                  (rewrite mapped_value_proof)
+                  (eval))))))))))
+
 (theorem length_snoc
   (forall list (is-list list)
     (forall value (is-value value)
@@ -5341,6 +8367,155 @@
                 tail_concat_proof
                 right_concat_proof))))))))
 
+(theorem map_length_nil
+  (computes-to (map length nil) nil)
+  (by
+    (eval)))
+
+(theorem map_length_cons
+  (forall head (is-list head)
+    (forall tail (is-list tail)
+      (computes-to
+        (map length (cons head tail))
+        (cons (length head) (map length tail)))))
+  (by
+    (intro head)
+    (intro tail)
+    (eval)))
+
+(theorem map_length_computes_to_list
+  (forall lists (is-list lists)
+    (implies
+      (computes-to (all-lists lists) (quote :true))
+      (computes-to-list result (map length lists))))
+  (by
+    (list-induction lists
+      (by
+        (intro lists_are_lists)
+        (exists nil
+          (by
+            (eval))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro lists_are_lists)
+        (specialize all_parts all_lists_cons_true head tail)
+        (cases all_parts head_is_list tail_all_lists)
+        (obtain head_length head_length_proof
+          (length_computes_to_list head))
+        (specialize tail_lengths_exists induction_hypothesis)
+        (obtain tail_lengths tail_lengths_proof
+          tail_lengths_exists)
+        (exists (cons head_length tail_lengths)
+          (by
+            (calc
+              (map length (cons head tail))
+              (==
+                (cons (length head) (map length tail))
+                (by
+                  (exact map_length_cons head tail)))
+              (==
+                (cons head_length (map length tail))
+                (by
+                  (simpa only head_length_proof)))
+              (==
+                (cons head_length tail_lengths)
+                (by
+                  (simpa only tail_lengths_proof))))))))))
+
+(theorem length_concat
+  (forall lists (is-list lists)
+    (implies
+      (computes-to (all-lists lists) (quote :true))
+      (computes-to
+        (length (concat lists))
+        (concat (map length lists)))))
+  (by
+    (list-induction lists
+      (by
+        (intro lists_are_lists)
+        (calc
+          (length (concat nil))
+          (==
+            (length nil)
+            (by
+              (simpa only concat_nil)))
+          (==
+            nil
+            (by
+              (exact length_nil)))
+          (==
+            (concat nil)
+            (by
+              (exact (symm concat_nil))))
+          (==
+            (concat (map length nil))
+            (by
+              (rewrite (symm map_length_nil))
+              (eval)))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro lists_are_lists)
+        (specialize all_parts all_lists_cons_true head tail)
+        (cases all_parts head_is_list tail_all_lists)
+        (obtain head_length head_length_proof
+          (length_computes_to_list head))
+        (specialize tail_concat_exists concat_computes_to_list tail)
+        (obtain tail_concat tail_concat_proof
+          tail_concat_exists)
+        (specialize tail_lengths_exists map_length_computes_to_list tail)
+        (obtain tail_lengths tail_lengths_proof
+          tail_lengths_exists)
+        (calc
+          (length (concat (cons head tail)))
+          (==
+            (length (append head (concat tail)))
+            (by
+              (simpa only (concat_cons head tail))))
+          (==
+            (length (append head tail_concat))
+            (by
+              (simpa only tail_concat_proof)))
+          (==
+            (append (length head) (length tail_concat))
+            (by
+              (exact length_append head tail_concat)))
+          (==
+            (append head_length (length tail_concat))
+            (by
+              (simpa only head_length_proof)))
+          (==
+            (append head_length (length (concat tail)))
+            (by
+              (simpa only (symm tail_concat_proof))))
+          (==
+            (append head_length (concat (map length tail)))
+            (by
+              (simpa only induction_hypothesis)))
+          (==
+            (append head_length (concat tail_lengths))
+            (by
+              (simpa only tail_lengths_proof)))
+          (==
+            (concat (cons head_length tail_lengths))
+            (by
+              (exact (symm (concat_cons head_length tail_lengths)))))
+          (==
+            (concat (cons (length head) tail_lengths))
+            (by
+              (simpa only (symm head_length_proof))))
+          (==
+            (concat (cons (length head) (map length tail)))
+            (by
+              (simpa only (symm tail_lengths_proof))))
+          (==
+            (concat (map length (cons head tail)))
+            (by
+              (simpa only (symm (map_length_cons head tail))))))))))
+
 (theorem concat_map_as_concat_map
   (forall function (is-value function)
     (implies
@@ -5520,3 +8695,1391 @@
     (intro next)
     (intro tail)
     (eval)))
+
+(theorem is_pair_nil_false
+  (computes-to
+    (is-pair nil)
+    (quote :false))
+  (by
+    (eval)))
+
+(theorem is_pair_singleton_false
+  (forall head (is-value head)
+    (computes-to
+      (is-pair (cons head nil))
+      (quote :false)))
+  (by
+    (intro head)
+    (eval)))
+
+(theorem is_pair_cons_cons_nil_true
+  (forall first (is-value first)
+    (forall second (is-value second)
+      (computes-to
+        (is-pair (cons first (cons second nil)))
+        (quote :true))))
+  (by
+    (intro first)
+    (intro second)
+    (eval)))
+
+(theorem is_pair_cons_cons_cons_false
+  (forall first (is-value first)
+    (forall second (is-value second)
+      (forall third (is-value third)
+        (forall tail (is-list tail)
+          (computes-to
+            (is-pair (cons first (cons second (cons third tail))))
+            (quote :false))))))
+  (by
+    (intro first)
+    (intro second)
+    (intro third)
+    (intro tail)
+    (eval)))
+
+(theorem is_pair_cons_cons_true_elim
+  (forall first (is-value first)
+    (forall second (is-value second)
+      (forall rest (is-list rest)
+        (implies
+          (computes-to
+            (is-pair (cons first (cons second rest)))
+            (quote :true))
+          (computes-to rest nil)))))
+  (by
+    (intro first)
+    (intro second)
+    (list-induction rest
+      (by
+        (intro pair_true)
+        (eval))
+      third
+      extra
+      induction_hypothesis
+      (by
+        (intro pair_true)
+        (have pair_false
+          (computes-to
+            (is-pair (cons first (cons second (cons third extra))))
+            (quote :false))
+          (by
+            (exact
+              (is_pair_cons_cons_cons_false
+                first
+                second
+                third
+                extra)))
+          (by
+            (have impossible_eq
+              (computes-to (quote :false) (quote :true))
+              (by
+                (calc
+                  (quote :false)
+                  (==
+                    (is-pair
+                      (cons first (cons second (cons third extra))))
+                    (by
+                      (exact (symm pair_false))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact pair_true)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to (cons third extra) nil)))))))))))
+
+(theorem is_pair_cons_true_elim
+  (forall first (is-value first)
+    (forall tail (is-list tail)
+      (implies
+        (computes-to
+          (is-pair (cons first tail))
+          (quote :true))
+        (exists second (is-value second)
+          (computes-to tail (cons second nil))))))
+  (by
+    (intro first)
+    (list-induction tail
+      (by
+        (intro pair_true)
+        (have pair_false
+          (computes-to
+            (is-pair (cons first nil))
+            (quote :false))
+          (by
+            (exact (is_pair_singleton_false first)))
+          (by
+            (have impossible_eq
+              (computes-to (quote :false) (quote :true))
+              (by
+                (calc
+                  (quote :false)
+                  (==
+                    (is-pair (cons first nil))
+                    (by
+                      (exact (symm pair_false))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact pair_true)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (exists second (is-value second)
+                      (computes-to nil (cons second nil))))))))))
+      second
+      rest
+      induction_hypothesis
+      (by
+        (intro pair_true)
+        (specialize rest_nil
+          is_pair_cons_cons_true_elim
+          first
+          second
+          rest)
+        (exists second
+          (by
+            (calc
+              (cons second rest)
+              (==
+                (cons second nil)
+                (by
+                  (simpa only rest_nil))))))))))
+
+(theorem is_pair_true_elim
+  (forall value (is-value value)
+    (implies
+      (computes-to (is-pair value) (quote :true))
+      (exists first (is-value first)
+        (exists second (is-value second)
+          (computes-to
+            value
+            (cons first (cons second nil)))))))
+  (by
+    (value-induction value
+      value_is_symbol
+      (by
+        (intro pair_true)
+        (have value_is_symbol_result
+          (computes-to (is-symbol value) (quote :true))
+          (by
+            (calc
+              (is-symbol value)
+              (==
+                (symbol-eq (value-kind value) (quote :symbol))
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact value_is_symbol))))))
+        (specialize value_not_list
+          is_symbol_true_implies_is_list_value_false
+          value)
+        (have pair_false
+          (computes-to (is-pair value) (quote :false))
+          (by
+            (simpa only value_not_list))
+          (by
+            (have impossible_eq
+              (computes-to (quote :false) (quote :true))
+              (by
+                (calc
+                  (quote :false)
+                  (==
+                    (is-pair value)
+                    (by
+                      (exact (symm pair_false))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact pair_true)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (exists first (is-value first)
+                      (exists second (is-value second)
+                        (computes-to
+                          value
+                          (cons first (cons second nil))))))))))))
+      value_is_lambda
+      (by
+        (intro pair_true)
+        (have value_is_lambda_result
+          (computes-to (is-lambda value) (quote :true))
+          (by
+            (calc
+              (is-lambda value)
+              (==
+                (symbol-eq (value-kind value) (quote :lambda))
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact value_is_lambda))))))
+        (specialize value_not_list
+          is_lambda_true_implies_is_list_value_false
+          value)
+        (have pair_false
+          (computes-to (is-pair value) (quote :false))
+          (by
+            (simpa only value_not_list))
+          (by
+            (have impossible_eq
+              (computes-to (quote :false) (quote :true))
+              (by
+                (calc
+                  (quote :false)
+                  (==
+                    (is-pair value)
+                    (by
+                      (exact (symm pair_false))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact pair_true)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (exists first (is-value first)
+                      (exists second (is-value second)
+                        (computes-to
+                          value
+                          (cons first (cons second nil))))))))))))
+      (by
+        (intro pair_true)
+        (have pair_false
+          (computes-to (is-pair nil) (quote :false))
+          (by
+            (exact is_pair_nil_false))
+          (by
+            (have impossible_eq
+              (computes-to (quote :false) (quote :true))
+              (by
+                (calc
+                  (quote :false)
+                  (==
+                    (is-pair nil)
+                    (by
+                      (exact (symm pair_false))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact pair_true)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (exists first (is-value first)
+                      (exists second (is-value second)
+                        (computes-to
+                          nil
+                          (cons first (cons second nil))))))))))))
+      head
+      tail
+      head_induction_hypothesis
+      tail_induction_hypothesis
+      (by
+        (intro pair_true)
+        (specialize tail_parts
+          is_pair_cons_true_elim
+          head
+          tail)
+        (obtain second tail_is_singleton tail_parts)
+        (exists head
+          (by
+            (exists second
+              (by
+                (calc
+                  (cons head tail)
+                  (==
+                    (cons head (cons second nil))
+                    (by
+                      (simpa only tail_is_singleton))))))))))))
+
+(theorem all_is_pair_cons_true_parts
+  (forall head (is-value head)
+    (forall tail (is-list tail)
+      (implies
+        (computes-to
+          (all is-pair (cons head tail))
+          (quote :true))
+        (and
+          (computes-to (is-pair head) (quote :true))
+          (computes-to (all is-pair tail) (quote :true))))))
+  (by
+    (intro head)
+    (intro tail)
+    (intro all_true)
+    (have unfolded_all_true
+      (computes-to
+        (all
+          (lambda value
+            (if
+              (is-list-value value)
+              (list-case value
+                (quote :false)
+                first_cell
+                (list-case (tail first_cell)
+                  (quote :false)
+                  second_cell
+                  (list-case (tail second_cell)
+                    (quote :true)
+                    extra_cell
+                    (quote :false))))
+              (quote :false)))
+          (cons head tail))
+        (quote :true))
+      (by
+        (calc
+          (all
+            (lambda value
+              (if
+                (is-list-value value)
+                (list-case value
+                  (quote :false)
+                  first_cell
+                  (list-case (tail first_cell)
+                    (quote :false)
+                    second_cell
+                    (list-case (tail second_cell)
+                      (quote :true)
+                      extra_cell
+                      (quote :false))))
+                (quote :false)))
+            (cons head tail))
+          (==
+            (all is-pair (cons head tail))
+            (by
+              (eval)))
+          (==
+            (quote :true)
+            (by
+              (exact all_true)))))
+      (by
+        (specialize all_parts
+          all_cons_true_parts
+          (lambda value
+            (if
+              (is-list-value value)
+              (list-case value
+                (quote :false)
+                first_cell
+                (list-case (tail first_cell)
+                  (quote :false)
+                  second_cell
+                  (list-case (tail second_cell)
+                    (quote :true)
+                    extra_cell
+                    (quote :false))))
+              (quote :false)))
+          head
+          tail)
+        (cases all_parts
+          head_lambda_true
+          tail_lambda_true)
+        (split
+          (by
+            (calc
+              (is-pair head)
+              (==
+                ((lambda value
+                   (if
+                     (is-list-value value)
+                     (list-case value
+                       (quote :false)
+                       first_cell
+                       (list-case (tail first_cell)
+                         (quote :false)
+                         second_cell
+                         (list-case (tail second_cell)
+                           (quote :true)
+                           extra_cell
+                           (quote :false))))
+                     (quote :false)))
+                 head)
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact head_lambda_true)))))
+          (by
+            (calc
+              (all is-pair tail)
+              (==
+                (all
+                  (lambda value
+                    (if
+                      (is-list-value value)
+                      (list-case value
+                        (quote :false)
+                        first_cell
+                        (list-case (tail first_cell)
+                          (quote :false)
+                          second_cell
+                          (list-case (tail second_cell)
+                            (quote :true)
+                            extra_cell
+                            (quote :false))))
+                      (quote :false)))
+                  tail)
+                (by
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact tail_lambda_true))))))))))
+
+(theorem zip_pair_shape
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (computes-to
+        (all is-pair (zip left right))
+        (quote :true))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (eval))
+      left_head
+      left_tail
+      left_induction_hypothesis
+      (by
+        (list-induction right
+          (by
+            (eval))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (have zipped_head_is_pair
+              (computes-to
+                (is-pair (cons left_head (cons right_head nil)))
+                (quote :true))
+              (by
+                (apply
+                  is_pair_cons_cons_nil_true
+                  left_head
+                  right_head))
+              (by
+                (obtain zipped_tail zipped_tail_proof
+                  (zip_computes_to_list left_tail right_tail))
+                (have tail_pairs
+                  (computes-to
+                    (all is-pair zipped_tail)
+                    (quote :true))
+                  (by
+                    (calc
+                      (all is-pair zipped_tail)
+                      (==
+                        (all is-pair (zip left_tail right_tail))
+                        (by
+                          (simpa only (symm zipped_tail_proof))))
+                      (==
+                        (quote :true)
+                        (by
+                          (exact
+                            (left_induction_hypothesis
+                              right_tail))))))
+                  (by
+                    (calc
+                      (all
+                        is-pair
+                        (zip
+                          (cons left_head left_tail)
+                          (cons right_head right_tail)))
+                      (==
+                        (all
+                          is-pair
+                          (cons
+                            (cons left_head (cons right_head nil))
+                            (zip left_tail right_tail)))
+                        (by
+                          (simpa only
+                            (zip_cons
+                              left_head
+                              left_tail
+                              right_head
+                              right_tail))))
+                      (==
+                        (all
+                          is-pair
+                          (cons
+                            (cons left_head (cons right_head nil))
+                            zipped_tail))
+                        (by
+                          (simpa only zipped_tail_proof)))
+                      (==
+                        (all is-pair zipped_tail)
+                        (by
+                          (simpa only zipped_head_is_pair)))
+                          (==
+                            (quote :true)
+                            (by
+                              (exact tail_pairs))))))))))))))
+
+(theorem unzip_pair_shape
+  (forall pairs (is-list pairs)
+    (implies
+      (computes-to
+        (all is-pair pairs)
+        (quote :true))
+      (exists left (is-list left)
+        (exists right (is-list right)
+          (computes-to
+            (unzip pairs)
+            (cons left (cons right nil)))))))
+  (by
+    (list-induction pairs
+      (by
+        (intro all_pairs)
+        (exists nil
+          (by
+            (exists nil
+              (by
+                (exact unzip_nil))))))
+      head_pair
+      tail_pairs
+      induction_hypothesis
+      (by
+        (intro all_pairs)
+        (specialize all_parts
+          all_is_pair_cons_true_parts
+          head_pair
+          tail_pairs)
+        (cases all_parts
+          head_pair_is_pair
+          tail_all)
+        (specialize head_parts
+          is_pair_true_elim
+          head_pair)
+        (obtain left_head right_head_exists head_parts)
+        (obtain right_head head_pair_value right_head_exists)
+        (specialize tail_parts induction_hypothesis)
+        (obtain tail_left tail_right_exists tail_parts)
+        (obtain tail_right tail_unzip tail_right_exists)
+        (exists (cons left_head tail_left)
+          (by
+            (exists (cons right_head tail_right)
+              (by
+                (calc
+                  (unzip (cons head_pair tail_pairs))
+                  (==
+                    (unzip
+                      (cons
+                        (cons left_head (cons right_head nil))
+                        tail_pairs))
+                    (by
+                      (simpa only head_pair_value)))
+                  (==
+                    (cons
+                      (cons
+                        left_head
+                        (head (unzip tail_pairs)))
+                      (cons
+                        (cons
+                          right_head
+                          (head (tail (unzip tail_pairs))))
+                        nil))
+                    (by
+                      (exact
+                        (unzip_cons
+                          left_head
+                          right_head
+                          tail_pairs))))
+                  (==
+                    (cons
+                      (cons left_head tail_left)
+                      (cons
+                        (cons right_head tail_right)
+                        nil))
+                    (by
+                      (simpa only tail_unzip))))))))))))
+
+(theorem zip_unzip
+  (forall pairs (is-list pairs)
+    (implies
+      (computes-to
+        (all is-pair pairs)
+        (quote :true))
+      (computes-to
+        (zip
+          (head (unzip pairs))
+          (head (tail (unzip pairs))))
+        pairs)))
+  (by
+    (list-induction pairs
+      (by
+        (intro all_pairs)
+        (eval))
+      head_pair
+      tail_pairs
+      induction_hypothesis
+      (by
+        (intro all_pairs)
+        (specialize all_parts
+          all_is_pair_cons_true_parts
+          head_pair
+          tail_pairs)
+        (cases all_parts
+          head_pair_is_pair
+          tail_all)
+        (specialize head_parts
+          is_pair_true_elim
+          head_pair)
+        (obtain left_head right_head_exists head_parts)
+        (obtain right_head head_pair_value right_head_exists)
+        (specialize tail_shape
+          unzip_pair_shape
+          tail_pairs)
+        (obtain tail_left tail_right_exists tail_shape)
+        (obtain tail_right tail_unzip tail_right_exists)
+        (have tail_first
+          (computes-to
+            (head (unzip tail_pairs))
+            tail_left)
+          (by
+            (apply
+              list_pair_first_from_computation
+              (unzip tail_pairs)
+              tail_left
+              tail_right))
+          (by
+            (have tail_second
+              (computes-to
+                (head (tail (unzip tail_pairs)))
+                tail_right)
+              (by
+                (apply
+                  list_pair_second_from_computation
+                  (unzip tail_pairs)
+                  tail_left
+                  tail_right))
+              (by
+                (have current_unzip
+                  (computes-to
+                    (unzip (cons head_pair tail_pairs))
+                    (cons
+                      (cons left_head tail_left)
+                      (cons (cons right_head tail_right) nil)))
+                  (by
+                    (calc
+                      (unzip (cons head_pair tail_pairs))
+                      (==
+                        (cons
+                          (cons
+                            (head head_pair)
+                            (head (unzip tail_pairs)))
+                          (cons
+                            (cons
+                              (head (tail head_pair))
+                              (head (tail (unzip tail_pairs))))
+                            nil))
+                        (by
+                          (eval)))
+                      (==
+                        (cons
+                          (cons left_head (head (unzip tail_pairs)))
+                          (cons
+                            (cons
+                              (head (tail head_pair))
+                              (head (tail (unzip tail_pairs))))
+                            nil))
+                        (by
+                          (simpa only
+                            (pair_first_from_computation
+                              head_pair
+                              left_head
+                              right_head))))
+                      (==
+                        (cons
+                          (cons left_head (head (unzip tail_pairs)))
+                          (cons
+                            (cons
+                              right_head
+                              (head (tail (unzip tail_pairs))))
+                            nil))
+                        (by
+                          (simpa only
+                            (pair_second_from_computation
+                              head_pair
+                              left_head
+                              right_head))))
+                      (==
+                        (cons
+                          (cons left_head tail_left)
+                          (cons
+                            (cons
+                              right_head
+                              (head (tail (unzip tail_pairs))))
+                            nil))
+                        (by
+                          (simpa only tail_first)))
+                      (==
+                        (cons
+                          (cons left_head tail_left)
+                          (cons
+                            (cons right_head tail_right)
+                            nil))
+                        (by
+                          (simpa only tail_second)))))
+                  (by
+                    (have current_first
+                      (computes-to
+                        (head (unzip (cons head_pair tail_pairs)))
+                        (cons left_head tail_left))
+                      (by
+                        (apply
+                          list_pair_first_from_computation
+                          (unzip (cons head_pair tail_pairs))
+                          (cons left_head tail_left)
+                          (cons right_head tail_right)))
+                      (by
+                        (have current_second
+                          (computes-to
+                            (head
+                              (tail
+                                (unzip (cons head_pair tail_pairs))))
+                            (cons right_head tail_right))
+                          (by
+                            (apply
+                              list_pair_second_from_computation
+                              (unzip (cons head_pair tail_pairs))
+                              (cons left_head tail_left)
+                              (cons right_head tail_right)))
+                          (by
+                            (specialize zipped_tail induction_hypothesis)
+                            (calc
+                              (zip
+                                (head (unzip (cons head_pair tail_pairs)))
+                                (head
+                                  (tail
+                                    (unzip
+                                      (cons head_pair tail_pairs)))))
+                              (==
+                                (zip
+                                  (cons left_head tail_left)
+                                  (head
+                                    (tail
+                                      (unzip
+                                        (cons head_pair tail_pairs)))))
+                                (by
+                                  (rewrite current_first)
+                                  (eval)))
+                              (==
+                                (zip
+                                  (cons left_head tail_left)
+                                  (cons right_head tail_right))
+                                (by
+                                  (rewrite current_second)
+                                  (eval)))
+                              (==
+                                (cons
+                                  (cons left_head (cons right_head nil))
+                                  (zip tail_left tail_right))
+                                (by
+                                  (exact
+                                    (zip_cons
+                                      left_head
+                                      tail_left
+                                      right_head
+                                      tail_right))))
+                              (==
+                                (cons
+                                  (cons left_head (cons right_head nil))
+                                  (zip
+                                    (head (unzip tail_pairs))
+                                    tail_right))
+                                (by
+                                  (simpa only (symm tail_first))))
+                              (==
+                                (cons
+                                  (cons left_head (cons right_head nil))
+                                  (zip
+                                    (head (unzip tail_pairs))
+                                    (head (tail (unzip tail_pairs)))))
+                                (by
+                                  (simpa only (symm tail_second))))
+                              (==
+                                (cons
+                                  (cons left_head (cons right_head nil))
+                                  tail_pairs)
+                                (by
+                                  (simpa only zipped_tail)))
+                              (==
+                                (cons head_pair tail_pairs)
+                                (by
+                                  (simpa only
+                                    (symm head_pair_value)))))))))))))))))))
+
+(theorem unzip_zip
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (computes-to
+        (unzip (zip left right))
+        (cons
+          (take (length right) left)
+          (cons
+            (take (length left) right)
+            nil)))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (obtain right_length right_length_proof
+          (length_computes_to_list right))
+        (calc
+          (unzip (zip nil right))
+          (==
+            (unzip nil)
+            (by
+              (simpa only (zip_left_nil right))))
+          (==
+            (cons nil (cons nil nil))
+            (by
+              (exact unzip_nil)))
+          (==
+            (cons (take right_length nil) (cons nil nil))
+            (by
+              (simpa only (take_nil right_length))))
+          (==
+            (cons
+              (take (length right) nil)
+              (cons nil nil))
+            (by
+              (simpa only right_length_proof)))
+          (==
+            (cons
+              (take (length right) nil)
+              (cons (take nil right) nil))
+            (by
+              (simpa only (take_zero right))))
+          (==
+            (cons
+              (take (length right) nil)
+              (cons (take (length nil) right) nil))
+            (by
+              (simpa only length_nil)))))
+      left_head
+      left_tail
+      left_induction_hypothesis
+      (by
+        (list-induction right
+          (by
+            (obtain left_length left_length_proof
+              (length_computes_to_list
+                (cons left_head left_tail)))
+            (calc
+              (unzip (zip (cons left_head left_tail) nil))
+              (==
+                (unzip nil)
+                (by
+                  (simpa only
+                    (zip_right_nil
+                      (cons left_head left_tail)))))
+              (==
+                (cons nil (cons nil nil))
+                (by
+                  (exact unzip_nil)))
+              (==
+                (cons
+                  (take nil (cons left_head left_tail))
+                  (cons nil nil))
+                (by
+                  (simpa only
+                    (take_zero
+                      (cons left_head left_tail)))))
+              (==
+                (cons
+                  (take (length nil) (cons left_head left_tail))
+                  (cons nil nil))
+                (by
+                  (simpa only length_nil)))
+              (==
+                (cons
+                  (take (length nil) (cons left_head left_tail))
+                  (cons (take left_length nil) nil))
+                (by
+                  (simpa only (take_nil left_length))))
+              (==
+                (cons
+                  (take (length nil) (cons left_head left_tail))
+                  (cons
+                    (take (length (cons left_head left_tail)) nil)
+                    nil))
+                (by
+                  (simpa only left_length_proof)))))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (obtain zipped_tail zipped_tail_proof
+              (zip_computes_to_list left_tail right_tail))
+            (obtain right_tail_length right_tail_length_proof
+              (length_computes_to_list right_tail))
+            (obtain left_tail_length left_tail_length_proof
+              (length_computes_to_list left_tail))
+            (obtain tail_left tail_left_proof
+              (take_computes_to_list
+                right_tail_length
+                left_tail))
+            (obtain tail_right tail_right_proof
+              (take_computes_to_list
+                left_tail_length
+                right_tail))
+            (have tail_unzipped
+              (computes-to
+                (unzip (zip left_tail right_tail))
+                (cons
+                  (take (length right_tail) left_tail)
+                  (cons
+                    (take (length left_tail) right_tail)
+                    nil)))
+              (by
+                (exact
+                  left_induction_hypothesis
+                  right_tail))
+              (by
+                (have tail_unzipped_concrete
+                  (computes-to
+                    (unzip (zip left_tail right_tail))
+                    (cons tail_left (cons tail_right nil)))
+                  (by
+                    (calc
+                      (unzip (zip left_tail right_tail))
+                      (==
+                        (cons
+                          (take (length right_tail) left_tail)
+                          (cons
+                            (take (length left_tail) right_tail)
+                            nil))
+                        (by
+                          (exact tail_unzipped)))
+                      (==
+                        (cons
+                          (take right_tail_length left_tail)
+                          (cons
+                            (take (length left_tail) right_tail)
+                            nil))
+                        (by
+                          (simpa only right_tail_length_proof)))
+                      (==
+                        (cons
+                          (take right_tail_length left_tail)
+                          (cons
+                            (take left_tail_length right_tail)
+                            nil))
+                        (by
+                          (simpa only left_tail_length_proof)))
+                      (==
+                        (cons
+                          tail_left
+                          (cons
+                            (take left_tail_length right_tail)
+                            nil))
+                        (by
+                          (simpa only tail_left_proof)))
+                      (==
+                        (cons tail_left (cons tail_right nil))
+                        (by
+                          (simpa only tail_right_proof)))))
+                  (by
+                    (have tail_first
+                      (computes-to
+                        (head
+                          (unzip (zip left_tail right_tail)))
+                        tail_left)
+                      (by
+                        (apply
+                          list_pair_first_from_computation
+                          (unzip (zip left_tail right_tail))
+                          tail_left
+                          tail_right))
+                      (by
+                        (have tail_second
+                          (computes-to
+                            (head
+                              (tail
+                                (unzip
+                                  (zip left_tail right_tail))))
+                            tail_right)
+                          (by
+                            (apply
+                              list_pair_second_from_computation
+                              (unzip (zip left_tail right_tail))
+                              tail_left
+                              tail_right))
+                          (by
+                            (calc
+                              (unzip
+                                (zip
+                                  (cons left_head left_tail)
+                                  (cons right_head right_tail)))
+                              (==
+                                (unzip
+                                  (cons
+                                    (cons
+                                      left_head
+                                      (cons right_head nil))
+                                    (zip left_tail right_tail)))
+                                (by
+                                  (simpa only
+                                    (zip_cons
+                                      left_head
+                                      left_tail
+                                      right_head
+                                      right_tail))))
+                              (==
+                                (unzip
+                                  (cons
+                                    (cons
+                                      left_head
+                                      (cons right_head nil))
+                                    zipped_tail))
+                                (by
+                                  (simpa only zipped_tail_proof)))
+                              (==
+                                (cons
+                                  (cons
+                                    left_head
+                                    (head (unzip zipped_tail)))
+                                  (cons
+                                    (cons
+                                      right_head
+                                      (head
+                                        (tail (unzip zipped_tail))))
+                                    nil))
+                                (by
+                                  (exact
+                                    unzip_cons
+                                    left_head
+                                    right_head
+                                    zipped_tail)))
+                              (==
+                                (cons
+                                  (cons
+                                    left_head
+                                    (head
+                                      (unzip
+                                        (zip left_tail right_tail))))
+                                  (cons
+                                    (cons
+                                      right_head
+                                      (head
+                                        (tail
+                                          (unzip
+                                            (zip
+                                              left_tail
+                                              right_tail)))))
+                                    nil))
+                                (by
+                                  (simpa only zipped_tail_proof)))
+                              (==
+                                (cons
+                                  (cons left_head tail_left)
+                                  (cons
+                                    (cons
+                                      right_head
+                                      (head
+                                        (tail
+                                          (unzip
+                                            (zip
+                                              left_tail
+                                              right_tail)))))
+                                    nil))
+                                (by
+                                  (simpa only tail_first)))
+                              (==
+                                (cons
+                                  (cons left_head tail_left)
+                                  (cons
+                                    (cons right_head tail_right)
+                                    nil))
+                                (by
+                                  (simpa only tail_second)))
+                              (==
+                                (cons
+                                  (cons
+                                    left_head
+                                    (take
+                                      right_tail_length
+                                      left_tail))
+                                  (cons
+                                    (cons right_head tail_right)
+                                    nil))
+                                (by
+                                  (simpa only tail_left_proof)))
+                              (==
+                                (cons
+                                  (cons
+                                    left_head
+                                    (take
+                                      right_tail_length
+                                      left_tail))
+                                  (cons
+                                    (cons
+                                      right_head
+                                      (take
+                                        left_tail_length
+                                        right_tail))
+                                    nil))
+                                (by
+                                  (simpa only tail_right_proof)))
+                  (==
+                    (cons
+                      (take
+                        (cons (quote unit) right_tail_length)
+                        (cons left_head left_tail))
+                      (cons
+                        (cons
+                          right_head
+                          (take left_tail_length right_tail))
+                        nil))
+                    (by
+                      (simpa only
+                        (take_cons
+                          (quote unit)
+                          right_tail_length
+                          left_head
+                          left_tail))))
+                  (==
+                    (cons
+                      (take
+                        (cons (quote unit) right_tail_length)
+                        (cons left_head left_tail))
+                      (cons
+                        (take
+                          (cons (quote unit) left_tail_length)
+                          (cons right_head right_tail))
+                        nil))
+                    (by
+                      (simpa only
+                        (take_cons
+                          (quote unit)
+                          left_tail_length
+                          right_head
+                          right_tail))))
+                  (==
+                    (cons
+                      (take
+                        (cons (quote unit) (length right_tail))
+                        (cons left_head left_tail))
+                      (cons
+                        (take
+                          (cons (quote unit) left_tail_length)
+                          (cons right_head right_tail))
+                        nil))
+                    (by
+                      (simpa only
+                        right_tail_length_proof)))
+                  (==
+                    (cons
+                      (take
+                        (cons (quote unit) (length right_tail))
+                        (cons left_head left_tail))
+                      (cons
+                        (take
+                          (cons (quote unit) (length left_tail))
+                          (cons right_head right_tail))
+                        nil))
+                    (by
+                      (simpa only
+                        left_tail_length_proof)))
+                  (==
+                    (cons
+                      (take
+                        (length (cons right_head right_tail))
+                        (cons left_head left_tail))
+                      (cons
+                        (take
+                          (cons (quote unit) (length left_tail))
+                          (cons right_head right_tail))
+                        nil))
+                    (by
+                      (simpa only
+                        (length_cons
+                          right_head
+                          right_tail))))
+                  (==
+                    (cons
+                      (take
+                        (length (cons right_head right_tail))
+                        (cons left_head left_tail))
+                      (cons
+                        (take
+                          (length (cons left_head left_tail))
+                          (cons right_head right_tail))
+                        nil))
+                    (by
+                      (simpa only
+                        (length_cons
+                          left_head
+                          left_tail)))))))))))
+  )
+  )
+  )
+  )
+  )
+  )
+  )
+  )
+
+(theorem zip_with_as_map_zip
+  (forall function (is-value function)
+    (forall left (is-list left)
+      (forall right (is-list right)
+        (computes-to
+          (zip-with function left right)
+          (map
+            (lambda pair
+              (function
+                (head pair)
+                (head (tail pair))))
+            (zip left right))))))
+  (by
+    (intro function)
+    (list-induction left
+      (by
+        (intro right)
+        (simpa only
+          (zip_with_left_nil function right)
+          (zip_left_nil right)
+          (map_nil
+            (lambda proof_pair_left_nil
+              (function
+                (head proof_pair_left_nil)
+                (head (tail proof_pair_left_nil)))))))
+      left_head
+      left_tail
+      induction_hypothesis
+      (by
+        (list-induction right
+          (by
+            (simpa only
+              (zip_with_right_nil
+                function
+                (cons left_head left_tail))
+              (zip_right_nil (cons left_head left_tail))
+              (map_nil
+                (lambda proof_pair_right_nil
+                  (function
+                    (head proof_pair_right_nil)
+                    (head (tail proof_pair_right_nil)))))))
+          right_head
+          right_tail
+          right_induction_hypothesis
+          (by
+            (specialize tail_zip_with_as_map
+              induction_hypothesis
+              right_tail)
+            (obtain zipped_tail zipped_tail_proof
+              (zip_computes_to_list left_tail right_tail))
+            (calc
+              (zip-with
+                function
+                (cons left_head left_tail)
+                (cons right_head right_tail))
+              (==
+                (cons
+                  (function left_head right_head)
+                  (zip-with function left_tail right_tail))
+                (by
+                  (exact
+                    (zip_with_cons
+                      function
+                      left_head
+                      left_tail
+                      right_head
+                      right_tail))))
+              (==
+                (cons
+                  (function left_head right_head)
+                  (map
+                    (lambda proof_pair_tail
+                      (function
+                        (head proof_pair_tail)
+                        (head (tail proof_pair_tail))))
+                    (zip left_tail right_tail)))
+                (by
+                  (simpa only tail_zip_with_as_map)))
+              (==
+                (cons
+                  (function left_head right_head)
+                  (map
+                    (lambda proof_pair_zipped_tail
+                      (function
+                        (head proof_pair_zipped_tail)
+                        (head (tail proof_pair_zipped_tail))))
+                    zipped_tail))
+                (by
+                  (simpa only zipped_tail_proof)))
+              (==
+                (cons
+                  ((lambda proof_pair_head
+                     (function
+                       (head proof_pair_head)
+                       (head (tail proof_pair_head))))
+                   (cons left_head (cons right_head nil)))
+                  (map
+                    (lambda proof_pair_head_tail
+                      (function
+                        (head proof_pair_head_tail)
+                        (head (tail proof_pair_head_tail))))
+                    zipped_tail))
+                (by
+                  (eval)))
+              (==
+                (map
+                  (lambda proof_pair_cons
+                    (function
+                      (head proof_pair_cons)
+                      (head (tail proof_pair_cons))))
+                  (cons
+                    (cons left_head (cons right_head nil))
+                    zipped_tail))
+                (by
+                  (simpa only
+                    (symm
+                      (map_cons
+                        (lambda proof_pair_map_cons
+                          (function
+                            (head proof_pair_map_cons)
+                            (head (tail proof_pair_map_cons))))
+                        (cons left_head (cons right_head nil))
+                        zipped_tail)))))
+              (==
+                (map
+                  (lambda proof_pair_unzipped_tail
+                    (function
+                      (head proof_pair_unzipped_tail)
+                      (head (tail proof_pair_unzipped_tail))))
+                  (cons
+                    (cons left_head (cons right_head nil))
+                    (zip left_tail right_tail)))
+                (by
+                  (simpa only (symm zipped_tail_proof))))
+              (==
+                (map
+                  (lambda proof_pair_zip
+                    (function
+                      (head proof_pair_zip)
+                      (head (tail proof_pair_zip))))
+                  (zip
+                    (cons left_head left_tail)
+                    (cons right_head right_tail)))
+                (by
+                  (simpa only
+                    (symm
+                      (zip_cons
+                        left_head
+                        left_tail
+                        right_head
+                        right_tail))))))))))))

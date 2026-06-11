@@ -262,6 +262,9 @@ pub(crate) enum ProofExpr {
     Symm(Box<ProofExpr>),
     Trans(Box<ProofExpr>, Box<ProofExpr>),
     SymbolEqTrue(Box<ProofExpr>),
+    SymbolEqTrueLeftIsSymbol(Box<ProofExpr>),
+    SymbolEqTrueRightIsSymbol(Box<ProofExpr>),
+    SymbolEqResultBool(Box<ProofExpr>),
     IfTrueCondition(Box<ProofExpr>),
     IfTrueThen(Box<ProofExpr>),
     IfEffectThenConditionFalse(Box<ProofExpr>),
@@ -1829,6 +1832,9 @@ impl<'a> SourceParser<'a> {
             "symm" => self.proof_symm(items),
             "trans" => self.proof_trans(items),
             "symbol-eq-true" => self.proof_symbol_eq_true(items),
+            "symbol-eq-true-left-is-symbol" => self.proof_symbol_eq_true_left_is_symbol(items),
+            "symbol-eq-true-right-is-symbol" => self.proof_symbol_eq_true_right_is_symbol(items),
+            "symbol-eq-result-bool" => self.proof_symbol_eq_result_bool(items),
             "if-true-condition" => self.proof_if_true_condition(items),
             "if-true-then" => self.proof_if_true_then(items),
             "if-effect-then-condition-false" => self.proof_if_effect_then_condition_false(items),
@@ -1902,6 +1908,33 @@ impl<'a> SourceParser<'a> {
     fn proof_symbol_eq_true(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
         expect_len("symbol-eq-true", items, 2)?;
         Ok(ProofExpr::SymbolEqTrue(Box::new(
+            self.proof_expr_or_ref(&items[1])?,
+        )))
+    }
+
+    fn proof_symbol_eq_true_left_is_symbol(
+        &mut self,
+        items: &[Expr],
+    ) -> Result<ProofExpr, ParseError> {
+        expect_len("symbol-eq-true-left-is-symbol", items, 2)?;
+        Ok(ProofExpr::SymbolEqTrueLeftIsSymbol(Box::new(
+            self.proof_expr_or_ref(&items[1])?,
+        )))
+    }
+
+    fn proof_symbol_eq_true_right_is_symbol(
+        &mut self,
+        items: &[Expr],
+    ) -> Result<ProofExpr, ParseError> {
+        expect_len("symbol-eq-true-right-is-symbol", items, 2)?;
+        Ok(ProofExpr::SymbolEqTrueRightIsSymbol(Box::new(
+            self.proof_expr_or_ref(&items[1])?,
+        )))
+    }
+
+    fn proof_symbol_eq_result_bool(&mut self, items: &[Expr]) -> Result<ProofExpr, ParseError> {
+        expect_len("symbol-eq-result-bool", items, 2)?;
+        Ok(ProofExpr::SymbolEqResultBool(Box::new(
             self.proof_expr_or_ref(&items[1])?,
         )))
     }

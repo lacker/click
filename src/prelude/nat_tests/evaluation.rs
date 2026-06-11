@@ -28,6 +28,12 @@ fn constructors_evaluate_to_unary_lists() {
     assert_evaluates_to(mul_call(three_value(), zero()), nil());
     assert_evaluates_to(mul_call(one_value(), three_value()), three_value());
     assert_evaluates_to(mul_call(two_value(), three_value()), six_value());
+    assert_evaluates_to(min_call(zero(), three_value()), nil());
+    assert_evaluates_to(min_call(two_value(), five_value()), two_value());
+    assert_evaluates_to(min_call(five_value(), two_value()), two_value());
+    assert_evaluates_to(max_call(zero(), three_value()), three_value());
+    assert_evaluates_to(max_call(two_value(), five_value()), five_value());
+    assert_evaluates_to(max_call(five_value(), two_value()), five_value());
     assert_evaluates_to(nat_eq_call(two_value(), two_value()), true_value());
     assert_evaluates_to(nat_eq_call(two_value(), three_value()), false_value());
     assert_evaluates_to(nat_le_call(zero(), three_value()), true_value());

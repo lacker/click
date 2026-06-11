@@ -42,6 +42,10 @@ fn value_eq_source_theorems_have_expected_shape() {
     let cons_elim_left_tail = theorem_symbol("value_eq_cons_true_elim", "left_tail");
     let cons_elim_right_head = theorem_symbol("value_eq_cons_true_elim", "right_head");
     let cons_elim_right_tail = theorem_symbol("value_eq_cons_true_elim", "right_tail");
+    let cons_false_left_head = theorem_symbol("value_eq_cons_false_cases", "left_head");
+    let cons_false_left_tail = theorem_symbol("value_eq_cons_false_cases", "left_tail");
+    let cons_false_right_head = theorem_symbol("value_eq_cons_false_cases", "right_head");
+    let cons_false_right_tail = theorem_symbol("value_eq_cons_false_cases", "right_tail");
     let cons_congr_left_head = theorem_symbol("cons_congr", "left_head");
     let cons_congr_left_tail = theorem_symbol("cons_congr", "left_tail");
     let cons_congr_right_head = theorem_symbol("cons_congr", "right_head");
@@ -183,6 +187,15 @@ fn value_eq_source_theorems_have_expected_shape() {
             cons_elim_left_tail,
             cons_elim_right_head,
             cons_elim_right_tail,
+        )
+    );
+    assert_eq!(
+        value_eq_cons_false_cases_source_theorem(),
+        value_eq_cons_false_cases_theorem(
+            cons_false_left_head,
+            cons_false_left_tail,
+            cons_false_right_head,
+            cons_false_right_tail,
         )
     );
     assert_eq!(

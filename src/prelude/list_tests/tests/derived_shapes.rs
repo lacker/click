@@ -101,6 +101,9 @@ fn filter_any_all_source_theorems_have_expected_shape() {
     let member_false_value = theorem_symbol("member_cons_false", "value");
     let member_false_head = theorem_symbol("member_cons_false", "head");
     let member_false_tail = theorem_symbol("member_cons_false", "tail");
+    let member_bool_value = theorem_symbol("member_computes_to_bool", "value");
+    let member_bool_list = theorem_symbol("member_computes_to_bool", "list");
+    let member_bool_result = theorem_symbol("member_computes_to_bool", "result");
 
     assert_eq!(
         member_nil_source_theorem(),
@@ -113,6 +116,10 @@ fn filter_any_all_source_theorems_have_expected_shape() {
     assert_eq!(
         member_cons_false_source_theorem(),
         member_cons_false_theorem(member_false_value, member_false_head, member_false_tail)
+    );
+    assert_eq!(
+        member_computes_to_bool_source_theorem(),
+        member_computes_to_bool_theorem(member_bool_value, member_bool_list, member_bool_result)
     );
 
     let all_nil_predicate = theorem_symbol("all_nil", "predicate");
@@ -230,6 +237,16 @@ fn higher_order_relation_source_theorems_have_expected_shape() {
     assert_alpha_eq(
         &concat_map_singleton_source_theorem(),
         &concat_map_singleton_theorem(X, VALUE),
+    );
+    assert_eq!(
+        map_snoc_source_theorem(),
+        map_snoc_theorem(
+            theorem_symbol("map_snoc", "function"),
+            theorem_symbol("map_snoc", "input_value"),
+            theorem_symbol("map_snoc", "mapped_value"),
+            theorem_symbol("map_snoc", "list"),
+            theorem_symbol("map_snoc", "snoc_value"),
+        )
     );
     assert_eq!(
         option_map_nth_source_theorem(),
@@ -511,6 +528,204 @@ fn is_singleton_source_theorems_have_expected_shape() {
     assert_eq!(
         is_singleton_cons_source_theorem(),
         is_singleton_cons_theorem(cons_head, cons_next, cons_tail)
+    );
+}
+
+#[test]
+fn is_pair_theorems_have_expected_shape() {
+    assert_eq!(
+        is_pair_nil_false_theorem(),
+        computes_to(is_pair_call(nil()), false_value())
+    );
+    assert_eq!(
+        is_pair_singleton_false_theorem(HEAD),
+        forall_where(
+            HEAD,
+            is_value(var(HEAD)),
+            computes_to(is_pair_call(singleton(var(HEAD))), false_value()),
+        )
+    );
+    assert_eq!(
+        is_pair_cons_cons_nil_true_theorem(LEFT_VALUE, RIGHT_VALUE),
+        forall_where(
+            LEFT_VALUE,
+            is_value(var(LEFT_VALUE)),
+            forall_where(
+                RIGHT_VALUE,
+                is_value(var(RIGHT_VALUE)),
+                computes_to(
+                    is_pair_call(pair(var(LEFT_VALUE), var(RIGHT_VALUE))),
+                    true_value(),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        is_pair_cons_cons_cons_false_theorem(LEFT_VALUE, RIGHT_VALUE, VALUE, TAIL),
+        forall_where(
+            LEFT_VALUE,
+            is_value(var(LEFT_VALUE)),
+            forall_where(
+                RIGHT_VALUE,
+                is_value(var(RIGHT_VALUE)),
+                forall_where(
+                    VALUE,
+                    is_value(var(VALUE)),
+                    forall_where(
+                        TAIL,
+                        is_list(var(TAIL)),
+                        computes_to(
+                            is_pair_call(cons(
+                                var(LEFT_VALUE),
+                                cons(var(RIGHT_VALUE), cons(var(VALUE), var(TAIL))),
+                            )),
+                            false_value(),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        is_pair_cons_cons_true_elim_theorem(LEFT_VALUE, RIGHT_VALUE, TAIL),
+        forall_where(
+            LEFT_VALUE,
+            is_value(var(LEFT_VALUE)),
+            forall_where(
+                RIGHT_VALUE,
+                is_value(var(RIGHT_VALUE)),
+                forall_where(
+                    TAIL,
+                    is_list(var(TAIL)),
+                    implies(
+                        computes_to(
+                            is_pair_call(cons(var(LEFT_VALUE), cons(var(RIGHT_VALUE), var(TAIL)))),
+                            true_value(),
+                        ),
+                        computes_to(var(TAIL), nil()),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        is_pair_cons_true_elim_theorem(LEFT_VALUE, TAIL, RIGHT_VALUE),
+        forall_where(
+            LEFT_VALUE,
+            is_value(var(LEFT_VALUE)),
+            forall_where(
+                TAIL,
+                is_list(var(TAIL)),
+                implies(
+                    computes_to(is_pair_call(cons(var(LEFT_VALUE), var(TAIL))), true_value()),
+                    exists_where(
+                        RIGHT_VALUE,
+                        is_value(var(RIGHT_VALUE)),
+                        computes_to(var(TAIL), singleton(var(RIGHT_VALUE))),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        is_pair_true_elim_theorem(VALUE, LEFT_VALUE, RIGHT_VALUE),
+        forall_where(
+            VALUE,
+            is_value(var(VALUE)),
+            implies(
+                computes_to(is_pair_call(var(VALUE)), true_value()),
+                exists_where(
+                    LEFT_VALUE,
+                    is_value(var(LEFT_VALUE)),
+                    exists_where(
+                        RIGHT_VALUE,
+                        is_value(var(RIGHT_VALUE)),
+                        computes_to(var(VALUE), pair(var(LEFT_VALUE), var(RIGHT_VALUE))),
+                    ),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        all_is_pair_cons_true_parts_theorem(HEAD, TAIL),
+        forall_where(
+            HEAD,
+            is_value(var(HEAD)),
+            forall_where(
+                TAIL,
+                is_list(var(TAIL)),
+                implies(
+                    computes_to(
+                        all_call(is_pair(), cons(var(HEAD), var(TAIL))),
+                        true_value()
+                    ),
+                    and(
+                        computes_to(is_pair_call(var(HEAD)), true_value()),
+                        computes_to(all_call(is_pair(), var(TAIL)), true_value()),
+                    ),
+                ),
+            ),
+        )
+    );
+}
+
+#[test]
+fn is_pair_source_theorems_have_expected_shape() {
+    let singleton_head = theorem_symbol("is_pair_singleton_false", "head");
+    let pair_first = theorem_symbol("is_pair_cons_cons_nil_true", "first");
+    let pair_second = theorem_symbol("is_pair_cons_cons_nil_true", "second");
+    let longer_first = theorem_symbol("is_pair_cons_cons_cons_false", "first");
+    let longer_second = theorem_symbol("is_pair_cons_cons_cons_false", "second");
+    let longer_third = theorem_symbol("is_pair_cons_cons_cons_false", "third");
+    let longer_tail = theorem_symbol("is_pair_cons_cons_cons_false", "tail");
+    let elim_first = theorem_symbol("is_pair_cons_cons_true_elim", "first");
+    let elim_second = theorem_symbol("is_pair_cons_cons_true_elim", "second");
+    let elim_rest = theorem_symbol("is_pair_cons_cons_true_elim", "rest");
+    let cons_elim_first = theorem_symbol("is_pair_cons_true_elim", "first");
+    let cons_elim_tail = theorem_symbol("is_pair_cons_true_elim", "tail");
+    let cons_elim_second = theorem_symbol("is_pair_cons_true_elim", "second");
+    let value_elim_value = theorem_symbol("is_pair_true_elim", "value");
+    let value_elim_first = theorem_symbol("is_pair_true_elim", "first");
+    let value_elim_second = theorem_symbol("is_pair_true_elim", "second");
+    let all_parts_head = theorem_symbol("all_is_pair_cons_true_parts", "head");
+    let all_parts_tail = theorem_symbol("all_is_pair_cons_true_parts", "tail");
+
+    assert_eq!(
+        is_pair_nil_false_source_theorem(),
+        is_pair_nil_false_theorem()
+    );
+    assert_eq!(
+        is_pair_singleton_false_source_theorem(),
+        is_pair_singleton_false_theorem(singleton_head)
+    );
+    assert_eq!(
+        is_pair_cons_cons_nil_true_source_theorem(),
+        is_pair_cons_cons_nil_true_theorem(pair_first, pair_second)
+    );
+    assert_eq!(
+        is_pair_cons_cons_cons_false_source_theorem(),
+        is_pair_cons_cons_cons_false_theorem(
+            longer_first,
+            longer_second,
+            longer_third,
+            longer_tail,
+        )
+    );
+    assert_eq!(
+        is_pair_cons_cons_true_elim_source_theorem(),
+        is_pair_cons_cons_true_elim_theorem(elim_first, elim_second, elim_rest)
+    );
+    assert_eq!(
+        is_pair_cons_true_elim_source_theorem(),
+        is_pair_cons_true_elim_theorem(cons_elim_first, cons_elim_tail, cons_elim_second)
+    );
+    assert_eq!(
+        is_pair_true_elim_source_theorem(),
+        is_pair_true_elim_theorem(value_elim_value, value_elim_first, value_elim_second)
+    );
+    assert_eq!(
+        all_is_pair_cons_true_parts_source_theorem(),
+        all_is_pair_cons_true_parts_theorem(all_parts_head, all_parts_tail)
     );
 }
 

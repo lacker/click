@@ -249,6 +249,15 @@ fn proven_prop_in_context(proof: &Proof, bindings: &Bindings, context: &Context)
         Proof::SymbolEqTrueElim(proof) => {
             symbol_eq_true_elim(proven_prop_in_context(proof, bindings, context)?)
         }
+        Proof::SymbolEqTrueLeftIsSymbol(proof) => {
+            symbol_eq_true_left_is_symbol(proven_prop_in_context(proof, bindings, context)?)
+        }
+        Proof::SymbolEqTrueRightIsSymbol(proof) => {
+            symbol_eq_true_right_is_symbol(proven_prop_in_context(proof, bindings, context)?)
+        }
+        Proof::SymbolEqResultBool(proof) => {
+            symbol_eq_result_bool(proven_prop_in_context(proof, bindings, context)?, context)
+        }
         Proof::IfTrueWithFalseElseCondition(proof) => {
             if_true_with_false_else_condition(proven_prop_in_context(proof, bindings, context)?)
         }
@@ -515,6 +524,35 @@ fn symbol_eq_true_elim(prop: Prop) -> Option<Prop> {
     match prop {
         Prop::Equal(Computation::SymbolEq { left, right }, Computation::Quote(TRUE_SYMBOL)) => {
             Some(Prop::Equal(*left, *right))
+        }
+        _ => None,
+    }
+}
+
+fn symbol_eq_true_left_is_symbol(prop: Prop) -> Option<Prop> {
+    match prop {
+        Prop::Equal(Computation::SymbolEq { left, .. }, Computation::Quote(TRUE_SYMBOL)) => {
+            Some(value_kind_is_kind(*left, SYMBOL_KIND_SYMBOL))
+        }
+        _ => None,
+    }
+}
+
+fn symbol_eq_true_right_is_symbol(prop: Prop) -> Option<Prop> {
+    match prop {
+        Prop::Equal(Computation::SymbolEq { right, .. }, Computation::Quote(TRUE_SYMBOL)) => {
+            Some(value_kind_is_kind(*right, SYMBOL_KIND_SYMBOL))
+        }
+        _ => None,
+    }
+}
+
+fn symbol_eq_result_bool(prop: Prop, context: &Context) -> Option<Prop> {
+    match prop {
+        Prop::Equal(Computation::SymbolEq { .. }, value)
+            if computation_is_known_value(&value, context) =>
+        {
+            Some(is_bool(value))
         }
         _ => None,
     }
@@ -1362,6 +1400,18 @@ fn computation_is_known_value(computation: &Computation, context: &Context) -> b
     if context_contains_prop(context, &is_value(computation.clone()))
         || computation.as_value().is_some()
         || computation_is_list(computation, context)
+        || context_contains_prop(
+            context,
+            &value_kind_is_kind(computation.clone(), SYMBOL_KIND_SYMBOL),
+        )
+        || context_contains_prop(
+            context,
+            &value_kind_is_kind(computation.clone(), LAMBDA_KIND_SYMBOL),
+        )
+        || context_contains_prop(
+            context,
+            &value_kind_is_kind(computation.clone(), LIST_KIND_SYMBOL),
+        )
     {
         return true;
     }

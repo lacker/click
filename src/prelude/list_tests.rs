@@ -445,6 +445,14 @@ pub fn is_singleton_definition() -> Computation {
     definition("is-singleton")
 }
 
+pub fn is_pair() -> Computation {
+    computation_ref("is-pair")
+}
+
+pub fn is_pair_definition() -> Computation {
+    definition("is-pair")
+}
+
 fn definition(spelling: &str) -> Computation {
     let modules = super::parsed_list_modules().expect("prelude list source should parse");
     let env = super::parsed_prelude_env().expect("prelude source should parse");
@@ -567,6 +575,18 @@ pub fn snoc_cons_source_theorem() -> Prop {
     theorem_prop("snoc_cons")
 }
 
+pub fn member_snoc_source_theorem() -> Prop {
+    theorem_prop("member_snoc")
+}
+
+pub fn tail_snoc_after_snoc_source_theorem() -> Prop {
+    theorem_prop("tail_snoc_after_snoc")
+}
+
+pub fn all_lists_snoc_source_theorem() -> Prop {
+    theorem_prop("all_lists_snoc")
+}
+
 pub fn concat_nil_source_theorem() -> Prop {
     theorem_prop("concat_nil")
 }
@@ -581,6 +601,22 @@ pub fn concat_computes_to_list_source_theorem() -> Prop {
 
 pub fn concat_append_source_theorem() -> Prop {
     theorem_prop("concat_append")
+}
+
+pub fn map_length_nil_source_theorem() -> Prop {
+    theorem_prop("map_length_nil")
+}
+
+pub fn map_length_cons_source_theorem() -> Prop {
+    theorem_prop("map_length_cons")
+}
+
+pub fn map_length_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("map_length_computes_to_list")
+}
+
+pub fn length_concat_source_theorem() -> Prop {
+    theorem_prop("length_concat")
 }
 
 pub fn last_nil_errors_source_theorem() -> Prop {
@@ -625,6 +661,38 @@ pub fn is_singleton_singleton_source_theorem() -> Prop {
 
 pub fn is_singleton_cons_source_theorem() -> Prop {
     theorem_prop("is_singleton_cons")
+}
+
+pub fn is_pair_nil_false_source_theorem() -> Prop {
+    theorem_prop("is_pair_nil_false")
+}
+
+pub fn is_pair_singleton_false_source_theorem() -> Prop {
+    theorem_prop("is_pair_singleton_false")
+}
+
+pub fn is_pair_cons_cons_nil_true_source_theorem() -> Prop {
+    theorem_prop("is_pair_cons_cons_nil_true")
+}
+
+pub fn is_pair_cons_cons_cons_false_source_theorem() -> Prop {
+    theorem_prop("is_pair_cons_cons_cons_false")
+}
+
+pub fn is_pair_cons_cons_true_elim_source_theorem() -> Prop {
+    theorem_prop("is_pair_cons_cons_true_elim")
+}
+
+pub fn is_pair_cons_true_elim_source_theorem() -> Prop {
+    theorem_prop("is_pair_cons_true_elim")
+}
+
+pub fn is_pair_true_elim_source_theorem() -> Prop {
+    theorem_prop("is_pair_true_elim")
+}
+
+pub fn all_is_pair_cons_true_parts_source_theorem() -> Prop {
+    theorem_prop("all_is_pair_cons_true_parts")
 }
 
 pub fn append_nil_computes_to_list_source_theorem() -> Prop {
@@ -699,6 +767,18 @@ pub fn length_snoc_source_theorem() -> Prop {
     theorem_prop("length_snoc")
 }
 
+pub fn length_take_source_theorem() -> Prop {
+    theorem_prop("length_take")
+}
+
+pub fn length_drop_source_theorem() -> Prop {
+    theorem_prop("length_drop")
+}
+
+pub fn length_take_add_length_drop_source_theorem() -> Prop {
+    theorem_prop("length_take_add_length_drop")
+}
+
 pub fn length_reverse_source_theorem() -> Prop {
     theorem_prop("length_reverse")
 }
@@ -719,6 +799,14 @@ pub fn take_computes_to_list_source_theorem() -> Prop {
     theorem_prop("take_computes_to_list")
 }
 
+pub fn take_congr_count_computation_source_theorem() -> Prop {
+    theorem_prop("take_congr_count_computation")
+}
+
+pub fn take_congr_list_computation_source_theorem() -> Prop {
+    theorem_prop("take_congr_list_computation")
+}
+
 pub fn drop_zero_source_theorem() -> Prop {
     theorem_prop("drop_zero")
 }
@@ -735,8 +823,24 @@ pub fn drop_computes_to_list_source_theorem() -> Prop {
     theorem_prop("drop_computes_to_list")
 }
 
+pub fn drop_congr_count_computation_source_theorem() -> Prop {
+    theorem_prop("drop_congr_count_computation")
+}
+
+pub fn drop_congr_list_computation_source_theorem() -> Prop {
+    theorem_prop("drop_congr_list_computation")
+}
+
 pub fn take_take_source_theorem() -> Prop {
     theorem_prop("take_take")
+}
+
+pub fn drop_drop_source_theorem() -> Prop {
+    theorem_prop("drop_drop")
+}
+
+pub fn take_drop_commute_source_theorem() -> Prop {
+    theorem_prop("take_drop_commute")
 }
 
 pub fn split_at_def_source_theorem() -> Prop {
@@ -859,12 +963,40 @@ pub fn value_kind_list_implies_is_list_source_theorem() -> Prop {
     theorem_prop("value_kind_list_implies_is_list")
 }
 
+pub fn is_list_implies_is_list_value_true_source_theorem() -> Prop {
+    theorem_prop("is_list_implies_is_list_value_true")
+}
+
+pub fn all_lists_cons_source_theorem() -> Prop {
+    theorem_prop("all_lists_cons")
+}
+
 pub fn all_lists_cons_true_source_theorem() -> Prop {
     theorem_prop("all_lists_cons_true")
 }
 
 pub fn symbol_eq_refl_source_theorem() -> Prop {
     theorem_prop("symbol_eq_refl")
+}
+
+pub fn symbol_eq_true_implies_is_symbol_left_source_theorem() -> Prop {
+    theorem_prop("symbol_eq_true_implies_is_symbol_left")
+}
+
+pub fn symbol_eq_true_implies_is_symbol_right_source_theorem() -> Prop {
+    theorem_prop("symbol_eq_true_implies_is_symbol_right")
+}
+
+pub fn symbol_eq_false_distinct_source_theorem() -> Prop {
+    theorem_prop("symbol_eq_false_distinct")
+}
+
+pub fn symbol_eq_symm_source_theorem() -> Prop {
+    theorem_prop("symbol_eq_symm")
+}
+
+pub fn symbol_eq_computes_to_bool_source_theorem() -> Prop {
+    theorem_prop("symbol_eq_computes_to_bool")
 }
 
 pub fn true_is_bool_source_theorem() -> Prop {
@@ -885,6 +1017,30 @@ pub fn bool_distinct_source_theorem() -> Prop {
 
 pub fn not_congr_source_theorem() -> Prop {
     theorem_prop("not_congr")
+}
+
+pub fn and_congr_left_source_theorem() -> Prop {
+    theorem_prop("and_congr_left")
+}
+
+pub fn and_congr_right_source_theorem() -> Prop {
+    theorem_prop("and_congr_right")
+}
+
+pub fn and_congr_source_theorem() -> Prop {
+    theorem_prop("and_congr")
+}
+
+pub fn or_congr_left_source_theorem() -> Prop {
+    theorem_prop("or_congr_left")
+}
+
+pub fn or_congr_right_source_theorem() -> Prop {
+    theorem_prop("or_congr_right")
+}
+
+pub fn or_congr_source_theorem() -> Prop {
+    theorem_prop("or_congr")
 }
 
 pub fn not_true_elim_source_theorem() -> Prop {
@@ -921,6 +1077,26 @@ pub fn if_congr_else_source_theorem() -> Prop {
 
 pub fn if_false_result_with_true_else_source_theorem() -> Prop {
     theorem_prop("if_false_result_with_true_else")
+}
+
+pub fn if_false_result_with_error_else_source_theorem() -> Prop {
+    theorem_prop("if_false_result_with_error_else")
+}
+
+pub fn if_false_result_with_false_else_source_theorem() -> Prop {
+    theorem_prop("if_false_result_with_false_else")
+}
+
+pub fn if_true_result_with_true_then_source_theorem() -> Prop {
+    theorem_prop("if_true_result_with_true_then")
+}
+
+pub fn if_true_result_with_true_else_source_theorem() -> Prop {
+    theorem_prop("if_true_result_with_true_else")
+}
+
+pub fn if_false_result_with_false_then_source_theorem() -> Prop {
+    theorem_prop("if_false_result_with_false_then")
 }
 
 pub fn and_true_intro_source_theorem() -> Prop {
@@ -1119,6 +1295,10 @@ pub fn option_map_congr_option_source_theorem() -> Prop {
     theorem_prop("option_map_congr_option")
 }
 
+pub fn option_map_congr_option_computation_source_theorem() -> Prop {
+    theorem_prop("option_map_congr_option_computation")
+}
+
 pub fn option_map_congr_source_theorem() -> Prop {
     theorem_prop("option_map_congr")
 }
@@ -1129,6 +1309,10 @@ pub fn option_bind_congr_function_source_theorem() -> Prop {
 
 pub fn option_bind_congr_option_source_theorem() -> Prop {
     theorem_prop("option_bind_congr_option")
+}
+
+pub fn option_bind_congr_option_computation_source_theorem() -> Prop {
+    theorem_prop("option_bind_congr_option_computation")
 }
 
 pub fn unwrap_or_congr_default_source_theorem() -> Prop {
@@ -1283,12 +1467,32 @@ pub fn zip_computes_to_list_source_theorem() -> Prop {
     theorem_prop("zip_computes_to_list")
 }
 
+pub fn zip_pair_shape_source_theorem() -> Prop {
+    theorem_prop("zip_pair_shape")
+}
+
 pub fn unzip_nil_source_theorem() -> Prop {
     theorem_prop("unzip_nil")
 }
 
 pub fn unzip_cons_source_theorem() -> Prop {
     theorem_prop("unzip_cons")
+}
+
+pub fn unzip_pair_shape_source_theorem() -> Prop {
+    theorem_prop("unzip_pair_shape")
+}
+
+pub fn zip_unzip_source_theorem() -> Prop {
+    theorem_prop("zip_unzip")
+}
+
+pub fn unzip_zip_source_theorem() -> Prop {
+    theorem_prop("unzip_zip")
+}
+
+pub fn zip_with_as_map_zip_source_theorem() -> Prop {
+    theorem_prop("zip_with_as_map_zip")
 }
 
 pub fn zip_with_left_nil_source_theorem() -> Prop {
@@ -1447,6 +1651,22 @@ pub fn elem_index_cons_false_some_source_theorem() -> Prop {
     theorem_prop("elem_index_cons_false_some")
 }
 
+pub fn elem_index_cons_some_cases_source_theorem() -> Prop {
+    theorem_prop("elem_index_cons_some_cases")
+}
+
+pub fn elem_index_append_left_source_theorem() -> Prop {
+    theorem_prop("elem_index_append_left")
+}
+
+pub fn elem_index_cons_none_parts_source_theorem() -> Prop {
+    theorem_prop("elem_index_cons_none_parts")
+}
+
+pub fn elem_index_append_right_source_theorem() -> Prop {
+    theorem_prop("elem_index_append_right")
+}
+
 pub fn value_eq_true_true_source_theorem() -> Prop {
     theorem_prop("value_eq_true_true")
 }
@@ -1547,6 +1767,10 @@ pub fn value_eq_cons_true_elim_source_theorem() -> Prop {
     theorem_prop("value_eq_cons_true_elim")
 }
 
+pub fn value_eq_cons_false_cases_source_theorem() -> Prop {
+    theorem_prop("value_eq_cons_false_cases")
+}
+
 pub fn cons_congr_source_theorem() -> Prop {
     theorem_prop("cons_congr")
 }
@@ -1607,6 +1831,22 @@ pub fn member_cons_false_source_theorem() -> Prop {
     theorem_prop("member_cons_false")
 }
 
+pub fn member_computes_to_bool_source_theorem() -> Prop {
+    theorem_prop("member_computes_to_bool")
+}
+
+pub fn member_is_bool_for_comparable_value_source_theorem() -> Prop {
+    theorem_prop("member_is_bool_for_comparable_value")
+}
+
+pub fn member_cons_or_source_theorem() -> Prop {
+    theorem_prop("member_cons_or")
+}
+
+pub fn member_append_source_theorem() -> Prop {
+    theorem_prop("member_append")
+}
+
 pub fn all_nil_source_theorem() -> Prop {
     theorem_prop("all_nil")
 }
@@ -1647,6 +1887,10 @@ pub fn map_append_source_theorem() -> Prop {
     theorem_prop("map_append")
 }
 
+pub fn map_snoc_source_theorem() -> Prop {
+    theorem_prop("map_snoc")
+}
+
 pub fn map_take_source_theorem() -> Prop {
     theorem_prop("map_take")
 }
@@ -1657,6 +1901,18 @@ pub fn map_drop_source_theorem() -> Prop {
 
 pub fn option_map_nth_source_theorem() -> Prop {
     theorem_prop("option_map_nth")
+}
+
+pub fn option_map_find_source_theorem() -> Prop {
+    theorem_prop("option_map_find")
+}
+
+pub fn option_bind_find_none_source_theorem() -> Prop {
+    theorem_prop("option_bind_find_none")
+}
+
+pub fn option_bind_find_some_source_theorem() -> Prop {
+    theorem_prop("option_bind_find_some")
 }
 
 pub fn concat_map_singleton_source_theorem() -> Prop {
@@ -1944,6 +2200,10 @@ pub fn null_call(list: Computation) -> Computation {
 
 pub fn is_singleton_call(list: Computation) -> Computation {
     apply(is_singleton(), list)
+}
+
+pub fn is_pair_call(value: Computation) -> Computation {
+    apply(is_pair(), value)
 }
 
 /// If `list` and `acc` are lists, then `reverse_acc(list, acc)` computes to a list.
@@ -2252,6 +2512,152 @@ pub fn is_singleton_cons_theorem(head: Symbol, next: Symbol, tail: Symbol) -> Pr
     )
 }
 
+/// `is-pair(nil)` returns `:false`.
+pub fn is_pair_nil_false_theorem() -> Prop {
+    computes_to(is_pair_call(nil()), false_value())
+}
+
+/// `is-pair` returns `:false` for a one-element list.
+pub fn is_pair_singleton_false_theorem(head: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        computes_to(is_pair_call(singleton(var(head))), false_value()),
+    )
+}
+
+/// `is-pair` returns `:true` for a two-element list.
+pub fn is_pair_cons_cons_nil_true_theorem(first: Symbol, second: Symbol) -> Prop {
+    forall_where(
+        first,
+        is_value(var(first)),
+        forall_where(
+            second,
+            is_value(var(second)),
+            computes_to(is_pair_call(pair(var(first), var(second))), true_value()),
+        ),
+    )
+}
+
+/// `is-pair` returns `:false` for lists with at least three elements.
+pub fn is_pair_cons_cons_cons_false_theorem(
+    first: Symbol,
+    second: Symbol,
+    third: Symbol,
+    tail: Symbol,
+) -> Prop {
+    forall_where(
+        first,
+        is_value(var(first)),
+        forall_where(
+            second,
+            is_value(var(second)),
+            forall_where(
+                third,
+                is_value(var(third)),
+                forall_where(
+                    tail,
+                    is_list(var(tail)),
+                    computes_to(
+                        is_pair_call(cons(
+                            var(first),
+                            cons(var(second), cons(var(third), var(tail))),
+                        )),
+                        false_value(),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If a two-or-more element list is an `is-pair`, its tail after the second
+/// element is `nil`.
+pub fn is_pair_cons_cons_true_elim_theorem(first: Symbol, second: Symbol, rest: Symbol) -> Prop {
+    forall_where(
+        first,
+        is_value(var(first)),
+        forall_where(
+            second,
+            is_value(var(second)),
+            forall_where(
+                rest,
+                is_list(var(rest)),
+                implies(
+                    computes_to(
+                        is_pair_call(cons(var(first), cons(var(second), var(rest)))),
+                        true_value(),
+                    ),
+                    computes_to(var(rest), nil()),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If a cons value is an `is-pair`, its tail is a singleton.
+pub fn is_pair_cons_true_elim_theorem(first: Symbol, tail: Symbol, second: Symbol) -> Prop {
+    forall_where(
+        first,
+        is_value(var(first)),
+        forall_where(
+            tail,
+            is_list(var(tail)),
+            implies(
+                computes_to(is_pair_call(cons(var(first), var(tail))), true_value()),
+                exists_where(
+                    second,
+                    is_value(var(second)),
+                    computes_to(var(tail), singleton(var(second))),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If an arbitrary value is an `is-pair`, it computes to a two-element list.
+pub fn is_pair_true_elim_theorem(value: Symbol, first: Symbol, second: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        implies(
+            computes_to(is_pair_call(var(value)), true_value()),
+            exists_where(
+                first,
+                is_value(var(first)),
+                exists_where(
+                    second,
+                    is_value(var(second)),
+                    computes_to(var(value), pair(var(first), var(second))),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If `all is-pair` is true for a cons, it is true for the head and tail
+/// pieces separately.
+pub fn all_is_pair_cons_true_parts_theorem(head: Symbol, tail: Symbol) -> Prop {
+    forall_where(
+        head,
+        is_value(var(head)),
+        forall_where(
+            tail,
+            is_list(var(tail)),
+            implies(
+                computes_to(
+                    all_call(is_pair(), cons(var(head), var(tail))),
+                    true_value(),
+                ),
+                and(
+                    computes_to(is_pair_call(var(head)), true_value()),
+                    computes_to(all_call(is_pair(), var(tail)), true_value()),
+                ),
+            ),
+        ),
+    )
+}
+
 /// If `right` is a list, then `append(nil, right)` computes to a list.
 pub fn append_nil_computes_to_list_theorem(right: Symbol, result: Symbol) -> Prop {
     forall_where(
@@ -2412,6 +2818,58 @@ pub fn take_computes_to_list_theorem(count: Symbol, list: Symbol, result: Symbol
     )
 }
 
+/// Replacing a count computation by its list result preserves `take`.
+pub fn take_congr_count_computation_theorem(
+    count: Symbol,
+    count_value: Symbol,
+    list: Symbol,
+) -> Prop {
+    forall(
+        count,
+        forall_where(
+            count_value,
+            is_list(var(count_value)),
+            implies(
+                computes_to(var(count), var(count_value)),
+                forall_where(
+                    list,
+                    is_list(var(list)),
+                    computes_to(
+                        take_call(var(count), var(list)),
+                        take_call(var(count_value), var(list)),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Replacing a list computation by its list result preserves `take`.
+pub fn take_congr_list_computation_theorem(
+    count: Symbol,
+    list: Symbol,
+    list_value: Symbol,
+) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        forall(
+            list,
+            forall_where(
+                list_value,
+                is_list(var(list_value)),
+                implies(
+                    computes_to(var(list), var(list_value)),
+                    computes_to(
+                        take_call(var(count), var(list)),
+                        take_call(var(count), var(list_value)),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
 /// Dropping zero elements returns the input list.
 pub fn drop_zero_theorem(list: Symbol) -> Prop {
     forall_where(
@@ -2475,6 +2933,58 @@ pub fn drop_computes_to_list_theorem(count: Symbol, list: Symbol, result: Symbol
     )
 }
 
+/// Replacing a count computation by its list result preserves `drop`.
+pub fn drop_congr_count_computation_theorem(
+    count: Symbol,
+    count_value: Symbol,
+    list: Symbol,
+) -> Prop {
+    forall(
+        count,
+        forall_where(
+            count_value,
+            is_list(var(count_value)),
+            implies(
+                computes_to(var(count), var(count_value)),
+                forall_where(
+                    list,
+                    is_list(var(list)),
+                    computes_to(
+                        drop_call(var(count), var(list)),
+                        drop_call(var(count_value), var(list)),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Replacing a list computation by its list result preserves `drop`.
+pub fn drop_congr_list_computation_theorem(
+    count: Symbol,
+    list: Symbol,
+    list_value: Symbol,
+) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        forall(
+            list,
+            forall_where(
+                list_value,
+                is_list(var(list_value)),
+                implies(
+                    computes_to(var(list), var(list_value)),
+                    computes_to(
+                        drop_call(var(count), var(list)),
+                        drop_call(var(count), var(list_value)),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
 /// Taking the same count twice is idempotent.
 pub fn take_take_theorem(count: Symbol, list: Symbol) -> Prop {
     forall_where(
@@ -2486,6 +2996,49 @@ pub fn take_take_theorem(count: Symbol, list: Symbol) -> Prop {
             computes_to(
                 take_call(var(count), take_call(var(count), var(list))),
                 take_call(var(count), var(list)),
+            ),
+        ),
+    )
+}
+
+/// Dropping `left` and then `right` is dropping `append(left, right)`.
+pub fn drop_drop_theorem(left: Symbol, right: Symbol, list: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_list(var(left)),
+        forall_where(
+            right,
+            is_list(var(right)),
+            forall_where(
+                list,
+                is_list(var(list)),
+                computes_to(
+                    drop_call(var(right), drop_call(var(left), var(list))),
+                    drop_call(append_call(var(left), var(right)), var(list)),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Taking after dropping equals dropping after taking the combined prefix.
+pub fn take_drop_commute_theorem(take_count: Symbol, drop_count: Symbol, list: Symbol) -> Prop {
+    forall_where(
+        take_count,
+        is_list(var(take_count)),
+        forall_where(
+            drop_count,
+            is_list(var(drop_count)),
+            forall_where(
+                list,
+                is_list(var(list)),
+                computes_to(
+                    take_call(var(take_count), drop_call(var(drop_count), var(list))),
+                    drop_call(
+                        var(drop_count),
+                        take_call(append_call(var(drop_count), var(take_count)), var(list)),
+                    ),
+                ),
             ),
         ),
     )
@@ -3098,6 +3651,57 @@ pub fn length_snoc_theorem(list: Symbol, value: Symbol) -> Prop {
     )
 }
 
+/// The length of a taken prefix is the corresponding prefix of the length.
+pub fn length_take_theorem(count: Symbol, list: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        forall_where(
+            list,
+            is_list(var(list)),
+            computes_to(
+                length_call(take_call(var(count), var(list))),
+                take_call(var(count), length_call(var(list))),
+            ),
+        ),
+    )
+}
+
+/// The length of a dropped suffix is the corresponding suffix of the length.
+pub fn length_drop_theorem(count: Symbol, list: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        forall_where(
+            list,
+            is_list(var(list)),
+            computes_to(
+                length_call(drop_call(var(count), var(list))),
+                drop_call(var(count), length_call(var(list))),
+            ),
+        ),
+    )
+}
+
+/// The lengths of `take` and `drop` append back to the original length.
+pub fn length_take_add_length_drop_theorem(count: Symbol, list: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        forall_where(
+            list,
+            is_list(var(list)),
+            computes_to(
+                append_call(
+                    length_call(take_call(var(count), var(list))),
+                    length_call(drop_call(var(count), var(list))),
+                ),
+                length_call(var(list)),
+            ),
+        ),
+    )
+}
+
 /// Mapping over `nil` returns `nil`.
 pub fn map_nil_theorem(function: Symbol) -> Prop {
     forall_where(
@@ -3548,6 +4152,22 @@ pub fn zip_computes_to_list_theorem(left: Symbol, right: Symbol, result: Symbol)
     )
 }
 
+/// `zip` produces a list whose elements are encoded pairs.
+pub fn zip_pair_shape_theorem(left: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_list(var(left)),
+        forall_where(
+            right,
+            is_list(var(right)),
+            computes_to(
+                all_call(is_pair(), zip_call(var(left), var(right))),
+                true_value(),
+            ),
+        ),
+    )
+}
+
 /// Unzipping an empty list returns a pair of empty lists.
 pub fn unzip_nil_theorem() -> Prop {
     computes_to(unzip_call(nil()), pair(nil(), nil()))
@@ -3571,6 +4191,80 @@ pub fn unzip_cons_theorem(left: Symbol, right: Symbol, tail: Symbol) -> Prop {
                         cons(var(left), head_call(unzip_call(var(tail)))),
                         cons(var(right), head_call(tail_call(unzip_call(var(tail))))),
                     ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// A list whose elements are all encoded pairs unzips to a pair of lists.
+pub fn unzip_pair_shape_theorem(pairs: Symbol, left: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        pairs,
+        is_list(var(pairs)),
+        implies(
+            computes_to(all_call(is_pair(), var(pairs)), true_value()),
+            exists_where(
+                left,
+                is_list(var(left)),
+                exists_where(
+                    right,
+                    is_list(var(right)),
+                    computes_to(unzip_call(var(pairs)), pair(var(left), var(right))),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Zipping the two outputs of `unzip` reconstructs a list of encoded pairs.
+pub fn zip_unzip_theorem(pairs: Symbol) -> Prop {
+    forall_where(
+        pairs,
+        is_list(var(pairs)),
+        implies(
+            computes_to(all_call(is_pair(), var(pairs)), true_value()),
+            computes_to(
+                zip_call(
+                    head_call(unzip_call(var(pairs))),
+                    head_call(tail_call(unzip_call(var(pairs)))),
+                ),
+                var(pairs),
+            ),
+        ),
+    )
+}
+
+pub fn zip_pair_map_function(function: Computation, pair_value: Symbol) -> Computation {
+    lambda(
+        pair_value,
+        apply(
+            apply(function, head_call(var(pair_value))),
+            head_call(tail_call(var(pair_value))),
+        ),
+    )
+}
+
+/// `zip-with f xs ys` is mapping the pair eliminator for `f` over `zip xs ys`.
+pub fn zip_with_as_map_zip_theorem(
+    function: Symbol,
+    left: Symbol,
+    right: Symbol,
+    pair_value: Symbol,
+) -> Prop {
+    let mapped_pair = zip_pair_map_function(var(function), pair_value);
+    forall_where(
+        function,
+        is_value(var(function)),
+        forall_where(
+            left,
+            is_list(var(left)),
+            forall_where(
+                right,
+                is_list(var(right)),
+                computes_to(
+                    zip_with_call(var(function), var(left), var(right)),
+                    map_call(mapped_pair, zip_call(var(left), var(right))),
                 ),
             ),
         ),
@@ -4316,6 +5010,50 @@ pub fn value_eq_cons_true_elim_theorem(
     )
 }
 
+/// If cons `value-eq` returns false, either the heads or tails return false under `value-eq`.
+pub fn value_eq_cons_false_cases_theorem(
+    left_head: Symbol,
+    left_tail: Symbol,
+    right_head: Symbol,
+    right_tail: Symbol,
+) -> Prop {
+    forall_where(
+        left_head,
+        is_value(var(left_head)),
+        forall_where(
+            left_tail,
+            is_list(var(left_tail)),
+            forall_where(
+                right_head,
+                is_value(var(right_head)),
+                forall_where(
+                    right_tail,
+                    is_list(var(right_tail)),
+                    implies(
+                        computes_to(
+                            value_eq_call(
+                                cons(var(left_head), var(left_tail)),
+                                cons(var(right_head), var(right_tail)),
+                            ),
+                            false_value(),
+                        ),
+                        or(
+                            computes_to(
+                                value_eq_call(var(left_head), var(right_head)),
+                                false_value(),
+                            ),
+                            computes_to(
+                                value_eq_call(var(left_tail), var(right_tail)),
+                                false_value(),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
 /// `cons` respects equality of its head and tail arguments.
 pub fn cons_congr_theorem(
     left_head: Symbol,
@@ -4589,6 +5327,26 @@ pub fn member_cons_false_theorem(value: Symbol, head: Symbol, tail: Symbol) -> P
                         member_call(var(value), cons(var(head), var(tail))),
                         member_call(var(value), var(tail)),
                     ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// If `member` computes to a value, that value is boolean.
+pub fn member_computes_to_bool_theorem(value: Symbol, list: Symbol, result: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        forall_where(
+            list,
+            is_list(var(list)),
+            forall_where(
+                result,
+                is_value(var(result)),
+                implies(
+                    computes_to(member_call(var(value), var(list)), var(result)),
+                    is_bool(var(result)),
                 ),
             ),
         ),
@@ -4962,6 +5720,46 @@ pub fn option_map_nth_theorem(
                     computes_to(
                         option_map_call(var(function), nth_call(var(index), var(list))),
                         nth_call(var(index), map_call(var(function), var(list))),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Mapping over a snoc maps the appended value and snocs it onto the mapped list.
+pub fn map_snoc_theorem(
+    function: Symbol,
+    input_value: Symbol,
+    mapped_value: Symbol,
+    list: Symbol,
+    snoc_value: Symbol,
+) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        implies(
+            forall_where(
+                input_value,
+                is_value(var(input_value)),
+                exists_where(
+                    mapped_value,
+                    is_value(var(mapped_value)),
+                    computes_to(apply(var(function), var(input_value)), var(mapped_value)),
+                ),
+            ),
+            forall_where(
+                list,
+                is_list(var(list)),
+                forall_where(
+                    snoc_value,
+                    is_value(var(snoc_value)),
+                    computes_to(
+                        map_call(var(function), snoc_call(var(list), var(snoc_value))),
+                        snoc_call(
+                            map_call(var(function), var(list)),
+                            apply(var(function), var(snoc_value)),
+                        ),
                     ),
                 ),
             ),
@@ -5410,6 +6208,9 @@ mod tests {
     const COUNT: Symbol = Symbol(220);
     const COUNT_HEAD: Symbol = Symbol(221);
     const COUNT_TAIL: Symbol = Symbol(222);
+    const COUNT_VALUE: Symbol = Symbol(223);
+    const LIST_VALUE: Symbol = Symbol(224);
+    const LEFT_LIST: Symbol = Symbol(225);
 
     fn prove_evaluation(computation: Computation, expected: impl Into<Outcome>) -> Proof {
         proof_by_evaluation(computation, expected, 512).expect("example should evaluate")

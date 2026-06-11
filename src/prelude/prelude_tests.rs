@@ -218,6 +218,10 @@ fn is_singleton() -> Computation {
     computation_ref("is-singleton")
 }
 
+fn is_pair() -> Computation {
+    computation_ref("is-pair")
+}
+
 fn zero() -> Computation {
     computation_ref("zero")
 }
@@ -296,10 +300,17 @@ fn prelude_theorem_names() -> Vec<Name> {
         "snoc_computes_to_list",
         "snoc_nil",
         "snoc_cons",
+        "member_snoc",
+        "tail_snoc_after_snoc",
+        "all_lists_snoc",
         "concat_nil",
         "concat_cons",
         "concat_computes_to_list",
         "concat_append",
+        "map_length_nil",
+        "map_length_cons",
+        "map_length_computes_to_list",
+        "length_concat",
         "length_nil",
         "length_cons",
         "length_singleton",
@@ -307,15 +318,22 @@ fn prelude_theorem_names() -> Vec<Name> {
         "length_append",
         "append_length_singleton",
         "length_snoc",
+        "length_take",
+        "length_drop",
+        "length_take_add_length_drop",
         "length_reverse",
         "take_zero",
         "take_nil",
         "take_cons",
         "take_computes_to_list",
+        "take_congr_count_computation",
+        "take_congr_list_computation",
         "drop_zero",
         "drop_nil",
         "drop_cons",
         "drop_computes_to_list",
+        "drop_congr_count_computation",
+        "drop_congr_list_computation",
         "take_take",
         "split_at_def",
         "split_at_zero",
@@ -351,6 +369,8 @@ fn prelude_theorem_names() -> Vec<Name> {
         "intercalate_cons_cons",
         "is_list_value_true_implies_is_list",
         "value_kind_list_implies_is_list",
+        "is_list_implies_is_list_value_true",
+        "all_lists_cons",
         "all_lists_cons_true",
         "none_is_none",
         "some_is_none",
@@ -382,9 +402,11 @@ fn prelude_theorem_names() -> Vec<Name> {
         "option_bind_assoc",
         "option_map_congr_function",
         "option_map_congr_option",
+        "option_map_congr_option_computation",
         "option_map_congr",
         "option_bind_congr_function",
         "option_bind_congr_option",
+        "option_bind_congr_option_computation",
         "unwrap_or_congr_default",
         "unwrap_or_congr_option",
         "pair_first",
@@ -423,8 +445,13 @@ fn prelude_theorem_names() -> Vec<Name> {
         "zip_right_nil",
         "zip_cons",
         "zip_computes_to_list",
+        "zip_pair_shape",
         "unzip_nil",
         "unzip_cons",
+        "unzip_pair_shape",
+        "zip_unzip",
+        "unzip_zip",
+        "zip_with_as_map_zip",
         "zip_with_left_nil",
         "zip_with_right_nil",
         "zip_with_cons",
@@ -499,6 +526,7 @@ fn prelude_theorem_names() -> Vec<Name> {
         "value_eq_left_symbol_true",
         "value_eq_left_symbol_sound",
         "value_eq_cons_true_elim",
+        "value_eq_cons_false_cases",
         "cons_congr",
         "value_eq_sound",
         "value_eq_refl",
@@ -514,11 +542,19 @@ fn prelude_theorem_names() -> Vec<Name> {
         "member_nil",
         "member_cons_true",
         "member_cons_false",
+        "member_computes_to_bool",
+        "member_is_bool_for_comparable_value",
+        "member_cons_or",
+        "member_append",
         "elem_index_computes_to_option",
         "member_false_implies_elem_index_none",
         "member_true_implies_elem_index_some",
         "elem_index_none_implies_member_false",
         "elem_index_some_implies_member_true",
+        "elem_index_cons_some_cases",
+        "elem_index_append_left",
+        "elem_index_cons_none_parts",
+        "elem_index_append_right",
         "all_nil",
         "all_cons_true",
         "all_cons_false",
@@ -530,9 +566,13 @@ fn prelude_theorem_names() -> Vec<Name> {
         "map_compose",
         "map_congr",
         "map_append",
+        "map_snoc",
         "map_take",
         "map_drop",
         "option_map_nth",
+        "option_map_find",
+        "option_bind_find_none",
+        "option_bind_find_some",
         "concat_map_singleton",
         "concat_map_append",
         "concat_map_as_concat_map",
@@ -544,6 +584,8 @@ fn prelude_theorem_names() -> Vec<Name> {
         "fold_left_reverse_acc",
         "fold_left_reverse",
         "append_take_drop",
+        "drop_drop",
+        "take_drop_commute",
         "split_at_append",
         "split_at_pair_eta",
         "last_nil_errors",
@@ -557,6 +599,14 @@ fn prelude_theorem_names() -> Vec<Name> {
         "is_singleton_nil",
         "is_singleton_singleton",
         "is_singleton_cons",
+        "is_pair_nil_false",
+        "is_pair_singleton_false",
+        "is_pair_cons_cons_nil_true",
+        "is_pair_cons_cons_cons_false",
+        "is_pair_cons_cons_true_elim",
+        "is_pair_cons_true_elim",
+        "is_pair_true_elim",
+        "all_is_pair_cons_true_parts",
         "if_true",
         "if_false",
         "if_condition_true",
@@ -566,10 +616,20 @@ fn prelude_theorem_names() -> Vec<Name> {
         "if_true_result_with_false_then",
         "if_false_result_with_true_then",
         "if_false_result_with_true_else",
+        "if_false_result_with_error_else",
+        "if_false_result_with_false_else",
+        "if_true_result_with_true_then",
+        "if_true_result_with_true_else",
+        "if_false_result_with_false_then",
         "symbol_eq_unit_unit",
         "symbol_eq_true_false",
         "symbol_eq_true",
+        "symbol_eq_true_implies_is_symbol_left",
+        "symbol_eq_true_implies_is_symbol_right",
+        "symbol_eq_false_distinct",
+        "symbol_eq_symm",
         "symbol_eq_refl",
+        "symbol_eq_computes_to_bool",
         "true_is_bool",
         "false_is_bool",
         "is_bool_elim",
@@ -578,6 +638,12 @@ fn prelude_theorem_names() -> Vec<Name> {
         "not_false",
         "not_computes_to_bool",
         "not_congr",
+        "and_congr_left",
+        "and_congr_right",
+        "and_congr",
+        "or_congr_left",
+        "or_congr_right",
+        "or_congr",
         "not_true_elim",
         "not_false_elim",
         "if_computes_to_bool",
@@ -641,6 +707,10 @@ fn prelude_theorem_names() -> Vec<Name> {
         "range_cons",
         "range_succ",
         "range_computes_to_list",
+        "range_all_lists",
+        "map_succ_computes_to_list",
+        "map_succ_snoc",
+        "map_succ_range",
         "length_range",
         "succ_preserves_nat_value",
         "is_nat_value_cons",
@@ -864,6 +934,7 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         computation_name("is-singleton"),
         Some(computation("is-singleton"))
     );
+    assert_eq!(computation_name("is-pair"), Some(computation("is-pair")));
     assert_eq!(
         theorem_name("reverse_double"),
         Some(theorem("reverse_double"))
@@ -1196,6 +1267,10 @@ fn theory_defines_reverse() {
         Some(&list_tests::is_singleton_definition())
     );
     assert_eq!(
+        theory.computation(computation("is-pair")),
+        Some(&list_tests::is_pair_definition())
+    );
+    assert_eq!(
         theory.computation(computation("zero")),
         Some(&nat_tests::zero_definition())
     );
@@ -1287,6 +1362,7 @@ fn theory_defines_reverse() {
         is_singleton(),
         Computation::Ref(computation("is-singleton"))
     );
+    assert_eq!(is_pair(), Computation::Ref(computation("is-pair")));
     assert_eq!(zero(), Computation::Ref(computation("zero")));
     assert_eq!(succ(), Computation::Ref(computation("succ")));
     assert_eq!(
@@ -1488,6 +1564,10 @@ fn theory_defines_reverse() {
         Step::Reduced(list_tests::is_singleton_definition())
     );
     assert_eq!(
+        theory.reduce(&is_pair()),
+        Step::Reduced(list_tests::is_pair_definition())
+    );
+    assert_eq!(
         theory.reduce(&zero()),
         Step::Reduced(nat_tests::zero_definition())
     );
@@ -1600,10 +1680,20 @@ fn theorem_definitions_require_computations() {
         theorem("if_true_result_with_false_then"),
         theorem("if_false_result_with_true_then"),
         theorem("if_false_result_with_true_else"),
+        theorem("if_false_result_with_error_else"),
+        theorem("if_false_result_with_false_else"),
+        theorem("if_true_result_with_true_then"),
+        theorem("if_true_result_with_true_else"),
+        theorem("if_false_result_with_false_then"),
         theorem("symbol_eq_unit_unit"),
         theorem("symbol_eq_true_false"),
         theorem("symbol_eq_true"),
+        theorem("symbol_eq_true_implies_is_symbol_left"),
+        theorem("symbol_eq_true_implies_is_symbol_right"),
+        theorem("symbol_eq_false_distinct"),
+        theorem("symbol_eq_symm"),
         theorem("symbol_eq_refl"),
+        theorem("symbol_eq_computes_to_bool"),
         theorem("true_is_bool"),
         theorem("false_is_bool"),
         theorem("is_bool_elim"),
@@ -1738,10 +1828,17 @@ fn theory_defines_reverse_theorems() {
     let snoc_prop = list_tests::snoc_computes_to_list_source_theorem();
     let snoc_nil_prop = list_tests::snoc_nil_source_theorem();
     let snoc_cons_prop = list_tests::snoc_cons_source_theorem();
+    let member_snoc_prop = list_tests::member_snoc_source_theorem();
+    let tail_snoc_after_snoc_prop = list_tests::tail_snoc_after_snoc_source_theorem();
+    let all_lists_snoc_prop = list_tests::all_lists_snoc_source_theorem();
     let concat_nil_prop = list_tests::concat_nil_source_theorem();
     let concat_cons_prop = list_tests::concat_cons_source_theorem();
     let concat_computes_to_list_prop = list_tests::concat_computes_to_list_source_theorem();
     let concat_append_prop = list_tests::concat_append_source_theorem();
+    let map_length_nil_prop = list_tests::map_length_nil_source_theorem();
+    let map_length_cons_prop = list_tests::map_length_cons_source_theorem();
+    let map_length_computes_to_list_prop = list_tests::map_length_computes_to_list_source_theorem();
+    let length_concat_prop = list_tests::length_concat_source_theorem();
     let length_nil_prop = list_tests::length_nil_source_theorem();
     let length_cons_prop = list_tests::length_cons_source_theorem();
     let length_singleton_prop = list_tests::length_singleton_source_theorem();
@@ -1749,16 +1846,27 @@ fn theory_defines_reverse_theorems() {
     let length_append_prop = list_tests::length_append_source_theorem();
     let append_length_singleton_prop = list_tests::append_length_singleton_source_theorem();
     let length_snoc_prop = list_tests::length_snoc_source_theorem();
+    let length_take_prop = list_tests::length_take_source_theorem();
+    let length_drop_prop = list_tests::length_drop_source_theorem();
+    let length_take_add_length_drop_prop = list_tests::length_take_add_length_drop_source_theorem();
     let length_reverse_prop = list_tests::length_reverse_source_theorem();
     let take_zero_prop = list_tests::take_zero_source_theorem();
     let take_nil_prop = list_tests::take_nil_source_theorem();
     let take_cons_prop = list_tests::take_cons_source_theorem();
     let take_computes_to_list_prop = list_tests::take_computes_to_list_source_theorem();
+    let take_congr_count_computation_prop =
+        list_tests::take_congr_count_computation_source_theorem();
+    let take_congr_list_computation_prop = list_tests::take_congr_list_computation_source_theorem();
     let drop_zero_prop = list_tests::drop_zero_source_theorem();
     let drop_nil_prop = list_tests::drop_nil_source_theorem();
     let drop_cons_prop = list_tests::drop_cons_source_theorem();
     let drop_computes_to_list_prop = list_tests::drop_computes_to_list_source_theorem();
+    let drop_congr_count_computation_prop =
+        list_tests::drop_congr_count_computation_source_theorem();
+    let drop_congr_list_computation_prop = list_tests::drop_congr_list_computation_source_theorem();
     let take_take_prop = list_tests::take_take_source_theorem();
+    let drop_drop_prop = list_tests::drop_drop_source_theorem();
+    let take_drop_commute_prop = list_tests::take_drop_commute_source_theorem();
     let split_at_def_prop = list_tests::split_at_def_source_theorem();
     let split_at_zero_prop = list_tests::split_at_zero_source_theorem();
     let split_at_nil_prop = list_tests::split_at_nil_source_theorem();
@@ -1793,13 +1901,29 @@ fn theory_defines_reverse_theorems() {
         list_tests::is_list_value_true_implies_is_list_source_theorem();
     let value_kind_list_implies_is_list_prop =
         list_tests::value_kind_list_implies_is_list_source_theorem();
+    let is_list_implies_is_list_value_true_prop =
+        list_tests::is_list_implies_is_list_value_true_source_theorem();
+    let all_lists_cons_prop = list_tests::all_lists_cons_source_theorem();
     let all_lists_cons_true_prop = list_tests::all_lists_cons_true_source_theorem();
     let symbol_eq_refl_prop = list_tests::symbol_eq_refl_source_theorem();
+    let symbol_eq_true_implies_is_symbol_left_prop =
+        list_tests::symbol_eq_true_implies_is_symbol_left_source_theorem();
+    let symbol_eq_true_implies_is_symbol_right_prop =
+        list_tests::symbol_eq_true_implies_is_symbol_right_source_theorem();
+    let symbol_eq_false_distinct_prop = list_tests::symbol_eq_false_distinct_source_theorem();
+    let symbol_eq_symm_prop = list_tests::symbol_eq_symm_source_theorem();
+    let symbol_eq_computes_to_bool_prop = list_tests::symbol_eq_computes_to_bool_source_theorem();
     let true_is_bool_prop = list_tests::true_is_bool_source_theorem();
     let false_is_bool_prop = list_tests::false_is_bool_source_theorem();
     let is_bool_elim_prop = list_tests::is_bool_elim_source_theorem();
     let bool_distinct_prop = list_tests::bool_distinct_source_theorem();
     let not_congr_prop = list_tests::not_congr_source_theorem();
+    let and_congr_left_prop = list_tests::and_congr_left_source_theorem();
+    let and_congr_right_prop = list_tests::and_congr_right_source_theorem();
+    let and_congr_prop = list_tests::and_congr_source_theorem();
+    let or_congr_left_prop = list_tests::or_congr_left_source_theorem();
+    let or_congr_right_prop = list_tests::or_congr_right_source_theorem();
+    let or_congr_prop = list_tests::or_congr_source_theorem();
     let not_true_elim_prop = list_tests::not_true_elim_source_theorem();
     let not_false_elim_prop = list_tests::not_false_elim_source_theorem();
     let if_computes_to_bool_prop = list_tests::if_computes_to_bool_source_theorem();
@@ -1810,6 +1934,16 @@ fn theory_defines_reverse_theorems() {
     let if_congr_else_prop = list_tests::if_congr_else_source_theorem();
     let if_false_result_with_true_else_prop =
         list_tests::if_false_result_with_true_else_source_theorem();
+    let if_false_result_with_error_else_prop =
+        list_tests::if_false_result_with_error_else_source_theorem();
+    let if_false_result_with_false_else_prop =
+        list_tests::if_false_result_with_false_else_source_theorem();
+    let if_true_result_with_true_then_prop =
+        list_tests::if_true_result_with_true_then_source_theorem();
+    let if_true_result_with_true_else_prop =
+        list_tests::if_true_result_with_true_else_source_theorem();
+    let if_false_result_with_false_then_prop =
+        list_tests::if_false_result_with_false_then_source_theorem();
     let and_true_intro_prop = list_tests::and_true_intro_source_theorem();
     let and_true_elim_left_prop = list_tests::and_true_elim_left_source_theorem();
     let and_true_elim_right_prop = list_tests::and_true_elim_right_source_theorem();
@@ -1862,9 +1996,13 @@ fn theory_defines_reverse_theorems() {
     let option_bind_assoc_prop = list_tests::option_bind_assoc_source_theorem();
     let option_map_congr_function_prop = list_tests::option_map_congr_function_source_theorem();
     let option_map_congr_option_prop = list_tests::option_map_congr_option_source_theorem();
+    let option_map_congr_option_computation_prop =
+        list_tests::option_map_congr_option_computation_source_theorem();
     let option_map_congr_prop = list_tests::option_map_congr_source_theorem();
     let option_bind_congr_function_prop = list_tests::option_bind_congr_function_source_theorem();
     let option_bind_congr_option_prop = list_tests::option_bind_congr_option_source_theorem();
+    let option_bind_congr_option_computation_prop =
+        list_tests::option_bind_congr_option_computation_source_theorem();
     let unwrap_or_congr_default_prop = list_tests::unwrap_or_congr_default_source_theorem();
     let unwrap_or_congr_option_prop = list_tests::unwrap_or_congr_option_source_theorem();
     let pair_first_prop = list_tests::pair_first_source_theorem();
@@ -1910,8 +2048,13 @@ fn theory_defines_reverse_theorems() {
     let zip_right_nil_prop = list_tests::zip_right_nil_source_theorem();
     let zip_cons_prop = list_tests::zip_cons_source_theorem();
     let zip_computes_to_list_prop = list_tests::zip_computes_to_list_source_theorem();
+    let zip_pair_shape_prop = list_tests::zip_pair_shape_source_theorem();
     let unzip_nil_prop = list_tests::unzip_nil_source_theorem();
     let unzip_cons_prop = list_tests::unzip_cons_source_theorem();
+    let unzip_pair_shape_prop = list_tests::unzip_pair_shape_source_theorem();
+    let zip_unzip_prop = list_tests::zip_unzip_source_theorem();
+    let unzip_zip_prop = list_tests::unzip_zip_source_theorem();
+    let zip_with_as_map_zip_prop = list_tests::zip_with_as_map_zip_source_theorem();
     let zip_with_left_nil_prop = list_tests::zip_with_left_nil_source_theorem();
     let zip_with_right_nil_prop = list_tests::zip_with_right_nil_source_theorem();
     let zip_with_cons_prop = list_tests::zip_with_cons_source_theorem();
@@ -1954,6 +2097,10 @@ fn theory_defines_reverse_theorems() {
     let elem_index_cons_true_prop = list_tests::elem_index_cons_true_source_theorem();
     let elem_index_cons_false_none_prop = list_tests::elem_index_cons_false_none_source_theorem();
     let elem_index_cons_false_some_prop = list_tests::elem_index_cons_false_some_source_theorem();
+    let elem_index_cons_some_cases_prop = list_tests::elem_index_cons_some_cases_source_theorem();
+    let elem_index_append_left_prop = list_tests::elem_index_append_left_source_theorem();
+    let elem_index_cons_none_parts_prop = list_tests::elem_index_cons_none_parts_source_theorem();
+    let elem_index_append_right_prop = list_tests::elem_index_append_right_source_theorem();
     let value_eq_true_true_prop = list_tests::value_eq_true_true_source_theorem();
     let value_eq_true_false_prop = list_tests::value_eq_true_false_source_theorem();
     let value_eq_nil_prop = list_tests::value_eq_nil_source_theorem();
@@ -1991,6 +2138,7 @@ fn theory_defines_reverse_theorems() {
     let value_eq_left_symbol_true_prop = list_tests::value_eq_left_symbol_true_source_theorem();
     let value_eq_left_symbol_sound_prop = list_tests::value_eq_left_symbol_sound_source_theorem();
     let value_eq_cons_true_elim_prop = list_tests::value_eq_cons_true_elim_source_theorem();
+    let value_eq_cons_false_cases_prop = list_tests::value_eq_cons_false_cases_source_theorem();
     let cons_congr_prop = list_tests::cons_congr_source_theorem();
     let value_eq_sound_prop = list_tests::value_eq_sound_source_theorem();
     let value_eq_refl_prop = list_tests::value_eq_refl_source_theorem();
@@ -2010,6 +2158,11 @@ fn theory_defines_reverse_theorems() {
     let member_nil_prop = list_tests::member_nil_source_theorem();
     let member_cons_true_prop = list_tests::member_cons_true_source_theorem();
     let member_cons_false_prop = list_tests::member_cons_false_source_theorem();
+    let member_computes_to_bool_prop = list_tests::member_computes_to_bool_source_theorem();
+    let member_is_bool_for_comparable_value_prop =
+        list_tests::member_is_bool_for_comparable_value_source_theorem();
+    let member_cons_or_prop = list_tests::member_cons_or_source_theorem();
+    let member_append_prop = list_tests::member_append_source_theorem();
     let all_nil_prop = list_tests::all_nil_source_theorem();
     let all_cons_true_prop = list_tests::all_cons_true_source_theorem();
     let all_cons_false_prop = list_tests::all_cons_false_source_theorem();
@@ -2020,9 +2173,13 @@ fn theory_defines_reverse_theorems() {
     let map_compose_prop = list_tests::map_compose_source_theorem();
     let map_congr_prop = list_tests::map_congr_source_theorem();
     let map_append_prop = list_tests::map_append_source_theorem();
+    let map_snoc_prop = list_tests::map_snoc_source_theorem();
     let map_take_prop = list_tests::map_take_source_theorem();
     let map_drop_prop = list_tests::map_drop_source_theorem();
     let option_map_nth_prop = list_tests::option_map_nth_source_theorem();
+    let option_map_find_prop = list_tests::option_map_find_source_theorem();
+    let option_bind_find_none_prop = list_tests::option_bind_find_none_source_theorem();
+    let option_bind_find_some_prop = list_tests::option_bind_find_some_source_theorem();
     let concat_map_singleton_prop = list_tests::concat_map_singleton_source_theorem();
     let concat_map_append_prop = list_tests::concat_map_append_source_theorem();
     let concat_map_as_concat_map_prop = list_tests::concat_map_as_concat_map_source_theorem();
@@ -2044,6 +2201,15 @@ fn theory_defines_reverse_theorems() {
     let is_singleton_nil_prop = list_tests::is_singleton_nil_source_theorem();
     let is_singleton_singleton_prop = list_tests::is_singleton_singleton_source_theorem();
     let is_singleton_cons_prop = list_tests::is_singleton_cons_source_theorem();
+    let is_pair_nil_false_prop = list_tests::is_pair_nil_false_source_theorem();
+    let is_pair_singleton_false_prop = list_tests::is_pair_singleton_false_source_theorem();
+    let is_pair_cons_cons_nil_true_prop = list_tests::is_pair_cons_cons_nil_true_source_theorem();
+    let is_pair_cons_cons_cons_false_prop =
+        list_tests::is_pair_cons_cons_cons_false_source_theorem();
+    let is_pair_cons_cons_true_elim_prop = list_tests::is_pair_cons_cons_true_elim_source_theorem();
+    let is_pair_cons_true_elim_prop = list_tests::is_pair_cons_true_elim_source_theorem();
+    let is_pair_true_elim_prop = list_tests::is_pair_true_elim_source_theorem();
+    let all_is_pair_cons_true_parts_prop = list_tests::all_is_pair_cons_true_parts_source_theorem();
     let append_nil_prop = list_tests::append_nil_computes_to_list_source_theorem();
     let append_prop = list_tests::append_computes_to_list_source_theorem();
     let append_nil_returns_right_prop = list_tests::append_nil_returns_right_source_theorem();
@@ -2145,6 +2311,18 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(theory.theorem(theorem("snoc_nil")), Some(&snoc_nil_prop));
     assert_eq!(theory.theorem(theorem("snoc_cons")), Some(&snoc_cons_prop));
     assert_eq!(
+        theory.theorem(theorem("member_snoc")),
+        Some(&member_snoc_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("tail_snoc_after_snoc")),
+        Some(&tail_snoc_after_snoc_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("all_lists_snoc")),
+        Some(&all_lists_snoc_prop)
+    );
+    assert_eq!(
         theory.theorem(theorem("concat_nil")),
         Some(&concat_nil_prop)
     );
@@ -2159,6 +2337,22 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("concat_append")),
         Some(&concat_append_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("map_length_nil")),
+        Some(&map_length_nil_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("map_length_cons")),
+        Some(&map_length_cons_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("map_length_computes_to_list")),
+        Some(&map_length_computes_to_list_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("length_concat")),
+        Some(&length_concat_prop)
     );
     assert_eq!(
         theory.theorem(theorem("length_nil")),
@@ -2189,6 +2383,18 @@ fn theory_defines_reverse_theorems() {
         Some(&length_snoc_prop)
     );
     assert_eq!(
+        theory.theorem(theorem("length_take")),
+        Some(&length_take_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("length_drop")),
+        Some(&length_drop_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("length_take_add_length_drop")),
+        Some(&length_take_add_length_drop_prop)
+    );
+    assert_eq!(
         theory.theorem(theorem("length_reverse")),
         Some(&length_reverse_prop)
     );
@@ -2199,6 +2405,14 @@ fn theory_defines_reverse_theorems() {
         theory.theorem(theorem("take_computes_to_list")),
         Some(&take_computes_to_list_prop)
     );
+    assert_eq!(
+        theory.theorem(theorem("take_congr_count_computation")),
+        Some(&take_congr_count_computation_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("take_congr_list_computation")),
+        Some(&take_congr_list_computation_prop)
+    );
     assert_eq!(theory.theorem(theorem("drop_zero")), Some(&drop_zero_prop));
     assert_eq!(theory.theorem(theorem("drop_nil")), Some(&drop_nil_prop));
     assert_eq!(theory.theorem(theorem("drop_cons")), Some(&drop_cons_prop));
@@ -2206,7 +2420,20 @@ fn theory_defines_reverse_theorems() {
         theory.theorem(theorem("drop_computes_to_list")),
         Some(&drop_computes_to_list_prop)
     );
+    assert_eq!(
+        theory.theorem(theorem("drop_congr_count_computation")),
+        Some(&drop_congr_count_computation_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("drop_congr_list_computation")),
+        Some(&drop_congr_list_computation_prop)
+    );
     assert_eq!(theory.theorem(theorem("take_take")), Some(&take_take_prop));
+    assert_eq!(theory.theorem(theorem("drop_drop")), Some(&drop_drop_prop));
+    assert_eq!(
+        theory.theorem(theorem("take_drop_commute")),
+        Some(&take_drop_commute_prop)
+    );
     assert_eq!(
         theory.theorem(theorem("split_at_def")),
         Some(&split_at_def_prop)
@@ -2328,16 +2555,64 @@ fn theory_defines_reverse_theorems() {
         Some(&value_kind_list_implies_is_list_prop)
     );
     assert_eq!(
+        theory.theorem(theorem("is_list_implies_is_list_value_true")),
+        Some(&is_list_implies_is_list_value_true_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("all_lists_cons")),
+        Some(&all_lists_cons_prop)
+    );
+    assert_eq!(
         theory.theorem(theorem("all_lists_cons_true")),
         Some(&all_lists_cons_true_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("symbol_eq_true_implies_is_symbol_left")),
+        Some(&symbol_eq_true_implies_is_symbol_left_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("symbol_eq_true_implies_is_symbol_right")),
+        Some(&symbol_eq_true_implies_is_symbol_right_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("symbol_eq_false_distinct")),
+        Some(&symbol_eq_false_distinct_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("symbol_eq_symm")),
+        Some(&symbol_eq_symm_prop)
     );
     assert_eq!(
         theory.theorem(theorem("symbol_eq_refl")),
         Some(&symbol_eq_refl_prop)
     );
     assert_eq!(
+        theory.theorem(theorem("symbol_eq_computes_to_bool")),
+        Some(&symbol_eq_computes_to_bool_prop)
+    );
+    assert_eq!(
         theory.theorem(theorem("if_false_result_with_true_else")),
         Some(&if_false_result_with_true_else_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("if_false_result_with_error_else")),
+        Some(&if_false_result_with_error_else_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("if_false_result_with_false_else")),
+        Some(&if_false_result_with_false_else_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("if_true_result_with_true_then")),
+        Some(&if_true_result_with_true_then_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("if_true_result_with_true_else")),
+        Some(&if_true_result_with_true_else_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("if_false_result_with_false_then")),
+        Some(&if_false_result_with_false_then_prop)
     );
     assert_eq!(
         theory.theorem(theorem("true_is_bool")),
@@ -2356,6 +2631,24 @@ fn theory_defines_reverse_theorems() {
         Some(&bool_distinct_prop)
     );
     assert_eq!(theory.theorem(theorem("not_congr")), Some(&not_congr_prop));
+    assert_eq!(
+        theory.theorem(theorem("and_congr_left")),
+        Some(&and_congr_left_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("and_congr_right")),
+        Some(&and_congr_right_prop)
+    );
+    assert_eq!(theory.theorem(theorem("and_congr")), Some(&and_congr_prop));
+    assert_eq!(
+        theory.theorem(theorem("or_congr_left")),
+        Some(&or_congr_left_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("or_congr_right")),
+        Some(&or_congr_right_prop)
+    );
+    assert_eq!(theory.theorem(theorem("or_congr")), Some(&or_congr_prop));
     assert_eq!(
         theory.theorem(theorem("not_true_elim")),
         Some(&not_true_elim_prop)
@@ -2573,6 +2866,10 @@ fn theory_defines_reverse_theorems() {
         Some(&option_map_congr_option_prop)
     );
     assert_eq!(
+        theory.theorem(theorem("option_map_congr_option_computation")),
+        Some(&option_map_congr_option_computation_prop)
+    );
+    assert_eq!(
         theory.theorem(theorem("option_map_congr")),
         Some(&option_map_congr_prop)
     );
@@ -2583,6 +2880,10 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("option_bind_congr_option")),
         Some(&option_bind_congr_option_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("option_bind_congr_option_computation")),
+        Some(&option_bind_congr_option_computation_prop)
     );
     assert_eq!(
         theory.theorem(theorem("unwrap_or_congr_default")),
@@ -2721,10 +3022,24 @@ fn theory_defines_reverse_theorems() {
         theory.theorem(theorem("zip_computes_to_list")),
         Some(&zip_computes_to_list_prop)
     );
+    assert_eq!(
+        theory.theorem(theorem("zip_pair_shape")),
+        Some(&zip_pair_shape_prop)
+    );
     assert_eq!(theory.theorem(theorem("unzip_nil")), Some(&unzip_nil_prop));
     assert_eq!(
         theory.theorem(theorem("unzip_cons")),
         Some(&unzip_cons_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("unzip_pair_shape")),
+        Some(&unzip_pair_shape_prop)
+    );
+    assert_eq!(theory.theorem(theorem("zip_unzip")), Some(&zip_unzip_prop));
+    assert_eq!(theory.theorem(theorem("unzip_zip")), Some(&unzip_zip_prop));
+    assert_eq!(
+        theory.theorem(theorem("zip_with_as_map_zip")),
+        Some(&zip_with_as_map_zip_prop)
     );
     assert_eq!(
         theory.theorem(theorem("zip_with_left_nil")),
@@ -2877,6 +3192,22 @@ fn theory_defines_reverse_theorems() {
         Some(&elem_index_cons_false_some_prop)
     );
     assert_eq!(
+        theory.theorem(theorem("elem_index_cons_some_cases")),
+        Some(&elem_index_cons_some_cases_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("elem_index_append_left")),
+        Some(&elem_index_append_left_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("elem_index_cons_none_parts")),
+        Some(&elem_index_cons_none_parts_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("elem_index_append_right")),
+        Some(&elem_index_append_right_prop)
+    );
+    assert_eq!(
         theory.theorem(theorem("value_eq_true_true")),
         Some(&value_eq_true_true_prop)
     );
@@ -2912,6 +3243,22 @@ fn theory_defines_reverse_theorems() {
         theory.theorem(theorem("member_cons_false")),
         Some(&member_cons_false_prop)
     );
+    assert_eq!(
+        theory.theorem(theorem("member_computes_to_bool")),
+        Some(&member_computes_to_bool_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("member_is_bool_for_comparable_value")),
+        Some(&member_is_bool_for_comparable_value_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("member_cons_or")),
+        Some(&member_cons_or_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("member_append")),
+        Some(&member_append_prop)
+    );
     assert_eq!(theory.theorem(theorem("all_nil")), Some(&all_nil_prop));
     assert_eq!(
         theory.theorem(theorem("all_cons_true")),
@@ -2946,11 +3293,24 @@ fn theory_defines_reverse_theorems() {
         theory.theorem(theorem("map_append")),
         Some(&map_append_prop)
     );
+    assert_eq!(theory.theorem(theorem("map_snoc")), Some(&map_snoc_prop));
     assert_eq!(theory.theorem(theorem("map_take")), Some(&map_take_prop));
     assert_eq!(theory.theorem(theorem("map_drop")), Some(&map_drop_prop));
     assert_eq!(
         theory.theorem(theorem("option_map_nth")),
         Some(&option_map_nth_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("option_map_find")),
+        Some(&option_map_find_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("option_bind_find_none")),
+        Some(&option_bind_find_none_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("option_bind_find_some")),
+        Some(&option_bind_find_some_prop)
     );
     assert_eq!(
         theory.theorem(theorem("concat_map_singleton")),
@@ -3027,6 +3387,38 @@ fn theory_defines_reverse_theorems() {
     assert_eq!(
         theory.theorem(theorem("is_singleton_cons")),
         Some(&is_singleton_cons_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("is_pair_nil_false")),
+        Some(&is_pair_nil_false_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("is_pair_singleton_false")),
+        Some(&is_pair_singleton_false_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("is_pair_cons_cons_nil_true")),
+        Some(&is_pair_cons_cons_nil_true_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("is_pair_cons_cons_cons_false")),
+        Some(&is_pair_cons_cons_cons_false_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("is_pair_cons_cons_true_elim")),
+        Some(&is_pair_cons_cons_true_elim_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("is_pair_cons_true_elim")),
+        Some(&is_pair_cons_true_elim_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("is_pair_true_elim")),
+        Some(&is_pair_true_elim_prop)
+    );
+    assert_eq!(
+        theory.theorem(theorem("all_is_pair_cons_true_parts")),
+        Some(&all_is_pair_cons_true_parts_prop)
     );
     assert_eq!(
         theory.theorem(theorem("append_nil_computes_to_list")),
@@ -3180,6 +3572,18 @@ fn theory_defines_reverse_theorems() {
         &snoc_cons_prop,
     );
     assert_eq!(
+        checked_theorem("member_snoc")
+            .expect("member snoc theorem source proof should check with dependencies")
+            .prop(),
+        &member_snoc_prop,
+    );
+    assert_eq!(
+        checked_theorem("tail_snoc_after_snoc")
+            .expect("tail snoc after snoc theorem source proof should check with dependencies")
+            .prop(),
+        &tail_snoc_after_snoc_prop,
+    );
+    assert_eq!(
         checked_theorem("concat_nil")
             .expect("concat nil theorem source proof should check with dependencies")
             .prop(),
@@ -3190,6 +3594,30 @@ fn theory_defines_reverse_theorems() {
             .expect("concat append theorem source proof should check with dependencies")
             .prop(),
         &concat_append_prop,
+    );
+    assert_eq!(
+        checked_theorem("map_length_nil")
+            .expect("map length nil theorem source proof should check with dependencies")
+            .prop(),
+        &map_length_nil_prop,
+    );
+    assert_eq!(
+        checked_theorem("map_length_cons")
+            .expect("map length cons theorem source proof should check with dependencies")
+            .prop(),
+        &map_length_cons_prop,
+    );
+    assert_eq!(
+        checked_theorem("map_length_computes_to_list")
+            .expect("map length computes theorem source proof should check with dependencies")
+            .prop(),
+        &map_length_computes_to_list_prop,
+    );
+    assert_eq!(
+        checked_theorem("length_concat")
+            .expect("length concat theorem source proof should check with dependencies")
+            .prop(),
+        &length_concat_prop,
     );
     assert_eq!(
         checked_theorem("last_nil_errors")
@@ -3256,6 +3684,54 @@ fn theory_defines_reverse_theorems() {
             .expect("is-singleton cons theorem source proof should check with dependencies")
             .prop(),
         &is_singleton_cons_prop,
+    );
+    assert_eq!(
+        checked_theorem("is_pair_nil_false")
+            .expect("is-pair nil theorem source proof should check with dependencies")
+            .prop(),
+        &is_pair_nil_false_prop,
+    );
+    assert_eq!(
+        checked_theorem("is_pair_singleton_false")
+            .expect("is-pair singleton theorem source proof should check with dependencies")
+            .prop(),
+        &is_pair_singleton_false_prop,
+    );
+    assert_eq!(
+        checked_theorem("is_pair_cons_cons_nil_true")
+            .expect("is-pair two-element theorem source proof should check with dependencies")
+            .prop(),
+        &is_pair_cons_cons_nil_true_prop,
+    );
+    assert_eq!(
+        checked_theorem("is_pair_cons_cons_cons_false")
+            .expect("is-pair longer-list theorem source proof should check with dependencies")
+            .prop(),
+        &is_pair_cons_cons_cons_false_prop,
+    );
+    assert_eq!(
+        checked_theorem("is_pair_cons_cons_true_elim")
+            .expect("is-pair long-list eliminator source proof should check with dependencies")
+            .prop(),
+        &is_pair_cons_cons_true_elim_prop,
+    );
+    assert_eq!(
+        checked_theorem("is_pair_cons_true_elim")
+            .expect("is-pair cons eliminator source proof should check with dependencies")
+            .prop(),
+        &is_pair_cons_true_elim_prop,
+    );
+    assert_eq!(
+        checked_theorem("is_pair_true_elim")
+            .expect("is-pair value eliminator source proof should check with dependencies")
+            .prop(),
+        &is_pair_true_elim_prop,
+    );
+    assert_eq!(
+        checked_theorem("all_is_pair_cons_true_parts")
+            .expect("all is-pair cons parts source proof should check with dependencies")
+            .prop(),
+        &all_is_pair_cons_true_parts_prop,
     );
     assert_eq!(
         checked_theorem("append_nil_computes_to_list")
@@ -3330,10 +3806,64 @@ fn theory_defines_reverse_theorems() {
         &length_snoc_prop,
     );
     assert_eq!(
+        checked_theorem("length_take")
+            .expect("length take theorem source proof should check with dependencies")
+            .prop(),
+        &length_take_prop,
+    );
+    assert_eq!(
+        checked_theorem("length_drop")
+            .expect("length drop theorem source proof should check with dependencies")
+            .prop(),
+        &length_drop_prop,
+    );
+    assert_eq!(
+        checked_theorem("length_take_add_length_drop")
+            .expect("length take/drop theorem source proof should check with dependencies")
+            .prop(),
+        &length_take_add_length_drop_prop,
+    );
+    assert_eq!(
+        checked_theorem("take_congr_count_computation")
+            .expect("take count congruence theorem source proof should check with dependencies")
+            .prop(),
+        &take_congr_count_computation_prop,
+    );
+    assert_eq!(
+        checked_theorem("take_congr_list_computation")
+            .expect("take list congruence theorem source proof should check with dependencies")
+            .prop(),
+        &take_congr_list_computation_prop,
+    );
+    assert_eq!(
+        checked_theorem("drop_congr_count_computation")
+            .expect("drop count congruence theorem source proof should check with dependencies")
+            .prop(),
+        &drop_congr_count_computation_prop,
+    );
+    assert_eq!(
+        checked_theorem("drop_congr_list_computation")
+            .expect("drop list congruence theorem source proof should check with dependencies")
+            .prop(),
+        &drop_congr_list_computation_prop,
+    );
+    assert_eq!(
         checked_theorem("take_take")
             .expect("take-take theorem source proof should check with dependencies")
             .prop(),
         &take_take_prop,
+    );
+    assert_eq!(
+        checked_theorem("drop_drop")
+            .expect("drop-drop theorem source proof should check with dependencies")
+            .prop(),
+        &drop_drop_prop,
+    );
+    assert_eq!(
+        checked_theorem("take_drop_commute")
+            .expect("take/drop commute theorem source proof should check with dependencies")
+            .prop(),
+        &take_drop_commute_prop,
     );
     assert_eq!(
         checked_theorem("split_at_def")
@@ -3422,16 +3952,76 @@ fn theory_defines_reverse_theorems() {
         &nth_computes_to_option_prop,
     );
     assert_eq!(
+        checked_theorem("symbol_eq_true_implies_is_symbol_left")
+            .expect("symbol-eq left symbol theorem source proof should check with dependencies")
+            .prop(),
+        &symbol_eq_true_implies_is_symbol_left_prop,
+    );
+    assert_eq!(
+        checked_theorem("symbol_eq_true_implies_is_symbol_right")
+            .expect("symbol-eq right symbol theorem source proof should check with dependencies")
+            .prop(),
+        &symbol_eq_true_implies_is_symbol_right_prop,
+    );
+    assert_eq!(
+        checked_theorem("symbol_eq_false_distinct")
+            .expect("symbol-eq false distinct theorem source proof should check with dependencies")
+            .prop(),
+        &symbol_eq_false_distinct_prop,
+    );
+    assert_eq!(
+        checked_theorem("symbol_eq_symm")
+            .expect("symbol-eq symmetry theorem source proof should check with dependencies")
+            .prop(),
+        &symbol_eq_symm_prop,
+    );
+    assert_eq!(
         checked_theorem("symbol_eq_refl")
             .expect("symbol-eq reflexivity theorem source proof should check with dependencies")
             .prop(),
         &symbol_eq_refl_prop,
     );
     assert_eq!(
+        checked_theorem("symbol_eq_computes_to_bool")
+            .expect("symbol-eq bool result theorem source proof should check with dependencies")
+            .prop(),
+        &symbol_eq_computes_to_bool_prop,
+    );
+    assert_eq!(
         checked_theorem("if_false_result_with_true_else")
             .expect("if false result with true else theorem source proof should check")
             .prop(),
         &if_false_result_with_true_else_prop,
+    );
+    assert_eq!(
+        checked_theorem("if_false_result_with_error_else")
+            .expect("if false result with error else theorem source proof should check")
+            .prop(),
+        &if_false_result_with_error_else_prop,
+    );
+    assert_eq!(
+        checked_theorem("if_false_result_with_false_else")
+            .expect("if false result with false else theorem source proof should check")
+            .prop(),
+        &if_false_result_with_false_else_prop,
+    );
+    assert_eq!(
+        checked_theorem("if_true_result_with_true_then")
+            .expect("if true result with true then theorem source proof should check")
+            .prop(),
+        &if_true_result_with_true_then_prop,
+    );
+    assert_eq!(
+        checked_theorem("if_true_result_with_true_else")
+            .expect("if true result with true else theorem source proof should check")
+            .prop(),
+        &if_true_result_with_true_else_prop,
+    );
+    assert_eq!(
+        checked_theorem("if_false_result_with_false_then")
+            .expect("if false result with false then theorem source proof should check")
+            .prop(),
+        &if_false_result_with_false_then_prop,
     );
     assert_eq!(
         checked_theorem("true_is_bool")
@@ -3462,6 +4052,42 @@ fn theory_defines_reverse_theorems() {
             .expect("not congruence theorem source proof should check with dependencies")
             .prop(),
         &not_congr_prop,
+    );
+    assert_eq!(
+        checked_theorem("and_congr_left")
+            .expect("and left congruence theorem source proof should check with dependencies")
+            .prop(),
+        &and_congr_left_prop,
+    );
+    assert_eq!(
+        checked_theorem("and_congr_right")
+            .expect("and right congruence theorem source proof should check with dependencies")
+            .prop(),
+        &and_congr_right_prop,
+    );
+    assert_eq!(
+        checked_theorem("and_congr")
+            .expect("and congruence theorem source proof should check with dependencies")
+            .prop(),
+        &and_congr_prop,
+    );
+    assert_eq!(
+        checked_theorem("or_congr_left")
+            .expect("or left congruence theorem source proof should check with dependencies")
+            .prop(),
+        &or_congr_left_prop,
+    );
+    assert_eq!(
+        checked_theorem("or_congr_right")
+            .expect("or right congruence theorem source proof should check with dependencies")
+            .prop(),
+        &or_congr_right_prop,
+    );
+    assert_eq!(
+        checked_theorem("or_congr")
+            .expect("or congruence theorem source proof should check with dependencies")
+            .prop(),
+        &or_congr_prop,
     );
     assert_eq!(
         checked_theorem("not_true_elim")
@@ -3814,6 +4440,14 @@ fn theory_defines_reverse_theorems() {
         &option_map_congr_option_prop,
     );
     assert_eq!(
+        checked_theorem("option_map_congr_option_computation")
+            .expect(
+                "option map option computation congruence theorem source proof should check with dependencies"
+            )
+            .prop(),
+        &option_map_congr_option_computation_prop,
+    );
+    assert_eq!(
         checked_theorem("option_map_congr")
             .expect("option map congruence theorem source proof should check with dependencies")
             .prop(),
@@ -3834,6 +4468,14 @@ fn theory_defines_reverse_theorems() {
             )
             .prop(),
         &option_bind_congr_option_prop,
+    );
+    assert_eq!(
+        checked_theorem("option_bind_congr_option_computation")
+            .expect(
+                "option bind option computation congruence theorem source proof should check with dependencies"
+            )
+            .prop(),
+        &option_bind_congr_option_computation_prop,
     );
     assert_eq!(
         checked_theorem("unwrap_or_congr_default")
@@ -4050,6 +4692,12 @@ fn theory_defines_reverse_theorems() {
         &zip_computes_to_list_prop,
     );
     assert_eq!(
+        checked_theorem("zip_pair_shape")
+            .expect("zip pair-shape theorem source proof should check with dependencies")
+            .prop(),
+        &zip_pair_shape_prop,
+    );
+    assert_eq!(
         checked_theorem("unzip_nil")
             .expect("unzip nil theorem source proof should check with dependencies")
             .prop(),
@@ -4060,6 +4708,30 @@ fn theory_defines_reverse_theorems() {
             .expect("unzip cons theorem source proof should check with dependencies")
             .prop(),
         &unzip_cons_prop,
+    );
+    assert_eq!(
+        checked_theorem("unzip_pair_shape")
+            .expect("unzip pair-shape theorem source proof should check with dependencies")
+            .prop(),
+        &unzip_pair_shape_prop,
+    );
+    assert_eq!(
+        checked_theorem("zip_unzip")
+            .expect("zip unzip theorem source proof should check with dependencies")
+            .prop(),
+        &zip_unzip_prop,
+    );
+    assert_eq!(
+        checked_theorem("unzip_zip")
+            .expect("unzip zip theorem source proof should check with dependencies")
+            .prop(),
+        &unzip_zip_prop,
+    );
+    assert_eq!(
+        checked_theorem("zip_with_as_map_zip")
+            .expect("zip with as map zip theorem source proof should check with dependencies")
+            .prop(),
+        &zip_with_as_map_zip_prop,
     );
     assert_eq!(
         checked_theorem("zip_with_left_nil")
@@ -4430,6 +5102,12 @@ fn theory_defines_reverse_theorems() {
         &value_eq_cons_true_elim_prop,
     );
     assert_eq!(
+        checked_theorem("value_eq_cons_false_cases")
+            .expect("value-eq cons false-cases theorem source proof should check with dependencies")
+            .prop(),
+        &value_eq_cons_false_cases_prop,
+    );
+    assert_eq!(
         checked_theorem("cons_congr")
             .expect("cons congruence theorem source proof should check with dependencies")
             .prop(),
@@ -4524,6 +5202,58 @@ fn theory_defines_reverse_theorems() {
         &member_cons_false_prop,
     );
     assert_eq!(
+        checked_theorem("member_computes_to_bool")
+            .expect("member computes to bool theorem source proof should check with dependencies")
+            .prop(),
+        &member_computes_to_bool_prop,
+    );
+    assert_eq!(
+        checked_theorem("member_is_bool_for_comparable_value")
+            .expect("member comparable bool theorem source proof should check with dependencies")
+            .prop(),
+        &member_is_bool_for_comparable_value_prop,
+    );
+    assert_eq!(
+        checked_theorem("member_cons_or")
+            .expect("member cons or theorem source proof should check with dependencies")
+            .prop(),
+        &member_cons_or_prop,
+    );
+    assert_eq!(
+        checked_theorem("member_append")
+            .expect("member append theorem source proof should check with dependencies")
+            .prop(),
+        &member_append_prop,
+    );
+    assert_eq!(
+        checked_theorem("elem_index_cons_some_cases")
+            .expect(
+                "elem-index cons some cases theorem source proof should check with dependencies"
+            )
+            .prop(),
+        &elem_index_cons_some_cases_prop,
+    );
+    assert_eq!(
+        checked_theorem("elem_index_append_left")
+            .expect("elem-index append left theorem source proof should check with dependencies")
+            .prop(),
+        &elem_index_append_left_prop,
+    );
+    assert_eq!(
+        checked_theorem("elem_index_cons_none_parts")
+            .expect(
+                "elem-index cons none parts theorem source proof should check with dependencies"
+            )
+            .prop(),
+        &elem_index_cons_none_parts_prop,
+    );
+    assert_eq!(
+        checked_theorem("elem_index_append_right")
+            .expect("elem-index append right theorem source proof should check with dependencies")
+            .prop(),
+        &elem_index_append_right_prop,
+    );
+    assert_eq!(
         checked_theorem("all_nil")
             .expect("all nil theorem source proof should check with dependencies")
             .prop(),
@@ -4584,6 +5314,12 @@ fn theory_defines_reverse_theorems() {
         &map_append_prop,
     );
     assert_eq!(
+        checked_theorem("map_snoc")
+            .expect("map snoc theorem source proof should check with dependencies")
+            .prop(),
+        &map_snoc_prop,
+    );
+    assert_eq!(
         checked_theorem("map_take")
             .expect("map take theorem source proof should check with dependencies")
             .prop(),
@@ -4600,6 +5336,24 @@ fn theory_defines_reverse_theorems() {
             .expect("option-map nth theorem source proof should check with dependencies")
             .prop(),
         &option_map_nth_prop,
+    );
+    assert_eq!(
+        checked_theorem("option_map_find")
+            .expect("option-map find theorem source proof should check with dependencies")
+            .prop(),
+        &option_map_find_prop,
+    );
+    assert_eq!(
+        checked_theorem("option_bind_find_none")
+            .expect("option-bind find none theorem source proof should check with dependencies")
+            .prop(),
+        &option_bind_find_none_prop,
+    );
+    assert_eq!(
+        checked_theorem("option_bind_find_some")
+            .expect("option-bind find some theorem source proof should check with dependencies")
+            .prop(),
+        &option_bind_find_some_prop,
     );
     assert_eq!(
         checked_theorem("concat_map_singleton")
