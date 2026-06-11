@@ -234,9 +234,166 @@
               (simpa only sum_proof)))
           (==
             (quote :true)
-            (by
-              (exact result)))))))
+              (by
+                (exact result)))))))
 )
+
+(theorem nat_lt_add_right
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (nat-lt zero right) (quote :true))
+        (computes-to
+          (nat-lt left (add left right))
+          (quote :true)))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (intro right_positive)
+        (calc
+          (nat-lt nil (add nil right))
+          (==
+            (nat-lt nil right)
+            (by
+              (eval)))
+          (==
+            (nat-lt zero right)
+            (by
+              (fold zero)
+              (eval)))
+          (==
+            (quote :true)
+            (by
+              (exact right_positive)))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro right)
+        (intro right_positive)
+        (obtain tail_sum tail_sum_proof
+          (add_computes_to_list tail right))
+        (calc
+          (nat-lt (cons head tail) (add (cons head tail) right))
+          (==
+            (nat-lt (cons head tail) (cons head (add tail right)))
+            (by
+              (simpa only (add_cons head tail right))))
+          (==
+            (nat-lt (cons head tail) (cons head tail_sum))
+            (by
+              (simpa only tail_sum_proof)))
+          (==
+            (nat-lt tail tail_sum)
+            (by
+              (eval)))
+          (==
+            (nat-lt tail (add tail right))
+            (by
+              (simpa only (symm tail_sum_proof))))
+          (==
+            (quote :true)
+            (by
+              (exact induction_hypothesis right))))))))
+
+(theorem nat_lt_add_left
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (nat-lt zero left) (quote :true))
+        (computes-to
+          (nat-lt right (add left right))
+          (quote :true)))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (intro left_positive)
+        (have impossible_eq
+          (computes-to (quote :false) (quote :true))
+          (by
+            (calc
+              (quote :false)
+              (==
+                (nat-lt zero nil)
+                (by
+                  (fold zero)
+                  (eval)))
+              (==
+                (quote :true)
+                (by
+                  (exact left_positive)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (computes-to
+                  (nat-lt right (add nil right))
+                  (quote :true)))))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro right)
+        (intro left_positive)
+        (obtain tail_sum tail_sum_proof
+          (add_computes_to_list tail right))
+        (have right_le_tail_sum
+          (computes-to (nat-le right tail_sum) (quote :true))
+          (by
+            (calc
+              (nat-le right tail_sum)
+              (==
+                (nat-le right (add tail right))
+                (by
+                  (simpa only (symm tail_sum_proof))))
+              (==
+                (quote :true)
+                (by
+                  (exact nat_le_right_add tail right)))))
+          (by
+            (specialize right_lt_cons
+              nat_le_implies_nat_lt_cons_right
+              right
+              tail_sum
+              head)
+            (calc
+              (nat-lt right (add (cons head tail) right))
+              (==
+                (nat-lt right (cons head (add tail right)))
+                (by
+                  (simpa only (add_cons head tail right))))
+              (==
+                (nat-lt right (cons head tail_sum))
+                (by
+                  (simpa only tail_sum_proof)))
+              (==
+                (quote :true)
+                (by
+                  (exact right_lt_cons))))))))))
+
+(theorem nat_le_add_right
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (computes-to
+        (nat-le left (add left right))
+        (quote :true))))
+  (by
+    (intro left)
+    (intro right)
+    (exact nat_le_left_add left right)))
+
+(theorem nat_le_add_left
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (computes-to
+        (nat-le right (add left right))
+        (quote :true))))
+  (by
+    (intro left)
+    (intro right)
+    (exact nat_le_right_add left right)))
 
 (theorem nat_le_add_right_mono
   (forall left (is-list left)
@@ -830,6 +987,38 @@
             (specialize tail_cancel induction_hypothesis)
             (exact tail_cancel)))))))
 
+(theorem nat_le_add_cancel_left
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall prefix (is-list prefix)
+        (implies
+          (computes-to
+            (nat-le (add prefix left) (add prefix right))
+            (quote :true))
+          (computes-to (nat-le left right) (quote :true))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro prefix)
+    (intro prefixed_le)
+    (exact nat_le_add_left_cancel left right prefix)))
+
+(theorem nat_lt_add_cancel_left
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall prefix (is-list prefix)
+        (implies
+          (computes-to
+            (nat-lt (add prefix left) (add prefix right))
+            (quote :true))
+          (computes-to (nat-lt left right) (quote :true))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro prefix)
+    (intro prefixed_lt)
+    (exact nat_lt_add_left_cancel left right prefix)))
+
 (theorem add_succ_left
   (forall left (is-list left)
     (forall right (is-list right)
@@ -1321,6 +1510,279 @@
             (by
               (simpa only (symm head_unit)))))))))
 
+(theorem add_left_cancel
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall prefix (is-list prefix)
+        (implies
+          (computes-to (add prefix left) (add prefix right))
+          (computes-to left right)))))
+  (by
+    (intro left)
+    (intro right)
+    (list-induction prefix
+      (by
+        (intro prefixed_equal)
+        (calc
+          left
+          (==
+            (add nil left)
+            (by
+              (exact
+                (symm
+                  (eval-to (add nil left) left)))))
+          (==
+            (add nil right)
+            (by
+              (exact prefixed_equal)))
+          (==
+            right
+            (by
+              (eval)))))
+      prefix_head
+      prefix_tail
+      induction_hypothesis
+      (by
+        (intro prefixed_equal)
+        (obtain left_sum left_sum_proof
+          (add_computes_to_list prefix_tail left))
+        (obtain right_sum right_sum_proof
+          (add_computes_to_list prefix_tail right))
+        (have tail_prefixed_equal
+          (computes-to
+            (add prefix_tail left)
+            (add prefix_tail right))
+          (by
+            (have cons_sums_equal
+              (computes-to
+                (cons prefix_head left_sum)
+                (cons prefix_head right_sum))
+              (by
+                (calc
+                  (cons prefix_head left_sum)
+                  (==
+                    (cons prefix_head (add prefix_tail left))
+                    (by
+                      (simpa only (symm left_sum_proof))))
+                  (==
+                    (add (cons prefix_head prefix_tail) left)
+                    (by
+                      (exact (symm (add_cons prefix_head prefix_tail left)))))
+                  (==
+                    (add (cons prefix_head prefix_tail) right)
+                    (by
+                      (exact prefixed_equal)))
+                  (==
+                    (cons prefix_head (add prefix_tail right))
+                    (by
+                      (exact add_cons prefix_head prefix_tail right)))
+                  (==
+                    (cons prefix_head right_sum)
+                    (by
+                      (simpa only right_sum_proof)))))
+              (by
+                (have sums_equal
+                  (computes-to left_sum right_sum)
+                  (by
+                    (apply
+                      cons_injective_tail
+                      prefix_head
+                      left_sum
+                      prefix_head
+                      right_sum))
+                  (by
+                    (calc
+                      (add prefix_tail left)
+                      (==
+                        left_sum
+                        (by
+                          (exact left_sum_proof)))
+                      (==
+                        right_sum
+                        (by
+                          (exact sums_equal)))
+                      (==
+                        (add prefix_tail right)
+                        (by
+                          (exact (symm right_sum_proof))))))))))
+          (by
+            (specialize tail_cancel induction_hypothesis)
+            (exact tail_cancel)))))))
+
+(theorem add_right_cancel
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall suffix (is-list suffix)
+        (implies
+          (computes-to (is-nat-value left) (quote :true))
+          (implies
+            (computes-to (is-nat-value right) (quote :true))
+            (implies
+              (computes-to (is-nat-value suffix) (quote :true))
+              (implies
+                (computes-to (add left suffix) (add right suffix))
+                (computes-to left right))))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro suffix)
+    (intro left_is_nat)
+    (intro right_is_nat)
+    (intro suffix_is_nat)
+    (intro suffixed_equal)
+    (have prefixed_equal
+      (computes-to (add suffix left) (add suffix right))
+      (by
+        (calc
+          (add suffix left)
+          (==
+            (add left suffix)
+            (by
+              (exact add_comm suffix left)))
+          (==
+            (add right suffix)
+            (by
+              (exact suffixed_equal)))
+          (==
+            (add suffix right)
+            (by
+              (exact add_comm right suffix)))))
+      (by
+        (apply add_left_cancel left right suffix)))))
+
+(theorem add_left_eq_zero
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (add left right) zero)
+        (computes-to left zero))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (intro sum_zero)
+        (exact (symm zero_eq_nil)))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro right)
+        (intro sum_zero)
+        (obtain tail_sum tail_sum_proof
+          (add_computes_to_list tail right))
+        (have impossible_eq
+          (computes-to (cons head tail_sum) nil)
+          (by
+            (calc
+              (cons head tail_sum)
+              (==
+                (cons head (add tail right))
+                (by
+                  (simpa only (symm tail_sum_proof))))
+              (==
+                (add (cons head tail) right)
+                (by
+                  (exact (symm (add_cons head tail right)))))
+              (==
+                zero
+                (by
+                  (exact sum_zero)))
+              (==
+                nil
+                (by
+                  (exact zero_eq_nil)))))
+          (by
+            (have contradiction
+              (absurd)
+              (by
+                (apply cons_not_nil head tail_sum))
+              (by
+                (exact
+                  (absurd-elim
+                    contradiction
+                    (computes-to (cons head tail) zero)))))))))))
+
+(theorem add_right_eq_zero
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (add left right) zero)
+        (computes-to right zero))))
+  (by
+    (list-induction left
+      (by
+        (intro right)
+        (intro sum_zero)
+        (calc
+          right
+          (==
+            (add nil right)
+            (by
+              (exact
+                (symm
+                  (eval-to (add nil right) right)))))
+          (==
+            zero
+            (by
+              (exact sum_zero)))))
+      head
+      tail
+      induction_hypothesis
+      (by
+        (intro right)
+        (intro sum_zero)
+        (obtain tail_sum tail_sum_proof
+          (add_computes_to_list tail right))
+        (have impossible_eq
+          (computes-to (cons head tail_sum) nil)
+          (by
+            (calc
+              (cons head tail_sum)
+              (==
+                (cons head (add tail right))
+                (by
+                  (simpa only (symm tail_sum_proof))))
+              (==
+                (add (cons head tail) right)
+                (by
+                  (exact (symm (add_cons head tail right)))))
+              (==
+                zero
+                (by
+                  (exact sum_zero)))
+              (==
+                nil
+                (by
+                  (exact zero_eq_nil)))))
+          (by
+            (have contradiction
+              (absurd)
+              (by
+                (apply cons_not_nil head tail_sum))
+              (by
+                (exact
+                  (absurd-elim
+                    contradiction
+                    (computes-to right zero)))))))))))
+
+(theorem add_eq_zero_cases
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (add left right) zero)
+        (and
+          (computes-to left zero)
+          (computes-to right zero)))))
+  (by
+    (intro left)
+    (intro right)
+    (intro sum_zero)
+    (split
+      (by
+        (apply add_left_eq_zero left right))
+      (by
+        (apply add_right_eq_zero left right)))))
+
 (theorem nat_le_add_right_cancel
   (forall left (is-list left)
     (forall right (is-list right)
@@ -1412,6 +1874,56 @@
       (by
         (specialize prefix_cancel nat_lt_add_left_cancel left right suffix)
         (exact prefix_cancel)))))
+
+(theorem nat_le_add_cancel_right
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall suffix (is-list suffix)
+        (implies
+          (computes-to (is-nat-value left) (quote :true))
+          (implies
+            (computes-to (is-nat-value right) (quote :true))
+            (implies
+              (computes-to (is-nat-value suffix) (quote :true))
+              (implies
+                (computes-to
+                  (nat-le (add left suffix) (add right suffix))
+                  (quote :true))
+                (computes-to (nat-le left right) (quote :true)))))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro suffix)
+    (intro left_is_nat)
+    (intro right_is_nat)
+    (intro suffix_is_nat)
+    (intro suffixed_le)
+    (exact nat_le_add_right_cancel left right suffix)))
+
+(theorem nat_lt_add_cancel_right
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall suffix (is-list suffix)
+        (implies
+          (computes-to (is-nat-value left) (quote :true))
+          (implies
+            (computes-to (is-nat-value right) (quote :true))
+            (implies
+              (computes-to (is-nat-value suffix) (quote :true))
+              (implies
+                (computes-to
+                  (nat-lt (add left suffix) (add right suffix))
+                  (quote :true))
+                (computes-to (nat-lt left right) (quote :true)))))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro suffix)
+    (intro left_is_nat)
+    (intro right_is_nat)
+    (intro suffix_is_nat)
+    (intro suffixed_lt)
+    (exact nat_lt_add_right_cancel left right suffix)))
 
 (theorem add_swap
   (forall left (is-list left)

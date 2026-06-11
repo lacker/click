@@ -137,6 +137,330 @@
               (symbol-eq kind (quote :lambda))
               (quote :false))))))))
 
+(theorem is_symbol_true_implies_is_list_value_false
+  (forall value
+    (implies
+      (computes-to (is-symbol value) (quote :true))
+      (computes-to (is-list-value value) (quote :false))))
+  (proof
+    (forall-intro value
+      (implies-intro value_is_symbol
+        (computes-to (is-symbol value) (quote :true))
+        (trans
+          (eval-same
+            (is-list-value value)
+            (symbol-eq (value-kind value) (quote :list)))
+          (rewrite
+            (symm
+              (implies-elim
+                (forall-elim
+                  (forall-elim
+                    (known symbol_eq_true)
+                    (value-kind value))
+                  (quote :symbol))
+                (trans
+                  (eval-same
+                    (symbol-eq (value-kind value) (quote :symbol))
+                    (is-symbol value))
+                  (assume value_is_symbol))))
+            (eval-to
+              (symbol-eq (quote :symbol) (quote :list))
+              (quote :false))
+            kind
+            (computes-to
+              (symbol-eq kind (quote :list))
+              (quote :false))))))))
+
+(theorem is_lambda_true_implies_is_symbol_false
+  (forall value
+    (implies
+      (computes-to (is-lambda value) (quote :true))
+      (computes-to (is-symbol value) (quote :false))))
+  (proof
+    (forall-intro value
+      (implies-intro value_is_lambda
+        (computes-to (is-lambda value) (quote :true))
+        (trans
+          (eval-same
+            (is-symbol value)
+            (symbol-eq (value-kind value) (quote :symbol)))
+          (rewrite
+            (symm
+              (implies-elim
+                (forall-elim
+                  (forall-elim
+                    (known symbol_eq_true)
+                    (value-kind value))
+                  (quote :lambda))
+                (trans
+                  (eval-same
+                    (symbol-eq (value-kind value) (quote :lambda))
+                    (is-lambda value))
+                  (assume value_is_lambda))))
+            (eval-to
+              (symbol-eq (quote :lambda) (quote :symbol))
+              (quote :false))
+            kind
+            (computes-to
+              (symbol-eq kind (quote :symbol))
+              (quote :false))))))))
+
+(theorem is_lambda_true_implies_is_list_value_false
+  (forall value
+    (implies
+      (computes-to (is-lambda value) (quote :true))
+      (computes-to (is-list-value value) (quote :false))))
+  (proof
+    (forall-intro value
+      (implies-intro value_is_lambda
+        (computes-to (is-lambda value) (quote :true))
+        (trans
+          (eval-same
+            (is-list-value value)
+            (symbol-eq (value-kind value) (quote :list)))
+          (rewrite
+            (symm
+              (implies-elim
+                (forall-elim
+                  (forall-elim
+                    (known symbol_eq_true)
+                    (value-kind value))
+                  (quote :lambda))
+                (trans
+                  (eval-same
+                    (symbol-eq (value-kind value) (quote :lambda))
+                    (is-lambda value))
+                  (assume value_is_lambda))))
+            (eval-to
+              (symbol-eq (quote :lambda) (quote :list))
+              (quote :false))
+            kind
+            (computes-to
+              (symbol-eq kind (quote :list))
+              (quote :false))))))))
+
+(theorem is_list_value_true_implies_is_symbol_false
+  (forall value
+    (implies
+      (computes-to (is-list-value value) (quote :true))
+      (computes-to (is-symbol value) (quote :false))))
+  (proof
+    (forall-intro value
+      (implies-intro value_is_list
+        (computes-to (is-list-value value) (quote :true))
+        (trans
+          (eval-same
+            (is-symbol value)
+            (symbol-eq (value-kind value) (quote :symbol)))
+          (rewrite
+            (symm
+              (implies-elim
+                (forall-elim
+                  (forall-elim
+                    (known symbol_eq_true)
+                    (value-kind value))
+                  (quote :list))
+                (trans
+                  (eval-same
+                    (symbol-eq (value-kind value) (quote :list))
+                    (is-list-value value))
+                  (assume value_is_list))))
+            (eval-to
+              (symbol-eq (quote :list) (quote :symbol))
+              (quote :false))
+            kind
+            (computes-to
+              (symbol-eq kind (quote :symbol))
+              (quote :false))))))))
+
+(theorem is_list_value_true_implies_is_lambda_false
+  (forall value
+    (implies
+      (computes-to (is-list-value value) (quote :true))
+      (computes-to (is-lambda value) (quote :false))))
+  (proof
+    (forall-intro value
+      (implies-intro value_is_list
+        (computes-to (is-list-value value) (quote :true))
+        (trans
+          (eval-same
+            (is-lambda value)
+            (symbol-eq (value-kind value) (quote :lambda)))
+          (rewrite
+            (symm
+              (implies-elim
+                (forall-elim
+                  (forall-elim
+                    (known symbol_eq_true)
+                    (value-kind value))
+                  (quote :list))
+                (trans
+                  (eval-same
+                    (symbol-eq (value-kind value) (quote :list))
+                    (is-list-value value))
+                  (assume value_is_list))))
+            (eval-to
+              (symbol-eq (quote :list) (quote :lambda))
+              (quote :false))
+            kind
+            (computes-to
+              (symbol-eq kind (quote :lambda))
+              (quote :false))))))))
+
+(theorem value_kind_exactly_one
+  (forall value (is-value value)
+    (or
+      (and
+        (computes-to (is-symbol value) (quote :true))
+        (and
+          (computes-to (is-lambda value) (quote :false))
+          (computes-to (is-list-value value) (quote :false))))
+      (or
+        (and
+          (computes-to (is-lambda value) (quote :true))
+          (and
+            (computes-to (is-symbol value) (quote :false))
+            (computes-to (is-list-value value) (quote :false))))
+        (and
+          (computes-to (is-list-value value) (quote :true))
+          (and
+            (computes-to (is-symbol value) (quote :false))
+            (computes-to (is-lambda value) (quote :false)))))))
+  (by
+    (value-induction value
+      value_is_symbol
+      (by
+        (have value_is_symbol_result
+          (computes-to (is-symbol value) (quote :true))
+          (proof
+            (trans
+              (eval-same
+                (is-symbol value)
+                (symbol-eq (value-kind value) (quote :symbol)))
+              (assume value_is_symbol))))
+        (have value_not_lambda
+          (computes-to (is-lambda value) (quote :false))
+          (proof
+            (implies-elim
+              (forall-elim
+                (known is_symbol_true_implies_is_lambda_false)
+                value)
+              (assume value_is_symbol_result))))
+        (have value_not_list
+          (computes-to (is-list-value value) (quote :false))
+          (proof
+            (implies-elim
+              (forall-elim
+                (known is_symbol_true_implies_is_list_value_false)
+                value)
+              (assume value_is_symbol_result))))
+        (left
+          (by
+            (split
+              (by
+                (exact value_is_symbol_result))
+              (by
+                (split
+                  (by
+                    (exact value_not_lambda))
+                  (by
+                    (exact value_not_list))))))))
+      value_is_lambda
+      (by
+        (have value_is_lambda_result
+          (computes-to (is-lambda value) (quote :true))
+          (proof
+            (trans
+              (eval-same
+                (is-lambda value)
+                (symbol-eq (value-kind value) (quote :lambda)))
+              (assume value_is_lambda))))
+        (have value_not_symbol
+          (computes-to (is-symbol value) (quote :false))
+          (proof
+            (implies-elim
+              (forall-elim
+                (known is_lambda_true_implies_is_symbol_false)
+                value)
+              (assume value_is_lambda_result))))
+        (have value_not_list
+          (computes-to (is-list-value value) (quote :false))
+          (proof
+            (implies-elim
+              (forall-elim
+                (known is_lambda_true_implies_is_list_value_false)
+                value)
+              (assume value_is_lambda_result))))
+        (right
+          (by
+            (left
+              (by
+                (split
+                  (by
+                    (exact value_is_lambda_result))
+                  (by
+                    (split
+                      (by
+                        (exact value_not_symbol))
+                      (by
+                        (exact value_not_list))))))))))
+      (by
+        (have value_is_list
+          (computes-to (is-list-value nil) (quote :true))
+          (by
+            (eval)))
+        (have value_not_symbol
+          (computes-to (is-symbol nil) (quote :false))
+          (by
+            (eval)))
+        (have value_not_lambda
+          (computes-to (is-lambda nil) (quote :false))
+          (by
+            (eval)))
+        (right
+          (by
+            (right
+              (by
+                (split
+                  (by
+                    (exact value_is_list))
+                  (by
+                    (split
+                      (by
+                        (exact value_not_symbol))
+                      (by
+                        (exact value_not_lambda))))))))))
+      head
+      tail
+      head_kinds
+      tail_kinds
+      (by
+        (have value_is_list
+          (computes-to (is-list-value (cons head tail)) (quote :true))
+          (by
+            (eval)))
+        (have value_not_symbol
+          (computes-to (is-symbol (cons head tail)) (quote :false))
+          (by
+            (eval)))
+        (have value_not_lambda
+          (computes-to (is-lambda (cons head tail)) (quote :false))
+          (by
+            (eval)))
+        (right
+          (by
+            (right
+              (by
+                (split
+                  (by
+                    (exact value_is_list))
+                  (by
+                    (split
+                      (by
+                        (exact value_not_symbol))
+                      (by
+                        (exact value_not_lambda)))))))))))))
+
 (theorem value_eq_comparable_symbol
   (forall value (is-value value)
     (implies
@@ -169,6 +493,95 @@
     (intro head_comparable)
     (intro tail_comparable)
     (simp only head_comparable tail_comparable)))
+
+(theorem value_eq_comparable_no_lambdas
+  (forall value (is-value value)
+    (implies
+      (computes-to (value-eq-comparable value) (quote :true))
+      (computes-to (is-lambda value) (quote :false))))
+  (by
+    (value-induction value
+      value_is_symbol
+      (by
+        (intro value_comparable)
+        (have value_is_symbol_result
+          (computes-to (is-symbol value) (quote :true))
+          (proof
+            (trans
+              (eval-same
+                (is-symbol value)
+                (symbol-eq (value-kind value) (quote :symbol)))
+              (assume value_is_symbol))))
+        (exact
+          (implies-elim
+            (forall-elim
+              (known is_symbol_true_implies_is_lambda_false)
+              value)
+            (assume value_is_symbol_result))))
+      value_is_lambda
+      (by
+        (intro value_comparable)
+        (have value_is_lambda_result
+          (computes-to (is-lambda value) (quote :true))
+          (proof
+            (trans
+              (eval-same
+                (is-lambda value)
+                (symbol-eq (value-kind value) (quote :lambda)))
+              (assume value_is_lambda))))
+        (have comparable_false
+          (computes-to (value-eq-comparable value) (quote :false))
+          (by
+            (calc
+              (value-eq-comparable value)
+              (==
+                (if
+                  (is-lambda value)
+                  (quote :false)
+                  (if
+                    (is-symbol value)
+                    (quote :true)
+                    (list-case value
+                      (quote :true)
+                      cell
+                      (if
+                        (value-eq-comparable (head cell))
+                        (value-eq-comparable (tail cell))
+                        (quote :false)))))
+                (by
+                  (eval)))
+              (==
+                (quote :false)
+                (by
+                  (simpa only value_is_lambda_result))))))
+        (have impossible_eq
+          (computes-to (quote :false) (quote :true))
+          (by
+            (calc
+              (quote :false)
+              (==
+                (value-eq-comparable value)
+                (by
+                  (exact (symm comparable_false))))
+              (==
+                (quote :true)
+                (by
+                  (exact value_comparable)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (computes-to (is-lambda value) (quote :false)))))))
+      (by
+        (intro value_comparable)
+        (eval))
+      head
+      tail
+      head_not_lambda
+      tail_not_lambda
+      (by
+        (intro value_comparable)
+        (eval)))))
 
 (theorem value_eq_true_implies_not_lambdas
   (forall left (is-value left)
@@ -1397,3 +1810,199 @@
     (specialize values_same value_eq_sound left right)
     (specialize right_refl value_eq_refl right)
     (simp only values_same right_refl)))
+
+(theorem value_eq_trans
+  (forall left (is-value left)
+    (forall middle (is-value middle)
+      (forall right (is-value right)
+        (implies
+          (computes-to (value-eq left middle) (quote :true))
+          (implies
+            (computes-to (value-eq middle right) (quote :true))
+            (computes-to (value-eq left right) (quote :true)))))))
+  (by
+    (intro left)
+    (intro middle)
+    (intro right)
+    (intro left_middle_equal)
+    (intro middle_right_equal)
+    (specialize left_computes_to_middle value_eq_sound left middle)
+    (calc
+      (value-eq left right)
+      (==
+        (value-eq middle right)
+        (by
+          (simpa only left_computes_to_middle)))
+      (==
+        (quote :true)
+        (by
+          (exact middle_right_equal))))))
+
+(theorem value_eq_complete_for_comparable_values
+  (forall left (is-value left)
+    (forall right (is-value right)
+      (implies
+        (computes-to (value-eq-comparable left) (quote :true))
+        (implies
+          (computes-to (value-eq-comparable right) (quote :true))
+          (implies
+            (computes-to left right)
+            (computes-to (value-eq left right) (quote :true)))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro left_comparable)
+    (intro right_comparable)
+    (intro values_same)
+    (specialize left_refl value_eq_refl left)
+    (simpa only (symm values_same) left_refl)))
+
+(theorem value_eq_false_implies_not_equal_for_comparable_values
+  (forall left (is-value left)
+    (forall right (is-value right)
+      (implies
+        (computes-to (value-eq-comparable left) (quote :true))
+        (implies
+          (computes-to (value-eq-comparable right) (quote :true))
+          (implies
+            (computes-to (value-eq left right) (quote :false))
+            (implies
+              (computes-to left right)
+              (absurd)))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro left_comparable)
+    (intro right_comparable)
+    (intro values_not_equal)
+    (intro values_same)
+    (specialize values_equal value_eq_complete_for_comparable_values left right)
+    (have true_is_false
+      (computes-to (quote :true) (quote :false))
+      (by
+        (calc
+          (quote :true)
+          (==
+            (value-eq left right)
+            (by
+              (exact (symm values_equal))))
+          (==
+            (quote :false)
+            (by
+              (exact values_not_equal)))))
+      (by
+        (exact (distinct-outcomes true_is_false))))))
+
+(theorem symbol_not_list
+  (forall symbol_value (is-value symbol_value)
+    (implies
+      (computes-to (is-symbol symbol_value) (quote :true))
+      (forall list_value (is-list list_value)
+        (implies
+          (computes-to symbol_value list_value)
+          (absurd)))))
+  (by
+    (intro symbol_value)
+    (intro symbol_is_symbol)
+    (intro list_value)
+    (intro values_same)
+    (have list_not_symbol
+      (computes-to (is-symbol list_value) (quote :false))
+      (by
+        (eval)))
+    (have symbol_not_symbol
+      (computes-to (is-symbol symbol_value) (quote :false))
+      (by
+        (rewrite values_same)
+        (exact list_not_symbol)))
+    (have true_is_false
+      (computes-to (quote :true) (quote :false))
+      (by
+        (calc
+          (quote :true)
+          (==
+            (is-symbol symbol_value)
+            (by
+              (exact (symm symbol_is_symbol))))
+          (==
+            (quote :false)
+            (by
+              (exact symbol_not_symbol)))))
+      (by
+        (exact (distinct-outcomes true_is_false))))))
+
+(theorem symbol_not_lambda
+  (forall symbol_value (is-value symbol_value)
+    (implies
+      (computes-to (is-symbol symbol_value) (quote :true))
+      (forall lambda_value (is-value lambda_value)
+        (implies
+          (computes-to (is-lambda lambda_value) (quote :true))
+          (implies
+            (computes-to symbol_value lambda_value)
+            (absurd))))))
+  (by
+    (intro symbol_value)
+    (intro symbol_is_symbol)
+    (intro lambda_value)
+    (intro lambda_is_lambda)
+    (intro values_same)
+    (specialize lambda_not_symbol is_lambda_true_implies_is_symbol_false lambda_value)
+    (have symbol_not_symbol
+      (computes-to (is-symbol symbol_value) (quote :false))
+      (by
+        (rewrite values_same)
+        (exact lambda_not_symbol)))
+    (have true_is_false
+      (computes-to (quote :true) (quote :false))
+      (by
+        (calc
+          (quote :true)
+          (==
+            (is-symbol symbol_value)
+            (by
+              (exact (symm symbol_is_symbol))))
+          (==
+            (quote :false)
+            (by
+              (exact symbol_not_symbol)))))
+      (by
+        (exact (distinct-outcomes true_is_false))))))
+
+(theorem list_not_lambda
+  (forall list_value (is-list list_value)
+    (forall lambda_value (is-value lambda_value)
+      (implies
+        (computes-to (is-lambda lambda_value) (quote :true))
+        (implies
+          (computes-to list_value lambda_value)
+          (absurd)))))
+  (by
+    (intro list_value)
+    (intro lambda_value)
+    (intro lambda_is_lambda)
+    (intro values_same)
+    (have list_not_lambda
+      (computes-to (is-lambda list_value) (quote :false))
+      (by
+        (eval)))
+    (have lambda_not_lambda
+      (computes-to (is-lambda lambda_value) (quote :false))
+      (by
+        (rewrite (symm values_same))
+        (exact list_not_lambda)))
+    (have true_is_false
+      (computes-to (quote :true) (quote :false))
+      (by
+        (calc
+          (quote :true)
+          (==
+            (is-lambda lambda_value)
+            (by
+              (exact (symm lambda_is_lambda))))
+          (==
+            (quote :false)
+            (by
+              (exact lambda_not_lambda)))))
+      (by
+        (exact (distinct-outcomes true_is_false))))))

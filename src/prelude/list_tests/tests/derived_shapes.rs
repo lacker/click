@@ -151,6 +151,10 @@ fn filter_any_all_source_theorems_have_expected_shape() {
     let find_false_predicate = theorem_symbol("find_cons_false", "predicate");
     let find_false_head = theorem_symbol("find_cons_false", "head");
     let find_false_tail = theorem_symbol("find_cons_false", "tail");
+    let find_append_predicate = theorem_symbol("find_append", "predicate");
+    let find_append_value = theorem_symbol("find_append", "value");
+    let find_append_left = theorem_symbol("find_append", "left");
+    let find_append_right = theorem_symbol("find_append", "right");
 
     assert_eq!(
         find_nil_source_theorem(),
@@ -163,6 +167,15 @@ fn filter_any_all_source_theorems_have_expected_shape() {
     assert_eq!(
         find_cons_false_source_theorem(),
         find_cons_false_theorem(find_false_predicate, find_false_head, find_false_tail)
+    );
+    assert_eq!(
+        find_append_source_theorem(),
+        find_append_theorem(
+            find_append_predicate,
+            find_append_value,
+            find_append_left,
+            find_append_right,
+        )
     );
 
     let elem_index_nil_value = theorem_symbol("elem_index_nil", "value");
@@ -218,9 +231,84 @@ fn higher_order_relation_source_theorems_have_expected_shape() {
         &concat_map_singleton_source_theorem(),
         &concat_map_singleton_theorem(X, VALUE),
     );
+    assert_eq!(
+        option_map_nth_source_theorem(),
+        option_map_nth_theorem(
+            theorem_symbol("option_map_nth", "function"),
+            theorem_symbol("option_map_nth", "value"),
+            theorem_symbol("option_map_nth", "mapped_value"),
+            theorem_symbol("option_map_nth", "index"),
+            theorem_symbol("option_map_nth", "list"),
+        )
+    );
+    assert_eq!(
+        concat_map_as_concat_map_source_theorem(),
+        concat_map_as_concat_map_theorem(
+            theorem_symbol("concat_map_as_concat_map", "function"),
+            theorem_symbol("concat_map_as_concat_map", "value"),
+            theorem_symbol("concat_map_as_concat_map", "mapped_list"),
+            theorem_symbol("concat_map_as_concat_map", "list"),
+        )
+    );
     assert_alpha_eq(
         &fold_right_cons_nil_source_theorem(),
         &fold_right_cons_nil_theorem(X, VALUE, ACCUMULATOR),
+    );
+    assert_eq!(
+        fold_right_append_source_theorem(),
+        fold_right_append_theorem(
+            theorem_symbol("fold_right_append", "function"),
+            theorem_symbol("fold_right_append", "initial"),
+            theorem_symbol("fold_right_append", "value"),
+            theorem_symbol("fold_right_append", "accumulator"),
+            theorem_symbol("fold_right_append", "folded_value"),
+            theorem_symbol("fold_right_append", "left"),
+            theorem_symbol("fold_right_append", "right"),
+        )
+    );
+    assert_eq!(
+        fold_left_append_source_theorem(),
+        fold_left_append_theorem(
+            theorem_symbol("fold_left_append", "function"),
+            theorem_symbol("fold_left_append", "accumulator"),
+            theorem_symbol("fold_left_append", "value"),
+            theorem_symbol("fold_left_append", "folded_value"),
+            theorem_symbol("fold_left_append", "left"),
+            theorem_symbol("fold_left_append", "initial"),
+            theorem_symbol("fold_left_append", "right"),
+        )
+    );
+    assert_alpha_eq(
+        &fold_right_map_source_theorem(),
+        &fold_right_map_theorem(
+            FUNCTION,
+            RIGHT_VALUE,
+            INITIAL,
+            VALUE,
+            MAPPED_VALUE,
+            LEFT_VALUE,
+            ACCUMULATOR,
+            FOLDED_VALUE,
+            X,
+            HEAD,
+            TAIL,
+        ),
+    );
+    assert_alpha_eq(
+        &fold_left_map_source_theorem(),
+        &fold_left_map_theorem(
+            FUNCTION,
+            RIGHT_VALUE,
+            VALUE,
+            MAPPED_VALUE,
+            ACCUMULATOR,
+            LEFT_VALUE,
+            FOLDED_VALUE,
+            X,
+            INITIAL,
+            HEAD,
+            TAIL,
+        ),
     );
     assert_alpha_eq(
         &fold_left_reverse_acc_source_theorem(),

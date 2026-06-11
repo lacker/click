@@ -1226,10 +1226,42 @@
                         (by
                           (eval)))
                       (==
-                        (quote :true)
+                          (quote :true)
                         (by
                           (exact tail_anti)))))))))))))
 )
+
+(theorem sub_monotone_left
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall middle (is-list middle)
+        (implies
+          (computes-to (nat-le left right) (quote :true))
+          (computes-to
+            (nat-le (sub left middle) (sub right middle))
+            (quote :true))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro middle)
+    (intro left_le_right)
+    (exact nat_le_sub_right_mono left right middle)))
+
+(theorem sub_monotone_right
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall middle (is-list middle)
+        (implies
+          (computes-to (nat-le left right) (quote :true))
+          (computes-to
+            (nat-le (sub middle right) (sub middle left))
+            (quote :true))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro middle)
+    (intro left_le_right)
+    (exact nat_le_sub_left_anti left right middle)))
 
 (theorem nat_lt_sub_right_mono
   (forall left (is-list left)
@@ -1474,6 +1506,18 @@
     (intro left_le_right)
     (exact nat_le_implies_sub_zero left right)))
 
+(theorem sub_eq_zero_of_le
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (nat-le left right) (quote :true))
+        (computes-to (sub left right) zero))))
+  (by
+    (intro left)
+    (intro right)
+    (intro left_le_right)
+    (exact sub_eq_zero_of_nat_le left right)))
+
 (theorem nat_le_of_sub_eq_zero
   (forall left (is-list left)
     (forall right (is-list right)
@@ -1630,10 +1674,10 @@
                     (quote :true)
                     (by
                       (exact right_lt_left)))))
-              (by
-                (specialize tail_positive induction_hypothesis right_tail)
-                (calc
-                  (nat-lt zero (sub (cons left_head left_tail) (cons right_head right_tail)))
+      (by
+        (specialize tail_positive induction_hypothesis right_tail)
+        (calc
+          (nat-lt zero (sub (cons left_head left_tail) (cons right_head right_tail)))
                   (==
                     (nat-lt nil (sub left_tail right_tail))
                     (by
@@ -1647,6 +1691,20 @@
                     (by
                       (exact tail_positive)))))))))))
 )
+
+(theorem sub_pos_of_lt
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (nat-lt right left) (quote :true))
+        (computes-to
+          (nat-lt zero (sub left right))
+          (quote :true)))))
+  (by
+    (intro left)
+    (intro right)
+    (intro right_lt_left)
+    (exact nat_lt_right_left_implies_nat_lt_zero_sub left right)))
 
 (theorem nat_lt_zero_sub_implies_nat_lt_right_left
   (forall left (is-list left)

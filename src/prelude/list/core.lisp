@@ -427,6 +427,53 @@
           (quote :false)))
       (quote :false))))
 
+(def option-map
+  (lambda function
+    (lambda option
+      (if
+        (is-none option)
+        none
+        (if
+          (is-some option)
+          (some (function (head (tail option))))
+          (error 0))))))
+
+(def option-bind
+  (lambda function
+    (lambda option
+      (if
+        (is-none option)
+        none
+        (if
+          (is-some option)
+          (function (head (tail option)))
+          (error 0))))))
+
+(def unwrap-or
+  (lambda default
+    (lambda option
+      (if
+        (is-none option)
+        default
+        (if
+          (is-some option)
+          (head (tail option))
+          (error 0))))))
+
+(def option-filter
+  (lambda predicate
+    (lambda option
+      (if
+        (is-none option)
+        none
+        (if
+          (is-some option)
+          (if
+            (predicate (head (tail option)))
+            option
+            none)
+          (error 0))))))
+
 (def value-eq
   (lambda left
     (lambda right

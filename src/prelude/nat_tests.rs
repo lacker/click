@@ -1,13 +1,13 @@
 //! Test helpers and expected behavior for the nat prelude source.
 
 use crate::{
-    Computation, Lambda, Prop, Symbol, Theory, computes_to, computes_to_list, implies, is_bool,
-    is_list, is_value, or,
+    Computation, Lambda, Prop, Symbol, Theory, computes_to, computes_to_list, forall_where,
+    implies, is_bool, is_list, is_value, or,
 };
 
 use super::list_tests::{
-    apply, check_evaluates_to, cons, false_value, nil, proof_by_evaluation, quote, snoc_call,
-    true_value, unit, var,
+    apply, check_evaluates_to, cons, false_value, length_call, nil, proof_by_evaluation, quote,
+    snoc_call, true_value, unit, var,
 };
 
 const NAT: Symbol = Symbol(2_100);
@@ -185,6 +185,14 @@ pub fn succ_zero_source_theorem() -> Prop {
     theorem_prop("succ_zero")
 }
 
+pub fn succ_injective_source_theorem() -> Prop {
+    theorem_prop("succ_injective")
+}
+
+pub fn zero_ne_succ_source_theorem() -> Prop {
+    theorem_prop("zero_ne_succ")
+}
+
 pub fn is_zero_zero_source_theorem() -> Prop {
     theorem_prop("is_zero_zero")
 }
@@ -199,6 +207,10 @@ pub fn is_zero_cons_false_source_theorem() -> Prop {
 
 pub fn is_zero_is_bool_source_theorem() -> Prop {
     theorem_prop("is_zero_is_bool")
+}
+
+pub fn is_zero_computes_to_bool_source_theorem() -> Prop {
+    theorem_prop("is_zero_computes_to_bool")
 }
 
 pub fn pred_zero_source_theorem() -> Prop {
@@ -217,8 +229,20 @@ pub fn pred_computes_to_list_source_theorem() -> Prop {
     theorem_prop("pred_computes_to_list")
 }
 
+pub fn pred_preserves_nat_value_source_theorem() -> Prop {
+    theorem_prop("pred_preserves_nat_value")
+}
+
+pub fn pred_succ_inverse_source_theorem() -> Prop {
+    theorem_prop("pred_succ_inverse")
+}
+
 pub fn succ_computes_to_list_source_theorem() -> Prop {
     theorem_prop("succ_computes_to_list")
+}
+
+pub fn succ_pred_inverse_for_nonzero_source_theorem() -> Prop {
+    theorem_prop("succ_pred_inverse_for_nonzero")
 }
 
 pub fn range_zero_source_theorem() -> Prop {
@@ -237,8 +261,16 @@ pub fn range_computes_to_list_source_theorem() -> Prop {
     theorem_prop("range_computes_to_list")
 }
 
+pub fn length_range_source_theorem() -> Prop {
+    theorem_prop("length_range")
+}
+
 pub fn succ_preserves_nat_value_source_theorem() -> Prop {
     theorem_prop("succ_preserves_nat_value")
+}
+
+pub fn is_nat_value_nil_source_theorem() -> Prop {
+    theorem_prop("is_nat_value_nil")
 }
 
 pub fn is_nat_value_cons_source_theorem() -> Prop {
@@ -247,6 +279,10 @@ pub fn is_nat_value_cons_source_theorem() -> Prop {
 
 pub fn is_nat_value_cons_true_elim_source_theorem() -> Prop {
     theorem_prop("is_nat_value_cons_true_elim")
+}
+
+pub fn is_nat_value_tail_source_theorem() -> Prop {
+    theorem_prop("is_nat_value_tail")
 }
 
 pub fn nat_eq_zero_zero_source_theorem() -> Prop {
@@ -281,6 +317,10 @@ pub fn nat_eq_is_bool_source_theorem() -> Prop {
     theorem_prop("nat_eq_is_bool")
 }
 
+pub fn nat_eq_computes_to_bool_source_theorem() -> Prop {
+    theorem_prop("nat_eq_computes_to_bool")
+}
+
 pub fn nat_eq_pred_succ_source_theorem() -> Prop {
     theorem_prop("nat_eq_pred_succ")
 }
@@ -305,8 +345,16 @@ pub fn nat_le_refl_source_theorem() -> Prop {
     theorem_prop("nat_le_refl")
 }
 
+pub fn nat_le_of_equal_lists_source_theorem() -> Prop {
+    theorem_prop("nat_le_of_equal_lists")
+}
+
 pub fn nat_le_is_bool_source_theorem() -> Prop {
     theorem_prop("nat_le_is_bool")
+}
+
+pub fn nat_le_computes_to_bool_source_theorem() -> Prop {
+    theorem_prop("nat_le_computes_to_bool")
 }
 
 pub fn nat_lt_zero_zero_source_theorem() -> Prop {
@@ -361,6 +409,10 @@ pub fn nat_lt_is_bool_source_theorem() -> Prop {
     theorem_prop("nat_lt_is_bool")
 }
 
+pub fn nat_lt_computes_to_bool_source_theorem() -> Prop {
+    theorem_prop("nat_lt_computes_to_bool")
+}
+
 pub fn nat_le_list_suffix_cons_source_theorem() -> Prop {
     theorem_prop("nat_le_list_suffix_cons")
 }
@@ -373,12 +425,24 @@ pub fn nat_le_self_succ_source_theorem() -> Prop {
     theorem_prop("nat_le_self_succ")
 }
 
+pub fn nat_le_succ_right_source_theorem() -> Prop {
+    theorem_prop("nat_le_succ_right")
+}
+
 pub fn nat_lt_self_succ_source_theorem() -> Prop {
     theorem_prop("nat_lt_self_succ")
 }
 
+pub fn nat_lt_succ_self_source_theorem() -> Prop {
+    theorem_prop("nat_lt_succ_self")
+}
+
 pub fn nat_lt_implies_nat_le_source_theorem() -> Prop {
     theorem_prop("nat_lt_implies_nat_le")
+}
+
+pub fn nat_lt_implies_le_source_theorem() -> Prop {
+    theorem_prop("nat_lt_implies_le")
 }
 
 pub fn nat_le_false_implies_nat_lt_right_left_source_theorem() -> Prop {
@@ -387,6 +451,10 @@ pub fn nat_le_false_implies_nat_lt_right_left_source_theorem() -> Prop {
 
 pub fn nat_lt_false_implies_nat_le_right_left_source_theorem() -> Prop {
     theorem_prop("nat_lt_false_implies_nat_le_right_left")
+}
+
+pub fn nat_le_total_source_theorem() -> Prop {
+    theorem_prop("nat_le_total")
 }
 
 pub fn nat_le_trans_source_theorem() -> Prop {
@@ -417,6 +485,22 @@ pub fn nat_eq_sound_source_theorem() -> Prop {
     theorem_prop("nat_eq_sound")
 }
 
+pub fn nat_eq_true_implies_equal_source_theorem() -> Prop {
+    theorem_prop("nat_eq_true_implies_equal")
+}
+
+pub fn nat_eq_false_implies_not_equal_source_theorem() -> Prop {
+    theorem_prop("nat_eq_false_implies_not_equal")
+}
+
+pub fn nat_lt_implies_nat_eq_false_source_theorem() -> Prop {
+    theorem_prop("nat_lt_implies_nat_eq_false")
+}
+
+pub fn nat_lt_as_le_and_not_eq_source_theorem() -> Prop {
+    theorem_prop("nat_lt_as_le_and_not_eq")
+}
+
 pub fn nat_eq_false_implies_nat_lt_or_nat_lt_source_theorem() -> Prop {
     theorem_prop("nat_eq_false_implies_nat_lt_or_nat_lt")
 }
@@ -431,6 +515,10 @@ pub fn nat_eq_implies_nat_le_right_left_source_theorem() -> Prop {
 
 pub fn nat_le_antisymm_source_theorem() -> Prop {
     theorem_prop("nat_le_antisymm")
+}
+
+pub fn nat_le_and_ne_implies_lt_source_theorem() -> Prop {
+    theorem_prop("nat_le_and_ne_implies_lt")
 }
 
 pub fn nat_le_implies_nat_lt_cons_right_source_theorem() -> Prop {
@@ -461,8 +549,24 @@ pub fn nat_le_right_add_source_theorem() -> Prop {
     theorem_prop("nat_le_right_add")
 }
 
+pub fn nat_le_add_right_source_theorem() -> Prop {
+    theorem_prop("nat_le_add_right")
+}
+
+pub fn nat_le_add_left_source_theorem() -> Prop {
+    theorem_prop("nat_le_add_left")
+}
+
 pub fn nat_lt_nil_left_add_source_theorem() -> Prop {
     theorem_prop("nat_lt_nil_left_add")
+}
+
+pub fn nat_lt_add_right_source_theorem() -> Prop {
+    theorem_prop("nat_lt_add_right")
+}
+
+pub fn nat_lt_add_left_source_theorem() -> Prop {
+    theorem_prop("nat_lt_add_left")
 }
 
 pub fn nat_le_add_right_mono_source_theorem() -> Prop {
@@ -489,12 +593,28 @@ pub fn nat_lt_add_left_cancel_source_theorem() -> Prop {
     theorem_prop("nat_lt_add_left_cancel")
 }
 
+pub fn nat_le_add_cancel_left_source_theorem() -> Prop {
+    theorem_prop("nat_le_add_cancel_left")
+}
+
+pub fn nat_lt_add_cancel_left_source_theorem() -> Prop {
+    theorem_prop("nat_lt_add_cancel_left")
+}
+
 pub fn nat_le_add_right_cancel_source_theorem() -> Prop {
     theorem_prop("nat_le_add_right_cancel")
 }
 
 pub fn nat_lt_add_right_cancel_source_theorem() -> Prop {
     theorem_prop("nat_lt_add_right_cancel")
+}
+
+pub fn nat_le_add_cancel_right_source_theorem() -> Prop {
+    theorem_prop("nat_le_add_cancel_right")
+}
+
+pub fn nat_lt_add_cancel_right_source_theorem() -> Prop {
+    theorem_prop("nat_lt_add_cancel_right")
 }
 
 pub fn add_succ_left_source_theorem() -> Prop {
@@ -543,6 +663,26 @@ pub fn add_assoc_source_theorem() -> Prop {
 
 pub fn add_comm_source_theorem() -> Prop {
     theorem_prop("add_comm")
+}
+
+pub fn add_left_cancel_source_theorem() -> Prop {
+    theorem_prop("add_left_cancel")
+}
+
+pub fn add_right_cancel_source_theorem() -> Prop {
+    theorem_prop("add_right_cancel")
+}
+
+pub fn add_left_eq_zero_source_theorem() -> Prop {
+    theorem_prop("add_left_eq_zero")
+}
+
+pub fn add_right_eq_zero_source_theorem() -> Prop {
+    theorem_prop("add_right_eq_zero")
+}
+
+pub fn add_eq_zero_cases_source_theorem() -> Prop {
+    theorem_prop("add_eq_zero_cases")
 }
 
 pub fn add_swap_source_theorem() -> Prop {
@@ -629,6 +769,14 @@ pub fn nat_le_sub_left_anti_source_theorem() -> Prop {
     theorem_prop("nat_le_sub_left_anti")
 }
 
+pub fn sub_monotone_left_source_theorem() -> Prop {
+    theorem_prop("sub_monotone_left")
+}
+
+pub fn sub_monotone_right_source_theorem() -> Prop {
+    theorem_prop("sub_monotone_right")
+}
+
 pub fn nat_lt_sub_right_mono_source_theorem() -> Prop {
     theorem_prop("nat_lt_sub_right_mono")
 }
@@ -639,6 +787,10 @@ pub fn nat_eq_of_le_and_sub_zero_source_theorem() -> Prop {
 
 pub fn sub_eq_zero_of_nat_le_source_theorem() -> Prop {
     theorem_prop("sub_eq_zero_of_nat_le")
+}
+
+pub fn sub_eq_zero_of_le_source_theorem() -> Prop {
+    theorem_prop("sub_eq_zero_of_le")
 }
 
 pub fn nat_le_of_sub_eq_zero_source_theorem() -> Prop {
@@ -655,6 +807,10 @@ pub fn nat_le_of_exists_add_source_theorem() -> Prop {
 
 pub fn nat_lt_right_left_implies_nat_lt_zero_sub_source_theorem() -> Prop {
     theorem_prop("nat_lt_right_left_implies_nat_lt_zero_sub")
+}
+
+pub fn sub_pos_of_lt_source_theorem() -> Prop {
+    theorem_prop("sub_pos_of_lt")
 }
 
 pub fn nat_lt_zero_sub_implies_nat_lt_right_left_source_theorem() -> Prop {
@@ -685,12 +841,28 @@ pub fn nat_lt_mul_right_mono_source_theorem() -> Prop {
     theorem_prop("nat_lt_mul_right_mono")
 }
 
+pub fn nat_le_mul_positive_right_source_theorem() -> Prop {
+    theorem_prop("nat_le_mul_positive_right")
+}
+
+pub fn nat_lt_mul_positive_right_source_theorem() -> Prop {
+    theorem_prop("nat_lt_mul_positive_right")
+}
+
 pub fn nat_le_mul_left_mono_source_theorem() -> Prop {
     theorem_prop("nat_le_mul_left_mono")
 }
 
 pub fn nat_lt_mul_left_mono_source_theorem() -> Prop {
     theorem_prop("nat_lt_mul_left_mono")
+}
+
+pub fn nat_le_mul_positive_left_source_theorem() -> Prop {
+    theorem_prop("nat_le_mul_positive_left")
+}
+
+pub fn nat_lt_mul_positive_left_source_theorem() -> Prop {
+    theorem_prop("nat_lt_mul_positive_left")
 }
 
 pub fn mul_preserves_nat_value_source_theorem() -> Prop {
@@ -737,6 +909,10 @@ pub fn is_zero_mul_implies_is_zero_or_is_zero_source_theorem() -> Prop {
     theorem_prop("is_zero_mul_implies_is_zero_or_is_zero")
 }
 
+pub fn mul_eq_zero_cases_source_theorem() -> Prop {
+    theorem_prop("mul_eq_zero_cases")
+}
+
 pub fn mul_zero_right_source_theorem() -> Prop {
     theorem_prop("mul_zero_right")
 }
@@ -753,6 +929,10 @@ pub fn nat_lt_mul_right_cancel_source_theorem() -> Prop {
     theorem_prop("nat_lt_mul_right_cancel")
 }
 
+pub fn mul_right_cancel_positive_source_theorem() -> Prop {
+    theorem_prop("mul_right_cancel_positive")
+}
+
 pub fn is_zero_mul_zero_right_source_theorem() -> Prop {
     theorem_prop("is_zero_mul_zero_right")
 }
@@ -767,6 +947,10 @@ pub fn mul_one_right_source_theorem() -> Prop {
 
 pub fn mul_comm_source_theorem() -> Prop {
     theorem_prop("mul_comm")
+}
+
+pub fn mul_left_cancel_positive_source_theorem() -> Prop {
+    theorem_prop("mul_left_cancel_positive")
 }
 
 pub fn nat_le_mul_left_cancel_source_theorem() -> Prop {
@@ -833,6 +1017,17 @@ fn forall_list(symbol: Symbol, body: Prop) -> Prop {
 
 fn nat_value_true(symbol: Symbol) -> Prop {
     computes_to(is_nat_value_call(var(symbol)), true_value())
+}
+
+pub fn length_range_theorem(count: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        implies(
+            nat_value_true(count),
+            computes_to(length_call(range_call(var(count))), var(count)),
+        ),
+    )
 }
 
 fn nat_le_true(left: Symbol, right: Symbol) -> Prop {

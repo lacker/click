@@ -12,6 +12,7 @@ fn nat_theorem_statements_load_from_source() {
     let range_succ_nat = theorem_symbol("range_succ", "nat");
     let range_result = theorem_symbol("range_computes_to_list", "result");
     let range_count = theorem_symbol("range_computes_to_list", "count");
+    let length_range_count = theorem_symbol("length_range", "count");
     let nat_eq_refl_nat = theorem_symbol("nat_eq_refl", "nat");
     let nat_eq_is_bool_left = theorem_symbol("nat_eq_is_bool", "left");
     let nat_eq_is_bool_right = theorem_symbol("nat_eq_is_bool", "right");
@@ -286,6 +287,10 @@ fn nat_theorem_statements_load_from_source() {
             range_count,
             computes_to_list(range_result, range_call(var(range_count)))
         )
+    );
+    assert_eq!(
+        length_range_source_theorem(),
+        length_range_theorem(length_range_count)
     );
     assert_eq!(
         is_zero_cons_false_source_theorem(),

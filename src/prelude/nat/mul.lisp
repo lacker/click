@@ -388,6 +388,44 @@
                           (exact add_mono)))))))))))))
 )
 
+(theorem nat_le_mul_positive_right
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall factor (is-list factor)
+        (implies
+          (computes-to (nat-lt zero factor) (quote :true))
+          (implies
+            (computes-to (nat-le left right) (quote :true))
+            (computes-to
+              (nat-le (mul left factor) (mul right factor))
+              (quote :true)))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro factor)
+    (intro factor_positive)
+    (intro left_le_right)
+    (exact nat_le_mul_right_mono left right factor)))
+
+(theorem nat_lt_mul_positive_right
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall factor (is-list factor)
+        (implies
+          (computes-to (nat-lt zero factor) (quote :true))
+          (implies
+            (computes-to (nat-lt left right) (quote :true))
+            (computes-to
+              (nat-lt (mul left factor) (mul right factor))
+              (quote :true)))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro factor)
+    (intro factor_positive)
+    (intro left_lt_right)
+    (exact nat_lt_mul_right_mono left right factor)))
+
 (theorem nat_le_mul_left_mono
   (forall left (is-list left)
     (forall right (is-list right)
@@ -697,6 +735,44 @@
                             (by
                               (exact total_lt))))))))))))))
 ))
+
+(theorem nat_le_mul_positive_left
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall factor (is-list factor)
+        (implies
+          (computes-to (nat-lt zero factor) (quote :true))
+          (implies
+            (computes-to (nat-le left right) (quote :true))
+            (computes-to
+              (nat-le (mul factor left) (mul factor right))
+              (quote :true)))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro factor)
+    (intro factor_positive)
+    (intro left_le_right)
+    (exact nat_le_mul_left_mono left right factor)))
+
+(theorem nat_lt_mul_positive_left
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall factor (is-list factor)
+        (implies
+          (computes-to (nat-lt zero factor) (quote :true))
+          (implies
+            (computes-to (nat-lt left right) (quote :true))
+            (computes-to
+              (nat-lt (mul factor left) (mul factor right))
+              (quote :true)))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro factor)
+    (intro factor_positive)
+    (intro left_lt_right)
+    (exact nat_lt_mul_left_mono left right factor)))
 
 (theorem mul_preserves_nat_value
   (forall left (is-list left)
@@ -1356,6 +1432,34 @@
                             (quote :true)))))))))))))
 ))
 
+(theorem mul_eq_zero_cases
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (implies
+        (computes-to (mul left right) zero)
+        (or
+          (computes-to (is-zero left) (quote :true))
+          (computes-to (is-zero right) (quote :true))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro product_zero)
+    (have product_is_zero
+      (computes-to (is-zero (mul left right)) (quote :true))
+      (by
+        (calc
+          (is-zero (mul left right))
+          (==
+            (is-zero zero)
+            (by
+              (simpa only product_zero)))
+          (==
+            (quote :true)
+            (by
+              (eval)))))
+      (by
+        (exact is_zero_mul_implies_is_zero_or_is_zero left right)))))
+
 (theorem mul_zero_right
   (forall nat (is-list nat)
     (computes-to (mul nat zero) zero))
@@ -1953,10 +2057,128 @@
                             (by
                               (eval)))
                           (==
-                            (quote :true)
-                            (by
-                              (exact tail_cancel)))))))))))))
+                        (quote :true)
+                        (by
+                          (exact tail_cancel)))))))))))))
 )))
+
+(theorem mul_right_cancel_positive
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall factor (is-list factor)
+        (implies
+          (computes-to (is-nat-value left) (quote :true))
+          (implies
+            (computes-to (is-nat-value right) (quote :true))
+            (implies
+              (computes-to (is-nat-value factor) (quote :true))
+              (implies
+                (computes-to (nat-lt zero factor) (quote :true))
+                (implies
+                  (computes-to (mul left factor) (mul right factor))
+                  (computes-to left right)))))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro factor)
+    (intro left_is_nat)
+    (intro right_is_nat)
+    (intro factor_is_nat)
+    (intro factor_positive)
+    (intro products_equal_expr)
+    (obtain left_product left_product_proof
+      (mul_computes_to_list left factor))
+    (obtain right_product right_product_proof
+      (mul_computes_to_list right factor))
+    (have products_equal
+      (computes-to left_product right_product)
+      (by
+        (calc
+          left_product
+          (==
+            (mul left factor)
+            (by
+              (exact (symm left_product_proof))))
+          (==
+            (mul right factor)
+            (by
+              (exact products_equal_expr)))
+          (==
+            right_product
+            (by
+              (exact right_product_proof)))))
+      (by
+        (have left_product_le_right_product
+          (computes-to (nat-le left_product right_product) (quote :true))
+          (by
+            (exact nat_le_of_equal_lists left_product right_product))
+          (by
+            (have product_exprs_le
+              (computes-to
+                (nat-le (mul left factor) (mul right factor))
+                (quote :true))
+              (by
+                (calc
+                  (nat-le (mul left factor) (mul right factor))
+                  (==
+                    (nat-le left_product (mul right factor))
+                    (by
+                      (simpa only left_product_proof)))
+                  (==
+                    (nat-le left_product right_product)
+                    (by
+                      (simpa only right_product_proof)))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact left_product_le_right_product)))))
+              (by
+                (specialize left_le_right
+                  nat_le_mul_right_cancel
+                  left
+                  right
+                  factor)
+                (have products_equal_reversed
+                  (computes-to right_product left_product)
+                  (by
+                    (exact (symm products_equal)))
+                  (by
+                    (have right_product_le_left_product
+                      (computes-to (nat-le right_product left_product) (quote :true))
+                      (by
+                        (exact nat_le_of_equal_lists right_product left_product))
+                      (by
+                        (have product_exprs_le_reversed
+                          (computes-to
+                            (nat-le (mul right factor) (mul left factor))
+                            (quote :true))
+                          (by
+                            (calc
+                              (nat-le (mul right factor) (mul left factor))
+                              (==
+                                (nat-le right_product (mul left factor))
+                                (by
+                                  (simpa only right_product_proof)))
+                              (==
+                                (nat-le right_product left_product)
+                                (by
+                                  (simpa only left_product_proof)))
+                              (==
+                                (quote :true)
+                                (by
+                                  (exact right_product_le_left_product)))))
+                          (by
+                            (specialize right_le_left
+                              nat_le_mul_right_cancel
+                              right
+                              left
+                              factor)
+                            (have eq_true
+                              (computes-to (nat-eq left right) (quote :true))
+                              (by
+                                (exact nat_le_antisymm left right))
+                              (by
+                                (apply nat_eq_sound left right)))))))))))))))))
 
 (theorem is_zero_mul_zero_right
   (forall nat (is-list nat)
@@ -2124,6 +2346,52 @@
             (mul right (cons head tail))
             (by
               (simpa only (symm head_unit)))))))))
+
+(theorem mul_left_cancel_positive
+  (forall left (is-list left)
+    (forall right (is-list right)
+      (forall factor (is-list factor)
+        (implies
+          (computes-to (is-nat-value left) (quote :true))
+          (implies
+            (computes-to (is-nat-value right) (quote :true))
+            (implies
+              (computes-to (is-nat-value factor) (quote :true))
+              (implies
+                (computes-to (nat-lt zero factor) (quote :true))
+                (implies
+                  (computes-to (mul factor left) (mul factor right))
+                  (computes-to left right)))))))))
+  (by
+    (intro left)
+    (intro right)
+    (intro factor)
+    (intro left_is_nat)
+    (intro right_is_nat)
+    (intro factor_is_nat)
+    (intro factor_positive)
+    (intro products_equal_expr)
+    (specialize left_factor_comm mul_comm left factor)
+    (specialize right_factor_comm mul_comm right factor)
+    (have right_products_equal
+      (computes-to (mul left factor) (mul right factor))
+      (by
+        (calc
+          (mul left factor)
+          (==
+            (mul factor left)
+            (by
+              (exact left_factor_comm)))
+          (==
+            (mul factor right)
+            (by
+              (exact products_equal_expr)))
+          (==
+            (mul right factor)
+            (by
+              (exact (symm right_factor_comm))))))
+      (by
+        (apply mul_right_cancel_positive left right factor)))))
 
 (theorem nat_le_mul_left_cancel
   (forall left (is-list left)

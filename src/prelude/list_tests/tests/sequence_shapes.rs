@@ -407,6 +407,21 @@ fn length_theorems_have_expected_shape() {
         )
     );
     assert_eq!(
+        length_snoc_theorem(X, VALUE),
+        forall_where(
+            X,
+            is_list(var(X)),
+            forall_where(
+                VALUE,
+                is_value(var(VALUE)),
+                computes_to(
+                    length_call(snoc_call(var(X), var(VALUE))),
+                    cons(unit(), length_call(var(X))),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
         length_map_theorem(FUNCTION, VALUE, MAPPED_VALUE, X),
         forall_where(
             FUNCTION,
@@ -443,6 +458,8 @@ fn length_source_theorems_have_expected_shape() {
     let computes_result = theorem_symbol("length_computes_to_list", "result");
     let append_left = theorem_symbol("length_append", "left");
     let append_right = theorem_symbol("length_append", "right");
+    let snoc_list = theorem_symbol("length_snoc", "list");
+    let snoc_value = theorem_symbol("length_snoc", "value");
 
     assert_eq!(length_nil_source_theorem(), length_nil_theorem());
     assert_eq!(
@@ -460,6 +477,10 @@ fn length_source_theorems_have_expected_shape() {
     assert_eq!(
         length_append_source_theorem(),
         length_append_theorem(append_left, append_right)
+    );
+    assert_eq!(
+        length_snoc_source_theorem(),
+        length_snoc_theorem(snoc_list, snoc_value)
     );
 }
 
@@ -563,6 +584,19 @@ fn length_map_source_theorem_has_expected_shape() {
 }
 
 #[test]
+fn map_replicate_source_theorem_has_expected_shape() {
+    let function = theorem_symbol("map_replicate", "function");
+    let value = theorem_symbol("map_replicate", "value");
+    let mapped_value = theorem_symbol("map_replicate", "mapped_value");
+    let count = theorem_symbol("map_replicate", "count");
+
+    assert_eq!(
+        map_replicate_source_theorem(),
+        map_replicate_theorem(function, value, mapped_value, count)
+    );
+}
+
+#[test]
 fn take_theorems_have_expected_shape() {
     assert_eq!(
         take_zero_theorem(X),
@@ -618,6 +652,21 @@ fn take_theorems_have_expected_shape() {
             ),
         )
     );
+    assert_eq!(
+        take_take_theorem(COUNT, X),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            forall_where(
+                X,
+                is_list(var(X)),
+                computes_to(
+                    take_call(var(COUNT), take_call(var(COUNT), var(X))),
+                    take_call(var(COUNT), var(X)),
+                ),
+            ),
+        )
+    );
 }
 
 #[test]
@@ -631,6 +680,8 @@ fn take_source_theorems_have_expected_shape() {
     let computes_count = theorem_symbol("take_computes_to_list", "count");
     let computes_list = theorem_symbol("take_computes_to_list", "list");
     let computes_result = theorem_symbol("take_computes_to_list", "result");
+    let take_take_count = theorem_symbol("take_take", "count");
+    let take_take_list = theorem_symbol("take_take", "list");
 
     assert_eq!(take_zero_source_theorem(), take_zero_theorem(zero_list));
     assert_eq!(take_nil_source_theorem(), take_nil_theorem(nil_count));
@@ -641,6 +692,10 @@ fn take_source_theorems_have_expected_shape() {
     assert_eq!(
         take_computes_to_list_source_theorem(),
         take_computes_to_list_theorem(computes_count, computes_list, computes_result)
+    );
+    assert_eq!(
+        take_take_source_theorem(),
+        take_take_theorem(take_take_count, take_take_list)
     );
 }
 
@@ -906,6 +961,36 @@ fn replicate_theorems_have_expected_shape() {
             ),
         )
     );
+    assert_eq!(
+        take_replicate_theorem(COUNT, VALUE),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            forall_where(
+                VALUE,
+                is_value(var(VALUE)),
+                computes_to(
+                    take_call(var(COUNT), replicate_call(var(COUNT), var(VALUE))),
+                    replicate_call(var(COUNT), var(VALUE)),
+                ),
+            ),
+        )
+    );
+    assert_eq!(
+        drop_replicate_theorem(COUNT, VALUE),
+        forall_where(
+            COUNT,
+            is_list(var(COUNT)),
+            forall_where(
+                VALUE,
+                is_value(var(VALUE)),
+                computes_to(
+                    drop_call(var(COUNT), replicate_call(var(COUNT), var(VALUE))),
+                    nil(),
+                ),
+            ),
+        )
+    );
 }
 
 #[test]
@@ -919,6 +1004,10 @@ fn replicate_source_theorems_have_expected_shape() {
     let computes_result = theorem_symbol("replicate_computes_to_list", "result");
     let length_count = theorem_symbol("length_replicate", "count");
     let length_value = theorem_symbol("length_replicate", "value");
+    let take_count = theorem_symbol("take_replicate", "count");
+    let take_value = theorem_symbol("take_replicate", "value");
+    let drop_count = theorem_symbol("drop_replicate", "count");
+    let drop_value = theorem_symbol("drop_replicate", "value");
 
     assert_eq!(
         replicate_zero_source_theorem(),
@@ -935,6 +1024,14 @@ fn replicate_source_theorems_have_expected_shape() {
     assert_eq!(
         length_replicate_source_theorem(),
         length_replicate_theorem(length_count, length_value)
+    );
+    assert_eq!(
+        take_replicate_source_theorem(),
+        take_replicate_theorem(take_count, take_value)
+    );
+    assert_eq!(
+        drop_replicate_source_theorem(),
+        drop_replicate_theorem(drop_count, drop_value)
     );
 }
 

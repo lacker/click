@@ -254,6 +254,64 @@ fn option_primitives_encode_none_and_some() {
 }
 
 #[test]
+fn option_map_reduces_on_none_and_some() {
+    let constant_b = lambda(X, quote(B));
+
+    assert_evaluates(
+        option_map_call(constant_b.clone(), none()),
+        Value::quote(prelude_symbol(":none")),
+    );
+    assert_evaluates(
+        option_map_call(constant_b, some_call(quote(A))),
+        value(pair(quote(prelude_symbol(":some")), quote(B))),
+    );
+}
+
+#[test]
+fn option_bind_reduces_on_none_and_some() {
+    let return_input = lambda(X, some_call(var(X)));
+    let return_none = lambda(X, none());
+
+    assert_evaluates(
+        option_bind_call(return_input.clone(), none()),
+        Value::quote(prelude_symbol(":none")),
+    );
+    assert_evaluates(
+        option_bind_call(return_input, some_call(quote(A))),
+        value(pair(quote(prelude_symbol(":some")), quote(A))),
+    );
+    assert_evaluates(
+        option_bind_call(return_none, some_call(quote(A))),
+        Value::quote(prelude_symbol(":none")),
+    );
+}
+
+#[test]
+fn unwrap_or_reduces_on_none_and_some() {
+    assert_evaluates(unwrap_or_call(quote(B), none()), Value::quote(B));
+    assert_evaluates(
+        unwrap_or_call(quote(B), some_call(quote(A))),
+        Value::quote(A),
+    );
+}
+
+#[test]
+fn option_filter_reduces_on_none_and_some() {
+    assert_evaluates(
+        option_filter_call(always_true_predicate(), none()),
+        Value::quote(prelude_symbol(":none")),
+    );
+    assert_evaluates(
+        option_filter_call(always_true_predicate(), some_call(quote(A))),
+        value(pair(quote(prelude_symbol(":some")), quote(A))),
+    );
+    assert_evaluates(
+        option_filter_call(always_false_predicate(), some_call(quote(A))),
+        Value::quote(prelude_symbol(":none")),
+    );
+}
+
+#[test]
 fn is_some_rejects_malformed_some_lists() {
     assert_evaluates(
         is_some_call(singleton(quote(prelude_symbol(":some")))),

@@ -2,10 +2,10 @@
 
 use crate::{
     Computation, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Lambda, Outcome, Proof, Prop, RUNTIME_ERROR,
-    SYMBOL_KIND_SYMBOL, Symbol, Theory, and, computes_to, computes_to_list,
+    SYMBOL_KIND_SYMBOL, Symbol, Theory, absurd, and, computes_to, computes_to_list,
     elab::{proof, source::ParsedTheorem},
     equal, errors_with, exists_where, forall, forall_where, implies, is_bool, is_list, is_value,
-    symbol_eq, value_kind,
+    or, symbol_eq, value_kind,
 };
 
 pub use crate::elab::EvaluationProofError;
@@ -337,6 +337,38 @@ pub fn is_some_definition() -> Computation {
     definition("is-some")
 }
 
+pub fn option_map() -> Computation {
+    computation_ref("option-map")
+}
+
+pub fn option_map_definition() -> Computation {
+    definition("option-map")
+}
+
+pub fn option_bind() -> Computation {
+    computation_ref("option-bind")
+}
+
+pub fn option_bind_definition() -> Computation {
+    definition("option-bind")
+}
+
+pub fn unwrap_or() -> Computation {
+    computation_ref("unwrap-or")
+}
+
+pub fn unwrap_or_definition() -> Computation {
+    definition("unwrap-or")
+}
+
+pub fn option_filter() -> Computation {
+    computation_ref("option-filter")
+}
+
+pub fn option_filter_definition() -> Computation {
+    definition("option-filter")
+}
+
 pub fn is_symbol_definition() -> Computation {
     definition("is-symbol")
 }
@@ -435,6 +467,46 @@ pub fn reverse_acc_computes_to_list_source_theorem() -> Prop {
     theorem_prop("reverse_acc_computes_to_list")
 }
 
+pub fn nil_is_list_source_theorem() -> Prop {
+    theorem_prop("nil_is_list")
+}
+
+pub fn cons_is_list_source_theorem() -> Prop {
+    theorem_prop("cons_is_list")
+}
+
+pub fn cons_head_source_theorem() -> Prop {
+    theorem_prop("cons_head")
+}
+
+pub fn cons_tail_source_theorem() -> Prop {
+    theorem_prop("cons_tail")
+}
+
+pub fn nil_not_cons_source_theorem() -> Prop {
+    theorem_prop("nil_not_cons")
+}
+
+pub fn cons_not_nil_source_theorem() -> Prop {
+    theorem_prop("cons_not_nil")
+}
+
+pub fn cons_injective_head_source_theorem() -> Prop {
+    theorem_prop("cons_injective_head")
+}
+
+pub fn cons_injective_tail_source_theorem() -> Prop {
+    theorem_prop("cons_injective_tail")
+}
+
+pub fn cons_injective_source_theorem() -> Prop {
+    theorem_prop("cons_injective")
+}
+
+pub fn list_eta_source_theorem() -> Prop {
+    theorem_prop("list_eta")
+}
+
 pub fn reverse_computes_to_list_source_theorem() -> Prop {
     theorem_prop("reverse_computes_to_list")
 }
@@ -449,6 +521,10 @@ pub fn reverse_nil_source_theorem() -> Prop {
 
 pub fn reverse_singleton_source_theorem() -> Prop {
     theorem_prop("reverse_singleton")
+}
+
+pub fn reverse_congr_source_theorem() -> Prop {
+    theorem_prop("reverse_congr")
 }
 
 pub fn reverse_acc_append_source_theorem() -> Prop {
@@ -475,6 +551,10 @@ pub fn reverse_append_source_theorem() -> Prop {
     theorem_prop("reverse_append")
 }
 
+pub fn map_reverse_source_theorem() -> Prop {
+    theorem_prop("map_reverse")
+}
+
 pub fn snoc_computes_to_list_source_theorem() -> Prop {
     theorem_prop("snoc_computes_to_list")
 }
@@ -489,6 +569,18 @@ pub fn snoc_cons_source_theorem() -> Prop {
 
 pub fn concat_nil_source_theorem() -> Prop {
     theorem_prop("concat_nil")
+}
+
+pub fn concat_cons_source_theorem() -> Prop {
+    theorem_prop("concat_cons")
+}
+
+pub fn concat_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("concat_computes_to_list")
+}
+
+pub fn concat_append_source_theorem() -> Prop {
+    theorem_prop("concat_append")
 }
 
 pub fn last_nil_errors_source_theorem() -> Prop {
@@ -559,6 +651,18 @@ pub fn append_singleton_source_theorem() -> Prop {
     theorem_prop("append_singleton")
 }
 
+pub fn append_congr_left_source_theorem() -> Prop {
+    theorem_prop("append_congr_left")
+}
+
+pub fn append_congr_right_source_theorem() -> Prop {
+    theorem_prop("append_congr_right")
+}
+
+pub fn append_congr_source_theorem() -> Prop {
+    theorem_prop("append_congr")
+}
+
 pub fn append_assoc_source_theorem() -> Prop {
     theorem_prop("append_assoc")
 }
@@ -585,6 +689,18 @@ pub fn length_computes_to_list_source_theorem() -> Prop {
 
 pub fn length_append_source_theorem() -> Prop {
     theorem_prop("length_append")
+}
+
+pub fn append_length_singleton_source_theorem() -> Prop {
+    theorem_prop("append_length_singleton")
+}
+
+pub fn length_snoc_source_theorem() -> Prop {
+    theorem_prop("length_snoc")
+}
+
+pub fn length_reverse_source_theorem() -> Prop {
+    theorem_prop("length_reverse")
 }
 
 pub fn take_zero_source_theorem() -> Prop {
@@ -619,6 +735,10 @@ pub fn drop_computes_to_list_source_theorem() -> Prop {
     theorem_prop("drop_computes_to_list")
 }
 
+pub fn take_take_source_theorem() -> Prop {
+    theorem_prop("take_take")
+}
+
 pub fn split_at_def_source_theorem() -> Prop {
     theorem_prop("split_at_def")
 }
@@ -633,6 +753,18 @@ pub fn split_at_nil_source_theorem() -> Prop {
 
 pub fn split_at_cons_source_theorem() -> Prop {
     theorem_prop("split_at_cons")
+}
+
+pub fn split_at_computes_to_pair_source_theorem() -> Prop {
+    theorem_prop("split_at_computes_to_pair")
+}
+
+pub fn split_at_first_take_source_theorem() -> Prop {
+    theorem_prop("split_at_first_take")
+}
+
+pub fn split_at_second_drop_source_theorem() -> Prop {
+    theorem_prop("split_at_second_drop")
 }
 
 pub fn nth_zero_nil_source_theorem() -> Prop {
@@ -651,6 +783,18 @@ pub fn nth_cons_cons_source_theorem() -> Prop {
     theorem_prop("nth_cons_cons")
 }
 
+pub fn nth_zero_cons_some_source_theorem() -> Prop {
+    theorem_prop("nth_zero_cons_some")
+}
+
+pub fn nth_out_of_bounds_none_source_theorem() -> Prop {
+    theorem_prop("nth_out_of_bounds_none")
+}
+
+pub fn nth_computes_to_option_source_theorem() -> Prop {
+    theorem_prop("nth_computes_to_option")
+}
+
 pub fn replicate_zero_source_theorem() -> Prop {
     theorem_prop("replicate_zero")
 }
@@ -665,6 +809,14 @@ pub fn replicate_computes_to_list_source_theorem() -> Prop {
 
 pub fn length_replicate_source_theorem() -> Prop {
     theorem_prop("length_replicate")
+}
+
+pub fn take_replicate_source_theorem() -> Prop {
+    theorem_prop("take_replicate")
+}
+
+pub fn drop_replicate_source_theorem() -> Prop {
+    theorem_prop("drop_replicate")
 }
 
 pub fn intersperse_nil_source_theorem() -> Prop {
@@ -703,8 +855,164 @@ pub fn is_list_value_true_implies_is_list_source_theorem() -> Prop {
     theorem_prop("is_list_value_true_implies_is_list")
 }
 
+pub fn value_kind_list_implies_is_list_source_theorem() -> Prop {
+    theorem_prop("value_kind_list_implies_is_list")
+}
+
 pub fn all_lists_cons_true_source_theorem() -> Prop {
     theorem_prop("all_lists_cons_true")
+}
+
+pub fn symbol_eq_refl_source_theorem() -> Prop {
+    theorem_prop("symbol_eq_refl")
+}
+
+pub fn true_is_bool_source_theorem() -> Prop {
+    theorem_prop("true_is_bool")
+}
+
+pub fn false_is_bool_source_theorem() -> Prop {
+    theorem_prop("false_is_bool")
+}
+
+pub fn is_bool_elim_source_theorem() -> Prop {
+    theorem_prop("is_bool_elim")
+}
+
+pub fn bool_distinct_source_theorem() -> Prop {
+    theorem_prop("bool_distinct")
+}
+
+pub fn not_congr_source_theorem() -> Prop {
+    theorem_prop("not_congr")
+}
+
+pub fn not_true_elim_source_theorem() -> Prop {
+    theorem_prop("not_true_elim")
+}
+
+pub fn not_false_elim_source_theorem() -> Prop {
+    theorem_prop("not_false_elim")
+}
+
+pub fn if_computes_to_bool_source_theorem() -> Prop {
+    theorem_prop("if_computes_to_bool")
+}
+
+pub fn if_same_source_theorem() -> Prop {
+    theorem_prop("if_same")
+}
+
+pub fn if_not_source_theorem() -> Prop {
+    theorem_prop("if_not")
+}
+
+pub fn if_congr_condition_source_theorem() -> Prop {
+    theorem_prop("if_congr_condition")
+}
+
+pub fn if_congr_then_source_theorem() -> Prop {
+    theorem_prop("if_congr_then")
+}
+
+pub fn if_congr_else_source_theorem() -> Prop {
+    theorem_prop("if_congr_else")
+}
+
+pub fn if_false_result_with_true_else_source_theorem() -> Prop {
+    theorem_prop("if_false_result_with_true_else")
+}
+
+pub fn and_true_intro_source_theorem() -> Prop {
+    theorem_prop("and_true_intro")
+}
+
+pub fn and_true_elim_left_source_theorem() -> Prop {
+    theorem_prop("and_true_elim_left")
+}
+
+pub fn and_true_elim_right_source_theorem() -> Prop {
+    theorem_prop("and_true_elim_right")
+}
+
+pub fn and_false_cases_source_theorem() -> Prop {
+    theorem_prop("and_false_cases")
+}
+
+pub fn or_false_intro_source_theorem() -> Prop {
+    theorem_prop("or_false_intro")
+}
+
+pub fn or_false_elim_left_source_theorem() -> Prop {
+    theorem_prop("or_false_elim_left")
+}
+
+pub fn or_false_elim_right_source_theorem() -> Prop {
+    theorem_prop("or_false_elim_right")
+}
+
+pub fn or_true_cases_source_theorem() -> Prop {
+    theorem_prop("or_true_cases")
+}
+
+pub fn and_prop_to_bool_source_theorem() -> Prop {
+    theorem_prop("and_prop_to_bool")
+}
+
+pub fn and_bool_to_prop_source_theorem() -> Prop {
+    theorem_prop("and_bool_to_prop")
+}
+
+pub fn or_prop_to_bool_left_source_theorem() -> Prop {
+    theorem_prop("or_prop_to_bool_left")
+}
+
+pub fn or_prop_to_bool_right_source_theorem() -> Prop {
+    theorem_prop("or_prop_to_bool_right")
+}
+
+pub fn or_bool_to_prop_source_theorem() -> Prop {
+    theorem_prop("or_bool_to_prop")
+}
+
+pub fn not_bool_to_absurd_source_theorem() -> Prop {
+    theorem_prop("not_bool_to_absurd")
+}
+
+pub fn not_absurd_to_bool_false_source_theorem() -> Prop {
+    theorem_prop("not_absurd_to_bool_false")
+}
+
+pub fn and_absorb_or_source_theorem() -> Prop {
+    theorem_prop("and_absorb_or")
+}
+
+pub fn or_absorb_and_source_theorem() -> Prop {
+    theorem_prop("or_absorb_and")
+}
+
+pub fn and_distrib_or_left_source_theorem() -> Prop {
+    theorem_prop("and_distrib_or_left")
+}
+
+pub fn and_distrib_or_right_source_theorem() -> Prop {
+    theorem_prop("and_distrib_or_right")
+}
+
+pub fn or_distrib_and_left_source_theorem() -> Prop {
+    theorem_prop("or_distrib_and_left")
+}
+
+pub fn or_distrib_and_right_source_theorem() -> Prop {
+    theorem_prop("or_distrib_and_right")
+}
+
+pub fn not_and_source_theorem() -> Prop {
+    theorem_prop("not_and")
+}
+
+pub fn not_or_source_theorem() -> Prop {
+    theorem_prop("not_or")
 }
 
 pub fn none_is_none_source_theorem() -> Prop {
@@ -721,6 +1029,170 @@ pub fn none_is_some_source_theorem() -> Prop {
 
 pub fn some_is_some_source_theorem() -> Prop {
     theorem_prop("some_is_some")
+}
+
+pub fn some_congr_source_theorem() -> Prop {
+    theorem_prop("some_congr")
+}
+
+pub fn some_injective_source_theorem() -> Prop {
+    theorem_prop("some_injective")
+}
+
+pub fn option_map_none_source_theorem() -> Prop {
+    theorem_prop("option_map_none")
+}
+
+pub fn option_map_some_source_theorem() -> Prop {
+    theorem_prop("option_map_some")
+}
+
+pub fn option_bind_none_source_theorem() -> Prop {
+    theorem_prop("option_bind_none")
+}
+
+pub fn option_bind_some_source_theorem() -> Prop {
+    theorem_prop("option_bind_some")
+}
+
+pub fn unwrap_or_none_source_theorem() -> Prop {
+    theorem_prop("unwrap_or_none")
+}
+
+pub fn unwrap_or_some_source_theorem() -> Prop {
+    theorem_prop("unwrap_or_some")
+}
+
+pub fn option_filter_none_source_theorem() -> Prop {
+    theorem_prop("option_filter_none")
+}
+
+pub fn option_filter_some_true_source_theorem() -> Prop {
+    theorem_prop("option_filter_some_true")
+}
+
+pub fn option_filter_some_false_source_theorem() -> Prop {
+    theorem_prop("option_filter_some_false")
+}
+
+pub fn option_map_computes_to_option_source_theorem() -> Prop {
+    theorem_prop("option_map_computes_to_option")
+}
+
+pub fn option_bind_computes_to_option_source_theorem() -> Prop {
+    theorem_prop("option_bind_computes_to_option")
+}
+
+pub fn unwrap_or_computes_to_value_source_theorem() -> Prop {
+    theorem_prop("unwrap_or_computes_to_value")
+}
+
+pub fn option_filter_computes_to_option_source_theorem() -> Prop {
+    theorem_prop("option_filter_computes_to_option")
+}
+
+pub fn option_map_identity_source_theorem() -> Prop {
+    theorem_prop("option_map_identity")
+}
+
+pub fn option_map_compose_source_theorem() -> Prop {
+    theorem_prop("option_map_compose")
+}
+
+pub fn option_bind_left_identity_source_theorem() -> Prop {
+    theorem_prop("option_bind_left_identity")
+}
+
+pub fn option_bind_right_identity_source_theorem() -> Prop {
+    theorem_prop("option_bind_right_identity")
+}
+
+pub fn option_bind_assoc_source_theorem() -> Prop {
+    theorem_prop("option_bind_assoc")
+}
+
+pub fn option_map_congr_function_source_theorem() -> Prop {
+    theorem_prop("option_map_congr_function")
+}
+
+pub fn option_map_congr_option_source_theorem() -> Prop {
+    theorem_prop("option_map_congr_option")
+}
+
+pub fn option_map_congr_source_theorem() -> Prop {
+    theorem_prop("option_map_congr")
+}
+
+pub fn option_bind_congr_function_source_theorem() -> Prop {
+    theorem_prop("option_bind_congr_function")
+}
+
+pub fn option_bind_congr_option_source_theorem() -> Prop {
+    theorem_prop("option_bind_congr_option")
+}
+
+pub fn unwrap_or_congr_default_source_theorem() -> Prop {
+    theorem_prop("unwrap_or_congr_default")
+}
+
+pub fn unwrap_or_congr_option_source_theorem() -> Prop {
+    theorem_prop("unwrap_or_congr_option")
+}
+
+pub fn pair_first_source_theorem() -> Prop {
+    theorem_prop("pair_first")
+}
+
+pub fn pair_tail_source_theorem() -> Prop {
+    theorem_prop("pair_tail")
+}
+
+pub fn pair_second_source_theorem() -> Prop {
+    theorem_prop("pair_second")
+}
+
+pub fn pair_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("pair_computes_to_list")
+}
+
+pub fn pair_computes_to_value_source_theorem() -> Prop {
+    theorem_prop("pair_computes_to_value")
+}
+
+pub fn pair_eta_source_theorem() -> Prop {
+    theorem_prop("pair_eta")
+}
+
+pub fn pair_congr_source_theorem() -> Prop {
+    theorem_prop("pair_congr")
+}
+
+pub fn pair_first_from_computation_source_theorem() -> Prop {
+    theorem_prop("pair_first_from_computation")
+}
+
+pub fn pair_second_from_computation_source_theorem() -> Prop {
+    theorem_prop("pair_second_from_computation")
+}
+
+pub fn pair_injective_first_source_theorem() -> Prop {
+    theorem_prop("pair_injective_first")
+}
+
+pub fn pair_injective_second_source_theorem() -> Prop {
+    theorem_prop("pair_injective_second")
+}
+
+pub fn pair_injective_source_theorem() -> Prop {
+    theorem_prop("pair_injective")
+}
+
+pub fn list_pair_first_from_computation_source_theorem() -> Prop {
+    theorem_prop("list_pair_first_from_computation")
+}
+
+pub fn list_pair_second_from_computation_source_theorem() -> Prop {
+    theorem_prop("list_pair_second_from_computation")
 }
 
 pub fn intercalate_cons_computes_to_list_source_theorem() -> Prop {
@@ -747,6 +1219,10 @@ pub fn length_map_source_theorem() -> Prop {
     theorem_prop("length_map")
 }
 
+pub fn map_replicate_source_theorem() -> Prop {
+    theorem_prop("map_replicate")
+}
+
 pub fn concat_map_nil_source_theorem() -> Prop {
     theorem_prop("concat_map_nil")
 }
@@ -771,6 +1247,10 @@ pub fn fold_right_computes_to_value_source_theorem() -> Prop {
     theorem_prop("fold_right_computes_to_value")
 }
 
+pub fn fold_right_congr_source_theorem() -> Prop {
+    theorem_prop("fold_right_congr")
+}
+
 pub fn fold_left_nil_source_theorem() -> Prop {
     theorem_prop("fold_left_nil")
 }
@@ -781,6 +1261,10 @@ pub fn fold_left_cons_source_theorem() -> Prop {
 
 pub fn fold_left_computes_to_value_source_theorem() -> Prop {
     theorem_prop("fold_left_computes_to_value")
+}
+
+pub fn fold_left_congr_source_theorem() -> Prop {
+    theorem_prop("fold_left_congr")
 }
 
 pub fn zip_left_nil_source_theorem() -> Prop {
@@ -839,6 +1323,42 @@ pub fn filter_computes_to_list_source_theorem() -> Prop {
     theorem_prop("filter_computes_to_list")
 }
 
+pub fn filter_congr_source_theorem() -> Prop {
+    theorem_prop("filter_congr")
+}
+
+pub fn reject_nil_source_theorem() -> Prop {
+    theorem_prop("reject_nil")
+}
+
+pub fn reject_cons_true_source_theorem() -> Prop {
+    theorem_prop("reject_cons_true")
+}
+
+pub fn reject_cons_false_source_theorem() -> Prop {
+    theorem_prop("reject_cons_false")
+}
+
+pub fn reject_computes_to_list_source_theorem() -> Prop {
+    theorem_prop("reject_computes_to_list")
+}
+
+pub fn filter_append_source_theorem() -> Prop {
+    theorem_prop("filter_append")
+}
+
+pub fn reject_append_source_theorem() -> Prop {
+    theorem_prop("reject_append")
+}
+
+pub fn filter_idempotent_source_theorem() -> Prop {
+    theorem_prop("filter_idempotent")
+}
+
+pub fn reject_idempotent_source_theorem() -> Prop {
+    theorem_prop("reject_idempotent")
+}
+
 pub fn partition_nil_source_theorem() -> Prop {
     theorem_prop("partition_nil")
 }
@@ -849,6 +1369,22 @@ pub fn partition_cons_true_source_theorem() -> Prop {
 
 pub fn partition_cons_false_source_theorem() -> Prop {
     theorem_prop("partition_cons_false")
+}
+
+pub fn partition_computes_to_pair_source_theorem() -> Prop {
+    theorem_prop("partition_computes_to_pair")
+}
+
+pub fn partition_first_filter_source_theorem() -> Prop {
+    theorem_prop("partition_first_filter")
+}
+
+pub fn partition_second_filter_false_source_theorem() -> Prop {
+    theorem_prop("partition_second_filter_false")
+}
+
+pub fn partition_second_reject_source_theorem() -> Prop {
+    theorem_prop("partition_second_reject")
 }
 
 pub fn any_nil_source_theorem() -> Prop {
@@ -867,6 +1403,18 @@ pub fn any_computes_to_bool_source_theorem() -> Prop {
     theorem_prop("any_computes_to_bool")
 }
 
+pub fn any_append_source_theorem() -> Prop {
+    theorem_prop("any_append")
+}
+
+pub fn all_true_implies_not_any_false_source_theorem() -> Prop {
+    theorem_prop("all_true_implies_not_any_false")
+}
+
+pub fn any_true_implies_not_all_false_source_theorem() -> Prop {
+    theorem_prop("any_true_implies_not_all_false")
+}
+
 pub fn find_nil_source_theorem() -> Prop {
     theorem_prop("find_nil")
 }
@@ -877,6 +1425,10 @@ pub fn find_cons_true_source_theorem() -> Prop {
 
 pub fn find_cons_false_source_theorem() -> Prop {
     theorem_prop("find_cons_false")
+}
+
+pub fn find_append_source_theorem() -> Prop {
+    theorem_prop("find_append")
 }
 
 pub fn elem_index_nil_source_theorem() -> Prop {
@@ -931,6 +1483,30 @@ pub fn is_symbol_true_implies_is_lambda_false_source_theorem() -> Prop {
     theorem_prop("is_symbol_true_implies_is_lambda_false")
 }
 
+pub fn is_symbol_true_implies_is_list_value_false_source_theorem() -> Prop {
+    theorem_prop("is_symbol_true_implies_is_list_value_false")
+}
+
+pub fn is_lambda_true_implies_is_symbol_false_source_theorem() -> Prop {
+    theorem_prop("is_lambda_true_implies_is_symbol_false")
+}
+
+pub fn is_lambda_true_implies_is_list_value_false_source_theorem() -> Prop {
+    theorem_prop("is_lambda_true_implies_is_list_value_false")
+}
+
+pub fn is_list_value_true_implies_is_symbol_false_source_theorem() -> Prop {
+    theorem_prop("is_list_value_true_implies_is_symbol_false")
+}
+
+pub fn is_list_value_true_implies_is_lambda_false_source_theorem() -> Prop {
+    theorem_prop("is_list_value_true_implies_is_lambda_false")
+}
+
+pub fn value_kind_exactly_one_source_theorem() -> Prop {
+    theorem_prop("value_kind_exactly_one")
+}
+
 pub fn value_eq_comparable_symbol_source_theorem() -> Prop {
     theorem_prop("value_eq_comparable_symbol")
 }
@@ -941,6 +1517,10 @@ pub fn value_eq_comparable_nil_source_theorem() -> Prop {
 
 pub fn value_eq_comparable_cons_source_theorem() -> Prop {
     theorem_prop("value_eq_comparable_cons")
+}
+
+pub fn value_eq_comparable_no_lambdas_source_theorem() -> Prop {
+    theorem_prop("value_eq_comparable_no_lambdas")
 }
 
 pub fn value_eq_true_implies_not_lambdas_source_theorem() -> Prop {
@@ -991,6 +1571,30 @@ pub fn value_eq_symm_source_theorem() -> Prop {
     theorem_prop("value_eq_symm")
 }
 
+pub fn value_eq_trans_source_theorem() -> Prop {
+    theorem_prop("value_eq_trans")
+}
+
+pub fn value_eq_complete_for_comparable_values_source_theorem() -> Prop {
+    theorem_prop("value_eq_complete_for_comparable_values")
+}
+
+pub fn value_eq_false_implies_not_equal_for_comparable_values_source_theorem() -> Prop {
+    theorem_prop("value_eq_false_implies_not_equal_for_comparable_values")
+}
+
+pub fn symbol_not_list_source_theorem() -> Prop {
+    theorem_prop("symbol_not_list")
+}
+
+pub fn symbol_not_lambda_source_theorem() -> Prop {
+    theorem_prop("symbol_not_lambda")
+}
+
+pub fn list_not_lambda_source_theorem() -> Prop {
+    theorem_prop("list_not_lambda")
+}
+
 pub fn member_nil_source_theorem() -> Prop {
     theorem_prop("member_nil")
 }
@@ -1019,16 +1623,72 @@ pub fn all_computes_to_bool_source_theorem() -> Prop {
     theorem_prop("all_computes_to_bool")
 }
 
+pub fn all_cons_true_parts_source_theorem() -> Prop {
+    theorem_prop("all_cons_true_parts")
+}
+
+pub fn all_append_source_theorem() -> Prop {
+    theorem_prop("all_append")
+}
+
 pub fn map_identity_source_theorem() -> Prop {
     theorem_prop("map_identity")
+}
+
+pub fn map_compose_source_theorem() -> Prop {
+    theorem_prop("map_compose")
+}
+
+pub fn map_congr_source_theorem() -> Prop {
+    theorem_prop("map_congr")
+}
+
+pub fn map_append_source_theorem() -> Prop {
+    theorem_prop("map_append")
+}
+
+pub fn map_take_source_theorem() -> Prop {
+    theorem_prop("map_take")
+}
+
+pub fn map_drop_source_theorem() -> Prop {
+    theorem_prop("map_drop")
+}
+
+pub fn option_map_nth_source_theorem() -> Prop {
+    theorem_prop("option_map_nth")
 }
 
 pub fn concat_map_singleton_source_theorem() -> Prop {
     theorem_prop("concat_map_singleton")
 }
 
+pub fn concat_map_append_source_theorem() -> Prop {
+    theorem_prop("concat_map_append")
+}
+
+pub fn concat_map_as_concat_map_source_theorem() -> Prop {
+    theorem_prop("concat_map_as_concat_map")
+}
+
 pub fn fold_right_cons_nil_source_theorem() -> Prop {
     theorem_prop("fold_right_cons_nil")
+}
+
+pub fn fold_right_append_source_theorem() -> Prop {
+    theorem_prop("fold_right_append")
+}
+
+pub fn fold_left_append_source_theorem() -> Prop {
+    theorem_prop("fold_left_append")
+}
+
+pub fn fold_right_map_source_theorem() -> Prop {
+    theorem_prop("fold_right_map")
+}
+
+pub fn fold_left_map_source_theorem() -> Prop {
+    theorem_prop("fold_left_map")
 }
 
 pub fn fold_left_reverse_acc_source_theorem() -> Prop {
@@ -1204,6 +1864,22 @@ pub fn is_none_call(option: Computation) -> Computation {
 
 pub fn is_some_call(option: Computation) -> Computation {
     apply(is_some(), option)
+}
+
+pub fn option_map_call(function: Computation, option: Computation) -> Computation {
+    apply(apply(option_map(), function), option)
+}
+
+pub fn option_bind_call(function: Computation, option: Computation) -> Computation {
+    apply(apply(option_bind(), function), option)
+}
+
+pub fn unwrap_or_call(default: Computation, option: Computation) -> Computation {
+    apply(apply(unwrap_or(), default), option)
+}
+
+pub fn option_filter_call(predicate: Computation, option: Computation) -> Computation {
+    apply(apply(option_filter(), predicate), option)
 }
 
 pub fn is_symbol_call(value: Computation) -> Computation {
@@ -1799,6 +2475,22 @@ pub fn drop_computes_to_list_theorem(count: Symbol, list: Symbol, result: Symbol
     )
 }
 
+/// Taking the same count twice is idempotent.
+pub fn take_take_theorem(count: Symbol, list: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        forall_where(
+            list,
+            is_list(var(list)),
+            computes_to(
+                take_call(var(count), take_call(var(count), var(list))),
+                take_call(var(count), var(list)),
+            ),
+        ),
+    )
+}
+
 /// Splitting is definitionally the pair of `take` and `drop`.
 pub fn split_at_def_theorem(count: Symbol, list: Symbol) -> Prop {
     forall_where(
@@ -1996,6 +2688,38 @@ pub fn length_replicate_theorem(count: Symbol, value: Symbol) -> Prop {
             computes_to(
                 length_call(replicate_call(var(count), var(value))),
                 length_call(var(count)),
+            ),
+        ),
+    )
+}
+
+/// Taking the full replicated count returns the replicated list.
+pub fn take_replicate_theorem(count: Symbol, value: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        forall_where(
+            value,
+            is_value(var(value)),
+            computes_to(
+                take_call(var(count), replicate_call(var(count), var(value))),
+                replicate_call(var(count), var(value)),
+            ),
+        ),
+    )
+}
+
+/// Dropping the full replicated count returns `nil`.
+pub fn drop_replicate_theorem(count: Symbol, value: Symbol) -> Prop {
+    forall_where(
+        count,
+        is_list(var(count)),
+        forall_where(
+            value,
+            is_value(var(value)),
+            computes_to(
+                drop_call(var(count), replicate_call(var(count), var(value))),
+                nil(),
             ),
         ),
     )
@@ -2358,6 +3082,22 @@ pub fn length_append_theorem(left: Symbol, right: Symbol) -> Prop {
     )
 }
 
+/// Snoc increases a list's length by one.
+pub fn length_snoc_theorem(list: Symbol, value: Symbol) -> Prop {
+    forall_where(
+        list,
+        is_list(var(list)),
+        forall_where(
+            value,
+            is_value(var(value)),
+            computes_to(
+                length_call(snoc_call(var(list), var(value))),
+                cons(unit(), length_call(var(list))),
+            ),
+        ),
+    )
+}
+
 /// Mapping over `nil` returns `nil`.
 pub fn map_nil_theorem(function: Symbol) -> Prop {
     forall_where(
@@ -2446,6 +3186,38 @@ pub fn length_map_theorem(
                 computes_to(
                     length_call(map_call(var(function), var(list))),
                     length_call(var(list)),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Mapping over `replicate` maps the replicated value.
+pub fn map_replicate_theorem(
+    function: Symbol,
+    value: Symbol,
+    mapped_value: Symbol,
+    count: Symbol,
+) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        forall_where(
+            value,
+            is_value(var(value)),
+            forall_where(
+                mapped_value,
+                is_value(var(mapped_value)),
+                implies(
+                    computes_to(apply(var(function), var(value)), var(mapped_value)),
+                    forall_where(
+                        count,
+                        is_list(var(count)),
+                        computes_to(
+                            map_call(var(function), replicate_call(var(count), var(value))),
+                            replicate_call(var(count), var(mapped_value)),
+                        ),
+                    ),
                 ),
             ),
         ),
@@ -3267,6 +4039,94 @@ pub fn is_symbol_true_implies_is_lambda_false_theorem(value: Symbol) -> Prop {
     )
 }
 
+/// A computation whose symbol-kind test returns true has a false list-kind test.
+pub fn is_symbol_true_implies_is_list_value_false_theorem(value: Symbol) -> Prop {
+    forall(
+        value,
+        implies(
+            computes_to(is_symbol_call(var(value)), true_value()),
+            computes_to(is_list_value_call(var(value)), false_value()),
+        ),
+    )
+}
+
+/// A computation whose lambda-kind test returns true has a false symbol-kind test.
+pub fn is_lambda_true_implies_is_symbol_false_theorem(value: Symbol) -> Prop {
+    forall(
+        value,
+        implies(
+            computes_to(is_lambda_call(var(value)), true_value()),
+            computes_to(is_symbol_call(var(value)), false_value()),
+        ),
+    )
+}
+
+/// A computation whose lambda-kind test returns true has a false list-kind test.
+pub fn is_lambda_true_implies_is_list_value_false_theorem(value: Symbol) -> Prop {
+    forall(
+        value,
+        implies(
+            computes_to(is_lambda_call(var(value)), true_value()),
+            computes_to(is_list_value_call(var(value)), false_value()),
+        ),
+    )
+}
+
+/// A computation whose list-kind test returns true has a false symbol-kind test.
+pub fn is_list_value_true_implies_is_symbol_false_theorem(value: Symbol) -> Prop {
+    forall(
+        value,
+        implies(
+            computes_to(is_list_value_call(var(value)), true_value()),
+            computes_to(is_symbol_call(var(value)), false_value()),
+        ),
+    )
+}
+
+/// A computation whose list-kind test returns true has a false lambda-kind test.
+pub fn is_list_value_true_implies_is_lambda_false_theorem(value: Symbol) -> Prop {
+    forall(
+        value,
+        implies(
+            computes_to(is_list_value_call(var(value)), true_value()),
+            computes_to(is_lambda_call(var(value)), false_value()),
+        ),
+    )
+}
+
+/// A finalized value has exactly one value kind.
+pub fn value_kind_exactly_one_theorem(value: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        or(
+            and(
+                computes_to(is_symbol_call(var(value)), true_value()),
+                and(
+                    computes_to(is_lambda_call(var(value)), false_value()),
+                    computes_to(is_list_value_call(var(value)), false_value()),
+                ),
+            ),
+            or(
+                and(
+                    computes_to(is_lambda_call(var(value)), true_value()),
+                    and(
+                        computes_to(is_symbol_call(var(value)), false_value()),
+                        computes_to(is_list_value_call(var(value)), false_value()),
+                    ),
+                ),
+                and(
+                    computes_to(is_list_value_call(var(value)), true_value()),
+                    and(
+                        computes_to(is_symbol_call(var(value)), false_value()),
+                        computes_to(is_lambda_call(var(value)), false_value()),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
 /// Symbols are comparable by `value-eq`.
 pub fn value_eq_comparable_symbol_theorem(value: Symbol) -> Prop {
     forall_where(
@@ -3302,6 +4162,18 @@ pub fn value_eq_comparable_cons_theorem(head: Symbol, tail: Symbol) -> Prop {
                     ),
                 ),
             ),
+        ),
+    )
+}
+
+/// Comparable values contain no lambdas at the top level.
+pub fn value_eq_comparable_no_lambdas_theorem(value: Symbol) -> Prop {
+    forall_where(
+        value,
+        is_value(var(value)),
+        implies(
+            computes_to(value_eq_comparable_call(var(value)), true_value()),
+            computes_to(is_lambda_call(var(value)), false_value()),
         ),
     )
 }
@@ -3547,6 +4419,127 @@ pub fn value_eq_symm_theorem(left: Symbol, right: Symbol) -> Prop {
     )
 }
 
+/// `value-eq` is transitive when it returns true.
+pub fn value_eq_trans_theorem(left: Symbol, middle: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_value(var(left)),
+        forall_where(
+            middle,
+            is_value(var(middle)),
+            forall_where(
+                right,
+                is_value(var(right)),
+                implies(
+                    computes_to(value_eq_call(var(left), var(middle)), true_value()),
+                    implies(
+                        computes_to(value_eq_call(var(middle), var(right)), true_value()),
+                        computes_to(value_eq_call(var(left), var(right)), true_value()),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Kernel-equal comparable values are equal according to `value-eq`.
+pub fn value_eq_complete_for_comparable_values_theorem(left: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        left,
+        is_value(var(left)),
+        forall_where(
+            right,
+            is_value(var(right)),
+            implies(
+                computes_to(value_eq_comparable_call(var(left)), true_value()),
+                implies(
+                    computes_to(value_eq_comparable_call(var(right)), true_value()),
+                    implies(
+                        computes_to(var(left), var(right)),
+                        computes_to(value_eq_call(var(left), var(right)), true_value()),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// A false `value-eq` result contradicts kernel equality for comparable values.
+pub fn value_eq_false_implies_not_equal_for_comparable_values_theorem(
+    left: Symbol,
+    right: Symbol,
+) -> Prop {
+    forall_where(
+        left,
+        is_value(var(left)),
+        forall_where(
+            right,
+            is_value(var(right)),
+            implies(
+                computes_to(value_eq_comparable_call(var(left)), true_value()),
+                implies(
+                    computes_to(value_eq_comparable_call(var(right)), true_value()),
+                    implies(
+                        computes_to(value_eq_call(var(left), var(right)), false_value()),
+                        implies(computes_to(var(left), var(right)), absurd()),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// A symbol value cannot compute to a list value.
+pub fn symbol_not_list_theorem(symbol_value: Symbol, list_value: Symbol) -> Prop {
+    forall_where(
+        symbol_value,
+        is_value(var(symbol_value)),
+        implies(
+            computes_to(is_symbol_call(var(symbol_value)), true_value()),
+            forall_where(
+                list_value,
+                is_list(var(list_value)),
+                implies(computes_to(var(symbol_value), var(list_value)), absurd()),
+            ),
+        ),
+    )
+}
+
+/// A symbol value cannot compute to a lambda value.
+pub fn symbol_not_lambda_theorem(symbol_value: Symbol, lambda_value: Symbol) -> Prop {
+    forall_where(
+        symbol_value,
+        is_value(var(symbol_value)),
+        implies(
+            computes_to(is_symbol_call(var(symbol_value)), true_value()),
+            forall_where(
+                lambda_value,
+                is_value(var(lambda_value)),
+                implies(
+                    computes_to(is_lambda_call(var(lambda_value)), true_value()),
+                    implies(computes_to(var(symbol_value), var(lambda_value)), absurd()),
+                ),
+            ),
+        ),
+    )
+}
+
+/// A list value cannot compute to a lambda value.
+pub fn list_not_lambda_theorem(list_value: Symbol, lambda_value: Symbol) -> Prop {
+    forall_where(
+        list_value,
+        is_list(var(list_value)),
+        forall_where(
+            lambda_value,
+            is_value(var(lambda_value)),
+            implies(
+                computes_to(is_lambda_call(var(lambda_value)), true_value()),
+                implies(computes_to(var(list_value), var(lambda_value)), absurd()),
+            ),
+        ),
+    )
+}
+
 /// `member` over `nil` returns false.
 pub fn member_nil_theorem(value: Symbol) -> Prop {
     forall_where(
@@ -3732,6 +4725,37 @@ pub fn find_cons_false_theorem(predicate: Symbol, head: Symbol, tail: Symbol) ->
     )
 }
 
+/// Finding over an append searches the right side only if the left side has no match.
+pub fn find_append_theorem(predicate: Symbol, value: Symbol, left: Symbol, right: Symbol) -> Prop {
+    forall_where(
+        predicate,
+        is_value(var(predicate)),
+        implies(
+            forall_where(
+                value,
+                is_value(var(value)),
+                is_bool(apply(var(predicate), var(value))),
+            ),
+            forall_where(
+                left,
+                is_list(var(left)),
+                forall_where(
+                    right,
+                    is_list(var(right)),
+                    computes_to(
+                        find_call(var(predicate), append_call(var(left), var(right))),
+                        if_call(
+                            any_call(var(predicate), var(left)),
+                            find_call(var(predicate), var(left)),
+                            find_call(var(predicate), var(right)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
 /// Searching `nil` for an element returns `none`.
 pub fn elem_index_nil_theorem(value: Symbol) -> Prop {
     forall_where(
@@ -3851,6 +4875,42 @@ pub fn fold_left_reverse_function(accumulator: Symbol, value: Symbol) -> Computa
     )
 }
 
+pub fn fold_right_map_function(
+    fold_function: Computation,
+    map_function: Computation,
+    value: Symbol,
+    accumulator: Symbol,
+) -> Computation {
+    lambda(
+        value,
+        lambda(
+            accumulator,
+            apply(
+                apply(fold_function, apply(map_function, var(value))),
+                var(accumulator),
+            ),
+        ),
+    )
+}
+
+pub fn fold_left_map_function(
+    fold_function: Computation,
+    map_function: Computation,
+    accumulator: Symbol,
+    value: Symbol,
+) -> Computation {
+    lambda(
+        accumulator,
+        lambda(
+            value,
+            apply(
+                apply(fold_function, var(accumulator)),
+                apply(map_function, var(value)),
+            ),
+        ),
+    )
+}
+
 /// Mapping identity over a list returns the list.
 pub fn map_identity_theorem(list: Symbol, value: Symbol) -> Prop {
     forall_where(
@@ -3872,6 +4932,71 @@ pub fn concat_map_singleton_theorem(list: Symbol, value: Symbol) -> Prop {
     )
 }
 
+/// Mapping over the option returned by `nth` agrees with taking `nth` after `map`.
+pub fn option_map_nth_theorem(
+    function: Symbol,
+    value: Symbol,
+    mapped_value: Symbol,
+    index: Symbol,
+    list: Symbol,
+) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        implies(
+            forall_where(
+                value,
+                is_value(var(value)),
+                exists_where(
+                    mapped_value,
+                    is_value(var(mapped_value)),
+                    computes_to(apply(var(function), var(value)), var(mapped_value)),
+                ),
+            ),
+            forall_where(
+                index,
+                is_list(var(index)),
+                forall_where(
+                    list,
+                    is_list(var(list)),
+                    computes_to(
+                        option_map_call(var(function), nth_call(var(index), var(list))),
+                        nth_call(var(index), map_call(var(function), var(list))),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// `concat-map` agrees with concatenating a mapped list when the function returns lists.
+pub fn concat_map_as_concat_map_theorem(
+    function: Symbol,
+    value: Symbol,
+    mapped_list: Symbol,
+    list: Symbol,
+) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        implies(
+            forall_where(
+                value,
+                is_value(var(value)),
+                computes_to_list(mapped_list, apply(var(function), var(value))),
+            ),
+            forall_where(
+                list,
+                is_list(var(list)),
+                computes_to(
+                    concat_map_call(var(function), var(list)),
+                    concat_call(map_call(var(function), var(list))),
+                ),
+            ),
+        ),
+    )
+}
+
 /// Folding right with `cons` and `nil` rebuilds the input list.
 pub fn fold_right_cons_nil_theorem(list: Symbol, value: Symbol, accumulator: Symbol) -> Prop {
     forall_where(
@@ -3884,6 +5009,280 @@ pub fn fold_right_cons_nil_theorem(list: Symbol, value: Symbol, accumulator: Sym
                 var(list),
             ),
             var(list),
+        ),
+    )
+}
+
+/// Folding right over an append folds the right side into the initial accumulator first.
+pub fn fold_right_append_theorem(
+    function: Symbol,
+    initial: Symbol,
+    value: Symbol,
+    accumulator: Symbol,
+    folded_value: Symbol,
+    left: Symbol,
+    right: Symbol,
+) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        forall_where(
+            initial,
+            is_value(var(initial)),
+            implies(
+                forall_where(
+                    value,
+                    is_value(var(value)),
+                    forall_where(
+                        accumulator,
+                        is_value(var(accumulator)),
+                        exists_where(
+                            folded_value,
+                            is_value(var(folded_value)),
+                            computes_to(
+                                apply(apply(var(function), var(value)), var(accumulator)),
+                                var(folded_value),
+                            ),
+                        ),
+                    ),
+                ),
+                forall_where(
+                    left,
+                    is_list(var(left)),
+                    forall_where(
+                        right,
+                        is_list(var(right)),
+                        computes_to(
+                            fold_right_call(
+                                var(function),
+                                var(initial),
+                                append_call(var(left), var(right)),
+                            ),
+                            fold_right_call(
+                                var(function),
+                                fold_right_call(var(function), var(initial), var(right)),
+                                var(left),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Folding left over an append uses the left fold as the right side's initial accumulator.
+pub fn fold_left_append_theorem(
+    function: Symbol,
+    accumulator: Symbol,
+    value: Symbol,
+    folded_value: Symbol,
+    left: Symbol,
+    initial: Symbol,
+    right: Symbol,
+) -> Prop {
+    forall_where(
+        function,
+        is_value(var(function)),
+        implies(
+            forall_where(
+                accumulator,
+                is_value(var(accumulator)),
+                forall_where(
+                    value,
+                    is_value(var(value)),
+                    exists_where(
+                        folded_value,
+                        is_value(var(folded_value)),
+                        computes_to(
+                            apply(apply(var(function), var(accumulator)), var(value)),
+                            var(folded_value),
+                        ),
+                    ),
+                ),
+            ),
+            forall_where(
+                left,
+                is_list(var(left)),
+                forall_where(
+                    initial,
+                    is_value(var(initial)),
+                    forall_where(
+                        right,
+                        is_list(var(right)),
+                        computes_to(
+                            fold_left_call(
+                                var(function),
+                                var(initial),
+                                append_call(var(left), var(right)),
+                            ),
+                            fold_left_call(
+                                var(function),
+                                fold_left_call(var(function), var(initial), var(left)),
+                                var(right),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Folding right after mapping is folding right with a composed combining function.
+pub fn fold_right_map_theorem(
+    fold_function: Symbol,
+    map_function: Symbol,
+    initial: Symbol,
+    value: Symbol,
+    mapped_value: Symbol,
+    fold_value: Symbol,
+    accumulator: Symbol,
+    folded_value: Symbol,
+    list: Symbol,
+    composed_value: Symbol,
+    composed_accumulator: Symbol,
+) -> Prop {
+    let composed = fold_right_map_function(
+        var(fold_function),
+        var(map_function),
+        composed_value,
+        composed_accumulator,
+    );
+
+    forall_where(
+        fold_function,
+        is_value(var(fold_function)),
+        forall_where(
+            map_function,
+            is_value(var(map_function)),
+            forall_where(
+                initial,
+                is_value(var(initial)),
+                implies(
+                    forall_where(
+                        value,
+                        is_value(var(value)),
+                        exists_where(
+                            mapped_value,
+                            is_value(var(mapped_value)),
+                            computes_to(apply(var(map_function), var(value)), var(mapped_value)),
+                        ),
+                    ),
+                    implies(
+                        forall_where(
+                            fold_value,
+                            is_value(var(fold_value)),
+                            forall_where(
+                                accumulator,
+                                is_value(var(accumulator)),
+                                exists_where(
+                                    folded_value,
+                                    is_value(var(folded_value)),
+                                    computes_to(
+                                        apply(
+                                            apply(var(fold_function), var(fold_value)),
+                                            var(accumulator),
+                                        ),
+                                        var(folded_value),
+                                    ),
+                                ),
+                            ),
+                        ),
+                        forall_where(
+                            list,
+                            is_list(var(list)),
+                            computes_to(
+                                fold_right_call(
+                                    var(fold_function),
+                                    var(initial),
+                                    map_call(var(map_function), var(list)),
+                                ),
+                                fold_right_call(composed, var(initial), var(list)),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+}
+
+/// Folding left after mapping is folding left with a composed combining function.
+pub fn fold_left_map_theorem(
+    fold_function: Symbol,
+    map_function: Symbol,
+    value: Symbol,
+    mapped_value: Symbol,
+    accumulator: Symbol,
+    fold_value: Symbol,
+    folded_value: Symbol,
+    list: Symbol,
+    initial: Symbol,
+    composed_accumulator: Symbol,
+    composed_value: Symbol,
+) -> Prop {
+    let composed = fold_left_map_function(
+        var(fold_function),
+        var(map_function),
+        composed_accumulator,
+        composed_value,
+    );
+
+    forall_where(
+        fold_function,
+        is_value(var(fold_function)),
+        forall_where(
+            map_function,
+            is_value(var(map_function)),
+            implies(
+                forall_where(
+                    value,
+                    is_value(var(value)),
+                    exists_where(
+                        mapped_value,
+                        is_value(var(mapped_value)),
+                        computes_to(apply(var(map_function), var(value)), var(mapped_value)),
+                    ),
+                ),
+                implies(
+                    forall_where(
+                        accumulator,
+                        is_value(var(accumulator)),
+                        forall_where(
+                            fold_value,
+                            is_value(var(fold_value)),
+                            exists_where(
+                                folded_value,
+                                is_value(var(folded_value)),
+                                computes_to(
+                                    apply(
+                                        apply(var(fold_function), var(accumulator)),
+                                        var(fold_value),
+                                    ),
+                                    var(folded_value),
+                                ),
+                            ),
+                        ),
+                    ),
+                    forall_where(
+                        list,
+                        is_list(var(list)),
+                        forall_where(
+                            initial,
+                            is_value(var(initial)),
+                            computes_to(
+                                fold_left_call(
+                                    var(fold_function),
+                                    var(initial),
+                                    map_call(var(map_function), var(list)),
+                                ),
+                                fold_left_call(composed, var(initial), var(list)),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
         ),
     )
 }
