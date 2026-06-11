@@ -9,7 +9,7 @@ use crate::{ComputationDefinitionError, Name, Symbol, Theory};
 
 use super::{
     proof::{self, SourceTheoremError},
-    source::{ElabEnv, ParseError, ParsedModule, PrettyEnv, SourceSection},
+    source::{ParseError, ParsedModule, PrettyEnv, SourceEnv, SourceSection},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,7 +44,7 @@ pub enum SourceFileLoadError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoadedSource {
     theory: Theory,
-    env: ElabEnv,
+    source_env: SourceEnv,
     modules: Vec<LoadedModule>,
 }
 
@@ -76,13 +76,13 @@ impl Default for LoadedSource {
 
 impl LoadedSource {
     pub fn new() -> Self {
-        Self::with_env(ElabEnv::new())
+        Self::with_source_env(SourceEnv::new())
     }
 
-    pub fn with_env(env: ElabEnv) -> Self {
+    pub fn with_source_env(source_env: SourceEnv) -> Self {
         Self {
             theory: Theory::new(),
-            env,
+            source_env,
             modules: Vec::new(),
         }
     }
@@ -91,8 +91,8 @@ impl LoadedSource {
         &self.theory
     }
 
-    pub fn env(&self) -> &ElabEnv {
-        &self.env
+    pub fn source_env(&self) -> &SourceEnv {
+        &self.source_env
     }
 
     pub fn into_theory(self) -> Theory {
@@ -100,15 +100,15 @@ impl LoadedSource {
     }
 
     pub fn computation(&self, spelling: &str) -> Option<Name> {
-        self.env.computation(spelling)
+        self.source_env.computation(spelling)
     }
 
     pub fn theorem(&self, spelling: &str) -> Option<Name> {
-        self.env.theorem(spelling)
+        self.source_env.theorem(spelling)
     }
 
     pub fn symbol(&self, spelling: &str) -> Option<Symbol> {
-        self.env.symbol(spelling)
+        self.source_env.symbol(spelling)
     }
 
     pub fn load_str(&mut self, source: &str) -> Result<(), SourceLoadError> {
@@ -128,7 +128,7 @@ impl LoadedSource {
         section: Option<SourceSection>,
         source: &str,
     ) -> Result<(), SourceLoadError> {
-        let mut env = self.env.clone();
+        let mut env = self.source_env.clone();
         let module =
             env.parse_module(source)
                 .map_err(|error| SourceLoadError::ModuleParseFailed {
@@ -143,7 +143,7 @@ impl LoadedSource {
         define_module_theorems_result_in_section(&mut theory, &module, section.as_ref(), &pretty)
             .map_err(SourceLoadError::Theorem)?;
 
-        self.env = env;
+        self.source_env = env;
         self.theory = theory;
         self.modules.push(LoadedModule::new(section, module));
 
@@ -179,7 +179,7 @@ impl LoadedSource {
         section: Option<SourceSection>,
         source: &str,
     ) -> Result<(), SourceComputationError> {
-        let mut env = self.env.clone();
+        let mut env = self.source_env.clone();
         let module = env.parse_module(source).map_err(|error| {
             SourceComputationError::ModuleParseFailed {
                 section: section.clone(),
@@ -190,7 +190,7 @@ impl LoadedSource {
 
         define_module_computations_result_in_section(&mut theory, &module, section.as_ref())?;
 
-        self.env = env;
+        self.source_env = env;
         self.theory = theory;
         self.modules.push(LoadedModule::new(section, module));
 

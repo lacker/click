@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use crate::kernel::{primitive_prop_holds, structural_primitive_prop_holds};
 use crate::{
-    Computation, Context, LAMBDA_KIND_SYMBOL, ListCase, Name, Proof, Prop, SYMBOL_KIND_SYMBOL,
+    Computation, LAMBDA_KIND_SYMBOL, ListCase, Name, Proof, ProofContext, Prop, SYMBOL_KIND_SYMBOL,
     Symbol, TRUE_SYMBOL, Theory, alpha_eq_computation, alpha_eq_prop, equal, free_symbols, is_list,
     is_value, substitute_prop, symbol_eq, value_kind,
 };
@@ -24,14 +24,14 @@ use super::source::{CalcStep, PrettyEnv, ProofExpr, ProofScript, TacticExpr, Tac
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Goal {
-    pub(super) context: Context,
+    pub(super) context: ProofContext,
     pub(super) target: Prop,
 }
 
 impl Goal {
     pub(super) fn new(target: Prop) -> Self {
         Self {
-            context: Context::new(),
+            context: ProofContext::new(),
             target,
         }
     }
@@ -607,7 +607,7 @@ pub(super) fn apply_arguments_and_implications(
     mut prop: Prop,
     arguments: &[Computation],
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     target: Option<&Prop>,
     pretty: &PrettyEnv,
     mismatch_theorem: Option<Name>,
@@ -673,7 +673,7 @@ fn apply_arguments_and_available_implications(
     prop: Prop,
     arguments: &[Computation],
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     pretty: &PrettyEnv,
 ) -> Result<(Proof, Prop), ProofElaborationError> {
     let (proof, prop) = apply_arguments_and_implications(
@@ -687,7 +687,7 @@ pub(super) fn finish_available_implications(
     mut proof: Proof,
     mut prop: Prop,
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     pretty: &PrettyEnv,
 ) -> Result<(Proof, Prop), ProofElaborationError> {
     loop {
@@ -721,7 +721,7 @@ fn finish_implications(
     mut proof: Proof,
     mut prop: Prop,
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     target: Option<&Prop>,
     pretty: &PrettyEnv,
     mismatch_theorem: Option<Name>,
@@ -783,7 +783,7 @@ fn finish_implications(
 fn explicit_argument_error_message(
     prop: &Prop,
     argument: &Computation,
-    context: &Context,
+    context: &ProofContext,
     pretty: &PrettyEnv,
 ) -> String {
     let argument_is_local_fact =
@@ -860,7 +860,7 @@ fn apply_available_premise(
     tactic: &'static str,
     implication: Proof,
     premise: &Prop,
-    context: &Context,
+    context: &ProofContext,
     pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     let premise_proof = available_prop_proof(premise, context, pretty).map_err(|_| {
@@ -878,7 +878,7 @@ fn apply_available_premise(
 
 pub(super) fn available_prop_proof(
     prop: &Prop,
-    context: &Context,
+    context: &ProofContext,
     pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     let goal = Goal {
@@ -892,7 +892,11 @@ pub(super) fn available_prop_proof(
     })
 }
 
-fn unavailable_premise_message(premise: &Prop, context: &Context, pretty: &PrettyEnv) -> String {
+fn unavailable_premise_message(
+    premise: &Prop,
+    context: &ProofContext,
+    pretty: &PrettyEnv,
+) -> String {
     format!(
         "premise {} is not available; {}\n\
          reason: premise_not_available\n\
@@ -905,7 +909,7 @@ fn unavailable_premise_message(premise: &Prop, context: &Context, pretty: &Prett
     )
 }
 
-fn local_facts_message(context: &Context, pretty: &PrettyEnv) -> String {
+fn local_facts_message(context: &ProofContext, pretty: &PrettyEnv) -> String {
     if context.is_empty() {
         return "no local facts are in scope".to_owned();
     }
@@ -933,7 +937,7 @@ fn proof_goal_mismatch_message(
     arguments: Option<&[Computation]>,
     proof_prop: &Prop,
     goal: &Prop,
-    context: &Context,
+    context: &ProofContext,
     pretty: &PrettyEnv,
 ) -> String {
     let theorem = theorem
@@ -994,7 +998,7 @@ fn apply_structural_premise(
     tactic: &'static str,
     implication: Proof,
     premise: &Prop,
-    context: &Context,
+    context: &ProofContext,
     pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     if !structural_primitive_prop_holds(premise, context) {
@@ -1104,7 +1108,7 @@ fn existential_witness_goal(
     body: &Prop,
     variable: Symbol,
     witness: &Computation,
-    context: &Context,
+    context: &ProofContext,
 ) -> (Prop, Option<Prop>) {
     let Prop::And(left, right) = body else {
         return (substitute_prop(body, variable, witness), None);

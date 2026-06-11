@@ -10,7 +10,7 @@ pub use check::{
 };
 pub(crate) use check::{primitive_prop_holds, structural_primitive_prop_holds};
 pub use eval::{computation_is_value, normal_form, normal_outcome, step};
-pub use theory::{ComputationDefinitionError, Context, Theorem, TheoremError, Theory};
+pub use theory::{ComputationDefinitionError, ProofContext, Theorem, TheoremError, Theory};
 
 #[cfg(test)]
 pub(crate) use check::check_in_bindings;

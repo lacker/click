@@ -638,7 +638,7 @@ fn step_proof_proves_value_kind_reduction() {
 #[test]
 fn step_proof_uses_context_to_prove_value_kind_list_reduction() {
     let computation = value_kind_computation(Computation::Var(Symbol(1)));
-    let mut context = Context::new();
+    let mut context = ProofContext::new();
     context.insert(Symbol(99), is_list(Computation::Var(Symbol(1))));
 
     assert!(check_in_context(
@@ -1284,7 +1284,7 @@ fn list_induction_rejects_stale_step_variables() {
 #[test]
 fn assume_uses_context() {
     let prop = equal(Computation::Quote(Symbol(1)), Computation::Quote(Symbol(1)));
-    let mut context = Context::new();
+    let mut context = ProofContext::new();
     context.insert(Symbol(7), prop.clone());
 
     assert!(check_in_context(&Proof::Assume(Symbol(7)), &prop, &context));
@@ -1486,7 +1486,7 @@ fn symbol_eq_result_bool_uses_contextual_value_facts() {
     let comparison =
         symbol_eq_computation(Computation::Var(Symbol(1)), Computation::Var(Symbol(2)));
     let result = Computation::Var(Symbol(99));
-    let mut context = Context::new();
+    let mut context = ProofContext::new();
     context.insert(Symbol(99), is_value(result.clone()));
     context.insert(Symbol(100), equal(comparison, result.clone()));
 
@@ -1504,7 +1504,7 @@ fn symbol_eq_reduces_reflexive_open_symbol_in_context() {
     let expected = equal(comparison.clone(), Computation::Quote(TRUE_SYMBOL));
     assert!(!check(&Proof::Step(comparison.clone()), &expected));
 
-    let mut context = Context::new();
+    let mut context = ProofContext::new();
     context.insert(
         Symbol(10),
         equal(
@@ -1620,7 +1620,7 @@ fn if_value_condition_bool_uses_contextual_value_facts() {
     let condition = Computation::Quote(TRUE_SYMBOL);
     let result = Computation::Var(Symbol(99));
     let conditional = if_computation(condition.clone(), Computation::Nil, error(ErrorName(7)));
-    let mut context = Context::new();
+    let mut context = ProofContext::new();
     context.insert(Symbol(99), is_value(result.clone()));
     context.insert(Symbol(100), equal(conditional, result));
 
@@ -1659,7 +1659,7 @@ fn apply_value_argument_extracts_argument_termination() {
     ));
 
     let result = Computation::Var(Symbol(100));
-    let mut context = Context::new();
+    let mut context = ProofContext::new();
     context.insert(Symbol(100), is_value(result.clone()));
     context.insert(Symbol(101), equal(application, result));
     assert!(check_in_context(
@@ -1698,7 +1698,7 @@ fn distinct_outcomes_prove_absurd_and_absurd_eliminates() {
         Computation::Quote(FALSE_SYMBOL),
     );
     let target = is_value(Computation::Nil);
-    let mut context = Context::new();
+    let mut context = ProofContext::new();
     context.insert(assumption, contradiction);
 
     let absurd_proof = Proof::DistinctOutcomes(Box::new(Proof::Assume(assumption)));
@@ -1721,7 +1721,7 @@ fn distinct_outcomes_uses_contextual_value_constructors() {
     let tail_var = Computation::Var(Symbol(1));
     let cons_value = cons(Computation::Quote(Symbol(2)), tail_var.clone());
     let contradiction = equal(cons_value, Computation::Quote(Symbol(3)));
-    let mut context = Context::new();
+    let mut context = ProofContext::new();
     context.insert(Symbol(1), is_list(tail_var));
     context.insert(Symbol(4), contradiction);
 
@@ -1738,7 +1738,7 @@ fn non_symbol_non_lambda_values_are_lists() {
     let value_assumption = Symbol(10);
     let not_symbol_assumption = Symbol(11);
     let not_lambda_assumption = Symbol(12);
-    let mut context = Context::new();
+    let mut context = ProofContext::new();
     context.insert(value_assumption, is_value(value.clone()));
     context.insert(
         not_symbol_assumption,

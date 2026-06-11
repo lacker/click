@@ -1235,7 +1235,7 @@ pub fn mul_add_right_distrib_source_theorem() -> Prop {
 
 fn definition(spelling: &str) -> Computation {
     let modules = super::parsed_nat_modules().expect("prelude nat source should parse");
-    let env = super::parsed_prelude_env().expect("prelude source should parse");
+    let env = super::parsed_prelude_source_env().expect("prelude source should parse");
     let name = env
         .computation(spelling)
         .expect("prelude nat source should define requested computation name");
@@ -1253,7 +1253,7 @@ fn theorem_prop(spelling: &str) -> Prop {
 
 fn theorem_definition(spelling: &str) -> crate::elab::source::ParsedTheorem {
     let modules = super::parsed_nat_modules().expect("prelude nat source should parse");
-    let env = super::parsed_prelude_env().expect("prelude source should parse");
+    let env = super::parsed_prelude_source_env().expect("prelude source should parse");
     let name = env
         .theorem(spelling)
         .expect("prelude nat source should define requested theorem name");

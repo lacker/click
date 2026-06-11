@@ -1,7 +1,7 @@
 //! Proof-term elaboration and evaluation-proof helpers.
 
 use crate::{
-    Computation, Context, Name, Proof, Prop, Step, Symbol, Theorem, TheoremError, Theory,
+    Computation, Name, Proof, ProofContext, Prop, Step, Symbol, Theorem, TheoremError, Theory,
     alpha_eq_computation, is_list, is_value, substitute_prop,
 };
 
@@ -135,13 +135,13 @@ fn proof_expr_to_proof(
     theory: &Theory,
     pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
-    proof_expr_to_proof_in_context(proof, theory, &Context::new(), pretty)
+    proof_expr_to_proof_in_context(proof, theory, &ProofContext::new(), pretty)
 }
 
 pub(super) fn proof_expr_to_proof_in_context(
     proof: &ProofExpr,
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     proof_expr_to_proof_in_context_with_target(proof, theory, context, None, pretty)
@@ -150,7 +150,7 @@ pub(super) fn proof_expr_to_proof_in_context(
 pub(super) fn proof_expr_to_proof_in_context_with_target(
     proof: &ProofExpr,
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     target: Option<&Prop>,
     pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
@@ -554,13 +554,13 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
 }
 
 pub(super) fn list_induction_step_context(
-    context: &Context,
+    context: &ProofContext,
     variable: Symbol,
     property: &crate::Prop,
     head: Symbol,
     tail: Symbol,
     induction_hypothesis_assumption: Symbol,
-) -> Context {
+) -> ProofContext {
     let mut context = context.clone();
     let tail_var = Computation::Var(tail);
     context.insert(
@@ -574,12 +574,12 @@ pub(super) fn list_induction_step_context(
 
 pub(super) fn exists_elim_context(
     tactic: &'static str,
-    context: &Context,
+    context: &ProofContext,
     theory: &Theory,
     existential_proof: &Proof,
     witness: Symbol,
     assumption: Symbol,
-) -> Result<Context, ProofElaborationError> {
+) -> Result<ProofContext, ProofElaborationError> {
     let mut context = context.clone();
 
     let Some(Prop::Exists { variable, body }) =
@@ -609,7 +609,7 @@ fn subproof(
     form: &'static str,
     proof: &ProofExpr,
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     pretty: &PrettyEnv,
 ) -> Result<Proof, ProofElaborationError> {
     proof_expr_to_proof_in_context(proof, theory, context, pretty).map_err(|error| {
@@ -623,7 +623,7 @@ fn subproof(
 pub(crate) fn evaluation_chain_in_theory_and_context(
     computation: Computation,
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     limit: usize,
 ) -> Result<Vec<Computation>, EvaluationProofError> {
     let mut computation = computation;
@@ -663,7 +663,7 @@ pub(crate) fn proof_by_evaluation_to_computation_in_theory(
         computation,
         expected,
         theory,
-        &Context::new(),
+        &ProofContext::new(),
         limit,
     )
 }
@@ -672,7 +672,7 @@ pub(crate) fn proof_by_evaluation_to_computation_in_theory_and_context(
     computation: Computation,
     expected: Computation,
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
     let chain = evaluation_chain_in_theory_and_context(computation, theory, context, limit)?;
@@ -692,7 +692,7 @@ pub(crate) fn proof_by_reduction_to_computation_in_theory_and_context(
     computation: Computation,
     expected: Computation,
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
     let mut computation = computation;
@@ -727,7 +727,7 @@ pub(crate) fn proof_by_same_normal_form_in_theory_and_context(
     left: Computation,
     right: Computation,
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
     let left_normal = theory.normal_form_in_context(&left, context);

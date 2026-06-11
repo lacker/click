@@ -9,7 +9,7 @@ use super::{
     eval::{normal_form_in_bindings, normal_outcome_in_bindings, step_in_bindings},
 };
 
-pub type Context = HashMap<Symbol, Prop>;
+pub type ProofContext = HashMap<Symbol, Prop>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Bindings {
@@ -142,8 +142,8 @@ impl Theorem {
         proof: Proof,
         bindings: &Bindings,
     ) -> Result<Self, TheoremError> {
-        let prop =
-            proven_prop(&proof, bindings, &Context::new()).ok_or(TheoremError::InvalidProof)?;
+        let prop = proven_prop(&proof, bindings, &ProofContext::new())
+            .ok_or(TheoremError::InvalidProof)?;
         closed_prop(&prop)?;
 
         Ok(Self { prop, proof })
@@ -336,11 +336,15 @@ impl Theory {
         check_in_bindings(proof, prop, &self.bindings)
     }
 
-    pub fn check_in_context(&self, proof: &Proof, prop: &Prop, context: &Context) -> bool {
+    pub fn check_in_context(&self, proof: &Proof, prop: &Prop, context: &ProofContext) -> bool {
         check_in_bindings_and_context(proof, prop, &self.bindings, context)
     }
 
-    pub(crate) fn proven_prop_in_context(&self, proof: &Proof, context: &Context) -> Option<Prop> {
+    pub(crate) fn proven_prop_in_context(
+        &self,
+        proof: &Proof,
+        context: &ProofContext,
+    ) -> Option<Prop> {
         proven_prop(proof, &self.bindings, context)
     }
 
@@ -364,7 +368,11 @@ impl Theory {
         step_in_bindings(computation, &self.bindings)
     }
 
-    pub(crate) fn reduce_in_context(&self, computation: &Computation, context: &Context) -> Step {
+    pub(crate) fn reduce_in_context(
+        &self,
+        computation: &Computation,
+        context: &ProofContext,
+    ) -> Step {
         step_in_bindings_and_context(computation, &self.bindings, context)
     }
 
@@ -375,7 +383,7 @@ impl Theory {
     pub(crate) fn normal_form_in_context(
         &self,
         computation: &Computation,
-        context: &Context,
+        context: &ProofContext,
     ) -> Computation {
         let mut computation = computation.clone();
 

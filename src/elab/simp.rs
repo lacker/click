@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    Computation, Context, Lambda, ListCase, Proof, Prop, Symbol, Theory, alpha_eq_computation,
+    Computation, Lambda, ListCase, Proof, ProofContext, Prop, Symbol, Theory, alpha_eq_computation,
     alpha_eq_prop, substitute_prop,
 };
 
@@ -215,7 +215,7 @@ fn simplify_equality(
     right: &Computation,
     rules: &[ProofExpr],
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     pretty: &PrettyEnv,
 ) -> Result<SimpEqualityResult, ProofElaborationError> {
     let mut left_budget = SimpBudget::new();
@@ -312,7 +312,7 @@ fn simplify_computation(
     original: Computation,
     rules: &[ProofExpr],
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     budget: &mut SimpBudget,
     pretty: &PrettyEnv,
 ) -> Result<SimpResult, ProofElaborationError> {
@@ -379,7 +379,7 @@ fn simp_rewrite(
     target: &Computation,
     rules: &[ProofExpr],
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     pretty: &PrettyEnv,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
     for (rule_index, rule) in rules.iter().enumerate() {
@@ -404,7 +404,7 @@ fn simp_rewrite_with_rule(
     rule: &ProofExpr,
     target: &Computation,
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     pretty: &PrettyEnv,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
     let proof = proof_expr_to_proof_in_context(rule, theory, context, pretty)?;
@@ -510,7 +510,7 @@ fn instantiate_simp_rule(
     mut prop: Prop,
     substitutions: &HashMap<Symbol, Computation>,
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     pretty: &PrettyEnv,
 ) -> Result<Option<(Proof, Prop)>, ProofElaborationError> {
     loop {
@@ -947,7 +947,7 @@ fn simp_child(
     computation: &Computation,
     rules: &[ProofExpr],
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     budget: &mut SimpBudget,
     pretty: &PrettyEnv,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
@@ -1195,7 +1195,7 @@ fn simplify_child(
     rebuild: impl Fn(Computation) -> Computation,
     rules: &[ProofExpr],
     theory: &Theory,
-    context: &Context,
+    context: &ProofContext,
     budget: &mut SimpBudget,
     pretty: &PrettyEnv,
 ) -> Result<Option<SimpRewrite>, ProofElaborationError> {
@@ -1316,7 +1316,7 @@ mod tests {
         let (theory, prop) = value_nil_rule();
         let target = Computation::Var(TARGET_VALUE);
         let substitutions = HashMap::from([(VALUE, target.clone())]);
-        let mut context = Context::new();
+        let mut context = ProofContext::new();
         context.insert(TARGET_VALUE, is_value(target.clone()));
         context.insert(TARGET_EQUAL, equal(target.clone(), Computation::Nil));
         let pretty = PrettyEnv::new();
@@ -1345,7 +1345,7 @@ mod tests {
         let (theory, prop) = value_nil_rule();
         let target = Computation::Var(TARGET_VALUE);
         let substitutions = HashMap::from([(VALUE, target.clone())]);
-        let mut context = Context::new();
+        let mut context = ProofContext::new();
         context.insert(TARGET_VALUE, is_value(target));
         let pretty = PrettyEnv::new();
 
@@ -1376,7 +1376,7 @@ mod tests {
                 ProofExpr::Known(ALIAS_A_TO_ALIAS_B),
             ],
             &theory,
-            &Context::new(),
+            &ProofContext::new(),
             &pretty,
         )
         .expect("simp rewrite should not fail")
@@ -1392,7 +1392,7 @@ mod tests {
             head: Box::new(Computation::Nil),
             tail: Box::new(target.clone()),
         };
-        let mut context = Context::new();
+        let mut context = ProofContext::new();
         context.insert(RECURSIVE_EXPANSION_RULE, equal(target.clone(), expansion));
         let pretty = PrettyEnv::new();
 

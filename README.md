@@ -39,17 +39,19 @@ The kernel lives in `src/kernel/`:
 - `check.rs` implements substitution, alpha-equivalence, and the primitive proof
   rules.
 - `theory.rs` contains the logistical LCF-style layer: `Theory`, `Theorem`,
-  `Context`, and named bindings.
+  `ProofContext`, and named bindings.
 
 The source elaborator lives in `src/elab/`. It parses S-expression source and
 proof scripts, then elaborates them into kernel computations, propositions, and
-proofs. `ElabEnv` owns the mapping from source spellings to opaque kernel
-`Name` and `Symbol` IDs. The prelude uses this layer to load source files into a
-`Theory`; when source names matter, the loaded prelude carries both the checked
-`Theory` and its `ElabEnv`. Concrete numeric IDs are not part of the prelude's
-public API; callers resolve source spellings through the elaborator environment.
+proofs. `SourceEnv` owns the mapping from source spellings to opaque kernel
+`Name` and `Symbol` IDs. `ProofContext` is separate: it is the local set of
+assumptions available while checking or elaborating one proof goal. The prelude
+uses this layer to load source files into a `Theory`; when source names matter,
+the loaded prelude carries both the checked `Theory` and its `SourceEnv`.
+Concrete numeric IDs are not part of the prelude's public API; callers resolve
+source spellings through the source environment.
 General source loading uses `LoadedSource`, which can load source strings or
-files into a checked `Theory` while maintaining the shared `ElabEnv`.
+files into a checked `Theory` while maintaining the shared `SourceEnv`.
 Source loading can attach a section name to each parsed module; prelude loading
 uses names such as `list/value_eq` and `nat/sub`, and diagnostics for parse,
 computation, and theorem failures carry that section when one is available.

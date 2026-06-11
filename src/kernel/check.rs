@@ -2,26 +2,26 @@ use std::collections::HashSet;
 
 use super::{
     calculus::*,
-    theory::{Bindings, Context},
+    theory::{Bindings, ProofContext},
 };
 
 pub fn check(proof: &Proof, prop: &Prop) -> bool {
-    check_in_context(proof, prop, &Context::new())
+    check_in_context(proof, prop, &ProofContext::new())
 }
 
-pub fn check_in_context(proof: &Proof, prop: &Prop, context: &Context) -> bool {
+pub fn check_in_context(proof: &Proof, prop: &Prop, context: &ProofContext) -> bool {
     check_in_bindings_and_context(proof, prop, &Bindings::new(), context)
 }
 
 pub(crate) fn check_in_bindings(proof: &Proof, prop: &Prop, bindings: &Bindings) -> bool {
-    check_in_bindings_and_context(proof, prop, bindings, &Context::new())
+    check_in_bindings_and_context(proof, prop, bindings, &ProofContext::new())
 }
 
 pub(super) fn check_in_bindings_and_context(
     proof: &Proof,
     prop: &Prop,
     bindings: &Bindings,
-    context: &Context,
+    context: &ProofContext,
 ) -> bool {
     proven_prop(proof, bindings, context).is_some_and(|proven| alpha_eq_prop(&proven, prop))
 }
@@ -211,19 +211,27 @@ fn alpha_bound_position(
         .rposition(|binding| select(binding) == symbol)
 }
 
-pub(super) fn proven_prop(proof: &Proof, bindings: &Bindings, context: &Context) -> Option<Prop> {
+pub(super) fn proven_prop(
+    proof: &Proof,
+    bindings: &Bindings,
+    context: &ProofContext,
+) -> Option<Prop> {
     proven_prop_in_context(proof, bindings, context)
 }
 
 pub(super) fn step_in_bindings_and_context(
     computation: &Computation,
     bindings: &Bindings,
-    context: &Context,
+    context: &ProofContext,
 ) -> Step {
     step_for_proof(computation, bindings, context)
 }
 
-fn proven_prop_in_context(proof: &Proof, bindings: &Bindings, context: &Context) -> Option<Prop> {
+fn proven_prop_in_context(
+    proof: &Proof,
+    bindings: &Bindings,
+    context: &ProofContext,
+) -> Option<Prop> {
     match proof {
         Proof::Known(name) => bindings.theorem(*name).cloned(),
         Proof::Assume(symbol) => context.get(symbol).cloned(),
@@ -547,7 +555,7 @@ fn symbol_eq_true_right_is_symbol(prop: Prop) -> Option<Prop> {
     }
 }
 
-fn symbol_eq_result_bool(prop: Prop, context: &Context) -> Option<Prop> {
+fn symbol_eq_result_bool(prop: Prop, context: &ProofContext) -> Option<Prop> {
     match prop {
         Prop::Equal(Computation::SymbolEq { .. }, value)
             if computation_is_known_value(&value, context) =>
@@ -622,7 +630,7 @@ fn if_value_with_effect_then_else(prop: Prop) -> Option<Prop> {
     }
 }
 
-fn if_value_condition_bool(prop: Prop, context: &Context) -> Option<Prop> {
+fn if_value_condition_bool(prop: Prop, context: &ProofContext) -> Option<Prop> {
     match prop {
         Prop::Equal(
             Computation::If {
@@ -636,7 +644,7 @@ fn if_value_condition_bool(prop: Prop, context: &Context) -> Option<Prop> {
     }
 }
 
-fn apply_value_argument(variable: Symbol, prop: Prop, context: &Context) -> Option<Prop> {
+fn apply_value_argument(variable: Symbol, prop: Prop, context: &ProofContext) -> Option<Prop> {
     match prop {
         Prop::Equal(Computation::Apply { argument, .. }, value)
             if computation_is_known_value(&value, context) =>
@@ -658,7 +666,7 @@ enum ValueConstructor {
 
 fn known_value_constructor(
     computation: &Computation,
-    context: &Context,
+    context: &ProofContext,
 ) -> Option<ValueConstructor> {
     if !computation_is_known_value(computation, context) {
         return None;
@@ -689,7 +697,7 @@ fn value_constructors_are_distinct(left: ValueConstructor, right: ValueConstruct
     )
 }
 
-fn distinct_outcomes(prop: Prop, context: &Context) -> Option<Prop> {
+fn distinct_outcomes(prop: Prop, context: &ProofContext) -> Option<Prop> {
     match prop {
         Prop::Equal(left, right)
             if left
@@ -745,7 +753,7 @@ fn value_kind_is_kind(computation: Computation, kind: Symbol) -> Prop {
     )
 }
 
-fn step_for_proof(computation: &Computation, bindings: &Bindings, context: &Context) -> Step {
+fn step_for_proof(computation: &Computation, bindings: &Bindings, context: &ProofContext) -> Step {
     match computation {
         Computation::Apply { function, argument } => {
             step_apply_for_proof(function, argument, bindings, context)
@@ -780,7 +788,7 @@ fn step_apply_for_proof(
     function: &Computation,
     argument: &Computation,
     bindings: &Bindings,
-    context: &Context,
+    context: &ProofContext,
 ) -> Step {
     match function {
         Computation::Lambda(lambda) => {
@@ -806,7 +814,7 @@ fn step_lambda_application_for_proof(
     lambda: &Lambda,
     argument: &Computation,
     bindings: &Bindings,
-    context: &Context,
+    context: &ProofContext,
 ) -> Step {
     match step_for_proof(argument, bindings, context) {
         Step::Reduced(argument) => Step::Reduced(Computation::Apply {
@@ -825,7 +833,7 @@ fn step_neutral_application_for_proof(
     function: &Computation,
     argument: &Computation,
     bindings: &Bindings,
-    context: &Context,
+    context: &ProofContext,
 ) -> Step {
     match step_for_proof(argument, bindings, context) {
         Step::Reduced(argument) => Step::Reduced(Computation::Apply {
@@ -841,7 +849,7 @@ fn step_cons_for_proof(
     head: &Computation,
     tail: &Computation,
     bindings: &Bindings,
-    context: &Context,
+    context: &ProofContext,
 ) -> Step {
     match step_for_proof(head, bindings, context) {
         Step::Reduced(head) => Step::Reduced(Computation::Cons {
@@ -861,7 +869,11 @@ fn step_cons_for_proof(
     }
 }
 
-fn step_head_for_proof(computation: &Computation, bindings: &Bindings, context: &Context) -> Step {
+fn step_head_for_proof(
+    computation: &Computation,
+    bindings: &Bindings,
+    context: &ProofContext,
+) -> Step {
     match step_for_proof(computation, bindings, context) {
         Step::Reduced(computation) => Step::Reduced(Computation::Head(Box::new(computation))),
         Step::Normal if computation_is_effect(computation, context) => {
@@ -890,7 +902,11 @@ fn step_head_for_proof(computation: &Computation, bindings: &Bindings, context: 
     }
 }
 
-fn step_tail_for_proof(computation: &Computation, bindings: &Bindings, context: &Context) -> Step {
+fn step_tail_for_proof(
+    computation: &Computation,
+    bindings: &Bindings,
+    context: &ProofContext,
+) -> Step {
     match step_for_proof(computation, bindings, context) {
         Step::Reduced(computation) => Step::Reduced(Computation::Tail(Box::new(computation))),
         Step::Normal if computation_is_effect(computation, context) => {
@@ -919,7 +935,11 @@ fn step_tail_for_proof(computation: &Computation, bindings: &Bindings, context: 
     }
 }
 
-fn step_list_case_for_proof(list_case: &ListCase, bindings: &Bindings, context: &Context) -> Step {
+fn step_list_case_for_proof(
+    list_case: &ListCase,
+    bindings: &Bindings,
+    context: &ProofContext,
+) -> Step {
     match step_for_proof(list_case.list.as_ref(), bindings, context) {
         Step::Reduced(list) => Step::Reduced(Computation::ListCase(ListCase {
             list: Box::new(list),
@@ -961,7 +981,7 @@ fn step_if_for_proof(
     then_branch: &Computation,
     else_branch: &Computation,
     bindings: &Bindings,
-    context: &Context,
+    context: &ProofContext,
 ) -> Step {
     match step_for_proof(condition, bindings, context) {
         Step::Reduced(condition) => Step::Reduced(Computation::If {
@@ -987,7 +1007,7 @@ fn step_symbol_eq_for_proof(
     left: &Computation,
     right: &Computation,
     bindings: &Bindings,
-    context: &Context,
+    context: &ProofContext,
 ) -> Step {
     match step_for_proof(left, bindings, context) {
         Step::Reduced(left) => Step::Reduced(Computation::SymbolEq {
@@ -1013,7 +1033,7 @@ fn step_symbol_eq_for_proof(
 fn symbol_eq_result_for_proof(
     left: &Computation,
     right: &Computation,
-    context: &Context,
+    context: &ProofContext,
 ) -> Option<Computation> {
     match (left, right) {
         _ if alpha_eq_computation(left, right)
@@ -1037,7 +1057,7 @@ fn symbol_eq_result_for_proof(
 fn step_value_kind_for_proof(
     computation: &Computation,
     bindings: &Bindings,
-    context: &Context,
+    context: &ProofContext,
 ) -> Step {
     match step_for_proof(computation, bindings, context) {
         Step::Reduced(computation) => Step::Reduced(Computation::ValueKind(Box::new(computation))),
@@ -1052,7 +1072,7 @@ fn step_value_kind_for_proof(
 
 fn value_kind_result_for_proof(
     computation: &Computation,
-    context: &Context,
+    context: &ProofContext,
 ) -> Option<Computation> {
     match computation {
         Computation::Quote(_) => Some(Computation::Quote(SYMBOL_KIND_SYMBOL)),
@@ -1068,7 +1088,7 @@ fn runtime_error() -> Computation {
     Computation::Error(RUNTIME_ERROR)
 }
 
-fn computation_is_known_non_callable(computation: &Computation, context: &Context) -> bool {
+fn computation_is_known_non_callable(computation: &Computation, context: &ProofContext) -> bool {
     match computation {
         Computation::Quote(_) | Computation::Nil => true,
         Computation::Cons { .. } => computation_is_list(computation, context),
@@ -1081,7 +1101,7 @@ fn computation_is_known_non_list(computation: &Computation) -> bool {
     matches!(computation, Computation::Quote(_) | Computation::Lambda(_))
 }
 
-fn computation_is_known_non_bool(computation: &Computation, context: &Context) -> bool {
+fn computation_is_known_non_bool(computation: &Computation, context: &ProofContext) -> bool {
     match computation {
         Computation::Quote(symbol) => !matches!(*symbol, TRUE_SYMBOL | FALSE_SYMBOL),
         Computation::Nil | Computation::Lambda(_) => true,
@@ -1090,7 +1110,10 @@ fn computation_is_known_non_bool(computation: &Computation, context: &Context) -
     }
 }
 
-fn computation_is_known_non_symbol_value(computation: &Computation, context: &Context) -> bool {
+fn computation_is_known_non_symbol_value(
+    computation: &Computation,
+    context: &ProofContext,
+) -> bool {
     match computation {
         Computation::Nil | Computation::Lambda(_) => true,
         Computation::Cons { .. } => computation_is_list(computation, context),
@@ -1099,7 +1122,7 @@ fn computation_is_known_non_symbol_value(computation: &Computation, context: &Co
     }
 }
 
-fn computation_is_known_symbol_value(computation: &Computation, context: &Context) -> bool {
+fn computation_is_known_symbol_value(computation: &Computation, context: &ProofContext) -> bool {
     matches!(computation, Computation::Quote(_))
         || context_contains_prop(
             context,
@@ -1110,7 +1133,7 @@ fn computation_is_known_symbol_value(computation: &Computation, context: &Contex
 fn proven_steps(
     computations: &[Computation],
     bindings: &Bindings,
-    context: &Context,
+    context: &ProofContext,
 ) -> Option<Prop> {
     let (first, rest) = computations.split_first()?;
     let mut previous = first;
@@ -1153,7 +1176,7 @@ struct ValueInductionCases<'a> {
 
 fn prove_list_induction(
     bindings: &Bindings,
-    context: &Context,
+    context: &ProofContext,
     symbols: ListInductionSymbols,
     property: &Prop,
     base: &Proof,
@@ -1212,7 +1235,7 @@ fn prove_list_induction(
 
 fn prove_value_induction(
     bindings: &Bindings,
-    context: &Context,
+    context: &ProofContext,
     symbols: ValueInductionSymbols,
     property: &Prop,
     cases: ValueInductionCases<'_>,
@@ -1301,7 +1324,7 @@ fn prove_value_induction(
 }
 
 fn list_induction_symbols_are_fresh(
-    context: &Context,
+    context: &ProofContext,
     symbols: ListInductionSymbols,
     property: &Prop,
 ) -> bool {
@@ -1336,7 +1359,7 @@ fn list_induction_symbols_are_fresh(
 }
 
 fn value_induction_symbols_are_fresh(
-    context: &Context,
+    context: &ProofContext,
     symbols: ValueInductionSymbols,
     property: &Prop,
 ) -> bool {
@@ -1382,7 +1405,7 @@ fn value_induction_symbols_are_fresh(
         && !prop_mentions_symbol(property, tail_induction_hypothesis_assumption)
 }
 
-fn computation_is_list(computation: &Computation, context: &Context) -> bool {
+fn computation_is_list(computation: &Computation, context: &ProofContext) -> bool {
     if context_contains_prop(context, &is_list(computation.clone())) {
         return true;
     }
@@ -1396,7 +1419,7 @@ fn computation_is_list(computation: &Computation, context: &Context) -> bool {
     }
 }
 
-fn computation_is_known_value(computation: &Computation, context: &Context) -> bool {
+fn computation_is_known_value(computation: &Computation, context: &ProofContext) -> bool {
     if context_contains_prop(context, &is_value(computation.clone()))
         || computation.as_value().is_some()
         || computation_is_list(computation, context)
@@ -1419,22 +1442,22 @@ fn computation_is_known_value(computation: &Computation, context: &Context) -> b
     false
 }
 
-fn computation_is_effect(computation: &Computation, context: &Context) -> bool {
+fn computation_is_effect(computation: &Computation, context: &ProofContext) -> bool {
     context_contains_prop(context, &is_effect(computation.clone()))
         || computation.as_effect().is_some()
 }
 
-fn computation_is_outcome(computation: &Computation, context: &Context) -> bool {
+fn computation_is_outcome(computation: &Computation, context: &ProofContext) -> bool {
     context_contains_prop(context, &is_outcome(computation.clone()))
         || computation_is_known_value(computation, context)
         || computation_is_effect(computation, context)
 }
 
-pub(crate) fn primitive_prop_holds(prop: &Prop, context: &Context) -> bool {
+pub(crate) fn primitive_prop_holds(prop: &Prop, context: &ProofContext) -> bool {
     structural_primitive_prop_holds(prop, context) || context_contains_prop(context, prop)
 }
 
-pub(crate) fn structural_primitive_prop_holds(prop: &Prop, context: &Context) -> bool {
+pub(crate) fn structural_primitive_prop_holds(prop: &Prop, context: &ProofContext) -> bool {
     match prop {
         Prop::IsValue(computation) => computation_is_known_value(computation, context),
         Prop::IsList(computation) => computation_is_list(computation, context),
@@ -1444,7 +1467,7 @@ pub(crate) fn structural_primitive_prop_holds(prop: &Prop, context: &Context) ->
     }
 }
 
-fn context_contains_prop(context: &Context, target: &Prop) -> bool {
+fn context_contains_prop(context: &ProofContext, target: &Prop) -> bool {
     context
         .values()
         .any(|prop| prop_contains_prop(prop, target))
@@ -1666,7 +1689,7 @@ fn prop_mentions_symbol(prop: &Prop, symbol: Symbol) -> bool {
     free_symbols_prop(prop).contains(&symbol)
 }
 
-fn context_mentions_symbol(context: &Context, symbol: Symbol) -> bool {
+fn context_mentions_symbol(context: &ProofContext, symbol: Symbol) -> bool {
     context
         .values()
         .any(|prop| prop_mentions_symbol(prop, symbol))

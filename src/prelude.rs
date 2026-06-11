@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 use crate::{
     Name, Symbol, Theory,
     elab::{
-        ElabEnv, LoadedSource,
+        LoadedSource, SourceEnv,
         loader::{
             define_module_computations_result_in_section, define_module_theorems_result_in_section,
         },
@@ -107,8 +107,8 @@ fn loaded_computation_source() -> Result<&'static LoadedSource, SourceComputatio
 }
 
 #[cfg(test)]
-pub(crate) fn parsed_prelude_env() -> Result<&'static ElabEnv, SourceComputationError> {
-    loaded_computation_source().map(LoadedSource::env)
+pub(crate) fn parsed_prelude_source_env() -> Result<&'static SourceEnv, SourceComputationError> {
+    loaded_computation_source().map(LoadedSource::source_env)
 }
 
 #[cfg(test)]
@@ -142,7 +142,7 @@ pub(crate) fn parsed_nat_modules()
 }
 
 fn load_prelude_source() -> Result<LoadedSource, SourceLoadError> {
-    let mut loaded = LoadedSource::with_env(prelude_env());
+    let mut loaded = LoadedSource::with_source_env(prelude_source_env());
 
     for (section, source) in list::SOURCES {
         loaded.load_section(*section, source)?;
@@ -156,7 +156,7 @@ fn load_prelude_source() -> Result<LoadedSource, SourceLoadError> {
 }
 
 fn load_prelude_computation_source() -> Result<LoadedSource, SourceComputationError> {
-    let mut loaded = LoadedSource::with_env(prelude_env());
+    let mut loaded = LoadedSource::with_source_env(prelude_source_env());
 
     for (section, source) in list::SOURCES {
         loaded.load_computations_section(*section, source)?;
@@ -169,8 +169,8 @@ fn load_prelude_computation_source() -> Result<LoadedSource, SourceComputationEr
     Ok(loaded)
 }
 
-pub(crate) fn prelude_env() -> ElabEnv {
-    let mut env = ElabEnv::new();
+pub(crate) fn prelude_source_env() -> SourceEnv {
+    let mut env = SourceEnv::new();
 
     env.intern_symbol("unit");
 
@@ -186,7 +186,7 @@ fn define_modules_in_theory_result(
             .map_err(SourceLoadError::Computation)?;
     }
 
-    let pretty = loaded.env().pretty_env();
+    let pretty = loaded.source_env().pretty_env();
     for module in loaded.modules() {
         define_module_theorems_result_in_section(
             theory,
@@ -241,7 +241,7 @@ pub fn try_define_theorems_in_theory(theory: &mut Theory) -> Result<(), SourceTh
         }
     })?;
 
-    let pretty = loaded.env().pretty_env();
+    let pretty = loaded.source_env().pretty_env();
     for module in loaded.modules() {
         define_module_theorems_result_in_section(
             theory,

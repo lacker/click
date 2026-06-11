@@ -1,7 +1,7 @@
 //! Source-level rendering helpers for elaboration diagnostics.
 
 use crate::{
-    Computation, Context, FALSE_SYMBOL, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Name, Prop,
+    Computation, FALSE_SYMBOL, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Name, ProofContext, Prop,
     RUNTIME_ERROR, SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL,
 };
 
@@ -221,7 +221,11 @@ pub(super) fn computation_diagnostic(
     )
 }
 
-pub(super) fn context_diagnostic(label: &str, context: &Context, pretty: &PrettyEnv) -> String {
+pub(super) fn context_diagnostic(
+    label: &str,
+    context: &ProofContext,
+    pretty: &PrettyEnv,
+) -> String {
     if context.is_empty() {
         return format!("{label}: (empty)");
     }

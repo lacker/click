@@ -27,7 +27,7 @@ pub(crate) struct SymbolBinding {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ElabEnv {
+pub struct SourceEnv {
     computations: HashMap<String, Name>,
     theorems: HashMap<String, Name>,
     symbols: HashMap<String, Symbol>,
@@ -35,13 +35,13 @@ pub struct ElabEnv {
     next_symbol: u64,
 }
 
-impl Default for ElabEnv {
+impl Default for SourceEnv {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ElabEnv {
+impl SourceEnv {
     pub fn new() -> Self {
         let symbols = HashMap::from([
             (":true".to_owned(), TRUE_SYMBOL),
@@ -2327,8 +2327,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn elab_env_allocates_names_and_symbols_from_source() {
-        let mut env = ElabEnv::new();
+    fn source_env_allocates_names_and_symbols_from_source() {
+        let mut env = SourceEnv::new();
         assert_eq!(env.intern_symbol(":true"), Symbol(1));
         assert_eq!(env.symbol(":false"), Some(Symbol(2)));
 
@@ -2341,7 +2341,7 @@ mod tests {
                   (proof (eval-to (id nil) (quote :true))))
                 ",
             )
-            .expect("source should parse through environment");
+            .expect("source should parse through SourceEnv");
 
         assert_eq!(env.computation("id"), Some(Name(1)));
         assert_eq!(env.theorem("id_computes"), Some(Name(2)));
@@ -2353,7 +2353,7 @@ mod tests {
 
     #[test]
     fn parses_if_computation() {
-        let mut env = ElabEnv::new();
+        let mut env = SourceEnv::new();
 
         let module = env
             .parse_module("(def choose (if (quote :true) nil diverge))")
@@ -2373,7 +2373,7 @@ mod tests {
 
     #[test]
     fn parses_symbol_eq_computation_and_is_bool_prop() {
-        let mut env = ElabEnv::new();
+        let mut env = SourceEnv::new();
 
         let module = env
             .parse_module(
@@ -2404,7 +2404,7 @@ mod tests {
 
     #[test]
     fn parses_value_kind_computation_and_reserved_kind_symbols() {
-        let mut env = ElabEnv::new();
+        let mut env = SourceEnv::new();
 
         let module = env
             .parse_module("(def kind (value-kind (quote :true)))")
@@ -2421,7 +2421,7 @@ mod tests {
 
     #[test]
     fn parses_direct_value_kind_test_aliases() {
-        let mut env = ElabEnv::new();
+        let mut env = SourceEnv::new();
 
         let module = env
             .parse_module(

@@ -254,8 +254,8 @@ fn mul() -> Computation {
     computation_ref("mul")
 }
 
-fn parse_test_module(source: &str) -> (source::ParsedModule, ElabEnv) {
-    let mut env = prelude_env();
+fn parse_test_module(source: &str) -> (source::ParsedModule, SourceEnv) {
+    let mut env = prelude_source_env();
     let module = env
         .parse_module(source)
         .expect("synthetic module should parse");
@@ -894,39 +894,51 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
         Some(&nat_tests::add_computes_to_list_source_theorem())
     );
     assert_eq!(
-        loaded.env().computation("reverse_acc"),
+        loaded.source_env().computation("reverse_acc"),
         Some(computation("reverse_acc"))
     );
-    assert_eq!(loaded.env().computation("take"), Some(computation("take")));
     assert_eq!(
-        loaded.env().computation("replicate"),
+        loaded.source_env().computation("take"),
+        Some(computation("take"))
+    );
+    assert_eq!(
+        loaded.source_env().computation("replicate"),
         Some(computation("replicate"))
     );
     assert_eq!(
-        loaded.env().computation("intersperse"),
+        loaded.source_env().computation("intersperse"),
         Some(computation("intersperse"))
     );
     assert_eq!(
-        loaded.env().computation("intercalate"),
+        loaded.source_env().computation("intercalate"),
         Some(computation("intercalate"))
     );
-    assert_eq!(loaded.env().computation("not"), Some(computation("not")));
-    assert_eq!(loaded.env().computation("and"), Some(computation("and")));
-    assert_eq!(loaded.env().computation("or"), Some(computation("or")));
     assert_eq!(
-        loaded.env().computation("option-map"),
+        loaded.source_env().computation("not"),
+        Some(computation("not"))
+    );
+    assert_eq!(
+        loaded.source_env().computation("and"),
+        Some(computation("and"))
+    );
+    assert_eq!(
+        loaded.source_env().computation("or"),
+        Some(computation("or"))
+    );
+    assert_eq!(
+        loaded.source_env().computation("option-map"),
         Some(computation("option-map"))
     );
     assert_eq!(
-        loaded.env().computation("option-bind"),
+        loaded.source_env().computation("option-bind"),
         Some(computation("option-bind"))
     );
     assert_eq!(
-        loaded.env().computation("unwrap-or"),
+        loaded.source_env().computation("unwrap-or"),
         Some(computation("unwrap-or"))
     );
     assert_eq!(
-        loaded.env().computation("option-filter"),
+        loaded.source_env().computation("option-filter"),
         Some(computation("option-filter"))
     );
 
@@ -955,7 +967,7 @@ fn loaded_prelude_exposes_theory_and_source_environment() {
 }
 
 #[test]
-fn loaded_computation_prelude_keeps_env_without_defining_theorems() {
+fn loaded_computation_prelude_keeps_source_env_without_defining_theorems() {
     let loaded = loaded_computations();
 
     assert_eq!(loaded.computation("reverse"), Some(computation("reverse")));

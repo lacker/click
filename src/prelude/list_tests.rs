@@ -455,7 +455,7 @@ pub fn is_pair_definition() -> Computation {
 
 fn definition(spelling: &str) -> Computation {
     let modules = super::parsed_list_modules().expect("prelude list source should parse");
-    let env = super::parsed_prelude_env().expect("prelude source should parse");
+    let env = super::parsed_prelude_source_env().expect("prelude source should parse");
     let name = env
         .computation(spelling)
         .expect("prelude list source should define requested computation name");
@@ -1962,7 +1962,7 @@ fn theorem_prop(spelling: &str) -> Prop {
 fn theorem_definition(spelling: &str) -> ParsedTheorem {
     let modules =
         super::parsed_list_modules().expect("prelude list source should parse theorem statements");
-    let env = super::parsed_prelude_env().expect("prelude source should parse");
+    let env = super::parsed_prelude_source_env().expect("prelude source should parse");
     let name = env
         .theorem(spelling)
         .expect("prelude list source should define requested theorem name");
