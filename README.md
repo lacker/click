@@ -17,7 +17,7 @@ Click is designed in three layers:
    and proofs. Based on a Lisp-like untyped list value.
 2. An LCF-style logistical layer for naming, scoping, checking, and safely
    reusing definitions and theorems.
-3. A structural type system, where a value can belong to many types.
+3. A flexible type system that can model C, C++, Rust, Python, TypeScript, and more.
 
 The medium-term goal is to build out layers 1 and 2.
 * Keep code quality high. Clean up when things should be cleaned up.
