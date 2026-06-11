@@ -4,12 +4,20 @@
 
 Click's goal is to make it easy to add proofs to existing programs in other programming languages.
 
-The general idea is to make an extremely flexible kernel and theorem proving system.
+Some principles for the design of the kernel:
 
-English is very flexible. You can cram all sorts of stuff into an English sentence.
-Even if it is kind of disgusting. Like sushi burrito hors d'oeuvres.
+Simplicity
+It should be clear to an AI how to prove things that seem obvious.
+When a proof fails, it should be clear what went wrong.
+Proofs should be AI-comprehensible. Human-comprehensible is nice to have but not critical.
+Proofs do not need to be concise.
+The kernel should be clear and explicit, not necessarily minimal.
 
-Click aims to do the same thing, for programming languages.
+Flexibility
+It is very important to handle C.
+It is also important, later, to handle C++, Rust, JavaScript, TypeScript, and Python.
+Eventually we must handle tricky parts like concurrency and mutable state.
+Handling advanced mathematics is a non-goal.
 
 Click is designed in three layers:
 
@@ -17,17 +25,82 @@ Click is designed in three layers:
    and proofs. Based on a Lisp-like untyped list value.
 2. An LCF-style logistical layer for naming, scoping, checking, and safely
    reusing definitions and theorems.
-3. A flexible type system that can model C, C++, Rust, Python, TypeScript, and more.
+3. A flexible language modeling system.
 
-The medium-term goal is to build out layers 1 and 2.
-* Keep code quality high. Clean up when things should be cleaned up.
-* Make a prelude that loads from `.lisp` files.
-* Build out lots of definitions and proofs about lists, to make sure layers 1 and 2 are well designed.
-* Make sure to prove props about props. Like proving strong induction.
+The medium-term goal is to prove useful facts about C code.
 
-It's better to have n simple things, rather than one thing with n different ways to interpret it.
-The "many simple things" principle.
-So it's okay if the kernel feels like a "pile of different algebraic types".
+## Human edited above this point, AI edited below this point.
+
+## C target
+
+The medium-term target is to prove useful facts about C code, not to finish a
+general-purpose theorem prover in the abstract. C should be the forcing case for
+syntax, tactics, language modeling, and any future type-system work.
+
+The first C target should be a deliberately small C subset, tentatively called
+`C0`:
+
+- integer expressions
+- local variables
+- assignment
+- sequencing
+- `if`
+- `return`
+- simple function bodies after statement semantics are working
+
+The first semantic model should make undefined behavior and runtime errors
+explicit. C has many behaviors that are not ordinary returned values, so the C
+model should use outcome-style judgments rather than pretending every program
+just returns a value.
+
+The first useful proof targets should be small but recognizable C functions:
+
+- `max`: prove the result is at least both inputs and equals one of them
+- `abs`: prove the result is nonnegative, with explicit assumptions about the
+  integer range where C signed overflow is not triggered
+- `clamp`: prove the result lies inside the requested interval
+- a simple counted loop: prove a bounds-safety property
+
+The first genuinely compelling demo should involve memory safety, probably an
+array or pointer loop with a proof that every read is in bounds. Arithmetic
+examples are useful for bootstrapping, but the eventual pitch to C programmers
+should be about facts they already care about: no out-of-bounds access, no
+undefined behavior under stated preconditions, and correct return values.
+
+Current status:
+
+- The kernel and first-layer prelude are good enough to start modeling a tiny
+  source language.
+- There is no C AST, C type model, C semantics, or C parser bridge yet.
+- The existing S-expression source format is acceptable for bootstrapping the C
+  model, but proof and model syntax should be revisited once C examples start
+  getting large.
+- Type-system design should be driven by C modeling work. For now, C types
+  should be represented as ordinary values and C typing should be represented by
+  ordinary propositions and judgments.
+
+Near-term implementation shape:
+
+1. Add a C model module, probably under `src/lang/c/` or `src/c/`.
+2. Define source-language values for C types, expressions, statements,
+   environments, stores, and execution outcomes.
+3. Define typing judgments such as `c-has-type` and semantic judgments such as
+   `c-eval-expr` or `c-exec-stmt`.
+4. Prove basic determinism and preservation-style facts for the tiny subset.
+5. Prove the first concrete C function theorem.
+6. Add parsing/import from real C syntax only after the hand-built AST model is
+   coherent.
+
+Deferred C features:
+
+- pointers and arrays
+- loops with invariants
+- function calls
+- structs and unions
+- signed and unsigned integer width details
+- volatile and atomics
+- concurrency
+- preprocessor and build-system integration
 
 ## Current architecture
 
