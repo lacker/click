@@ -521,7 +521,7 @@ fn prelude_theorem_names() -> Vec<Name> {
         "value_eq_comparable_cons",
         "value_eq_comparable_no_lambdas",
         "value_eq_true_implies_not_lambdas",
-        "value_non_symbol_non_lambda_is_list",
+        "value_non_symbol_non_lambda_non_bv32_is_list",
         "value_eq_left_non_symbol_true_implies_lists",
         "value_eq_left_symbol_true",
         "value_eq_left_symbol_sound",
@@ -2143,8 +2143,8 @@ fn theory_defines_reverse_theorems() {
         list_tests::value_eq_comparable_no_lambdas_source_theorem();
     let value_eq_true_implies_not_lambdas_prop =
         list_tests::value_eq_true_implies_not_lambdas_source_theorem();
-    let value_non_symbol_non_lambda_is_list_prop =
-        list_tests::value_non_symbol_non_lambda_is_list_source_theorem();
+    let value_non_symbol_non_lambda_non_bv32_is_list_prop =
+        list_tests::value_non_symbol_non_lambda_non_bv32_is_list_source_theorem();
     let value_eq_left_non_symbol_true_implies_lists_prop =
         list_tests::value_eq_left_non_symbol_true_implies_lists_source_theorem();
     let value_eq_left_symbol_true_prop = list_tests::value_eq_left_symbol_true_source_theorem();
@@ -5082,10 +5082,10 @@ fn theory_defines_reverse_theorems() {
         &value_eq_true_implies_not_lambdas_prop,
     );
     assert_eq!(
-        checked_theorem("value_non_symbol_non_lambda_is_list")
+        checked_theorem("value_non_symbol_non_lambda_non_bv32_is_list")
             .expect("value classification theorem source proof should check with dependencies")
             .prop(),
-        &value_non_symbol_non_lambda_is_list_prop,
+        &value_non_symbol_non_lambda_non_bv32_is_list_prop,
     );
     assert_eq!(
         checked_theorem("value_eq_left_non_symbol_true_implies_lists")

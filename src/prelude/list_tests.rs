@@ -1,8 +1,9 @@
 //! Test helpers and expected shapes for the list prelude source.
 
 use crate::{
-    Computation, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Lambda, Outcome, Proof, Prop, RUNTIME_ERROR,
-    SYMBOL_KIND_SYMBOL, Symbol, Theory, absurd, and, computes_to, computes_to_list,
+    BV32_KIND_SYMBOL, Computation, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Lambda, Outcome, Proof,
+    Prop, RUNTIME_ERROR, SYMBOL_KIND_SYMBOL, Symbol, Theory, absurd, and, computes_to,
+    computes_to_list,
     elab::{proof, source::ParsedTheorem},
     equal, errors_with, exists_where, forall, forall_where, implies, is_bool, is_list, is_value,
     or, symbol_eq, value_kind,
@@ -1747,8 +1748,8 @@ pub fn value_eq_true_implies_not_lambdas_source_theorem() -> Prop {
     theorem_prop("value_eq_true_implies_not_lambdas")
 }
 
-pub fn value_non_symbol_non_lambda_is_list_source_theorem() -> Prop {
-    theorem_prop("value_non_symbol_non_lambda_is_list")
+pub fn value_non_symbol_non_lambda_non_bv32_is_list_source_theorem() -> Prop {
+    theorem_prop("value_non_symbol_non_lambda_non_bv32_is_list")
 }
 
 pub fn value_eq_left_non_symbol_true_implies_lists_source_theorem() -> Prop {
@@ -2144,6 +2145,10 @@ pub fn is_symbol_call(value: Computation) -> Computation {
 
 pub fn is_lambda_call(value: Computation) -> Computation {
     symbol_eq(value_kind(value), quote(LAMBDA_KIND_SYMBOL))
+}
+
+pub fn is_bv32_call(value: Computation) -> Computation {
+    symbol_eq(value_kind(value), quote(BV32_KIND_SYMBOL))
 }
 
 pub fn is_list_value_call(value: Computation) -> Computation {
@@ -4788,33 +4793,18 @@ pub fn is_list_value_true_implies_is_lambda_false_theorem(value: Symbol) -> Prop
     )
 }
 
-/// A finalized value has exactly one value kind.
+/// A finalized value has one of the kernel value kinds.
 pub fn value_kind_exactly_one_theorem(value: Symbol) -> Prop {
     forall_where(
         value,
         is_value(var(value)),
         or(
-            and(
-                computes_to(is_symbol_call(var(value)), true_value()),
-                and(
-                    computes_to(is_lambda_call(var(value)), false_value()),
-                    computes_to(is_list_value_call(var(value)), false_value()),
-                ),
-            ),
+            computes_to(is_symbol_call(var(value)), true_value()),
             or(
-                and(
-                    computes_to(is_lambda_call(var(value)), true_value()),
-                    and(
-                        computes_to(is_symbol_call(var(value)), false_value()),
-                        computes_to(is_list_value_call(var(value)), false_value()),
-                    ),
-                ),
-                and(
+                computes_to(is_lambda_call(var(value)), true_value()),
+                or(
+                    computes_to(is_bv32_call(var(value)), true_value()),
                     computes_to(is_list_value_call(var(value)), true_value()),
-                    and(
-                        computes_to(is_symbol_call(var(value)), false_value()),
-                        computes_to(is_lambda_call(var(value)), false_value()),
-                    ),
                 ),
             ),
         ),
@@ -4891,8 +4881,8 @@ pub fn value_eq_true_implies_not_lambdas_theorem(left: Symbol, right: Symbol) ->
     )
 }
 
-/// Any value whose kind is neither symbol nor lambda is a list.
-pub fn value_non_symbol_non_lambda_is_list_theorem(value: Symbol) -> Prop {
+/// Any value whose kind is neither symbol, lambda, nor bv32 is a list.
+pub fn value_non_symbol_non_lambda_non_bv32_is_list_theorem(value: Symbol) -> Prop {
     forall_where(
         value,
         is_value(var(value)),
@@ -4900,7 +4890,10 @@ pub fn value_non_symbol_non_lambda_is_list_theorem(value: Symbol) -> Prop {
             computes_to(is_symbol_call(var(value)), false_value()),
             implies(
                 computes_to(is_lambda_call(var(value)), false_value()),
-                is_list(var(value)),
+                implies(
+                    computes_to(is_bv32_call(var(value)), false_value()),
+                    is_list(var(value)),
+                ),
             ),
         ),
     )
@@ -4913,12 +4906,18 @@ pub fn value_eq_left_non_symbol_true_implies_lists_theorem(left: Symbol, right: 
         is_value(var(left)),
         implies(
             computes_to(is_symbol_call(var(left)), false_value()),
-            forall_where(
-                right,
-                is_value(var(right)),
-                implies(
-                    computes_to(value_eq_call(var(left), var(right)), true_value()),
-                    and(is_list(var(left)), is_list(var(right))),
+            implies(
+                computes_to(is_bv32_call(var(left)), false_value()),
+                forall_where(
+                    right,
+                    is_value(var(right)),
+                    implies(
+                        computes_to(is_bv32_call(var(right)), false_value()),
+                        implies(
+                            computes_to(value_eq_call(var(left), var(right)), true_value()),
+                            and(is_list(var(left)), is_list(var(right))),
+                        ),
+                    ),
                 ),
             ),
         ),

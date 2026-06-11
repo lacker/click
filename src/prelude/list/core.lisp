@@ -391,6 +391,10 @@
   (lambda value
     (symbol-eq (value-kind value) (quote :list))))
 
+(def is-bv32
+  (lambda value
+    (symbol-eq (value-kind value) (quote :bv32))))
+
 (def all-lists
   (lambda lists
     (list-case lists
@@ -480,28 +484,28 @@
       (if
         (is-lambda left)
         (error 0)
-        (if
-          (is-lambda right)
-          (error 0)
           (if
-            (is-symbol left)
-            (symbol-eq left right)
+            (is-lambda right)
+            (error 0)
             (if
-              (is-symbol right)
-              (quote :false)
-              (list-case left
-                (list-case right
-                  (quote :true)
-                  right_cell
-                  (quote :false))
-                left_cell
-                (list-case right
-                  (quote :false)
-                  right_cell
-                  (if
-                    (value-eq (head left_cell) (head right_cell))
-                    (value-eq (tail left_cell) (tail right_cell))
-                    (quote :false)))))))))))
+              (is-symbol left)
+              (symbol-eq left right)
+              (if
+                (is-symbol right)
+                (quote :false)
+                (list-case left
+                  (list-case right
+                    (quote :true)
+                    right_cell
+                    (quote :false))
+                  left_cell
+                  (list-case right
+                    (quote :false)
+                    right_cell
+                    (if
+                      (value-eq (head left_cell) (head right_cell))
+                      (value-eq (tail left_cell) (tail right_cell))
+                      (quote :false)))))))))))
 
 (def value-eq-comparable
   (lambda value

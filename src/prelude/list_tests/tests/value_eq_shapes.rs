@@ -29,7 +29,8 @@ fn value_eq_source_theorems_have_expected_shape() {
     let comparable_no_lambda_value = theorem_symbol("value_eq_comparable_no_lambdas", "value");
     let not_lambdas_left = theorem_symbol("value_eq_true_implies_not_lambdas", "left");
     let not_lambdas_right = theorem_symbol("value_eq_true_implies_not_lambdas", "right");
-    let classified_list_value = theorem_symbol("value_non_symbol_non_lambda_is_list", "value");
+    let classified_list_value =
+        theorem_symbol("value_non_symbol_non_lambda_non_bv32_is_list", "value");
     let non_symbol_lists_left =
         theorem_symbol("value_eq_left_non_symbol_true_implies_lists", "left");
     let non_symbol_lists_right =
@@ -162,8 +163,8 @@ fn value_eq_source_theorems_have_expected_shape() {
         value_eq_true_implies_not_lambdas_theorem(not_lambdas_left, not_lambdas_right)
     );
     assert_eq!(
-        value_non_symbol_non_lambda_is_list_source_theorem(),
-        value_non_symbol_non_lambda_is_list_theorem(classified_list_value)
+        value_non_symbol_non_lambda_non_bv32_is_list_source_theorem(),
+        value_non_symbol_non_lambda_non_bv32_is_list_theorem(classified_list_value)
     );
     assert_eq!(
         value_eq_left_non_symbol_true_implies_lists_source_theorem(),

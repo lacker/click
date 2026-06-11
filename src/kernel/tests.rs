@@ -1738,6 +1738,7 @@ fn non_symbol_non_lambda_values_are_lists() {
     let value_assumption = Symbol(10);
     let not_symbol_assumption = Symbol(11);
     let not_lambda_assumption = Symbol(12);
+    let not_bv32_assumption = Symbol(13);
     let mut context = ProofContext::new();
     context.insert(value_assumption, is_value(value.clone()));
     context.insert(
@@ -1760,19 +1761,31 @@ fn non_symbol_non_lambda_values_are_lists() {
             Computation::Quote(FALSE_SYMBOL),
         ),
     );
+    context.insert(
+        not_bv32_assumption,
+        equal(
+            symbol_eq_computation(
+                value_kind_computation(value.clone()),
+                Computation::Quote(BV32_KIND_SYMBOL),
+            ),
+            Computation::Quote(FALSE_SYMBOL),
+        ),
+    );
 
-    let proof = Proof::ValueNonSymbolNonLambdaIsList {
+    let proof = Proof::ValueNonSymbolNonLambdaNonBv32IsList {
         value: Box::new(Proof::Assume(value_assumption)),
         not_symbol: Box::new(Proof::Assume(not_symbol_assumption)),
         not_lambda: Box::new(Proof::Assume(not_lambda_assumption)),
+        not_bv32: Box::new(Proof::Assume(not_bv32_assumption)),
     };
 
     assert!(check_in_context(&proof, &is_list(value.clone()), &context));
 
-    let wrong_not_lambda = Proof::ValueNonSymbolNonLambdaIsList {
+    let wrong_not_lambda = Proof::ValueNonSymbolNonLambdaNonBv32IsList {
         value: Box::new(Proof::Assume(value_assumption)),
         not_symbol: Box::new(Proof::Assume(not_symbol_assumption)),
         not_lambda: Box::new(Proof::Assume(not_symbol_assumption)),
+        not_bv32: Box::new(Proof::Assume(not_bv32_assumption)),
     };
     assert!(!check_in_context(
         &wrong_not_lambda,
@@ -1786,10 +1799,11 @@ fn value_induction_proves_values_are_values() {
     let value = Symbol(1);
     let symbol_assumption = Symbol(2);
     let lambda_assumption = Symbol(3);
-    let head = Symbol(4);
-    let tail = Symbol(5);
-    let head_ih = Symbol(6);
-    let tail_ih = Symbol(7);
+    let bv32_assumption = Symbol(4);
+    let head = Symbol(5);
+    let tail = Symbol(6);
+    let head_ih = Symbol(7);
+    let tail_ih = Symbol(8);
     let property = is_value(Computation::Var(value));
     let cons_value = cons(Computation::Var(head), Computation::Var(tail));
 
@@ -1800,6 +1814,8 @@ fn value_induction_proves_values_are_values() {
         symbol_case: Box::new(Proof::Assume(value)),
         lambda_assumption,
         lambda_case: Box::new(Proof::Assume(value)),
+        bv32_assumption,
+        bv32_case: Box::new(Proof::Assume(value)),
         nil_case: Box::new(Proof::Primitive(is_value(Computation::Nil))),
         head,
         tail,
@@ -1818,6 +1834,8 @@ fn value_induction_proves_values_are_values() {
         symbol_case: Box::new(Proof::Assume(value)),
         lambda_assumption,
         lambda_case: Box::new(Proof::Assume(value)),
+        bv32_assumption,
+        bv32_case: Box::new(Proof::Assume(value)),
         nil_case: Box::new(Proof::Primitive(is_value(Computation::Nil))),
         head,
         tail,

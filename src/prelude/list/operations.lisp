@@ -1706,7 +1706,7 @@
         (is-value value)
         (implies-intro value_is_list_value
           (computes-to (is-list-value value) (quote :true))
-          (value-non-symbol-non-lambda-is-list
+          (value-non-symbol-non-lambda-non-bv32-is-list
             (assume value_is_value)
             (trans
               (eval-same
@@ -1755,6 +1755,30 @@
                 kind
                 (computes-to
                   (symbol-eq kind (quote :lambda))
+                  (quote :false))))
+            (trans
+              (eval-same
+                (is-bv32 value)
+                (symbol-eq (value-kind value) (quote :bv32)))
+              (rewrite
+                (symm
+                  (implies-elim
+                    (forall-elim
+                      (forall-elim
+                        (known symbol_eq_true)
+                        (value-kind value))
+                      (quote :list))
+                    (trans
+                      (eval-same
+                        (symbol-eq (value-kind value) (quote :list))
+                        (is-list-value value))
+                      (assume value_is_list_value))))
+                (eval-to
+                  (symbol-eq (quote :list) (quote :bv32))
+                  (quote :false))
+                kind
+                (computes-to
+                  (symbol-eq kind (quote :bv32))
                   (quote :false))))))))))
 
 (theorem value_kind_list_implies_is_list

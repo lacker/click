@@ -9,6 +9,7 @@ pub(super) fn step_in_bindings(computation: &Computation, bindings: &Bindings) -
         Computation::Apply { function, argument } => step_apply(function, argument, bindings),
         Computation::Lambda(_) => Step::Normal,
         Computation::Nil => Step::Normal,
+        Computation::Bv32(_) => Step::Normal,
         Computation::Cons { head, tail } => step_cons(head, tail, bindings),
         Computation::Head(computation) => step_head(computation, bindings),
         Computation::Tail(computation) => step_tail(computation, bindings),
@@ -19,6 +20,18 @@ pub(super) fn step_in_bindings(computation: &Computation, bindings: &Bindings) -
             else_branch,
         } => step_if(condition, then_branch, else_branch, bindings),
         Computation::SymbolEq { left, right } => step_symbol_eq(left, right, bindings),
+        Computation::Bv32Eq { left, right } => {
+            step_bv32_binary(Bv32BinaryOp::Eq, left, right, bindings)
+        }
+        Computation::Bv32Add { left, right } => {
+            step_bv32_binary(Bv32BinaryOp::Add, left, right, bindings)
+        }
+        Computation::Bv32Slt { left, right } => {
+            step_bv32_binary(Bv32BinaryOp::Slt, left, right, bindings)
+        }
+        Computation::Bv32SignedAddOverflows { left, right } => {
+            step_bv32_binary(Bv32BinaryOp::SignedAddOverflows, left, right, bindings)
+        }
         Computation::ValueKind(computation) => step_value_kind(computation, bindings),
         Computation::Ref(name) => match bindings.computation(*name) {
             Some(computation) => Step::Reduced(computation.clone()),
@@ -81,7 +94,7 @@ pub fn computation_is_value(computation: &Computation) -> bool {
 fn is_known_non_callable(computation: &Computation) -> bool {
     matches!(
         computation,
-        Computation::Quote(_) | Computation::Nil | Computation::Cons { .. }
+        Computation::Quote(_) | Computation::Nil | Computation::Cons { .. } | Computation::Bv32(_)
     )
 }
 
@@ -109,7 +122,10 @@ fn step_cons(head: &Computation, tail: &Computation, bindings: &Bindings) -> Ste
 }
 
 fn is_known_non_list(computation: &Computation) -> bool {
-    matches!(computation, Computation::Quote(_) | Computation::Lambda(_))
+    matches!(
+        computation,
+        Computation::Quote(_) | Computation::Lambda(_) | Computation::Bv32(_)
+    )
 }
 
 fn step_head(computation: &Computation, bindings: &Bindings) -> Step {
@@ -125,11 +141,16 @@ fn step_head(computation: &Computation, bindings: &Bindings) -> Step {
             | Computation::Tail(_)
             | Computation::ListCase(_)
             | Computation::SymbolEq { .. }
+            | Computation::Bv32Eq { .. }
+            | Computation::Bv32Add { .. }
+            | Computation::Bv32Slt { .. }
+            | Computation::Bv32SignedAddOverflows { .. }
             | Computation::ValueKind(_)
             | Computation::If { .. } => Step::Normal,
-            Computation::Nil | Computation::Quote(_) | Computation::Lambda(_) => {
-                Step::Reduced(runtime_error())
-            }
+            Computation::Nil
+            | Computation::Quote(_)
+            | Computation::Lambda(_)
+            | Computation::Bv32(_) => Step::Reduced(runtime_error()),
         },
     }
 }
@@ -147,11 +168,16 @@ fn step_tail(computation: &Computation, bindings: &Bindings) -> Step {
             | Computation::Tail(_)
             | Computation::ListCase(_)
             | Computation::SymbolEq { .. }
+            | Computation::Bv32Eq { .. }
+            | Computation::Bv32Add { .. }
+            | Computation::Bv32Slt { .. }
+            | Computation::Bv32SignedAddOverflows { .. }
             | Computation::ValueKind(_)
             | Computation::If { .. } => Step::Normal,
-            Computation::Nil | Computation::Quote(_) | Computation::Lambda(_) => {
-                Step::Reduced(runtime_error())
-            }
+            Computation::Nil
+            | Computation::Quote(_)
+            | Computation::Lambda(_)
+            | Computation::Bv32(_) => Step::Reduced(runtime_error()),
         },
     }
 }
@@ -181,9 +207,15 @@ fn step_list_case(list_case: &ListCase, bindings: &Bindings) -> Step {
             | Computation::Tail(_)
             | Computation::ListCase(_)
             | Computation::SymbolEq { .. }
+            | Computation::Bv32Eq { .. }
+            | Computation::Bv32Add { .. }
+            | Computation::Bv32Slt { .. }
+            | Computation::Bv32SignedAddOverflows { .. }
             | Computation::ValueKind(_)
             | Computation::If { .. } => Step::Normal,
-            Computation::Quote(_) | Computation::Lambda(_) => Step::Reduced(runtime_error()),
+            Computation::Quote(_) | Computation::Lambda(_) | Computation::Bv32(_) => {
+                Step::Reduced(runtime_error())
+            }
         },
     }
 }
@@ -211,10 +243,15 @@ fn step_if(
             | Computation::Tail(_)
             | Computation::ListCase(_)
             | Computation::SymbolEq { .. }
+            | Computation::Bv32Eq { .. }
+            | Computation::Bv32Add { .. }
+            | Computation::Bv32Slt { .. }
+            | Computation::Bv32SignedAddOverflows { .. }
             | Computation::ValueKind(_)
             | Computation::If { .. } => Step::Normal,
             Computation::Nil
             | Computation::Cons { .. }
+            | Computation::Bv32(_)
             | Computation::Lambda(_)
             | Computation::Quote(_) => Step::Reduced(runtime_error()),
         },
@@ -250,6 +287,77 @@ fn symbol_eq_result(left: &Computation, right: &Computation) -> Computation {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Bv32BinaryOp {
+    Eq,
+    Add,
+    Slt,
+    SignedAddOverflows,
+}
+
+fn step_bv32_binary(
+    op: Bv32BinaryOp,
+    left: &Computation,
+    right: &Computation,
+    bindings: &Bindings,
+) -> Step {
+    match step_in_bindings(left, bindings) {
+        Step::Reduced(left) => Step::Reduced(rebuild_bv32_binary(op, left, right.clone())),
+        Step::Normal if is_effect(left) => Step::Reduced(left.clone()),
+        Step::Normal if left.as_value().is_none() => Step::Normal,
+        Step::Normal => match left {
+            Computation::Bv32(left_value) => match step_in_bindings(right, bindings) {
+                Step::Reduced(right) => Step::Reduced(rebuild_bv32_binary(op, left.clone(), right)),
+                Step::Normal if is_effect(right) => Step::Reduced(right.clone()),
+                Step::Normal if right.as_value().is_none() => Step::Normal,
+                Step::Normal => match right {
+                    Computation::Bv32(right_value) => {
+                        Step::Reduced(apply_bv32_binary(op, *left_value, *right_value))
+                    }
+                    _ => Step::Reduced(runtime_error()),
+                },
+            },
+            _ => Step::Reduced(runtime_error()),
+        },
+    }
+}
+
+fn rebuild_bv32_binary(op: Bv32BinaryOp, left: Computation, right: Computation) -> Computation {
+    match op {
+        Bv32BinaryOp::Eq => Computation::Bv32Eq {
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+        Bv32BinaryOp::Add => Computation::Bv32Add {
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+        Bv32BinaryOp::Slt => Computation::Bv32Slt {
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+        Bv32BinaryOp::SignedAddOverflows => Computation::Bv32SignedAddOverflows {
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+    }
+}
+
+fn apply_bv32_binary(op: Bv32BinaryOp, left: u32, right: u32) -> Computation {
+    match op {
+        Bv32BinaryOp::Eq => boolean_computation(left == right),
+        Bv32BinaryOp::Add => Computation::Bv32(left.wrapping_add(right)),
+        Bv32BinaryOp::Slt => boolean_computation((left as i32) < (right as i32)),
+        Bv32BinaryOp::SignedAddOverflows => {
+            boolean_computation((left as i32).overflowing_add(right as i32).1)
+        }
+    }
+}
+
+fn boolean_computation(value: bool) -> Computation {
+    Computation::Quote(if value { TRUE_SYMBOL } else { FALSE_SYMBOL })
+}
+
 fn step_value_kind(computation: &Computation, bindings: &Bindings) -> Step {
     match step_in_bindings(computation, bindings) {
         Step::Reduced(computation) => Step::Reduced(Computation::ValueKind(Box::new(computation))),
@@ -262,6 +370,7 @@ fn value_kind_result(computation: &Computation) -> Option<Computation> {
     match computation {
         Computation::Quote(_) => Some(Computation::Quote(SYMBOL_KIND_SYMBOL)),
         Computation::Lambda(_) => Some(Computation::Quote(LAMBDA_KIND_SYMBOL)),
+        Computation::Bv32(_) => Some(Computation::Quote(BV32_KIND_SYMBOL)),
         Computation::Nil => Some(Computation::Quote(LIST_KIND_SYMBOL)),
         Computation::Cons { .. } if computation.as_list_value().is_some() => {
             Some(Computation::Quote(LIST_KIND_SYMBOL))

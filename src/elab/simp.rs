@@ -630,6 +630,7 @@ fn match_simp_pattern(
             match_lambda_pattern(pattern, target, matchable, substitutions)
         }
         (Computation::Nil, Computation::Nil) => true,
+        (Computation::Bv32(pattern), Computation::Bv32(target)) => pattern == target,
         (
             Computation::Cons {
                 head: pattern_head,
@@ -677,6 +678,49 @@ fn match_simp_pattern(
                 right: pattern_right,
             },
             Computation::SymbolEq {
+                left: target_left,
+                right: target_right,
+            },
+        ) => {
+            match_simp_pattern(pattern_left, target_left, matchable, substitutions)
+                && match_simp_pattern(pattern_right, target_right, matchable, substitutions)
+        }
+        (
+            Computation::Bv32Eq {
+                left: pattern_left,
+                right: pattern_right,
+            },
+            Computation::Bv32Eq {
+                left: target_left,
+                right: target_right,
+            },
+        )
+        | (
+            Computation::Bv32Add {
+                left: pattern_left,
+                right: pattern_right,
+            },
+            Computation::Bv32Add {
+                left: target_left,
+                right: target_right,
+            },
+        )
+        | (
+            Computation::Bv32Slt {
+                left: pattern_left,
+                right: pattern_right,
+            },
+            Computation::Bv32Slt {
+                left: target_left,
+                right: target_right,
+            },
+        )
+        | (
+            Computation::Bv32SignedAddOverflows {
+                left: pattern_left,
+                right: pattern_right,
+            },
+            Computation::Bv32SignedAddOverflows {
                 left: target_left,
                 right: target_right,
             },
@@ -1167,6 +1211,66 @@ fn simp_child(
             },
             |rewrite| Ok(Some(rewrite)),
         ),
+        Computation::Bv32Add { left, right } => simplify_binary_children(
+            tactic,
+            computation,
+            left,
+            right,
+            |left, right| Computation::Bv32Add {
+                left: Box::new(left),
+                right: Box::new(right),
+            },
+            rules,
+            theory,
+            context,
+            budget,
+            pretty,
+        ),
+        Computation::Bv32Eq { left, right } => simplify_binary_children(
+            tactic,
+            computation,
+            left,
+            right,
+            |left, right| Computation::Bv32Eq {
+                left: Box::new(left),
+                right: Box::new(right),
+            },
+            rules,
+            theory,
+            context,
+            budget,
+            pretty,
+        ),
+        Computation::Bv32Slt { left, right } => simplify_binary_children(
+            tactic,
+            computation,
+            left,
+            right,
+            |left, right| Computation::Bv32Slt {
+                left: Box::new(left),
+                right: Box::new(right),
+            },
+            rules,
+            theory,
+            context,
+            budget,
+            pretty,
+        ),
+        Computation::Bv32SignedAddOverflows { left, right } => simplify_binary_children(
+            tactic,
+            computation,
+            left,
+            right,
+            |left, right| Computation::Bv32SignedAddOverflows {
+                left: Box::new(left),
+                right: Box::new(right),
+            },
+            rules,
+            theory,
+            context,
+            budget,
+            pretty,
+        ),
         Computation::ValueKind(child) => simplify_child(
             tactic,
             computation,
@@ -1180,12 +1284,55 @@ fn simp_child(
         ),
         Computation::Lambda(_)
         | Computation::Nil
+        | Computation::Bv32(_)
         | Computation::Ref(_)
         | Computation::Error(_)
         | Computation::Diverge
         | Computation::Var(_)
         | Computation::Quote(_) => Ok(None),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn simplify_binary_children(
+    tactic: &'static str,
+    computation: &Computation,
+    left: &Computation,
+    right: &Computation,
+    rebuild: impl Fn(Computation, Computation) -> Computation + Copy,
+    rules: &[ProofExpr],
+    theory: &Theory,
+    context: &ProofContext,
+    budget: &mut SimpBudget,
+    pretty: &PrettyEnv,
+) -> Result<Option<SimpRewrite>, ProofElaborationError> {
+    simplify_child(
+        tactic,
+        computation,
+        left,
+        |left| rebuild(left, right.clone()),
+        rules,
+        theory,
+        context,
+        budget,
+        pretty,
+    )?
+    .map_or_else(
+        || {
+            simplify_child(
+                tactic,
+                computation,
+                right,
+                |right| rebuild(left.clone(), right),
+                rules,
+                theory,
+                context,
+                budget,
+                pretty,
+            )
+        },
+        |rewrite| Ok(Some(rewrite)),
+    )
 }
 
 fn simplify_child(

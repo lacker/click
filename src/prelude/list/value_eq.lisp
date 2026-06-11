@@ -310,156 +310,55 @@
 (theorem value_kind_exactly_one
   (forall value (is-value value)
     (or
-      (and
-        (computes-to (is-symbol value) (quote :true))
-        (and
-          (computes-to (is-lambda value) (quote :false))
-          (computes-to (is-list-value value) (quote :false))))
+      (computes-to (is-symbol value) (quote :true))
       (or
-        (and
-          (computes-to (is-lambda value) (quote :true))
-          (and
-            (computes-to (is-symbol value) (quote :false))
-            (computes-to (is-list-value value) (quote :false))))
-        (and
-          (computes-to (is-list-value value) (quote :true))
-          (and
-            (computes-to (is-symbol value) (quote :false))
-            (computes-to (is-lambda value) (quote :false)))))))
+        (computes-to (is-lambda value) (quote :true))
+        (or
+          (computes-to (is-bv32 value) (quote :true))
+          (computes-to (is-list-value value) (quote :true))))))
   (by
     (value-induction value
       value_is_symbol
       (by
-        (have value_is_symbol_result
-          (computes-to (is-symbol value) (quote :true))
-          (proof
-            (trans
-              (eval-same
-                (is-symbol value)
-                (symbol-eq (value-kind value) (quote :symbol)))
-              (assume value_is_symbol))))
-        (have value_not_lambda
-          (computes-to (is-lambda value) (quote :false))
-          (proof
-            (implies-elim
-              (forall-elim
-                (known is_symbol_true_implies_is_lambda_false)
-                value)
-              (assume value_is_symbol_result))))
-        (have value_not_list
-          (computes-to (is-list-value value) (quote :false))
-          (proof
-            (implies-elim
-              (forall-elim
-                (known is_symbol_true_implies_is_list_value_false)
-                value)
-              (assume value_is_symbol_result))))
         (left
           (by
-            (split
-              (by
-                (exact value_is_symbol_result))
-              (by
-                (split
-                  (by
-                    (exact value_not_lambda))
-                  (by
-                    (exact value_not_list))))))))
+            (eval))))
       value_is_lambda
       (by
-        (have value_is_lambda_result
-          (computes-to (is-lambda value) (quote :true))
-          (proof
-            (trans
-              (eval-same
-                (is-lambda value)
-                (symbol-eq (value-kind value) (quote :lambda)))
-              (assume value_is_lambda))))
-        (have value_not_symbol
-          (computes-to (is-symbol value) (quote :false))
-          (proof
-            (implies-elim
-              (forall-elim
-                (known is_lambda_true_implies_is_symbol_false)
-                value)
-              (assume value_is_lambda_result))))
-        (have value_not_list
-          (computes-to (is-list-value value) (quote :false))
-          (proof
-            (implies-elim
-              (forall-elim
-                (known is_lambda_true_implies_is_list_value_false)
-                value)
-              (assume value_is_lambda_result))))
         (right
           (by
             (left
               (by
-                (split
-                  (by
-                    (exact value_is_lambda_result))
-                  (by
-                    (split
-                      (by
-                        (exact value_not_symbol))
-                      (by
-                        (exact value_not_list))))))))))
+                (eval))))))
+      value_is_bv32
       (by
-        (have value_is_list
-          (computes-to (is-list-value nil) (quote :true))
-          (by
-            (eval)))
-        (have value_not_symbol
-          (computes-to (is-symbol nil) (quote :false))
-          (by
-            (eval)))
-        (have value_not_lambda
-          (computes-to (is-lambda nil) (quote :false))
-          (by
-            (eval)))
         (right
           (by
             (right
               (by
-                (split
+                (left
                   (by
-                    (exact value_is_list))
+                    (eval))))))))
+      (by
+        (right
+          (by
+            (right
+              (by
+                (right
                   (by
-                    (split
-                      (by
-                        (exact value_not_symbol))
-                      (by
-                        (exact value_not_lambda))))))))))
+                    (eval))))))))
       head
       tail
       head_kinds
       tail_kinds
       (by
-        (have value_is_list
-          (computes-to (is-list-value (cons head tail)) (quote :true))
-          (by
-            (eval)))
-        (have value_not_symbol
-          (computes-to (is-symbol (cons head tail)) (quote :false))
-          (by
-            (eval)))
-        (have value_not_lambda
-          (computes-to (is-lambda (cons head tail)) (quote :false))
-          (by
-            (eval)))
         (right
           (by
             (right
               (by
-                (split
+                (right
                   (by
-                    (exact value_is_list))
-                  (by
-                    (split
-                      (by
-                        (exact value_not_symbol))
-                      (by
-                        (exact value_not_lambda)))))))))))))
+                    (eval)))))))))))
 
 (theorem value_eq_comparable_symbol
   (forall value (is-value value)
@@ -572,6 +471,10 @@
               (absurd-elim
                 (distinct-outcomes impossible_eq)
                 (computes-to (is-lambda value) (quote :false)))))))
+      value_is_bv32
+      (by
+        (intro value_comparable)
+        (eval))
       (by
         (intro value_comparable)
         (eval))
@@ -712,13 +615,15 @@
           (by
             (exact right_not_lambda)))))))
 
-(theorem value_non_symbol_non_lambda_is_list
+(theorem value_non_symbol_non_lambda_non_bv32_is_list
   (forall value (is-value value)
     (implies
       (computes-to (is-symbol value) (quote :false))
       (implies
         (computes-to (is-lambda value) (quote :false))
-        (is-list value))))
+        (implies
+          (computes-to (is-bv32 value) (quote :false))
+          (is-list value)))))
   (proof
     (forall-intro value
       (implies-intro value_is_value
@@ -727,29 +632,38 @@
           (computes-to (is-symbol value) (quote :false))
           (implies-intro value_not_lambda
             (computes-to (is-lambda value) (quote :false))
-            (value-non-symbol-non-lambda-is-list
-              (assume value_is_value)
-              (assume value_not_symbol)
-              (assume value_not_lambda))))))))
+            (implies-intro value_not_bv32
+              (computes-to (is-bv32 value) (quote :false))
+              (value-non-symbol-non-lambda-non-bv32-is-list
+                (assume value_is_value)
+                (assume value_not_symbol)
+                (assume value_not_lambda)
+                (assume value_not_bv32)))))))))
 
 (theorem value_eq_left_non_symbol_true_implies_lists
   (forall left (is-value left)
     (implies
       (computes-to (is-symbol left) (quote :false))
-      (forall right (is-value right)
-        (implies
-          (computes-to (value-eq left right) (quote :true))
-          (and
-            (is-list left)
-            (is-list right))))))
+      (implies
+        (computes-to (is-bv32 left) (quote :false))
+        (forall right (is-value right)
+          (implies
+            (computes-to (is-bv32 right) (quote :false))
+            (implies
+              (computes-to (value-eq left right) (quote :true))
+              (and
+                (is-list left)
+                (is-list right))))))))
   (by
     (intro left)
     (intro left_not_symbol)
+    (intro left_not_bv32)
     (intro right)
+    (intro right_not_bv32)
     (intro values_equal)
     (specialize not_lambdas value_eq_true_implies_not_lambdas left right)
     (cases not_lambdas left_not_lambda right_not_lambda)
-    (specialize left_is_list value_non_symbol_non_lambda_is_list left)
+    (specialize left_is_list value_non_symbol_non_lambda_non_bv32_is_list left)
     (have right_symbol_branch_true
       (computes-to
         (if
@@ -886,7 +800,7 @@
             (value-eq (tail left_cell) (tail right_cell))
             (quote :false)))))
     (cases right_branch_parts right_not_symbol list_branch_true)
-    (specialize right_is_list value_non_symbol_non_lambda_is_list right)
+    (specialize right_is_list value_non_symbol_non_lambda_non_bv32_is_list right)
     (split
       (by
         (exact left_is_list))
@@ -1271,34 +1185,158 @@
               (absurd-elim
                 (distinct-outcomes impossible_eq)
                 (computes-to left right))))))
+      left_is_bv32
       (by
         (value-induction right
           right_is_symbol
           (by
             (intro values_equal)
-            (have nil_not_symbol
-              (computes-to (is-symbol nil) (quote :false))
-              (by
-                (eval)))
-            (specialize lists value_eq_left_non_symbol_true_implies_lists nil right)
-            (cases lists nil_is_list right_is_list)
-            (have right_not_symbol
-              (computes-to (is-symbol right) (quote :false))
+            (have value_eq_false
+              (computes-to (value-eq left right) (quote :false))
               (by
                 (eval)))
             (have impossible_eq
-              (computes-to (quote :true) (quote :false))
+              (computes-to (quote :false) (quote :true))
               (by
                 (calc
-                  (quote :true)
+                  (quote :false)
                   (==
-                    (is-symbol right)
+                    (value-eq left right)
                     (by
-                      (exact (symm right_is_symbol))))
+                      (exact (symm value_eq_false))))
                   (==
-                    (quote :false)
+                    (quote :true)
                     (by
-                      (exact right_not_symbol)))))
+                      (exact values_equal)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to left right))))))
+          right_is_lambda
+          (by
+            (intro values_equal)
+            (have value_eq_errors
+              (computes-to (value-eq left right) (error 0))
+              (by
+                (eval)))
+            (have impossible_eq
+              (computes-to (error 0) (quote :true))
+              (by
+                (calc
+                  (error 0)
+                  (==
+                    (value-eq left right)
+                    (by
+                      (exact (symm value_eq_errors))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact values_equal)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to left right))))))
+          right_is_bv32
+          (by
+            (intro values_equal)
+            (have value_eq_errors
+              (computes-to (value-eq left right) (error 0))
+              (by
+                (eval)))
+            (have impossible_eq
+              (computes-to (error 0) (quote :true))
+              (by
+                (calc
+                  (error 0)
+                  (==
+                    (value-eq left right)
+                    (by
+                      (exact (symm value_eq_errors))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact values_equal)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to left right))))))
+          (by
+            (intro values_equal)
+            (have value_eq_errors
+              (computes-to (value-eq left nil) (error 0))
+              (by
+                (eval)))
+            (have impossible_eq
+              (computes-to (error 0) (quote :true))
+              (by
+                (calc
+                  (error 0)
+                  (==
+                    (value-eq left nil)
+                    (by
+                      (exact (symm value_eq_errors))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact values_equal)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to left nil))))))
+          right_head
+          right_tail
+          right_head_sound
+          right_tail_sound
+          (by
+            (intro values_equal)
+            (have value_eq_errors
+              (computes-to (value-eq left (cons right_head right_tail)) (error 0))
+              (by
+                (eval)))
+            (have impossible_eq
+              (computes-to (error 0) (quote :true))
+              (by
+                (calc
+                  (error 0)
+                  (==
+                    (value-eq left (cons right_head right_tail))
+                    (by
+                      (exact (symm value_eq_errors))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact values_equal)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to left (cons right_head right_tail)))))))))
+      (by
+        (value-induction right
+          right_is_symbol
+          (by
+            (intro values_equal)
+            (have value_eq_false
+              (computes-to (value-eq nil right) (quote :false))
+              (by
+                (eval)))
+            (have impossible_eq
+              (computes-to (quote :false) (quote :true))
+              (by
+                (calc
+                  (quote :false)
+                  (==
+                    (value-eq nil right)
+                    (by
+                      (exact (symm value_eq_false))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact values_equal)))))
               (by
                 (exact
                   (absurd-elim
@@ -1322,6 +1360,31 @@
                     (quote :false)
                     (by
                       (exact right_not_lambda)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to nil right))))))
+          right_is_bv32
+          (by
+            (intro values_equal)
+            (have value_eq_errors
+              (computes-to (value-eq nil right) (error 0))
+              (by
+                (eval)))
+            (have impossible_eq
+              (computes-to (error 0) (quote :true))
+              (by
+                (calc
+                  (error 0)
+                  (==
+                    (value-eq nil right)
+                    (by
+                      (exact (symm value_eq_errors))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact values_equal)))))
               (by
                 (exact
                   (absurd-elim
@@ -1364,31 +1427,25 @@
           right_is_symbol
           (by
             (intro values_equal)
-            (have left_not_symbol
-              (computes-to (is-symbol (cons left_head left_tail)) (quote :false))
-              (by
-                (eval)))
-            (specialize lists value_eq_left_non_symbol_true_implies_lists
-              (cons left_head left_tail)
-              right)
-            (cases lists left_is_list right_is_list)
-            (have right_not_symbol
-              (computes-to (is-symbol right) (quote :false))
+            (have value_eq_false
+              (computes-to
+                (value-eq (cons left_head left_tail) right)
+                (quote :false))
               (by
                 (eval)))
             (have impossible_eq
-              (computes-to (quote :true) (quote :false))
+              (computes-to (quote :false) (quote :true))
               (by
                 (calc
-                  (quote :true)
+                  (quote :false)
                   (==
-                    (is-symbol right)
+                    (value-eq (cons left_head left_tail) right)
                     (by
-                      (exact (symm right_is_symbol))))
+                      (exact (symm value_eq_false))))
                   (==
-                    (quote :false)
+                    (quote :true)
                     (by
-                      (exact right_not_symbol)))))
+                      (exact values_equal)))))
               (by
                 (exact
                   (absurd-elim
@@ -1414,6 +1471,33 @@
                     (quote :false)
                     (by
                       (exact right_not_lambda)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to (cons left_head left_tail) right))))))
+          right_is_bv32
+          (by
+            (intro values_equal)
+            (have value_eq_errors
+              (computes-to
+                (value-eq (cons left_head left_tail) right)
+                (error 0))
+              (by
+                (eval)))
+            (have impossible_eq
+              (computes-to (error 0) (quote :true))
+              (by
+                (calc
+                  (error 0)
+                  (==
+                    (value-eq (cons left_head left_tail) right)
+                    (by
+                      (exact (symm value_eq_errors))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact values_equal)))))
               (by
                 (exact
                   (absurd-elim
@@ -1629,6 +1713,31 @@
               (absurd-elim
                 (distinct-outcomes impossible_eq)
                 (computes-to (value-eq value value) (quote :true)))))))
+      value_is_bv32
+      (by
+        (intro value_comparable)
+        (have comparable_error
+          (computes-to (value-eq-comparable value) (error 0))
+          (by
+            (eval)))
+        (have impossible_eq
+          (computes-to (error 0) (quote :true))
+          (by
+            (calc
+              (error 0)
+              (==
+                (value-eq-comparable value)
+                (by
+                  (exact (symm comparable_error))))
+              (==
+                (quote :true)
+                (by
+                  (exact value_comparable)))))
+          (by
+            (exact
+              (absurd-elim
+                (distinct-outcomes impossible_eq)
+                (computes-to (value-eq value value) (quote :true)))))))
       (by
         (intro value_comparable)
         (eval))
@@ -1767,6 +1876,136 @@
               (absurd-elim
                 (distinct-outcomes impossible_eq)
                 (computes-to (value-eq-comparable left) (quote :true)))))))
+      left_is_bv32
+      (by
+        (value-induction right
+          right_is_symbol
+          (by
+            (intro values_equal)
+            (have value_eq_false
+              (computes-to (value-eq left right) (quote :false))
+              (by
+                (eval)))
+            (have impossible_eq
+              (computes-to (quote :false) (quote :true))
+              (by
+                (calc
+                  (quote :false)
+                  (==
+                    (value-eq left right)
+                    (by
+                      (exact (symm value_eq_false))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact values_equal)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to (value-eq-comparable left) (quote :true)))))))
+          right_is_lambda
+          (by
+            (intro values_equal)
+            (have value_eq_errors
+              (computes-to (value-eq left right) (error 0))
+              (by
+                (eval)))
+            (have impossible_eq
+              (computes-to (error 0) (quote :true))
+              (by
+                (calc
+                  (error 0)
+                  (==
+                    (value-eq left right)
+                    (by
+                      (exact (symm value_eq_errors))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact values_equal)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to (value-eq-comparable left) (quote :true)))))))
+          right_is_bv32
+          (by
+            (intro values_equal)
+            (have value_eq_errors
+              (computes-to (value-eq left right) (error 0))
+              (by
+                (eval)))
+            (have impossible_eq
+              (computes-to (error 0) (quote :true))
+              (by
+                (calc
+                  (error 0)
+                  (==
+                    (value-eq left right)
+                    (by
+                      (exact (symm value_eq_errors))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact values_equal)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to (value-eq-comparable left) (quote :true)))))))
+          (by
+            (intro values_equal)
+            (have value_eq_errors
+              (computes-to (value-eq left nil) (error 0))
+              (by
+                (eval)))
+            (have impossible_eq
+              (computes-to (error 0) (quote :true))
+              (by
+                (calc
+                  (error 0)
+                  (==
+                    (value-eq left nil)
+                    (by
+                      (exact (symm value_eq_errors))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact values_equal)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to (value-eq-comparable left) (quote :true)))))))
+          right_head
+          right_tail
+          right_head_comparable
+          right_tail_comparable
+          (by
+            (intro values_equal)
+            (have value_eq_errors
+              (computes-to (value-eq left (cons right_head right_tail)) (error 0))
+              (by
+                (eval)))
+            (have impossible_eq
+              (computes-to (error 0) (quote :true))
+              (by
+                (calc
+                  (error 0)
+                  (==
+                    (value-eq left (cons right_head right_tail))
+                    (by
+                      (exact (symm value_eq_errors))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact values_equal)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+                    (computes-to (value-eq-comparable left) (quote :true)))))))))
       (by
         (intro right)
         (intro values_equal)
@@ -1780,32 +2019,25 @@
           right_is_symbol
           (by
             (intro values_equal)
-            (have left_not_symbol
-              (computes-to (is-symbol (cons left_head left_tail)) (quote :false))
+            (have value_eq_false
+              (computes-to
+                (value-eq (cons left_head left_tail) right)
+                (quote :false))
               (by
                 (eval)))
-            (specialize lists value_eq_left_non_symbol_true_implies_lists
-              (cons left_head left_tail)
-              right)
-            (cases lists left_is_list right_is_list)
-            (have right_not_symbol
-              (computes-to (is-symbol right) (quote :false))
-              (by
-                (eval)))
-            (specialize right_is_symbol_result value_kind_symbol_implies_is_symbol right)
             (have impossible_eq
-              (computes-to (quote :true) (quote :false))
+              (computes-to (quote :false) (quote :true))
               (by
                 (calc
-                  (quote :true)
+                  (quote :false)
                   (==
-                    (is-symbol right)
+                    (value-eq (cons left_head left_tail) right)
                     (by
-                      (exact (symm right_is_symbol_result))))
+                      (exact (symm value_eq_false))))
                   (==
-                    (quote :false)
+                    (quote :true)
                     (by
-                      (exact right_not_symbol)))))
+                      (exact values_equal)))))
               (by
                 (exact
                   (absurd-elim
@@ -1834,6 +2066,35 @@
                     (quote :false)
                     (by
                       (exact right_not_lambda)))))
+              (by
+                (exact
+                  (absurd-elim
+                    (distinct-outcomes impossible_eq)
+	                    (computes-to
+	                      (value-eq-comparable (cons left_head left_tail))
+	                      (quote :true)))))))
+          right_is_bv32
+          (by
+            (intro values_equal)
+            (have value_eq_errors
+              (computes-to
+                (value-eq (cons left_head left_tail) right)
+                (error 0))
+              (by
+                (eval)))
+            (have impossible_eq
+              (computes-to (error 0) (quote :true))
+              (by
+                (calc
+                  (error 0)
+                  (==
+                    (value-eq (cons left_head left_tail) right)
+                    (by
+                      (exact (symm value_eq_errors))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact values_equal)))))
               (by
                 (exact
                   (absurd-elim

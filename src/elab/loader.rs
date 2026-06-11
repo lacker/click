@@ -305,7 +305,7 @@ mod tests {
             .theorem("id_nil")
             .expect("loader should record theorem spelling");
 
-        let parameter = crate::Symbol(crate::LIST_KIND_SYMBOL.0 + 1);
+        let parameter = crate::Symbol(crate::BV32_KIND_SYMBOL.0 + 1);
 
         assert_eq!(
             loaded.theory().computation(id),
@@ -1299,6 +1299,9 @@ mod tests {
                       value_is_lambda
                       (by
                         (eval))
+                      value_is_bv32
+                      (by
+                        (eval))
                       (by
                         (eval))
                       head
@@ -1329,6 +1332,9 @@ mod tests {
                       (by
                         (eval))
                       value_is_lambda
+                      (by
+                        (eval))
+                      value_is_bv32
                       (by
                         (eval))
                       (by

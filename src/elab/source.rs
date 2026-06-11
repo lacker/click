@@ -3,11 +3,11 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    Computation, ErrorName, FALSE_SYMBOL, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Lambda, ListCase,
-    Name, Prop, SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL, absurd, and, computes_to,
-    computes_to_list, diverges, equal, errors_with, exists, exists_where, forall, forall_where,
-    if_then_else, implies, is_bool, is_effect, is_list, is_outcome, is_value, or, substitute_prop,
-    symbol_eq, value_kind,
+    BV32_KIND_SYMBOL, Computation, ErrorName, FALSE_SYMBOL, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL,
+    Lambda, ListCase, Name, Prop, SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL, absurd, and, bv32_add,
+    bv32_eq, bv32_signed_add_overflows, bv32_slt, computes_to, computes_to_list, diverges, equal,
+    errors_with, exists, exists_where, forall, forall_where, if_then_else, implies, is_bool,
+    is_effect, is_list, is_outcome, is_value, or, substitute_prop, symbol_eq, value_kind,
 };
 
 const FIRST_THEOREM_SYMBOL: Symbol = Symbol(2_000);
@@ -49,6 +49,7 @@ impl SourceEnv {
             (":symbol".to_owned(), SYMBOL_KIND_SYMBOL),
             (":lambda".to_owned(), LAMBDA_KIND_SYMBOL),
             (":list".to_owned(), LIST_KIND_SYMBOL),
+            (":bv32".to_owned(), BV32_KIND_SYMBOL),
         ]);
         let max_reserved_symbol = [
             TRUE_SYMBOL,
@@ -56,6 +57,7 @@ impl SourceEnv {
             SYMBOL_KIND_SYMBOL,
             LAMBDA_KIND_SYMBOL,
             LIST_KIND_SYMBOL,
+            BV32_KIND_SYMBOL,
         ]
         .into_iter()
         .map(|symbol| symbol.0)
@@ -275,10 +277,11 @@ pub(crate) enum ProofExpr {
         proof: Box<ProofExpr>,
     },
     DistinctOutcomes(Box<ProofExpr>),
-    ValueNonSymbolNonLambdaIsList {
+    ValueNonSymbolNonLambdaNonBv32IsList {
         value: Box<ProofExpr>,
         not_symbol: Box<ProofExpr>,
         not_lambda: Box<ProofExpr>,
+        not_bv32: Box<ProofExpr>,
     },
     AbsurdElim {
         absurd: Box<ProofExpr>,
@@ -447,6 +450,8 @@ pub(crate) enum TacticExpr {
         symbol_case: TacticScript,
         lambda_assumption: Symbol,
         lambda_case: TacticScript,
+        bv32_assumption: Symbol,
+        bv32_case: TacticScript,
         nil_case: TacticScript,
         head: Symbol,
         tail: Symbol,
@@ -800,6 +805,10 @@ fn error_name(expression: &Expr) -> Result<ErrorName, ParseError> {
     Ok(ErrorName(parse_u64(atom(expression)?)?))
 }
 
+fn u32_literal(expression: &Expr) -> Result<u32, ParseError> {
+    parse_u32(atom(expression)?)
+}
+
 struct SymbolTable {
     symbols: HashMap<String, Symbol>,
     used_symbols: HashSet<Symbol>,
@@ -974,6 +983,11 @@ impl<'a> SourceParser<'a> {
                 "tail" => return self.tail(items),
                 "if" => return self.if_computation(items),
                 "symbol-eq" => return self.symbol_eq(items),
+                "bv32" => return self.bv32(items),
+                "bv32-eq" => return self.bv32_eq(items),
+                "bv32-add" => return self.bv32_add(items),
+                "bv32-slt" => return self.bv32_slt(items),
+                "bv32-sadd-overflows" => return self.bv32_signed_add_overflows(items),
                 "value-kind" => return self.value_kind(items),
                 "is-symbol" if self.variable(form).is_none() => {
                     return self.value_kind_test(items, SYMBOL_KIND_SYMBOL);
@@ -983,6 +997,9 @@ impl<'a> SourceParser<'a> {
                 }
                 "is-list-value" if self.variable(form).is_none() => {
                     return self.value_kind_test(items, LIST_KIND_SYMBOL);
+                }
+                "is-bv32" if self.variable(form).is_none() => {
+                    return self.value_kind_test(items, BV32_KIND_SYMBOL);
                 }
                 "error" => return self.error(items),
                 "quote" => return self.quote(items),
@@ -1056,6 +1073,43 @@ impl<'a> SourceParser<'a> {
     fn symbol_eq(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
         expect_len("symbol-eq", items, 3)?;
         Ok(symbol_eq(
+            self.computation(&items[1])?,
+            self.computation(&items[2])?,
+        ))
+    }
+
+    fn bv32(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
+        expect_len("bv32", items, 2)?;
+        Ok(Computation::Bv32(u32_literal(&items[1])?))
+    }
+
+    fn bv32_add(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
+        expect_len("bv32-add", items, 3)?;
+        Ok(bv32_add(
+            self.computation(&items[1])?,
+            self.computation(&items[2])?,
+        ))
+    }
+
+    fn bv32_eq(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
+        expect_len("bv32-eq", items, 3)?;
+        Ok(bv32_eq(
+            self.computation(&items[1])?,
+            self.computation(&items[2])?,
+        ))
+    }
+
+    fn bv32_slt(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
+        expect_len("bv32-slt", items, 3)?;
+        Ok(bv32_slt(
+            self.computation(&items[1])?,
+            self.computation(&items[2])?,
+        ))
+    }
+
+    fn bv32_signed_add_overflows(&mut self, items: &[Expr]) -> Result<Computation, ParseError> {
+        expect_len("bv32-sadd-overflows", items, 3)?;
+        Ok(bv32_signed_add_overflows(
             self.computation(&items[1])?,
             self.computation(&items[2])?,
         ))
@@ -1709,19 +1763,21 @@ impl<'a> SourceParser<'a> {
     }
 
     fn tactic_value_induction(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
-        expect_len("value-induction", items, 12)?;
+        expect_len("value-induction", items, 14)?;
         Ok(TacticExpr::ValueInduction {
             variable: self.proof_symbol(atom(&items[1])?)?,
             symbol_assumption: self.proof_symbol(atom(&items[2])?)?,
             symbol_case: self.nested_tactic_script(&items[3])?,
             lambda_assumption: self.proof_symbol(atom(&items[4])?)?,
             lambda_case: self.nested_tactic_script(&items[5])?,
-            nil_case: self.nested_tactic_script(&items[6])?,
-            head: self.proof_symbol(atom(&items[7])?)?,
-            tail: self.proof_symbol(atom(&items[8])?)?,
-            head_induction_hypothesis_assumption: self.proof_symbol(atom(&items[9])?)?,
-            tail_induction_hypothesis_assumption: self.proof_symbol(atom(&items[10])?)?,
-            cons_case: self.nested_tactic_script(&items[11])?,
+            bv32_assumption: self.proof_symbol(atom(&items[6])?)?,
+            bv32_case: self.nested_tactic_script(&items[7])?,
+            nil_case: self.nested_tactic_script(&items[8])?,
+            head: self.proof_symbol(atom(&items[9])?)?,
+            tail: self.proof_symbol(atom(&items[10])?)?,
+            head_induction_hypothesis_assumption: self.proof_symbol(atom(&items[11])?)?,
+            tail_induction_hypothesis_assumption: self.proof_symbol(atom(&items[12])?)?,
+            cons_case: self.nested_tactic_script(&items[13])?,
         })
     }
 
@@ -1842,8 +1898,8 @@ impl<'a> SourceParser<'a> {
             "if-value-condition-bool" => self.proof_if_value_condition_bool(items),
             "apply-value-argument" => self.proof_apply_value_argument(items),
             "distinct-outcomes" => self.proof_distinct_outcomes(items),
-            "value-non-symbol-non-lambda-is-list" => {
-                self.proof_value_non_symbol_non_lambda_is_list(items)
+            "value-non-symbol-non-lambda-non-bv32-is-list" => {
+                self.proof_value_non_symbol_non_lambda_non_bv32_is_list(items)
             }
             "absurd-elim" => self.proof_absurd_elim(items),
             "eval-to" => self.proof_eval_to(items),
@@ -1992,15 +2048,16 @@ impl<'a> SourceParser<'a> {
         )))
     }
 
-    fn proof_value_non_symbol_non_lambda_is_list(
+    fn proof_value_non_symbol_non_lambda_non_bv32_is_list(
         &mut self,
         items: &[Expr],
     ) -> Result<ProofExpr, ParseError> {
-        expect_len("value-non-symbol-non-lambda-is-list", items, 4)?;
-        Ok(ProofExpr::ValueNonSymbolNonLambdaIsList {
+        expect_len("value-non-symbol-non-lambda-non-bv32-is-list", items, 5)?;
+        Ok(ProofExpr::ValueNonSymbolNonLambdaNonBv32IsList {
             value: Box::new(self.proof_expr_or_ref(&items[1])?),
             not_symbol: Box::new(self.proof_expr_or_ref(&items[2])?),
             not_lambda: Box::new(self.proof_expr_or_ref(&items[3])?),
+            not_bv32: Box::new(self.proof_expr_or_ref(&items[4])?),
         })
     }
 
@@ -2317,6 +2374,11 @@ fn parse_usize(atom: &str) -> Result<usize, ParseError> {
         .map_err(|_| ParseError::new(format!("expected natural number, got `{atom}`")))
 }
 
+fn parse_u32(atom: &str) -> Result<u32, ParseError> {
+    atom.parse()
+        .map_err(|_| ParseError::new(format!("expected u32 literal, got `{atom}`")))
+}
+
 fn parse_u64(atom: &str) -> Result<u64, ParseError> {
     atom.parse()
         .map_err(|_| ParseError::new(format!("expected natural number, got `{atom}`")))
@@ -2346,7 +2408,7 @@ mod tests {
         assert_eq!(env.computation("id"), Some(Name(1)));
         assert_eq!(env.theorem("id_computes"), Some(Name(2)));
         assert_eq!(env.symbol(":true"), Some(Symbol(1)));
-        assert_eq!(env.symbol("x"), Some(Symbol(LIST_KIND_SYMBOL.0 + 1)));
+        assert_eq!(env.symbol("x"), Some(Symbol(BV32_KIND_SYMBOL.0 + 1)));
         assert!(module.computation(Name(1)).is_some());
         assert!(module.theorem(Name(2)).is_some());
     }
@@ -2417,6 +2479,7 @@ mod tests {
         assert_eq!(env.symbol(":symbol"), Some(SYMBOL_KIND_SYMBOL));
         assert_eq!(env.symbol(":lambda"), Some(LAMBDA_KIND_SYMBOL));
         assert_eq!(env.symbol(":list"), Some(LIST_KIND_SYMBOL));
+        assert_eq!(env.symbol(":bv32"), Some(BV32_KIND_SYMBOL));
     }
 
     #[test]
@@ -2908,6 +2971,9 @@ mod tests {
                   value_is_lambda
                   (by
                     (eval))
+                  value_is_bv32
+                  (by
+                    (eval))
                   (by
                     (eval))
                   head
@@ -2932,10 +2998,11 @@ mod tests {
                 variable: Symbol(2_000),
                 symbol_assumption: Symbol(2_001),
                 lambda_assumption: Symbol(2_002),
-                head: Symbol(2_003),
-                tail: Symbol(2_004),
-                head_induction_hypothesis_assumption: Symbol(2_005),
-                tail_induction_hypothesis_assumption: Symbol(2_006),
+                bv32_assumption: Symbol(2_003),
+                head: Symbol(2_004),
+                tail: Symbol(2_005),
+                head_induction_hypothesis_assumption: Symbol(2_006),
+                tail_induction_hypothesis_assumption: Symbol(2_007),
                 ..
             }]
         ));
@@ -3650,10 +3717,11 @@ mod tests {
             (theorem value_classification
               (is-list nil)
               (proof
-                (value-non-symbol-non-lambda-is-list
+                (value-non-symbol-non-lambda-non-bv32-is-list
                   (primitive (is-value nil))
                   (eval-to (is-symbol nil) (quote :false))
-                  (eval-to (is-lambda nil) (quote :false)))))
+                  (eval-to (is-lambda nil) (quote :false))
+                  (eval-to (is-bv32 nil) (quote :false)))))
 
             (theorem application_argument
               (exists result (is-value result)
@@ -3742,7 +3810,7 @@ mod tests {
         ));
         assert!(matches!(
             &module.theorems[5].proof,
-            ProofScript::Proof(ProofExpr::ValueNonSymbolNonLambdaIsList { .. })
+            ProofScript::Proof(ProofExpr::ValueNonSymbolNonLambdaNonBv32IsList { .. })
         ));
         assert!(matches!(
             &module.theorems[6].proof,

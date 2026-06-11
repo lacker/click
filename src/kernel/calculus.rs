@@ -15,6 +15,7 @@ pub const FALSE_SYMBOL: Symbol = Symbol(2);
 pub const SYMBOL_KIND_SYMBOL: Symbol = Symbol(3);
 pub const LAMBDA_KIND_SYMBOL: Symbol = Symbol(4);
 pub const LIST_KIND_SYMBOL: Symbol = Symbol(5);
+pub const BV32_KIND_SYMBOL: Symbol = Symbol(6);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Lambda {
@@ -38,6 +39,7 @@ pub enum Computation {
     },
     Lambda(Lambda),
     Nil,
+    Bv32(u32),
     Cons {
         head: Box<Computation>,
         tail: Box<Computation>,
@@ -54,6 +56,22 @@ pub enum Computation {
         left: Box<Computation>,
         right: Box<Computation>,
     },
+    Bv32Eq {
+        left: Box<Computation>,
+        right: Box<Computation>,
+    },
+    Bv32Add {
+        left: Box<Computation>,
+        right: Box<Computation>,
+    },
+    Bv32Slt {
+        left: Box<Computation>,
+        right: Box<Computation>,
+    },
+    Bv32SignedAddOverflows {
+        left: Box<Computation>,
+        right: Box<Computation>,
+    },
     ValueKind(Box<Computation>),
     Ref(Name),
     Error(ErrorName),
@@ -66,6 +84,7 @@ pub enum Computation {
 pub enum Value {
     Lambda(Lambda),
     List(ListValue),
+    Bv32(u32),
     Quote(Symbol),
 }
 
@@ -106,6 +125,7 @@ impl Computation {
         match self {
             Self::Lambda(lambda) => Some(Value::Lambda(lambda.clone())),
             Self::Nil | Self::Cons { .. } => self.as_list_value().map(Value::List),
+            Self::Bv32(value) => Some(Value::Bv32(*value)),
             Self::Quote(symbol) => Some(Value::Quote(*symbol)),
             _ => None,
         }
@@ -149,10 +169,15 @@ impl Value {
         Self::Quote(symbol)
     }
 
+    pub fn bv32(value: u32) -> Self {
+        Self::Bv32(value)
+    }
+
     pub fn into_computation(self) -> Computation {
         match self {
             Self::Lambda(lambda) => Computation::Lambda(lambda),
             Self::List(list) => list.into_computation(),
+            Self::Bv32(value) => Computation::Bv32(value),
             Self::Quote(symbol) => Computation::Quote(symbol),
         }
     }
@@ -300,10 +325,11 @@ pub enum Proof {
         proof: Box<Proof>,
     },
     DistinctOutcomes(Box<Proof>),
-    ValueNonSymbolNonLambdaIsList {
+    ValueNonSymbolNonLambdaNonBv32IsList {
         value: Box<Proof>,
         not_symbol: Box<Proof>,
         not_lambda: Box<Proof>,
+        not_bv32: Box<Proof>,
     },
     AbsurdElim {
         absurd: Box<Proof>,
@@ -333,6 +359,8 @@ pub enum Proof {
         symbol_case: Box<Proof>,
         lambda_assumption: Symbol,
         lambda_case: Box<Proof>,
+        bv32_assumption: Symbol,
+        bv32_case: Box<Proof>,
         nil_case: Box<Proof>,
         head: Symbol,
         tail: Symbol,
@@ -470,6 +498,34 @@ pub fn symbol_eq(left: Computation, right: Computation) -> Computation {
     }
 }
 
+pub fn bv32_add(left: Computation, right: Computation) -> Computation {
+    Computation::Bv32Add {
+        left: Box::new(left),
+        right: Box::new(right),
+    }
+}
+
+pub fn bv32_eq(left: Computation, right: Computation) -> Computation {
+    Computation::Bv32Eq {
+        left: Box::new(left),
+        right: Box::new(right),
+    }
+}
+
+pub fn bv32_slt(left: Computation, right: Computation) -> Computation {
+    Computation::Bv32Slt {
+        left: Box::new(left),
+        right: Box::new(right),
+    }
+}
+
+pub fn bv32_signed_add_overflows(left: Computation, right: Computation) -> Computation {
+    Computation::Bv32SignedAddOverflows {
+        left: Box::new(left),
+        right: Box::new(right),
+    }
+}
+
 pub fn value_kind(computation: Computation) -> Computation {
     Computation::ValueKind(Box::new(computation))
 }
@@ -552,6 +608,7 @@ pub fn substitute(
             })
         }
         Computation::Nil => Computation::Nil,
+        Computation::Bv32(value) => Computation::Bv32(*value),
         Computation::Cons { head, tail } => Computation::Cons {
             head: Box::new(substitute(head, variable, replacement)),
             tail: Box::new(substitute(tail, variable, replacement)),
@@ -578,6 +635,24 @@ pub fn substitute(
             left: Box::new(substitute(left, variable, replacement)),
             right: Box::new(substitute(right, variable, replacement)),
         },
+        Computation::Bv32Eq { left, right } => Computation::Bv32Eq {
+            left: Box::new(substitute(left, variable, replacement)),
+            right: Box::new(substitute(right, variable, replacement)),
+        },
+        Computation::Bv32Add { left, right } => Computation::Bv32Add {
+            left: Box::new(substitute(left, variable, replacement)),
+            right: Box::new(substitute(right, variable, replacement)),
+        },
+        Computation::Bv32Slt { left, right } => Computation::Bv32Slt {
+            left: Box::new(substitute(left, variable, replacement)),
+            right: Box::new(substitute(right, variable, replacement)),
+        },
+        Computation::Bv32SignedAddOverflows { left, right } => {
+            Computation::Bv32SignedAddOverflows {
+                left: Box::new(substitute(left, variable, replacement)),
+                right: Box::new(substitute(right, variable, replacement)),
+            }
+        }
         Computation::ValueKind(computation) => {
             Computation::ValueKind(Box::new(substitute(computation, variable, replacement)))
         }
@@ -651,7 +726,7 @@ pub(super) fn add_free_symbols(computation: &Computation, symbols: &mut HashSet<
             body_symbols.remove(&lambda.parameter);
             symbols.extend(body_symbols);
         }
-        Computation::Nil => {}
+        Computation::Nil | Computation::Bv32(_) => {}
         Computation::Cons { head, tail } => {
             add_free_symbols(head, symbols);
             add_free_symbols(tail, symbols);
@@ -681,6 +756,13 @@ pub(super) fn add_free_symbols(computation: &Computation, symbols: &mut HashSet<
             add_free_symbols(left, symbols);
             add_free_symbols(right, symbols);
         }
+        Computation::Bv32Eq { left, right }
+        | Computation::Bv32Add { left, right }
+        | Computation::Bv32Slt { left, right }
+        | Computation::Bv32SignedAddOverflows { left, right } => {
+            add_free_symbols(left, symbols);
+            add_free_symbols(right, symbols);
+        }
         Computation::ValueKind(computation) => {
             add_free_symbols(computation, symbols);
         }
@@ -706,6 +788,7 @@ pub(super) fn rename_bound_var(computation: &Computation, old: Symbol, new: Symb
             body: Box::new(rename_bound_var(lambda.body.as_ref(), old, new)),
         }),
         Computation::Nil => Computation::Nil,
+        Computation::Bv32(value) => Computation::Bv32(*value),
         Computation::Cons { head, tail } => Computation::Cons {
             head: Box::new(rename_bound_var(head, old, new)),
             tail: Box::new(rename_bound_var(tail, old, new)),
@@ -739,6 +822,24 @@ pub(super) fn rename_bound_var(computation: &Computation, old: Symbol, new: Symb
             left: Box::new(rename_bound_var(left, old, new)),
             right: Box::new(rename_bound_var(right, old, new)),
         },
+        Computation::Bv32Eq { left, right } => Computation::Bv32Eq {
+            left: Box::new(rename_bound_var(left, old, new)),
+            right: Box::new(rename_bound_var(right, old, new)),
+        },
+        Computation::Bv32Add { left, right } => Computation::Bv32Add {
+            left: Box::new(rename_bound_var(left, old, new)),
+            right: Box::new(rename_bound_var(right, old, new)),
+        },
+        Computation::Bv32Slt { left, right } => Computation::Bv32Slt {
+            left: Box::new(rename_bound_var(left, old, new)),
+            right: Box::new(rename_bound_var(right, old, new)),
+        },
+        Computation::Bv32SignedAddOverflows { left, right } => {
+            Computation::Bv32SignedAddOverflows {
+                left: Box::new(rename_bound_var(left, old, new)),
+                right: Box::new(rename_bound_var(right, old, new)),
+            }
+        }
         Computation::ValueKind(computation) => {
             Computation::ValueKind(Box::new(rename_bound_var(computation, old, new)))
         }
@@ -776,7 +877,7 @@ pub(super) fn add_all_symbols(computation: &Computation, symbols: &mut HashSet<S
             symbols.insert(lambda.parameter);
             add_all_symbols(lambda.body.as_ref(), symbols);
         }
-        Computation::Nil => {}
+        Computation::Nil | Computation::Bv32(_) => {}
         Computation::Cons { head, tail } => {
             add_all_symbols(head, symbols);
             add_all_symbols(tail, symbols);
@@ -800,6 +901,13 @@ pub(super) fn add_all_symbols(computation: &Computation, symbols: &mut HashSet<S
             add_all_symbols(else_branch, symbols);
         }
         Computation::SymbolEq { left, right } => {
+            add_all_symbols(left, symbols);
+            add_all_symbols(right, symbols);
+        }
+        Computation::Bv32Eq { left, right }
+        | Computation::Bv32Add { left, right }
+        | Computation::Bv32Slt { left, right }
+        | Computation::Bv32SignedAddOverflows { left, right } => {
             add_all_symbols(left, symbols);
             add_all_symbols(right, symbols);
         }

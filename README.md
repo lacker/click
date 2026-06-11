@@ -73,9 +73,10 @@ Current status:
 - There is a tiny hand-built C0 model in `src/lang/c/`.
 - The model has source values for C types, expressions, statements,
   environments, stores, expression outcomes, and statement outcomes.
-- C integers are currently represented as tagged `int32` values containing 32
-  boolean bits, with signed less-than over that representation. This is still
-  tiny, but it is no longer using `nat` as a substitute for C integers.
+- C integers are represented as tagged `int32` values containing a kernel
+  `bv32` payload, with primitive signed less-than, wrapping addition, and signed
+  overflow checks. This is still tiny, but it is no longer using `nat` as a
+  substitute for C integers.
 - C undefined behavior is represented as ordinary C outcome values, not as
   Click kernel errors. Signed `int32` addition now returns UB on overflow.
 - The first judgments are in place: `c-has-type`, `c-stmt-well-typed`,
@@ -85,9 +86,8 @@ Current status:
   less-than and addition evaluations, an overflow-to-UB theorem, a UB
   propagation theorem through `return`, a well-typedness proof for a tiny `max`
   body, and concrete execution theorems for `max(0, 1)` and `max(1, 0)`.
-- The full C theorem load is intentionally an ignored slow test for now; default
-  tests load the C computations without rechecking every concrete 32-bit
-  arithmetic proof.
+- The full C theorem load is part of the normal test suite again; concrete
+  `int32` arithmetic proofs no longer rely on reducing 32-bit boolean lists.
 - Symbolic branch theorems for `max` are not done yet. The current obstacle is
   the interaction between call-by-value constructor evaluation and rewriting a
   symbolic `(c-int32-lt a b)` condition under the C execution model.
@@ -264,8 +264,8 @@ over list values.
 
 The kernel has both list induction and value induction. List induction reasons
 over a list spine. Value induction reasons over all finite values: symbols,
-lambdas, nil, and cons, with recursive hypotheses for both the cons head and
-tail. The head hypothesis is what makes proofs about nested list values
+lambdas, `bv32` values, nil, and cons, with recursive hypotheses for both the
+cons head and tail. The head hypothesis is what makes proofs about nested list values
 possible; ordinary list induction only gives a hypothesis for the tail.
 
 The core calculus can contain opaque names. The logistical layer gives those

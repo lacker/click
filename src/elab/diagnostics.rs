@@ -1,8 +1,8 @@
 //! Source-level rendering helpers for elaboration diagnostics.
 
 use crate::{
-    Computation, FALSE_SYMBOL, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Name, ProofContext, Prop,
-    RUNTIME_ERROR, SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL,
+    BV32_KIND_SYMBOL, Computation, FALSE_SYMBOL, LAMBDA_KIND_SYMBOL, LIST_KIND_SYMBOL, Name,
+    ProofContext, Prop, RUNTIME_ERROR, SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL,
 };
 
 use super::source::PrettyEnv;
@@ -52,6 +52,7 @@ pub(super) fn symbol_source(symbol: Symbol, pretty: &PrettyEnv) -> String {
         SYMBOL_KIND_SYMBOL => ":symbol".to_owned(),
         LAMBDA_KIND_SYMBOL => ":lambda".to_owned(),
         LIST_KIND_SYMBOL => ":list".to_owned(),
+        BV32_KIND_SYMBOL => ":bv32".to_owned(),
         _ => format!("%s{}", symbol.0),
     }
 }
@@ -84,6 +85,7 @@ fn computation_source(computation: &Computation, pretty: &PrettyEnv) -> String {
             )
         }
         Computation::Nil => "nil".to_owned(),
+        Computation::Bv32(value) => format!("(bv32 {value})"),
         Computation::Cons { head, tail } => {
             format!(
                 "(cons {} {})",
@@ -117,6 +119,34 @@ fn computation_source(computation: &Computation, pretty: &PrettyEnv) -> String {
         Computation::SymbolEq { left, right } => {
             format!(
                 "(symbol-eq {} {})",
+                computation_source(left, pretty),
+                computation_source(right, pretty)
+            )
+        }
+        Computation::Bv32Eq { left, right } => {
+            format!(
+                "(bv32-eq {} {})",
+                computation_source(left, pretty),
+                computation_source(right, pretty)
+            )
+        }
+        Computation::Bv32Add { left, right } => {
+            format!(
+                "(bv32-add {} {})",
+                computation_source(left, pretty),
+                computation_source(right, pretty)
+            )
+        }
+        Computation::Bv32Slt { left, right } => {
+            format!(
+                "(bv32-slt {} {})",
+                computation_source(left, pretty),
+                computation_source(right, pretty)
+            )
+        }
+        Computation::Bv32SignedAddOverflows { left, right } => {
+            format!(
+                "(bv32-sadd-overflows {} {})",
                 computation_source(left, pretty),
                 computation_source(right, pretty)
             )

@@ -245,28 +245,36 @@ pub(super) fn proof_expr_to_proof_in_context_with_target(
             context,
             pretty,
         )?))),
-        ProofExpr::ValueNonSymbolNonLambdaIsList {
+        ProofExpr::ValueNonSymbolNonLambdaNonBv32IsList {
             value,
             not_symbol,
             not_lambda,
-        } => Ok(Proof::ValueNonSymbolNonLambdaIsList {
+            not_bv32,
+        } => Ok(Proof::ValueNonSymbolNonLambdaNonBv32IsList {
             value: Box::new(subproof(
-                "value-non-symbol-non-lambda-is-list value",
+                "value-non-symbol-non-lambda-non-bv32-is-list value",
                 value,
                 theory,
                 context,
                 pretty,
             )?),
             not_symbol: Box::new(subproof(
-                "value-non-symbol-non-lambda-is-list not-symbol",
+                "value-non-symbol-non-lambda-non-bv32-is-list not-symbol",
                 not_symbol,
                 theory,
                 context,
                 pretty,
             )?),
             not_lambda: Box::new(subproof(
-                "value-non-symbol-non-lambda-is-list not-lambda",
+                "value-non-symbol-non-lambda-non-bv32-is-list not-lambda",
                 not_lambda,
+                theory,
+                context,
+                pretty,
+            )?),
+            not_bv32: Box::new(subproof(
+                "value-non-symbol-non-lambda-non-bv32-is-list not-bv32",
+                not_bv32,
                 theory,
                 context,
                 pretty,

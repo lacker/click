@@ -111,6 +111,7 @@ fn alpha_eq_computation_in_context(
             })
         }
         (Computation::Nil, Computation::Nil) => true,
+        (Computation::Bv32(left), Computation::Bv32(right)) => left == right,
         (
             Computation::Cons {
                 head: left_head,
@@ -157,6 +158,49 @@ fn alpha_eq_computation_in_context(
                 right: left_right,
             },
             Computation::SymbolEq {
+                left: right_left,
+                right: right_right,
+            },
+        ) => {
+            alpha_eq_computation_in_context(left_left, right_left, bindings)
+                && alpha_eq_computation_in_context(left_right, right_right, bindings)
+        }
+        (
+            Computation::Bv32Eq {
+                left: left_left,
+                right: left_right,
+            },
+            Computation::Bv32Eq {
+                left: right_left,
+                right: right_right,
+            },
+        )
+        | (
+            Computation::Bv32Add {
+                left: left_left,
+                right: left_right,
+            },
+            Computation::Bv32Add {
+                left: right_left,
+                right: right_right,
+            },
+        )
+        | (
+            Computation::Bv32Slt {
+                left: left_left,
+                right: left_right,
+            },
+            Computation::Bv32Slt {
+                left: right_left,
+                right: right_right,
+            },
+        )
+        | (
+            Computation::Bv32SignedAddOverflows {
+                left: left_left,
+                right: left_right,
+            },
+            Computation::Bv32SignedAddOverflows {
                 left: right_left,
                 right: right_right,
             },
@@ -291,14 +335,16 @@ fn proven_prop_in_context(
         Proof::DistinctOutcomes(proof) => {
             distinct_outcomes(proven_prop_in_context(proof, bindings, context)?, context)
         }
-        Proof::ValueNonSymbolNonLambdaIsList {
+        Proof::ValueNonSymbolNonLambdaNonBv32IsList {
             value,
             not_symbol,
             not_lambda,
-        } => value_non_symbol_non_lambda_is_list(
+            not_bv32,
+        } => value_non_symbol_non_lambda_non_bv32_is_list(
             proven_prop_in_context(value, bindings, context)?,
             proven_prop_in_context(not_symbol, bindings, context)?,
             proven_prop_in_context(not_lambda, bindings, context)?,
+            proven_prop_in_context(not_bv32, bindings, context)?,
         ),
         Proof::AbsurdElim { absurd, prop } => {
             let Prop::Absurd = proven_prop_in_context(absurd, bindings, context)? else {
@@ -357,6 +403,8 @@ fn proven_prop_in_context(
             symbol_case,
             lambda_assumption,
             lambda_case,
+            bv32_assumption,
+            bv32_case,
             nil_case,
             head,
             tail,
@@ -368,6 +416,7 @@ fn proven_prop_in_context(
                 variable: *variable,
                 symbol_assumption: *symbol_assumption,
                 lambda_assumption: *lambda_assumption,
+                bv32_assumption: *bv32_assumption,
                 head: *head,
                 tail: *tail,
                 head_induction_hypothesis_assumption: *head_induction_hypothesis_assumption,
@@ -376,6 +425,7 @@ fn proven_prop_in_context(
             let cases = ValueInductionCases {
                 symbol_case,
                 lambda_case,
+                bv32_case,
                 nil_case,
                 cons_case,
             };
@@ -659,6 +709,7 @@ fn apply_value_argument(variable: Symbol, prop: Prop, context: &ProofContext) ->
 enum ValueConstructor {
     Symbol,
     Lambda,
+    Bv32,
     Nil,
     Cons,
     List,
@@ -675,6 +726,7 @@ fn known_value_constructor(
     match computation {
         Computation::Quote(_) => Some(ValueConstructor::Symbol),
         Computation::Lambda(_) => Some(ValueConstructor::Lambda),
+        Computation::Bv32(_) => Some(ValueConstructor::Bv32),
         Computation::Nil => Some(ValueConstructor::Nil),
         Computation::Cons { .. } => Some(ValueConstructor::Cons),
         Computation::Var(_) if computation_is_list(computation, context) => {
@@ -689,11 +741,12 @@ fn value_constructors_are_distinct(left: ValueConstructor, right: ValueConstruct
 
     matches!(
         (left, right),
-        (Symbol, Lambda | Nil | Cons | List)
-            | (Lambda, Symbol | Nil | Cons | List)
-            | (Nil, Symbol | Lambda | Cons)
-            | (Cons, Symbol | Lambda | Nil)
-            | (List, Symbol | Lambda)
+        (Symbol, Lambda | Bv32 | Nil | Cons | List)
+            | (Lambda, Symbol | Bv32 | Nil | Cons | List)
+            | (Bv32, Symbol | Lambda | Nil | Cons | List)
+            | (Nil, Symbol | Lambda | Bv32 | Cons)
+            | (Cons, Symbol | Lambda | Bv32 | Nil)
+            | (List, Symbol | Lambda | Bv32)
     )
 }
 
@@ -718,10 +771,11 @@ fn distinct_outcomes(prop: Prop, context: &ProofContext) -> Option<Prop> {
     }
 }
 
-fn value_non_symbol_non_lambda_is_list(
+fn value_non_symbol_non_lambda_non_bv32_is_list(
     value: Prop,
     not_symbol: Prop,
     not_lambda: Prop,
+    not_bv32: Prop,
 ) -> Option<Prop> {
     let Prop::IsValue(computation) = value else {
         return None;
@@ -729,9 +783,11 @@ fn value_non_symbol_non_lambda_is_list(
 
     let expected_not_symbol = value_kind_is_not_kind(computation.clone(), SYMBOL_KIND_SYMBOL);
     let expected_not_lambda = value_kind_is_not_kind(computation.clone(), LAMBDA_KIND_SYMBOL);
+    let expected_not_bv32 = value_kind_is_not_kind(computation.clone(), BV32_KIND_SYMBOL);
 
     if alpha_eq_prop(&not_symbol, &expected_not_symbol)
         && alpha_eq_prop(&not_lambda, &expected_not_lambda)
+        && alpha_eq_prop(&not_bv32, &expected_not_bv32)
     {
         Some(Prop::IsList(computation))
     } else {
@@ -760,6 +816,7 @@ fn step_for_proof(computation: &Computation, bindings: &Bindings, context: &Proo
         }
         Computation::Lambda(_) => Step::Normal,
         Computation::Nil => Step::Normal,
+        Computation::Bv32(_) => Step::Normal,
         Computation::Cons { head, tail } => step_cons_for_proof(head, tail, bindings, context),
         Computation::Head(computation) => step_head_for_proof(computation, bindings, context),
         Computation::Tail(computation) => step_tail_for_proof(computation, bindings, context),
@@ -772,6 +829,22 @@ fn step_for_proof(computation: &Computation, bindings: &Bindings, context: &Proo
         Computation::SymbolEq { left, right } => {
             step_symbol_eq_for_proof(left, right, bindings, context)
         }
+        Computation::Bv32Eq { left, right } => {
+            step_bv32_binary_for_proof(Bv32BinaryOp::Eq, left, right, bindings, context)
+        }
+        Computation::Bv32Add { left, right } => {
+            step_bv32_binary_for_proof(Bv32BinaryOp::Add, left, right, bindings, context)
+        }
+        Computation::Bv32Slt { left, right } => {
+            step_bv32_binary_for_proof(Bv32BinaryOp::Slt, left, right, bindings, context)
+        }
+        Computation::Bv32SignedAddOverflows { left, right } => step_bv32_binary_for_proof(
+            Bv32BinaryOp::SignedAddOverflows,
+            left,
+            right,
+            bindings,
+            context,
+        ),
         Computation::ValueKind(computation) => {
             step_value_kind_for_proof(computation, bindings, context)
         }
@@ -863,7 +936,9 @@ fn step_cons_for_proof(
                 tail: Box::new(tail),
             }),
             Step::Normal if computation_is_effect(tail, context) => Step::Reduced(tail.clone()),
-            Step::Normal if computation_is_known_non_list(tail) => Step::Reduced(runtime_error()),
+            Step::Normal if computation_is_known_non_list(tail, context) => {
+                Step::Reduced(runtime_error())
+            }
             Step::Normal => Step::Normal,
         },
     }
@@ -883,9 +958,10 @@ fn step_head_for_proof(
             Computation::Cons { head, .. } if computation_is_list(computation, context) => {
                 Step::Reduced(head.as_ref().clone())
             }
-            Computation::Nil | Computation::Quote(_) | Computation::Lambda(_) => {
-                Step::Reduced(runtime_error())
-            }
+            Computation::Nil
+            | Computation::Quote(_)
+            | Computation::Lambda(_)
+            | Computation::Bv32(_) => Step::Reduced(runtime_error()),
             Computation::Ref(_)
             | Computation::Var(_)
             | Computation::Apply { .. }
@@ -894,6 +970,10 @@ fn step_head_for_proof(
             | Computation::ListCase(_)
             | Computation::If { .. }
             | Computation::SymbolEq { .. }
+            | Computation::Bv32Eq { .. }
+            | Computation::Bv32Add { .. }
+            | Computation::Bv32Slt { .. }
+            | Computation::Bv32SignedAddOverflows { .. }
             | Computation::ValueKind(_)
             | Computation::Cons { .. }
             | Computation::Error(_)
@@ -916,9 +996,10 @@ fn step_tail_for_proof(
             Computation::Cons { tail, .. } if computation_is_list(computation, context) => {
                 Step::Reduced(tail.as_ref().clone())
             }
-            Computation::Nil | Computation::Quote(_) | Computation::Lambda(_) => {
-                Step::Reduced(runtime_error())
-            }
+            Computation::Nil
+            | Computation::Quote(_)
+            | Computation::Lambda(_)
+            | Computation::Bv32(_) => Step::Reduced(runtime_error()),
             Computation::Ref(_)
             | Computation::Var(_)
             | Computation::Apply { .. }
@@ -927,6 +1008,10 @@ fn step_tail_for_proof(
             | Computation::ListCase(_)
             | Computation::If { .. }
             | Computation::SymbolEq { .. }
+            | Computation::Bv32Eq { .. }
+            | Computation::Bv32Add { .. }
+            | Computation::Bv32Slt { .. }
+            | Computation::Bv32SignedAddOverflows { .. }
             | Computation::ValueKind(_)
             | Computation::Cons { .. }
             | Computation::Error(_)
@@ -959,7 +1044,10 @@ fn step_list_case_for_proof(
                     list_case.list.as_ref(),
                 ))
             }
-            Computation::Quote(_) | Computation::Lambda(_) => Step::Reduced(runtime_error()),
+            _ if computation_is_known_non_list(list_case.list.as_ref(), context) => {
+                Step::Reduced(runtime_error())
+            }
+            Computation::Quote(_) | Computation::Lambda(_) | Computation::Bv32(_) => Step::Normal,
             Computation::Ref(_)
             | Computation::Var(_)
             | Computation::Apply { .. }
@@ -968,6 +1056,10 @@ fn step_list_case_for_proof(
             | Computation::ListCase(_)
             | Computation::If { .. }
             | Computation::SymbolEq { .. }
+            | Computation::Bv32Eq { .. }
+            | Computation::Bv32Add { .. }
+            | Computation::Bv32Slt { .. }
+            | Computation::Bv32SignedAddOverflows { .. }
             | Computation::ValueKind(_)
             | Computation::Cons { .. }
             | Computation::Error(_)
@@ -1054,6 +1146,80 @@ fn symbol_eq_result_for_proof(
     }
 }
 
+#[derive(Clone, Copy)]
+enum Bv32BinaryOp {
+    Eq,
+    Add,
+    Slt,
+    SignedAddOverflows,
+}
+
+fn step_bv32_binary_for_proof(
+    op: Bv32BinaryOp,
+    left: &Computation,
+    right: &Computation,
+    bindings: &Bindings,
+    context: &ProofContext,
+) -> Step {
+    match step_for_proof(left, bindings, context) {
+        Step::Reduced(left) => Step::Reduced(rebuild_bv32_binary(op, left, right.clone())),
+        Step::Normal if computation_is_effect(left, context) => Step::Reduced(left.clone()),
+        Step::Normal if !computation_is_known_value(left, context) => Step::Normal,
+        Step::Normal => match left {
+            Computation::Bv32(left_value) => match step_for_proof(right, bindings, context) {
+                Step::Reduced(right) => Step::Reduced(rebuild_bv32_binary(op, left.clone(), right)),
+                Step::Normal if computation_is_effect(right, context) => {
+                    Step::Reduced(right.clone())
+                }
+                Step::Normal if !computation_is_known_value(right, context) => Step::Normal,
+                Step::Normal => match right {
+                    Computation::Bv32(right_value) => {
+                        Step::Reduced(apply_bv32_binary(op, *left_value, *right_value))
+                    }
+                    _ => Step::Reduced(runtime_error()),
+                },
+            },
+            _ => Step::Reduced(runtime_error()),
+        },
+    }
+}
+
+fn rebuild_bv32_binary(op: Bv32BinaryOp, left: Computation, right: Computation) -> Computation {
+    match op {
+        Bv32BinaryOp::Eq => Computation::Bv32Eq {
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+        Bv32BinaryOp::Add => Computation::Bv32Add {
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+        Bv32BinaryOp::Slt => Computation::Bv32Slt {
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+        Bv32BinaryOp::SignedAddOverflows => Computation::Bv32SignedAddOverflows {
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+    }
+}
+
+fn apply_bv32_binary(op: Bv32BinaryOp, left: u32, right: u32) -> Computation {
+    match op {
+        Bv32BinaryOp::Eq => boolean_computation(left == right),
+        Bv32BinaryOp::Add => Computation::Bv32(left.wrapping_add(right)),
+        Bv32BinaryOp::Slt => boolean_computation((left as i32) < (right as i32)),
+        Bv32BinaryOp::SignedAddOverflows => {
+            boolean_computation((left as i32).overflowing_add(right as i32).1)
+        }
+    }
+}
+
+fn boolean_computation(value: bool) -> Computation {
+    Computation::Quote(if value { TRUE_SYMBOL } else { FALSE_SYMBOL })
+}
+
 fn step_value_kind_for_proof(
     computation: &Computation,
     bindings: &Bindings,
@@ -1074,9 +1240,21 @@ fn value_kind_result_for_proof(
     computation: &Computation,
     context: &ProofContext,
 ) -> Option<Computation> {
+    for kind in [
+        SYMBOL_KIND_SYMBOL,
+        LAMBDA_KIND_SYMBOL,
+        BV32_KIND_SYMBOL,
+        LIST_KIND_SYMBOL,
+    ] {
+        if context_contains_prop(context, &value_kind_is_kind(computation.clone(), kind)) {
+            return Some(Computation::Quote(kind));
+        }
+    }
+
     match computation {
         Computation::Quote(_) => Some(Computation::Quote(SYMBOL_KIND_SYMBOL)),
         Computation::Lambda(_) => Some(Computation::Quote(LAMBDA_KIND_SYMBOL)),
+        Computation::Bv32(_) => Some(Computation::Quote(BV32_KIND_SYMBOL)),
         _ if computation_is_list(computation, context) => {
             Some(Computation::Quote(LIST_KIND_SYMBOL))
         }
@@ -1090,21 +1268,33 @@ fn runtime_error() -> Computation {
 
 fn computation_is_known_non_callable(computation: &Computation, context: &ProofContext) -> bool {
     match computation {
-        Computation::Quote(_) | Computation::Nil => true,
+        Computation::Quote(_) | Computation::Nil | Computation::Bv32(_) => true,
         Computation::Cons { .. } => computation_is_list(computation, context),
         Computation::Var(_) => computation_is_list(computation, context),
         _ => false,
     }
 }
 
-fn computation_is_known_non_list(computation: &Computation) -> bool {
-    matches!(computation, Computation::Quote(_) | Computation::Lambda(_))
+fn computation_is_known_non_list(computation: &Computation, context: &ProofContext) -> bool {
+    matches!(
+        computation,
+        Computation::Quote(_) | Computation::Lambda(_) | Computation::Bv32(_)
+    ) || context_contains_prop(
+        context,
+        &value_kind_is_kind(computation.clone(), SYMBOL_KIND_SYMBOL),
+    ) || context_contains_prop(
+        context,
+        &value_kind_is_kind(computation.clone(), LAMBDA_KIND_SYMBOL),
+    ) || context_contains_prop(
+        context,
+        &value_kind_is_kind(computation.clone(), BV32_KIND_SYMBOL),
+    )
 }
 
 fn computation_is_known_non_bool(computation: &Computation, context: &ProofContext) -> bool {
     match computation {
         Computation::Quote(symbol) => !matches!(*symbol, TRUE_SYMBOL | FALSE_SYMBOL),
-        Computation::Nil | Computation::Lambda(_) => true,
+        Computation::Nil | Computation::Lambda(_) | Computation::Bv32(_) => true,
         Computation::Cons { .. } | Computation::Var(_) => computation_is_list(computation, context),
         _ => false,
     }
@@ -1115,7 +1305,7 @@ fn computation_is_known_non_symbol_value(
     context: &ProofContext,
 ) -> bool {
     match computation {
-        Computation::Nil | Computation::Lambda(_) => true,
+        Computation::Nil | Computation::Lambda(_) | Computation::Bv32(_) => true,
         Computation::Cons { .. } => computation_is_list(computation, context),
         Computation::Var(_) => computation_is_list(computation, context),
         _ => false,
@@ -1161,6 +1351,7 @@ struct ValueInductionSymbols {
     variable: Symbol,
     symbol_assumption: Symbol,
     lambda_assumption: Symbol,
+    bv32_assumption: Symbol,
     head: Symbol,
     tail: Symbol,
     head_induction_hypothesis_assumption: Symbol,
@@ -1170,6 +1361,7 @@ struct ValueInductionSymbols {
 struct ValueInductionCases<'a> {
     symbol_case: &'a Proof,
     lambda_case: &'a Proof,
+    bv32_case: &'a Proof,
     nil_case: &'a Proof,
     cons_case: &'a Proof,
 }
@@ -1248,6 +1440,7 @@ fn prove_value_induction(
         variable,
         symbol_assumption,
         lambda_assumption,
+        bv32_assumption,
         head,
         tail,
         head_induction_hypothesis_assumption,
@@ -1278,6 +1471,19 @@ fn prove_value_induction(
     );
     if !alpha_eq_prop(
         &proven_prop_in_context(cases.lambda_case, bindings, &lambda_context)?,
+        &variable_prop,
+    ) {
+        return None;
+    }
+
+    let mut bv32_context = context.clone();
+    bv32_context.insert(variable, is_value(variable_computation.clone()));
+    bv32_context.insert(
+        bv32_assumption,
+        value_kind_is_kind(variable_computation.clone(), BV32_KIND_SYMBOL),
+    );
+    if !alpha_eq_prop(
+        &proven_prop_in_context(cases.bv32_case, bindings, &bv32_context)?,
         &variable_prop,
     ) {
         return None;
@@ -1367,6 +1573,7 @@ fn value_induction_symbols_are_fresh(
         variable,
         symbol_assumption,
         lambda_assumption,
+        bv32_assumption,
         head,
         tail,
         head_induction_hypothesis_assumption,
@@ -1377,6 +1584,7 @@ fn value_induction_symbols_are_fresh(
         variable,
         symbol_assumption,
         lambda_assumption,
+        bv32_assumption,
         head,
         tail,
         head_induction_hypothesis_assumption,
@@ -1393,12 +1601,14 @@ fn value_induction_symbols_are_fresh(
     !context_mentions_symbol(context, variable)
         && !context_mentions_symbol(context, symbol_assumption)
         && !context_mentions_symbol(context, lambda_assumption)
+        && !context_mentions_symbol(context, bv32_assumption)
         && !context_mentions_symbol(context, head)
         && !context_mentions_symbol(context, tail)
         && !context_mentions_symbol(context, head_induction_hypothesis_assumption)
         && !context_mentions_symbol(context, tail_induction_hypothesis_assumption)
         && !prop_mentions_symbol(property, symbol_assumption)
         && !prop_mentions_symbol(property, lambda_assumption)
+        && !prop_mentions_symbol(property, bv32_assumption)
         && !prop_mentions_symbol(property, head)
         && !prop_mentions_symbol(property, tail)
         && !prop_mentions_symbol(property, head_induction_hypothesis_assumption)
@@ -1434,6 +1644,10 @@ fn computation_is_known_value(computation: &Computation, context: &ProofContext)
         || context_contains_prop(
             context,
             &value_kind_is_kind(computation.clone(), LIST_KIND_SYMBOL),
+        )
+        || context_contains_prop(
+            context,
+            &value_kind_is_kind(computation.clone(), BV32_KIND_SYMBOL),
         )
     {
         return true;

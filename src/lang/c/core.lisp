@@ -10,42 +10,6 @@
 (def c-type-bool
   (quote :c-type-bool))
 
-(def c-width-1
-  (cons (quote unit) nil))
-
-(def c-width-2
-  (append c-width-1 c-width-1))
-
-(def c-width-4
-  (append c-width-2 c-width-2))
-
-(def c-width-8
-  (append c-width-4 c-width-4))
-
-(def c-width-16
-  (append c-width-8 c-width-8))
-
-(def c-int32-width
-  (append c-width-16 c-width-16))
-
-(def c-int31-width
-  (tail c-int32-width))
-
-(def c-int30-width
-  (tail c-int31-width))
-
-(def c-is-bit
-  (lambda value
-    (or
-      (symbol-eq value (quote :true))
-      (symbol-eq value (quote :false)))))
-
-(def c-is-bit-list32
-  (lambda bits
-    (and
-      (nat-eq (length bits) c-int32-width)
-      (all c-is-bit bits))))
-
 (def c-int32
   (lambda bits
     (cons
@@ -67,142 +31,25 @@
           (symbol-eq (head cell) (quote :c-int32))
           (and
             (is-singleton (tail cell))
-            (c-is-bit-list32 (head (tail cell))))))
+            (is-bv32 (head (tail cell))))))
       (quote :false))))
 
-(def c-int32-zero-bits
-  (replicate c-int32-width (quote :false)))
-
-(def c-int32-one-bits
-  (append
-    (replicate c-int31-width (quote :false))
-    (cons (quote :true) nil)))
-
-(def c-int32-two-bits
-  (append
-    (replicate c-int30-width (quote :false))
-    (cons (quote :true) (cons (quote :false) nil))))
-
-(def c-int32-max-bits
-  (cons
-    (quote :false)
-    (replicate c-int31-width (quote :true))))
-
 (def c-int32-zero
-  (c-int32 c-int32-zero-bits))
+  (c-int32 (bv32 0)))
 
 (def c-int32-one
-  (c-int32 c-int32-one-bits))
+  (c-int32 (bv32 1)))
 
 (def c-int32-two
-  (c-int32 c-int32-two-bits))
+  (c-int32 (bv32 2)))
 
 (def c-int32-max
-  (c-int32 c-int32-max-bits))
-
-(def c-bit-eq
-  (lambda left
-    (lambda right
-      (if left
-        right
-        (not right)))))
-
-(def c-bit-lt
-  (lambda left
-    (lambda right
-      (if left
-        (quote :false)
-        right))))
-
-(def c-bit-xor
-  (lambda left
-    (lambda right
-      (if left
-        (not right)
-        right))))
-
-(def c-bit-sum
-  (lambda left
-    (lambda right
-      (lambda carry
-        (c-bit-xor
-          (c-bit-xor left right)
-          carry)))))
-
-(def c-bit-carry
-  (lambda left
-    (lambda right
-      (lambda carry
-        (or
-          (and left right)
-          (and carry (c-bit-xor left right)))))))
-
-(def c-uint-bits-lt
-  (lambda left_bits
-    (lambda right_bits
-      (list-case left_bits
-        (quote :false)
-        left_cell
-        (list-case right_bits
-          (quote :false)
-          right_cell
-          (if
-            (c-bit-eq (head left_cell) (head right_cell))
-            (c-uint-bits-lt (tail left_cell) (tail right_cell))
-            (c-bit-lt (head left_cell) (head right_cell))))))))
-
-(def c-int32-lt-bits
-  (lambda left_bits
-    (lambda right_bits
-      (if
-        (head left_bits)
-        (if
-          (head right_bits)
-          (c-uint-bits-lt left_bits right_bits)
-          (quote :true))
-        (if
-          (head right_bits)
-          (quote :false)
-          (c-uint-bits-lt left_bits right_bits))))))
-
-(def c-add-reversed-bits-with-carry
-  (lambda left_bits
-    (lambda right_bits
-      (lambda carry
-        (list-case left_bits
-          nil
-          left_cell
-          (list-case right_bits
-            nil
-            right_cell
-            (cons
-              (c-bit-sum (head left_cell) (head right_cell) carry)
-              (c-add-reversed-bits-with-carry
-                (tail left_cell)
-                (tail right_cell)
-                (c-bit-carry (head left_cell) (head right_cell) carry)))))))))
-
-(def c-int32-add-bits
-  (lambda left_bits
-    (lambda right_bits
-      (reverse
-        (c-add-reversed-bits-with-carry
-          (reverse left_bits)
-          (reverse right_bits)
-          (quote :false))))))
-
-(def c-int32-add-overflows
-  (lambda left_bits
-    (lambda right_bits
-      (lambda sum_bits
-        (and
-          (c-bit-eq (head left_bits) (head right_bits))
-          (not (c-bit-eq (head left_bits) (head sum_bits))))))))
+  (c-int32 (bv32 2147483647)))
 
 (def c-int32-lt-raw
   (lambda left
     (lambda right
-      (c-int32-lt-bits
+      (bv32-slt
         (c-int32-bits left)
         (c-int32-bits right)))))
 
@@ -366,23 +213,6 @@
       (c-stmt-ub (c-expr-ub-reason expr_result))
       c-stmt-runtime-error)))
 
-(def c-int32-add-finish
-  (lambda left_bits
-    (lambda right_bits
-      (lambda sum_bits
-        (if
-          (c-int32-add-overflows left_bits right_bits sum_bits)
-          (c-expr-ub c-ub-signed-overflow)
-          (c-expr-value (c-int32 sum_bits)))))))
-
-(def c-int32-add-bits-result
-  (lambda left_bits
-    (lambda right_bits
-      (c-int32-add-finish
-        left_bits
-        right_bits
-        (c-int32-add-bits left_bits right_bits)))))
-
 (def c-int32-add
   (lambda left
     (lambda right
@@ -390,9 +220,16 @@
         (c-is-int32 left)
         (if
           (c-is-int32 right)
-          (c-int32-add-bits-result
-            (c-int32-bits left)
-            (c-int32-bits right))
+          (if
+            (bv32-sadd-overflows
+              (c-int32-bits left)
+              (c-int32-bits right))
+            (c-expr-ub c-ub-signed-overflow)
+            (c-expr-value
+              (c-int32
+                (bv32-add
+                  (c-int32-bits left)
+                  (c-int32-bits right)))))
           c-expr-runtime-error)
         c-expr-runtime-error))))
 
@@ -720,14 +557,14 @@
     (c-int32-add c-int32-one c-int32-one)
     (c-expr-value c-int32-two))
   (by
-    (eval 262144)))
+    (eval 4096)))
 
 (theorem c_int32_max_one_add_overflows
   (computes-to
     (c-int32-add c-int32-max c-int32-one)
     (c-expr-ub c-ub-signed-overflow))
   (by
-    (eval 262144)))
+    (eval 4096)))
 
 (theorem c_int32_expr_preserves_type
   (forall type_env (is-list type_env)
@@ -804,7 +641,7 @@
       (c-lt-expr (c-int32-expr c-int32-zero) (c-int32-expr c-int32-one)))
     (c-expr-value (quote :true)))
   (by
-    (eval 32768)))
+    (eval 4096)))
 
 (theorem c_lt_literal_one_zero_eval
   (computes-to
@@ -813,7 +650,7 @@
       (c-lt-expr (c-int32-expr c-int32-one) (c-int32-expr c-int32-zero)))
     (c-expr-value (quote :false)))
   (by
-    (eval 32768)))
+    (eval 4096)))
 
 (theorem c_add_literal_one_one_has_type
   (computes-to
@@ -823,7 +660,7 @@
       c-type-int32)
     (quote :true))
   (by
-    (eval 32768)))
+    (eval 4096)))
 
 (theorem c_add_literal_max_one_has_type
   (computes-to
@@ -833,7 +670,7 @@
       c-type-int32)
     (quote :true))
   (by
-    (eval 32768)))
+    (eval 4096)))
 
 (theorem c_add_literal_one_one_eval
   (computes-to
@@ -842,7 +679,7 @@
       (c-add-expr (c-int32-expr c-int32-one) (c-int32-expr c-int32-one)))
     (c-expr-value c-int32-two))
   (by
-    (eval 262144)))
+    (eval 4096)))
 
 (theorem c_add_literal_max_one_ub
   (computes-to
@@ -851,7 +688,7 @@
       (c-add-expr (c-int32-expr c-int32-max) (c-int32-expr c-int32-one)))
     (c-expr-ub c-ub-signed-overflow))
   (by
-    (eval 262144)))
+    (eval 4096)))
 
 (theorem c_return_add_overflow_ub
   (computes-to
@@ -861,7 +698,7 @@
         (c-add-expr (c-int32-expr c-int32-max) (c-int32-expr c-int32-one))))
     (c-stmt-ub c-ub-signed-overflow))
   (by
-    (eval 262144)))
+    (eval 4096)))
 
 (theorem c_max_body_well_typed
   (computes-to
@@ -875,11 +712,11 @@
     (c-exec-stmt (c-max-store c-int32-zero c-int32-one) c-max-body)
     (c-stmt-return c-int32-one))
   (by
-    (eval 65536)))
+    (eval 8192)))
 
 (theorem c_max_one_zero_returns_one
   (computes-to
     (c-exec-stmt (c-max-store c-int32-one c-int32-zero) c-max-body)
     (c-stmt-return c-int32-one))
   (by
-    (eval 65536)))
+    (eval 8192)))

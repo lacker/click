@@ -8945,6 +8945,36 @@
                     (by
                       (exact pair_true)))))
               (by
+	                (exact
+	                  (absurd-elim
+	                    (distinct-outcomes impossible_eq)
+	                    (exists first (is-value first)
+	                      (exists second (is-value second)
+	                        (computes-to
+	                          value
+	                          (cons first (cons second nil))))))))))))
+      value_is_bv32
+      (by
+        (intro pair_true)
+        (have pair_false
+          (computes-to (is-pair value) (quote :false))
+          (by
+            (eval))
+          (by
+            (have impossible_eq
+              (computes-to (quote :false) (quote :true))
+              (by
+                (calc
+                  (quote :false)
+                  (==
+                    (is-pair value)
+                    (by
+                      (exact (symm pair_false))))
+                  (==
+                    (quote :true)
+                    (by
+                      (exact pair_true)))))
+              (by
                 (exact
                   (absurd-elim
                     (distinct-outcomes impossible_eq)

@@ -4,9 +4,9 @@ use std::collections::HashSet;
 
 use crate::kernel::{primitive_prop_holds, structural_primitive_prop_holds};
 use crate::{
-    Computation, LAMBDA_KIND_SYMBOL, ListCase, Name, Proof, ProofContext, Prop, SYMBOL_KIND_SYMBOL,
-    Symbol, TRUE_SYMBOL, Theory, alpha_eq_computation, alpha_eq_prop, equal, free_symbols, is_list,
-    is_value, substitute_prop, symbol_eq, value_kind,
+    BV32_KIND_SYMBOL, Computation, LAMBDA_KIND_SYMBOL, ListCase, Name, Proof, ProofContext, Prop,
+    SYMBOL_KIND_SYMBOL, Symbol, TRUE_SYMBOL, Theory, alpha_eq_computation, alpha_eq_prop, equal,
+    free_symbols, is_list, is_value, substitute_prop, symbol_eq, value_kind,
 };
 
 use super::diagnostics::{
@@ -197,6 +197,8 @@ fn tactic_steps_to_proof(
             symbol_case,
             lambda_assumption,
             lambda_case,
+            bv32_assumption,
+            bv32_case,
             nil_case,
             head,
             tail,
@@ -211,6 +213,8 @@ fn tactic_steps_to_proof(
                 symbol_case,
                 *lambda_assumption,
                 lambda_case,
+                *bv32_assumption,
+                bv32_case,
                 nil_case,
                 *head,
                 *tail,
@@ -1592,6 +1596,8 @@ fn tactic_value_induction(
     symbol_case: &TacticScript,
     lambda_assumption: Symbol,
     lambda_case: &TacticScript,
+    bv32_assumption: Symbol,
+    bv32_case: &TacticScript,
     nil_case: &TacticScript,
     head: Symbol,
     tail: Symbol,
@@ -1646,13 +1652,24 @@ fn tactic_value_induction(
     };
 
     let mut lambda_context = goal.context.clone();
-    lambda_context.insert(variable, is_value(variable_computation));
+    lambda_context.insert(variable, is_value(variable_computation.clone()));
     lambda_context.insert(
         lambda_assumption,
-        value_kind_is_kind(Computation::Var(variable), LAMBDA_KIND_SYMBOL),
+        value_kind_is_kind(variable_computation.clone(), LAMBDA_KIND_SYMBOL),
     );
     let lambda_goal = Goal {
         context: lambda_context,
+        target: variable_target.clone(),
+    };
+
+    let mut bv32_context = goal.context.clone();
+    bv32_context.insert(variable, is_value(variable_computation));
+    bv32_context.insert(
+        bv32_assumption,
+        value_kind_is_kind(Computation::Var(variable), BV32_KIND_SYMBOL),
+    );
+    let bv32_goal = Goal {
+        context: bv32_context,
         target: variable_target,
     };
 
@@ -1699,6 +1716,10 @@ fn tactic_value_induction(
             theory,
             &lambda_goal,
             pretty,
+        )?),
+        bv32_assumption,
+        bv32_case: Box::new(tactic_script_to_proof(
+            bv32_case, theory, &bv32_goal, pretty,
         )?),
         nil_case: Box::new(tactic_script_to_proof(nil_case, theory, &nil_goal, pretty)?),
         head,
@@ -2147,12 +2168,71 @@ fn replace_first_computation(
                     })
                 })
         }
+        Computation::Bv32Eq { left, right } => replace_first_computation(left, needle, replacement)
+            .map(|left| Computation::Bv32Eq {
+                left: Box::new(left),
+                right: right.clone(),
+            })
+            .or_else(|| {
+                replace_first_computation(right, needle, replacement).map(|right| {
+                    Computation::Bv32Eq {
+                        left: left.clone(),
+                        right: Box::new(right),
+                    }
+                })
+            }),
+        Computation::Bv32Add { left, right } => {
+            replace_first_computation(left, needle, replacement)
+                .map(|left| Computation::Bv32Add {
+                    left: Box::new(left),
+                    right: right.clone(),
+                })
+                .or_else(|| {
+                    replace_first_computation(right, needle, replacement).map(|right| {
+                        Computation::Bv32Add {
+                            left: left.clone(),
+                            right: Box::new(right),
+                        }
+                    })
+                })
+        }
+        Computation::Bv32Slt { left, right } => {
+            replace_first_computation(left, needle, replacement)
+                .map(|left| Computation::Bv32Slt {
+                    left: Box::new(left),
+                    right: right.clone(),
+                })
+                .or_else(|| {
+                    replace_first_computation(right, needle, replacement).map(|right| {
+                        Computation::Bv32Slt {
+                            left: left.clone(),
+                            right: Box::new(right),
+                        }
+                    })
+                })
+        }
+        Computation::Bv32SignedAddOverflows { left, right } => {
+            replace_first_computation(left, needle, replacement)
+                .map(|left| Computation::Bv32SignedAddOverflows {
+                    left: Box::new(left),
+                    right: right.clone(),
+                })
+                .or_else(|| {
+                    replace_first_computation(right, needle, replacement).map(|right| {
+                        Computation::Bv32SignedAddOverflows {
+                            left: left.clone(),
+                            right: Box::new(right),
+                        }
+                    })
+                })
+        }
         Computation::ValueKind(computation) => {
             replace_first_computation(computation, needle, replacement)
                 .map(|computation| Computation::ValueKind(Box::new(computation)))
         }
         Computation::Lambda(_)
         | Computation::Nil
+        | Computation::Bv32(_)
         | Computation::Ref(_)
         | Computation::Error(_)
         | Computation::Diverge
@@ -2243,9 +2323,20 @@ fn add_all_symbols_computation(computation: &Computation, symbols: &mut HashSet<
             add_all_symbols_computation(left, symbols);
             add_all_symbols_computation(right, symbols);
         }
+        Computation::Bv32Eq { left, right }
+        | Computation::Bv32Add { left, right }
+        | Computation::Bv32Slt { left, right }
+        | Computation::Bv32SignedAddOverflows { left, right } => {
+            add_all_symbols_computation(left, symbols);
+            add_all_symbols_computation(right, symbols);
+        }
         Computation::Var(symbol) | Computation::Quote(symbol) => {
             symbols.insert(*symbol);
         }
-        Computation::Nil | Computation::Ref(_) | Computation::Error(_) | Computation::Diverge => {}
+        Computation::Nil
+        | Computation::Bv32(_)
+        | Computation::Ref(_)
+        | Computation::Error(_)
+        | Computation::Diverge => {}
     }
 }
