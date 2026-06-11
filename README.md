@@ -76,12 +76,15 @@ Current status:
 - C integers are currently represented as tagged `int32` values containing 32
   boolean bits, with signed less-than over that representation. This is still
   tiny, but it is no longer using `nat` as a substitute for C integers.
+- C undefined behavior is represented as ordinary C outcome values, not as
+  Click kernel errors. Signed `int32` addition now returns UB on overflow.
 - The first judgments are in place: `c-has-type`, `c-stmt-well-typed`,
   `c-eval-expr`, and `c-exec-stmt`.
 - The checked theorem set includes determinism facts for expression and
-  statement execution, preservation-style facts for `int32` and less-than
-  literals, a well-typedness proof for a tiny `max` body, and concrete execution
-  theorems for `max(0, 1)` and `max(1, 0)`.
+  statement execution, preservation-style facts for `int32` literals, concrete
+  less-than and addition evaluations, an overflow-to-UB theorem, a UB
+  propagation theorem through `return`, a well-typedness proof for a tiny `max`
+  body, and concrete execution theorems for `max(0, 1)` and `max(1, 0)`.
 - Symbolic branch theorems for `max` are not done yet. The current obstacle is
   the interaction between call-by-value constructor evaluation and rewriting a
   symbolic `(c-int32-lt a b)` condition under the C execution model.
