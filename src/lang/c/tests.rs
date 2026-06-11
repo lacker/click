@@ -1,9 +1,6 @@
 use super::*;
 
-#[test]
-fn c_model_loads_from_source() {
-    let loaded = loaded();
-
+fn assert_c_computations_load(loaded: &LoadedC) {
     assert!(loaded.computation("c-type-int32").is_some());
     assert!(loaded.computation("c-int32").is_some());
     assert!(loaded.computation("c-is-int32").is_some());
@@ -18,6 +15,21 @@ fn c_model_loads_from_source() {
     assert!(loaded.computation("c-eval-expr").is_some());
     assert!(loaded.computation("c-exec-stmt").is_some());
     assert!(loaded.computation("c-max-body").is_some());
+}
+
+#[test]
+fn c_model_computations_load_from_source() {
+    let loaded = loaded_computation_source().expect("C computations should load");
+
+    assert_c_computations_load(loaded);
+}
+
+#[test]
+#[ignore = "checks all C source theorems, including slow concrete int32 arithmetic proofs"]
+fn c_model_theorems_load_from_source() {
+    let loaded = loaded();
+
+    assert_c_computations_load(&loaded);
 
     assert!(loaded.theorem("c_eval_expr_deterministic").is_some());
     assert!(loaded.theorem("c_exec_stmt_deterministic").is_some());

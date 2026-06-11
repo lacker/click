@@ -15,7 +15,6 @@ use super::diagnostics::{
 };
 use super::proof::{
     ProofElaborationError, exists_elim_context, list_induction_step_context,
-    proof_by_reduction_to_computation_in_theory_and_context,
     proof_by_same_normal_form_in_theory_and_context, proof_expr_to_proof_in_context,
     proof_expr_to_proof_in_context_with_target,
 };
@@ -487,22 +486,13 @@ fn tactic_eval(
         ));
     };
 
-    proof_by_reduction_to_computation_in_theory_and_context(
+    proof_by_same_normal_form_in_theory_and_context(
         left.clone(),
         right.clone(),
         theory,
         &goal.context,
         limit,
     )
-    .or_else(|_| {
-        proof_by_same_normal_form_in_theory_and_context(
-            left.clone(),
-            right.clone(),
-            theory,
-            &goal.context,
-            limit,
-        )
-    })
     .map_err(ProofElaborationError::EvaluationFailed)
 }
 

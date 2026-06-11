@@ -380,20 +380,6 @@ impl Theory {
         normal_form_in_bindings(computation, &self.bindings)
     }
 
-    pub(crate) fn normal_form_in_context(
-        &self,
-        computation: &Computation,
-        context: &ProofContext,
-    ) -> Computation {
-        let mut computation = computation.clone();
-
-        while let Step::Reduced(next) = self.reduce_in_context(&computation, context) {
-            computation = next;
-        }
-
-        computation
-    }
-
     pub fn normal_outcome(&self, computation: &Computation) -> Option<Outcome> {
         normal_outcome_in_bindings(computation, &self.bindings)
     }

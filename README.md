@@ -85,6 +85,9 @@ Current status:
   less-than and addition evaluations, an overflow-to-UB theorem, a UB
   propagation theorem through `return`, a well-typedness proof for a tiny `max`
   body, and concrete execution theorems for `max(0, 1)` and `max(1, 0)`.
+- The full C theorem load is intentionally an ignored slow test for now; default
+  tests load the C computations without rechecking every concrete 32-bit
+  arithmetic proof.
 - Symbolic branch theorems for `max` are not done yet. The current obstacle is
   the interaction between call-by-value constructor evaluation and rewriting a
   symbolic `(c-int32-lt a b)` condition under the C execution model.

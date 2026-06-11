@@ -668,6 +668,7 @@ pub(crate) fn proof_by_evaluation_to_computation_in_theory(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn proof_by_evaluation_to_computation_in_theory_and_context(
     computation: Computation,
     expected: Computation,
@@ -730,8 +731,16 @@ pub(crate) fn proof_by_same_normal_form_in_theory_and_context(
     context: &ProofContext,
     limit: usize,
 ) -> Result<Proof, EvaluationProofError> {
-    let left_normal = theory.normal_form_in_context(&left, context);
-    let right_normal = theory.normal_form_in_context(&right, context);
+    let left_chain = evaluation_chain_in_theory_and_context(left, theory, context, limit)?;
+    let right_chain = evaluation_chain_in_theory_and_context(right, theory, context, limit)?;
+    let left_normal = left_chain
+        .last()
+        .cloned()
+        .expect("evaluation chains are nonempty");
+    let right_normal = right_chain
+        .last()
+        .cloned()
+        .expect("evaluation chains are nonempty");
 
     if !alpha_eq_computation(&left_normal, &right_normal) {
         return Err(EvaluationProofError::UnexpectedNormalForm {
@@ -740,20 +749,8 @@ pub(crate) fn proof_by_same_normal_form_in_theory_and_context(
         });
     }
 
-    let left_proof = proof_by_evaluation_to_computation_in_theory_and_context(
-        left,
-        left_normal,
-        theory,
-        context,
-        limit,
-    )?;
-    let right_proof = proof_by_evaluation_to_computation_in_theory_and_context(
-        right,
-        right_normal,
-        theory,
-        context,
-        limit,
-    )?;
+    let left_proof = Proof::Steps(left_chain);
+    let right_proof = Proof::Steps(right_chain);
 
     Ok(Proof::Trans(
         Box::new(left_proof),
