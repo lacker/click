@@ -41,6 +41,7 @@ The first C target should be a deliberately small C subset, tentatively called
 `C0`:
 
 - integer expressions
+- specifically, real `int32` values rather than natural-number stand-ins
 - local variables
 - assignment
 - sequencing
@@ -69,9 +70,21 @@ undefined behavior under stated preconditions, and correct return values.
 
 Current status:
 
-- The kernel and first-layer prelude are good enough to start modeling a tiny
-  source language.
-- There is no C AST, C type model, C semantics, or C parser bridge yet.
+- There is a tiny hand-built C0 model in `src/lang/c/`.
+- The model has source values for C types, expressions, statements,
+  environments, stores, expression outcomes, and statement outcomes.
+- C integers are currently represented as tagged `int32` values containing 32
+  boolean bits, with signed less-than over that representation. This is still
+  tiny, but it is no longer using `nat` as a substitute for C integers.
+- The first judgments are in place: `c-has-type`, `c-stmt-well-typed`,
+  `c-eval-expr`, and `c-exec-stmt`.
+- The checked theorem set includes determinism facts for expression and
+  statement execution, preservation-style facts for `int32` and less-than
+  literals, a well-typedness proof for a tiny `max` body, and concrete execution
+  theorems for `max(0, 1)` and `max(1, 0)`.
+- Symbolic branch theorems for `max` are not done yet. The current obstacle is
+  the interaction between call-by-value constructor evaluation and rewriting a
+  symbolic `(c-int32-lt a b)` condition under the C execution model.
 - The existing S-expression source format is acceptable for bootstrapping the C
   model, but proof and model syntax should be revisited once C examples start
   getting large.
@@ -81,14 +94,11 @@ Current status:
 
 Near-term implementation shape:
 
-1. Add a C model module, probably under `src/lang/c/` or `src/c/`.
-2. Define source-language values for C types, expressions, statements,
-   environments, stores, and execution outcomes.
-3. Define typing judgments such as `c-has-type` and semantic judgments such as
-   `c-eval-expr` or `c-exec-stmt`.
-4. Prove basic determinism and preservation-style facts for the tiny subset.
-5. Prove the first concrete C function theorem.
-6. Add parsing/import from real C syntax only after the hand-built AST model is
+1. Strengthen the symbolic rewrite/control-flow story enough to prove symbolic
+   branch theorems for `max`.
+2. Add a tiny expression/statement pretty syntax so C examples are less
+   parenthesis-heavy.
+3. Add parsing/import from real C syntax only after the hand-built AST model is
    coherent.
 
 Deferred C features:
@@ -97,7 +107,8 @@ Deferred C features:
 - loops with invariants
 - function calls
 - structs and unions
-- signed and unsigned integer width details
+- integer width coverage beyond `int32`, overflow, promotions, and
+  signed/unsigned conversion
 - volatile and atomics
 - concurrency
 - preprocessor and build-system integration
