@@ -2,24 +2,45 @@
 
 `click` is a new programming language.
 
-Click's goal is to make it easy to add proofs to existing programs in other programming languages.
+Click's goal is to make it easy to prove things about programs in other programming languages.
 
-Some principles for the design of the kernel:
+## Megakernel Theory
 
-Simplicity
-It should be clear to an AI how to prove things that seem obvious.
-When a proof fails, it should be clear what went wrong.
-Proofs should be AI-comprehensible. Human-comprehensible is nice to have but not critical.
-Proofs do not need to be concise.
-The kernel should be clear and explicit, not necessarily minimal.
+There's a traditional principle of theorem prover design that says you should build a
+small, trusted kernel.
+The rationale is that you want it to be really small to avoid bugs, and then you prove
+things outward from there.
+my theory is that for the task of "systems engineering theorem proving",
+this is actually the wrong design.
+it's actually a good idea to put a whole lot of stuff into the kernel.
+the rationale is that it lets you develop faster.
+it lets you put more powerful stuff in the kernel, and it makes performance better.
+these are all really important for the systems engineering questions that we care about.
+like, can we formally verify the Linux kernel.
 
-Flexibility
-It is very important to handle C.
-It is also important, later, to handle C++, Rust, JavaScript, TypeScript, and Python.
-Eventually we must handle tricky parts like concurrency and mutable state.
-Handling advanced mathematics is a non-goal.
+there's a serious tradeoff!
+the downside is that you are more likely to have bugs in the kernel.
+but, for our domain, this is not the most important problem.
+we aren't concerned about like, the soundness of mathematics itself.
+we are verifying code that is already supposed to work.
+so if we do discover bugs in the kernel, we don't have a huge tower of false statements.
+it isn't going to lead to some sort of philosophical disaster.
 
-Click is designed in three layers:
+plus, we can always use other systems to prove the soundness of the megakernel itself.
+in fact, we should do that, eventually, with a number of differently implemented,
+alternative theorem-proving systems.
+that will increase trust in the megakernel.
+but it just isn't the priority during development, for the Click kernel to be simple.
+it should be fast on big codebases.
+it should be easy to use, in terms of, it should be really good at proving things.
+those are the priorities.
+
+In other words, we are happy to hardcode axioms and tactics
+about int32, char*, and float64 into the kernel.
+
+## Getting There From Here
+
+Click was originally designed in three layers:
 
 1. A core calculus with computations, values, effects, outcomes, propositions,
    and proofs. Based on a Lisp-like untyped list value.
@@ -27,7 +48,7 @@ Click is designed in three layers:
    reusing definitions and theorems.
 3. A flexible language modeling system.
 
-The medium-term goal is to prove useful facts about C code.
+This was before megakernel theory. I'm not sure how to get there from here.
 
 ## Human edited above this point, AI edited below this point.
 
