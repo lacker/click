@@ -117,6 +117,14 @@ Current status:
   basic pointer equality and load/store facts.
 - The full C theorem load is part of the normal test suite again; concrete
   `int32` arithmetic proofs no longer rely on reducing 32-bit boolean lists.
+- There is also a parallel megakernel spike in `src/megakernel.rs`. It keeps an
+  LCF-style abstract `Theorem` object, but gives the trusted kernel native C
+  values, bitvector terms, C expressions/statements, state, memory, outcomes,
+  and theorem-producing operations. It now supports native assignment,
+  sequencing, expression loads, statement stores, state-threading execution, and
+  symbolic execution under explicit branch/overflow assumptions. The native
+  `max`, overflow, state, and load/store tests are tiny compared with the
+  list-encoded C proofs and run effectively instantly.
 - The existing S-expression source format is acceptable for bootstrapping the C
   model, but proof and model syntax should be revisited once C examples start
   getting large.
@@ -126,12 +134,13 @@ Current status:
 
 Near-term implementation shape:
 
-1. Extend the C0 importer beyond the current tiny expression/statement subset,
-   while keeping it pointed at the existing executable model.
-2. Connect the pointer/memory model to C expression and statement semantics with
-   explicit load/store operations and UB propagation.
-3. Watch performance carefully. The current symbolic C proofs work, but they
-   expose that contextual proof evaluation is an expensive path.
+1. Grow the megakernel spike toward the C subset we actually want, rather than
+   continuing to encode new C features primarily as Lisp-style list programs.
+2. Add native function bodies/calls and make symbolic execution produce useful
+   precondition obligations instead of merely failing when it cannot decide a
+   branch or overflow condition.
+3. Decide which pieces of the old list-kernel path remain useful as regression
+   tests or source-language prototypes, and which should be retired.
 
 Deferred C features:
 
