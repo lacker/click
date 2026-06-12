@@ -191,6 +191,51 @@ fn c0_syntax_targets_megakernel_max_body() {
 }
 
 #[test]
+fn c0_syntax_targets_megakernel_max_function_call() {
+    let function = syntax::parse_function(
+        r#"
+        int32 max(int32 a, int32 b) {
+            if (a < b) {
+                return b;
+            } else {
+                return a;
+            }
+        }
+        "#,
+    )
+    .expect("max should parse");
+    let function = function.to_megakernel_function();
+
+    assert_eq!(function, crate::megakernel::c_max_function());
+
+    let state = crate::megakernel::CState::new();
+    let args = vec![
+        crate::megakernel::c_int32_literal(0),
+        crate::megakernel::c_int32_literal(1),
+    ];
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        args.clone(),
+        Default::default(),
+    )
+    .expect("parsed max function call should execute");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state: state.clone(),
+            function,
+            args,
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(1),
+                state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_syntax_targets_megakernel_assignment_and_sequence() {
     let function = syntax::parse_function(
         r#"
@@ -219,6 +264,42 @@ fn c0_syntax_targets_megakernel_assignment_and_sequence() {
             outcome: crate::megakernel::CStmtOutcome::Return {
                 value: crate::megakernel::int32(2),
                 state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_targets_megakernel_assignment_function_call() {
+    let function = syntax::parse_function(
+        r#"
+        int32 inc(int32 x) {
+            x = x + 1;
+            return x;
+        }
+        "#,
+    )
+    .expect("assignment function should parse");
+    let function = function.to_megakernel_function();
+    let state = crate::megakernel::CState::new().with_local("caller", crate::megakernel::int32(5));
+    let args = vec![crate::megakernel::c_int32_literal(1)];
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        args.clone(),
+        Default::default(),
+    )
+    .expect("parsed assignment function call should execute");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state: state.clone(),
+            function,
+            args,
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(2),
+                state,
             },
         }
     );
@@ -261,6 +342,50 @@ fn c0_syntax_targets_megakernel_store_and_load() {
             state: initial,
             stmt,
             outcome: crate::megakernel::CStmtOutcome::Return {
+                value: crate::megakernel::int32(9),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_targets_megakernel_store_and_load_function_call() {
+    let function = syntax::parse_function(
+        r#"
+        int32 load_after_store(int32* p) {
+            *p = 9;
+            return *p;
+        }
+        "#,
+    )
+    .expect("store/load function should parse")
+    .to_megakernel_function();
+
+    let ptr = crate::megakernel::Ptr {
+        block: "block".to_string(),
+        offset: crate::megakernel::Bv32Term::Const(0),
+    };
+    let state = crate::megakernel::CState::new().with_local("caller", crate::megakernel::int32(7));
+    let args = vec![crate::megakernel::c_ptr_value(ptr.clone())];
+    let final_state = crate::megakernel::CState::new()
+        .with_local("caller", crate::megakernel::int32(7))
+        .with_memory(crate::megakernel::CMemory::new().store(ptr, crate::megakernel::int32(9)));
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        args.clone(),
+        Default::default(),
+    )
+    .expect("parsed store/load function call should execute");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state,
+            function,
+            args,
+            outcome: crate::megakernel::CFunctionOutcome::Return {
                 value: crate::megakernel::int32(9),
                 state: final_state,
             },

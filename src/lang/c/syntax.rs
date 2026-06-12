@@ -77,6 +77,18 @@ impl C0Function {
     pub fn body_megakernel_stmt(&self) -> crate::megakernel::CStmt {
         self.body.to_megakernel_stmt()
     }
+
+    pub fn to_megakernel_function(&self) -> crate::megakernel::CFunction {
+        crate::megakernel::c_function(
+            self.return_type.to_megakernel_type(),
+            self.name.clone(),
+            self.params
+                .iter()
+                .map(C0Param::to_megakernel_param)
+                .collect(),
+            self.body.to_megakernel_stmt(),
+        )
+    }
 }
 
 impl C0Param {
@@ -86,6 +98,19 @@ impl C0Param {
 
     pub fn ty(&self) -> C0Type {
         self.ty
+    }
+
+    pub fn to_megakernel_param(&self) -> crate::megakernel::CParam {
+        crate::megakernel::c_param(self.name.clone(), self.ty.to_megakernel_type())
+    }
+}
+
+impl C0Type {
+    pub fn to_megakernel_type(self) -> crate::megakernel::CType {
+        match self {
+            Self::Int32 => crate::megakernel::CType::Int32,
+            Self::Int32Ptr => crate::megakernel::CType::Int32Ptr,
+        }
     }
 }
 

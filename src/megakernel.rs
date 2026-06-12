@@ -14,6 +14,7 @@ pub struct Var(pub u64);
 pub enum Sort {
     Bool,
     Bv32,
+    CType,
     CInt32,
     CBool,
     CPtr,
@@ -21,6 +22,7 @@ pub enum Sort {
     CMemory,
     CState,
     CStmtOutcome,
+    CFunctionOutcome,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -52,6 +54,12 @@ pub enum CValue {
     Ptr(Ptr),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CType {
+    Int32,
+    Int32Ptr,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CExpr {
     Value(CValue),
@@ -81,6 +89,20 @@ pub enum CStmt {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CParam {
+    name: String,
+    ty: CType,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CFunction {
+    return_type: CType,
+    name: String,
+    params: Vec<CParam>,
+    body: CStmt,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CUndefinedBehavior {
     SignedOverflow,
     InvalidMemory,
@@ -90,6 +112,8 @@ pub enum CUndefinedBehavior {
 pub enum CRuntimeError {
     UnboundVariable(String),
     TypeMismatch,
+    WrongArity { expected: usize, actual: usize },
+    MissingReturn,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -102,6 +126,13 @@ pub enum CExprOutcome {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CStmtOutcome {
     Normal(CState),
+    Return { value: CValue, state: CState },
+    Ub(CUndefinedBehavior),
+    RuntimeError(CRuntimeError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CFunctionOutcome {
     Return { value: CValue, state: CState },
     Ub(CUndefinedBehavior),
     RuntimeError(CRuntimeError),
@@ -130,6 +161,7 @@ pub enum Term {
     CValue(CValue),
     CExprOutcome(CExprOutcome),
     CStmtOutcome(CStmtOutcome),
+    CFunctionOutcome(CFunctionOutcome),
     CMemory(CMemory),
     CState(CState),
 }
@@ -147,6 +179,12 @@ pub enum Prop {
         state: CState,
         stmt: CStmt,
         outcome: CStmtOutcome,
+    },
+    CFunctionExecutes {
+        state: CState,
+        function: CFunction,
+        args: Vec<CExpr>,
+        outcome: CFunctionOutcome,
     },
     CMemoryLoads {
         memory: CMemory,
@@ -200,6 +238,19 @@ struct CStmtPath {
     obligations: Vec<BoolObligation>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CFunctionPath {
+    outcome: CFunctionOutcome,
+    obligations: Vec<BoolObligation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CArgsPath {
+    values: Vec<CValue>,
+    outcome: Option<CFunctionOutcome>,
+    obligations: Vec<BoolObligation>,
+}
+
 impl Bv32Term {
     pub fn var(var: Var) -> Self {
         Self::Var(var)
@@ -237,6 +288,64 @@ impl BoolTerm {
             (Some(left), Some(right)) => Self::Const((left as i32).overflowing_add(right as i32).1),
             _ => Self::Bv32SignedAddOverflows(Box::new(left), Box::new(right)),
         }
+    }
+}
+
+impl CType {
+    fn accepts(self, value: &CValue) -> bool {
+        matches!(
+            (self, value),
+            (Self::Int32, CValue::Int32(_)) | (Self::Int32Ptr, CValue::Ptr(_))
+        )
+    }
+}
+
+impl CParam {
+    pub fn new(name: impl Into<String>, ty: CType) -> Self {
+        Self {
+            name: name.into(),
+            ty,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn ty(&self) -> CType {
+        self.ty
+    }
+}
+
+impl CFunction {
+    pub fn new(
+        return_type: CType,
+        name: impl Into<String>,
+        params: Vec<CParam>,
+        body: CStmt,
+    ) -> Self {
+        Self {
+            return_type,
+            name: name.into(),
+            params,
+            body,
+        }
+    }
+
+    pub fn return_type(&self) -> CType {
+        self.return_type
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn params(&self) -> &[CParam] {
+        &self.params
+    }
+
+    pub fn body(&self) -> &CStmt {
+        &self.body
     }
 }
 
@@ -422,11 +531,33 @@ pub fn c_if(condition: CExpr, then_branch: CStmt, else_branch: CStmt) -> CStmt {
     }
 }
 
+pub fn c_param(name: impl Into<String>, ty: CType) -> CParam {
+    CParam::new(name, ty)
+}
+
+pub fn c_function(
+    return_type: CType,
+    name: impl Into<String>,
+    params: Vec<CParam>,
+    body: CStmt,
+) -> CFunction {
+    CFunction::new(return_type, name, params, body)
+}
+
 pub fn c_max_body() -> CStmt {
     c_if(
         c_lt(c_var("a"), c_var("b")),
         c_return(c_var("b")),
         c_return(c_var("a")),
+    )
+}
+
+pub fn c_max_function() -> CFunction {
+    c_function(
+        CType::Int32,
+        "max",
+        vec![c_param("a", CType::Int32), c_param("b", CType::Int32)],
+        c_max_body(),
     )
 }
 
@@ -488,6 +619,48 @@ pub fn prove_symbolic_c_execution_with_obligations(
             let prop = Prop::CStmtExecutes {
                 state: state.clone(),
                 stmt: stmt.clone(),
+                outcome: path.outcome,
+            };
+            let theorem = Theorem::new(wrap_bool_facts(prop, &assumptions, &path.obligations));
+            SymbolicCExecutionPath {
+                obligations: path.obligations,
+                theorem,
+            }
+        })
+        .collect();
+
+    SymbolicCExecution { paths }
+}
+
+pub fn prove_symbolic_c_function_execution(
+    state: CState,
+    function: CFunction,
+    args: Vec<CExpr>,
+    assumptions: Assumptions,
+) -> Option<Theorem> {
+    let execution =
+        prove_symbolic_c_function_execution_with_obligations(state, function, args, assumptions);
+    let mut paths = execution.paths.into_iter();
+    let path = paths.next()?;
+    if paths.next().is_some() {
+        return None;
+    }
+    Some(path.theorem)
+}
+
+pub fn prove_symbolic_c_function_execution_with_obligations(
+    state: CState,
+    function: CFunction,
+    args: Vec<CExpr>,
+    assumptions: Assumptions,
+) -> SymbolicCExecution {
+    let paths = exec_c_function_paths(&state, &function, &args, &assumptions)
+        .into_iter()
+        .map(|path| {
+            let prop = Prop::CFunctionExecutes {
+                state: state.clone(),
+                function: function.clone(),
+                args: args.clone(),
                 outcome: path.outcome,
             };
             let theorem = Theorem::new(wrap_bool_facts(prop, &assumptions, &path.obligations));
@@ -1045,6 +1218,150 @@ fn exec_c_stmt_paths_with_prefix(
         .collect()
 }
 
+fn exec_c_function_paths(
+    caller_state: &CState,
+    function: &CFunction,
+    args: &[CExpr],
+    assumptions: &Assumptions,
+) -> Vec<CFunctionPath> {
+    if args.len() != function.params.len() {
+        return vec![CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::WrongArity {
+                expected: function.params.len(),
+                actual: args.len(),
+            }),
+            obligations: Vec::new(),
+        }];
+    }
+
+    let mut paths = Vec::new();
+    for args_path in eval_c_args_paths(caller_state, args, assumptions) {
+        if let Some(outcome) = args_path.outcome {
+            paths.push(CFunctionPath {
+                outcome,
+                obligations: args_path.obligations,
+            });
+            continue;
+        }
+
+        let Some(callee_state) = bind_c_function_args(caller_state, function, &args_path.values)
+        else {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                obligations: args_path.obligations,
+            });
+            continue;
+        };
+
+        for body_path in exec_c_stmt_paths(&callee_state, function.body(), assumptions) {
+            let Some(obligations) =
+                merge_obligations(&args_path.obligations, &body_path.obligations, assumptions)
+            else {
+                continue;
+            };
+
+            paths.push(CFunctionPath {
+                outcome: function_outcome_from_body(caller_state, function, body_path.outcome),
+                obligations,
+            });
+        }
+    }
+
+    paths
+}
+
+fn eval_c_args_paths(state: &CState, args: &[CExpr], assumptions: &Assumptions) -> Vec<CArgsPath> {
+    let mut paths = vec![CArgsPath {
+        values: Vec::new(),
+        outcome: None,
+        obligations: Vec::new(),
+    }];
+
+    for arg in args {
+        let mut next_paths = Vec::new();
+        for path in paths {
+            if path.outcome.is_some() {
+                next_paths.push(path);
+                continue;
+            }
+
+            for arg_path in eval_c_expr_paths(state, arg, assumptions) {
+                let Some(obligations) =
+                    merge_obligations(&path.obligations, &arg_path.obligations, assumptions)
+                else {
+                    continue;
+                };
+
+                match arg_path.outcome {
+                    CExprOutcome::Value(value) => {
+                        let mut values = path.values.clone();
+                        values.push(value);
+                        next_paths.push(CArgsPath {
+                            values,
+                            outcome: None,
+                            obligations,
+                        });
+                    }
+                    CExprOutcome::Ub(ub) => next_paths.push(CArgsPath {
+                        values: path.values.clone(),
+                        outcome: Some(CFunctionOutcome::Ub(ub)),
+                        obligations,
+                    }),
+                    CExprOutcome::RuntimeError(error) => next_paths.push(CArgsPath {
+                        values: path.values.clone(),
+                        outcome: Some(CFunctionOutcome::RuntimeError(error)),
+                        obligations,
+                    }),
+                }
+            }
+        }
+        paths = next_paths;
+    }
+
+    paths
+}
+
+fn bind_c_function_args(
+    caller_state: &CState,
+    function: &CFunction,
+    values: &[CValue],
+) -> Option<CState> {
+    let mut callee_state = CState::new().with_memory(caller_state.memory.clone());
+    for (param, value) in function.params().iter().zip(values) {
+        if !param.ty().accepts(value) {
+            return None;
+        }
+        callee_state
+            .locals
+            .set(param.name().to_string(), value.clone());
+    }
+    Some(callee_state)
+}
+
+fn function_outcome_from_body(
+    caller_state: &CState,
+    function: &CFunction,
+    outcome: CStmtOutcome,
+) -> CFunctionOutcome {
+    match outcome {
+        CStmtOutcome::Return { value, state } => {
+            if !function.return_type().accepts(&value) {
+                return CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch);
+            }
+
+            let mut caller_state = caller_state.clone();
+            caller_state.memory = state.memory;
+            CFunctionOutcome::Return {
+                value,
+                state: caller_state,
+            }
+        }
+        CStmtOutcome::Normal(_) => CFunctionOutcome::RuntimeError(CRuntimeError::MissingReturn),
+        CStmtOutcome::Ub(ub) => CFunctionOutcome::Ub(ub),
+        CStmtOutcome::RuntimeError(error) => CFunctionOutcome::RuntimeError(error),
+    }
+}
+
 impl From<u32> for Bv32Term {
     fn from(value: u32) -> Self {
         Self::Const(value)
@@ -1074,6 +1391,137 @@ mod tests {
                 outcome: CStmtOutcome::Return {
                     value: int32(1),
                     state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn concrete_max_function_call_preserves_caller_locals() {
+        let state = CState::new().with_local("caller", int32(99));
+        let function = c_max_function();
+        let args = vec![c_int32_literal(0), c_int32_literal(1)];
+        let theorem = prove_symbolic_c_function_execution(
+            state.clone(),
+            function.clone(),
+            args.clone(),
+            Assumptions::new(),
+        )
+        .expect("max function call should execute");
+
+        assert_eq!(
+            theorem.prop(),
+            &Prop::CFunctionExecutes {
+                state: state.clone(),
+                function,
+                args,
+                outcome: CFunctionOutcome::Return {
+                    value: int32(1),
+                    state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn symbolic_max_function_call_reports_branch_obligations() {
+        let a = Var(14);
+        let b = Var(15);
+        let a_bits = Bv32Term::Var(a);
+        let b_bits = Bv32Term::Var(b);
+        let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
+        let state = CState::new();
+        let function = c_max_function();
+        let args = vec![
+            CExpr::Value(int32(a_bits.clone())),
+            CExpr::Value(int32(b_bits.clone())),
+        ];
+        let execution = prove_symbolic_c_function_execution_with_obligations(
+            state.clone(),
+            function.clone(),
+            args.clone(),
+            Assumptions::new(),
+        );
+
+        assert_eq!(execution.paths().len(), 2);
+        assert_eq!(
+            execution.paths()[0].obligations(),
+            &[BoolObligation::new(condition.clone(), true)]
+        );
+        assert_eq!(
+            execution.paths()[0].theorem().prop(),
+            &Prop::Implies(
+                Box::new(Prop::BoolIs(condition.clone(), true)),
+                Box::new(Prop::CFunctionExecutes {
+                    state: state.clone(),
+                    function: function.clone(),
+                    args: args.clone(),
+                    outcome: CFunctionOutcome::Return {
+                        value: int32(b_bits),
+                        state: state.clone(),
+                    },
+                }),
+            )
+        );
+
+        assert_eq!(
+            execution.paths()[1].obligations(),
+            &[BoolObligation::new(condition.clone(), false)]
+        );
+        assert_eq!(
+            execution.paths()[1].theorem().prop(),
+            &Prop::Implies(
+                Box::new(Prop::BoolIs(condition, false)),
+                Box::new(Prop::CFunctionExecutes {
+                    state: state.clone(),
+                    function,
+                    args,
+                    outcome: CFunctionOutcome::Return {
+                        value: int32(a_bits),
+                        state,
+                    },
+                }),
+            )
+        );
+    }
+
+    #[test]
+    fn function_call_threads_memory_but_discards_callee_locals() {
+        let ptr = Ptr {
+            block: "block".to_string(),
+            offset: Bv32Term::Const(0),
+        };
+        let state = CState::new().with_local("caller", int32(42));
+        let function = c_function(
+            CType::Int32,
+            "store_and_load",
+            vec![c_param("p", CType::Int32Ptr)],
+            c_seq(
+                c_store(c_var("p"), c_int32_literal(9)),
+                c_return(c_load(c_var("p"))),
+            ),
+        );
+        let args = vec![c_ptr_value(ptr.clone())];
+        let final_state = CState::new()
+            .with_local("caller", int32(42))
+            .with_memory(CMemory::new().store(ptr, int32(9)));
+        let theorem = prove_symbolic_c_function_execution(
+            state.clone(),
+            function.clone(),
+            args.clone(),
+            Assumptions::new(),
+        )
+        .expect("store/load function call should execute");
+
+        assert_eq!(
+            theorem.prop(),
+            &Prop::CFunctionExecutes {
+                state,
+                function,
+                args,
+                outcome: CFunctionOutcome::Return {
+                    value: int32(9),
+                    state: final_state,
                 },
             }
         );

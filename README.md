@@ -122,9 +122,12 @@ Current status:
   values, bitvector terms, C expressions/statements, state, memory, outcomes,
   and theorem-producing operations. It now supports native assignment,
   sequencing, expression loads, statement stores, state-threading execution, and
-  path-based symbolic execution with explicit branch/overflow obligations. The
-  native `max`, overflow, state, and load/store tests are tiny compared with
-  the list-encoded C proofs and run effectively instantly.
+  path-based symbolic execution with explicit branch/overflow obligations. It
+  also has native function bodies/calls with typed parameter binding, return
+  checking, caller-local preservation, and memory effects threaded back to the
+  caller. The native `max`, overflow, state, function-call, and load/store
+  tests are tiny compared with the list-encoded C proofs and run effectively
+  instantly.
 - The existing S-expression source format is acceptable for bootstrapping the C
   model, but proof and model syntax should be revisited once C examples start
   getting large.
@@ -136,8 +139,8 @@ Near-term implementation shape:
 
 1. Grow the megakernel spike toward the C subset we actually want, rather than
    continuing to encode new C features primarily as Lisp-style list programs.
-2. Add native function bodies/calls on top of the new obligation-producing
-   symbolic execution path.
+2. Add memory validity obligations for loads/stores, on top of the new
+   obligation-producing symbolic execution path.
 3. Decide which pieces of the old list-kernel path remain useful as regression
    tests or source-language prototypes, and which should be retired.
 
