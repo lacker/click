@@ -15,6 +15,7 @@ use super::diagnostics::{
 };
 use super::proof::{
     ProofElaborationError, exists_elim_context, list_induction_step_context,
+    proof_by_same_contextual_normal_form_in_theory_and_context,
     proof_by_same_normal_form_in_theory_and_context, proof_expr_to_proof_in_context,
     proof_expr_to_proof_in_context_with_target,
 };
@@ -77,6 +78,10 @@ fn tactic_steps_to_proof(
         TacticExpr::Eval { limit } => {
             ensure_no_more_tactics(rest, "eval")?;
             tactic_eval(*limit, theory, goal, pretty)
+        }
+        TacticExpr::EvalContext { limit } => {
+            ensure_no_more_tactics(rest, "eval-context")?;
+            tactic_eval_context(*limit, theory, goal, pretty)
         }
         TacticExpr::Simp { rules } => {
             ensure_no_more_tactics(rest, "simp")?;
@@ -491,6 +496,29 @@ fn tactic_eval(
     };
 
     proof_by_same_normal_form_in_theory_and_context(
+        left.clone(),
+        right.clone(),
+        theory,
+        &goal.context,
+        limit,
+    )
+    .map_err(ProofElaborationError::EvaluationFailed)
+}
+
+fn tactic_eval_context(
+    limit: usize,
+    theory: &Theory,
+    goal: &Goal,
+    pretty: &PrettyEnv,
+) -> Result<Proof, ProofElaborationError> {
+    let Prop::Equal(left, right) = &goal.target else {
+        return Err(tactic_failed(
+            "eval-context",
+            goal_not_equality_message("eval_context_goal_not_equality", goal, pretty),
+        ));
+    };
+
+    proof_by_same_contextual_normal_form_in_theory_and_context(
         left.clone(),
         right.clone(),
         theory,

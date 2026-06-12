@@ -650,6 +650,28 @@ pub(crate) fn evaluation_chain_in_theory_and_context(
     Err(EvaluationProofError::StepLimitExceeded { limit })
 }
 
+pub(crate) fn contextual_evaluation_chain_in_theory_and_context(
+    computation: Computation,
+    theory: &Theory,
+    context: &ProofContext,
+    limit: usize,
+) -> Result<Vec<Computation>, EvaluationProofError> {
+    let mut computation = computation;
+    let mut chain = vec![computation.clone()];
+
+    for _ in 0..limit {
+        match theory.reduce_contextual_in_context(&computation, context) {
+            Step::Reduced(next) => {
+                chain.push(next.clone());
+                computation = next;
+            }
+            Step::Normal => return Ok(chain),
+        }
+    }
+
+    Err(EvaluationProofError::StepLimitExceeded { limit })
+}
+
 #[cfg(test)]
 pub(crate) fn proof_by_evaluation_in_theory(
     computation: Computation,
@@ -759,6 +781,42 @@ pub(crate) fn proof_by_same_normal_form_in_theory_and_context(
 
     let left_proof = Proof::Steps(left_chain);
     let right_proof = Proof::Steps(right_chain);
+
+    Ok(Proof::Trans(
+        Box::new(left_proof),
+        Box::new(Proof::Symm(Box::new(right_proof))),
+    ))
+}
+
+pub(crate) fn proof_by_same_contextual_normal_form_in_theory_and_context(
+    left: Computation,
+    right: Computation,
+    theory: &Theory,
+    context: &ProofContext,
+    limit: usize,
+) -> Result<Proof, EvaluationProofError> {
+    let left_chain =
+        contextual_evaluation_chain_in_theory_and_context(left, theory, context, limit)?;
+    let right_chain =
+        contextual_evaluation_chain_in_theory_and_context(right, theory, context, limit)?;
+    let left_normal = left_chain
+        .last()
+        .cloned()
+        .expect("evaluation chains are nonempty");
+    let right_normal = right_chain
+        .last()
+        .cloned()
+        .expect("evaluation chains are nonempty");
+
+    if !alpha_eq_computation(&left_normal, &right_normal) {
+        return Err(EvaluationProofError::UnexpectedNormalForm {
+            expected: left_normal,
+            actual: right_normal,
+        });
+    }
+
+    let left_proof = Proof::ContextSteps(left_chain);
+    let right_proof = Proof::ContextSteps(right_chain);
 
     Ok(Proof::Trans(
         Box::new(left_proof),

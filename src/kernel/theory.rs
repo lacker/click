@@ -4,7 +4,7 @@ use super::{
     calculus::*,
     check::{
         check_in_bindings, check_in_bindings_and_context, free_symbols_prop, proven_prop,
-        step_in_bindings_and_context, substitute_prop,
+        step_contextual_in_bindings_and_context, step_in_bindings_and_context, substitute_prop,
     },
     eval::{normal_form_in_bindings, normal_outcome_in_bindings, step_in_bindings},
 };
@@ -374,6 +374,14 @@ impl Theory {
         context: &ProofContext,
     ) -> Step {
         step_in_bindings_and_context(computation, &self.bindings, context)
+    }
+
+    pub(crate) fn reduce_contextual_in_context(
+        &self,
+        computation: &Computation,
+        context: &ProofContext,
+    ) -> Step {
+        step_contextual_in_bindings_and_context(computation, &self.bindings, context)
     }
 
     pub fn normal_form(&self, computation: &Computation) -> Computation {

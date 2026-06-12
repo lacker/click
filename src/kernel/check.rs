@@ -271,6 +271,14 @@ pub(super) fn step_in_bindings_and_context(
     step_for_proof(computation, bindings, context)
 }
 
+pub(super) fn step_contextual_in_bindings_and_context(
+    computation: &Computation,
+    bindings: &Bindings,
+    context: &ProofContext,
+) -> Step {
+    step_contextual_for_proof(computation, bindings, context)
+}
+
 fn proven_prop_in_context(
     proof: &Proof,
     bindings: &Bindings,
@@ -357,6 +365,7 @@ fn proven_prop_in_context(
             Step::Normal => None,
         },
         Proof::Steps(computations) => proven_steps(computations, bindings, context),
+        Proof::ContextSteps(computations) => proven_context_steps(computations, bindings, context),
         Proof::Rewrite {
             equality,
             proof,
@@ -809,34 +818,67 @@ fn value_kind_is_kind(computation: Computation, kind: Symbol) -> Prop {
     )
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ProofStepMode {
+    Normal,
+    Contextual,
+}
+
 fn step_for_proof(computation: &Computation, bindings: &Bindings, context: &ProofContext) -> Step {
+    step_for_proof_with_mode(computation, bindings, context, ProofStepMode::Normal)
+}
+
+fn step_contextual_for_proof(
+    computation: &Computation,
+    bindings: &Bindings,
+    context: &ProofContext,
+) -> Step {
+    step_for_proof_with_mode(computation, bindings, context, ProofStepMode::Contextual)
+}
+
+fn step_for_proof_with_mode(
+    computation: &Computation,
+    bindings: &Bindings,
+    context: &ProofContext,
+    mode: ProofStepMode,
+) -> Step {
+    if mode == ProofStepMode::Contextual {
+        if let Some(reduced) = context_reduction_for_proof(computation, bindings, context) {
+            return Step::Reduced(reduced);
+        }
+    }
+
     match computation {
         Computation::Apply { function, argument } => {
-            step_apply_for_proof(function, argument, bindings, context)
+            step_apply_for_proof(function, argument, bindings, context, mode)
         }
         Computation::Lambda(_) => Step::Normal,
         Computation::Nil => Step::Normal,
         Computation::Bv32(_) => Step::Normal,
-        Computation::Cons { head, tail } => step_cons_for_proof(head, tail, bindings, context),
-        Computation::Head(computation) => step_head_for_proof(computation, bindings, context),
-        Computation::Tail(computation) => step_tail_for_proof(computation, bindings, context),
-        Computation::ListCase(list_case) => step_list_case_for_proof(list_case, bindings, context),
+        Computation::Cons { head, tail } => {
+            step_cons_for_proof(head, tail, bindings, context, mode)
+        }
+        Computation::Head(computation) => step_head_for_proof(computation, bindings, context, mode),
+        Computation::Tail(computation) => step_tail_for_proof(computation, bindings, context, mode),
+        Computation::ListCase(list_case) => {
+            step_list_case_for_proof(list_case, bindings, context, mode)
+        }
         Computation::If {
             condition,
             then_branch,
             else_branch,
-        } => step_if_for_proof(condition, then_branch, else_branch, bindings, context),
+        } => step_if_for_proof(condition, then_branch, else_branch, bindings, context, mode),
         Computation::SymbolEq { left, right } => {
-            step_symbol_eq_for_proof(left, right, bindings, context)
+            step_symbol_eq_for_proof(left, right, bindings, context, mode)
         }
         Computation::Bv32Eq { left, right } => {
-            step_bv32_binary_for_proof(Bv32BinaryOp::Eq, left, right, bindings, context)
+            step_bv32_binary_for_proof(Bv32BinaryOp::Eq, left, right, bindings, context, mode)
         }
         Computation::Bv32Add { left, right } => {
-            step_bv32_binary_for_proof(Bv32BinaryOp::Add, left, right, bindings, context)
+            step_bv32_binary_for_proof(Bv32BinaryOp::Add, left, right, bindings, context, mode)
         }
         Computation::Bv32Slt { left, right } => {
-            step_bv32_binary_for_proof(Bv32BinaryOp::Slt, left, right, bindings, context)
+            step_bv32_binary_for_proof(Bv32BinaryOp::Slt, left, right, bindings, context, mode)
         }
         Computation::Bv32SignedAddOverflows { left, right } => step_bv32_binary_for_proof(
             Bv32BinaryOp::SignedAddOverflows,
@@ -844,9 +886,10 @@ fn step_for_proof(computation: &Computation, bindings: &Bindings, context: &Proo
             right,
             bindings,
             context,
+            mode,
         ),
         Computation::ValueKind(computation) => {
-            step_value_kind_for_proof(computation, bindings, context)
+            step_value_kind_for_proof(computation, bindings, context, mode)
         }
         Computation::Ref(name) => match bindings.computation(*name) {
             Some(computation) => Step::Reduced(computation.clone()),
@@ -857,18 +900,117 @@ fn step_for_proof(computation: &Computation, bindings: &Bindings, context: &Proo
     }
 }
 
+fn context_reduction_for_proof(
+    computation: &Computation,
+    bindings: &Bindings,
+    context: &ProofContext,
+) -> Option<Computation> {
+    let mut assumptions = context.iter().collect::<Vec<_>>();
+    assumptions.sort_by_key(|(symbol, _)| **symbol);
+
+    for (_, prop) in assumptions {
+        if let Some(reduced) =
+            prop_context_reduction_for_proof(computation, prop, bindings, context)
+        {
+            return Some(reduced);
+        }
+    }
+
+    None
+}
+
+fn prop_context_reduction_for_proof(
+    computation: &Computation,
+    prop: &Prop,
+    bindings: &Bindings,
+    context: &ProofContext,
+) -> Option<Computation> {
+    match prop {
+        Prop::Equal(left, right)
+            if !alpha_eq_computation(right, computation)
+                && computation_is_context_reduction_target(right)
+                && context_reduction_left_matches(left, computation, bindings, context) =>
+        {
+            Some(right.clone())
+        }
+        Prop::And(left, right) => {
+            prop_context_reduction_for_proof(computation, left, bindings, context)
+                .or_else(|| prop_context_reduction_for_proof(computation, right, bindings, context))
+        }
+        _ => None,
+    }
+}
+
+fn context_reduction_left_matches(
+    left: &Computation,
+    computation: &Computation,
+    bindings: &Bindings,
+    context: &ProofContext,
+) -> bool {
+    alpha_eq_computation(left, computation)
+        || bounded_normal_forms_match_for_context_reduction(left, computation, bindings, context)
+}
+
+fn bounded_normal_forms_match_for_context_reduction(
+    left: &Computation,
+    computation: &Computation,
+    bindings: &Bindings,
+    context: &ProofContext,
+) -> bool {
+    let Some(left_normal) = bounded_normal_form_for_context_reduction(left, bindings, context)
+    else {
+        return false;
+    };
+    let Some(computation_normal) =
+        bounded_normal_form_for_context_reduction(computation, bindings, context)
+    else {
+        return false;
+    };
+
+    alpha_eq_computation(&left_normal, &computation_normal)
+}
+
+fn bounded_normal_form_for_context_reduction(
+    computation: &Computation,
+    bindings: &Bindings,
+    context: &ProofContext,
+) -> Option<Computation> {
+    let mut computation = computation.clone();
+
+    for _ in 0..128 {
+        match step_for_proof_with_mode(&computation, bindings, context, ProofStepMode::Normal) {
+            Step::Reduced(next) => computation = next,
+            Step::Normal => return Some(computation),
+        }
+    }
+
+    None
+}
+
+fn computation_is_context_reduction_target(computation: &Computation) -> bool {
+    matches!(
+        computation,
+        Computation::Quote(TRUE_SYMBOL)
+            | Computation::Quote(FALSE_SYMBOL)
+            | Computation::Bv32(_)
+            | Computation::Error(_)
+            | Computation::Diverge
+    )
+}
+
 fn step_apply_for_proof(
     function: &Computation,
     argument: &Computation,
     bindings: &Bindings,
     context: &ProofContext,
+    mode: ProofStepMode,
 ) -> Step {
     match function {
         Computation::Lambda(lambda) => {
-            step_lambda_application_for_proof(lambda, argument, bindings, context)
+            step_lambda_application_for_proof(lambda, argument, bindings, context, mode)
         }
         _ if computation_is_effect(function, context) => Step::Reduced(function.clone()),
-        _ => match step_for_proof(function, bindings, context) {
+        _ => match step_for_proof_with_mode(function, bindings, context, mode) {
             Step::Reduced(function) => Step::Reduced(Computation::Apply {
                 function: Box::new(function),
                 argument: Box::new(argument.clone()),
@@ -877,7 +1019,7 @@ fn step_apply_for_proof(
                 Step::Reduced(runtime_error())
             }
             Step::Normal => {
-                step_neutral_application_for_proof(function, argument, bindings, context)
+                step_neutral_application_for_proof(function, argument, bindings, context, mode)
             }
         },
     }
@@ -888,8 +1030,9 @@ fn step_lambda_application_for_proof(
     argument: &Computation,
     bindings: &Bindings,
     context: &ProofContext,
+    mode: ProofStepMode,
 ) -> Step {
-    match step_for_proof(argument, bindings, context) {
+    match step_for_proof_with_mode(argument, bindings, context, mode) {
         Step::Reduced(argument) => Step::Reduced(Computation::Apply {
             function: Box::new(Computation::Lambda(lambda.clone())),
             argument: Box::new(argument),
@@ -907,8 +1050,9 @@ fn step_neutral_application_for_proof(
     argument: &Computation,
     bindings: &Bindings,
     context: &ProofContext,
+    mode: ProofStepMode,
 ) -> Step {
-    match step_for_proof(argument, bindings, context) {
+    match step_for_proof_with_mode(argument, bindings, context, mode) {
         Step::Reduced(argument) => Step::Reduced(Computation::Apply {
             function: Box::new(function.clone()),
             argument: Box::new(argument),
@@ -923,14 +1067,15 @@ fn step_cons_for_proof(
     tail: &Computation,
     bindings: &Bindings,
     context: &ProofContext,
+    mode: ProofStepMode,
 ) -> Step {
-    match step_for_proof(head, bindings, context) {
+    match step_for_proof_with_mode(head, bindings, context, mode) {
         Step::Reduced(head) => Step::Reduced(Computation::Cons {
             head: Box::new(head),
             tail: Box::new(tail.clone()),
         }),
         Step::Normal if computation_is_effect(head, context) => Step::Reduced(head.clone()),
-        Step::Normal => match step_for_proof(tail, bindings, context) {
+        Step::Normal => match step_for_proof_with_mode(tail, bindings, context, mode) {
             Step::Reduced(tail) => Step::Reduced(Computation::Cons {
                 head: Box::new(head.clone()),
                 tail: Box::new(tail),
@@ -948,8 +1093,9 @@ fn step_head_for_proof(
     computation: &Computation,
     bindings: &Bindings,
     context: &ProofContext,
+    mode: ProofStepMode,
 ) -> Step {
-    match step_for_proof(computation, bindings, context) {
+    match step_for_proof_with_mode(computation, bindings, context, mode) {
         Step::Reduced(computation) => Step::Reduced(Computation::Head(Box::new(computation))),
         Step::Normal if computation_is_effect(computation, context) => {
             Step::Reduced(computation.clone())
@@ -986,8 +1132,9 @@ fn step_tail_for_proof(
     computation: &Computation,
     bindings: &Bindings,
     context: &ProofContext,
+    mode: ProofStepMode,
 ) -> Step {
-    match step_for_proof(computation, bindings, context) {
+    match step_for_proof_with_mode(computation, bindings, context, mode) {
         Step::Reduced(computation) => Step::Reduced(Computation::Tail(Box::new(computation))),
         Step::Normal if computation_is_effect(computation, context) => {
             Step::Reduced(computation.clone())
@@ -1024,8 +1171,9 @@ fn step_list_case_for_proof(
     list_case: &ListCase,
     bindings: &Bindings,
     context: &ProofContext,
+    mode: ProofStepMode,
 ) -> Step {
-    match step_for_proof(list_case.list.as_ref(), bindings, context) {
+    match step_for_proof_with_mode(list_case.list.as_ref(), bindings, context, mode) {
         Step::Reduced(list) => Step::Reduced(Computation::ListCase(ListCase {
             list: Box::new(list),
             nil: list_case.nil.clone(),
@@ -1074,8 +1222,9 @@ fn step_if_for_proof(
     else_branch: &Computation,
     bindings: &Bindings,
     context: &ProofContext,
+    mode: ProofStepMode,
 ) -> Step {
-    match step_for_proof(condition, bindings, context) {
+    match step_for_proof_with_mode(condition, bindings, context, mode) {
         Step::Reduced(condition) => Step::Reduced(Computation::If {
             condition: Box::new(condition),
             then_branch: Box::new(then_branch.clone()),
@@ -1100,15 +1249,16 @@ fn step_symbol_eq_for_proof(
     right: &Computation,
     bindings: &Bindings,
     context: &ProofContext,
+    mode: ProofStepMode,
 ) -> Step {
-    match step_for_proof(left, bindings, context) {
+    match step_for_proof_with_mode(left, bindings, context, mode) {
         Step::Reduced(left) => Step::Reduced(Computation::SymbolEq {
             left: Box::new(left),
             right: Box::new(right.clone()),
         }),
         Step::Normal if computation_is_effect(left, context) => Step::Reduced(left.clone()),
         Step::Normal if !computation_is_known_value(left, context) => Step::Normal,
-        Step::Normal => match step_for_proof(right, bindings, context) {
+        Step::Normal => match step_for_proof_with_mode(right, bindings, context, mode) {
             Step::Reduced(right) => Step::Reduced(Computation::SymbolEq {
                 left: Box::new(left.clone()),
                 right: Box::new(right),
@@ -1160,25 +1310,30 @@ fn step_bv32_binary_for_proof(
     right: &Computation,
     bindings: &Bindings,
     context: &ProofContext,
+    mode: ProofStepMode,
 ) -> Step {
-    match step_for_proof(left, bindings, context) {
+    match step_for_proof_with_mode(left, bindings, context, mode) {
         Step::Reduced(left) => Step::Reduced(rebuild_bv32_binary(op, left, right.clone())),
         Step::Normal if computation_is_effect(left, context) => Step::Reduced(left.clone()),
         Step::Normal if !computation_is_known_value(left, context) => Step::Normal,
         Step::Normal => match left {
-            Computation::Bv32(left_value) => match step_for_proof(right, bindings, context) {
-                Step::Reduced(right) => Step::Reduced(rebuild_bv32_binary(op, left.clone(), right)),
-                Step::Normal if computation_is_effect(right, context) => {
-                    Step::Reduced(right.clone())
-                }
-                Step::Normal if !computation_is_known_value(right, context) => Step::Normal,
-                Step::Normal => match right {
-                    Computation::Bv32(right_value) => {
-                        Step::Reduced(apply_bv32_binary(op, *left_value, *right_value))
+            Computation::Bv32(left_value) => {
+                match step_for_proof_with_mode(right, bindings, context, mode) {
+                    Step::Reduced(right) => {
+                        Step::Reduced(rebuild_bv32_binary(op, left.clone(), right))
                     }
-                    _ => Step::Reduced(runtime_error()),
-                },
-            },
+                    Step::Normal if computation_is_effect(right, context) => {
+                        Step::Reduced(right.clone())
+                    }
+                    Step::Normal if !computation_is_known_value(right, context) => Step::Normal,
+                    Step::Normal => match right {
+                        Computation::Bv32(right_value) => {
+                            Step::Reduced(apply_bv32_binary(op, *left_value, *right_value))
+                        }
+                        _ => Step::Reduced(runtime_error()),
+                    },
+                }
+            }
             _ => Step::Reduced(runtime_error()),
         },
     }
@@ -1224,8 +1379,9 @@ fn step_value_kind_for_proof(
     computation: &Computation,
     bindings: &Bindings,
     context: &ProofContext,
+    mode: ProofStepMode,
 ) -> Step {
-    match step_for_proof(computation, bindings, context) {
+    match step_for_proof_with_mode(computation, bindings, context, mode) {
         Step::Reduced(computation) => Step::Reduced(Computation::ValueKind(Box::new(computation))),
         Step::Normal if computation_is_effect(computation, context) => {
             Step::Reduced(computation.clone())
@@ -1330,6 +1486,24 @@ fn proven_steps(
 
     for next in rest {
         match step_for_proof(previous, bindings, context) {
+            Step::Reduced(reduced) if alpha_eq_computation(&reduced, next) => previous = next,
+            _ => return None,
+        }
+    }
+
+    Some(Prop::Equal(first.clone(), previous.clone()))
+}
+
+fn proven_context_steps(
+    computations: &[Computation],
+    bindings: &Bindings,
+    context: &ProofContext,
+) -> Option<Prop> {
+    let (first, rest) = computations.split_first()?;
+    let mut previous = first;
+
+    for next in rest {
+        match step_contextual_for_proof(previous, bindings, context) {
             Step::Reduced(reduced) if alpha_eq_computation(&reduced, next) => previous = next,
             _ => return None,
         }

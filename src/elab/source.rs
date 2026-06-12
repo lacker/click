@@ -384,6 +384,9 @@ pub(crate) enum TacticExpr {
     Eval {
         limit: usize,
     },
+    EvalContext {
+        limit: usize,
+    },
     Simp {
         rules: Vec<ProofExpr>,
     },
@@ -1406,6 +1409,7 @@ impl<'a> SourceParser<'a> {
             "assumption" => self.tactic_assumption(items),
             "have" => self.tactic_have(items),
             "eval" => self.tactic_eval(items),
+            "eval-context" => self.tactic_eval_context(items),
             "simp" => self.tactic_simp(items),
             "simpa" => self.tactic_simpa(items),
             "fold" => self.tactic_fold(items),
@@ -1492,6 +1496,19 @@ impl<'a> SourceParser<'a> {
             }),
             _ => Err(ParseError::new(format!(
                 "`eval` expects 0 or 1 arguments, got {}",
+                items.len().saturating_sub(1)
+            ))),
+        }
+    }
+
+    fn tactic_eval_context(&mut self, items: &[Expr]) -> Result<TacticExpr, ParseError> {
+        match items.len() {
+            1 => Ok(TacticExpr::EvalContext { limit: 128 }),
+            2 => Ok(TacticExpr::EvalContext {
+                limit: parse_usize(atom(&items[1])?)?,
+            }),
+            _ => Err(ParseError::new(format!(
+                "`eval-context` expects 0 or 1 arguments, got {}",
                 items.len().saturating_sub(1)
             ))),
         }

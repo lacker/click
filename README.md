@@ -106,12 +106,17 @@ Current status:
   statement execution, preservation-style facts for `int32` literals, concrete
   less-than and addition evaluations, an overflow-to-UB theorem, a UB
   propagation theorem through `return`, a well-typedness proof for a tiny `max`
-  body, and concrete execution theorems for `max(0, 1)` and `max(1, 0)`.
+  body, concrete execution theorems for `max(0, 1)` and `max(1, 0)`, and
+  symbolic branch theorems for the two paths through `max`.
+- There is a tiny C0 syntax importer for `int32` functions with `if`/`else`,
+  `return`, variables, integer literals, `<`, and `+`. It currently emits the
+  same Click AST representation used by the hand-built model.
+- There is a first pointer/memory model: pointers are tagged values with a
+  block symbol and `bv32` offset, memory is a list of pointer/value cells, and
+  invalid loads produce C UB outcome values. The checked theorem set includes
+  basic pointer equality and load/store facts.
 - The full C theorem load is part of the normal test suite again; concrete
   `int32` arithmetic proofs no longer rely on reducing 32-bit boolean lists.
-- Symbolic branch theorems for `max` are not done yet. The current obstacle is
-  the interaction between call-by-value constructor evaluation and rewriting a
-  symbolic `(c-int32-lt a b)` condition under the C execution model.
 - The existing S-expression source format is acceptable for bootstrapping the C
   model, but proof and model syntax should be revisited once C examples start
   getting large.
@@ -121,16 +126,16 @@ Current status:
 
 Near-term implementation shape:
 
-1. Strengthen the symbolic rewrite/control-flow story enough to prove symbolic
-   branch theorems for `max`.
-2. Add a tiny expression/statement pretty syntax so C examples are less
-   parenthesis-heavy.
-3. Add parsing/import from real C syntax only after the hand-built AST model is
-   coherent.
+1. Extend the C0 importer beyond the current tiny expression/statement subset,
+   while keeping it pointed at the existing executable model.
+2. Connect the pointer/memory model to C expression and statement semantics with
+   explicit load/store operations and UB propagation.
+3. Watch performance carefully. The current symbolic C proofs work, but they
+   expose that contextual proof evaluation is an expensive path.
 
 Deferred C features:
 
-- pointers and arrays
+- arrays
 - loops with invariants
 - function calls
 - structs and unions

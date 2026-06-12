@@ -437,6 +437,17 @@ mod tests {
                     (intro value_nil)
                     (rewrite value_nil)
                     (eval)))
+                (theorem id_context_eval_true
+                  (forall value (is-value value)
+                    (implies
+                      (computes-to (id value) (quote :true))
+                      (computes-to
+                        (if (id value) nil diverge)
+                        nil)))
+                  (by
+                    (intro value)
+                    (intro id_value_true)
+                    (eval-context)))
                 (theorem value_self
                   (forall value (is-value value)
                     (computes-to value value))

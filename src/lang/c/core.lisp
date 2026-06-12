@@ -213,6 +213,102 @@
       (c-stmt-ub (c-expr-ub-reason expr_result))
       c-stmt-runtime-error)))
 
+(def c-ub-invalid-memory
+  (quote :c-ub-invalid-memory))
+
+(def c-ptr
+  (lambda block
+    (lambda offset
+      (cons
+        (quote :c-ptr)
+        (cons block (cons offset nil))))))
+
+(def c-ptr-block
+  (lambda ptr
+    (head (tail ptr))))
+
+(def c-ptr-offset
+  (lambda ptr
+    (head (tail (tail ptr)))))
+
+(def c-is-ptr
+  (lambda value
+    (if
+      (is-list-value value)
+      (list-case value
+        (quote :false)
+        cell
+        (and
+          (symbol-eq (head cell) (quote :c-ptr))
+          (and
+            (is-pair (tail cell))
+            (and
+              (is-symbol (head (tail cell)))
+              (is-bv32 (head (tail (tail cell))))))))
+      (quote :false))))
+
+(def c-ptr-eq
+  (lambda left
+    (lambda right
+      (if
+        (c-is-ptr left)
+        (if
+          (c-is-ptr right)
+          (and
+            (symbol-eq (c-ptr-block left) (c-ptr-block right))
+            (bv32-eq (c-ptr-offset left) (c-ptr-offset right)))
+          (quote :false))
+        (quote :false)))))
+
+(def c-memory-empty
+  nil)
+
+(def c-memory-cell
+  (lambda ptr
+    (lambda value
+      (cons ptr (cons value nil)))))
+
+(def c-memory-cell-ptr
+  (lambda cell
+    (head cell)))
+
+(def c-memory-cell-value
+  (lambda cell
+    (head (tail cell))))
+
+(def c-memory-load
+  (lambda ptr
+    (lambda memory
+      (list-case memory
+        (c-expr-ub c-ub-invalid-memory)
+        cell
+        (if
+          (c-ptr-eq ptr (c-memory-cell-ptr (head cell)))
+          (c-expr-value (c-memory-cell-value (head cell)))
+          (c-memory-load ptr (tail cell)))))))
+
+(def c-memory-store
+  (lambda ptr
+    (lambda value
+      (lambda memory
+        (list-case memory
+          (cons (c-memory-cell ptr value) nil)
+          cell
+          (if
+            (c-ptr-eq ptr (c-memory-cell-ptr (head cell)))
+            (cons
+              (c-memory-cell ptr value)
+              (tail cell))
+            (cons
+              (head cell)
+              (c-memory-store ptr value (tail cell)))))))))
+
+(def c-test-ptr-zero
+  (c-ptr (quote block) (bv32 0)))
+
+(def c-test-ptr-one
+  (c-ptr (quote block) (bv32 1)))
+
 (def c-int32-add
   (lambda left
     (lambda right
@@ -538,6 +634,76 @@
   (by
     (eval 4096)))
 
+(theorem c_test_ptr_zero_is_ptr
+  (computes-to
+    (c-is-ptr c-test-ptr-zero)
+    (quote :true))
+  (by
+    (eval 4096)))
+
+(theorem c_test_ptr_zero_eq_self
+  (computes-to
+    (c-ptr-eq c-test-ptr-zero c-test-ptr-zero)
+    (quote :true))
+  (by
+    (eval 4096)))
+
+(theorem c_test_ptr_zero_ne_one
+  (computes-to
+    (c-ptr-eq c-test-ptr-zero c-test-ptr-one)
+    (quote :false))
+  (by
+    (eval 4096)))
+
+(theorem c_memory_empty_load_invalid
+  (computes-to
+    (c-memory-load c-test-ptr-zero c-memory-empty)
+    (c-expr-ub c-ub-invalid-memory))
+  (by
+    (eval 4096)))
+
+(theorem c_memory_load_after_store_same
+  (computes-to
+    (c-memory-load
+      c-test-ptr-zero
+      (c-memory-store c-test-ptr-zero c-int32-one c-memory-empty))
+    (c-expr-value c-int32-one))
+  (by
+    (eval 4096)))
+
+(theorem c_memory_load_after_store_other_invalid
+  (computes-to
+    (c-memory-load
+      c-test-ptr-one
+      (c-memory-store c-test-ptr-zero c-int32-one c-memory-empty))
+    (c-expr-ub c-ub-invalid-memory))
+  (by
+    (eval 4096)))
+
+(theorem c_memory_store_replaces_same_address
+  (computes-to
+    (c-memory-load
+      c-test-ptr-zero
+      (c-memory-store
+        c-test-ptr-zero
+        c-int32-two
+        (c-memory-store c-test-ptr-zero c-int32-one c-memory-empty)))
+    (c-expr-value c-int32-two))
+  (by
+    (eval 4096)))
+
+(theorem c_memory_store_preserves_other_address
+  (computes-to
+    (c-memory-load
+      c-test-ptr-one
+      (c-memory-store
+        c-test-ptr-zero
+        c-int32-one
+        (c-memory-store c-test-ptr-one c-int32-two c-memory-empty)))
+    (c-expr-value c-int32-two))
+  (by
+    (eval 4096)))
+
 (theorem c_int32_zero_one_lt
   (computes-to
     (c-int32-lt c-int32-zero c-int32-one)
@@ -720,3 +886,47 @@
     (c-stmt-return c-int32-one))
   (by
     (eval 8192)))
+
+(theorem c_max_lt_returns_right
+  (forall a
+    (and
+      (is-value a)
+      (computes-to (c-is-int32 a) (quote :true)))
+    (forall b
+      (and
+        (is-value b)
+        (computes-to (c-is-int32 b) (quote :true)))
+      (implies
+        (computes-to (c-int32-lt a b) (quote :true))
+        (computes-to
+          (c-exec-stmt (c-max-store a b) c-max-body)
+          (c-stmt-return b)))))
+  (by
+    (intro a)
+    (cases a a_is_value a_is_int32)
+    (intro b)
+    (cases b b_is_value b_is_int32)
+    (intro a_lt_b)
+    (eval-context 8192)))
+
+(theorem c_max_not_lt_returns_left
+  (forall a
+    (and
+      (is-value a)
+      (computes-to (c-is-int32 a) (quote :true)))
+    (forall b
+      (and
+        (is-value b)
+        (computes-to (c-is-int32 b) (quote :true)))
+      (implies
+        (computes-to (c-int32-lt a b) (quote :false))
+        (computes-to
+          (c-exec-stmt (c-max-store a b) c-max-body)
+          (c-stmt-return a)))))
+  (by
+    (intro a)
+    (cases a a_is_value a_is_int32)
+    (intro b)
+    (cases b b_is_value b_is_int32)
+    (intro a_not_lt_b)
+    (eval-context 8192)))

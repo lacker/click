@@ -2,6 +2,8 @@
 
 use std::sync::OnceLock;
 
+pub mod syntax;
+
 use crate::{
     Name, Symbol, Theory,
     elab::{

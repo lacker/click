@@ -337,6 +337,7 @@ pub enum Proof {
     },
     Step(Computation),
     Steps(Vec<Computation>),
+    ContextSteps(Vec<Computation>),
     Rewrite {
         equality: Box<Proof>,
         proof: Box<Proof>,
