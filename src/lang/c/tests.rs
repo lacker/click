@@ -328,7 +328,13 @@ fn c0_syntax_targets_megakernel_store_and_load() {
         .with_local("p", crate::megakernel::CValue::Ptr(ptr.clone()));
     let final_state = crate::megakernel::CState::new()
         .with_local("p", crate::megakernel::CValue::Ptr(ptr.clone()))
-        .with_memory(crate::megakernel::CMemory::new().store(ptr, crate::megakernel::int32(9)));
+        .with_memory(
+            crate::megakernel::CMemory::new().store(ptr.clone(), crate::megakernel::int32(9)),
+        );
+    let store_obligation = crate::megakernel::Prop::CMemoryCanStore {
+        memory: crate::megakernel::CMemory::new(),
+        ptr,
+    };
     let theorem = crate::megakernel::prove_symbolic_c_execution(
         initial.clone(),
         stmt.clone(),
@@ -338,14 +344,17 @@ fn c0_syntax_targets_megakernel_store_and_load() {
 
     assert_eq!(
         theorem.prop(),
-        &crate::megakernel::Prop::CStmtExecutes {
-            state: initial,
-            stmt,
-            outcome: crate::megakernel::CStmtOutcome::Return {
-                value: crate::megakernel::int32(9),
-                state: final_state,
-            },
-        }
+        &crate::megakernel::Prop::Implies(
+            Box::new(store_obligation),
+            Box::new(crate::megakernel::Prop::CStmtExecutes {
+                state: initial,
+                stmt,
+                outcome: crate::megakernel::CStmtOutcome::Return {
+                    value: crate::megakernel::int32(9),
+                    state: final_state,
+                },
+            }),
+        )
     );
 }
 
@@ -370,7 +379,13 @@ fn c0_syntax_targets_megakernel_store_and_load_function_call() {
     let args = vec![crate::megakernel::c_ptr_value(ptr.clone())];
     let final_state = crate::megakernel::CState::new()
         .with_local("caller", crate::megakernel::int32(7))
-        .with_memory(crate::megakernel::CMemory::new().store(ptr, crate::megakernel::int32(9)));
+        .with_memory(
+            crate::megakernel::CMemory::new().store(ptr.clone(), crate::megakernel::int32(9)),
+        );
+    let store_obligation = crate::megakernel::Prop::CMemoryCanStore {
+        memory: crate::megakernel::CMemory::new(),
+        ptr,
+    };
     let theorem = crate::megakernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
@@ -381,13 +396,319 @@ fn c0_syntax_targets_megakernel_store_and_load_function_call() {
 
     assert_eq!(
         theorem.prop(),
+        &crate::megakernel::Prop::Implies(
+            Box::new(store_obligation),
+            Box::new(crate::megakernel::Prop::CFunctionExecutes {
+                state,
+                function,
+                args,
+                outcome: crate::megakernel::CFunctionOutcome::Return {
+                    value: crate::megakernel::int32(9),
+                    state: final_state,
+                },
+            }),
+        )
+    );
+}
+
+#[test]
+fn c0_syntax_targets_megakernel_pointer_addition_load() {
+    let function = syntax::parse_function(
+        r#"
+        int32 load_second(int32* p) {
+            return *(p + 1);
+        }
+        "#,
+    )
+    .expect("pointer-add load function should parse")
+    .to_megakernel_function();
+
+    let base = crate::megakernel::Ptr {
+        block: "block".to_string(),
+        offset: crate::megakernel::Bv32Term::Const(0),
+    };
+    let second = crate::megakernel::Ptr {
+        block: "block".to_string(),
+        offset: crate::megakernel::Bv32Term::Const(4),
+    };
+    let memory = crate::megakernel::CMemory::new()
+        .with_block("block", 16)
+        .store(second, crate::megakernel::int32(23));
+    let state = crate::megakernel::CState::new().with_memory(memory.clone());
+    let args = vec![crate::megakernel::c_ptr_value(base)];
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        args.clone(),
+        Default::default(),
+    )
+    .expect("parsed pointer-add load should execute");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state: state.clone(),
+            function,
+            args,
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(23),
+                state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_targets_megakernel_local_address_of() {
+    let function = syntax::parse_function(
+        r#"
+        int32 local_read() {
+            int32 x;
+            x = 5;
+            return *(&x);
+        }
+        "#,
+    )
+    .expect("local address-of function should parse")
+    .to_megakernel_function();
+
+    let local_ptr = crate::megakernel::Ptr {
+        block: "local:x".to_string(),
+        offset: crate::megakernel::Bv32Term::Const(0),
+    };
+    let state = crate::megakernel::CState::new();
+    let final_state = crate::megakernel::CState::new().with_memory(
+        crate::megakernel::CMemory::new()
+            .with_block("local:x", 4)
+            .store(local_ptr, crate::megakernel::int32(5)),
+    );
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("parsed local address-of function should execute");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state,
+            function,
+            args: Vec::new(),
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(5),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_targets_megakernel_int32_sub_and_comparisons() {
+    let function = syntax::parse_function(
+        r#"
+        int32 adjust(int32 x) {
+            if (x >= 3) {
+                return x - 1;
+            } else {
+                if (x == 0) {
+                    return x + 2;
+                } else {
+                    return x + 1;
+                }
+            }
+        }
+        "#,
+    )
+    .expect("int32 operator function should parse")
+    .to_megakernel_function();
+
+    let state = crate::megakernel::CState::new();
+    let args = vec![crate::megakernel::c_int32_literal(4)];
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        args.clone(),
+        Default::default(),
+    )
+    .expect("parsed int32 operator function should execute");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state: state.clone(),
+            function,
+            args,
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(3),
+                state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_targets_megakernel_known_function_call_assignment() {
+    let increment = syntax::parse_function(
+        r#"
+        int32 increment(int32 x) {
+            return x + 1;
+        }
+        "#,
+    )
+    .expect("increment function should parse")
+    .to_megakernel_function();
+    let caller = syntax::parse_function(
+        r#"
+        int32 caller() {
+            int32 result;
+            result = increment(41);
+            return result;
+        }
+        "#,
+    )
+    .expect("caller function should parse")
+    .to_megakernel_function();
+
+    let local_ptr = crate::megakernel::Ptr {
+        block: "local:result".to_string(),
+        offset: crate::megakernel::Bv32Term::Const(0),
+    };
+    let env = crate::megakernel::CFunctionEnv::new().with_function(increment);
+    let state = crate::megakernel::CState::new();
+    let final_state = crate::megakernel::CState::new().with_memory(
+        crate::megakernel::CMemory::new()
+            .with_block("local:result", 4)
+            .store(local_ptr, crate::megakernel::int32(42)),
+    );
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution_with_env(
+        state.clone(),
+        caller.clone(),
+        Vec::new(),
+        Default::default(),
+        env,
+    )
+    .expect("known C0 function call should execute");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state,
+            function: caller,
+            args: Vec::new(),
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(42),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_targets_megakernel_while_countdown() {
+    let function = syntax::parse_function(
+        r#"
+        int32 countdown(int32 x) {
+            while (x > 0) {
+                x = x - 1;
+            }
+            return x;
+        }
+        "#,
+    )
+    .expect("while countdown function should parse")
+    .to_megakernel_function();
+
+    let state = crate::megakernel::CState::new();
+    let args = vec![crate::megakernel::c_int32_literal(3)];
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        args.clone(),
+        Default::default(),
+    )
+    .expect("while countdown function should execute");
+
+    assert_eq!(
+        theorem.prop(),
         &crate::megakernel::Prop::CFunctionExecutes {
             state,
             function,
             args,
             outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(9),
-                state: final_state,
+                value: crate::megakernel::int32(0),
+                state: crate::megakernel::CState::new(),
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_memory_safety_demo_fill_three_ints() {
+    let function = syntax::parse_function(
+        r#"
+        int32 fill3(int32* p) {
+            int32 i;
+            i = 0;
+            while (i < 3) {
+                *(p + i) = i;
+                i = i + 1;
+            }
+            return *(p + 2);
+        }
+        "#,
+    )
+    .expect("fill3 demo should parse")
+    .to_megakernel_function();
+
+    let base = crate::megakernel::Ptr {
+        block: "buf".to_string(),
+        offset: crate::megakernel::Bv32Term::Const(0),
+    };
+    let first = crate::megakernel::Ptr {
+        block: "buf".to_string(),
+        offset: crate::megakernel::Bv32Term::Const(0),
+    };
+    let second = crate::megakernel::Ptr {
+        block: "buf".to_string(),
+        offset: crate::megakernel::Bv32Term::Const(4),
+    };
+    let third = crate::megakernel::Ptr {
+        block: "buf".to_string(),
+        offset: crate::megakernel::Bv32Term::Const(8),
+    };
+    let local_i = crate::megakernel::Ptr {
+        block: "local:i".to_string(),
+        offset: crate::megakernel::Bv32Term::Const(0),
+    };
+    let initial_memory = crate::megakernel::CMemory::new().with_block("buf", 12);
+    let state = crate::megakernel::CState::new().with_memory(initial_memory);
+    let final_memory = crate::megakernel::CMemory::new()
+        .with_block("buf", 12)
+        .with_block("local:i", 4)
+        .store(first, crate::megakernel::int32(0))
+        .store(second, crate::megakernel::int32(1))
+        .store(third, crate::megakernel::int32(2))
+        .store(local_i, crate::megakernel::int32(3));
+    let args = vec![crate::megakernel::c_ptr_value(base)];
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        args.clone(),
+        Default::default(),
+    )
+    .expect("fill3 should execute without memory obligations");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state,
+            function,
+            args,
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(2),
+                state: crate::megakernel::CState::new().with_memory(final_memory),
             },
         }
     );

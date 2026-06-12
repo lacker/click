@@ -122,12 +122,18 @@ Current status:
   values, bitvector terms, C expressions/statements, state, memory, outcomes,
   and theorem-producing operations. It now supports native assignment,
   sequencing, expression loads, statement stores, state-threading execution, and
-  path-based symbolic execution with explicit branch/overflow obligations. It
-  also has native function bodies/calls with typed parameter binding, return
-  checking, caller-local preservation, and memory effects threaded back to the
-  caller. The native `max`, overflow, state, function-call, and load/store
-  tests are tiny compared with the list-encoded C proofs and run effectively
-  instantly.
+  path-based symbolic execution with path facts for branches and overflow, plus
+  proof obligations for memory validity. It also has native function bodies/calls with
+  typed parameter binding, return checking, caller-local preservation, and
+  memory effects threaded back to the caller. Native memory has explicit
+  blocks with byte sizes, so in-range loads and stores can discharge memory
+  validity obligations directly. Native pointer arithmetic supports `int32*`
+  plus `int32` offsets, scaled by the `int32` element width. Native local
+  `int32` declarations allocate stack blocks, `&x` produces a pointer to the
+  block, and assignments sync the local value back to that stack cell. The
+  native `max`, overflow, state, function-call, pointer-arithmetic, stack, and
+  load/store tests are tiny compared with the list-encoded C proofs and run
+  effectively instantly.
 - The existing S-expression source format is acceptable for bootstrapping the C
   model, but proof and model syntax should be revisited once C examples start
   getting large.
@@ -139,10 +145,51 @@ Near-term implementation shape:
 
 1. Grow the megakernel spike toward the C subset we actually want, rather than
    continuing to encode new C features primarily as Lisp-style list programs.
-2. Add memory validity obligations for loads/stores, on top of the new
-   obligation-producing symbolic execution path.
-3. Decide which pieces of the old list-kernel path remain useful as regression
+2. Add native `int32` operators as needed by C examples. Signed addition and
+   subtraction are native and split on signed-overflow UB. Signed comparisons
+   and equality are native boolean-valued expressions.
+3. Symbolic C execution now separates path facts from proof obligations. Branch
+   choices and overflow case splits are path facts and refine later execution;
+   memory validity side conditions remain proof obligations.
+4. Function specs are native megakernel objects for ground or symbolic calls:
+   a spec packages an initial state, arguments, required propositions, and an
+   expected outcome. The spec prover checks that the requirements are strong
+   enough to avoid leftover generated path facts or proof obligations.
+5. Known function calls are represented by statement-level call assignment
+   through a native `CFunctionEnv`. This currently supports `x = f(args);`,
+   executes the known function body, threads memory effects back to the caller,
+   and assigns the return value.
+6. `while` statements are native. The current executor handles concrete and
+   path-split loops with a fuel cap, and the statement carries an invariant
+   proposition list whose entries become proof obligations/premises. C0 parses
+   ordinary `while (condition) { ... }` blocks into this form with no invariants
+   yet.
+7. There is a small built-in obligation solver. It discharges reflexive
+   equality, constant boolean facts, and concrete memory range facts before
+   exposing them as theorem premises.
+8. There is a first C0 memory-safety demo: `fill3(int32* p)` writes three
+   consecutive `int32` cells through `p + i` in a loop and reads back the final
+   cell. With a 12-byte backing block, it proves without memory-safety premises.
+9. Decide which pieces of the old list-kernel path remain useful as regression
    tests or source-language prototypes, and which should be retired.
+
+Roadmap progress:
+
+1. Native memory blocks and range checks: implemented in the megakernel.
+2. Pointer arithmetic: implemented in the megakernel for `int32*`.
+3. Local declarations and stack objects: implemented for local `int32` and
+   `&x`.
+4. More `int32` operators: implemented for subtraction, signed comparisons,
+   and equality.
+5. Path facts that refine later execution, not only obligations: implemented.
+6. Function specs: implemented.
+7. Calls to known functions through a function environment: implemented for
+   call assignment.
+8. `while` loops with invariants: implemented as concrete/fuel-capped execution
+   with invariant proof obligations.
+9. A small obligation solver: implemented for simple built-in facts.
+10. A first real memory-safety demo function: implemented as the C0 `fill3`
+    loop test.
 
 Deferred C features:
 
