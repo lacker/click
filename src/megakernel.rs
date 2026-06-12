@@ -171,6 +171,35 @@ pub struct Assumptions {
     bool_facts: BTreeMap<BoolTerm, bool>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct BoolObligation {
+    condition: BoolTerm,
+    value: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SymbolicCExecution {
+    paths: Vec<SymbolicCExecutionPath>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SymbolicCExecutionPath {
+    obligations: Vec<BoolObligation>,
+    theorem: Theorem,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CExprPath {
+    outcome: CExprOutcome,
+    obligations: Vec<BoolObligation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CStmtPath {
+    outcome: CStmtOutcome,
+    obligations: Vec<BoolObligation>,
+}
+
 impl Bv32Term {
     pub fn var(var: Var) -> Self {
         Self::Var(var)
@@ -300,6 +329,40 @@ impl Assumptions {
     }
 }
 
+impl BoolObligation {
+    pub fn new(condition: BoolTerm, value: bool) -> Self {
+        Self { condition, value }
+    }
+
+    pub fn condition(&self) -> &BoolTerm {
+        &self.condition
+    }
+
+    pub fn value(&self) -> bool {
+        self.value
+    }
+
+    pub fn prop(&self) -> Prop {
+        Prop::BoolIs(self.condition.clone(), self.value)
+    }
+}
+
+impl SymbolicCExecution {
+    pub fn paths(&self) -> &[SymbolicCExecutionPath] {
+        &self.paths
+    }
+}
+
+impl SymbolicCExecutionPath {
+    pub fn obligations(&self) -> &[BoolObligation] {
+        &self.obligations
+    }
+
+    pub fn theorem(&self) -> &Theorem {
+        &self.theorem
+    }
+}
+
 pub fn int32(bits: impl Into<Bv32Term>) -> CValue {
     CValue::Int32(bits.into())
 }
@@ -405,13 +468,37 @@ pub fn prove_symbolic_c_execution(
     stmt: CStmt,
     assumptions: Assumptions,
 ) -> Option<Theorem> {
-    let outcome = exec_c_stmt(&state, &stmt, &assumptions)?;
-    let prop = Prop::CStmtExecutes {
-        state,
-        stmt,
-        outcome,
-    };
-    Some(Theorem::new(wrap_assumptions(prop, &assumptions)))
+    let execution = prove_symbolic_c_execution_with_obligations(state, stmt, assumptions);
+    let mut paths = execution.paths.into_iter();
+    let path = paths.next()?;
+    if paths.next().is_some() {
+        return None;
+    }
+    Some(path.theorem)
+}
+
+pub fn prove_symbolic_c_execution_with_obligations(
+    state: CState,
+    stmt: CStmt,
+    assumptions: Assumptions,
+) -> SymbolicCExecution {
+    let paths = exec_c_stmt_paths(&state, &stmt, &assumptions)
+        .into_iter()
+        .map(|path| {
+            let prop = Prop::CStmtExecutes {
+                state: state.clone(),
+                stmt: stmt.clone(),
+                outcome: path.outcome,
+            };
+            let theorem = Theorem::new(wrap_bool_facts(prop, &assumptions, &path.obligations));
+            SymbolicCExecutionPath {
+                obligations: path.obligations,
+                theorem,
+            }
+        })
+        .collect();
+
+    SymbolicCExecution { paths }
 }
 
 pub fn prove_c_max_lt_returns_right(a: Var, b: Var) -> Option<Theorem> {
@@ -510,7 +597,11 @@ fn forall_int32(var: Var, body: Prop) -> Prop {
     }
 }
 
-fn wrap_assumptions(prop: Prop, assumptions: &Assumptions) -> Prop {
+fn wrap_bool_facts(prop: Prop, assumptions: &Assumptions, obligations: &[BoolObligation]) -> Prop {
+    let prop = obligations.iter().rev().fold(prop, |body, obligation| {
+        Prop::Implies(Box::new(obligation.prop()), Box::new(body))
+    });
+
     assumptions
         .bool_facts
         .iter()
@@ -523,120 +614,435 @@ fn wrap_assumptions(prop: Prop, assumptions: &Assumptions) -> Prop {
         })
 }
 
+fn add_bool_obligation(
+    obligations: &mut Vec<BoolObligation>,
+    assumptions: &Assumptions,
+    condition: BoolTerm,
+    value: bool,
+) -> Option<()> {
+    if let Some(known) = assumptions.decide(&condition) {
+        return (known == value).then_some(());
+    }
+
+    if let Some(existing) = obligations
+        .iter()
+        .find(|obligation| obligation.condition == condition)
+    {
+        return (existing.value == value).then_some(());
+    }
+
+    obligations.push(BoolObligation::new(condition, value));
+    Some(())
+}
+
+fn merge_obligations(
+    left: &[BoolObligation],
+    right: &[BoolObligation],
+    assumptions: &Assumptions,
+) -> Option<Vec<BoolObligation>> {
+    let mut obligations = left.to_vec();
+    for obligation in right {
+        add_bool_obligation(
+            &mut obligations,
+            assumptions,
+            obligation.condition.clone(),
+            obligation.value,
+        )?;
+    }
+    Some(obligations)
+}
+
+fn decide_with_obligations(
+    assumptions: &Assumptions,
+    obligations: &[BoolObligation],
+    condition: &BoolTerm,
+) -> Option<bool> {
+    assumptions.decide(condition).or_else(|| {
+        obligations
+            .iter()
+            .find(|obligation| &obligation.condition == condition)
+            .map(|obligation| obligation.value)
+    })
+}
+
 fn eval_c_expr(state: &CState, expr: &CExpr, assumptions: &Assumptions) -> Option<CExprOutcome> {
+    let paths = eval_c_expr_paths(state, expr, assumptions);
+    let mut paths = paths.into_iter();
+    let path = paths.next()?;
+    if paths.next().is_some() || !path.obligations.is_empty() {
+        return None;
+    }
+    Some(path.outcome)
+}
+
+fn eval_c_expr_paths(state: &CState, expr: &CExpr, assumptions: &Assumptions) -> Vec<CExprPath> {
     match expr {
-        CExpr::Value(value) => Some(CExprOutcome::Value(value.clone())),
-        CExpr::Var(name) => Some(match state.locals.get(name) {
-            Some(value) => CExprOutcome::Value(value.clone()),
-            None => CExprOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone())),
-        }),
-        CExpr::Lt(left, right) => {
-            eval_c_int32_binary(state, left, right, assumptions, |left, right| {
-                Some(CExprOutcome::Value(c_bool(BoolTerm::slt(left, right))))
-            })
-        }
-        CExpr::Add(left, right) => eval_c_int32_binary(
+        CExpr::Value(value) => vec![CExprPath {
+            outcome: CExprOutcome::Value(value.clone()),
+            obligations: Vec::new(),
+        }],
+        CExpr::Var(name) => vec![CExprPath {
+            outcome: match state.locals.get(name) {
+                Some(value) => CExprOutcome::Value(value.clone()),
+                None => CExprOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone())),
+            },
+            obligations: Vec::new(),
+        }],
+        CExpr::Lt(left, right) => eval_c_int32_binary_paths(
             state,
             left,
             right,
             assumptions,
-            |left, right| match assumptions
-                .decide(&BoolTerm::signed_add_overflows(left.clone(), right.clone()))
-            {
-                Some(true) => Some(CExprOutcome::Ub(CUndefinedBehavior::SignedOverflow)),
-                Some(false) => Some(CExprOutcome::Value(int32(Bv32Term::add(left, right)))),
-                None => None,
+            |left, right, obligations| {
+                vec![CExprPath {
+                    outcome: CExprOutcome::Value(c_bool(BoolTerm::slt(left, right))),
+                    obligations,
+                }]
             },
         ),
-        CExpr::Load(ptr) => Some(match eval_c_expr(state, ptr, assumptions)? {
-            CExprOutcome::Value(CValue::Ptr(ptr)) => state.memory.load(&ptr),
-            CExprOutcome::Value(_) => CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-            CExprOutcome::Ub(ub) => CExprOutcome::Ub(ub),
-            CExprOutcome::RuntimeError(error) => CExprOutcome::RuntimeError(error),
-        }),
+        CExpr::Add(left, right) => eval_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            |left, right, obligations| {
+                let overflow = BoolTerm::signed_add_overflows(left.clone(), right.clone());
+                match decide_with_obligations(assumptions, &obligations, &overflow) {
+                    Some(true) => vec![CExprPath {
+                        outcome: CExprOutcome::Ub(CUndefinedBehavior::SignedOverflow),
+                        obligations,
+                    }],
+                    Some(false) => vec![CExprPath {
+                        outcome: CExprOutcome::Value(int32(Bv32Term::add(left, right))),
+                        obligations,
+                    }],
+                    None => {
+                        let mut normal_obligations = obligations.clone();
+                        add_bool_obligation(
+                            &mut normal_obligations,
+                            assumptions,
+                            overflow.clone(),
+                            false,
+                        )
+                        .expect("unknown overflow fact should be consistent");
+
+                        let mut overflow_obligations = obligations;
+                        add_bool_obligation(&mut overflow_obligations, assumptions, overflow, true)
+                            .expect("unknown overflow fact should be consistent");
+
+                        vec![
+                            CExprPath {
+                                outcome: CExprOutcome::Value(int32(Bv32Term::add(left, right))),
+                                obligations: normal_obligations,
+                            },
+                            CExprPath {
+                                outcome: CExprOutcome::Ub(CUndefinedBehavior::SignedOverflow),
+                                obligations: overflow_obligations,
+                            },
+                        ]
+                    }
+                }
+            },
+        ),
+        CExpr::Load(ptr) => eval_c_expr_paths(state, ptr, assumptions)
+            .into_iter()
+            .map(|path| CExprPath {
+                outcome: match path.outcome {
+                    CExprOutcome::Value(CValue::Ptr(ptr)) => state.memory.load(&ptr),
+                    CExprOutcome::Value(_) => {
+                        CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                    }
+                    CExprOutcome::Ub(ub) => CExprOutcome::Ub(ub),
+                    CExprOutcome::RuntimeError(error) => CExprOutcome::RuntimeError(error),
+                },
+                obligations: path.obligations,
+            })
+            .collect(),
     }
 }
 
-fn eval_c_int32_binary(
+fn eval_c_int32_binary_paths(
     state: &CState,
     left: &CExpr,
     right: &CExpr,
     assumptions: &Assumptions,
-    apply: impl FnOnce(Bv32Term, Bv32Term) -> Option<CExprOutcome>,
-) -> Option<CExprOutcome> {
-    let left = eval_c_expr(state, left, assumptions)?;
-    let right = eval_c_expr(state, right, assumptions)?;
-    match (left, right) {
-        (CExprOutcome::Value(CValue::Int32(left)), CExprOutcome::Value(CValue::Int32(right))) => {
-            apply(left, right)
+    apply: impl Fn(Bv32Term, Bv32Term, Vec<BoolObligation>) -> Vec<CExprPath>,
+) -> Vec<CExprPath> {
+    let mut paths = Vec::new();
+    for left_path in eval_c_expr_paths(state, left, assumptions) {
+        let CExprPath {
+            outcome: left_outcome,
+            obligations: left_obligations,
+        } = left_path;
+
+        let left = match left_outcome {
+            CExprOutcome::Value(CValue::Int32(left)) => left,
+            CExprOutcome::Value(_) => {
+                paths.push(CExprPath {
+                    outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+            CExprOutcome::Ub(ub) => {
+                paths.push(CExprPath {
+                    outcome: CExprOutcome::Ub(ub),
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+            CExprOutcome::RuntimeError(error) => {
+                paths.push(CExprPath {
+                    outcome: CExprOutcome::RuntimeError(error),
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+        };
+
+        for right_path in eval_c_expr_paths(state, right, assumptions) {
+            let Some(obligations) =
+                merge_obligations(&left_obligations, &right_path.obligations, assumptions)
+            else {
+                continue;
+            };
+
+            match right_path.outcome {
+                CExprOutcome::Value(CValue::Int32(right)) => {
+                    paths.extend(apply(left.clone(), right, obligations));
+                }
+                CExprOutcome::Value(_) => paths.push(CExprPath {
+                    outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    obligations,
+                }),
+                CExprOutcome::Ub(ub) => paths.push(CExprPath {
+                    outcome: CExprOutcome::Ub(ub),
+                    obligations,
+                }),
+                CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
+                    outcome: CExprOutcome::RuntimeError(error),
+                    obligations,
+                }),
+            }
         }
-        (CExprOutcome::Ub(ub), _) | (_, CExprOutcome::Ub(ub)) => Some(CExprOutcome::Ub(ub)),
-        (CExprOutcome::RuntimeError(error), _) | (_, CExprOutcome::RuntimeError(error)) => {
-            Some(CExprOutcome::RuntimeError(error))
-        }
-        _ => Some(CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch)),
     }
+
+    paths
 }
 
 fn exec_c_stmt(state: &CState, stmt: &CStmt, assumptions: &Assumptions) -> Option<CStmtOutcome> {
+    let paths = exec_c_stmt_paths(state, stmt, assumptions);
+    let mut paths = paths.into_iter();
+    let path = paths.next()?;
+    if paths.next().is_some() {
+        return None;
+    }
+    Some(path.outcome)
+}
+
+fn exec_c_stmt_paths(state: &CState, stmt: &CStmt, assumptions: &Assumptions) -> Vec<CStmtPath> {
     match stmt {
-        CStmt::Assign { name, expr } => Some(match eval_c_expr(state, expr, assumptions)? {
-            CExprOutcome::Value(value) => {
-                let mut state = state.clone();
-                state.locals.set(name.clone(), value);
-                CStmtOutcome::Normal(state)
-            }
-            CExprOutcome::Ub(ub) => CStmtOutcome::Ub(ub),
-            CExprOutcome::RuntimeError(error) => CStmtOutcome::RuntimeError(error),
-        }),
-        CStmt::Seq(first, second) => match exec_c_stmt(state, first, assumptions)? {
-            CStmtOutcome::Normal(state) => exec_c_stmt(&state, second, assumptions),
-            outcome @ (CStmtOutcome::Return { .. }
-            | CStmtOutcome::Ub(_)
-            | CStmtOutcome::RuntimeError(_)) => Some(outcome),
-        },
-        CStmt::Return(expr) => Some(match eval_c_expr(state, expr, assumptions)? {
-            CExprOutcome::Value(value) => CStmtOutcome::Return {
-                value,
-                state: state.clone(),
-            },
-            CExprOutcome::Ub(ub) => CStmtOutcome::Ub(ub),
-            CExprOutcome::RuntimeError(error) => CStmtOutcome::RuntimeError(error),
-        }),
-        CStmt::Store { ptr, value } => Some(match eval_c_expr(state, ptr, assumptions)? {
-            CExprOutcome::Value(CValue::Ptr(ptr)) => {
-                match eval_c_expr(state, value, assumptions)? {
+        CStmt::Assign { name, expr } => eval_c_expr_paths(state, expr, assumptions)
+            .into_iter()
+            .map(|path| CStmtPath {
+                outcome: match path.outcome {
                     CExprOutcome::Value(value) => {
                         let mut state = state.clone();
-                        state.memory = state.memory.store(ptr, value);
+                        state.locals.set(name.clone(), value);
                         CStmtOutcome::Normal(state)
                     }
                     CExprOutcome::Ub(ub) => CStmtOutcome::Ub(ub),
                     CExprOutcome::RuntimeError(error) => CStmtOutcome::RuntimeError(error),
+                },
+                obligations: path.obligations,
+            })
+            .collect(),
+        CStmt::Seq(first, second) => {
+            let mut paths = Vec::new();
+            for first_path in exec_c_stmt_paths(state, first, assumptions) {
+                match first_path.outcome {
+                    CStmtOutcome::Normal(state) => {
+                        paths.extend(exec_c_stmt_paths_with_prefix(
+                            &state,
+                            second,
+                            assumptions,
+                            &first_path.obligations,
+                        ));
+                    }
+                    outcome @ (CStmtOutcome::Return { .. }
+                    | CStmtOutcome::Ub(_)
+                    | CStmtOutcome::RuntimeError(_)) => paths.push(CStmtPath {
+                        outcome,
+                        obligations: first_path.obligations,
+                    }),
                 }
             }
-            CExprOutcome::Value(_) => CStmtOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-            CExprOutcome::Ub(ub) => CStmtOutcome::Ub(ub),
-            CExprOutcome::RuntimeError(error) => CStmtOutcome::RuntimeError(error),
-        }),
+            paths
+        }
+        CStmt::Return(expr) => eval_c_expr_paths(state, expr, assumptions)
+            .into_iter()
+            .map(|path| CStmtPath {
+                outcome: match path.outcome {
+                    CExprOutcome::Value(value) => CStmtOutcome::Return {
+                        value,
+                        state: state.clone(),
+                    },
+                    CExprOutcome::Ub(ub) => CStmtOutcome::Ub(ub),
+                    CExprOutcome::RuntimeError(error) => CStmtOutcome::RuntimeError(error),
+                },
+                obligations: path.obligations,
+            })
+            .collect(),
+        CStmt::Store { ptr, value } => {
+            let mut paths = Vec::new();
+            for ptr_path in eval_c_expr_paths(state, ptr, assumptions) {
+                let CExprPath {
+                    outcome: ptr_outcome,
+                    obligations: ptr_obligations,
+                } = ptr_path;
+
+                let ptr = match ptr_outcome {
+                    CExprOutcome::Value(CValue::Ptr(ptr)) => ptr,
+                    CExprOutcome::Value(_) => {
+                        paths.push(CStmtPath {
+                            outcome: CStmtOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                            obligations: ptr_obligations,
+                        });
+                        continue;
+                    }
+                    CExprOutcome::Ub(ub) => {
+                        paths.push(CStmtPath {
+                            outcome: CStmtOutcome::Ub(ub),
+                            obligations: ptr_obligations,
+                        });
+                        continue;
+                    }
+                    CExprOutcome::RuntimeError(error) => {
+                        paths.push(CStmtPath {
+                            outcome: CStmtOutcome::RuntimeError(error),
+                            obligations: ptr_obligations,
+                        });
+                        continue;
+                    }
+                };
+
+                for value_path in eval_c_expr_paths(state, value, assumptions) {
+                    let Some(obligations) =
+                        merge_obligations(&ptr_obligations, &value_path.obligations, assumptions)
+                    else {
+                        continue;
+                    };
+
+                    paths.push(CStmtPath {
+                        outcome: match value_path.outcome {
+                            CExprOutcome::Value(value) => {
+                                let mut state = state.clone();
+                                state.memory = state.memory.store(ptr.clone(), value);
+                                CStmtOutcome::Normal(state)
+                            }
+                            CExprOutcome::Ub(ub) => CStmtOutcome::Ub(ub),
+                            CExprOutcome::RuntimeError(error) => CStmtOutcome::RuntimeError(error),
+                        },
+                        obligations,
+                    });
+                }
+            }
+            paths
+        }
         CStmt::If {
             condition,
             then_branch,
             else_branch,
-        } => match eval_c_expr(state, condition, assumptions)? {
-            CExprOutcome::Value(CValue::Bool(condition)) => {
-                let branch = if assumptions.decide(&condition)? {
-                    then_branch
-                } else {
-                    else_branch
-                };
-                exec_c_stmt(state, branch, assumptions)
+        } => {
+            let mut paths = Vec::new();
+            for condition_path in eval_c_expr_paths(state, condition, assumptions) {
+                match condition_path.outcome {
+                    CExprOutcome::Value(CValue::Bool(condition)) => {
+                        match decide_with_obligations(
+                            assumptions,
+                            &condition_path.obligations,
+                            &condition,
+                        ) {
+                            Some(true) => paths.extend(exec_c_stmt_paths_with_prefix(
+                                state,
+                                then_branch,
+                                assumptions,
+                                &condition_path.obligations,
+                            )),
+                            Some(false) => paths.extend(exec_c_stmt_paths_with_prefix(
+                                state,
+                                else_branch,
+                                assumptions,
+                                &condition_path.obligations,
+                            )),
+                            None => {
+                                let mut true_obligations = condition_path.obligations.clone();
+                                add_bool_obligation(
+                                    &mut true_obligations,
+                                    assumptions,
+                                    condition.clone(),
+                                    true,
+                                )
+                                .expect("unknown branch fact should be consistent");
+                                paths.extend(exec_c_stmt_paths_with_prefix(
+                                    state,
+                                    then_branch,
+                                    assumptions,
+                                    &true_obligations,
+                                ));
+
+                                let mut false_obligations = condition_path.obligations;
+                                add_bool_obligation(
+                                    &mut false_obligations,
+                                    assumptions,
+                                    condition,
+                                    false,
+                                )
+                                .expect("unknown branch fact should be consistent");
+                                paths.extend(exec_c_stmt_paths_with_prefix(
+                                    state,
+                                    else_branch,
+                                    assumptions,
+                                    &false_obligations,
+                                ));
+                            }
+                        }
+                    }
+                    CExprOutcome::Value(_) => paths.push(CStmtPath {
+                        outcome: CStmtOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        obligations: condition_path.obligations,
+                    }),
+                    CExprOutcome::Ub(ub) => paths.push(CStmtPath {
+                        outcome: CStmtOutcome::Ub(ub),
+                        obligations: condition_path.obligations,
+                    }),
+                    CExprOutcome::RuntimeError(error) => paths.push(CStmtPath {
+                        outcome: CStmtOutcome::RuntimeError(error),
+                        obligations: condition_path.obligations,
+                    }),
+                }
             }
-            CExprOutcome::Value(_) => Some(CStmtOutcome::RuntimeError(CRuntimeError::TypeMismatch)),
-            CExprOutcome::Ub(ub) => Some(CStmtOutcome::Ub(ub)),
-            CExprOutcome::RuntimeError(error) => Some(CStmtOutcome::RuntimeError(error)),
-        },
+            paths
+        }
     }
+}
+
+fn exec_c_stmt_paths_with_prefix(
+    state: &CState,
+    stmt: &CStmt,
+    assumptions: &Assumptions,
+    prefix: &[BoolObligation],
+) -> Vec<CStmtPath> {
+    exec_c_stmt_paths(state, stmt, assumptions)
+        .into_iter()
+        .filter_map(|path| {
+            let obligations = merge_obligations(prefix, &path.obligations, assumptions)?;
+            Some(CStmtPath {
+                outcome: path.outcome,
+                obligations,
+            })
+        })
+        .collect()
 }
 
 impl From<u32> for Bv32Term {
@@ -811,6 +1217,114 @@ mod tests {
         let stmt = c_return(c_add(c_var("left"), c_var("right")));
 
         assert!(prove_symbolic_c_execution(state, stmt, Assumptions::new()).is_none());
+    }
+
+    #[test]
+    fn symbolic_execution_reports_branch_obligations() {
+        let a = Var(24);
+        let b = Var(25);
+        let a_bits = Bv32Term::Var(a);
+        let b_bits = Bv32Term::Var(b);
+        let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
+        let state = c_max_state(int32(a_bits), int32(b_bits));
+        let execution = prove_symbolic_c_execution_with_obligations(
+            state.clone(),
+            c_max_body(),
+            Assumptions::new(),
+        );
+
+        assert_eq!(execution.paths().len(), 2);
+        assert_eq!(
+            execution.paths()[0].obligations(),
+            &[BoolObligation::new(condition.clone(), true)]
+        );
+        assert_eq!(
+            execution.paths()[0].theorem().prop(),
+            &Prop::Implies(
+                Box::new(Prop::BoolIs(condition.clone(), true)),
+                Box::new(Prop::CStmtExecutes {
+                    state: state.clone(),
+                    stmt: c_max_body(),
+                    outcome: CStmtOutcome::Return {
+                        value: int32(Bv32Term::Var(b)),
+                        state: state.clone(),
+                    },
+                }),
+            )
+        );
+
+        assert_eq!(
+            execution.paths()[1].obligations(),
+            &[BoolObligation::new(condition.clone(), false)]
+        );
+        assert_eq!(
+            execution.paths()[1].theorem().prop(),
+            &Prop::Implies(
+                Box::new(Prop::BoolIs(condition, false)),
+                Box::new(Prop::CStmtExecutes {
+                    state: state.clone(),
+                    stmt: c_max_body(),
+                    outcome: CStmtOutcome::Return {
+                        value: int32(Bv32Term::Var(a)),
+                        state,
+                    },
+                }),
+            )
+        );
+    }
+
+    #[test]
+    fn symbolic_execution_reports_overflow_obligations() {
+        let left = Var(26);
+        let right = Var(27);
+        let left_bits = Bv32Term::Var(left);
+        let right_bits = Bv32Term::Var(right);
+        let state = CState::new()
+            .with_local("left", int32(left_bits.clone()))
+            .with_local("right", int32(right_bits.clone()));
+        let stmt = c_return(c_add(c_var("left"), c_var("right")));
+        let overflow = BoolTerm::signed_add_overflows(left_bits.clone(), right_bits.clone());
+        let execution = prove_symbolic_c_execution_with_obligations(
+            state.clone(),
+            stmt.clone(),
+            Assumptions::new(),
+        );
+
+        assert_eq!(execution.paths().len(), 2);
+        assert_eq!(
+            execution.paths()[0].obligations(),
+            &[BoolObligation::new(overflow.clone(), false)]
+        );
+        assert_eq!(
+            execution.paths()[0].theorem().prop(),
+            &Prop::Implies(
+                Box::new(Prop::BoolIs(overflow.clone(), false)),
+                Box::new(Prop::CStmtExecutes {
+                    state: state.clone(),
+                    stmt: stmt.clone(),
+                    outcome: CStmtOutcome::Return {
+                        value: int32(Bv32Term::Add(Box::new(left_bits), Box::new(right_bits))),
+                        state: state.clone(),
+                    },
+                }),
+            )
+        );
+
+        assert_eq!(
+            execution.paths()[1].obligations(),
+            &[BoolObligation::new(overflow.clone(), true)]
+        );
+        assert_eq!(
+            execution.paths()[1].theorem().prop(),
+            &Prop::Implies(
+                Box::new(Prop::BoolIs(overflow, true)),
+                Box::new(Prop::CStmtExecutes {
+                    state: state.clone(),
+                    stmt,
+                    outcome: CStmtOutcome::Ub(CUndefinedBehavior::SignedOverflow),
+                }),
+            )
+        );
     }
 
     #[test]
