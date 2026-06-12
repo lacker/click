@@ -17,11 +17,21 @@ pub struct C0Param {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum C0Type {
     Int32,
+    Int32Ptr,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum C0Stmt {
+    Assign {
+        name: String,
+        expr: C0Expr,
+    },
+    Seq(Box<C0Stmt>, Box<C0Stmt>),
     Return(C0Expr),
+    Store {
+        ptr: C0Expr,
+        value: C0Expr,
+    },
     If {
         condition: C0Expr,
         then_branch: Box<C0Stmt>,
@@ -35,6 +45,7 @@ pub enum C0Expr {
     Int32Literal(u32),
     Lt(Box<C0Expr>, Box<C0Expr>),
     Add(Box<C0Expr>, Box<C0Expr>),
+    Load(Box<C0Expr>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,6 +73,10 @@ impl C0Function {
     pub fn body_click_source(&self) -> String {
         self.body.to_click_source()
     }
+
+    pub fn body_megakernel_stmt(&self) -> crate::megakernel::CStmt {
+        self.body.to_megakernel_stmt()
+    }
 }
 
 impl C0Param {
@@ -77,7 +92,18 @@ impl C0Param {
 impl C0Stmt {
     pub fn to_click_source(&self) -> String {
         match self {
+            Self::Assign { name, expr } => {
+                format!("(c-assign-stmt (quote {name}) {})", expr.to_click_source())
+            }
+            Self::Seq(first, second) => format!(
+                "(c-seq-stmt {} {})",
+                first.to_click_source(),
+                second.to_click_source()
+            ),
             Self::Return(expr) => format!("(c-return-stmt {})", expr.to_click_source()),
+            Self::Store { .. } => {
+                panic!("the list-kernel C model does not support C0 store statements yet")
+            }
             Self::If {
                 condition,
                 then_branch,
@@ -87,6 +113,30 @@ impl C0Stmt {
                 condition.to_click_source(),
                 then_branch.to_click_source(),
                 else_branch.to_click_source()
+            ),
+        }
+    }
+
+    pub fn to_megakernel_stmt(&self) -> crate::megakernel::CStmt {
+        match self {
+            Self::Assign { name, expr } => {
+                crate::megakernel::c_assign(name.clone(), expr.to_megakernel_expr())
+            }
+            Self::Seq(first, second) => {
+                crate::megakernel::c_seq(first.to_megakernel_stmt(), second.to_megakernel_stmt())
+            }
+            Self::Return(expr) => crate::megakernel::c_return(expr.to_megakernel_expr()),
+            Self::Store { ptr, value } => {
+                crate::megakernel::c_store(ptr.to_megakernel_expr(), value.to_megakernel_expr())
+            }
+            Self::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => crate::megakernel::c_if(
+                condition.to_megakernel_expr(),
+                then_branch.to_megakernel_stmt(),
+                else_branch.to_megakernel_stmt(),
             ),
         }
     }
@@ -107,6 +157,23 @@ impl C0Expr {
                 left.to_click_source(),
                 right.to_click_source()
             ),
+            Self::Load(_) => {
+                panic!("the list-kernel C model does not support C0 load expressions yet")
+            }
+        }
+    }
+
+    pub fn to_megakernel_expr(&self) -> crate::megakernel::CExpr {
+        match self {
+            Self::Var(name) => crate::megakernel::c_var(name.clone()),
+            Self::Int32Literal(value) => crate::megakernel::c_int32_literal(*value),
+            Self::Lt(left, right) => {
+                crate::megakernel::c_lt(left.to_megakernel_expr(), right.to_megakernel_expr())
+            }
+            Self::Add(left, right) => {
+                crate::megakernel::c_add(left.to_megakernel_expr(), right.to_megakernel_expr())
+            }
+            Self::Load(ptr) => crate::megakernel::c_load(ptr.to_megakernel_expr()),
         }
     }
 }
@@ -139,6 +206,8 @@ enum Token {
     Semicolon,
     Plus,
     Lt,
+    Star,
+    Equal,
 }
 
 struct Parser {
@@ -191,7 +260,14 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<C0Type, C0SyntaxError> {
         match self.next() {
-            Some(Token::Ident(name)) if name == "int32" => Ok(C0Type::Int32),
+            Some(Token::Ident(name)) if name == "int32" => {
+                if self.peek() == Some(&Token::Star) {
+                    self.position += 1;
+                    Ok(C0Type::Int32Ptr)
+                } else {
+                    Ok(C0Type::Int32)
+                }
+            }
             Some(token) => Err(C0SyntaxError::new(format!(
                 "expected type `int32`, got {token:?}"
             ))),
@@ -203,35 +279,75 @@ impl Parser {
 
     fn parse_block_stmt(&mut self) -> Result<C0Stmt, C0SyntaxError> {
         self.expect(Token::LBrace)?;
-        let statement = self.parse_stmt()?;
+        let mut statements = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            if self.peek().is_none() {
+                return Err(C0SyntaxError::new(
+                    "expected statement or `}`, got end of input",
+                ));
+            }
+            statements.push(self.parse_stmt()?);
+        }
         self.expect(Token::RBrace)?;
+
+        let mut statements = statements.into_iter();
+        let Some(mut statement) = statements.next() else {
+            return Err(C0SyntaxError::new(
+                "expected at least one statement in block",
+            ));
+        };
+        for next in statements {
+            statement = C0Stmt::Seq(Box::new(statement), Box::new(next));
+        }
+
         Ok(statement)
     }
 
     fn parse_stmt(&mut self) -> Result<C0Stmt, C0SyntaxError> {
-        match self.peek_ident() {
-            Some("return") => {
+        match self.peek() {
+            Some(Token::Star) => {
                 self.position += 1;
+                let ptr = self.parse_unary()?;
+                self.expect(Token::Equal)?;
+                let value = self.parse_expr()?;
+                self.expect(Token::Semicolon)?;
+                Ok(C0Stmt::Store { ptr, value })
+            }
+            Some(Token::Ident(name)) if self.peek_next() == Some(&Token::Equal) => {
+                let name = name.clone();
+                self.position += 2;
                 let expr = self.parse_expr()?;
                 self.expect(Token::Semicolon)?;
-                Ok(C0Stmt::Return(expr))
+                Ok(C0Stmt::Assign { name, expr })
             }
-            Some("if") => {
-                self.position += 1;
-                self.expect(Token::LParen)?;
-                let condition = self.parse_expr()?;
-                self.expect(Token::RParen)?;
-                let then_branch = Box::new(self.parse_block_stmt()?);
-                self.expect_ident_spelling("else")?;
-                let else_branch = Box::new(self.parse_block_stmt()?);
-                Ok(C0Stmt::If {
-                    condition,
-                    then_branch,
-                    else_branch,
-                })
-            }
-            Some(other) => Err(C0SyntaxError::new(format!(
-                "expected statement, got identifier `{other}`"
+            Some(Token::Ident(_)) => match self.peek_ident() {
+                Some("return") => {
+                    self.position += 1;
+                    let expr = self.parse_expr()?;
+                    self.expect(Token::Semicolon)?;
+                    Ok(C0Stmt::Return(expr))
+                }
+                Some("if") => {
+                    self.position += 1;
+                    self.expect(Token::LParen)?;
+                    let condition = self.parse_expr()?;
+                    self.expect(Token::RParen)?;
+                    let then_branch = Box::new(self.parse_block_stmt()?);
+                    self.expect_ident_spelling("else")?;
+                    let else_branch = Box::new(self.parse_block_stmt()?);
+                    Ok(C0Stmt::If {
+                        condition,
+                        then_branch,
+                        else_branch,
+                    })
+                }
+                Some(other) => Err(C0SyntaxError::new(format!(
+                    "expected statement, got identifier `{other}`"
+                ))),
+                None => unreachable!("identifier token should have identifier spelling"),
+            },
+            Some(token) => Err(C0SyntaxError::new(format!(
+                "expected statement, got {token:?}"
             ))),
             None => Err(C0SyntaxError::new("expected statement, got end of input")),
         }
@@ -252,13 +368,22 @@ impl Parser {
     }
 
     fn parse_add(&mut self) -> Result<C0Expr, C0SyntaxError> {
-        let mut expr = self.parse_primary()?;
+        let mut expr = self.parse_unary()?;
         while self.peek() == Some(&Token::Plus) {
             self.position += 1;
-            let right = self.parse_primary()?;
+            let right = self.parse_unary()?;
             expr = C0Expr::Add(Box::new(expr), Box::new(right));
         }
         Ok(expr)
+    }
+
+    fn parse_unary(&mut self) -> Result<C0Expr, C0SyntaxError> {
+        if self.peek() == Some(&Token::Star) {
+            self.position += 1;
+            return Ok(C0Expr::Load(Box::new(self.parse_unary()?)));
+        }
+
+        self.parse_primary()
     }
 
     fn parse_primary(&mut self) -> Result<C0Expr, C0SyntaxError> {
@@ -341,6 +466,10 @@ impl Parser {
         self.tokens.get(self.position)
     }
 
+    fn peek_next(&self) -> Option<&Token> {
+        self.tokens.get(self.position + 1)
+    }
+
     fn peek_ident(&self) -> Option<&str> {
         match self.peek() {
             Some(Token::Ident(name)) => Some(name),
@@ -398,6 +527,8 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
             ';' => Token::Semicolon,
             '+' => Token::Plus,
             '<' => Token::Lt,
+            '*' => Token::Star,
+            '=' => Token::Equal,
             _ => {
                 return Err(C0SyntaxError::new(format!("unexpected character `{ch}`")));
             }
