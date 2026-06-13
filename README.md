@@ -170,7 +170,11 @@ Near-term implementation shape:
 8. There is a first C0 memory-safety demo: `fill3(int32* p)` writes three
    consecutive `int32` cells through `p + i` in a loop and reads back the final
    cell. With a 12-byte backing block, it proves without memory-safety premises.
-9. Decide which pieces of the old list-kernel path remain useful as regression
+9. There is a tiny `.click` sidecar verifier slice for C0. It supports
+   `verify name in "file.c"`, `requires valid_range(p, bytes)`,
+   `ensures result == n`, and `proof { auto; }`, then packages the checked
+   execution as a native megakernel `CFunctionSpec` theorem.
+10. Decide which pieces of the old list-kernel path remain useful as regression
    tests or source-language prototypes, and which should be retired.
 
 Roadmap progress:
