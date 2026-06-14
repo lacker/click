@@ -89,7 +89,7 @@ examples are useful for bootstrapping, but the eventual pitch to C programmers
 should be about facts they already care about: no out-of-bounds access, no
 undefined behavior under stated preconditions, and correct return values.
 
-Current status:
+Current implementation status:
 
 - There is a tiny hand-built C0 model in `src/lang/c/`.
 - The model has source values for C types, expressions, statements,
@@ -108,9 +108,11 @@ Current status:
   propagation theorem through `return`, a well-typedness proof for a tiny `max`
   body, concrete execution theorems for `max(0, 1)` and `max(1, 0)`, and
   symbolic branch theorems for the two paths through `max`.
-- There is a tiny C0 syntax importer for `int32` functions with `if`/`else`,
-  `return`, variables, integer literals, `<`, and `+`. It currently emits the
-  same Click AST representation used by the hand-built model.
+- There is a tiny C0 syntax importer for `int32` and `int32*` functions with
+  declarations, assignment, `if`/`else`, `while`, `return`, loads, stores,
+  address-of, call assignment, variables, integer literals, signed comparisons,
+  `+`, and `-`. Its megakernel lowering is the primary path; its old list-kernel
+  Click AST lowering only supports the earliest C0 subset.
 - There is a first pointer/memory model: pointers are tagged values with a
   block symbol and `bv32` offset, memory is a list of pointer/value cells, and
   invalid loads produce C UB outcome values. The checked theorem set includes
@@ -131,9 +133,9 @@ Current status:
   plus `int32` offsets, scaled by the `int32` element width. Native local
   `int32` declarations allocate stack blocks, `&x` produces a pointer to the
   block, and assignments sync the local value back to that stack cell. The
-  native `max`, overflow, state, function-call, pointer-arithmetic, stack, and
-  load/store tests are tiny compared with the list-encoded C proofs and run
-  effectively instantly.
+  native `max`, `clamp`, overflow, state, function-call, pointer-arithmetic,
+  stack, and load/store tests are tiny compared with the list-encoded C proofs
+  and run effectively instantly.
 - The existing S-expression source format is acceptable for bootstrapping the C
   model, but proof and model syntax should be revisited once C examples start
   getting large.
@@ -141,43 +143,7 @@ Current status:
   should be represented as ordinary values and C typing should be represented by
   ordinary propositions and judgments.
 
-Near-term implementation shape:
-
-1. Grow the megakernel spike toward the C subset we actually want, rather than
-   continuing to encode new C features primarily as Lisp-style list programs.
-2. Add native `int32` operators as needed by C examples. Signed addition and
-   subtraction are native and split on signed-overflow UB. Signed comparisons
-   and equality are native boolean-valued expressions.
-3. Symbolic C execution now separates path facts from proof obligations. Branch
-   choices and overflow case splits are path facts and refine later execution;
-   memory validity side conditions remain proof obligations.
-4. Function specs are native megakernel objects for ground or symbolic calls:
-   a spec packages an initial state, arguments, required propositions, and an
-   expected outcome. The spec prover checks that the requirements are strong
-   enough to avoid leftover generated path facts or proof obligations.
-5. Known function calls are represented by statement-level call assignment
-   through a native `CFunctionEnv`. This currently supports `x = f(args);`,
-   executes the known function body, threads memory effects back to the caller,
-   and assigns the return value.
-6. `while` statements are native. The current executor handles concrete and
-   path-split loops with a fuel cap, and the statement carries an invariant
-   proposition list whose entries become proof obligations/premises. C0 parses
-   ordinary `while (condition) { ... }` blocks into this form with no invariants
-   yet.
-7. There is a small built-in obligation solver. It discharges reflexive
-   equality, constant boolean facts, and concrete memory range facts before
-   exposing them as theorem premises.
-8. There is a first C0 memory-safety demo: `fill3(int32* p)` writes three
-   consecutive `int32` cells through `p + i` in a loop and reads back the final
-   cell. With a 12-byte backing block, it proves without memory-safety premises.
-9. There is a tiny `.click` sidecar verifier slice for C0. It supports
-   `verify name in "file.c"`, `requires valid_range(p, bytes)`,
-   `ensures result == n`, and `proof { auto; }`, then packages the checked
-   execution as a native megakernel `CFunctionSpec` theorem.
-10. Decide which pieces of the old list-kernel path remain useful as regression
-   tests or source-language prototypes, and which should be retired.
-
-Roadmap progress:
+Implemented megakernel roadmap:
 
 1. Native memory blocks and range checks: implemented in the megakernel.
 2. Pointer arithmetic: implemented in the megakernel for `int32*`.
@@ -194,12 +160,30 @@ Roadmap progress:
 9. A small obligation solver: implemented for simple built-in facts.
 10. A first real memory-safety demo function: implemented as the C0 `fill3`
     loop test.
+11. A branch-sensitive arithmetic demo: implemented as parsed C0 `clamp`
+    branch specs over symbolic `int32` inputs.
 
-Deferred C features:
+Active next steps:
+
+1. Decide which pieces of the old list-kernel C path remain useful as
+   regression tests or source-language prototypes, and which should be retired.
+   The megakernel path is where new C features should land first.
+2. Extend the tiny `.click` sidecar verifier beyond pointer-only
+   `valid_range` inputs and concrete `ensures result == n`, so examples like
+   `clamp` and `abs` can state symbolic integer preconditions and result
+   properties in source.
+3. Parse loop invariants from C0 or `.click` sidecars. The native statement
+   representation already carries invariant propositions, but ordinary C0
+   `while` parsing currently attaches no invariants.
+4. Add a more expressive proposition vocabulary for C return-value properties,
+   especially signed comparisons such as `lo <= result`, `result <= hi`, and
+   branch-conditioned postconditions.
+5. Keep growing memory examples toward the C pitch: no out-of-bounds access, no
+   undefined behavior under stated preconditions, and correct return values.
+
+Deferred larger C features:
 
 - arrays
-- loops with invariants
-- function calls
 - structs and unions
 - integer width coverage beyond `int32`, overflow, promotions, and
   signed/unsigned conversion

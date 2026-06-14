@@ -549,6 +549,92 @@ fn c0_syntax_targets_megakernel_int32_sub_and_comparisons() {
 }
 
 #[test]
+fn c0_clamp_demo_proves_symbolic_branch_specs() {
+    let function = syntax::parse_function(
+        r#"
+        int32 clamp(int32 x, int32 lo, int32 hi) {
+            if (x < lo) {
+                return lo;
+            } else {
+                if (x > hi) {
+                    return hi;
+                } else {
+                    return x;
+                }
+            }
+        }
+        "#,
+    )
+    .expect("clamp should parse")
+    .to_megakernel_function();
+
+    let x = crate::megakernel::Var(40);
+    let lo = crate::megakernel::Var(41);
+    let hi = crate::megakernel::Var(42);
+    let x_bits = crate::megakernel::Bv32Term::Var(x);
+    let lo_bits = crate::megakernel::Bv32Term::Var(lo);
+    let hi_bits = crate::megakernel::Bv32Term::Var(hi);
+    let args = vec![
+        crate::megakernel::CExpr::Value(crate::megakernel::int32(x_bits.clone())),
+        crate::megakernel::CExpr::Value(crate::megakernel::int32(lo_bits.clone())),
+        crate::megakernel::CExpr::Value(crate::megakernel::int32(hi_bits.clone())),
+    ];
+    let below_lo =
+        crate::megakernel::BoolTerm::Bv32Slt(Box::new(x_bits.clone()), Box::new(lo_bits.clone()));
+    let above_hi =
+        crate::megakernel::BoolTerm::Bv32Sgt(Box::new(x_bits.clone()), Box::new(hi_bits.clone()));
+    let cases = vec![
+        (
+            vec![crate::megakernel::Prop::BoolIs(below_lo.clone(), true)],
+            crate::megakernel::int32(lo_bits),
+        ),
+        (
+            vec![
+                crate::megakernel::Prop::BoolIs(below_lo.clone(), false),
+                crate::megakernel::Prop::BoolIs(above_hi.clone(), true),
+            ],
+            crate::megakernel::int32(hi_bits),
+        ),
+        (
+            vec![
+                crate::megakernel::Prop::BoolIs(below_lo, false),
+                crate::megakernel::Prop::BoolIs(above_hi, false),
+            ],
+            crate::megakernel::int32(x_bits),
+        ),
+    ];
+
+    for (requires, value) in cases {
+        let spec = crate::megakernel::c_function_spec(
+            crate::megakernel::CState::new(),
+            args.clone(),
+            requires.clone(),
+            crate::megakernel::CFunctionOutcome::Return {
+                value,
+                state: crate::megakernel::CState::new(),
+            },
+        );
+        let theorem = crate::megakernel::prove_c_function_satisfies_spec(
+            function.clone(),
+            spec.clone(),
+            crate::megakernel::Assumptions::new(),
+        )
+        .expect("clamp branch spec should prove");
+        let expected = requires.iter().rev().fold(
+            crate::megakernel::Prop::CFunctionSatisfiesSpec {
+                function: function.clone(),
+                spec: spec.clone(),
+            },
+            |body, requirement| {
+                crate::megakernel::Prop::Implies(Box::new(requirement.clone()), Box::new(body))
+            },
+        );
+
+        assert_eq!(theorem.prop(), &expected);
+    }
+}
+
+#[test]
 fn c0_syntax_targets_megakernel_known_function_call_assignment() {
     let increment = syntax::parse_function(
         r#"
