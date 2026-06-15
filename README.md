@@ -60,7 +60,8 @@ to drive the design. It currently supports:
 - local `int32` declarations
 - assignment and sequencing
 - `if` / `else` with C scalar truthiness
-- `while`, currently concrete/fuel-capped with invariant slots
+- `while`, currently concrete/fuel-capped for execution, plus a native
+  invariant-rule checker for symbolic preservation and exit facts
 - `return`
 - address-of locals
 - pointer arithmetic for `int32*`
@@ -68,8 +69,10 @@ to drive the design. It currently supports:
 - known function calls through a small `CFunctionEnv`
 
 The memory model has named blocks with byte sizes. Concrete in-range loads and
-stores discharge memory-validity obligations directly. Out-of-range or unknown
-memory accesses become proof obligations or UB depending on the execution path.
+stores discharge memory-validity obligations directly. Symbolic accesses can
+also be discharged from valid-range facts plus simple index bounds such as
+`0 <= i < n`. Out-of-range or unknown memory accesses become proof obligations
+or UB depending on the execution path.
 
 ## Proof Surface
 
