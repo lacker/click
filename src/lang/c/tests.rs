@@ -27,7 +27,8 @@ fn c0_syntax_targets_megakernel_max_body() {
         crate::megakernel::int32(a_bits),
         crate::megakernel::int32(b_bits),
     );
-    let assumptions = crate::megakernel::Assumptions::new().assume_bool(condition.clone(), true);
+    let assumptions =
+        crate::megakernel::Assumptions::new().assume_condition(condition.clone(), true);
     let theorem =
         crate::megakernel::prove_symbolic_c_execution(state.clone(), stmt.clone(), assumptions)
             .expect("parsed max should symbolically execute");
@@ -35,7 +36,7 @@ fn c0_syntax_targets_megakernel_max_body() {
     assert_eq!(
         theorem.prop(),
         &crate::megakernel::Prop::Implies(
-            Box::new(crate::megakernel::Prop::BoolIs(condition, true)),
+            Box::new(crate::megakernel::Prop::ConditionIs(condition, true)),
             Box::new(crate::megakernel::Prop::CStmtExecutes {
                 state: state.clone(),
                 stmt,
@@ -499,26 +500,30 @@ fn c0_clamp_demo_proves_symbolic_branch_specs() {
         crate::megakernel::CExpr::Value(crate::megakernel::int32(lo_bits.clone())),
         crate::megakernel::CExpr::Value(crate::megakernel::int32(hi_bits.clone())),
     ];
-    let below_lo =
-        crate::megakernel::BoolTerm::Bv32Slt(Box::new(x_bits.clone()), Box::new(lo_bits.clone()));
-    let above_hi =
-        crate::megakernel::BoolTerm::Bv32Sgt(Box::new(x_bits.clone()), Box::new(hi_bits.clone()));
+    let below_lo = crate::megakernel::ConditionTerm::Bv32Slt(
+        Box::new(x_bits.clone()),
+        Box::new(lo_bits.clone()),
+    );
+    let above_hi = crate::megakernel::ConditionTerm::Bv32Sgt(
+        Box::new(x_bits.clone()),
+        Box::new(hi_bits.clone()),
+    );
     let cases = vec![
         (
-            vec![crate::megakernel::Prop::BoolIs(below_lo.clone(), true)],
+            vec![crate::megakernel::Prop::ConditionIs(below_lo.clone(), true)],
             crate::megakernel::int32(lo_bits),
         ),
         (
             vec![
-                crate::megakernel::Prop::BoolIs(below_lo.clone(), false),
-                crate::megakernel::Prop::BoolIs(above_hi.clone(), true),
+                crate::megakernel::Prop::ConditionIs(below_lo.clone(), false),
+                crate::megakernel::Prop::ConditionIs(above_hi.clone(), true),
             ],
             crate::megakernel::int32(hi_bits),
         ),
         (
             vec![
-                crate::megakernel::Prop::BoolIs(below_lo, false),
-                crate::megakernel::Prop::BoolIs(above_hi, false),
+                crate::megakernel::Prop::ConditionIs(below_lo, false),
+                crate::megakernel::Prop::ConditionIs(above_hi, false),
             ],
             crate::megakernel::int32(x_bits),
         ),

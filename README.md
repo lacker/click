@@ -41,12 +41,16 @@ The public crate currently has three modules:
 
 The megakernel currently has native data structures for:
 
-- `Bv32Term` and `BoolTerm`
+- `Bv32Term` and `ConditionTerm`
 - C values, expressions, statements, functions, and function environments
 - local state and memory with explicit byte-sized blocks
 - expression, statement, and function outcomes
 - C undefined behavior and runtime errors
 - propositions, assumptions, proof obligations, path facts, and theorems
+
+`ConditionTerm` is a proof-level truth-valued term for path conditions,
+overflow predicates, and range facts. It is not a C `bool`. Current C0
+comparisons evaluate to `int32` `0` or `1`, matching C-style scalar truthiness.
 
 ## C0 Status
 

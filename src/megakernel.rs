@@ -11,11 +11,10 @@ pub struct Var(pub u64);
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Sort {
-    Bool,
+    Condition,
     Bv32,
     CType,
     CInt32,
-    CBool,
     CPtr,
     CValue,
     CMemory,
@@ -35,7 +34,7 @@ pub enum Bv32Term {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum BoolTerm {
+pub enum ConditionTerm {
     Const(bool),
     Var(Var),
     Bv32Slt(Box<Bv32Term>, Box<Bv32Term>),
@@ -56,7 +55,6 @@ pub struct Ptr {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CValue {
     Int32(Bv32Term),
-    Bool(BoolTerm),
     Ptr(Ptr),
 }
 
@@ -220,7 +218,7 @@ pub struct CState {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Term {
-    Bool(BoolTerm),
+    Condition(ConditionTerm),
     Bv32(Bv32Term),
     CValue(CValue),
     CExprOutcome(CExprOutcome),
@@ -233,7 +231,7 @@ pub enum Term {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Prop {
     Equal(Term, Term),
-    BoolIs(BoolTerm, bool),
+    ConditionIs(ConditionTerm, bool),
     CExprEvaluates {
         state: CState,
         expr: CExpr,
@@ -296,7 +294,7 @@ pub struct Theorem {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Assumptions {
-    bool_facts: BTreeMap<BoolTerm, bool>,
+    condition_facts: BTreeMap<ConditionTerm, bool>,
     prop_facts: BTreeSet<Prop>,
 }
 
@@ -418,7 +416,7 @@ impl Bv32Term {
     }
 }
 
-impl BoolTerm {
+impl ConditionTerm {
     fn slt(left: Bv32Term, right: Bv32Term) -> Self {
         match (left.as_const(), right.as_const()) {
             (Some(left), Some(right)) => Self::Const((left as i32) < (right as i32)),
@@ -482,7 +480,6 @@ impl CValue {
     fn byte_width(&self) -> u32 {
         match self {
             Self::Int32(_) => 4,
-            Self::Bool(_) => 1,
             Self::Ptr(_) => 8,
         }
     }
@@ -840,15 +837,15 @@ impl Assumptions {
         Self::default()
     }
 
-    pub fn assume_bool(mut self, condition: BoolTerm, value: bool) -> Self {
-        self.bool_facts.insert(condition, value);
+    pub fn assume_condition(mut self, condition: ConditionTerm, value: bool) -> Self {
+        self.condition_facts.insert(condition, value);
         self
     }
 
     pub fn assume_prop(mut self, prop: Prop) -> Self {
         match prop {
-            Prop::BoolIs(condition, value) => {
-                self.bool_facts.insert(condition, value);
+            Prop::ConditionIs(condition, value) => {
+                self.condition_facts.insert(condition, value);
             }
             Prop::And(left, right) => {
                 self = self.assume_prop(*left);
@@ -861,11 +858,11 @@ impl Assumptions {
         self
     }
 
-    fn decide(&self, condition: &BoolTerm) -> Option<bool> {
+    fn decide(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
-            BoolTerm::Const(value) => Some(*value),
+            ConditionTerm::Const(value) => Some(*value),
             _ => self
-                .bool_facts
+                .condition_facts
                 .get(condition)
                 .copied()
                 .or_else(|| self.decide_from_order_facts(condition))
@@ -873,100 +870,118 @@ impl Assumptions {
         }
     }
 
-    fn has_bool_fact(&self, condition: BoolTerm, value: bool) -> bool {
-        self.bool_facts.get(&condition) == Some(&value)
+    fn has_condition_fact(&self, condition: ConditionTerm, value: bool) -> bool {
+        self.condition_facts.get(&condition) == Some(&value)
     }
 
-    fn decide_from_order_facts(&self, condition: &BoolTerm) -> Option<bool> {
+    fn decide_from_order_facts(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
-            BoolTerm::Bv32Eq(left, right) if left == right => Some(true),
-            BoolTerm::Bv32Eq(left, right) => {
+            ConditionTerm::Bv32Eq(left, right) if left == right => Some(true),
+            ConditionTerm::Bv32Eq(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
-                if self.has_bool_fact(BoolTerm::sle(left.clone(), right.clone()), true)
-                    && self.has_bool_fact(BoolTerm::sge(left.clone(), right.clone()), true)
+                if self.has_condition_fact(ConditionTerm::sle(left.clone(), right.clone()), true)
+                    && self
+                        .has_condition_fact(ConditionTerm::sge(left.clone(), right.clone()), true)
                 {
                     Some(true)
-                } else if self.has_bool_fact(BoolTerm::sle(left.clone(), right.clone()), true)
-                    && self.has_bool_fact(BoolTerm::slt(left.clone(), right.clone()), false)
+                } else if self
+                    .has_condition_fact(ConditionTerm::sle(left.clone(), right.clone()), true)
+                    && self
+                        .has_condition_fact(ConditionTerm::slt(left.clone(), right.clone()), false)
                 {
                     Some(true)
-                } else if self.has_bool_fact(BoolTerm::sge(left.clone(), right.clone()), true)
-                    && self.has_bool_fact(BoolTerm::sgt(left.clone(), right.clone()), false)
+                } else if self
+                    .has_condition_fact(ConditionTerm::sge(left.clone(), right.clone()), true)
+                    && self
+                        .has_condition_fact(ConditionTerm::sgt(left.clone(), right.clone()), false)
                 {
                     Some(true)
-                } else if self.has_bool_fact(BoolTerm::slt(left.clone(), right.clone()), true)
-                    || self.has_bool_fact(BoolTerm::sgt(left, right), true)
+                } else if self
+                    .has_condition_fact(ConditionTerm::slt(left.clone(), right.clone()), true)
+                    || self.has_condition_fact(ConditionTerm::sgt(left, right), true)
                 {
                     Some(false)
                 } else {
                     None
                 }
             }
-            BoolTerm::Bv32Slt(left, right) if left == right => Some(false),
-            BoolTerm::Bv32Sgt(left, right) if left == right => Some(false),
-            BoolTerm::Bv32Sle(left, right) if left == right => Some(true),
-            BoolTerm::Bv32Sge(left, right) if left == right => Some(true),
-            BoolTerm::Bv32Slt(left, right) => {
+            ConditionTerm::Bv32Slt(left, right) if left == right => Some(false),
+            ConditionTerm::Bv32Sgt(left, right) if left == right => Some(false),
+            ConditionTerm::Bv32Sle(left, right) if left == right => Some(true),
+            ConditionTerm::Bv32Sge(left, right) if left == right => Some(true),
+            ConditionTerm::Bv32Slt(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
-                if self.has_bool_fact(BoolTerm::sgt(right.clone(), left.clone()), true)
-                    || self.has_bool_fact(BoolTerm::sge(left.clone(), right.clone()), false)
+                if self.has_condition_fact(ConditionTerm::sgt(right.clone(), left.clone()), true)
+                    || self
+                        .has_condition_fact(ConditionTerm::sge(left.clone(), right.clone()), false)
                     || self.has_upper_bound_below(&left, &right)
                 {
                     Some(true)
-                } else if self.has_bool_fact(BoolTerm::sge(left.clone(), right.clone()), true)
-                    || self.has_bool_fact(BoolTerm::sle(right, left), true)
+                } else if self
+                    .has_condition_fact(ConditionTerm::sge(left.clone(), right.clone()), true)
+                    || self.has_condition_fact(ConditionTerm::sle(right, left), true)
                 {
                     Some(false)
                 } else {
                     None
                 }
             }
-            BoolTerm::Bv32Sle(left, right) => {
+            ConditionTerm::Bv32Sle(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
                 if left.add_const_base(1).is_some_and(|base| {
-                    self.has_bool_fact(BoolTerm::slt(base, right.clone()), true)
-                }) || self.has_bool_fact(BoolTerm::slt(left.clone(), right.clone()), true)
-                    || self.has_bool_fact(BoolTerm::sgt(right.clone(), left.clone()), true)
-                    || self.has_bool_fact(BoolTerm::sgt(left.clone(), right.clone()), false)
+                    self.has_condition_fact(ConditionTerm::slt(base, right.clone()), true)
+                }) || self
+                    .has_condition_fact(ConditionTerm::slt(left.clone(), right.clone()), true)
+                    || self
+                        .has_condition_fact(ConditionTerm::sgt(right.clone(), left.clone()), true)
+                    || self
+                        .has_condition_fact(ConditionTerm::sgt(left.clone(), right.clone()), false)
                 {
                     Some(true)
-                } else if self.has_bool_fact(BoolTerm::sgt(left, right), true) {
+                } else if self.has_condition_fact(ConditionTerm::sgt(left, right), true) {
                     Some(false)
                 } else {
                     None
                 }
             }
-            BoolTerm::Bv32Sgt(left, right) => {
+            ConditionTerm::Bv32Sgt(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
-                if self.has_bool_fact(BoolTerm::slt(right.clone(), left.clone()), true)
-                    || self.has_bool_fact(BoolTerm::sle(left.clone(), right.clone()), false)
+                if self.has_condition_fact(ConditionTerm::slt(right.clone(), left.clone()), true)
+                    || self
+                        .has_condition_fact(ConditionTerm::sle(left.clone(), right.clone()), false)
                 {
                     Some(true)
-                } else if self.has_bool_fact(BoolTerm::sle(left.clone(), right.clone()), true)
-                    || self.has_bool_fact(BoolTerm::sge(right, left), true)
+                } else if self
+                    .has_condition_fact(ConditionTerm::sle(left.clone(), right.clone()), true)
+                    || self.has_condition_fact(ConditionTerm::sge(right, left), true)
                 {
                     Some(false)
                 } else {
                     None
                 }
             }
-            BoolTerm::Bv32Sge(left, right) => {
+            ConditionTerm::Bv32Sge(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
                 if left.add_const_base(1).is_some_and(|base| {
                     right == Bv32Term::Const(0)
-                        && self.has_bool_fact(BoolTerm::sge(base, Bv32Term::Const(0)), true)
-                }) || self.has_bool_fact(BoolTerm::sgt(left.clone(), right.clone()), true)
-                    || self.has_bool_fact(BoolTerm::slt(right.clone(), left.clone()), true)
-                    || self.has_bool_fact(BoolTerm::sle(right.clone(), left.clone()), true)
-                    || self.has_bool_fact(BoolTerm::slt(left.clone(), right.clone()), false)
+                        && self
+                            .has_condition_fact(ConditionTerm::sge(base, Bv32Term::Const(0)), true)
+                }) || self
+                    .has_condition_fact(ConditionTerm::sgt(left.clone(), right.clone()), true)
+                    || self
+                        .has_condition_fact(ConditionTerm::slt(right.clone(), left.clone()), true)
+                    || self
+                        .has_condition_fact(ConditionTerm::sle(right.clone(), left.clone()), true)
+                    || self
+                        .has_condition_fact(ConditionTerm::slt(left.clone(), right.clone()), false)
                 {
                     Some(true)
-                } else if self.has_bool_fact(BoolTerm::slt(left, right), true) {
+                } else if self.has_condition_fact(ConditionTerm::slt(left, right), true) {
                     Some(false)
                 } else {
                     None
@@ -977,43 +992,49 @@ impl Assumptions {
     }
 
     fn has_upper_bound_below(&self, left: &Bv32Term, right: &Bv32Term) -> bool {
-        self.bool_facts
+        self.condition_facts
             .iter()
             .any(|(fact, value)| match (fact, value) {
-                (BoolTerm::Bv32Slt(fact_left, upper), true) if fact_left.as_ref() == left => {
-                    self.has_bool_fact(BoolTerm::sle(upper.as_ref().clone(), right.clone()), true)
+                (ConditionTerm::Bv32Slt(fact_left, upper), true) if fact_left.as_ref() == left => {
+                    self.has_condition_fact(
+                        ConditionTerm::sle(upper.as_ref().clone(), right.clone()),
+                        true,
+                    )
                 }
                 _ => false,
             })
     }
 
-    fn decide_from_overflow_facts(&self, condition: &BoolTerm) -> Option<bool> {
+    fn decide_from_overflow_facts(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
-            BoolTerm::Bv32SignedAddOverflows(left, right)
+            ConditionTerm::Bv32SignedAddOverflows(left, right)
                 if right.as_ref() == &Bv32Term::Const(1) =>
             {
                 let int_max = Bv32Term::Const(i32::MAX as u32);
                 let left = left.as_ref().clone();
-                (self.has_bool_fact(BoolTerm::slt(left.clone(), int_max.clone()), true)
+                (self.has_condition_fact(ConditionTerm::slt(left.clone(), int_max.clone()), true)
                     || self.has_upper_bound_below(&left, &int_max))
                 .then_some(false)
             }
-            BoolTerm::Bv32SignedSubOverflows(left, right)
+            ConditionTerm::Bv32SignedSubOverflows(left, right)
                 if right.as_ref() == &Bv32Term::Const(1) =>
             {
                 let zero = Bv32Term::Const(0);
                 let left = left.as_ref().clone();
-                self.has_bool_fact(BoolTerm::sgt(left, zero), true)
+                self.has_condition_fact(ConditionTerm::sgt(left, zero), true)
                     .then_some(false)
             }
-            BoolTerm::Bv32Sge(left, right)
+            ConditionTerm::Bv32Sge(left, right)
                 if left.as_ref().is_subtract_one() && right.as_ref() == &Bv32Term::Const(0) =>
             {
                 let Some(left_before_sub) = left.as_ref().subtract_one_base() else {
                     return None;
                 };
-                self.has_bool_fact(BoolTerm::sgt(left_before_sub, Bv32Term::Const(0)), true)
-                    .then_some(true)
+                self.has_condition_fact(
+                    ConditionTerm::sgt(left_before_sub, Bv32Term::Const(0)),
+                    true,
+                )
+                .then_some(true)
             }
             _ => None,
         }
@@ -1025,7 +1046,7 @@ impl Assumptions {
         }
 
         match prop {
-            Prop::BoolIs(condition, value) => self.decide(condition) == Some(*value),
+            Prop::ConditionIs(condition, value) => self.decide(condition) == Some(*value),
             Prop::And(left, right) => self.proves(left) && self.proves(right),
             Prop::CMemoryCanLoad { memory, ptr } => self.proves_memory_access(memory, ptr, 4),
             Prop::CMemoryCanStore { memory, ptr } => self.proves_memory_access(memory, ptr, 4),
@@ -1071,8 +1092,8 @@ impl Assumptions {
             return false;
         };
 
-        self.decide(&BoolTerm::sge(index.clone(), Bv32Term::Const(0))) == Some(true)
-            && self.decide(&BoolTerm::slt(index, element_count)) == Some(true)
+        self.decide(&ConditionTerm::sge(index.clone(), Bv32Term::Const(0))) == Some(true)
+            && self.decide(&ConditionTerm::slt(index, element_count)) == Some(true)
     }
 }
 
@@ -1081,8 +1102,8 @@ impl ProofObligation {
         Self { prop }
     }
 
-    pub fn bool(condition: BoolTerm, value: bool) -> Self {
-        Self::new(Prop::BoolIs(condition, value))
+    pub fn condition(condition: ConditionTerm, value: bool) -> Self {
+        Self::new(Prop::ConditionIs(condition, value))
     }
 
     pub fn memory_can_load(memory: CMemory, ptr: Ptr) -> Self {
@@ -1103,8 +1124,8 @@ impl PathFact {
         Self { prop }
     }
 
-    pub fn bool(condition: BoolTerm, value: bool) -> Self {
-        Self::new(Prop::BoolIs(condition, value))
+    pub fn condition(condition: ConditionTerm, value: bool) -> Self {
+        Self::new(Prop::ConditionIs(condition, value))
     }
 
     pub fn prop(&self) -> &Prop {
@@ -1138,10 +1159,6 @@ impl SymbolicCExecutionPath {
 
 pub fn int32(bits: impl Into<Bv32Term>) -> CValue {
     CValue::Int32(bits.into())
-}
-
-pub fn c_bool(value: impl Into<BoolTerm>) -> CValue {
-    CValue::Bool(value.into())
 }
 
 pub fn c_var(name: impl Into<String>) -> CExpr {
@@ -1274,7 +1291,7 @@ pub fn prop_and(left: Prop, right: Prop) -> Prop {
 
 pub fn prop_and_all(mut props: Vec<Prop>) -> Prop {
     let Some(first) = props.pop() else {
-        return Prop::BoolIs(BoolTerm::Const(true), true);
+        return Prop::ConditionIs(ConditionTerm::Const(true), true);
     };
 
     props
@@ -1308,8 +1325,8 @@ pub fn c_max_state(a: CValue, b: CValue) -> CState {
     CState::new().with_local("a", a).with_local("b", b)
 }
 
-pub fn c_max_lt_condition(a: Bv32Term, b: Bv32Term) -> BoolTerm {
-    BoolTerm::slt(a, b)
+pub fn c_max_lt_condition(a: Bv32Term, b: Bv32Term) -> ConditionTerm {
+    ConditionTerm::slt(a, b)
 }
 
 pub fn prove_c_expr_eval(state: CState, expr: CExpr) -> Option<Theorem> {
@@ -1768,7 +1785,7 @@ pub fn prove_c_max_lt_returns_right(a: Var, b: Var) -> Option<Theorem> {
     let b_value = int32(b_bits.clone());
     let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
     let state = c_max_state(a_value, b_value.clone());
-    let assumptions = Assumptions::new().assume_bool(condition.clone(), true);
+    let assumptions = Assumptions::new().assume_condition(condition.clone(), true);
     let outcome = exec_c_stmt(&state, &c_max_body(), &assumptions)?;
 
     if outcome
@@ -1785,7 +1802,7 @@ pub fn prove_c_max_lt_returns_right(a: Var, b: Var) -> Option<Theorem> {
         forall_int32(
             b,
             Prop::Implies(
-                Box::new(Prop::BoolIs(condition, true)),
+                Box::new(Prop::ConditionIs(condition, true)),
                 Box::new(Prop::CStmtExecutes {
                     state,
                     stmt: c_max_body(),
@@ -1803,7 +1820,7 @@ pub fn prove_c_max_not_lt_returns_left(a: Var, b: Var) -> Option<Theorem> {
     let b_value = int32(b_bits.clone());
     let condition = c_max_lt_condition(a_bits, b_bits);
     let state = c_max_state(a_value.clone(), b_value);
-    let assumptions = Assumptions::new().assume_bool(condition.clone(), false);
+    let assumptions = Assumptions::new().assume_condition(condition.clone(), false);
     let outcome = exec_c_stmt(&state, &c_max_body(), &assumptions)?;
 
     if outcome
@@ -1820,7 +1837,7 @@ pub fn prove_c_max_not_lt_returns_left(a: Var, b: Var) -> Option<Theorem> {
         forall_int32(
             b,
             Prop::Implies(
-                Box::new(Prop::BoolIs(condition, false)),
+                Box::new(Prop::ConditionIs(condition, false)),
                 Box::new(Prop::CStmtExecutes {
                     state,
                     stmt: c_max_body(),
@@ -2016,8 +2033,10 @@ fn condition_contexts_for_truthiness(
 
 fn ptrs_proven_distinct(left: &Ptr, right: &Ptr, assumptions: &Assumptions) -> bool {
     left.block != right.block
-        || assumptions.decide(&BoolTerm::eq(left.offset.clone(), right.offset.clone()))
-            == Some(false)
+        || assumptions.decide(&ConditionTerm::eq(
+            left.offset.clone(),
+            right.offset.clone(),
+        )) == Some(false)
 }
 
 fn forall_int32(var: Var, body: Prop) -> Prop {
@@ -2051,12 +2070,12 @@ fn wrap_proof_facts(
         });
 
     assumptions
-        .bool_facts
+        .condition_facts
         .iter()
         .rev()
         .fold(prop, |body, (condition, value)| {
             Prop::Implies(
-                Box::new(Prop::BoolIs(condition.clone(), *value)),
+                Box::new(Prop::ConditionIs(condition.clone(), *value)),
                 Box::new(body),
             )
         })
@@ -2065,7 +2084,7 @@ fn wrap_proof_facts(
 fn solve_builtin_prop(prop: &Prop) -> bool {
     match prop {
         Prop::Equal(left, right) => left == right,
-        Prop::BoolIs(BoolTerm::Const(actual), expected) => actual == expected,
+        Prop::ConditionIs(ConditionTerm::Const(actual), expected) => actual == expected,
         Prop::And(left, right) => solve_builtin_prop(left) && solve_builtin_prop(right),
         Prop::CMemoryValidRange {
             memory,
@@ -2113,8 +2132,8 @@ fn int32_element_count_from_bytes(bytes: &Bv32Term) -> Option<Bv32Term> {
 }
 
 fn add_path_fact(facts: &mut Vec<PathFact>, assumptions: &Assumptions, prop: Prop) -> Option<()> {
-    if let Prop::BoolIs(condition, value) = prop {
-        return add_bool_path_fact(facts, assumptions, condition, value);
+    if let Prop::ConditionIs(condition, value) = prop {
+        return add_condition_path_fact(facts, assumptions, condition, value);
     }
 
     if assumptions.proves(&prop) || facts.iter().any(|fact| fact.prop == prop) {
@@ -2125,10 +2144,10 @@ fn add_path_fact(facts: &mut Vec<PathFact>, assumptions: &Assumptions, prop: Pro
     Some(())
 }
 
-fn add_bool_path_fact(
+fn add_condition_path_fact(
     facts: &mut Vec<PathFact>,
     assumptions: &Assumptions,
-    condition: BoolTerm,
+    condition: ConditionTerm,
     value: bool,
 ) -> Option<()> {
     if let Some(known) = assumptions.decide(&condition) {
@@ -2138,7 +2157,7 @@ fn add_bool_path_fact(
     if let Some(existing) = facts
         .iter()
         .filter_map(|fact| match fact.prop() {
-            Prop::BoolIs(existing_condition, existing_value)
+            Prop::ConditionIs(existing_condition, existing_value)
                 if existing_condition == &condition =>
             {
                 Some(*existing_value)
@@ -2150,7 +2169,7 @@ fn add_bool_path_fact(
         return (existing == value).then_some(());
     }
 
-    facts.push(PathFact::bool(condition, value));
+    facts.push(PathFact::condition(condition, value));
     Some(())
 }
 
@@ -2159,8 +2178,8 @@ fn add_proof_obligation(
     assumptions: &Assumptions,
     prop: Prop,
 ) -> Option<()> {
-    if let Prop::BoolIs(condition, value) = prop {
-        return add_bool_obligation(obligations, assumptions, condition, value);
+    if let Prop::ConditionIs(condition, value) = prop {
+        return add_condition_obligation(obligations, assumptions, condition, value);
     }
 
     if assumptions.proves(&prop) || obligations.iter().any(|obligation| obligation.prop == prop) {
@@ -2171,10 +2190,10 @@ fn add_proof_obligation(
     Some(())
 }
 
-fn add_bool_obligation(
+fn add_condition_obligation(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &Assumptions,
-    condition: BoolTerm,
+    condition: ConditionTerm,
     value: bool,
 ) -> Option<()> {
     if let Some(known) = assumptions.decide(&condition) {
@@ -2184,7 +2203,7 @@ fn add_bool_obligation(
     if let Some(existing) = obligations
         .iter()
         .filter_map(|obligation| match obligation.prop() {
-            Prop::BoolIs(existing_condition, existing_value)
+            Prop::ConditionIs(existing_condition, existing_value)
                 if existing_condition == &condition =>
             {
                 Some(*existing_value)
@@ -2196,7 +2215,7 @@ fn add_bool_obligation(
         return (existing == value).then_some(());
     }
 
-    obligations.push(ProofObligation::bool(condition, value));
+    obligations.push(ProofObligation::condition(condition, value));
     Some(())
 }
 
@@ -2239,11 +2258,11 @@ fn merge_path_facts_and_obligations(
 fn decide_with_facts(
     assumptions: &Assumptions,
     facts: &[PathFact],
-    condition: &BoolTerm,
+    condition: &ConditionTerm,
 ) -> Option<bool> {
     assumptions.decide(condition).or_else(|| {
         facts.iter().find_map(|fact| match fact.prop() {
-            Prop::BoolIs(existing_condition, value) if existing_condition == condition => {
+            Prop::ConditionIs(existing_condition, value) if existing_condition == condition => {
                 Some(*value)
             }
             _ => None,
@@ -2329,8 +2348,8 @@ fn eval_c_expr_paths(
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                bool_term_as_c_int32_paths(
-                    BoolTerm::slt(left, right),
+                condition_as_c_int32_paths(
+                    ConditionTerm::slt(left, right),
                     facts,
                     obligations,
                     assumptions,
@@ -2344,8 +2363,8 @@ fn eval_c_expr_paths(
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                bool_term_as_c_int32_paths(
-                    BoolTerm::sle(left, right),
+                condition_as_c_int32_paths(
+                    ConditionTerm::sle(left, right),
                     facts,
                     obligations,
                     assumptions,
@@ -2359,8 +2378,8 @@ fn eval_c_expr_paths(
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                bool_term_as_c_int32_paths(
-                    BoolTerm::sgt(left, right),
+                condition_as_c_int32_paths(
+                    ConditionTerm::sgt(left, right),
                     facts,
                     obligations,
                     assumptions,
@@ -2374,8 +2393,8 @@ fn eval_c_expr_paths(
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                bool_term_as_c_int32_paths(
-                    BoolTerm::sge(left, right),
+                condition_as_c_int32_paths(
+                    ConditionTerm::sge(left, right),
                     facts,
                     obligations,
                     assumptions,
@@ -2389,8 +2408,8 @@ fn eval_c_expr_paths(
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                bool_term_as_c_int32_paths(
-                    BoolTerm::eq(left, right),
+                condition_as_c_int32_paths(
+                    ConditionTerm::eq(left, right),
                     facts,
                     obligations,
                     assumptions,
@@ -2445,8 +2464,8 @@ fn eval_c_expr_paths(
     Ok(paths)
 }
 
-fn bool_term_as_c_int32_paths(
-    condition: BoolTerm,
+fn condition_as_c_int32_paths(
+    condition: ConditionTerm,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
@@ -2464,11 +2483,11 @@ fn bool_term_as_c_int32_paths(
         }],
         None => {
             let mut true_facts = facts.clone();
-            add_bool_path_fact(&mut true_facts, assumptions, condition.clone(), true)
+            add_condition_path_fact(&mut true_facts, assumptions, condition.clone(), true)
                 .expect("unknown comparison fact should be consistent");
 
             let mut false_facts = facts;
-            add_bool_path_fact(&mut false_facts, assumptions, condition, false)
+            add_condition_path_fact(&mut false_facts, assumptions, condition, false)
                 .expect("unknown comparison fact should be consistent");
 
             vec![
@@ -2502,7 +2521,7 @@ fn c_truthiness_paths(
 ) -> Vec<CTruthinessPath> {
     match value {
         CValue::Int32(bits) => {
-            let is_zero = BoolTerm::eq(bits, Bv32Term::Const(0));
+            let is_zero = ConditionTerm::eq(bits, Bv32Term::Const(0));
             match decide_with_facts(assumptions, &facts, &is_zero) {
                 Some(true) => vec![CTruthinessPath {
                     is_true: false,
@@ -2516,11 +2535,11 @@ fn c_truthiness_paths(
                 }],
                 None => {
                     let mut true_facts = facts.clone();
-                    add_bool_path_fact(&mut true_facts, assumptions, is_zero.clone(), false)
+                    add_condition_path_fact(&mut true_facts, assumptions, is_zero.clone(), false)
                         .expect("unknown truthiness fact should be consistent");
 
                     let mut false_facts = facts;
-                    add_bool_path_fact(&mut false_facts, assumptions, is_zero, true)
+                    add_condition_path_fact(&mut false_facts, assumptions, is_zero, true)
                         .expect("unknown truthiness fact should be consistent");
 
                     vec![
@@ -2538,35 +2557,6 @@ fn c_truthiness_paths(
                 }
             }
         }
-        CValue::Bool(condition) => match decide_with_facts(assumptions, &facts, &condition) {
-            Some(value) => vec![CTruthinessPath {
-                is_true: value,
-                facts,
-                obligations,
-            }],
-            None => {
-                let mut true_facts = facts.clone();
-                add_bool_path_fact(&mut true_facts, assumptions, condition.clone(), true)
-                    .expect("unknown truthiness fact should be consistent");
-
-                let mut false_facts = facts;
-                add_bool_path_fact(&mut false_facts, assumptions, condition, false)
-                    .expect("unknown truthiness fact should be consistent");
-
-                vec![
-                    CTruthinessPath {
-                        is_true: true,
-                        facts: true_facts,
-                        obligations: obligations.clone(),
-                    },
-                    CTruthinessPath {
-                        is_true: false,
-                        facts: false_facts,
-                        obligations,
-                    },
-                ]
-            }
-        },
         CValue::Ptr(ptr) => match (&ptr.block[..], &ptr.offset) {
             ("null", Bv32Term::Const(0)) => vec![CTruthinessPath {
                 is_true: false,
@@ -2735,7 +2725,7 @@ fn apply_c_int32_add(
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExprPath> {
-    let overflow = BoolTerm::signed_add_overflows(left.clone(), right.clone());
+    let overflow = ConditionTerm::signed_add_overflows(left.clone(), right.clone());
     match decide_with_facts(assumptions, &facts, &overflow) {
         Some(true) => vec![CExprPath {
             outcome: CExprOutcome::Ub(CUndefinedBehavior::SignedOverflow),
@@ -2749,11 +2739,11 @@ fn apply_c_int32_add(
         }],
         None => {
             let mut normal_facts = facts.clone();
-            add_bool_path_fact(&mut normal_facts, assumptions, overflow.clone(), false)
+            add_condition_path_fact(&mut normal_facts, assumptions, overflow.clone(), false)
                 .expect("unknown overflow fact should be consistent");
 
             let mut overflow_facts = facts;
-            add_bool_path_fact(&mut overflow_facts, assumptions, overflow, true)
+            add_condition_path_fact(&mut overflow_facts, assumptions, overflow, true)
                 .expect("unknown overflow fact should be consistent");
 
             vec![
@@ -2779,7 +2769,7 @@ fn apply_c_int32_sub(
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExprPath> {
-    let overflow = BoolTerm::signed_sub_overflows(left.clone(), right.clone());
+    let overflow = ConditionTerm::signed_sub_overflows(left.clone(), right.clone());
     match decide_with_facts(assumptions, &facts, &overflow) {
         Some(true) => vec![CExprPath {
             outcome: CExprOutcome::Ub(CUndefinedBehavior::SignedOverflow),
@@ -2793,11 +2783,11 @@ fn apply_c_int32_sub(
         }],
         None => {
             let mut normal_facts = facts.clone();
-            add_bool_path_fact(&mut normal_facts, assumptions, overflow.clone(), false)
+            add_condition_path_fact(&mut normal_facts, assumptions, overflow.clone(), false)
                 .expect("unknown overflow fact should be consistent");
 
             let mut overflow_facts = facts;
-            add_bool_path_fact(&mut overflow_facts, assumptions, overflow, true)
+            add_condition_path_fact(&mut overflow_facts, assumptions, overflow, true)
                 .expect("unknown overflow fact should be consistent");
 
             vec![
@@ -3588,7 +3578,7 @@ impl From<u32> for Bv32Term {
     }
 }
 
-impl From<bool> for BoolTerm {
+impl From<bool> for ConditionTerm {
     fn from(value: bool) -> Self {
         Self::Const(value)
     }
@@ -3666,7 +3656,7 @@ mod tests {
         assert_eq!(execution.paths().len(), 2);
         assert_eq!(
             execution.paths()[0].facts(),
-            &[PathFact::bool(condition.clone(), true)]
+            &[PathFact::condition(condition.clone(), true)]
         );
         assert_eq!(
             execution.paths()[0].obligations(),
@@ -3675,7 +3665,7 @@ mod tests {
         assert_eq!(
             execution.paths()[0].theorem().prop(),
             &Prop::Implies(
-                Box::new(Prop::BoolIs(condition.clone(), true)),
+                Box::new(Prop::ConditionIs(condition.clone(), true)),
                 Box::new(Prop::CFunctionExecutes {
                     state: state.clone(),
                     function: function.clone(),
@@ -3690,7 +3680,7 @@ mod tests {
 
         assert_eq!(
             execution.paths()[1].facts(),
-            &[PathFact::bool(condition.clone(), false)]
+            &[PathFact::condition(condition.clone(), false)]
         );
         assert_eq!(
             execution.paths()[1].obligations(),
@@ -3699,7 +3689,7 @@ mod tests {
         assert_eq!(
             execution.paths()[1].theorem().prop(),
             &Prop::Implies(
-                Box::new(Prop::BoolIs(condition, false)),
+                Box::new(Prop::ConditionIs(condition, false)),
                 Box::new(Prop::CFunctionExecutes {
                     state: state.clone(),
                     function,
@@ -3795,7 +3785,7 @@ mod tests {
         let spec = c_function_spec(
             CState::new(),
             vec![CExpr::Value(int32(a_bits)), CExpr::Value(int32(b_bits))],
-            vec![Prop::BoolIs(condition.clone(), true)],
+            vec![Prop::ConditionIs(condition.clone(), true)],
             CFunctionOutcome::Return {
                 value: int32(Bv32Term::Var(b)),
                 state: CState::new(),
@@ -3808,7 +3798,7 @@ mod tests {
         assert_eq!(
             theorem.prop(),
             &Prop::Implies(
-                Box::new(Prop::BoolIs(condition, true)),
+                Box::new(Prop::ConditionIs(condition, true)),
                 Box::new(Prop::CFunctionSatisfiesSpec { function, spec }),
             )
         );
@@ -3830,7 +3820,7 @@ mod tests {
         let right_spec = c_function_spec(
             CState::new(),
             args.clone(),
-            vec![Prop::BoolIs(condition.clone(), true)],
+            vec![Prop::ConditionIs(condition.clone(), true)],
             CFunctionOutcome::Return {
                 value: int32(b_bits.clone()),
                 state: CState::new(),
@@ -3841,8 +3831,8 @@ mod tests {
             right_spec,
             Assumptions::new(),
             vec![
-                Prop::BoolIs(BoolTerm::sge(b_bits.clone(), a_bits.clone()), true),
-                Prop::BoolIs(BoolTerm::sge(b_bits.clone(), b_bits.clone()), true),
+                Prop::ConditionIs(ConditionTerm::sge(b_bits.clone(), a_bits.clone()), true),
+                Prop::ConditionIs(ConditionTerm::sge(b_bits.clone(), b_bits.clone()), true),
             ],
         )
         .expect("under a < b, max returns b and b is >= both inputs");
@@ -3850,7 +3840,7 @@ mod tests {
         let left_spec = c_function_spec(
             CState::new(),
             args,
-            vec![Prop::BoolIs(condition, false)],
+            vec![Prop::ConditionIs(condition, false)],
             CFunctionOutcome::Return {
                 value: int32(a_bits.clone()),
                 state: CState::new(),
@@ -3861,8 +3851,8 @@ mod tests {
             left_spec,
             Assumptions::new(),
             vec![
-                Prop::BoolIs(BoolTerm::sge(a_bits.clone(), a_bits.clone()), true),
-                Prop::BoolIs(BoolTerm::sge(a_bits, b_bits), true),
+                Prop::ConditionIs(ConditionTerm::sge(a_bits.clone(), a_bits.clone()), true),
+                Prop::ConditionIs(ConditionTerm::sge(a_bits, b_bits), true),
             ],
         )
         .expect("under not (a < b), max returns a and a is >= both inputs");
@@ -3876,9 +3866,10 @@ mod tests {
         let x_bits = Bv32Term::Var(x);
         let lo_bits = Bv32Term::Var(lo);
         let hi_bits = Bv32Term::Var(hi);
-        let ordered_limits = Prop::BoolIs(BoolTerm::sle(lo_bits.clone(), hi_bits.clone()), true);
-        let below_lo = BoolTerm::slt(x_bits.clone(), lo_bits.clone());
-        let above_hi = BoolTerm::sgt(x_bits.clone(), hi_bits.clone());
+        let ordered_limits =
+            Prop::ConditionIs(ConditionTerm::sle(lo_bits.clone(), hi_bits.clone()), true);
+        let below_lo = ConditionTerm::slt(x_bits.clone(), lo_bits.clone());
+        let above_hi = ConditionTerm::sgt(x_bits.clone(), hi_bits.clone());
         let function = c_function(
             CType::Int32,
             "clamp",
@@ -3905,15 +3896,18 @@ mod tests {
 
         for (requires, result, message) in [
             (
-                vec![ordered_limits.clone(), Prop::BoolIs(below_lo.clone(), true)],
+                vec![
+                    ordered_limits.clone(),
+                    Prop::ConditionIs(below_lo.clone(), true),
+                ],
                 lo_bits.clone(),
                 "x below lo returns lo within bounds",
             ),
             (
                 vec![
                     ordered_limits.clone(),
-                    Prop::BoolIs(below_lo.clone(), false),
-                    Prop::BoolIs(above_hi.clone(), true),
+                    Prop::ConditionIs(below_lo.clone(), false),
+                    Prop::ConditionIs(above_hi.clone(), true),
                 ],
                 hi_bits.clone(),
                 "x above hi returns hi within bounds",
@@ -3921,8 +3915,8 @@ mod tests {
             (
                 vec![
                     ordered_limits.clone(),
-                    Prop::BoolIs(below_lo.clone(), false),
-                    Prop::BoolIs(above_hi.clone(), false),
+                    Prop::ConditionIs(below_lo.clone(), false),
+                    Prop::ConditionIs(above_hi.clone(), false),
                 ],
                 x_bits.clone(),
                 "x already in range returns x within bounds",
@@ -3942,8 +3936,8 @@ mod tests {
                 spec,
                 Assumptions::new(),
                 vec![
-                    Prop::BoolIs(BoolTerm::sge(result.clone(), lo_bits.clone()), true),
-                    Prop::BoolIs(BoolTerm::sle(result, hi_bits.clone()), true),
+                    Prop::ConditionIs(ConditionTerm::sge(result.clone(), lo_bits.clone()), true),
+                    Prop::ConditionIs(ConditionTerm::sle(result, hi_bits.clone()), true),
                 ],
             )
             .expect(message);
@@ -4184,7 +4178,7 @@ mod tests {
             Term::Bv32(Bv32Term::Const(7)),
             Term::Bv32(Bv32Term::Const(7)),
         )));
-        assert!(assumptions.proves(&Prop::BoolIs(BoolTerm::Const(true), true)));
+        assert!(assumptions.proves(&Prop::ConditionIs(ConditionTerm::Const(true), true)));
         assert!(assumptions.proves(&Prop::CMemoryCanLoad {
             memory: memory.clone(),
             ptr: ptr.clone(),
@@ -4228,18 +4222,18 @@ mod tests {
         let x_bits = Bv32Term::Var(x);
         let state = CState::new().with_local("x", int32(x_bits.clone()));
         let stmt = c_assign("x", c_sub(c_var("x"), c_int32_literal(1)));
-        let invariant = BoolTerm::sge(x_bits.clone(), Bv32Term::Const(0));
-        let condition = BoolTerm::sgt(x_bits.clone(), Bv32Term::Const(0));
-        let post_invariant = Prop::BoolIs(
-            BoolTerm::sge(
+        let invariant = ConditionTerm::sge(x_bits.clone(), Bv32Term::Const(0));
+        let condition = ConditionTerm::sgt(x_bits.clone(), Bv32Term::Const(0));
+        let post_invariant = Prop::ConditionIs(
+            ConditionTerm::sge(
                 Bv32Term::Sub(Box::new(x_bits.clone()), Box::new(Bv32Term::Const(1))),
                 Bv32Term::Const(0),
             ),
             true,
         );
         let assumptions = Assumptions::new()
-            .assume_bool(invariant.clone(), true)
-            .assume_bool(condition.clone(), true);
+            .assume_condition(invariant.clone(), true)
+            .assume_condition(condition.clone(), true);
         let theorem = prove_c_stmt_executes_and_props(
             state.clone(),
             stmt.clone(),
@@ -4272,7 +4266,8 @@ mod tests {
         let a = Var(10);
         let b = Var(11);
         let theorem = prove_c_max_lt_returns_right(a, b).expect("lt branch should prove");
-        let condition = BoolTerm::Bv32Slt(Box::new(Bv32Term::Var(a)), Box::new(Bv32Term::Var(b)));
+        let condition =
+            ConditionTerm::Bv32Slt(Box::new(Bv32Term::Var(a)), Box::new(Bv32Term::Var(b)));
         let state = c_max_state(int32(Bv32Term::Var(a)), int32(Bv32Term::Var(b)));
 
         assert_eq!(
@@ -4282,7 +4277,7 @@ mod tests {
                 forall_int32(
                     b,
                     Prop::Implies(
-                        Box::new(Prop::BoolIs(condition, true)),
+                        Box::new(Prop::ConditionIs(condition, true)),
                         Box::new(Prop::CStmtExecutes {
                             state: state.clone(),
                             stmt: c_max_body(),
@@ -4302,7 +4297,8 @@ mod tests {
         let a = Var(12);
         let b = Var(13);
         let theorem = prove_c_max_not_lt_returns_left(a, b).expect("false branch should prove");
-        let condition = BoolTerm::Bv32Slt(Box::new(Bv32Term::Var(a)), Box::new(Bv32Term::Var(b)));
+        let condition =
+            ConditionTerm::Bv32Slt(Box::new(Bv32Term::Var(a)), Box::new(Bv32Term::Var(b)));
         let state = c_max_state(int32(Bv32Term::Var(a)), int32(Bv32Term::Var(b)));
 
         assert_eq!(
@@ -4312,7 +4308,7 @@ mod tests {
                 forall_int32(
                     b,
                     Prop::Implies(
-                        Box::new(Prop::BoolIs(condition, false)),
+                        Box::new(Prop::ConditionIs(condition, false)),
                         Box::new(Prop::CStmtExecutes {
                             state: state.clone(),
                             stmt: c_max_body(),
@@ -4794,8 +4790,8 @@ mod tests {
                 base: base.clone(),
                 bytes: Bv32Term::Mul(Box::new(n_bits.clone()), Box::new(Bv32Term::Const(4))),
             })
-            .assume_bool(BoolTerm::sge(i_bits.clone(), Bv32Term::Const(0)), true)
-            .assume_bool(BoolTerm::slt(i_bits.clone(), n_bits), true);
+            .assume_condition(ConditionTerm::sge(i_bits.clone(), Bv32Term::Const(0)), true)
+            .assume_condition(ConditionTerm::slt(i_bits.clone(), n_bits), true);
         let execution = prove_symbolic_c_execution_paths(state, stmt, assumptions);
 
         assert_eq!(execution.paths().len(), 1);
@@ -4815,10 +4811,10 @@ mod tests {
         let state = CState::new().with_local("i", int32(i_bits.clone()));
         let stmt = c_assign("i", c_add(c_var("i"), c_int32_literal(1)));
         let assumptions = Assumptions::new()
-            .assume_bool(BoolTerm::sge(i_bits.clone(), Bv32Term::Const(0)), true)
-            .assume_bool(BoolTerm::slt(i_bits.clone(), n_bits.clone()), true)
-            .assume_bool(
-                BoolTerm::sle(n_bits.clone(), Bv32Term::Const(i32::MAX as u32)),
+            .assume_condition(ConditionTerm::sge(i_bits.clone(), Bv32Term::Const(0)), true)
+            .assume_condition(ConditionTerm::slt(i_bits.clone(), n_bits.clone()), true)
+            .assume_condition(
+                ConditionTerm::sle(n_bits.clone(), Bv32Term::Const(i32::MAX as u32)),
                 true,
             );
         let theorem = prove_c_stmt_executes_and_props(
@@ -4826,8 +4822,11 @@ mod tests {
             stmt,
             assumptions,
             vec![
-                Prop::BoolIs(BoolTerm::sge(incremented.clone(), Bv32Term::Const(0)), true),
-                Prop::BoolIs(BoolTerm::sle(incremented, n_bits), true),
+                Prop::ConditionIs(
+                    ConditionTerm::sge(incremented.clone(), Bv32Term::Const(0)),
+                    true,
+                ),
+                Prop::ConditionIs(ConditionTerm::sle(incremented, n_bits), true),
             ],
         )
         .expect("interval facts should prove i + 1 bounds and no signed overflow");
@@ -4848,15 +4847,15 @@ mod tests {
         let condition = c_lt(c_var("i"), c_var("n"));
         let body = c_assign("i", c_add(c_var("i"), c_int32_literal(1)));
         let invariant = vec![
-            Prop::BoolIs(BoolTerm::sge(i_bits.clone(), Bv32Term::Const(0)), true),
-            Prop::BoolIs(BoolTerm::sle(i_bits.clone(), n_bits.clone()), true),
+            Prop::ConditionIs(ConditionTerm::sge(i_bits.clone(), Bv32Term::Const(0)), true),
+            Prop::ConditionIs(ConditionTerm::sle(i_bits.clone(), n_bits.clone()), true),
         ];
         let assumptions = invariant
             .iter()
             .cloned()
             .fold(Assumptions::new(), Assumptions::assume_prop)
-            .assume_bool(
-                BoolTerm::sle(n_bits.clone(), Bv32Term::Const(i32::MAX as u32)),
+            .assume_condition(
+                ConditionTerm::sle(n_bits.clone(), Bv32Term::Const(i32::MAX as u32)),
                 true,
             );
         let theorem = prove_c_while_invariant_rule(
@@ -4866,10 +4865,13 @@ mod tests {
             body,
             assumptions,
             vec![
-                Prop::BoolIs(BoolTerm::sge(incremented.clone(), Bv32Term::Const(0)), true),
-                Prop::BoolIs(BoolTerm::sle(incremented, n_bits.clone()), true),
+                Prop::ConditionIs(
+                    ConditionTerm::sge(incremented.clone(), Bv32Term::Const(0)),
+                    true,
+                ),
+                Prop::ConditionIs(ConditionTerm::sle(incremented, n_bits.clone()), true),
             ],
-            Prop::BoolIs(BoolTerm::eq(i_bits, n_bits), true),
+            Prop::ConditionIs(ConditionTerm::eq(i_bits, n_bits), true),
         )
         .expect("invariant rule should prove preservation and i == n on loop exit");
 
@@ -4889,8 +4891,8 @@ mod tests {
         let stored_ptr = base.offset_by_int32_elements(i_bits);
         let loaded_ptr = base.offset_by_int32_elements(j_bits);
         let memory = CMemory::new().store(loaded_ptr.clone(), int32(42));
-        let assumptions = Assumptions::new().assume_bool(
-            BoolTerm::eq(stored_ptr.offset.clone(), loaded_ptr.offset.clone()),
+        let assumptions = Assumptions::new().assume_condition(
+            ConditionTerm::eq(stored_ptr.offset.clone(), loaded_ptr.offset.clone()),
             false,
         );
         let theorem = prove_memory_load_after_store_distinct_under_assumptions(
@@ -4973,7 +4975,7 @@ mod tests {
         assert_eq!(execution.paths().len(), 2);
         assert_eq!(
             execution.paths()[0].facts(),
-            &[PathFact::bool(condition.clone(), true)]
+            &[PathFact::condition(condition.clone(), true)]
         );
         assert_eq!(
             execution.paths()[0].obligations(),
@@ -4982,7 +4984,7 @@ mod tests {
         assert_eq!(
             execution.paths()[0].theorem().prop(),
             &Prop::Implies(
-                Box::new(Prop::BoolIs(condition.clone(), true)),
+                Box::new(Prop::ConditionIs(condition.clone(), true)),
                 Box::new(Prop::CStmtExecutes {
                     state: state.clone(),
                     stmt: c_max_body(),
@@ -4996,7 +4998,7 @@ mod tests {
 
         assert_eq!(
             execution.paths()[1].facts(),
-            &[PathFact::bool(condition.clone(), false)]
+            &[PathFact::condition(condition.clone(), false)]
         );
         assert_eq!(
             execution.paths()[1].obligations(),
@@ -5005,7 +5007,7 @@ mod tests {
         assert_eq!(
             execution.paths()[1].theorem().prop(),
             &Prop::Implies(
-                Box::new(Prop::BoolIs(condition, false)),
+                Box::new(Prop::ConditionIs(condition, false)),
                 Box::new(Prop::CStmtExecutes {
                     state: state.clone(),
                     stmt: c_max_body(),
@@ -5028,14 +5030,14 @@ mod tests {
             .with_local("left", int32(left_bits.clone()))
             .with_local("right", int32(right_bits.clone()));
         let stmt = c_return(c_add(c_var("left"), c_var("right")));
-        let overflow = BoolTerm::signed_add_overflows(left_bits.clone(), right_bits.clone());
+        let overflow = ConditionTerm::signed_add_overflows(left_bits.clone(), right_bits.clone());
         let execution =
             prove_symbolic_c_execution_paths(state.clone(), stmt.clone(), Assumptions::new());
 
         assert_eq!(execution.paths().len(), 2);
         assert_eq!(
             execution.paths()[0].facts(),
-            &[PathFact::bool(overflow.clone(), false)]
+            &[PathFact::condition(overflow.clone(), false)]
         );
         assert_eq!(
             execution.paths()[0].obligations(),
@@ -5044,7 +5046,7 @@ mod tests {
         assert_eq!(
             execution.paths()[0].theorem().prop(),
             &Prop::Implies(
-                Box::new(Prop::BoolIs(overflow.clone(), false)),
+                Box::new(Prop::ConditionIs(overflow.clone(), false)),
                 Box::new(Prop::CStmtExecutes {
                     state: state.clone(),
                     stmt: stmt.clone(),
@@ -5058,7 +5060,7 @@ mod tests {
 
         assert_eq!(
             execution.paths()[1].facts(),
-            &[PathFact::bool(overflow.clone(), true)]
+            &[PathFact::condition(overflow.clone(), true)]
         );
         assert_eq!(
             execution.paths()[1].obligations(),
@@ -5067,7 +5069,7 @@ mod tests {
         assert_eq!(
             execution.paths()[1].theorem().prop(),
             &Prop::Implies(
-                Box::new(Prop::BoolIs(overflow, true)),
+                Box::new(Prop::ConditionIs(overflow, true)),
                 Box::new(Prop::CStmtExecutes {
                     state: state.clone(),
                     stmt,
@@ -5087,15 +5089,16 @@ mod tests {
             .with_local("left", int32(left_bits.clone()))
             .with_local("right", int32(right_bits.clone()));
         let stmt = c_return(c_add(c_var("left"), c_var("right")));
-        let no_overflow = BoolTerm::signed_add_overflows(left_bits.clone(), right_bits.clone());
-        let assumptions = Assumptions::new().assume_bool(no_overflow.clone(), false);
+        let no_overflow =
+            ConditionTerm::signed_add_overflows(left_bits.clone(), right_bits.clone());
+        let assumptions = Assumptions::new().assume_condition(no_overflow.clone(), false);
         let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), assumptions)
             .expect("no-overflow fact should let symbolic add execute");
 
         assert_eq!(
             theorem.prop(),
             &Prop::Implies(
-                Box::new(Prop::BoolIs(no_overflow, false)),
+                Box::new(Prop::ConditionIs(no_overflow, false)),
                 Box::new(Prop::CStmtExecutes {
                     state: state.clone(),
                     stmt,
@@ -5114,15 +5117,15 @@ mod tests {
         let x_bits = Bv32Term::Var(x);
         let state = CState::new().with_local("x", int32(x_bits.clone()));
         let stmt = c_return(c_add(c_var("x"), c_int32_literal(1)));
-        let x_lt_int_max = BoolTerm::slt(x_bits.clone(), Bv32Term::Const(i32::MAX as u32));
-        let assumptions = Assumptions::new().assume_bool(x_lt_int_max.clone(), true);
+        let x_lt_int_max = ConditionTerm::slt(x_bits.clone(), Bv32Term::Const(i32::MAX as u32));
+        let assumptions = Assumptions::new().assume_condition(x_lt_int_max.clone(), true);
         let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), assumptions)
             .expect("x < INT_MAX should prove x + 1 does not overflow");
 
         assert_eq!(
             theorem.prop(),
             &Prop::Implies(
-                Box::new(Prop::BoolIs(x_lt_int_max, true)),
+                Box::new(Prop::ConditionIs(x_lt_int_max, true)),
                 Box::new(Prop::CStmtExecutes {
                     state: state.clone(),
                     stmt,
