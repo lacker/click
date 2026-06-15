@@ -407,6 +407,68 @@ fn c0_syntax_targets_megakernel_int32_sub_and_comparisons() {
 }
 
 #[test]
+fn c0_if_condition_uses_c_int32_truthiness() {
+    let function = syntax::parse_function(
+        r#"
+        int32 truthy(int32 x) {
+            if (x) {
+                return 1;
+            } else {
+                return 0;
+            }
+        }
+        "#,
+    )
+    .expect("truthiness function should parse")
+    .to_megakernel_function();
+
+    let state = crate::megakernel::CState::new();
+    let args = vec![crate::megakernel::c_int32_literal(7)];
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        args.clone(),
+        Default::default(),
+    )
+    .expect("nonzero int32 condition should execute");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state: state.clone(),
+            function: function.clone(),
+            args,
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(1),
+                state: state.clone(),
+            },
+        }
+    );
+
+    let args = vec![crate::megakernel::c_int32_literal(0)];
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        args.clone(),
+        Default::default(),
+    )
+    .expect("zero int32 condition should execute");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state: state.clone(),
+            function,
+            args,
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(0),
+                state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_clamp_demo_proves_symbolic_branch_specs() {
     let function = syntax::parse_function(
         r#"

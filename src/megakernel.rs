@@ -1470,11 +1470,12 @@ fn eval_c_expr_paths(state: &CState, expr: &CExpr, assumptions: &Assumptions) ->
             right,
             assumptions,
             |left, right, facts, obligations| {
-                vec![CExprPath {
-                    outcome: CExprOutcome::Value(c_bool(BoolTerm::slt(left, right))),
+                bool_term_as_c_int32_paths(
+                    BoolTerm::slt(left, right),
                     facts,
                     obligations,
-                }]
+                    assumptions,
+                )
             },
         ),
         CExpr::Le(left, right) => eval_c_int32_binary_paths(
@@ -1483,11 +1484,12 @@ fn eval_c_expr_paths(state: &CState, expr: &CExpr, assumptions: &Assumptions) ->
             right,
             assumptions,
             |left, right, facts, obligations| {
-                vec![CExprPath {
-                    outcome: CExprOutcome::Value(c_bool(BoolTerm::sle(left, right))),
+                bool_term_as_c_int32_paths(
+                    BoolTerm::sle(left, right),
                     facts,
                     obligations,
-                }]
+                    assumptions,
+                )
             },
         ),
         CExpr::Gt(left, right) => eval_c_int32_binary_paths(
@@ -1496,11 +1498,12 @@ fn eval_c_expr_paths(state: &CState, expr: &CExpr, assumptions: &Assumptions) ->
             right,
             assumptions,
             |left, right, facts, obligations| {
-                vec![CExprPath {
-                    outcome: CExprOutcome::Value(c_bool(BoolTerm::sgt(left, right))),
+                bool_term_as_c_int32_paths(
+                    BoolTerm::sgt(left, right),
                     facts,
                     obligations,
-                }]
+                    assumptions,
+                )
             },
         ),
         CExpr::Ge(left, right) => eval_c_int32_binary_paths(
@@ -1509,11 +1512,12 @@ fn eval_c_expr_paths(state: &CState, expr: &CExpr, assumptions: &Assumptions) ->
             right,
             assumptions,
             |left, right, facts, obligations| {
-                vec![CExprPath {
-                    outcome: CExprOutcome::Value(c_bool(BoolTerm::sge(left, right))),
+                bool_term_as_c_int32_paths(
+                    BoolTerm::sge(left, right),
                     facts,
                     obligations,
-                }]
+                    assumptions,
+                )
             },
         ),
         CExpr::Eq(left, right) => eval_c_int32_binary_paths(
@@ -1522,11 +1526,12 @@ fn eval_c_expr_paths(state: &CState, expr: &CExpr, assumptions: &Assumptions) ->
             right,
             assumptions,
             |left, right, facts, obligations| {
-                vec![CExprPath {
-                    outcome: CExprOutcome::Value(c_bool(BoolTerm::eq(left, right))),
+                bool_term_as_c_int32_paths(
+                    BoolTerm::eq(left, right),
                     facts,
                     obligations,
-                }]
+                    assumptions,
+                )
             },
         ),
         CExpr::Add(left, right) => eval_c_add_paths(state, left, right, assumptions),
@@ -1566,6 +1571,143 @@ fn eval_c_expr_paths(state: &CState, expr: &CExpr, assumptions: &Assumptions) ->
                 }],
             })
             .collect(),
+    }
+}
+
+fn bool_term_as_c_int32_paths(
+    condition: BoolTerm,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExprPath> {
+    match decide_with_facts(assumptions, &facts, &condition) {
+        Some(true) => vec![CExprPath {
+            outcome: CExprOutcome::Value(int32(1)),
+            facts,
+            obligations,
+        }],
+        Some(false) => vec![CExprPath {
+            outcome: CExprOutcome::Value(int32(0)),
+            facts,
+            obligations,
+        }],
+        None => {
+            let mut true_facts = facts.clone();
+            add_bool_path_fact(&mut true_facts, assumptions, condition.clone(), true)
+                .expect("unknown comparison fact should be consistent");
+
+            let mut false_facts = facts;
+            add_bool_path_fact(&mut false_facts, assumptions, condition, false)
+                .expect("unknown comparison fact should be consistent");
+
+            vec![
+                CExprPath {
+                    outcome: CExprOutcome::Value(int32(1)),
+                    facts: true_facts,
+                    obligations: obligations.clone(),
+                },
+                CExprPath {
+                    outcome: CExprOutcome::Value(int32(0)),
+                    facts: false_facts,
+                    obligations,
+                },
+            ]
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CTruthinessPath {
+    is_true: bool,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+}
+
+fn c_truthiness_paths(
+    value: CValue,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CTruthinessPath> {
+    match value {
+        CValue::Int32(bits) => {
+            let is_zero = BoolTerm::eq(bits, Bv32Term::Const(0));
+            match decide_with_facts(assumptions, &facts, &is_zero) {
+                Some(true) => vec![CTruthinessPath {
+                    is_true: false,
+                    facts,
+                    obligations,
+                }],
+                Some(false) => vec![CTruthinessPath {
+                    is_true: true,
+                    facts,
+                    obligations,
+                }],
+                None => {
+                    let mut true_facts = facts.clone();
+                    add_bool_path_fact(&mut true_facts, assumptions, is_zero.clone(), false)
+                        .expect("unknown truthiness fact should be consistent");
+
+                    let mut false_facts = facts;
+                    add_bool_path_fact(&mut false_facts, assumptions, is_zero, true)
+                        .expect("unknown truthiness fact should be consistent");
+
+                    vec![
+                        CTruthinessPath {
+                            is_true: true,
+                            facts: true_facts,
+                            obligations: obligations.clone(),
+                        },
+                        CTruthinessPath {
+                            is_true: false,
+                            facts: false_facts,
+                            obligations,
+                        },
+                    ]
+                }
+            }
+        }
+        CValue::Bool(condition) => match decide_with_facts(assumptions, &facts, &condition) {
+            Some(value) => vec![CTruthinessPath {
+                is_true: value,
+                facts,
+                obligations,
+            }],
+            None => {
+                let mut true_facts = facts.clone();
+                add_bool_path_fact(&mut true_facts, assumptions, condition.clone(), true)
+                    .expect("unknown truthiness fact should be consistent");
+
+                let mut false_facts = facts;
+                add_bool_path_fact(&mut false_facts, assumptions, condition, false)
+                    .expect("unknown truthiness fact should be consistent");
+
+                vec![
+                    CTruthinessPath {
+                        is_true: true,
+                        facts: true_facts,
+                        obligations: obligations.clone(),
+                    },
+                    CTruthinessPath {
+                        is_true: false,
+                        facts: false_facts,
+                        obligations,
+                    },
+                ]
+            }
+        },
+        CValue::Ptr(ptr) => match (&ptr.block[..], &ptr.offset) {
+            ("null", Bv32Term::Const(0)) => vec![CTruthinessPath {
+                is_true: false,
+                facts,
+                obligations,
+            }],
+            _ => vec![CTruthinessPath {
+                is_true: true,
+                facts,
+                obligations,
+            }],
+        },
     }
 }
 
@@ -2058,71 +2200,40 @@ fn exec_c_stmt_paths(
         } => {
             let mut paths = Vec::new();
             for condition_path in eval_c_expr_paths(state, condition, assumptions) {
-                match condition_path.outcome {
-                    CExprOutcome::Value(CValue::Bool(condition)) => {
-                        match decide_with_facts(assumptions, &condition_path.facts, &condition) {
-                            Some(true) => paths.extend(exec_c_stmt_paths_with_prefix(
+                let CExprPath {
+                    outcome,
+                    facts,
+                    obligations,
+                } = condition_path;
+                match outcome {
+                    CExprOutcome::Value(value) => {
+                        let truthiness_paths =
+                            c_truthiness_paths(value, facts, obligations, assumptions);
+                        for truthiness_path in truthiness_paths {
+                            let branch = if truthiness_path.is_true {
+                                then_branch
+                            } else {
+                                else_branch
+                            };
+                            paths.extend(exec_c_stmt_paths_with_prefix(
                                 state,
-                                then_branch,
+                                branch,
                                 assumptions,
                                 env,
-                                &condition_path.facts,
-                                &condition_path.obligations,
-                            )),
-                            Some(false) => paths.extend(exec_c_stmt_paths_with_prefix(
-                                state,
-                                else_branch,
-                                assumptions,
-                                env,
-                                &condition_path.facts,
-                                &condition_path.obligations,
-                            )),
-                            None => {
-                                let mut true_facts = condition_path.facts.clone();
-                                add_bool_path_fact(
-                                    &mut true_facts,
-                                    assumptions,
-                                    condition.clone(),
-                                    true,
-                                )
-                                .expect("unknown branch fact should be consistent");
-                                paths.extend(exec_c_stmt_paths_with_prefix(
-                                    state,
-                                    then_branch,
-                                    assumptions,
-                                    env,
-                                    &true_facts,
-                                    &condition_path.obligations,
-                                ));
-
-                                let mut false_facts = condition_path.facts;
-                                add_bool_path_fact(&mut false_facts, assumptions, condition, false)
-                                    .expect("unknown branch fact should be consistent");
-                                paths.extend(exec_c_stmt_paths_with_prefix(
-                                    state,
-                                    else_branch,
-                                    assumptions,
-                                    env,
-                                    &false_facts,
-                                    &condition_path.obligations,
-                                ));
-                            }
+                                &truthiness_path.facts,
+                                &truthiness_path.obligations,
+                            ));
                         }
                     }
-                    CExprOutcome::Value(_) => paths.push(CStmtPath {
-                        outcome: CStmtOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                        facts: condition_path.facts,
-                        obligations: condition_path.obligations,
-                    }),
                     CExprOutcome::Ub(ub) => paths.push(CStmtPath {
                         outcome: CStmtOutcome::Ub(ub),
-                        facts: condition_path.facts,
-                        obligations: condition_path.obligations,
+                        facts,
+                        obligations,
                     }),
                     CExprOutcome::RuntimeError(error) => paths.push(CStmtPath {
                         outcome: CStmtOutcome::RuntimeError(error),
-                        facts: condition_path.facts,
-                        obligations: condition_path.obligations,
+                        facts,
+                        obligations,
                     }),
                 }
             }
@@ -2174,42 +2285,11 @@ fn exec_c_while_paths(
         };
 
         match condition_path.outcome {
-            CExprOutcome::Value(CValue::Bool(condition_value)) => {
-                match decide_with_facts(assumptions, &condition_facts, &condition_value) {
-                    Some(false) => paths.push(CStmtPath {
-                        outcome: CStmtOutcome::Normal(state.clone()),
-                        facts: condition_facts,
-                        obligations: condition_obligations,
-                    }),
-                    Some(true) => paths.extend(exec_c_while_body_paths(
-                        state,
-                        condition,
-                        invariant,
-                        body,
-                        assumptions,
-                        env,
-                        fuel,
-                        condition_facts,
-                        condition_obligations,
-                    )),
-                    None => {
-                        let mut false_facts = condition_facts.clone();
-                        add_bool_path_fact(
-                            &mut false_facts,
-                            assumptions,
-                            condition_value.clone(),
-                            false,
-                        )
-                        .expect("unknown loop condition fact should be consistent");
-                        paths.push(CStmtPath {
-                            outcome: CStmtOutcome::Normal(state.clone()),
-                            facts: false_facts,
-                            obligations: condition_obligations.clone(),
-                        });
-
-                        let mut true_facts = condition_facts;
-                        add_bool_path_fact(&mut true_facts, assumptions, condition_value, true)
-                            .expect("unknown loop condition fact should be consistent");
+            CExprOutcome::Value(value) => {
+                let truthiness_paths =
+                    c_truthiness_paths(value, condition_facts, condition_obligations, assumptions);
+                for truthiness_path in truthiness_paths {
+                    if truthiness_path.is_true {
                         paths.extend(exec_c_while_body_paths(
                             state,
                             condition,
@@ -2218,17 +2298,18 @@ fn exec_c_while_paths(
                             assumptions,
                             env,
                             fuel,
-                            true_facts,
-                            condition_obligations,
+                            truthiness_path.facts,
+                            truthiness_path.obligations,
                         ));
+                    } else {
+                        paths.push(CStmtPath {
+                            outcome: CStmtOutcome::Normal(state.clone()),
+                            facts: truthiness_path.facts,
+                            obligations: truthiness_path.obligations,
+                        });
                     }
                 }
             }
-            CExprOutcome::Value(_) => paths.push(CStmtPath {
-                outcome: CStmtOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                facts: condition_facts,
-                obligations: condition_obligations,
-            }),
             CExprOutcome::Ub(ub) => paths.push(CStmtPath {
                 outcome: CStmtOutcome::Ub(ub),
                 facts: condition_facts,
@@ -3137,13 +3218,13 @@ mod tests {
     }
 
     #[test]
-    fn int32_comparisons_are_native_bools() {
+    fn int32_comparisons_return_c_int32_zero_or_one() {
         let state = CState::new();
         let examples = [
-            (c_le(c_int32_literal(2), c_int32_literal(2)), true),
-            (c_gt(c_int32_literal(3), c_int32_literal(2)), true),
-            (c_ge(c_int32_literal(2), c_int32_literal(3)), false),
-            (c_eq(c_int32_literal(4), c_int32_literal(4)), true),
+            (c_le(c_int32_literal(2), c_int32_literal(2)), int32(1)),
+            (c_gt(c_int32_literal(3), c_int32_literal(2)), int32(1)),
+            (c_ge(c_int32_literal(2), c_int32_literal(3)), int32(0)),
+            (c_eq(c_int32_literal(4), c_int32_literal(4)), int32(1)),
         ];
 
         for (expr, expected) in examples {
@@ -3154,10 +3235,55 @@ mod tests {
                 &Prop::CExprEvaluates {
                     state: state.clone(),
                     expr,
-                    outcome: CExprOutcome::Value(c_bool(expected)),
+                    outcome: CExprOutcome::Value(expected),
                 }
             );
         }
+    }
+
+    #[test]
+    fn if_uses_c_int32_truthiness() {
+        let state = CState::new();
+        let stmt = c_if(
+            c_int32_literal(7),
+            c_return(c_int32_literal(1)),
+            c_return(c_int32_literal(0)),
+        );
+        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
+            .expect("nonzero int32 condition should take then branch");
+
+        assert_eq!(
+            theorem.prop(),
+            &Prop::CStmtExecutes {
+                state: state.clone(),
+                stmt,
+                outcome: CStmtOutcome::Return {
+                    value: int32(1),
+                    state,
+                },
+            }
+        );
+
+        let state = CState::new();
+        let stmt = c_if(
+            c_int32_literal(0),
+            c_return(c_int32_literal(1)),
+            c_return(c_int32_literal(0)),
+        );
+        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
+            .expect("zero int32 condition should take else branch");
+
+        assert_eq!(
+            theorem.prop(),
+            &Prop::CStmtExecutes {
+                state: state.clone(),
+                stmt,
+                outcome: CStmtOutcome::Return {
+                    value: int32(0),
+                    state,
+                },
+            }
+        );
     }
 
     #[test]

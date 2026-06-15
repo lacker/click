@@ -55,11 +55,11 @@ to drive the design. It currently supports:
 
 - `int32` and `int32*`
 - integer literals and variables
-- signed comparisons and equality
+- signed comparisons and equality, returning `int32` `0` or `1` like C
 - signed addition and subtraction, with signed-overflow UB
 - local `int32` declarations
 - assignment and sequencing
-- `if` / `else`
+- `if` / `else` with C scalar truthiness
 - `while`, currently concrete/fuel-capped with invariant slots
 - `return`
 - address-of locals
