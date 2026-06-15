@@ -89,6 +89,10 @@ pub enum CExpr {
     Gt(Box<CExpr>, Box<CExpr>),
     Ge(Box<CExpr>, Box<CExpr>),
     Eq(Box<CExpr>, Box<CExpr>),
+    Ne(Box<CExpr>, Box<CExpr>),
+    Not(Box<CExpr>),
+    And(Box<CExpr>, Box<CExpr>),
+    Or(Box<CExpr>, Box<CExpr>),
     Add(Box<CExpr>, Box<CExpr>),
     Sub(Box<CExpr>, Box<CExpr>),
     Load(Box<CExpr>),
@@ -1258,6 +1262,22 @@ pub fn c_ge(left: CExpr, right: CExpr) -> CExpr {
 
 pub fn c_eq(left: CExpr, right: CExpr) -> CExpr {
     CExpr::Eq(Box::new(left), Box::new(right))
+}
+
+pub fn c_ne(left: CExpr, right: CExpr) -> CExpr {
+    CExpr::Ne(Box::new(left), Box::new(right))
+}
+
+pub fn c_not(expr: CExpr) -> CExpr {
+    CExpr::Not(Box::new(expr))
+}
+
+pub fn c_and(left: CExpr, right: CExpr) -> CExpr {
+    CExpr::And(Box::new(left), Box::new(right))
+}
+
+pub fn c_or(left: CExpr, right: CExpr) -> CExpr {
+    CExpr::Or(Box::new(left), Box::new(right))
 }
 
 pub fn c_add(left: CExpr, right: CExpr) -> CExpr {
@@ -2467,6 +2487,12 @@ fn eval_c_expr_paths(
             },
         )?,
         CExpr::Eq(left, right) => eval_c_eq_paths(state, left, right, assumptions, budget)?,
+        CExpr::Ne(left, right) => eval_c_ne_paths(state, left, right, assumptions, budget)?,
+        CExpr::Not(expr) => eval_c_not_paths(state, expr, assumptions, budget)?,
+        CExpr::And(left, right) => {
+            eval_c_logical_and_paths(state, left, right, assumptions, budget)?
+        }
+        CExpr::Or(left, right) => eval_c_logical_or_paths(state, left, right, assumptions, budget)?,
         CExpr::Add(left, right) => eval_c_add_paths(state, left, right, assumptions, budget)?,
         CExpr::Sub(left, right) => eval_c_int32_binary_paths(
             state,
@@ -2557,6 +2583,48 @@ fn condition_as_c_int32_paths(
     }
 }
 
+fn condition_as_c_int32_not_paths(
+    condition: ConditionTerm,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExprPath> {
+    match decide_with_facts(assumptions, &facts, &condition) {
+        Some(true) => vec![CExprPath {
+            outcome: CExprOutcome::Value(int32(0)),
+            facts,
+            obligations,
+        }],
+        Some(false) => vec![CExprPath {
+            outcome: CExprOutcome::Value(int32(1)),
+            facts,
+            obligations,
+        }],
+        None => {
+            let mut true_facts = facts.clone();
+            add_condition_path_fact(&mut true_facts, assumptions, condition.clone(), true)
+                .expect("unknown comparison fact should be consistent");
+
+            let mut false_facts = facts;
+            add_condition_path_fact(&mut false_facts, assumptions, condition, false)
+                .expect("unknown comparison fact should be consistent");
+
+            vec![
+                CExprPath {
+                    outcome: CExprOutcome::Value(int32(0)),
+                    facts: true_facts,
+                    obligations: obligations.clone(),
+                },
+                CExprPath {
+                    outcome: CExprOutcome::Value(int32(1)),
+                    facts: false_facts,
+                    obligations,
+                },
+            ]
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CTruthinessPath {
     is_true: bool,
@@ -2621,6 +2689,22 @@ fn c_truthiness_paths(
             }],
         },
     }
+}
+
+fn c_truthiness_as_c_int32_paths(
+    value: CValue,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExprPath> {
+    c_truthiness_paths(value, facts, obligations, assumptions)
+        .into_iter()
+        .map(|path| CExprPath {
+            outcome: CExprOutcome::Value(int32(if path.is_true { 1 } else { 0 })),
+            facts: path.facts,
+            obligations: path.obligations,
+        })
+        .collect()
 }
 
 fn eval_c_memory_load_paths(
@@ -2964,6 +3048,325 @@ fn apply_c_eq(
             obligations,
         }],
     }
+}
+
+fn eval_c_ne_paths(
+    state: &CState,
+    left: &CExpr,
+    right: &CExpr,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExprPath>> {
+    let mut paths = Vec::new();
+    for left_path in eval_c_expr_paths(state, left, assumptions, budget)? {
+        let CExprPath {
+            outcome: left_outcome,
+            facts: left_facts,
+            obligations: left_obligations,
+        } = left_path;
+
+        let left = match left_outcome {
+            CExprOutcome::Value(left) => left,
+            CExprOutcome::Ub(ub) => {
+                paths.push(CExprPath {
+                    outcome: CExprOutcome::Ub(ub),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+            CExprOutcome::RuntimeError(error) => {
+                paths.push(CExprPath {
+                    outcome: CExprOutcome::RuntimeError(error),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+        };
+
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
+        for right_path in eval_c_expr_paths(state, right, &right_assumptions, budget)? {
+            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &left_facts,
+                &left_obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+
+            match right_path.outcome {
+                CExprOutcome::Value(right) => {
+                    paths.extend(apply_c_ne(
+                        left.clone(),
+                        right,
+                        facts,
+                        obligations,
+                        assumptions,
+                    ));
+                }
+                CExprOutcome::Ub(ub) => paths.push(CExprPath {
+                    outcome: CExprOutcome::Ub(ub),
+                    facts,
+                    obligations,
+                }),
+                CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
+                    outcome: CExprOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+                }),
+            }
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn apply_c_ne(
+    left: CValue,
+    right: CValue,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExprPath> {
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right)) => condition_as_c_int32_not_paths(
+            ConditionTerm::eq(left, right),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Ptr(left), CValue::Ptr(right)) => condition_as_c_int32_not_paths(
+            ptr_equality_condition(left, right),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Ptr(ptr), CValue::Int32(bits)) | (CValue::Int32(bits), CValue::Ptr(ptr))
+            if bits.as_const() == Some(0) =>
+        {
+            condition_as_c_int32_not_paths(
+                ptr_is_null_condition(ptr),
+                facts,
+                obligations,
+                assumptions,
+            )
+        }
+        _ => vec![CExprPath {
+            outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts,
+            obligations,
+        }],
+    }
+}
+
+fn eval_c_not_paths(
+    state: &CState,
+    expr: &CExpr,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExprPath>> {
+    let mut paths = Vec::new();
+    for path in eval_c_expr_paths(state, expr, assumptions, budget)? {
+        match path.outcome {
+            CExprOutcome::Value(value) => {
+                paths.extend(
+                    c_truthiness_paths(value, path.facts, path.obligations, assumptions)
+                        .into_iter()
+                        .map(|truthiness| CExprPath {
+                            outcome: CExprOutcome::Value(int32(if truthiness.is_true {
+                                0
+                            } else {
+                                1
+                            })),
+                            facts: truthiness.facts,
+                            obligations: truthiness.obligations,
+                        }),
+                );
+            }
+            CExprOutcome::Ub(ub) => paths.push(CExprPath {
+                outcome: CExprOutcome::Ub(ub),
+                facts: path.facts,
+                obligations: path.obligations,
+            }),
+            CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
+                outcome: CExprOutcome::RuntimeError(error),
+                facts: path.facts,
+                obligations: path.obligations,
+            }),
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn eval_c_logical_and_paths(
+    state: &CState,
+    left: &CExpr,
+    right: &CExpr,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExprPath>> {
+    let mut paths = Vec::new();
+    for left_path in eval_c_expr_paths(state, left, assumptions, budget)? {
+        match left_path.outcome {
+            CExprOutcome::Value(left_value) => {
+                for left_truthiness in c_truthiness_paths(
+                    left_value,
+                    left_path.facts,
+                    left_path.obligations,
+                    assumptions,
+                ) {
+                    if !left_truthiness.is_true {
+                        paths.push(CExprPath {
+                            outcome: CExprOutcome::Value(int32(0)),
+                            facts: left_truthiness.facts,
+                            obligations: left_truthiness.obligations,
+                        });
+                        continue;
+                    }
+
+                    let right_assumptions = assumptions_with_path_context(
+                        assumptions,
+                        &left_truthiness.facts,
+                        &left_truthiness.obligations,
+                    );
+                    for right_path in eval_c_expr_paths(state, right, &right_assumptions, budget)? {
+                        let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                            &left_truthiness.facts,
+                            &left_truthiness.obligations,
+                            &right_path.facts,
+                            &right_path.obligations,
+                            assumptions,
+                        ) else {
+                            continue;
+                        };
+
+                        match right_path.outcome {
+                            CExprOutcome::Value(value) => {
+                                paths.extend(c_truthiness_as_c_int32_paths(
+                                    value,
+                                    facts,
+                                    obligations,
+                                    assumptions,
+                                ))
+                            }
+                            CExprOutcome::Ub(ub) => paths.push(CExprPath {
+                                outcome: CExprOutcome::Ub(ub),
+                                facts,
+                                obligations,
+                            }),
+                            CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
+                                outcome: CExprOutcome::RuntimeError(error),
+                                facts,
+                                obligations,
+                            }),
+                        }
+                    }
+                }
+            }
+            CExprOutcome::Ub(ub) => paths.push(CExprPath {
+                outcome: CExprOutcome::Ub(ub),
+                facts: left_path.facts,
+                obligations: left_path.obligations,
+            }),
+            CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
+                outcome: CExprOutcome::RuntimeError(error),
+                facts: left_path.facts,
+                obligations: left_path.obligations,
+            }),
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn eval_c_logical_or_paths(
+    state: &CState,
+    left: &CExpr,
+    right: &CExpr,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExprPath>> {
+    let mut paths = Vec::new();
+    for left_path in eval_c_expr_paths(state, left, assumptions, budget)? {
+        match left_path.outcome {
+            CExprOutcome::Value(left_value) => {
+                for left_truthiness in c_truthiness_paths(
+                    left_value,
+                    left_path.facts,
+                    left_path.obligations,
+                    assumptions,
+                ) {
+                    if left_truthiness.is_true {
+                        paths.push(CExprPath {
+                            outcome: CExprOutcome::Value(int32(1)),
+                            facts: left_truthiness.facts,
+                            obligations: left_truthiness.obligations,
+                        });
+                        continue;
+                    }
+
+                    let right_assumptions = assumptions_with_path_context(
+                        assumptions,
+                        &left_truthiness.facts,
+                        &left_truthiness.obligations,
+                    );
+                    for right_path in eval_c_expr_paths(state, right, &right_assumptions, budget)? {
+                        let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                            &left_truthiness.facts,
+                            &left_truthiness.obligations,
+                            &right_path.facts,
+                            &right_path.obligations,
+                            assumptions,
+                        ) else {
+                            continue;
+                        };
+
+                        match right_path.outcome {
+                            CExprOutcome::Value(value) => {
+                                paths.extend(c_truthiness_as_c_int32_paths(
+                                    value,
+                                    facts,
+                                    obligations,
+                                    assumptions,
+                                ))
+                            }
+                            CExprOutcome::Ub(ub) => paths.push(CExprPath {
+                                outcome: CExprOutcome::Ub(ub),
+                                facts,
+                                obligations,
+                            }),
+                            CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
+                                outcome: CExprOutcome::RuntimeError(error),
+                                facts,
+                                obligations,
+                            }),
+                        }
+                    }
+                }
+            }
+            CExprOutcome::Ub(ub) => paths.push(CExprPath {
+                outcome: CExprOutcome::Ub(ub),
+                facts: left_path.facts,
+                obligations: left_path.obligations,
+            }),
+            CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
+                outcome: CExprOutcome::RuntimeError(error),
+                facts: left_path.facts,
+                obligations: left_path.obligations,
+            }),
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
 }
 
 fn ptr_equality_condition(left: Ptr, right: Ptr) -> ConditionTerm {
@@ -4669,6 +5072,90 @@ mod tests {
                 outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             }
         );
+    }
+
+    #[test]
+    fn not_equal_and_not_return_c_int32_zero_or_one() {
+        let null = Ptr {
+            block: "null".to_string(),
+            offset: PtrOffsetTerm::Const(0),
+        };
+        let p = Ptr {
+            block: "array".to_string(),
+            offset: PtrOffsetTerm::Const(0),
+        };
+        let same = Ptr {
+            block: "array".to_string(),
+            offset: PtrOffsetTerm::Const(0),
+        };
+        let next = Ptr {
+            block: "array".to_string(),
+            offset: PtrOffsetTerm::Const(4),
+        };
+        let state = CState::new()
+            .with_local("nullp", CValue::Ptr(null))
+            .with_local("p", CValue::Ptr(p))
+            .with_local("same", CValue::Ptr(same))
+            .with_local("next", CValue::Ptr(next));
+        let examples = [
+            (c_ne(c_int32_literal(4), c_int32_literal(5)), int32(1)),
+            (c_ne(c_var("p"), c_var("same")), int32(0)),
+            (c_ne(c_var("p"), c_var("next")), int32(1)),
+            (c_ne(c_var("nullp"), c_int32_literal(0)), int32(0)),
+            (c_not(c_int32_literal(0)), int32(1)),
+            (c_not(c_int32_literal(7)), int32(0)),
+            (c_not(c_var("nullp")), int32(1)),
+            (c_not(c_var("p")), int32(0)),
+        ];
+
+        for (expr, expected) in examples {
+            let theorem = prove_c_expr_eval(state.clone(), expr.clone())
+                .expect("logical expression should evaluate");
+            assert_eq!(
+                theorem.prop(),
+                &Prop::CExprEvaluates {
+                    state: state.clone(),
+                    expr,
+                    outcome: CExprOutcome::Value(expected),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn logical_and_or_short_circuit_right_operand() {
+        let invalid_ptr = Ptr {
+            block: "missing".to_string(),
+            offset: PtrOffsetTerm::Const(0),
+        };
+        let invalid_load = c_load(c_ptr_value(invalid_ptr));
+        let state = CState::new();
+        let examples = [
+            (c_and(c_int32_literal(0), invalid_load.clone()), int32(0)),
+            (c_or(c_int32_literal(1), invalid_load.clone()), int32(1)),
+        ];
+
+        for (expr, expected) in examples {
+            let theorem = prove_c_expr_eval(state.clone(), expr.clone())
+                .expect("short-circuit expression should evaluate");
+            assert_eq!(
+                theorem.prop(),
+                &Prop::CExprEvaluates {
+                    state: state.clone(),
+                    expr,
+                    outcome: CExprOutcome::Value(expected),
+                }
+            );
+        }
+
+        assert!(
+            prove_c_expr_eval(
+                state.clone(),
+                c_and(c_int32_literal(1), invalid_load.clone()),
+            )
+            .is_none()
+        );
+        assert!(prove_c_expr_eval(state, c_or(c_int32_literal(0), invalid_load)).is_none());
     }
 
     #[test]

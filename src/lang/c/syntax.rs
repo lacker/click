@@ -62,6 +62,10 @@ pub enum C0Expr {
     Gt(Box<C0Expr>, Box<C0Expr>),
     Ge(Box<C0Expr>, Box<C0Expr>),
     Eq(Box<C0Expr>, Box<C0Expr>),
+    Ne(Box<C0Expr>, Box<C0Expr>),
+    Not(Box<C0Expr>),
+    And(Box<C0Expr>, Box<C0Expr>),
+    Or(Box<C0Expr>, Box<C0Expr>),
     Add(Box<C0Expr>, Box<C0Expr>),
     Sub(Box<C0Expr>, Box<C0Expr>),
     Load(Box<C0Expr>),
@@ -193,6 +197,16 @@ impl C0Expr {
             Self::Eq(left, right) => {
                 crate::megakernel::c_eq(left.to_megakernel_expr(), right.to_megakernel_expr())
             }
+            Self::Ne(left, right) => {
+                crate::megakernel::c_ne(left.to_megakernel_expr(), right.to_megakernel_expr())
+            }
+            Self::Not(expr) => crate::megakernel::c_not(expr.to_megakernel_expr()),
+            Self::And(left, right) => {
+                crate::megakernel::c_and(left.to_megakernel_expr(), right.to_megakernel_expr())
+            }
+            Self::Or(left, right) => {
+                crate::megakernel::c_or(left.to_megakernel_expr(), right.to_megakernel_expr())
+            }
             Self::Add(left, right) => {
                 crate::megakernel::c_add(left.to_megakernel_expr(), right.to_megakernel_expr())
             }
@@ -237,6 +251,10 @@ enum Token {
     Gt,
     Ge,
     EqEq,
+    BangEq,
+    Bang,
+    AmpAmp,
+    PipePipe,
     Star,
     Amp,
     Equal,
@@ -412,7 +430,7 @@ impl Parser {
     }
 
     fn parse_expr(&mut self) -> Result<C0Expr, C0SyntaxError> {
-        self.parse_compare()
+        self.parse_logical_or()
     }
 
     fn parse_call_args(&mut self) -> Result<Vec<C0Expr>, C0SyntaxError> {
@@ -445,6 +463,34 @@ impl Parser {
         }
     }
 
+    fn parse_logical_or(&mut self) -> Result<C0Expr, C0SyntaxError> {
+        let mut expr = self.parse_logical_and()?;
+        loop {
+            expr = match self.peek() {
+                Some(Token::PipePipe) => {
+                    self.position += 1;
+                    let right = self.parse_logical_and()?;
+                    C0Expr::Or(Box::new(expr), Box::new(right))
+                }
+                _ => return Ok(expr),
+            };
+        }
+    }
+
+    fn parse_logical_and(&mut self) -> Result<C0Expr, C0SyntaxError> {
+        let mut expr = self.parse_compare()?;
+        loop {
+            expr = match self.peek() {
+                Some(Token::AmpAmp) => {
+                    self.position += 1;
+                    let right = self.parse_compare()?;
+                    C0Expr::And(Box::new(expr), Box::new(right))
+                }
+                _ => return Ok(expr),
+            };
+        }
+    }
+
     fn parse_compare(&mut self) -> Result<C0Expr, C0SyntaxError> {
         let mut expr = self.parse_add()?;
         loop {
@@ -473,6 +519,11 @@ impl Parser {
                     self.position += 1;
                     let right = self.parse_add()?;
                     C0Expr::Eq(Box::new(expr), Box::new(right))
+                }
+                Some(Token::BangEq) => {
+                    self.position += 1;
+                    let right = self.parse_add()?;
+                    C0Expr::Ne(Box::new(expr), Box::new(right))
                 }
                 _ => return Ok(expr),
             };
@@ -508,6 +559,11 @@ impl Parser {
             self.position += 1;
             let name = self.expect_ident("address-of target")?;
             return Ok(C0Expr::AddressOf(name));
+        }
+
+        if self.peek() == Some(&Token::Bang) {
+            self.position += 1;
+            return Ok(C0Expr::Not(Box::new(self.parse_unary()?)));
         }
 
         self.parse_primary()
@@ -648,6 +704,9 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
         if index + 1 < chars.len() {
             let token = match (ch, chars[index + 1]) {
                 ('=', '=') => Some(Token::EqEq),
+                ('!', '=') => Some(Token::BangEq),
+                ('&', '&') => Some(Token::AmpAmp),
+                ('|', '|') => Some(Token::PipePipe),
                 ('<', '=') => Some(Token::Le),
                 ('>', '=') => Some(Token::Ge),
                 _ => None,
@@ -672,6 +731,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
             '>' => Token::Gt,
             '*' => Token::Star,
             '&' => Token::Amp,
+            '!' => Token::Bang,
             '=' => Token::Equal,
             _ => {
                 return Err(C0SyntaxError::new(format!("unexpected character `{ch}`")));

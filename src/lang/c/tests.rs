@@ -362,6 +362,124 @@ fn c0_syntax_targets_megakernel_pointer_null_equality() {
 }
 
 #[test]
+fn c0_syntax_targets_megakernel_logical_short_circuiting() {
+    let function = syntax::parse_function(
+        r#"
+        int32 safe_is_three(int32* p) {
+            if (p == 0 || (p != 0 && *p == 3)) {
+                return 1;
+            } else {
+                return 0;
+            }
+        }
+        "#,
+    )
+    .expect("logical short-circuit function should parse")
+    .to_megakernel_function();
+
+    let null = crate::megakernel::Ptr {
+        block: "null".to_string(),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
+    };
+    let ptr = crate::megakernel::Ptr {
+        block: "block".to_string(),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
+    };
+    let cases = [
+        (
+            crate::megakernel::CState::new(),
+            vec![crate::megakernel::c_ptr_value(null)],
+            crate::megakernel::int32(1),
+        ),
+        (
+            crate::megakernel::CState::new().with_memory(
+                crate::megakernel::CMemory::new()
+                    .with_block("block", 4)
+                    .store(ptr.clone(), crate::megakernel::int32(3)),
+            ),
+            vec![crate::megakernel::c_ptr_value(ptr.clone())],
+            crate::megakernel::int32(1),
+        ),
+        (
+            crate::megakernel::CState::new().with_memory(
+                crate::megakernel::CMemory::new()
+                    .with_block("block", 4)
+                    .store(ptr.clone(), crate::megakernel::int32(4)),
+            ),
+            vec![crate::megakernel::c_ptr_value(ptr)],
+            crate::megakernel::int32(0),
+        ),
+    ];
+
+    for (state, args, expected) in cases {
+        let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+            state.clone(),
+            function.clone(),
+            args.clone(),
+            crate::megakernel::Assumptions::new(),
+        )
+        .expect("logical short-circuit function should execute");
+
+        assert_eq!(
+            theorem.prop(),
+            &crate::megakernel::Prop::CFunctionExecutes {
+                state: state.clone(),
+                function: function.clone(),
+                args,
+                outcome: crate::megakernel::CFunctionOutcome::Return {
+                    value: expected,
+                    state,
+                },
+            }
+        );
+    }
+}
+
+#[test]
+fn c0_syntax_targets_megakernel_unary_not() {
+    let function = syntax::parse_function(
+        r#"
+        int32 not_null(int32* p) {
+            if (!(p == 0)) {
+                return 1;
+            } else {
+                return 0;
+            }
+        }
+        "#,
+    )
+    .expect("unary not function should parse")
+    .to_megakernel_function();
+
+    let ptr = crate::megakernel::Ptr {
+        block: "block".to_string(),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
+    };
+    let state = crate::megakernel::CState::new();
+    let args = vec![crate::megakernel::c_ptr_value(ptr)];
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        args.clone(),
+        crate::megakernel::Assumptions::new(),
+    )
+    .expect("unary not function should execute");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state: state.clone(),
+            function,
+            args,
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(1),
+                state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_syntax_targets_megakernel_local_address_of() {
     let function = syntax::parse_function(
         r#"
