@@ -180,7 +180,7 @@ fn c0_syntax_targets_megakernel_store_and_load() {
 
     let ptr = crate::megakernel::Ptr {
         block: "block".to_string(),
-        offset: crate::megakernel::Bv32Term::Const(0),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
     };
     let stmt = function.body_megakernel_stmt();
     let initial = crate::megakernel::CState::new()
@@ -232,7 +232,7 @@ fn c0_syntax_targets_megakernel_store_and_load_function_call() {
 
     let ptr = crate::megakernel::Ptr {
         block: "block".to_string(),
-        offset: crate::megakernel::Bv32Term::Const(0),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
     };
     let state = crate::megakernel::CState::new().with_local("caller", crate::megakernel::int32(7));
     let args = vec![crate::megakernel::c_ptr_value(ptr.clone())];
@@ -284,11 +284,11 @@ fn c0_syntax_targets_megakernel_pointer_addition_load() {
 
     let base = crate::megakernel::Ptr {
         block: "block".to_string(),
-        offset: crate::megakernel::Bv32Term::Const(0),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
     };
     let second = crate::megakernel::Ptr {
         block: "block".to_string(),
-        offset: crate::megakernel::Bv32Term::Const(4),
+        offset: crate::megakernel::PtrOffsetTerm::Const(4),
     };
     let memory = crate::megakernel::CMemory::new()
         .with_block("block", 16)
@@ -318,6 +318,50 @@ fn c0_syntax_targets_megakernel_pointer_addition_load() {
 }
 
 #[test]
+fn c0_syntax_targets_megakernel_pointer_null_equality() {
+    let function = syntax::parse_function(
+        r#"
+        int32 is_null(int32* p) {
+            if (p == 0) {
+                return 1;
+            } else {
+                return 0;
+            }
+        }
+        "#,
+    )
+    .expect("pointer null check should parse")
+    .to_megakernel_function();
+
+    let null = crate::megakernel::Ptr {
+        block: "null".to_string(),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
+    };
+    let state = crate::megakernel::CState::new();
+    let args = vec![crate::megakernel::c_ptr_value(null)];
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        args.clone(),
+        crate::megakernel::Assumptions::new(),
+    )
+    .expect("parsed pointer null check should execute");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state: state.clone(),
+            function,
+            args,
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(1),
+                state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_syntax_targets_megakernel_local_address_of() {
     let function = syntax::parse_function(
         r#"
@@ -333,7 +377,7 @@ fn c0_syntax_targets_megakernel_local_address_of() {
 
     let local_ptr = crate::megakernel::Ptr {
         block: "local:x".to_string(),
-        offset: crate::megakernel::Bv32Term::Const(0),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
     };
     let state = crate::megakernel::CState::new();
     let final_state = crate::megakernel::CState::new().with_memory(
@@ -584,7 +628,7 @@ fn c0_syntax_targets_megakernel_known_function_call_assignment() {
 
     let local_ptr = crate::megakernel::Ptr {
         block: "local:result".to_string(),
-        offset: crate::megakernel::Bv32Term::Const(0),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
     };
     let env = crate::megakernel::CFunctionEnv::new().with_function(increment);
     let state = crate::megakernel::CState::new();
@@ -675,23 +719,23 @@ fn c0_memory_safety_demo_fill_three_ints() {
 
     let base = crate::megakernel::Ptr {
         block: "buf".to_string(),
-        offset: crate::megakernel::Bv32Term::Const(0),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
     };
     let first = crate::megakernel::Ptr {
         block: "buf".to_string(),
-        offset: crate::megakernel::Bv32Term::Const(0),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
     };
     let second = crate::megakernel::Ptr {
         block: "buf".to_string(),
-        offset: crate::megakernel::Bv32Term::Const(4),
+        offset: crate::megakernel::PtrOffsetTerm::Const(4),
     };
     let third = crate::megakernel::Ptr {
         block: "buf".to_string(),
-        offset: crate::megakernel::Bv32Term::Const(8),
+        offset: crate::megakernel::PtrOffsetTerm::Const(8),
     };
     let local_i = crate::megakernel::Ptr {
         block: "local:i".to_string(),
-        offset: crate::megakernel::Bv32Term::Const(0),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
     };
     let initial_memory = crate::megakernel::CMemory::new().with_block("buf", 12);
     let state = crate::megakernel::CState::new().with_memory(initial_memory);

@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use crate::lang::c::syntax::{self, C0Type};
 use crate::megakernel::{
     Assumptions, Bv32Term, CExpr, CFunctionOutcome, CFunctionSpec, CMemory, CState, CValue, Prop,
-    Ptr, Theorem, c_function_spec, c_ptr_value, prove_c_function_satisfies_spec,
+    Ptr, PtrOffsetTerm, Theorem, c_function_spec, c_ptr_value, prove_c_function_satisfies_spec,
     prove_symbolic_c_function_execution,
 };
 
@@ -220,7 +220,7 @@ fn initial_call(
                 memory = memory.with_block(param.name(), bytes);
                 args.push(c_ptr_value(Ptr {
                     block: param.name().to_string(),
-                    offset: Bv32Term::Const(0),
+                    offset: PtrOffsetTerm::Const(0),
                 }));
             }
             C0Type::Int32 => {
@@ -645,23 +645,23 @@ mod tests {
         let verified = &verified[0];
         let base = Ptr {
             block: "p".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let first = Ptr {
             block: "p".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let second = Ptr {
             block: "p".to_string(),
-            offset: Bv32Term::Const(4),
+            offset: PtrOffsetTerm::Const(4),
         };
         let third = Ptr {
             block: "p".to_string(),
-            offset: Bv32Term::Const(8),
+            offset: PtrOffsetTerm::Const(8),
         };
         let local_i = Ptr {
             block: "local:i".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let final_memory = CMemory::new()
             .with_block("p", 12)

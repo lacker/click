@@ -41,7 +41,7 @@ The public crate currently has three modules:
 
 The megakernel currently has native data structures for:
 
-- `Bv32Term` and `ConditionTerm`
+- `Bv32Term`, `PtrOffsetTerm`, and `ConditionTerm`
 - C values, expressions, statements, functions, and function environments
 - local state and memory with explicit byte-sized blocks
 - expression, statement, and function outcomes
@@ -51,6 +51,10 @@ The megakernel currently has native data structures for:
 `ConditionTerm` is a proof-level truth-valued term for path conditions,
 overflow predicates, and range facts. It is not a C `bool`. Current C0
 comparisons evaluate to `int32` `0` or `1`, matching C-style scalar truthiness.
+Pointers are semantic objects with provenance blocks and pointer-offset terms;
+they are not represented as C `int32` values. The current C0 target layout
+still assumes 8-byte pointer objects; that should become explicit target
+configuration when multiple ABIs matter.
 
 ## C0 Status
 

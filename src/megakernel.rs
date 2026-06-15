@@ -6,6 +6,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+const C_POINTER_BYTE_WIDTH: u32 = 8;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Var(pub u64);
 
@@ -13,6 +15,7 @@ pub struct Var(pub u64);
 pub enum Sort {
     Condition,
     Bv32,
+    PtrOffset,
     CType,
     CInt32,
     CPtr,
@@ -34,6 +37,17 @@ pub enum Bv32Term {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum PtrOffsetTerm {
+    Const(i64),
+    Var(Var),
+    Add(Box<PtrOffsetTerm>, Box<PtrOffsetTerm>),
+    Int32Scaled {
+        value: Box<Bv32Term>,
+        byte_width: i64,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum ConditionTerm {
     Const(bool),
     Var(Var),
@@ -44,12 +58,13 @@ pub enum ConditionTerm {
     Bv32Eq(Box<Bv32Term>, Box<Bv32Term>),
     Bv32SignedAddOverflows(Box<Bv32Term>, Box<Bv32Term>),
     Bv32SignedSubOverflows(Box<Bv32Term>, Box<Bv32Term>),
+    PtrOffsetEq(Box<PtrOffsetTerm>, Box<PtrOffsetTerm>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Ptr {
     pub block: String,
-    pub offset: Bv32Term,
+    pub offset: PtrOffsetTerm,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -220,6 +235,7 @@ pub struct CState {
 pub enum Term {
     Condition(ConditionTerm),
     Bv32(Bv32Term),
+    PtrOffset(PtrOffsetTerm),
     CValue(CValue),
     CExprOutcome(CExprOutcome),
     CStmtOutcome(CStmtOutcome),
@@ -407,11 +423,41 @@ impl Bv32Term {
             _ => Self::Sub(Box::new(left), Box::new(right)),
         }
     }
+}
 
-    fn mul(left: Self, right: Self) -> Self {
+impl PtrOffsetTerm {
+    pub fn constant(value: i64) -> Self {
+        Self::Const(value)
+    }
+
+    fn as_const(&self) -> Option<i64> {
+        match self {
+            Self::Const(value) => Some(*value),
+            Self::Var(_) => None,
+            Self::Add(left, right) => left.as_const()?.checked_add(right.as_const()?),
+            Self::Int32Scaled { value, byte_width } => {
+                let value = value.as_const()? as i32 as i64;
+                value.checked_mul(*byte_width)
+            }
+        }
+    }
+
+    fn add(left: Self, right: Self) -> Self {
         match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Const(left.wrapping_mul(right)),
-            _ => Self::Mul(Box::new(left), Box::new(right)),
+            (Some(left), Some(right)) => Self::Const(left + right),
+            (Some(0), _) => right,
+            (_, Some(0)) => left,
+            _ => Self::Add(Box::new(left), Box::new(right)),
+        }
+    }
+
+    fn scale_int32(value: Bv32Term, byte_width: i64) -> Self {
+        match value.as_const() {
+            Some(value) => Self::Const((value as i32 as i64) * byte_width),
+            None => Self::Int32Scaled {
+                value: Box::new(value),
+                byte_width,
+            },
         }
     }
 }
@@ -465,6 +511,13 @@ impl ConditionTerm {
             _ => Self::Bv32SignedSubOverflows(Box::new(left), Box::new(right)),
         }
     }
+
+    fn ptr_offset_eq(left: PtrOffsetTerm, right: PtrOffsetTerm) -> Self {
+        match (left.as_const(), right.as_const()) {
+            (Some(left), Some(right)) => Self::Const(left == right),
+            _ => Self::PtrOffsetEq(Box::new(left), Box::new(right)),
+        }
+    }
 }
 
 impl CType {
@@ -480,7 +533,7 @@ impl CValue {
     fn byte_width(&self) -> u32 {
         match self {
             Self::Int32(_) => 4,
-            Self::Ptr(_) => 8,
+            Self::Ptr(_) => C_POINTER_BYTE_WIDTH,
         }
     }
 }
@@ -489,9 +542,9 @@ impl Ptr {
     fn offset_by_int32_elements(&self, elements: Bv32Term) -> Self {
         Self {
             block: self.block.clone(),
-            offset: Bv32Term::add(
+            offset: PtrOffsetTerm::add(
                 self.offset.clone(),
-                Bv32Term::mul(elements, Bv32Term::Const(4)),
+                PtrOffsetTerm::scale_int32(elements, 4),
             ),
         }
     }
@@ -505,15 +558,15 @@ impl Ptr {
             return Some(Bv32Term::Const(0));
         }
 
-        if base.offset == Bv32Term::Const(0) {
+        if base.offset == PtrOffsetTerm::Const(0) {
             return int32_element_index_from_offset(&self.offset);
         }
 
         match &self.offset {
-            Bv32Term::Add(left, right) if left.as_ref() == &base.offset => {
+            PtrOffsetTerm::Add(left, right) if left.as_ref() == &base.offset => {
                 int32_element_index_from_offset(right)
             }
-            Bv32Term::Add(left, right) if right.as_ref() == &base.offset => {
+            PtrOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
                 int32_element_index_from_offset(left)
             }
             _ => None,
@@ -675,7 +728,7 @@ impl CMemory {
     fn local_ptr(name: &str) -> Ptr {
         Ptr {
             block: format!("local:{name}"),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         }
     }
 
@@ -693,6 +746,9 @@ impl CMemory {
 
     fn access_in_bounds(&self, ptr: &Ptr, byte_width: u32) -> bool {
         let Some(offset) = ptr.offset.as_const() else {
+            return false;
+        };
+        let Ok(offset) = u32::try_from(offset) else {
             return false;
         };
         let Some(block) = self.blocks.get(&ptr.block) else {
@@ -876,6 +932,13 @@ impl Assumptions {
 
     fn decide_from_order_facts(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
+            ConditionTerm::PtrOffsetEq(left, right) if left == right => Some(true),
+            ConditionTerm::PtrOffsetEq(left, right) => {
+                match (left.as_ref().as_const(), right.as_ref().as_const()) {
+                    (Some(left), Some(right)) => Some(left == right),
+                    _ => None,
+                }
+            }
             ConditionTerm::Bv32Eq(left, right) if left == right => Some(true),
             ConditionTerm::Bv32Eq(left, right) => {
                 let left = left.as_ref().clone();
@@ -2033,7 +2096,7 @@ fn condition_contexts_for_truthiness(
 
 fn ptrs_proven_distinct(left: &Ptr, right: &Ptr, assumptions: &Assumptions) -> bool {
     left.block != right.block
-        || assumptions.decide(&ConditionTerm::eq(
+        || assumptions.decide(&ConditionTerm::ptr_offset_eq(
             left.offset.clone(),
             right.offset.clone(),
         )) == Some(false)
@@ -2099,21 +2162,23 @@ fn solve_builtin_prop(prop: &Prop) -> bool {
     }
 }
 
-fn int32_element_index_from_offset(offset: &Bv32Term) -> Option<Bv32Term> {
+fn int32_element_index_from_offset(offset: &PtrOffsetTerm) -> Option<Bv32Term> {
     match offset {
-        Bv32Term::Add(left, right) if left.as_ref() == &Bv32Term::Const(0) => {
+        PtrOffsetTerm::Add(left, right) if left.as_ref() == &PtrOffsetTerm::Const(0) => {
             int32_element_index_from_offset(right)
         }
-        Bv32Term::Add(left, right) if right.as_ref() == &Bv32Term::Const(0) => {
+        PtrOffsetTerm::Add(left, right) if right.as_ref() == &PtrOffsetTerm::Const(0) => {
             int32_element_index_from_offset(left)
         }
-        Bv32Term::Mul(left, right) if right.as_ref() == &Bv32Term::Const(4) => {
-            Some(left.as_ref().clone())
+        PtrOffsetTerm::Int32Scaled { value, byte_width } if *byte_width == 4 => {
+            Some(value.as_ref().clone())
         }
-        Bv32Term::Mul(left, right) if left.as_ref() == &Bv32Term::Const(4) => {
-            Some(right.as_ref().clone())
+        PtrOffsetTerm::Const(offset) if offset % 4 == 0 => {
+            let index = offset / 4;
+            (i32::MIN as i64..=i32::MAX as i64)
+                .contains(&index)
+                .then_some(Bv32Term::Const((index as i32) as u32))
         }
-        Bv32Term::Const(offset) if offset % 4 == 0 => Some(Bv32Term::Const(offset / 4)),
         _ => None,
     }
 }
@@ -2401,21 +2466,7 @@ fn eval_c_expr_paths(
                 )
             },
         )?,
-        CExpr::Eq(left, right) => eval_c_int32_binary_paths(
-            state,
-            left,
-            right,
-            assumptions,
-            budget,
-            |left, right, facts, obligations| {
-                condition_as_c_int32_paths(
-                    ConditionTerm::eq(left, right),
-                    facts,
-                    obligations,
-                    assumptions,
-                )
-            },
-        )?,
+        CExpr::Eq(left, right) => eval_c_eq_paths(state, left, right, assumptions, budget)?,
         CExpr::Add(left, right) => eval_c_add_paths(state, left, right, assumptions, budget)?,
         CExpr::Sub(left, right) => eval_c_int32_binary_paths(
             state,
@@ -2558,7 +2609,7 @@ fn c_truthiness_paths(
             }
         }
         CValue::Ptr(ptr) => match (&ptr.block[..], &ptr.offset) {
-            ("null", Bv32Term::Const(0)) => vec![CTruthinessPath {
+            ("null", PtrOffsetTerm::Const(0)) => vec![CTruthinessPath {
                 is_true: false,
                 facts,
                 obligations,
@@ -2804,6 +2855,133 @@ fn apply_c_int32_sub(
             ]
         }
     }
+}
+
+fn eval_c_eq_paths(
+    state: &CState,
+    left: &CExpr,
+    right: &CExpr,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExprPath>> {
+    let mut paths = Vec::new();
+    for left_path in eval_c_expr_paths(state, left, assumptions, budget)? {
+        let CExprPath {
+            outcome: left_outcome,
+            facts: left_facts,
+            obligations: left_obligations,
+        } = left_path;
+
+        let left = match left_outcome {
+            CExprOutcome::Value(left) => left,
+            CExprOutcome::Ub(ub) => {
+                paths.push(CExprPath {
+                    outcome: CExprOutcome::Ub(ub),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+            CExprOutcome::RuntimeError(error) => {
+                paths.push(CExprPath {
+                    outcome: CExprOutcome::RuntimeError(error),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+        };
+
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
+        for right_path in eval_c_expr_paths(state, right, &right_assumptions, budget)? {
+            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &left_facts,
+                &left_obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+
+            match right_path.outcome {
+                CExprOutcome::Value(right) => {
+                    paths.extend(apply_c_eq(
+                        left.clone(),
+                        right,
+                        facts,
+                        obligations,
+                        assumptions,
+                    ));
+                }
+                CExprOutcome::Ub(ub) => paths.push(CExprPath {
+                    outcome: CExprOutcome::Ub(ub),
+                    facts,
+                    obligations,
+                }),
+                CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
+                    outcome: CExprOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+                }),
+            }
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn apply_c_eq(
+    left: CValue,
+    right: CValue,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExprPath> {
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right)) => condition_as_c_int32_paths(
+            ConditionTerm::eq(left, right),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Ptr(left), CValue::Ptr(right)) => condition_as_c_int32_paths(
+            ptr_equality_condition(left, right),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Ptr(ptr), CValue::Int32(bits)) | (CValue::Int32(bits), CValue::Ptr(ptr))
+            if bits.as_const() == Some(0) =>
+        {
+            condition_as_c_int32_paths(ptr_is_null_condition(ptr), facts, obligations, assumptions)
+        }
+        _ => vec![CExprPath {
+            outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts,
+            obligations,
+        }],
+    }
+}
+
+fn ptr_equality_condition(left: Ptr, right: Ptr) -> ConditionTerm {
+    if left.block != right.block {
+        ConditionTerm::Const(false)
+    } else {
+        ConditionTerm::ptr_offset_eq(left.offset, right.offset)
+    }
+}
+
+fn ptr_is_null_condition(ptr: Ptr) -> ConditionTerm {
+    ptr_equality_condition(
+        ptr,
+        Ptr {
+            block: "null".to_string(),
+            offset: PtrOffsetTerm::Const(0),
+        },
+    )
 }
 
 fn eval_c_int32_binary_paths(
@@ -3273,9 +3451,9 @@ fn declare_local(state: &CState, name: &str, ty: CType) -> CState {
         CType::Int32Ptr => (
             CValue::Ptr(Ptr {
                 block: "null".to_string(),
-                offset: Bv32Term::Const(0),
+                offset: PtrOffsetTerm::Const(0),
             }),
-            8,
+            C_POINTER_BYTE_WIDTH,
         ),
     };
     let ptr = CMemory::local_ptr(name);
@@ -3707,7 +3885,7 @@ mod tests {
     fn function_call_threads_memory_but_discards_callee_locals() {
         let ptr = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let state = CState::new().with_local("caller", int32(42));
         let function = c_function(
@@ -4137,7 +4315,7 @@ mod tests {
     fn while_invariant_is_proof_obligation() {
         let ptr = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let invariant = Prop::CMemoryCanLoad {
             memory: CMemory::new(),
@@ -4171,7 +4349,7 @@ mod tests {
         let memory = CMemory::new().with_block("block", 8);
         let ptr = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(4),
+            offset: PtrOffsetTerm::Const(4),
         };
 
         assert!(assumptions.proves(&Prop::Equal(
@@ -4190,7 +4368,7 @@ mod tests {
     fn builtin_obligation_solver_discharges_concrete_invariant() {
         let ptr = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let memory = CMemory::new().with_block("block", 4);
         let invariant = Prop::CMemoryCanLoad {
@@ -4406,6 +4584,150 @@ mod tests {
     }
 
     #[test]
+    fn pointer_equality_returns_c_int32_zero_or_one() {
+        let p = Ptr {
+            block: "array".to_string(),
+            offset: PtrOffsetTerm::Const(0),
+        };
+        let same = Ptr {
+            block: "array".to_string(),
+            offset: PtrOffsetTerm::Const(0),
+        };
+        let next = Ptr {
+            block: "array".to_string(),
+            offset: PtrOffsetTerm::Const(4),
+        };
+        let other = Ptr {
+            block: "other".to_string(),
+            offset: PtrOffsetTerm::Const(0),
+        };
+        let state = CState::new()
+            .with_local("p", CValue::Ptr(p))
+            .with_local("same", CValue::Ptr(same))
+            .with_local("next", CValue::Ptr(next))
+            .with_local("other", CValue::Ptr(other));
+        let examples = [
+            (c_eq(c_var("p"), c_var("same")), int32(1)),
+            (c_eq(c_var("p"), c_var("next")), int32(0)),
+            (c_eq(c_var("p"), c_var("other")), int32(0)),
+        ];
+
+        for (expr, expected) in examples {
+            let theorem = prove_c_expr_eval(state.clone(), expr.clone())
+                .expect("pointer equality should evaluate");
+            assert_eq!(
+                theorem.prop(),
+                &Prop::CExprEvaluates {
+                    state: state.clone(),
+                    expr,
+                    outcome: CExprOutcome::Value(expected),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn pointer_equality_accepts_int32_zero_as_null_pointer_constant() {
+        let null = Ptr {
+            block: "null".to_string(),
+            offset: PtrOffsetTerm::Const(0),
+        };
+        let nonnull = Ptr {
+            block: "array".to_string(),
+            offset: PtrOffsetTerm::Const(0),
+        };
+        let state = CState::new()
+            .with_local("nullp", CValue::Ptr(null))
+            .with_local("p", CValue::Ptr(nonnull));
+        let examples = [
+            (c_eq(c_var("nullp"), c_int32_literal(0)), int32(1)),
+            (c_eq(c_int32_literal(0), c_var("nullp")), int32(1)),
+            (c_eq(c_var("p"), c_int32_literal(0)), int32(0)),
+        ];
+
+        for (expr, expected) in examples {
+            let theorem = prove_c_expr_eval(state.clone(), expr.clone())
+                .expect("null equality should evaluate");
+            assert_eq!(
+                theorem.prop(),
+                &Prop::CExprEvaluates {
+                    state: state.clone(),
+                    expr,
+                    outcome: CExprOutcome::Value(expected),
+                }
+            );
+        }
+
+        let invalid = c_eq(c_var("p"), c_int32_literal(1));
+        let theorem = prove_c_expr_eval(state.clone(), invalid.clone())
+            .expect("invalid pointer equality should evaluate");
+        assert_eq!(
+            theorem.prop(),
+            &Prop::CExprEvaluates {
+                state,
+                expr: invalid,
+                outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            }
+        );
+    }
+
+    #[test]
+    fn symbolic_pointer_equality_reports_branch_facts() {
+        let offset = Var(80);
+        let left = Ptr {
+            block: "array".to_string(),
+            offset: PtrOffsetTerm::Const(0),
+        };
+        let right = Ptr {
+            block: "array".to_string(),
+            offset: PtrOffsetTerm::Var(offset),
+        };
+        let condition = ConditionTerm::ptr_offset_eq(left.offset.clone(), right.offset.clone());
+        let state = CState::new()
+            .with_local("p", CValue::Ptr(left))
+            .with_local("q", CValue::Ptr(right));
+        let stmt = c_if(
+            c_eq(c_var("p"), c_var("q")),
+            c_return(c_int32_literal(1)),
+            c_return(c_int32_literal(0)),
+        );
+        let execution =
+            prove_symbolic_c_execution_paths(state.clone(), stmt.clone(), Assumptions::new());
+
+        assert_eq!(execution.paths().len(), 2);
+        assert_eq!(
+            execution.paths()[0].facts(),
+            &[PathFact::condition(condition.clone(), true)]
+        );
+        assert_eq!(
+            execution.paths()[0].theorem().prop().peel_implications(),
+            &Prop::CStmtExecutes {
+                state: state.clone(),
+                stmt: stmt.clone(),
+                outcome: CStmtOutcome::Return {
+                    value: int32(1),
+                    state: state.clone(),
+                },
+            }
+        );
+        assert_eq!(
+            execution.paths()[1].facts(),
+            &[PathFact::condition(condition, false)]
+        );
+        assert_eq!(
+            execution.paths()[1].theorem().prop().peel_implications(),
+            &Prop::CStmtExecutes {
+                state: state.clone(),
+                stmt,
+                outcome: CStmtOutcome::Return {
+                    value: int32(0),
+                    state,
+                },
+            }
+        );
+    }
+
+    #[test]
     fn if_uses_c_int32_truthiness() {
         let state = CState::new();
         let stmt = c_if(
@@ -4475,7 +4797,7 @@ mod tests {
     fn store_then_load_threads_native_memory() {
         let ptr = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let state = CState::new();
         let stmt = c_seq(
@@ -4510,7 +4832,7 @@ mod tests {
     fn symbolic_load_from_incomplete_memory_reports_validity_obligation() {
         let ptr = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(4),
+            offset: PtrOffsetTerm::Const(4),
         };
         let state = CState::new().with_local("p", CValue::Ptr(ptr.clone()));
         let stmt = c_return(c_load(c_var("p")));
@@ -4551,7 +4873,7 @@ mod tests {
     fn block_backed_store_then_load_needs_no_memory_obligation() {
         let ptr = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let memory = CMemory::new().with_block("block", 16);
         let state = CState::new().with_memory(memory.clone());
@@ -4580,7 +4902,7 @@ mod tests {
     fn block_backed_missing_load_returns_symbolic_value_without_obligation() {
         let ptr = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(4),
+            offset: PtrOffsetTerm::Const(4),
         };
         let memory = CMemory::new().with_block("block", 16);
         let state = CState::new()
@@ -4607,11 +4929,11 @@ mod tests {
     fn pointer_addition_scales_int32_offsets_for_loads() {
         let base = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let second = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(4),
+            offset: PtrOffsetTerm::Const(4),
         };
         let memory = CMemory::new()
             .with_block("block", 16)
@@ -4635,13 +4957,13 @@ mod tests {
                             "p",
                             CValue::Ptr(Ptr {
                                 block: "block".to_string(),
-                                offset: Bv32Term::Const(0),
+                                offset: PtrOffsetTerm::Const(0),
                             }),
                         )
                         .with_memory(CMemory::new().with_block("block", 16).store(
                             Ptr {
                                 block: "block".to_string(),
-                                offset: Bv32Term::Const(4),
+                                offset: PtrOffsetTerm::Const(4),
                             },
                             int32(23),
                         ),),
@@ -4654,11 +4976,11 @@ mod tests {
     fn pointer_addition_out_of_range_load_reports_validity_obligation() {
         let base = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let derived = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(4),
+            offset: PtrOffsetTerm::Const(4),
         };
         let memory = CMemory::new().with_block("block", 4);
         let state = CState::new()
@@ -4699,7 +5021,7 @@ mod tests {
     fn fixed_bound_store_loop_touches_only_valid_pointer_range() {
         let base = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let memory = CMemory::new().with_block("block", 12);
         let state = CState::new()
@@ -4719,21 +5041,21 @@ mod tests {
             .store(
                 Ptr {
                     block: "block".to_string(),
-                    offset: Bv32Term::Const(0),
+                    offset: PtrOffsetTerm::Const(0),
                 },
                 int32(0),
             )
             .store(
                 Ptr {
                     block: "block".to_string(),
-                    offset: Bv32Term::Const(4),
+                    offset: PtrOffsetTerm::Const(4),
                 },
                 int32(1),
             )
             .store(
                 Ptr {
                     block: "block".to_string(),
-                    offset: Bv32Term::Const(8),
+                    offset: PtrOffsetTerm::Const(8),
                 },
                 int32(2),
             );
@@ -4742,7 +5064,7 @@ mod tests {
                 "p",
                 CValue::Ptr(Ptr {
                     block: "block".to_string(),
-                    offset: Bv32Term::Const(0),
+                    offset: PtrOffsetTerm::Const(0),
                 }),
             )
             .with_local("i", int32(3))
@@ -4777,7 +5099,7 @@ mod tests {
         let memory = CMemory::new();
         let base = Ptr {
             block: "array".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let state = CState::new()
             .with_local("p", CValue::Ptr(base.clone()))
@@ -4886,13 +5208,13 @@ mod tests {
         let j_bits = Bv32Term::Var(j);
         let base = Ptr {
             block: "array".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let stored_ptr = base.offset_by_int32_elements(i_bits);
         let loaded_ptr = base.offset_by_int32_elements(j_bits);
         let memory = CMemory::new().store(loaded_ptr.clone(), int32(42));
         let assumptions = Assumptions::new().assume_condition(
-            ConditionTerm::eq(stored_ptr.offset.clone(), loaded_ptr.offset.clone()),
+            ConditionTerm::ptr_offset_eq(stored_ptr.offset.clone(), loaded_ptr.offset.clone()),
             false,
         );
         let theorem = prove_memory_load_after_store_distinct_under_assumptions(
@@ -4918,7 +5240,7 @@ mod tests {
     fn local_declaration_allocates_stack_object_for_address_of() {
         let local_ptr = Ptr {
             block: "local:x".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let state = CState::new();
         let stmt = c_seq(
@@ -5145,7 +5467,7 @@ mod tests {
     fn memory_load_store_are_native_theorems() {
         let ptr = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let value = int32(7);
         let theorem =
@@ -5165,11 +5487,11 @@ mod tests {
     fn store_preserves_distinct_memory_cell_frame() {
         let stored_ptr = Ptr {
             block: "left".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let loaded_ptr = Ptr {
             block: "right".to_string(),
-            offset: Bv32Term::Const(0),
+            offset: PtrOffsetTerm::Const(0),
         };
         let memory = CMemory::new().store(loaded_ptr.clone(), int32(42));
         let theorem = prove_memory_load_after_store_other(
@@ -5194,7 +5516,7 @@ mod tests {
     fn missing_memory_load_is_native_ub() {
         let ptr = Ptr {
             block: "block".to_string(),
-            offset: Bv32Term::Const(4),
+            offset: PtrOffsetTerm::Const(4),
         };
         let theorem = prove_memory_load(CMemory::new(), ptr.clone());
 
