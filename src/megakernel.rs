@@ -250,6 +250,7 @@ pub enum Prop {
         memory: CMemory,
         ptr: Ptr,
     },
+    And(Box<Prop>, Box<Prop>),
     Implies(Box<Prop>, Box<Prop>),
     ForAll {
         var: Var,
@@ -337,6 +338,19 @@ impl Bv32Term {
             Self::Sub(left, right) => Some(left.as_const()?.wrapping_sub(right.as_const()?)),
             Self::Mul(left, right) => Some(left.as_const()?.wrapping_mul(right.as_const()?)),
         }
+    }
+
+    fn subtract_one_base(&self) -> Option<Self> {
+        match self {
+            Self::Sub(left, right) if right.as_ref() == &Self::Const(1) => {
+                Some(left.as_ref().clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn is_subtract_one(&self) -> bool {
+        self.subtract_one_base().is_some()
     }
 
     fn add(left: Self, right: Self) -> Self {
@@ -667,6 +681,16 @@ impl Theorem {
     }
 }
 
+#[cfg(test)]
+impl Prop {
+    fn peel_implications(&self) -> &Self {
+        match self {
+            Self::Implies(_, body) => body.peel_implications(),
+            _ => self,
+        }
+    }
+}
+
 impl Assumptions {
     pub fn new() -> Self {
         Self::default()
@@ -678,10 +702,17 @@ impl Assumptions {
     }
 
     pub fn assume_prop(mut self, prop: Prop) -> Self {
-        if let Prop::BoolIs(condition, value) = prop {
-            self.bool_facts.insert(condition, value);
-        } else {
-            self.prop_facts.insert(prop);
+        match prop {
+            Prop::BoolIs(condition, value) => {
+                self.bool_facts.insert(condition, value);
+            }
+            Prop::And(left, right) => {
+                self = self.assume_prop(*left);
+                self = self.assume_prop(*right);
+            }
+            prop => {
+                self.prop_facts.insert(prop);
+            }
         }
         self
     }
@@ -689,7 +720,117 @@ impl Assumptions {
     fn decide(&self, condition: &BoolTerm) -> Option<bool> {
         match condition {
             BoolTerm::Const(value) => Some(*value),
-            _ => self.bool_facts.get(condition).copied(),
+            _ => self
+                .bool_facts
+                .get(condition)
+                .copied()
+                .or_else(|| self.decide_from_order_facts(condition))
+                .or_else(|| self.decide_from_overflow_facts(condition)),
+        }
+    }
+
+    fn has_bool_fact(&self, condition: BoolTerm, value: bool) -> bool {
+        self.bool_facts.get(&condition) == Some(&value)
+    }
+
+    fn decide_from_order_facts(&self, condition: &BoolTerm) -> Option<bool> {
+        match condition {
+            BoolTerm::Bv32Eq(left, right) if left == right => Some(true),
+            BoolTerm::Bv32Slt(left, right) if left == right => Some(false),
+            BoolTerm::Bv32Sgt(left, right) if left == right => Some(false),
+            BoolTerm::Bv32Sle(left, right) if left == right => Some(true),
+            BoolTerm::Bv32Sge(left, right) if left == right => Some(true),
+            BoolTerm::Bv32Slt(left, right) => {
+                let left = left.as_ref().clone();
+                let right = right.as_ref().clone();
+                if self.has_bool_fact(BoolTerm::sgt(right.clone(), left.clone()), true)
+                    || self.has_bool_fact(BoolTerm::sge(left.clone(), right.clone()), false)
+                {
+                    Some(true)
+                } else if self.has_bool_fact(BoolTerm::sge(left.clone(), right.clone()), true)
+                    || self.has_bool_fact(BoolTerm::sle(right, left), true)
+                {
+                    Some(false)
+                } else {
+                    None
+                }
+            }
+            BoolTerm::Bv32Sle(left, right) => {
+                let left = left.as_ref().clone();
+                let right = right.as_ref().clone();
+                if self.has_bool_fact(BoolTerm::slt(left.clone(), right.clone()), true)
+                    || self.has_bool_fact(BoolTerm::sgt(right.clone(), left.clone()), true)
+                    || self.has_bool_fact(BoolTerm::sgt(left.clone(), right.clone()), false)
+                {
+                    Some(true)
+                } else if self.has_bool_fact(BoolTerm::sgt(left, right), true) {
+                    Some(false)
+                } else {
+                    None
+                }
+            }
+            BoolTerm::Bv32Sgt(left, right) => {
+                let left = left.as_ref().clone();
+                let right = right.as_ref().clone();
+                if self.has_bool_fact(BoolTerm::slt(right.clone(), left.clone()), true)
+                    || self.has_bool_fact(BoolTerm::sle(left.clone(), right.clone()), false)
+                {
+                    Some(true)
+                } else if self.has_bool_fact(BoolTerm::sle(left.clone(), right.clone()), true)
+                    || self.has_bool_fact(BoolTerm::sge(right, left), true)
+                {
+                    Some(false)
+                } else {
+                    None
+                }
+            }
+            BoolTerm::Bv32Sge(left, right) => {
+                let left = left.as_ref().clone();
+                let right = right.as_ref().clone();
+                if self.has_bool_fact(BoolTerm::sgt(left.clone(), right.clone()), true)
+                    || self.has_bool_fact(BoolTerm::slt(right.clone(), left.clone()), true)
+                    || self.has_bool_fact(BoolTerm::sle(right.clone(), left.clone()), true)
+                    || self.has_bool_fact(BoolTerm::slt(left.clone(), right.clone()), false)
+                {
+                    Some(true)
+                } else if self.has_bool_fact(BoolTerm::slt(left, right), true) {
+                    Some(false)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn decide_from_overflow_facts(&self, condition: &BoolTerm) -> Option<bool> {
+        match condition {
+            BoolTerm::Bv32SignedAddOverflows(left, right)
+                if right.as_ref() == &Bv32Term::Const(1) =>
+            {
+                let int_max = Bv32Term::Const(i32::MAX as u32);
+                let left = left.as_ref().clone();
+                self.has_bool_fact(BoolTerm::slt(left, int_max), true)
+                    .then_some(false)
+            }
+            BoolTerm::Bv32SignedSubOverflows(left, right)
+                if right.as_ref() == &Bv32Term::Const(1) =>
+            {
+                let zero = Bv32Term::Const(0);
+                let left = left.as_ref().clone();
+                self.has_bool_fact(BoolTerm::sgt(left, zero), true)
+                    .then_some(false)
+            }
+            BoolTerm::Bv32Sge(left, right)
+                if left.as_ref().is_subtract_one() && right.as_ref() == &Bv32Term::Const(0) =>
+            {
+                let Some(left_before_sub) = left.as_ref().subtract_one_base() else {
+                    return None;
+                };
+                self.has_bool_fact(BoolTerm::sgt(left_before_sub, Bv32Term::Const(0)), true)
+                    .then_some(true)
+            }
+            _ => None,
         }
     }
 
@@ -700,6 +841,7 @@ impl Assumptions {
 
         match prop {
             Prop::BoolIs(condition, value) => self.decide(condition) == Some(*value),
+            Prop::And(left, right) => self.proves(left) && self.proves(right),
             _ => self.prop_facts.contains(prop),
         }
     }
@@ -891,6 +1033,21 @@ pub fn c_function_spec(
     outcome: CFunctionOutcome,
 ) -> CFunctionSpec {
     CFunctionSpec::new(state, args, requires, outcome)
+}
+
+pub fn prop_and(left: Prop, right: Prop) -> Prop {
+    Prop::And(Box::new(left), Box::new(right))
+}
+
+pub fn prop_and_all(mut props: Vec<Prop>) -> Prop {
+    let Some(first) = props.pop() else {
+        return Prop::BoolIs(BoolTerm::Const(true), true);
+    };
+
+    props
+        .into_iter()
+        .rev()
+        .fold(first, |right, left| prop_and(left, right))
 }
 
 pub fn c_max_body() -> CStmt {
@@ -1125,6 +1282,69 @@ pub fn prove_c_function_satisfies_spec_with_env(
     Some(Theorem::new(wrap_proof_facts(prop, &assumptions, &[], &[])))
 }
 
+pub fn prove_c_function_satisfies_spec_and_props(
+    function: CFunction,
+    spec: CFunctionSpec,
+    assumptions: Assumptions,
+    props: Vec<Prop>,
+) -> Option<Theorem> {
+    prove_c_function_satisfies_spec(function.clone(), spec.clone(), assumptions.clone())?;
+
+    let spec_assumptions = assumptions_with_props(&assumptions, spec.requires());
+    if props.iter().any(|prop| !spec_assumptions.proves(prop)) {
+        return None;
+    }
+
+    let conclusion = prop_and_all(
+        std::iter::once(Prop::CFunctionSatisfiesSpec {
+            function: function.clone(),
+            spec: spec.clone(),
+        })
+        .chain(props)
+        .collect(),
+    );
+    let prop = spec
+        .requires()
+        .iter()
+        .rev()
+        .fold(conclusion, |body, requirement| {
+            Prop::Implies(Box::new(requirement.clone()), Box::new(body))
+        });
+    Some(Theorem::new(wrap_proof_facts(prop, &assumptions, &[], &[])))
+}
+
+pub fn prove_c_stmt_executes_and_props(
+    state: CState,
+    stmt: CStmt,
+    assumptions: Assumptions,
+    props: Vec<Prop>,
+) -> Option<Theorem> {
+    let paths = exec_c_stmt_paths(&state, &stmt, &assumptions, &CFunctionEnv::new());
+    let mut paths = paths.into_iter();
+    let path = paths.next()?;
+    if paths.next().is_some() || !path.facts.is_empty() || !path.obligations.is_empty() {
+        return None;
+    }
+    if props.iter().any(|prop| !assumptions.proves(prop)) {
+        return None;
+    }
+    let conclusion = prop_and_all(
+        std::iter::once(Prop::CStmtExecutes {
+            state,
+            stmt,
+            outcome: path.outcome,
+        })
+        .chain(props)
+        .collect(),
+    );
+    Some(Theorem::new(wrap_proof_facts(
+        conclusion,
+        &assumptions,
+        &[],
+        &[],
+    )))
+}
+
 pub fn prove_c_max_lt_returns_right(a: Var, b: Var) -> Option<Theorem> {
     let a_bits = Bv32Term::Var(a);
     let b_bits = Bv32Term::Var(b);
@@ -1213,6 +1433,29 @@ pub fn prove_memory_load_after_store_same(memory: CMemory, ptr: Ptr, value: CVal
     })
 }
 
+pub fn prove_memory_load_after_store_other(
+    memory: CMemory,
+    stored_ptr: Ptr,
+    stored_value: CValue,
+    loaded_ptr: Ptr,
+) -> Option<Theorem> {
+    if stored_ptr == loaded_ptr {
+        return None;
+    }
+
+    let outcome = memory.load(&loaded_ptr);
+    let stored = memory.store(stored_ptr, stored_value);
+    if stored.load(&loaded_ptr) != outcome {
+        return None;
+    }
+
+    Some(Theorem::new(Prop::CMemoryLoads {
+        memory: stored,
+        ptr: loaded_ptr,
+        outcome,
+    }))
+}
+
 fn forall_int32(var: Var, body: Prop) -> Prop {
     Prop::ForAll {
         var,
@@ -1259,6 +1502,7 @@ fn solve_builtin_prop(prop: &Prop) -> bool {
     match prop {
         Prop::Equal(left, right) => left == right,
         Prop::BoolIs(BoolTerm::Const(actual), expected) => actual == expected,
+        Prop::And(left, right) => solve_builtin_prop(left) && solve_builtin_prop(right),
         Prop::CMemoryCanLoad { memory, ptr } => memory.can_load_concretely(ptr),
         Prop::CMemoryCanStore { memory, ptr } => memory.access_in_bounds(ptr, 4),
         _ => false,
@@ -2910,6 +3154,142 @@ mod tests {
     }
 
     #[test]
+    fn symbolic_max_branch_specs_include_bounds() {
+        let a = Var(60);
+        let b = Var(61);
+        let a_bits = Bv32Term::Var(a);
+        let b_bits = Bv32Term::Var(b);
+        let function = c_max_function();
+        let args = vec![
+            CExpr::Value(int32(a_bits.clone())),
+            CExpr::Value(int32(b_bits.clone())),
+        ];
+        let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
+
+        let right_spec = c_function_spec(
+            CState::new(),
+            args.clone(),
+            vec![Prop::BoolIs(condition.clone(), true)],
+            CFunctionOutcome::Return {
+                value: int32(b_bits.clone()),
+                state: CState::new(),
+            },
+        );
+        prove_c_function_satisfies_spec_and_props(
+            function.clone(),
+            right_spec,
+            Assumptions::new(),
+            vec![
+                Prop::BoolIs(BoolTerm::sge(b_bits.clone(), a_bits.clone()), true),
+                Prop::BoolIs(BoolTerm::sge(b_bits.clone(), b_bits.clone()), true),
+            ],
+        )
+        .expect("under a < b, max returns b and b is >= both inputs");
+
+        let left_spec = c_function_spec(
+            CState::new(),
+            args,
+            vec![Prop::BoolIs(condition, false)],
+            CFunctionOutcome::Return {
+                value: int32(a_bits.clone()),
+                state: CState::new(),
+            },
+        );
+        prove_c_function_satisfies_spec_and_props(
+            function,
+            left_spec,
+            Assumptions::new(),
+            vec![
+                Prop::BoolIs(BoolTerm::sge(a_bits.clone(), a_bits.clone()), true),
+                Prop::BoolIs(BoolTerm::sge(a_bits, b_bits), true),
+            ],
+        )
+        .expect("under not (a < b), max returns a and a is >= both inputs");
+    }
+
+    #[test]
+    fn symbolic_clamp_branch_specs_include_bounds_under_ordered_limits() {
+        let x = Var(62);
+        let lo = Var(63);
+        let hi = Var(64);
+        let x_bits = Bv32Term::Var(x);
+        let lo_bits = Bv32Term::Var(lo);
+        let hi_bits = Bv32Term::Var(hi);
+        let ordered_limits = Prop::BoolIs(BoolTerm::sle(lo_bits.clone(), hi_bits.clone()), true);
+        let below_lo = BoolTerm::slt(x_bits.clone(), lo_bits.clone());
+        let above_hi = BoolTerm::sgt(x_bits.clone(), hi_bits.clone());
+        let function = c_function(
+            CType::Int32,
+            "clamp",
+            vec![
+                c_param("x", CType::Int32),
+                c_param("lo", CType::Int32),
+                c_param("hi", CType::Int32),
+            ],
+            c_if(
+                c_lt(c_var("x"), c_var("lo")),
+                c_return(c_var("lo")),
+                c_if(
+                    c_gt(c_var("x"), c_var("hi")),
+                    c_return(c_var("hi")),
+                    c_return(c_var("x")),
+                ),
+            ),
+        );
+        let args = vec![
+            CExpr::Value(int32(x_bits.clone())),
+            CExpr::Value(int32(lo_bits.clone())),
+            CExpr::Value(int32(hi_bits.clone())),
+        ];
+
+        for (requires, result, message) in [
+            (
+                vec![ordered_limits.clone(), Prop::BoolIs(below_lo.clone(), true)],
+                lo_bits.clone(),
+                "x below lo returns lo within bounds",
+            ),
+            (
+                vec![
+                    ordered_limits.clone(),
+                    Prop::BoolIs(below_lo.clone(), false),
+                    Prop::BoolIs(above_hi.clone(), true),
+                ],
+                hi_bits.clone(),
+                "x above hi returns hi within bounds",
+            ),
+            (
+                vec![
+                    ordered_limits.clone(),
+                    Prop::BoolIs(below_lo.clone(), false),
+                    Prop::BoolIs(above_hi.clone(), false),
+                ],
+                x_bits.clone(),
+                "x already in range returns x within bounds",
+            ),
+        ] {
+            let spec = c_function_spec(
+                CState::new(),
+                args.clone(),
+                requires,
+                CFunctionOutcome::Return {
+                    value: int32(result.clone()),
+                    state: CState::new(),
+                },
+            );
+            prove_c_function_satisfies_spec_and_props(
+                function.clone(),
+                spec,
+                Assumptions::new(),
+                vec![
+                    Prop::BoolIs(BoolTerm::sge(result.clone(), lo_bits.clone()), true),
+                    Prop::BoolIs(BoolTerm::sle(result, hi_bits.clone()), true),
+                ],
+            )
+            .expect(message);
+        }
+    }
+
+    #[test]
     fn incomplete_symbolic_function_spec_does_not_prove() {
         let a = Var(18);
         let b = Var(19);
@@ -3096,6 +3476,51 @@ mod tests {
                 stmt,
                 outcome: CStmtOutcome::Normal(state),
             }
+        );
+    }
+
+    #[test]
+    fn countdown_loop_body_preserves_nonnegative_invariant_symbolically() {
+        let x = Var(66);
+        let x_bits = Bv32Term::Var(x);
+        let state = CState::new().with_local("x", int32(x_bits.clone()));
+        let stmt = c_assign("x", c_sub(c_var("x"), c_int32_literal(1)));
+        let invariant = BoolTerm::sge(x_bits.clone(), Bv32Term::Const(0));
+        let condition = BoolTerm::sgt(x_bits.clone(), Bv32Term::Const(0));
+        let post_invariant = Prop::BoolIs(
+            BoolTerm::sge(
+                Bv32Term::Sub(Box::new(x_bits.clone()), Box::new(Bv32Term::Const(1))),
+                Bv32Term::Const(0),
+            ),
+            true,
+        );
+        let assumptions = Assumptions::new()
+            .assume_bool(invariant.clone(), true)
+            .assume_bool(condition.clone(), true);
+        let theorem = prove_c_stmt_executes_and_props(
+            state.clone(),
+            stmt.clone(),
+            assumptions,
+            vec![post_invariant.clone()],
+        )
+        .expect("x > 0 should prove x - 1 executes and remains nonnegative");
+
+        assert_eq!(
+            theorem.prop().peel_implications(),
+            &prop_and(
+                Prop::CStmtExecutes {
+                    state: state.clone(),
+                    stmt,
+                    outcome: CStmtOutcome::Normal(CState::new().with_local(
+                        "x",
+                        int32(Bv32Term::Sub(
+                            Box::new(x_bits),
+                            Box::new(Bv32Term::Const(1)),
+                        )),
+                    ),),
+                },
+                post_invariant,
+            )
         );
     }
 
@@ -3532,6 +3957,79 @@ mod tests {
     }
 
     #[test]
+    fn fixed_bound_store_loop_touches_only_valid_pointer_range() {
+        let base = Ptr {
+            block: "block".to_string(),
+            offset: Bv32Term::Const(0),
+        };
+        let memory = CMemory::new().with_block("block", 12);
+        let state = CState::new()
+            .with_local("p", CValue::Ptr(base))
+            .with_local("i", int32(0))
+            .with_memory(memory.clone());
+        let loop_stmt = c_while(
+            c_lt(c_var("i"), c_int32_literal(3)),
+            Vec::new(),
+            c_seq(
+                c_store(c_add(c_var("p"), c_var("i")), c_var("i")),
+                c_assign("i", c_add(c_var("i"), c_int32_literal(1))),
+            ),
+        );
+        let stmt = c_seq(loop_stmt, c_return(c_var("i")));
+        let final_memory = memory
+            .store(
+                Ptr {
+                    block: "block".to_string(),
+                    offset: Bv32Term::Const(0),
+                },
+                int32(0),
+            )
+            .store(
+                Ptr {
+                    block: "block".to_string(),
+                    offset: Bv32Term::Const(4),
+                },
+                int32(1),
+            )
+            .store(
+                Ptr {
+                    block: "block".to_string(),
+                    offset: Bv32Term::Const(8),
+                },
+                int32(2),
+            );
+        let final_state = CState::new()
+            .with_local(
+                "p",
+                CValue::Ptr(Ptr {
+                    block: "block".to_string(),
+                    offset: Bv32Term::Const(0),
+                }),
+            )
+            .with_local("i", int32(3))
+            .with_memory(final_memory);
+        let execution =
+            prove_symbolic_c_execution_paths(state.clone(), stmt.clone(), Assumptions::new());
+
+        assert_eq!(execution.paths().len(), 1);
+        assert_eq!(
+            execution.paths()[0].obligations(),
+            &[] as &[ProofObligation]
+        );
+        assert_eq!(
+            execution.paths()[0].theorem().prop(),
+            &Prop::CStmtExecutes {
+                state,
+                stmt,
+                outcome: CStmtOutcome::Return {
+                    value: int32(3),
+                    state: final_state,
+                },
+            }
+        );
+    }
+
+    #[test]
     fn local_declaration_allocates_stack_object_for_address_of() {
         let local_ptr = Ptr {
             block: "local:x".to_string(),
@@ -3728,6 +4226,36 @@ mod tests {
     }
 
     #[test]
+    fn symbolic_increment_uses_int_max_bound_to_rule_out_overflow() {
+        let x = Var(65);
+        let x_bits = Bv32Term::Var(x);
+        let state = CState::new().with_local("x", int32(x_bits.clone()));
+        let stmt = c_return(c_add(c_var("x"), c_int32_literal(1)));
+        let x_lt_int_max = BoolTerm::slt(x_bits.clone(), Bv32Term::Const(i32::MAX as u32));
+        let assumptions = Assumptions::new().assume_bool(x_lt_int_max.clone(), true);
+        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), assumptions)
+            .expect("x < INT_MAX should prove x + 1 does not overflow");
+
+        assert_eq!(
+            theorem.prop(),
+            &Prop::Implies(
+                Box::new(Prop::BoolIs(x_lt_int_max, true)),
+                Box::new(Prop::CStmtExecutes {
+                    state: state.clone(),
+                    stmt,
+                    outcome: CStmtOutcome::Return {
+                        value: int32(Bv32Term::Add(
+                            Box::new(x_bits),
+                            Box::new(Bv32Term::Const(1)),
+                        )),
+                        state,
+                    },
+                }),
+            )
+        );
+    }
+
+    #[test]
     fn memory_load_store_are_native_theorems() {
         let ptr = Ptr {
             block: "block".to_string(),
@@ -3743,6 +4271,35 @@ mod tests {
                 memory: CMemory::new().store(ptr.clone(), value.clone()),
                 ptr,
                 outcome: CExprOutcome::Value(value),
+            }
+        );
+    }
+
+    #[test]
+    fn store_preserves_distinct_memory_cell_frame() {
+        let stored_ptr = Ptr {
+            block: "left".to_string(),
+            offset: Bv32Term::Const(0),
+        };
+        let loaded_ptr = Ptr {
+            block: "right".to_string(),
+            offset: Bv32Term::Const(0),
+        };
+        let memory = CMemory::new().store(loaded_ptr.clone(), int32(42));
+        let theorem = prove_memory_load_after_store_other(
+            memory.clone(),
+            stored_ptr.clone(),
+            int32(9),
+            loaded_ptr.clone(),
+        )
+        .expect("store to distinct pointer should preserve loaded cell");
+
+        assert_eq!(
+            theorem.prop(),
+            &Prop::CMemoryLoads {
+                memory: memory.store(stored_ptr, int32(9)),
+                ptr: loaded_ptr,
+                outcome: CExprOutcome::Value(int32(42)),
             }
         );
     }
