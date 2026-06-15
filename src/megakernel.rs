@@ -154,7 +154,24 @@ pub enum CRuntimeError {
     TypeMismatch,
     WrongArity { expected: usize, actual: usize },
     MissingReturn,
-    LoopLimitExceeded,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum ExecutionLimit {
+    ExpressionSteps,
+    StatementSteps,
+    FunctionCalls,
+    LoopUnrolls,
+    Paths,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionBudget {
+    expression_steps: usize,
+    statement_steps: usize,
+    function_calls: usize,
+    loop_unrolls: usize,
+    paths: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -296,6 +313,7 @@ pub struct PathFact {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SymbolicCExecution {
     paths: Vec<SymbolicCExecutionPath>,
+    limit: Option<ExecutionLimit>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -730,6 +748,83 @@ impl Theorem {
     }
 }
 
+impl Default for ExecutionBudget {
+    fn default() -> Self {
+        Self {
+            expression_steps: 10_000,
+            statement_steps: 10_000,
+            function_calls: 1_000,
+            loop_unrolls: 256,
+            paths: 10_000,
+        }
+    }
+}
+
+impl ExecutionBudget {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_expression_steps(mut self, expression_steps: usize) -> Self {
+        self.expression_steps = expression_steps;
+        self
+    }
+
+    pub fn with_statement_steps(mut self, statement_steps: usize) -> Self {
+        self.statement_steps = statement_steps;
+        self
+    }
+
+    pub fn with_function_calls(mut self, function_calls: usize) -> Self {
+        self.function_calls = function_calls;
+        self
+    }
+
+    pub fn with_loop_unrolls(mut self, loop_unrolls: usize) -> Self {
+        self.loop_unrolls = loop_unrolls;
+        self
+    }
+
+    pub fn with_paths(mut self, paths: usize) -> Self {
+        self.paths = paths;
+        self
+    }
+
+    fn consume_expression_step(&mut self) -> ExecutionResult<()> {
+        consume_budget(&mut self.expression_steps, ExecutionLimit::ExpressionSteps)
+    }
+
+    fn consume_statement_step(&mut self) -> ExecutionResult<()> {
+        consume_budget(&mut self.statement_steps, ExecutionLimit::StatementSteps)
+    }
+
+    fn consume_function_call(&mut self) -> ExecutionResult<()> {
+        consume_budget(&mut self.function_calls, ExecutionLimit::FunctionCalls)
+    }
+
+    fn consume_loop_unroll(&mut self) -> ExecutionResult<()> {
+        consume_budget(&mut self.loop_unrolls, ExecutionLimit::LoopUnrolls)
+    }
+
+    fn consume_paths(&mut self, paths: usize) -> ExecutionResult<()> {
+        if self.paths < paths {
+            return Err(ExecutionLimit::Paths);
+        }
+        self.paths -= paths;
+        Ok(())
+    }
+}
+
+type ExecutionResult<T> = Result<T, ExecutionLimit>;
+
+fn consume_budget(remaining: &mut usize, limit: ExecutionLimit) -> ExecutionResult<()> {
+    if *remaining == 0 {
+        return Err(limit);
+    }
+    *remaining -= 1;
+    Ok(())
+}
+
 #[cfg(test)]
 impl Prop {
     fn peel_implications(&self) -> &Self {
@@ -1021,6 +1116,10 @@ impl SymbolicCExecution {
     pub fn paths(&self) -> &[SymbolicCExecutionPath] {
         &self.paths
     }
+
+    pub fn limit(&self) -> Option<ExecutionLimit> {
+        self.limit
+    }
 }
 
 impl SymbolicCExecutionPath {
@@ -1214,7 +1313,12 @@ pub fn c_max_lt_condition(a: Bv32Term, b: Bv32Term) -> BoolTerm {
 }
 
 pub fn prove_c_expr_eval(state: CState, expr: CExpr) -> Option<Theorem> {
-    let outcome = eval_c_expr(&state, &expr, &Assumptions::new())?;
+    let outcome = eval_c_expr(
+        &state,
+        &expr,
+        &Assumptions::new(),
+        &mut ExecutionBudget::default(),
+    )?;
     Some(Theorem::new(Prop::CExprEvaluates {
         state,
         expr,
@@ -1239,7 +1343,22 @@ pub fn prove_symbolic_c_execution(
     stmt: CStmt,
     assumptions: Assumptions,
 ) -> Option<Theorem> {
-    prove_symbolic_c_execution_with_env(state, stmt, assumptions, CFunctionEnv::new())
+    prove_symbolic_c_execution_with_budget(state, stmt, assumptions, ExecutionBudget::default())
+}
+
+pub fn prove_symbolic_c_execution_with_budget(
+    state: CState,
+    stmt: CStmt,
+    assumptions: Assumptions,
+    budget: ExecutionBudget,
+) -> Option<Theorem> {
+    prove_symbolic_c_execution_with_env_and_budget(
+        state,
+        stmt,
+        assumptions,
+        CFunctionEnv::new(),
+        budget,
+    )
 }
 
 pub fn prove_symbolic_c_execution_with_env(
@@ -1248,7 +1367,27 @@ pub fn prove_symbolic_c_execution_with_env(
     assumptions: Assumptions,
     env: CFunctionEnv,
 ) -> Option<Theorem> {
-    let execution = prove_symbolic_c_execution_paths_with_env(state, stmt, assumptions, env);
+    prove_symbolic_c_execution_with_env_and_budget(
+        state,
+        stmt,
+        assumptions,
+        env,
+        ExecutionBudget::default(),
+    )
+}
+
+pub fn prove_symbolic_c_execution_with_env_and_budget(
+    state: CState,
+    stmt: CStmt,
+    assumptions: Assumptions,
+    env: CFunctionEnv,
+    budget: ExecutionBudget,
+) -> Option<Theorem> {
+    let execution =
+        prove_symbolic_c_execution_paths_with_env_and_budget(state, stmt, assumptions, env, budget);
+    if execution.limit().is_some() {
+        return None;
+    }
     let mut paths = execution.paths.into_iter();
     let path = paths.next()?;
     if paths.next().is_some() {
@@ -1262,7 +1401,27 @@ pub fn prove_symbolic_c_execution_paths(
     stmt: CStmt,
     assumptions: Assumptions,
 ) -> SymbolicCExecution {
-    prove_symbolic_c_execution_paths_with_env(state, stmt, assumptions, CFunctionEnv::new())
+    prove_symbolic_c_execution_paths_with_budget(
+        state,
+        stmt,
+        assumptions,
+        ExecutionBudget::default(),
+    )
+}
+
+pub fn prove_symbolic_c_execution_paths_with_budget(
+    state: CState,
+    stmt: CStmt,
+    assumptions: Assumptions,
+    budget: ExecutionBudget,
+) -> SymbolicCExecution {
+    prove_symbolic_c_execution_paths_with_env_and_budget(
+        state,
+        stmt,
+        assumptions,
+        CFunctionEnv::new(),
+        budget,
+    )
 }
 
 pub fn prove_symbolic_c_execution_paths_with_env(
@@ -1271,7 +1430,32 @@ pub fn prove_symbolic_c_execution_paths_with_env(
     assumptions: Assumptions,
     env: CFunctionEnv,
 ) -> SymbolicCExecution {
-    let paths = exec_c_stmt_paths(&state, &stmt, &assumptions, &env)
+    prove_symbolic_c_execution_paths_with_env_and_budget(
+        state,
+        stmt,
+        assumptions,
+        env,
+        ExecutionBudget::default(),
+    )
+}
+
+pub fn prove_symbolic_c_execution_paths_with_env_and_budget(
+    state: CState,
+    stmt: CStmt,
+    assumptions: Assumptions,
+    env: CFunctionEnv,
+    mut budget: ExecutionBudget,
+) -> SymbolicCExecution {
+    let paths = match exec_c_stmt_paths(&state, &stmt, &assumptions, &env, &mut budget) {
+        Ok(paths) => paths,
+        Err(limit) => {
+            return SymbolicCExecution {
+                paths: Vec::new(),
+                limit: Some(limit),
+            };
+        }
+    };
+    let paths = paths
         .into_iter()
         .map(|path| {
             let prop = Prop::CStmtExecutes {
@@ -1293,7 +1477,7 @@ pub fn prove_symbolic_c_execution_paths_with_env(
         })
         .collect();
 
-    SymbolicCExecution { paths }
+    SymbolicCExecution { paths, limit: None }
 }
 
 pub fn prove_symbolic_c_function_execution(
@@ -1302,12 +1486,29 @@ pub fn prove_symbolic_c_function_execution(
     args: Vec<CExpr>,
     assumptions: Assumptions,
 ) -> Option<Theorem> {
-    prove_symbolic_c_function_execution_with_env(
+    prove_symbolic_c_function_execution_with_budget(
+        state,
+        function,
+        args,
+        assumptions,
+        ExecutionBudget::default(),
+    )
+}
+
+pub fn prove_symbolic_c_function_execution_with_budget(
+    state: CState,
+    function: CFunction,
+    args: Vec<CExpr>,
+    assumptions: Assumptions,
+    budget: ExecutionBudget,
+) -> Option<Theorem> {
+    prove_symbolic_c_function_execution_with_env_and_budget(
         state,
         function,
         args,
         assumptions,
         CFunctionEnv::new(),
+        budget,
     )
 }
 
@@ -1318,8 +1519,35 @@ pub fn prove_symbolic_c_function_execution_with_env(
     assumptions: Assumptions,
     env: CFunctionEnv,
 ) -> Option<Theorem> {
-    let execution =
-        prove_symbolic_c_function_execution_paths_with_env(state, function, args, assumptions, env);
+    prove_symbolic_c_function_execution_with_env_and_budget(
+        state,
+        function,
+        args,
+        assumptions,
+        env,
+        ExecutionBudget::default(),
+    )
+}
+
+pub fn prove_symbolic_c_function_execution_with_env_and_budget(
+    state: CState,
+    function: CFunction,
+    args: Vec<CExpr>,
+    assumptions: Assumptions,
+    env: CFunctionEnv,
+    budget: ExecutionBudget,
+) -> Option<Theorem> {
+    let execution = prove_symbolic_c_function_execution_paths_with_env_and_budget(
+        state,
+        function,
+        args,
+        assumptions,
+        env,
+        budget,
+    );
+    if execution.limit().is_some() {
+        return None;
+    }
     let mut paths = execution.paths.into_iter();
     let path = paths.next()?;
     if paths.next().is_some() {
@@ -1334,12 +1562,29 @@ pub fn prove_symbolic_c_function_execution_paths(
     args: Vec<CExpr>,
     assumptions: Assumptions,
 ) -> SymbolicCExecution {
-    prove_symbolic_c_function_execution_paths_with_env(
+    prove_symbolic_c_function_execution_paths_with_budget(
+        state,
+        function,
+        args,
+        assumptions,
+        ExecutionBudget::default(),
+    )
+}
+
+pub fn prove_symbolic_c_function_execution_paths_with_budget(
+    state: CState,
+    function: CFunction,
+    args: Vec<CExpr>,
+    assumptions: Assumptions,
+    budget: ExecutionBudget,
+) -> SymbolicCExecution {
+    prove_symbolic_c_function_execution_paths_with_env_and_budget(
         state,
         function,
         args,
         assumptions,
         CFunctionEnv::new(),
+        budget,
     )
 }
 
@@ -1350,7 +1595,35 @@ pub fn prove_symbolic_c_function_execution_paths_with_env(
     assumptions: Assumptions,
     env: CFunctionEnv,
 ) -> SymbolicCExecution {
-    let paths = exec_c_function_paths(&state, &function, &args, &assumptions, &env)
+    prove_symbolic_c_function_execution_paths_with_env_and_budget(
+        state,
+        function,
+        args,
+        assumptions,
+        env,
+        ExecutionBudget::default(),
+    )
+}
+
+pub fn prove_symbolic_c_function_execution_paths_with_env_and_budget(
+    state: CState,
+    function: CFunction,
+    args: Vec<CExpr>,
+    assumptions: Assumptions,
+    env: CFunctionEnv,
+    mut budget: ExecutionBudget,
+) -> SymbolicCExecution {
+    let paths =
+        match exec_c_function_paths(&state, &function, &args, &assumptions, &env, &mut budget) {
+            Ok(paths) => paths,
+            Err(limit) => {
+                return SymbolicCExecution {
+                    paths: Vec::new(),
+                    limit: Some(limit),
+                };
+            }
+        };
+    let paths = paths
         .into_iter()
         .map(|path| {
             let prop = Prop::CFunctionExecutes {
@@ -1373,7 +1646,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_env(
         })
         .collect();
 
-    SymbolicCExecution { paths }
+    SymbolicCExecution { paths, limit: None }
 }
 
 pub fn prove_c_function_satisfies_spec(
@@ -1397,7 +1670,9 @@ pub fn prove_c_function_satisfies_spec_with_env(
         spec.args(),
         &spec_assumptions,
         &env,
-    );
+        &mut ExecutionBudget::default(),
+    )
+    .ok()?;
     let mut paths = paths.into_iter();
     let path = paths.next()?;
     if paths.next().is_some()
@@ -1453,7 +1728,14 @@ pub fn prove_c_stmt_executes_and_props(
     assumptions: Assumptions,
     props: Vec<Prop>,
 ) -> Option<Theorem> {
-    let paths = exec_c_stmt_paths(&state, &stmt, &assumptions, &CFunctionEnv::new());
+    let paths = exec_c_stmt_paths(
+        &state,
+        &stmt,
+        &assumptions,
+        &CFunctionEnv::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .ok()?;
     let mut paths = paths.into_iter();
     let path = paths.next()?;
     if paths.next().is_some() || !path.facts.is_empty() || !path.obligations.is_empty() {
@@ -1639,8 +1921,16 @@ pub fn prove_c_while_invariant_rule(
     let step_ok = condition_contexts_for_truthiness(&state, &condition, &loop_assumptions, true)
         .into_iter()
         .any(|step_assumptions| {
-            let body_paths =
-                exec_c_stmt_paths(&state, &body, &step_assumptions, &CFunctionEnv::new());
+            let body_paths = exec_c_stmt_paths(
+                &state,
+                &body,
+                &step_assumptions,
+                &CFunctionEnv::new(),
+                &mut ExecutionBudget::default(),
+            );
+            let Ok(body_paths) = body_paths else {
+                return false;
+            };
             let mut body_paths = body_paths.into_iter();
             let Some(body_path) = body_paths.next() else {
                 return false;
@@ -1691,7 +1981,15 @@ fn condition_contexts_for_truthiness(
     desired_truthiness: bool,
 ) -> Vec<Assumptions> {
     let mut contexts = Vec::new();
-    for condition_path in eval_c_expr_paths(state, condition, assumptions) {
+    let Ok(condition_paths) = eval_c_expr_paths(
+        state,
+        condition,
+        assumptions,
+        &mut ExecutionBudget::default(),
+    ) else {
+        return contexts;
+    };
+    for condition_path in condition_paths {
         let CExprPath {
             outcome,
             facts,
@@ -1976,8 +2274,13 @@ fn assumptions_with_props(assumptions: &Assumptions, props: &[Prop]) -> Assumpti
     assumptions
 }
 
-fn eval_c_expr(state: &CState, expr: &CExpr, assumptions: &Assumptions) -> Option<CExprOutcome> {
-    let paths = eval_c_expr_paths(state, expr, assumptions);
+fn eval_c_expr(
+    state: &CState,
+    expr: &CExpr,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> Option<CExprOutcome> {
+    let paths = eval_c_expr_paths(state, expr, assumptions, budget).ok()?;
     let mut paths = paths.into_iter();
     let path = paths.next()?;
     if paths.next().is_some() || !path.obligations.is_empty() {
@@ -1986,8 +2289,14 @@ fn eval_c_expr(state: &CState, expr: &CExpr, assumptions: &Assumptions) -> Optio
     Some(path.outcome)
 }
 
-fn eval_c_expr_paths(state: &CState, expr: &CExpr, assumptions: &Assumptions) -> Vec<CExprPath> {
-    match expr {
+fn eval_c_expr_paths(
+    state: &CState,
+    expr: &CExpr,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExprPath>> {
+    budget.consume_expression_step()?;
+    let paths = match expr {
         CExpr::Value(value) => vec![CExprPath {
             outcome: CExprOutcome::Value(value.clone()),
             facts: Vec::new(),
@@ -2018,6 +2327,7 @@ fn eval_c_expr_paths(state: &CState, expr: &CExpr, assumptions: &Assumptions) ->
             left,
             right,
             assumptions,
+            budget,
             |left, right, facts, obligations| {
                 bool_term_as_c_int32_paths(
                     BoolTerm::slt(left, right),
@@ -2026,12 +2336,13 @@ fn eval_c_expr_paths(state: &CState, expr: &CExpr, assumptions: &Assumptions) ->
                     assumptions,
                 )
             },
-        ),
+        )?,
         CExpr::Le(left, right) => eval_c_int32_binary_paths(
             state,
             left,
             right,
             assumptions,
+            budget,
             |left, right, facts, obligations| {
                 bool_term_as_c_int32_paths(
                     BoolTerm::sle(left, right),
@@ -2040,12 +2351,13 @@ fn eval_c_expr_paths(state: &CState, expr: &CExpr, assumptions: &Assumptions) ->
                     assumptions,
                 )
             },
-        ),
+        )?,
         CExpr::Gt(left, right) => eval_c_int32_binary_paths(
             state,
             left,
             right,
             assumptions,
+            budget,
             |left, right, facts, obligations| {
                 bool_term_as_c_int32_paths(
                     BoolTerm::sgt(left, right),
@@ -2054,12 +2366,13 @@ fn eval_c_expr_paths(state: &CState, expr: &CExpr, assumptions: &Assumptions) ->
                     assumptions,
                 )
             },
-        ),
+        )?,
         CExpr::Ge(left, right) => eval_c_int32_binary_paths(
             state,
             left,
             right,
             assumptions,
+            budget,
             |left, right, facts, obligations| {
                 bool_term_as_c_int32_paths(
                     BoolTerm::sge(left, right),
@@ -2068,12 +2381,13 @@ fn eval_c_expr_paths(state: &CState, expr: &CExpr, assumptions: &Assumptions) ->
                     assumptions,
                 )
             },
-        ),
+        )?,
         CExpr::Eq(left, right) => eval_c_int32_binary_paths(
             state,
             left,
             right,
             assumptions,
+            budget,
             |left, right, facts, obligations| {
                 bool_term_as_c_int32_paths(
                     BoolTerm::eq(left, right),
@@ -2082,45 +2396,53 @@ fn eval_c_expr_paths(state: &CState, expr: &CExpr, assumptions: &Assumptions) ->
                     assumptions,
                 )
             },
-        ),
-        CExpr::Add(left, right) => eval_c_add_paths(state, left, right, assumptions),
+        )?,
+        CExpr::Add(left, right) => eval_c_add_paths(state, left, right, assumptions, budget)?,
         CExpr::Sub(left, right) => eval_c_int32_binary_paths(
             state,
             left,
             right,
             assumptions,
+            budget,
             |left, right, facts, obligations| {
                 apply_c_int32_sub(left, right, facts, obligations, assumptions)
             },
-        ),
-        CExpr::Load(ptr) => eval_c_expr_paths(state, ptr, assumptions)
-            .into_iter()
-            .flat_map(|path| match path.outcome {
-                CExprOutcome::Value(CValue::Ptr(ptr)) => eval_c_memory_load_paths(
-                    &state.memory,
-                    ptr,
-                    path.facts,
-                    path.obligations,
-                    assumptions,
-                ),
-                CExprOutcome::Value(_) => vec![CExprPath {
-                    outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                    facts: path.facts,
-                    obligations: path.obligations,
-                }],
-                CExprOutcome::Ub(ub) => vec![CExprPath {
-                    outcome: CExprOutcome::Ub(ub),
-                    facts: path.facts,
-                    obligations: path.obligations,
-                }],
-                CExprOutcome::RuntimeError(error) => vec![CExprPath {
-                    outcome: CExprOutcome::RuntimeError(error),
-                    facts: path.facts,
-                    obligations: path.obligations,
-                }],
-            })
-            .collect(),
-    }
+        )?,
+        CExpr::Load(ptr) => {
+            let mut paths = Vec::new();
+            for path in eval_c_expr_paths(state, ptr, assumptions, budget)? {
+                match path.outcome {
+                    CExprOutcome::Value(CValue::Ptr(ptr)) => {
+                        paths.extend(eval_c_memory_load_paths(
+                            &state.memory,
+                            ptr,
+                            path.facts,
+                            path.obligations,
+                            assumptions,
+                        ))
+                    }
+                    CExprOutcome::Value(_) => paths.push(CExprPath {
+                        outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts: path.facts,
+                        obligations: path.obligations,
+                    }),
+                    CExprOutcome::Ub(ub) => paths.push(CExprPath {
+                        outcome: CExprOutcome::Ub(ub),
+                        facts: path.facts,
+                        obligations: path.obligations,
+                    }),
+                    CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
+                        outcome: CExprOutcome::RuntimeError(error),
+                        facts: path.facts,
+                        obligations: path.obligations,
+                    }),
+                }
+            }
+            paths
+        }
+    };
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
 }
 
 fn bool_term_as_c_int32_paths(
@@ -2303,9 +2625,10 @@ fn eval_c_add_paths(
     left: &CExpr,
     right: &CExpr,
     assumptions: &Assumptions,
-) -> Vec<CExprPath> {
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExprPath>> {
     let mut paths = Vec::new();
-    for left_path in eval_c_expr_paths(state, left, assumptions) {
+    for left_path in eval_c_expr_paths(state, left, assumptions, budget)? {
         let CExprPath {
             outcome: left_outcome,
             facts: left_facts,
@@ -2334,7 +2657,7 @@ fn eval_c_add_paths(
 
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
-        for right_path in eval_c_expr_paths(state, right, &right_assumptions) {
+        for right_path in eval_c_expr_paths(state, right, &right_assumptions, budget)? {
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &left_facts,
                 &left_obligations,
@@ -2375,7 +2698,8 @@ fn eval_c_add_paths(
         }
     }
 
-    paths
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
 }
 
 fn apply_c_add(
@@ -2497,10 +2821,11 @@ fn eval_c_int32_binary_paths(
     left: &CExpr,
     right: &CExpr,
     assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
     apply: impl Fn(Bv32Term, Bv32Term, Vec<PathFact>, Vec<ProofObligation>) -> Vec<CExprPath>,
-) -> Vec<CExprPath> {
+) -> ExecutionResult<Vec<CExprPath>> {
     let mut paths = Vec::new();
-    for left_path in eval_c_expr_paths(state, left, assumptions) {
+    for left_path in eval_c_expr_paths(state, left, assumptions, budget)? {
         let CExprPath {
             outcome: left_outcome,
             facts: left_facts,
@@ -2537,7 +2862,7 @@ fn eval_c_int32_binary_paths(
 
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
-        for right_path in eval_c_expr_paths(state, right, &right_assumptions) {
+        for right_path in eval_c_expr_paths(state, right, &right_assumptions, budget)? {
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &left_facts,
                 &left_obligations,
@@ -2571,11 +2896,19 @@ fn eval_c_int32_binary_paths(
         }
     }
 
-    paths
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
 }
 
 fn exec_c_stmt(state: &CState, stmt: &CStmt, assumptions: &Assumptions) -> Option<CStmtOutcome> {
-    let paths = exec_c_stmt_paths(state, stmt, assumptions, &CFunctionEnv::new());
+    let paths = exec_c_stmt_paths(
+        state,
+        stmt,
+        assumptions,
+        &CFunctionEnv::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .ok()?;
     let mut paths = paths.into_iter();
     let path = paths.next()?;
     if paths.next().is_some() {
@@ -2589,14 +2922,16 @@ fn exec_c_stmt_paths(
     stmt: &CStmt,
     assumptions: &Assumptions,
     env: &CFunctionEnv,
-) -> Vec<CStmtPath> {
-    match stmt {
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStmtPath>> {
+    budget.consume_statement_step()?;
+    let paths = match stmt {
         CStmt::Declare { name, ty } => vec![CStmtPath {
             outcome: CStmtOutcome::Normal(declare_local(state, name, *ty)),
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
-        CStmt::Assign { name, expr } => eval_c_expr_paths(state, expr, assumptions)
+        CStmt::Assign { name, expr } => eval_c_expr_paths(state, expr, assumptions, budget)?
             .into_iter()
             .map(|path| CStmtPath {
                 outcome: match path.outcome {
@@ -2617,10 +2952,12 @@ fn exec_c_stmt_paths(
             target,
             function_name,
             args,
-        } => exec_c_call_assign_paths(state, target, function_name, args, assumptions, env),
+        } => {
+            exec_c_call_assign_paths(state, target, function_name, args, assumptions, env, budget)?
+        }
         CStmt::Seq(first, second) => {
             let mut paths = Vec::new();
-            for first_path in exec_c_stmt_paths(state, first, assumptions, env) {
+            for first_path in exec_c_stmt_paths(state, first, assumptions, env, budget)? {
                 match first_path.outcome {
                     CStmtOutcome::Normal(state) => {
                         paths.extend(exec_c_stmt_paths_with_prefix(
@@ -2630,7 +2967,8 @@ fn exec_c_stmt_paths(
                             env,
                             &first_path.facts,
                             &first_path.obligations,
-                        ));
+                            budget,
+                        )?);
                     }
                     outcome @ (CStmtOutcome::Return { .. }
                     | CStmtOutcome::Ub(_)
@@ -2643,7 +2981,7 @@ fn exec_c_stmt_paths(
             }
             paths
         }
-        CStmt::Return(expr) => eval_c_expr_paths(state, expr, assumptions)
+        CStmt::Return(expr) => eval_c_expr_paths(state, expr, assumptions, budget)?
             .into_iter()
             .map(|path| CStmtPath {
                 outcome: match path.outcome {
@@ -2660,7 +2998,7 @@ fn exec_c_stmt_paths(
             .collect(),
         CStmt::Store { ptr, value } => {
             let mut paths = Vec::new();
-            for ptr_path in eval_c_expr_paths(state, ptr, assumptions) {
+            for ptr_path in eval_c_expr_paths(state, ptr, assumptions, budget)? {
                 let CExprPath {
                     outcome: ptr_outcome,
                     facts: ptr_facts,
@@ -2697,7 +3035,7 @@ fn exec_c_stmt_paths(
 
                 let value_assumptions =
                     assumptions_with_path_context(assumptions, &ptr_facts, &ptr_obligations);
-                for value_path in eval_c_expr_paths(state, value, &value_assumptions) {
+                for value_path in eval_c_expr_paths(state, value, &value_assumptions, budget)? {
                     let Some((facts, obligations)) = merge_path_facts_and_obligations(
                         &ptr_facts,
                         &ptr_obligations,
@@ -2748,7 +3086,7 @@ fn exec_c_stmt_paths(
             else_branch,
         } => {
             let mut paths = Vec::new();
-            for condition_path in eval_c_expr_paths(state, condition, assumptions) {
+            for condition_path in eval_c_expr_paths(state, condition, assumptions, budget)? {
                 let CExprPath {
                     outcome,
                     facts,
@@ -2771,7 +3109,8 @@ fn exec_c_stmt_paths(
                                 env,
                                 &truthiness_path.facts,
                                 &truthiness_path.obligations,
-                            ));
+                                budget,
+                            )?);
                         }
                     }
                     CExprOutcome::Ub(ub) => paths.push(CStmtPath {
@@ -2792,8 +3131,10 @@ fn exec_c_stmt_paths(
             condition,
             invariant,
             body,
-        } => exec_c_while_paths(state, condition, invariant, body, assumptions, env, 256),
-    }
+        } => exec_c_while_paths(state, condition, invariant, body, assumptions, env, budget)?,
+    };
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
 }
 
 fn exec_c_while_paths(
@@ -2803,26 +3144,20 @@ fn exec_c_while_paths(
     body: &CStmt,
     assumptions: &Assumptions,
     env: &CFunctionEnv,
-    fuel: usize,
-) -> Vec<CStmtPath> {
-    if fuel == 0 {
-        return vec![CStmtPath {
-            outcome: CStmtOutcome::RuntimeError(CRuntimeError::LoopLimitExceeded),
-            facts: Vec::new(),
-            obligations: Vec::new(),
-        }];
-    }
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStmtPath>> {
+    budget.consume_loop_unroll()?;
 
     let mut base_obligations = Vec::new();
     for prop in invariant {
         if add_proof_obligation(&mut base_obligations, assumptions, prop.clone()).is_none() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
     }
     let loop_assumptions = assumptions_with_props(assumptions, invariant);
     let mut paths = Vec::new();
 
-    for condition_path in eval_c_expr_paths(state, condition, &loop_assumptions) {
+    for condition_path in eval_c_expr_paths(state, condition, &loop_assumptions, budget)? {
         let Some((condition_facts, condition_obligations)) = merge_path_facts_and_obligations(
             &[],
             &base_obligations,
@@ -2846,10 +3181,10 @@ fn exec_c_while_paths(
                             body,
                             assumptions,
                             env,
-                            fuel,
                             truthiness_path.facts,
                             truthiness_path.obligations,
-                        ));
+                            budget,
+                        )?);
                     } else {
                         paths.push(CStmtPath {
                             outcome: CStmtOutcome::Normal(state.clone()),
@@ -2872,7 +3207,8 @@ fn exec_c_while_paths(
         }
     }
 
-    paths
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
 }
 
 fn exec_c_while_body_paths(
@@ -2882,64 +3218,62 @@ fn exec_c_while_body_paths(
     body: &CStmt,
     assumptions: &Assumptions,
     env: &CFunctionEnv,
-    fuel: usize,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
-) -> Vec<CStmtPath> {
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStmtPath>> {
     let body_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
-    exec_c_stmt_paths(state, body, &body_assumptions, env)
-        .into_iter()
-        .flat_map(|body_path| {
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
-                &facts,
-                &obligations,
-                &body_path.facts,
-                &body_path.obligations,
-                assumptions,
-            ) else {
-                return Vec::new();
-            };
+    let mut paths = Vec::new();
+    for body_path in exec_c_stmt_paths(state, body, &body_assumptions, env, budget)? {
+        let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            &facts,
+            &obligations,
+            &body_path.facts,
+            &body_path.obligations,
+            assumptions,
+        ) else {
+            continue;
+        };
 
-            match body_path.outcome {
-                CStmtOutcome::Normal(next_state) => {
-                    let next_assumptions =
-                        assumptions_with_path_context(assumptions, &facts, &obligations);
-                    exec_c_while_paths(
-                        &next_state,
-                        condition,
-                        invariant,
-                        body,
-                        &next_assumptions,
-                        env,
-                        fuel - 1,
+        match body_path.outcome {
+            CStmtOutcome::Normal(next_state) => {
+                let next_assumptions =
+                    assumptions_with_path_context(assumptions, &facts, &obligations);
+                for path in exec_c_while_paths(
+                    &next_state,
+                    condition,
+                    invariant,
+                    body,
+                    &next_assumptions,
+                    env,
+                    budget,
+                )? {
+                    let (facts, obligations) = merge_path_facts_and_obligations(
+                        &facts,
+                        &obligations,
+                        &path.facts,
+                        &path.obligations,
+                        assumptions,
                     )
-                    .into_iter()
-                    .filter_map(|path| {
-                        let (facts, obligations) = merge_path_facts_and_obligations(
-                            &facts,
-                            &obligations,
-                            &path.facts,
-                            &path.obligations,
-                            assumptions,
-                        )?;
-                        Some(CStmtPath {
-                            outcome: path.outcome,
-                            facts,
-                            obligations,
-                        })
-                    })
-                    .collect()
+                    .expect("merged loop path facts should remain consistent");
+                    paths.push(CStmtPath {
+                        outcome: path.outcome,
+                        facts,
+                        obligations,
+                    });
                 }
-                outcome @ (CStmtOutcome::Return { .. }
-                | CStmtOutcome::Ub(_)
-                | CStmtOutcome::RuntimeError(_)) => vec![CStmtPath {
-                    outcome,
-                    facts,
-                    obligations,
-                }],
             }
-        })
-        .collect()
+            outcome @ (CStmtOutcome::Return { .. }
+            | CStmtOutcome::Ub(_)
+            | CStmtOutcome::RuntimeError(_)) => paths.push(CStmtPath {
+                outcome,
+                facts,
+                obligations,
+            }),
+        }
+    }
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
 }
 
 fn declare_local(state: &CState, name: &str, ty: CType) -> CState {
@@ -2977,18 +3311,19 @@ fn exec_c_call_assign_paths(
     args: &[CExpr],
     assumptions: &Assumptions,
     env: &CFunctionEnv,
-) -> Vec<CStmtPath> {
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStmtPath>> {
     let Some(function) = env.get_function(function_name) else {
-        return vec![CStmtPath {
+        return Ok(vec![CStmtPath {
             outcome: CStmtOutcome::RuntimeError(CRuntimeError::UnknownFunction(
                 function_name.to_string(),
             )),
             facts: Vec::new(),
             obligations: Vec::new(),
-        }];
+        }]);
     };
 
-    exec_c_function_paths(state, function, args, assumptions, env)
+    let paths = exec_c_function_paths(state, function, args, assumptions, env, budget)?
         .into_iter()
         .map(|path| {
             let outcome = match path.outcome {
@@ -3007,7 +3342,9 @@ fn exec_c_call_assign_paths(
                 obligations: path.obligations,
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
 }
 
 fn exec_c_stmt_paths_with_prefix(
@@ -3017,10 +3354,11 @@ fn exec_c_stmt_paths_with_prefix(
     env: &CFunctionEnv,
     prefix_facts: &[PathFact],
     prefix_obligations: &[ProofObligation],
-) -> Vec<CStmtPath> {
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStmtPath>> {
     let effective_assumptions =
         assumptions_with_path_context(assumptions, prefix_facts, prefix_obligations);
-    exec_c_stmt_paths(state, stmt, &effective_assumptions, env)
+    let paths = exec_c_stmt_paths(state, stmt, &effective_assumptions, env, budget)?
         .into_iter()
         .filter_map(|path| {
             let (facts, obligations) = merge_path_facts_and_obligations(
@@ -3036,7 +3374,9 @@ fn exec_c_stmt_paths_with_prefix(
                 obligations,
             })
         })
-        .collect()
+        .collect::<Vec<_>>();
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
 }
 
 fn exec_c_function_paths(
@@ -3045,20 +3385,22 @@ fn exec_c_function_paths(
     args: &[CExpr],
     assumptions: &Assumptions,
     env: &CFunctionEnv,
-) -> Vec<CFunctionPath> {
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CFunctionPath>> {
+    budget.consume_function_call()?;
     if args.len() != function.params.len() {
-        return vec![CFunctionPath {
+        return Ok(vec![CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::WrongArity {
                 expected: function.params.len(),
                 actual: args.len(),
             }),
             facts: Vec::new(),
             obligations: Vec::new(),
-        }];
+        }]);
     }
 
     let mut paths = Vec::new();
-    for args_path in eval_c_args_paths(caller_state, args, assumptions) {
+    for args_path in eval_c_args_paths(caller_state, args, assumptions, budget)? {
         if let Some(outcome) = args_path.outcome {
             paths.push(CFunctionPath {
                 outcome,
@@ -3080,7 +3422,13 @@ fn exec_c_function_paths(
 
         let body_assumptions =
             assumptions_with_path_context(assumptions, &args_path.facts, &args_path.obligations);
-        for body_path in exec_c_stmt_paths(&callee_state, function.body(), &body_assumptions, env) {
+        for body_path in exec_c_stmt_paths(
+            &callee_state,
+            function.body(),
+            &body_assumptions,
+            env,
+            budget,
+        )? {
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &args_path.facts,
                 &args_path.obligations,
@@ -3099,7 +3447,8 @@ fn exec_c_function_paths(
         }
     }
 
-    paths
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
 }
 
 fn add_memory_store_obligation(
@@ -3124,7 +3473,12 @@ fn add_memory_store_obligation(
     Some(obligations)
 }
 
-fn eval_c_args_paths(state: &CState, args: &[CExpr], assumptions: &Assumptions) -> Vec<CArgsPath> {
+fn eval_c_args_paths(
+    state: &CState,
+    args: &[CExpr],
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CArgsPath>> {
     let mut paths = vec![CArgsPath {
         values: Vec::new(),
         outcome: None,
@@ -3142,7 +3496,7 @@ fn eval_c_args_paths(state: &CState, args: &[CExpr], assumptions: &Assumptions) 
 
             let arg_assumptions =
                 assumptions_with_path_context(assumptions, &path.facts, &path.obligations);
-            for arg_path in eval_c_expr_paths(state, arg, &arg_assumptions) {
+            for arg_path in eval_c_expr_paths(state, arg, &arg_assumptions, budget)? {
                 let Some((facts, obligations)) = merge_path_facts_and_obligations(
                     &path.facts,
                     &path.obligations,
@@ -3179,10 +3533,12 @@ fn eval_c_args_paths(state: &CState, args: &[CExpr], assumptions: &Assumptions) 
                 }
             }
         }
+        budget.consume_paths(next_paths.len())?;
         paths = next_paths;
     }
 
-    paths
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
 }
 
 fn bind_c_function_args(
@@ -3698,6 +4054,88 @@ mod tests {
                     state: final_state,
                 },
             }
+        );
+    }
+
+    #[test]
+    fn loop_budget_exhaustion_is_executor_failure_not_c_runtime_error() {
+        let state = CState::new().with_local("x", int32(0));
+        let stmt = c_while(c_int32_literal(1), Vec::new(), c_assign("x", c_var("x")));
+        let budget = ExecutionBudget::new().with_loop_unrolls(2);
+        let execution = prove_symbolic_c_execution_paths_with_budget(
+            state.clone(),
+            stmt.clone(),
+            Assumptions::new(),
+            budget.clone(),
+        );
+
+        assert_eq!(execution.limit(), Some(ExecutionLimit::LoopUnrolls));
+        assert_eq!(execution.paths(), &[] as &[SymbolicCExecutionPath]);
+        assert!(
+            prove_symbolic_c_execution_with_budget(state, stmt, Assumptions::new(), budget,)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn executor_budgets_cap_steps_calls_and_paths() {
+        let state = CState::new();
+        let stmt = c_return(c_int32_literal(1));
+
+        assert_eq!(
+            prove_symbolic_c_execution_paths_with_budget(
+                state.clone(),
+                stmt.clone(),
+                Assumptions::new(),
+                ExecutionBudget::new().with_statement_steps(0),
+            )
+            .limit(),
+            Some(ExecutionLimit::StatementSteps)
+        );
+        assert_eq!(
+            prove_symbolic_c_execution_paths_with_budget(
+                state.clone(),
+                stmt,
+                Assumptions::new(),
+                ExecutionBudget::new().with_expression_steps(0),
+            )
+            .limit(),
+            Some(ExecutionLimit::ExpressionSteps)
+        );
+
+        let function = c_function(
+            CType::Int32,
+            "id",
+            vec![c_param("x", CType::Int32)],
+            c_return(c_var("x")),
+        );
+        assert_eq!(
+            prove_symbolic_c_function_execution_paths_with_budget(
+                CState::new(),
+                function,
+                vec![c_int32_literal(1)],
+                Assumptions::new(),
+                ExecutionBudget::new().with_function_calls(0),
+            )
+            .limit(),
+            Some(ExecutionLimit::FunctionCalls)
+        );
+
+        let a = Var(75);
+        let b = Var(76);
+        let branchy_stmt = c_return(c_lt(
+            CExpr::Value(int32(Bv32Term::Var(a))),
+            CExpr::Value(int32(Bv32Term::Var(b))),
+        ));
+        assert_eq!(
+            prove_symbolic_c_execution_paths_with_budget(
+                state,
+                branchy_stmt,
+                Assumptions::new(),
+                ExecutionBudget::new().with_paths(3),
+            )
+            .limit(),
+            Some(ExecutionLimit::Paths)
         );
     }
 

@@ -60,7 +60,7 @@ to drive the design. It currently supports:
 - local `int32` declarations
 - assignment and sequencing
 - `if` / `else` with C scalar truthiness
-- `while`, currently concrete/fuel-capped for execution, plus a native
+- `while`, currently concrete/budget-capped for execution, plus a native
   invariant-rule checker for symbolic preservation and exit facts
 - `return`
 - address-of locals
@@ -79,6 +79,11 @@ or UB depending on the execution path.
 The primary proof engine today is native symbolic execution in the megakernel.
 It produces theorem objects for expression evaluation, statement execution,
 function execution, and function-spec satisfaction.
+
+Symbolic execution is bounded by an explicit `ExecutionBudget`: expression
+steps, statement steps, function calls, loop unrolls, and path count. Exhausting
+that budget is a Click proof/executor failure, reported as an `ExecutionLimit`;
+it is not modeled as C undefined behavior or as a C runtime error.
 
 Function specs package:
 
