@@ -89,10 +89,6 @@ impl C0Function {
         &self.body
     }
 
-    pub fn body_click_source(&self) -> String {
-        self.body.to_click_source()
-    }
-
     pub fn body_megakernel_stmt(&self) -> crate::megakernel::CStmt {
         self.body.to_megakernel_stmt()
     }
@@ -134,42 +130,6 @@ impl C0Type {
 }
 
 impl C0Stmt {
-    pub fn to_click_source(&self) -> String {
-        match self {
-            Self::Declare { .. } => {
-                panic!("the list-kernel C model does not support C0 declarations yet")
-            }
-            Self::Assign { name, expr } => {
-                format!("(c-assign-stmt (quote {name}) {})", expr.to_click_source())
-            }
-            Self::CallAssign { .. } => {
-                panic!("the list-kernel C model does not support C0 function calls yet")
-            }
-            Self::Seq(first, second) => format!(
-                "(c-seq-stmt {} {})",
-                first.to_click_source(),
-                second.to_click_source()
-            ),
-            Self::Return(expr) => format!("(c-return-stmt {})", expr.to_click_source()),
-            Self::Store { .. } => {
-                panic!("the list-kernel C model does not support C0 store statements yet")
-            }
-            Self::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => format!(
-                "(c-if-stmt {} {} {})",
-                condition.to_click_source(),
-                then_branch.to_click_source(),
-                else_branch.to_click_source()
-            ),
-            Self::While { .. } => {
-                panic!("the list-kernel C model does not support C0 while statements yet")
-            }
-        }
-    }
-
     pub fn to_megakernel_stmt(&self) -> crate::megakernel::CStmt {
         match self {
             Self::Declare { ty, name } => {
@@ -213,35 +173,6 @@ impl C0Stmt {
 }
 
 impl C0Expr {
-    pub fn to_click_source(&self) -> String {
-        match self {
-            Self::Var(name) => format!("(c-var-expr (quote {name}))"),
-            Self::AddressOf(_) => {
-                panic!("the list-kernel C model does not support C0 address-of expressions yet")
-            }
-            Self::Int32Literal(value) => format!("(c-int32-expr (c-int32 (bv32 {value})))"),
-            Self::Lt(left, right) => format!(
-                "(c-lt-expr {} {})",
-                left.to_click_source(),
-                right.to_click_source()
-            ),
-            Self::Le(_, _) | Self::Gt(_, _) | Self::Ge(_, _) | Self::Eq(_, _) => {
-                panic!("the list-kernel C model does not support these C0 comparisons yet")
-            }
-            Self::Add(left, right) => format!(
-                "(c-add-expr {} {})",
-                left.to_click_source(),
-                right.to_click_source()
-            ),
-            Self::Sub(_, _) => {
-                panic!("the list-kernel C model does not support C0 subtraction yet")
-            }
-            Self::Load(_) => {
-                panic!("the list-kernel C model does not support C0 load expressions yet")
-            }
-        }
-    }
-
     pub fn to_megakernel_expr(&self) -> crate::megakernel::CExpr {
         match self {
             Self::Var(name) => crate::megakernel::c_var(name.clone()),

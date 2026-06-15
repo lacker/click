@@ -1,9 +1,8 @@
 //! Experimental rich kernel for systems-code proofs.
 //!
-//! This module is intentionally parallel to the current list-based kernel. It
-//! keeps the LCF shape: `Theorem` is an abstract object whose constructor is not
-//! public. The difference is that the trusted kernel language has native
-//! systems concepts instead of encoding them all as Lisp-style lists.
+//! This module keeps the LCF shape: `Theorem` is an abstract object whose
+//! constructor is not public. The trusted kernel language has native systems
+//! concepts instead of encoding them as a tiny general-purpose calculus.
 
 use std::collections::{BTreeMap, BTreeSet};
 
