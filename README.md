@@ -170,11 +170,13 @@ int32 fill3(int32* p) {
 The C0 signature in the `.click` file is checked against the C source and a
 mismatch is reported directly. Function-level `requires` clauses are shared by
 all guarantees. Each `ensures` clause is a separately proven guarantee with its
-own `by` proof clause. For now, `ensures` supports result equality against a
-small C0 integer expression over literals, parameters, parentheses, `+`, and
-`-`. That sidecar path parses C0 source, builds the requested initial memory,
-runs native symbolic execution, checks the result clause, and packages the
-result as a megakernel `CFunctionSpec` theorem.
+own `by` proof clause. For now, `requires` supports `valid_range(pointer,
+bytes)` and signed integer comparisons over parameters and literals.
+`ensures` supports result equality against a small C0 integer expression over
+literals, parameters, parentheses, `+`, and `-`. That sidecar path parses C0
+source, builds the requested initial memory, runs native symbolic execution,
+checks the result clause, and packages the result as a megakernel
+`CFunctionSpec` theorem.
 
 ## Markdown Tests
 

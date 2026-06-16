@@ -8,10 +8,9 @@ use std::collections::BTreeMap;
 
 use crate::lang::c::syntax::{self, C0Expr, C0Type};
 use crate::megakernel::{
-    Assumptions, Bv32Term, CExpr, CExprOutcome, CFunctionEnv, CFunctionOutcome, CFunctionSpec,
-    CMemory, CState, CValue, Prop, Ptr, PtrOffsetTerm, Theorem, Var, c_function_spec, c_ptr_value,
-    prove_c_expr_eval, prove_c_function_satisfies_spec_with_env,
-    prove_symbolic_c_function_execution_with_env,
+    Assumptions, Bv32Term, CExpr, CFunctionEnv, CFunctionOutcome, CFunctionSpec, CMemory, CState,
+    CValue, ConditionTerm, Prop, Ptr, PtrOffsetTerm, Theorem, Var, c_function_spec, c_ptr_value,
+    prove_c_function_satisfies_spec_with_env, prove_symbolic_c_function_execution_with_env,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -43,6 +42,7 @@ pub struct FunctionParam {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Requirement {
     ValidRange { name: String, bytes: u32 },
+    Condition(CExpr),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -198,17 +198,18 @@ pub fn verify_c0_sources(
                 )));
             }
 
-            let (state, args) = initial_call(
+            let (state, args, requirement_props) = initial_call(
                 function_block.signature.name(),
                 function_block.requires(),
                 parsed_function.params(),
             )?;
+            let assumptions = assumptions_from_props(&requirement_props);
             let function = parsed_function.to_megakernel_function();
             let execution = prove_symbolic_c_function_execution_with_env(
                 state.clone(),
                 function.clone(),
                 args.clone(),
-                Assumptions::new(),
+                assumptions,
                 function_env.clone(),
             )
             .ok_or_else(|| {
@@ -216,7 +217,7 @@ pub fn verify_c0_sources(
                     "`auto` could not prove a single complete execution path for `{ensure_label}`"
                 ))
             })?;
-            let outcome = match execution.prop() {
+            let outcome = match implication_body(execution.prop()) {
                 Prop::CFunctionExecutes { outcome, .. } => outcome.clone(),
                 prop => {
                     return Err(ClickError::new(format!(
@@ -232,7 +233,7 @@ pub fn verify_c0_sources(
                 &args,
                 &outcome,
             )?;
-            let spec = c_function_spec(state, args, Vec::new(), outcome);
+            let spec = c_function_spec(state, args, requirement_props, outcome.clone());
             let theorem = prove_c_function_satisfies_spec_with_env(
                 function,
                 spec.clone(),
@@ -309,6 +310,20 @@ fn ensure_label(function_name: &str, ensure: &EnsureClause, index: usize) -> Str
     }
 }
 
+fn implication_body(prop: &Prop) -> &Prop {
+    match prop {
+        Prop::Implies(_, body) => implication_body(body),
+        _ => prop,
+    }
+}
+
+fn assumptions_from_props(props: &[Prop]) -> Assumptions {
+    props
+        .iter()
+        .cloned()
+        .fold(Assumptions::new(), Assumptions::assume_prop)
+}
+
 fn check_signature(
     signature: &FunctionSignature,
     parsed_function: &syntax::C0Function,
@@ -358,11 +373,12 @@ fn initial_call(
     function_name: &str,
     requires: &[Requirement],
     params: &[syntax::C0Param],
-) -> Result<(CState, Vec<CExpr>), ClickError> {
+) -> Result<(CState, Vec<CExpr>, Vec<Prop>), ClickError> {
     let valid_ranges: BTreeMap<&str, u32> = requires
         .iter()
-        .map(|requirement| match requirement {
-            Requirement::ValidRange { name, bytes } => (name.as_str(), *bytes),
+        .filter_map(|requirement| match requirement {
+            Requirement::ValidRange { name, bytes } => Some((name.as_str(), *bytes)),
+            Requirement::Condition(_) => None,
         })
         .collect();
     let mut memory = CMemory::new();
@@ -396,7 +412,199 @@ fn initial_call(
         }
     }
 
-    Ok((CState::new().with_memory(memory), args))
+    let requirement_props = requirement_props(requires, params, &args)?;
+    Ok((CState::new().with_memory(memory), args, requirement_props))
+}
+
+fn requirement_props(
+    requires: &[Requirement],
+    params: &[syntax::C0Param],
+    args: &[CExpr],
+) -> Result<Vec<Prop>, ClickError> {
+    requires
+        .iter()
+        .filter_map(|requirement| match requirement {
+            Requirement::ValidRange { .. } => None,
+            Requirement::Condition(condition) => {
+                Some(condition_requirement_prop(params, args, condition))
+            }
+        })
+        .collect()
+}
+
+fn condition_requirement_prop(
+    params: &[syntax::C0Param],
+    args: &[CExpr],
+    condition: &CExpr,
+) -> Result<Prop, ClickError> {
+    let parameter_values = parameter_values(params, args)?;
+    let (condition, value) = lower_condition_requirement(condition, &parameter_values)?;
+    Ok(Prop::ConditionIs(condition, value))
+}
+
+fn parameter_values(
+    params: &[syntax::C0Param],
+    args: &[CExpr],
+) -> Result<BTreeMap<String, CValue>, ClickError> {
+    params
+        .iter()
+        .zip(args)
+        .map(|(param, arg)| {
+            let CExpr::Value(value) = arg else {
+                return Err(ClickError::new(format!(
+                    "could not build contract environment for parameter `{}`",
+                    param.name()
+                )));
+            };
+            Ok((param.name().to_string(), value.clone()))
+        })
+        .collect()
+}
+
+fn lower_condition_requirement(
+    condition: &CExpr,
+    parameter_values: &BTreeMap<String, CValue>,
+) -> Result<(ConditionTerm, bool), ClickError> {
+    match condition {
+        CExpr::Lt(left, right) => Ok((
+            signed_lt(
+                lower_bv32_expr(left, parameter_values)?,
+                lower_bv32_expr(right, parameter_values)?,
+            ),
+            true,
+        )),
+        CExpr::Le(left, right) => Ok((
+            signed_le(
+                lower_bv32_expr(left, parameter_values)?,
+                lower_bv32_expr(right, parameter_values)?,
+            ),
+            true,
+        )),
+        CExpr::Gt(left, right) => Ok((
+            signed_gt(
+                lower_bv32_expr(left, parameter_values)?,
+                lower_bv32_expr(right, parameter_values)?,
+            ),
+            true,
+        )),
+        CExpr::Ge(left, right) => Ok((
+            signed_ge(
+                lower_bv32_expr(left, parameter_values)?,
+                lower_bv32_expr(right, parameter_values)?,
+            ),
+            true,
+        )),
+        CExpr::Eq(left, right) => Ok((
+            bv32_eq(
+                lower_bv32_expr(left, parameter_values)?,
+                lower_bv32_expr(right, parameter_values)?,
+            ),
+            true,
+        )),
+        CExpr::Ne(left, right) => Ok((
+            bv32_eq(
+                lower_bv32_expr(left, parameter_values)?,
+                lower_bv32_expr(right, parameter_values)?,
+            ),
+            false,
+        )),
+        _ => Err(ClickError::new(format!(
+            "unsupported `requires` condition `{condition:?}`"
+        ))),
+    }
+}
+
+fn lower_bv32_expr(
+    expr: &CExpr,
+    parameter_values: &BTreeMap<String, CValue>,
+) -> Result<Bv32Term, ClickError> {
+    match expr {
+        CExpr::Value(CValue::Int32(bits)) => Ok(bits.clone()),
+        CExpr::Value(_) => Err(ClickError::new(format!(
+            "expected int32 expression in contract, got `{expr:?}`"
+        ))),
+        CExpr::Var(name) => match parameter_values.get(name) {
+            Some(CValue::Int32(bits)) => Ok(bits.clone()),
+            Some(_) => Err(ClickError::new(format!(
+                "parameter `{name}` is not an int32 parameter"
+            ))),
+            None => Err(ClickError::new(format!(
+                "contract expression references unknown parameter `{name}`"
+            ))),
+        },
+        CExpr::Add(left, right) => Ok(bv32_add(
+            lower_bv32_expr(left, parameter_values)?,
+            lower_bv32_expr(right, parameter_values)?,
+        )),
+        CExpr::Sub(left, right) => Ok(bv32_sub(
+            lower_bv32_expr(left, parameter_values)?,
+            lower_bv32_expr(right, parameter_values)?,
+        )),
+        _ => Err(ClickError::new(format!(
+            "unsupported int32 expression in contract: `{expr:?}`"
+        ))),
+    }
+}
+
+fn bv32_add(left: Bv32Term, right: Bv32Term) -> Bv32Term {
+    match (&left, &right) {
+        (Bv32Term::Const(left), Bv32Term::Const(right)) => {
+            Bv32Term::Const(left.wrapping_add(*right))
+        }
+        _ => Bv32Term::Add(Box::new(left), Box::new(right)),
+    }
+}
+
+fn bv32_sub(left: Bv32Term, right: Bv32Term) -> Bv32Term {
+    match (&left, &right) {
+        (Bv32Term::Const(left), Bv32Term::Const(right)) => {
+            Bv32Term::Const(left.wrapping_sub(*right))
+        }
+        _ => Bv32Term::Sub(Box::new(left), Box::new(right)),
+    }
+}
+
+fn signed_lt(left: Bv32Term, right: Bv32Term) -> ConditionTerm {
+    match (&left, &right) {
+        (Bv32Term::Const(left), Bv32Term::Const(right)) => {
+            ConditionTerm::Const((*left as i32) < (*right as i32))
+        }
+        _ => ConditionTerm::Bv32Slt(Box::new(left), Box::new(right)),
+    }
+}
+
+fn signed_le(left: Bv32Term, right: Bv32Term) -> ConditionTerm {
+    match (&left, &right) {
+        (Bv32Term::Const(left), Bv32Term::Const(right)) => {
+            ConditionTerm::Const((*left as i32) <= (*right as i32))
+        }
+        _ => ConditionTerm::Bv32Sle(Box::new(left), Box::new(right)),
+    }
+}
+
+fn signed_gt(left: Bv32Term, right: Bv32Term) -> ConditionTerm {
+    match (&left, &right) {
+        (Bv32Term::Const(left), Bv32Term::Const(right)) => {
+            ConditionTerm::Const((*left as i32) > (*right as i32))
+        }
+        _ => ConditionTerm::Bv32Sgt(Box::new(left), Box::new(right)),
+    }
+}
+
+fn signed_ge(left: Bv32Term, right: Bv32Term) -> ConditionTerm {
+    match (&left, &right) {
+        (Bv32Term::Const(left), Bv32Term::Const(right)) => {
+            ConditionTerm::Const((*left as i32) >= (*right as i32))
+        }
+        _ => ConditionTerm::Bv32Sge(Box::new(left), Box::new(right)),
+    }
+}
+
+fn bv32_eq(left: Bv32Term, right: Bv32Term) -> ConditionTerm {
+    match (&left, &right) {
+        (Bv32Term::Const(left), Bv32Term::Const(right)) => ConditionTerm::Const(left == right),
+        _ => ConditionTerm::Bv32Eq(Box::new(left), Box::new(right)),
+    }
 }
 
 fn check_ensure(
@@ -435,25 +643,13 @@ fn check_ensure(
 fn evaluate_expected_result_expr(
     params: &[syntax::C0Param],
     args: &[CExpr],
-    state: &CState,
+    _state: &CState,
     expected: &CExpr,
 ) -> Option<CValue> {
-    let mut eval_state = state.clone();
-    for (param, arg) in params.iter().zip(args) {
-        let CExpr::Value(value) = arg else {
-            return None;
-        };
-        eval_state = eval_state.with_local(param.name(), value.clone());
-    }
-
-    let theorem = prove_c_expr_eval(eval_state, expected.clone())?;
-    match theorem.prop() {
-        Prop::CExprEvaluates {
-            outcome: CExprOutcome::Value(value),
-            ..
-        } => Some(value.clone()),
-        _ => None,
-    }
+    let parameter_values = parameter_values(params, args).ok()?;
+    Some(CValue::Int32(
+        lower_bv32_expr(expected, &parameter_values).ok()?,
+    ))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -469,6 +665,11 @@ enum Token {
     Comma,
     Semicolon,
     EqEq,
+    BangEq,
+    Lt,
+    Le,
+    Gt,
+    Ge,
     Plus,
     Minus,
     Star,
@@ -602,6 +803,12 @@ impl Parser {
 
     fn parse_requirement(&mut self) -> Result<Requirement, ClickError> {
         self.expect_ident_spelling("requires")?;
+        if self.peek_ident() != Some("valid_range") || self.peek_next() != Some(&Token::LParen) {
+            let condition = self.parse_requirement_condition()?;
+            self.expect(Token::Semicolon)?;
+            return Ok(Requirement::Condition(condition.to_megakernel_expr()));
+        }
+
         self.expect_ident_spelling("valid_range")?;
         self.expect(Token::LParen)?;
         let name = self.expect_ident("range base name")?;
@@ -611,6 +818,26 @@ impl Parser {
         self.expect(Token::Semicolon)?;
 
         Ok(Requirement::ValidRange { name, bytes })
+    }
+
+    fn parse_requirement_condition(&mut self) -> Result<C0Expr, ClickError> {
+        let left = self.parse_ensure_expr()?;
+        let operator = self.next().ok_or_else(|| {
+            self.error("expected comparison operator in `requires`, got end of input")
+        })?;
+        let right = self.parse_ensure_expr()?;
+
+        match operator {
+            Token::Lt => Ok(C0Expr::Lt(Box::new(left), Box::new(right))),
+            Token::Le => Ok(C0Expr::Le(Box::new(left), Box::new(right))),
+            Token::Gt => Ok(C0Expr::Gt(Box::new(left), Box::new(right))),
+            Token::Ge => Ok(C0Expr::Ge(Box::new(left), Box::new(right))),
+            Token::EqEq => Ok(C0Expr::Eq(Box::new(left), Box::new(right))),
+            Token::BangEq => Ok(C0Expr::Ne(Box::new(left), Box::new(right))),
+            token => Err(self.error(format!(
+                "expected comparison operator in `requires`, got {token:?}"
+            ))),
+        }
     }
 
     fn parse_ensure_clause(&mut self) -> Result<EnsureClause, ClickError> {
@@ -834,6 +1061,34 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
                 tokens.push(Token::Star);
                 index += 1;
             }
+            '<' => {
+                if chars.get(index + 1) == Some(&'=') {
+                    tokens.push(Token::Le);
+                    index += 2;
+                } else {
+                    tokens.push(Token::Lt);
+                    index += 1;
+                }
+            }
+            '>' => {
+                if chars.get(index + 1) == Some(&'=') {
+                    tokens.push(Token::Ge);
+                    index += 2;
+                } else {
+                    tokens.push(Token::Gt);
+                    index += 1;
+                }
+            }
+            '!' => {
+                if chars.get(index + 1) == Some(&'=') {
+                    tokens.push(Token::BangEq);
+                    index += 2;
+                } else {
+                    return Err(ClickError::new(format!(
+                        "expected `!=`, got `!` at byte offset {index}"
+                    )));
+                }
+            }
             '=' => {
                 if chars.get(index + 1) == Some(&'=') {
                     tokens.push(Token::EqEq);
@@ -1020,6 +1275,56 @@ mod tests {
         assert_eq!(
             verified[0].ensure_clause.ensure(),
             &Ensure::ResultEq(CExpr::Var("x".to_string()))
+        );
+    }
+
+    #[test]
+    fn verifies_symbolic_increment_with_numeric_requirement() {
+        let c_source = r#"
+            int32 increment(int32 x) {
+                return x + 1;
+            }
+        "#;
+        let click_source = r#"
+            verifying "increment.c";
+
+            int32 increment(int32 x) {
+                requires x < 2147483647;
+                ensures increments: result == x + 1 by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("increment.c", c_source)])
+            .expect("increment sidecar should verify");
+
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].spec.requires().len(), 1);
+    }
+
+    #[test]
+    fn symbolic_increment_without_numeric_requirement_fails() {
+        let c_source = r#"
+            int32 increment(int32 x) {
+                return x + 1;
+            }
+        "#;
+        let click_source = r#"
+            verifying "increment.c";
+
+            int32 increment(int32 x) {
+                ensures increments: result == x + 1 by auto;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("increment.c", c_source)])
+            .expect_err("increment without overflow requirement should fail");
+
+        assert!(
+            error
+                .message()
+                .contains("could not prove a single complete execution path"),
+            "{}",
+            error.message()
         );
     }
 

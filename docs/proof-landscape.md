@@ -43,7 +43,7 @@ new proof workflow concepts too early.
 | Capability | Common source | Click axiom family | Click tactic surface | Current mdtest |
 | --- | --- | --- | --- | --- |
 | Scalar execution | symbolic evaluators, SMT-backed automation | C expression/statement execution | `auto`, later `symbolic_execute` | `mdtests/scalar.md`, `mdtests/argument_result.md` |
-| C undefined behavior | CBMC, Frama-C/WP, UBSan-style checks | UB-aware C execution | `auto`, later `check_ub` or VCG output | `mdtests/overflow.md` |
+| C undefined behavior | CBMC, Frama-C/WP, UBSan-style checks | UB-aware C execution | `auto`, later `check_ub` or VCG output | `mdtests/overflow.md`, `mdtests/increment_requires_no_overflow.md`, `mdtests/increment_without_requires.md` |
 | Pointer range safety | C verifiers, separation logic | memory-validity and range axioms | `auto`, later `bounds` or `frame` | `mdtests/pointer_range.md` |
 | Bounded loops | bounded model checking, symbolic execution | budgeted loop execution | `auto`, later `bounded_check` | `mdtests/bounded_loop.md`, `mdtests/fill3.md` |
 | Function calls | modular verification, inlining, call summaries | function environment and spec satisfaction | `auto`, later `use spec` | `mdtests/function_call.md` |
