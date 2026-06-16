@@ -129,6 +129,7 @@ pub enum CStatement {
     },
     Assert {
         condition: CExpression,
+        label: Option<String>,
     },
     Seq(Box<CStatement>, Box<CStatement>),
     Return(CExpression),
@@ -144,8 +145,16 @@ pub enum CStatement {
     While {
         condition: CExpression,
         invariant: Vec<Proposition>,
+        invariant_checks: Vec<CLoopInvariantCheck>,
         body: Box<CStatement>,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CLoopInvariantCheck {
+    condition: CExpression,
+    entry_context: Option<String>,
+    preservation_context: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -314,6 +323,11 @@ pub enum Proposition {
         base: Pointer,
         bytes: Bitvector32Term,
     },
+    CMemoryWritesOnly {
+        before: CMemory,
+        after: CMemory,
+        pointers: Vec<Pointer>,
+    },
     CWhileInvariantRule {
         state: CState,
         condition: CExpression,
@@ -346,6 +360,7 @@ pub struct Assumptions {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ProofObligation {
     proposition: Proposition,
+    context: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -402,6 +417,23 @@ struct CArgumentsPath {
     obligations: Vec<ProofObligation>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VerificationVariableGenerator {
+    next: u64,
+}
+
+impl VerificationVariableGenerator {
+    fn new(start: u64) -> Self {
+        Self { next: start }
+    }
+
+    fn next(&mut self) -> Variable {
+        let variable = Variable(self.next);
+        self.next += 1;
+        variable
+    }
+}
+
 impl Bitvector32Term {
     pub fn var(var: Variable) -> Self {
         Self::Variable(var)
@@ -442,6 +474,17 @@ impl Bitvector32Term {
             Self::Add(left, right) if left.as_ref() == &Self::Constant(value) => {
                 Some(right.as_ref().clone())
             }
+            _ => None,
+        }
+    }
+
+    fn add_const_parts(&self) -> Option<(Self, u32)> {
+        match self {
+            Self::Add(left, right) => match (left.as_ref(), right.as_ref()) {
+                (base, Self::Constant(value)) => Some((base.clone(), *value)),
+                (Self::Constant(value), base) => Some((base.clone(), *value)),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -704,6 +747,32 @@ impl CFunction {
 
     pub fn body(&self) -> &CStatement {
         &self.body
+    }
+}
+
+impl CLoopInvariantCheck {
+    pub fn new(
+        condition: CExpression,
+        entry_context: Option<String>,
+        preservation_context: Option<String>,
+    ) -> Self {
+        Self {
+            condition,
+            entry_context,
+            preservation_context,
+        }
+    }
+
+    pub fn condition(&self) -> &CExpression {
+        &self.condition
+    }
+
+    pub fn entry_context(&self) -> Option<&str> {
+        self.entry_context.as_deref()
+    }
+
+    pub fn preservation_context(&self) -> Option<&str> {
+        self.preservation_context.as_deref()
     }
 }
 
@@ -1020,20 +1089,31 @@ impl Assumptions {
             ConditionTerm::PointerOffsetEqual(left, right) => {
                 match (left.as_ref().as_const(), right.as_ref().as_const()) {
                     (Some(left), Some(right)) => Some(left == right),
-                    _ => None,
+                    _ => {
+                        let left_index = int32_element_index_from_offset(left);
+                        let right_index = int32_element_index_from_offset(right);
+                        match (left_index, right_index) {
+                            (Some(left), Some(right)) => {
+                                self.decide(&ConditionTerm::equal(left, right))
+                            }
+                            _ => None,
+                        }
+                    }
                 }
             }
             ConditionTerm::Bitvector32Equal(left, right) if left == right => Some(true),
             ConditionTerm::Bitvector32Equal(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
-                if self.has_condition_fact(
-                    ConditionTerm::signed_less_equal(left.clone(), right.clone()),
-                    true,
-                ) && self.has_condition_fact(
-                    ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
-                    true,
-                ) {
+                if self.memory_loads_proven_equal(&left, &right)
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+                        true,
+                    ) && self.has_condition_fact(
+                        ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
+                        true,
+                    )
+                {
                     Some(true)
                 } else if self.has_condition_fact(
                     ConditionTerm::signed_less_equal(left.clone(), right.clone()),
@@ -1051,11 +1131,11 @@ impl Assumptions {
                     false,
                 ) {
                     Some(true)
-                } else if self.has_condition_fact(
-                    ConditionTerm::signed_less_than(left.clone(), right.clone()),
-                    true,
-                ) || self
-                    .has_condition_fact(ConditionTerm::signed_greater_than(left, right), true)
+                } else if self.decide(&ConditionTerm::signed_less_than(
+                    left.clone(),
+                    right.clone(),
+                )) == Some(true)
+                    || self.decide(&ConditionTerm::signed_greater_than(left, right)) == Some(true)
                 {
                     Some(false)
                 } else {
@@ -1080,6 +1160,8 @@ impl Assumptions {
                     ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
                     false,
                 ) || self.has_upper_bound_below(&left, &right)
+                    || self.has_lower_bound_above(&right, &left)
+                    || self.has_add_const_lower_bound_above(&right, &left)
                 {
                     Some(true)
                 } else if self.has_condition_fact(
@@ -1105,12 +1187,17 @@ impl Assumptions {
                     ConditionTerm::signed_less_than(left.clone(), right.clone()),
                     true,
                 ) || self.has_condition_fact(
+                    ConditionTerm::signed_greater_equal(right.clone(), left.clone()),
+                    true,
+                ) || self.has_condition_fact(
                     ConditionTerm::signed_greater_than(right.clone(), left.clone()),
                     true,
                 ) || self.has_condition_fact(
                     ConditionTerm::signed_greater_than(left.clone(), right.clone()),
                     false,
-                ) {
+                ) || self.has_lower_bound_at_or_above(&right, &left)
+                    || self.has_add_const_lower_bound_at_or_above(&right, &left)
+                {
                     Some(true)
                 } else if self
                     .has_condition_fact(ConditionTerm::signed_greater_than(left, right), true)
@@ -1123,13 +1210,21 @@ impl Assumptions {
             ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
-                if self.has_condition_fact(
+                if left.add_const_base(1).is_some_and(|base| {
+                    right == Bitvector32Term::Constant(0)
+                        && self.has_condition_fact(
+                            ConditionTerm::signed_greater_equal(base, Bitvector32Term::Constant(0)),
+                            true,
+                        )
+                }) || self.has_condition_fact(
                     ConditionTerm::signed_less_than(right.clone(), left.clone()),
                     true,
                 ) || self.has_condition_fact(
                     ConditionTerm::signed_less_equal(left.clone(), right.clone()),
                     false,
-                ) {
+                ) || self.has_lower_bound_above(&left, &right)
+                    || self.has_add_const_lower_bound_above(&left, &right)
+                {
                     Some(true)
                 } else if self.has_condition_fact(
                     ConditionTerm::signed_less_equal(left.clone(), right.clone()),
@@ -1155,15 +1250,17 @@ impl Assumptions {
                     ConditionTerm::signed_greater_than(left.clone(), right.clone()),
                     true,
                 ) || self.has_condition_fact(
-                    ConditionTerm::signed_less_than(right.clone(), left.clone()),
+                    ConditionTerm::signed_less_equal(right.clone(), left.clone()),
                     true,
                 ) || self.has_condition_fact(
-                    ConditionTerm::signed_less_equal(right.clone(), left.clone()),
+                    ConditionTerm::signed_less_than(right.clone(), left.clone()),
                     true,
                 ) || self.has_condition_fact(
                     ConditionTerm::signed_less_than(left.clone(), right.clone()),
                     false,
-                ) {
+                ) || self.has_lower_bound_at_or_above(&left, &right)
+                    || self.has_add_const_lower_bound_at_or_above(&left, &right)
+                {
                     Some(true)
                 } else if self
                     .has_condition_fact(ConditionTerm::signed_less_than(left, right), true)
@@ -1184,13 +1281,161 @@ impl Assumptions {
                 (ConditionTerm::Bitvector32SignedLessThan(fact_left, upper), true)
                     if fact_left.as_ref() == left =>
                 {
-                    self.has_condition_fact(
-                        ConditionTerm::signed_less_equal(upper.as_ref().clone(), right.clone()),
-                        true,
-                    )
+                    self.decide(&ConditionTerm::signed_less_equal(
+                        upper.as_ref().clone(),
+                        right.clone(),
+                    )) == Some(true)
                 }
                 _ => false,
             })
+    }
+
+    fn has_lower_bound_above(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+        self.condition_facts
+            .iter()
+            .any(|(fact, value)| match (fact, value) {
+                (ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, lower), true)
+                    if fact_left.as_ref() == left =>
+                {
+                    self.decide(&ConditionTerm::signed_greater_than(
+                        lower.as_ref().clone(),
+                        right.clone(),
+                    )) == Some(true)
+                }
+                (ConditionTerm::Bitvector32SignedLessEqual(lower, fact_left), true)
+                    if fact_left.as_ref() == left =>
+                {
+                    self.decide(&ConditionTerm::signed_greater_than(
+                        lower.as_ref().clone(),
+                        right.clone(),
+                    )) == Some(true)
+                }
+                _ => false,
+            })
+    }
+
+    fn has_lower_bound_at_or_above(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+        self.condition_facts
+            .iter()
+            .any(|(fact, value)| match (fact, value) {
+                (ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, lower), true)
+                    if fact_left.as_ref() == left =>
+                {
+                    self.decide(&ConditionTerm::signed_greater_equal(
+                        lower.as_ref().clone(),
+                        right.clone(),
+                    )) == Some(true)
+                }
+                (ConditionTerm::Bitvector32SignedLessEqual(lower, fact_left), true)
+                    if fact_left.as_ref() == left =>
+                {
+                    self.decide(&ConditionTerm::signed_greater_equal(
+                        lower.as_ref().clone(),
+                        right.clone(),
+                    )) == Some(true)
+                }
+                _ => false,
+            })
+    }
+
+    fn has_add_const_lower_bound_above(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        let Some((base, addend)) = left.add_const_parts() else {
+            return false;
+        };
+        self.condition_facts
+            .iter()
+            .any(|(fact, value)| match (fact, value) {
+                (ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, lower), true)
+                    if fact_left.as_ref() == &base =>
+                {
+                    let Some(lower) = signed_const_add(lower, addend) else {
+                        return false;
+                    };
+                    self.decide(&ConditionTerm::signed_greater_than(lower, right.clone()))
+                        == Some(true)
+                }
+                (ConditionTerm::Bitvector32SignedLessEqual(lower, fact_left), true)
+                    if fact_left.as_ref() == &base =>
+                {
+                    let Some(lower) = signed_const_add(lower, addend) else {
+                        return false;
+                    };
+                    self.decide(&ConditionTerm::signed_greater_than(lower, right.clone()))
+                        == Some(true)
+                }
+                _ => false,
+            })
+    }
+
+    fn has_add_const_lower_bound_at_or_above(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        let Some((base, addend)) = left.add_const_parts() else {
+            return false;
+        };
+        self.condition_facts
+            .iter()
+            .any(|(fact, value)| match (fact, value) {
+                (ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, lower), true)
+                    if fact_left.as_ref() == &base =>
+                {
+                    let Some(lower) = signed_const_add(lower, addend) else {
+                        return false;
+                    };
+                    self.decide(&ConditionTerm::signed_greater_equal(lower, right.clone()))
+                        == Some(true)
+                }
+                (ConditionTerm::Bitvector32SignedLessEqual(lower, fact_left), true)
+                    if fact_left.as_ref() == &base =>
+                {
+                    let Some(lower) = signed_const_add(lower, addend) else {
+                        return false;
+                    };
+                    self.decide(&ConditionTerm::signed_greater_equal(lower, right.clone()))
+                        == Some(true)
+                }
+                _ => false,
+            })
+    }
+
+    fn memory_loads_proven_equal(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+        let (
+            Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+            Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+        ) = (left, right)
+        else {
+            return false;
+        };
+        if left_pointer != right_pointer {
+            return false;
+        }
+
+        self.prop_facts.iter().any(|proposition| {
+            let Proposition::CMemoryWritesOnly {
+                before,
+                after,
+                pointers,
+            } = proposition
+            else {
+                return false;
+            };
+            let matches_order =
+                memories_match_for_pointer_load(before, right_memory.as_ref(), left_pointer)
+                    && memories_match_for_pointer_load(after, left_memory.as_ref(), left_pointer);
+            let matches_reverse =
+                memories_match_for_pointer_load(before, left_memory.as_ref(), left_pointer)
+                    && memories_match_for_pointer_load(after, right_memory.as_ref(), left_pointer);
+            (matches_order || matches_reverse)
+                && pointers
+                    .iter()
+                    .all(|pointer| pointers_proven_distinct(pointer, left_pointer, self))
+        })
     }
 
     fn decide_from_overflow_facts(&self, condition: &ConditionTerm) -> Option<bool> {
@@ -1267,7 +1512,7 @@ impl Assumptions {
                 return false;
             };
 
-            range_memory == memory
+            memory_range_still_available(range_memory, memory, base)
                 && self.proves_access_from_valid_range(base, bytes, pointer, byte_width)
         })
     }
@@ -1300,7 +1545,15 @@ impl Assumptions {
 
 impl ProofObligation {
     pub fn new(proposition: Proposition) -> Self {
-        Self { proposition }
+        Self {
+            proposition,
+            context: None,
+        }
+    }
+
+    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.context = Some(context.into());
+        self
     }
 
     pub fn condition(condition: ConditionTerm, value: bool) -> Self {
@@ -1317,6 +1570,10 @@ impl ProofObligation {
 
     pub fn proposition(&self) -> &Proposition {
         &self.proposition
+    }
+
+    pub fn context(&self) -> Option<&str> {
+        self.context.as_deref()
     }
 }
 
@@ -1457,7 +1714,17 @@ pub fn c_declare(name: impl Into<String>, c_type: CType) -> CStatement {
 }
 
 pub fn c_assert(condition: CExpression) -> CStatement {
-    CStatement::Assert { condition }
+    CStatement::Assert {
+        condition,
+        label: None,
+    }
+}
+
+pub fn c_labeled_assert(condition: CExpression, label: impl Into<String>) -> CStatement {
+    CStatement::Assert {
+        condition,
+        label: Some(label.into()),
+    }
 }
 
 pub fn c_seq(first: CStatement, second: CStatement) -> CStatement {
@@ -1489,9 +1756,19 @@ pub fn c_while(
     invariant: Vec<Proposition>,
     body: CStatement,
 ) -> CStatement {
+    c_while_with_invariant_checks(condition, invariant, Vec::new(), body)
+}
+
+pub fn c_while_with_invariant_checks(
+    condition: CExpression,
+    invariant: Vec<Proposition>,
+    invariant_checks: Vec<CLoopInvariantCheck>,
+    body: CStatement,
+) -> CStatement {
     CStatement::While {
         condition,
         invariant,
+        invariant_checks,
         body: Box::new(body),
     }
 }
@@ -1924,6 +2201,98 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
     SymbolicCExecution { paths, limit: None }
 }
 
+pub fn prove_symbolic_c_function_verification_paths_with_environment(
+    state: CState,
+    function: CFunction,
+    arguments: Vec<CExpression>,
+    assumptions: Assumptions,
+    environment: CFunctionEnvironment,
+) -> SymbolicCExecution {
+    prove_symbolic_c_function_verification_paths_with_environment_and_budget(
+        state,
+        function,
+        arguments,
+        assumptions,
+        environment,
+        ExecutionBudget::default(),
+    )
+}
+
+pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
+    state: CState,
+    function: CFunction,
+    arguments: Vec<CExpression>,
+    assumptions: Assumptions,
+    environment: CFunctionEnvironment,
+    mut budget: ExecutionBudget,
+) -> SymbolicCExecution {
+    let mut variables = VerificationVariableGenerator::new(1_000_000);
+    let paths = match execute_c_function_verification_paths(
+        &state,
+        &function,
+        &arguments,
+        &assumptions,
+        &environment,
+        &mut budget,
+        &mut variables,
+    ) {
+        Ok(paths) => paths,
+        Err(limit) => {
+            return SymbolicCExecution {
+                paths: Vec::new(),
+                limit: Some(limit),
+            };
+        }
+    };
+    let paths = paths
+        .into_iter()
+        .map(|path| {
+            let proposition = Proposition::CFunctionExecutes {
+                state: state.clone(),
+                function: function.clone(),
+                arguments: arguments.clone(),
+                outcome: path.outcome,
+            };
+            let theorem = Theorem::new(wrap_proof_facts(
+                proposition,
+                &assumptions,
+                &path.facts,
+                &path.obligations,
+            ));
+            SymbolicCExecutionPath {
+                facts: path.facts,
+                obligations: path.obligations,
+                theorem,
+            }
+        })
+        .collect();
+
+    SymbolicCExecution { paths, limit: None }
+}
+
+pub fn prove_c_function_satisfies_specification_from_symbolic_path(
+    function: CFunction,
+    specification: CFunctionSpecification,
+    assumptions: Assumptions,
+    facts: &[PathFact],
+    obligations: &[ProofObligation],
+) -> Theorem {
+    let requires = specification.requires().to_vec();
+    let proposition = requires.iter().rev().fold(
+        Proposition::CFunctionSatisfiesSpecification {
+            function,
+            specification,
+        },
+        |body, requirement| Proposition::Implies(Box::new(requirement.clone()), Box::new(body)),
+    );
+    Theorem::new(wrap_proof_facts(
+        proposition,
+        &assumptions,
+        facts,
+        obligations,
+    ))
+}
+
 pub fn prove_c_function_satisfies_specification(
     function: CFunction,
     specification: CFunctionSpecification,
@@ -2331,6 +2700,40 @@ fn pointers_proven_distinct(left: &Pointer, right: &Pointer, assumptions: &Assum
         )) == Some(false)
 }
 
+fn memories_match_for_pointer_load(left: &CMemory, right: &CMemory, pointer: &Pointer) -> bool {
+    if left == right {
+        return true;
+    }
+    if pointer.block.starts_with("local:") {
+        return false;
+    }
+
+    left.blocks
+        .iter()
+        .filter(|(block, _)| !block.starts_with("local:"))
+        .eq(right
+            .blocks
+            .iter()
+            .filter(|(block, _)| !block.starts_with("local:")))
+        && left
+            .cells
+            .iter()
+            .filter(|(cell_pointer, _)| !cell_pointer.block.starts_with("local:"))
+            .eq(right
+                .cells
+                .iter()
+                .filter(|(cell_pointer, _)| !cell_pointer.block.starts_with("local:")))
+}
+
+fn memory_range_still_available(
+    range_memory: &CMemory,
+    current_memory: &CMemory,
+    base: &Pointer,
+) -> bool {
+    range_memory == current_memory
+        || range_memory.has_block(&base.block) == current_memory.has_block(&base.block)
+}
+
 fn forall_int32(var: Variable, body: Proposition) -> Proposition {
     Proposition::ForAll {
         var,
@@ -2436,6 +2839,12 @@ fn int32_element_count_from_bytes(bytes: &Bitvector32Term) -> Option<Bitvector32
     }
 }
 
+fn signed_const_add(term: &Bitvector32Term, addend: u32) -> Option<Bitvector32Term> {
+    let addend = i32::try_from(addend).ok()?;
+    let sum = (term.as_const()? as i32).checked_add(addend)?;
+    Some(Bitvector32Term::Constant(sum as u32))
+}
+
 fn add_path_fact(
     facts: &mut Vec<PathFact>,
     assumptions: &Assumptions,
@@ -2488,8 +2897,17 @@ fn add_proof_obligation(
     assumptions: &Assumptions,
     proposition: Proposition,
 ) -> Option<()> {
+    add_proof_obligation_with_context(obligations, assumptions, proposition, None)
+}
+
+fn add_proof_obligation_with_context(
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &Assumptions,
+    proposition: Proposition,
+    context: Option<&str>,
+) -> Option<()> {
     if let Proposition::ConditionIs(condition, value) = proposition {
-        return add_condition_obligation(obligations, assumptions, condition, value);
+        return add_condition_obligation(obligations, assumptions, condition, value, context);
     }
 
     if assumptions.proves(&proposition)
@@ -2500,7 +2918,11 @@ fn add_proof_obligation(
         return Some(());
     }
 
-    obligations.push(ProofObligation::new(proposition));
+    let obligation = ProofObligation::new(proposition);
+    obligations.push(match context {
+        Some(context) => obligation.with_context(context),
+        None => obligation,
+    });
     Some(())
 }
 
@@ -2509,6 +2931,7 @@ fn add_condition_obligation(
     assumptions: &Assumptions,
     condition: ConditionTerm,
     value: bool,
+    context: Option<&str>,
 ) -> Option<()> {
     if let Some(known) = assumptions.decide(&condition) {
         return (known == value).then_some(());
@@ -2529,7 +2952,11 @@ fn add_condition_obligation(
         return (existing == value).then_some(());
     }
 
-    obligations.push(ProofObligation::condition(condition, value));
+    let obligation = ProofObligation::condition(condition, value);
+    obligations.push(match context {
+        Some(context) => obligation.with_context(context),
+        None => obligation,
+    });
     Some(())
 }
 
@@ -2540,10 +2967,11 @@ fn merge_obligations(
 ) -> Option<Vec<ProofObligation>> {
     let mut obligations = left.to_vec();
     for obligation in right {
-        add_proof_obligation(
+        add_proof_obligation_with_context(
             &mut obligations,
             assumptions,
             obligation.proposition().clone(),
+            obligation.context(),
         )?;
     }
     Some(obligations)
@@ -4124,8 +4552,8 @@ fn execute_c_statement_paths(
             environment,
             budget,
         )?,
-        CStatement::Assert { condition } => {
-            execute_c_assert_paths(state, condition, assumptions, budget)?
+        CStatement::Assert { condition, label } => {
+            execute_c_assert_paths(state, condition, label.as_deref(), assumptions, budget)?
         }
         CStatement::Seq(first, second) => {
             let mut paths = Vec::new();
@@ -4239,6 +4667,7 @@ fn execute_c_statement_paths(
         CStatement::While {
             condition,
             invariant,
+            invariant_checks: _,
             body,
         } => execute_c_while_paths(
             state,
@@ -4257,6 +4686,7 @@ fn execute_c_statement_paths(
 fn execute_c_assert_paths(
     state: &CState,
     condition: &CExpression,
+    label: Option<&str>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
@@ -4269,7 +4699,7 @@ fn execute_c_assert_paths(
         } = condition_path;
         match outcome {
             CExpressionOutcome::Value(value) => {
-                let assertion_obligation = assertion_truthiness_obligation(&value);
+                let assertion_obligation = assertion_truthiness_obligation(&value, label);
                 for truthiness_path in c_truthiness_paths(value, facts, obligations, assumptions) {
                     let mut obligations = truthiness_path.obligations;
                     if !truthiness_path.is_true {
@@ -4301,11 +4731,15 @@ fn execute_c_assert_paths(
     Ok(paths)
 }
 
-fn assertion_truthiness_obligation(value: &CValue) -> ProofObligation {
-    ProofObligation::new(Proposition::Equal(
+fn assertion_truthiness_obligation(value: &CValue, label: Option<&str>) -> ProofObligation {
+    let obligation = ProofObligation::new(Proposition::Equal(
         Term::CValue(value.clone()),
         Term::CValue(int32(1)),
-    ))
+    ));
+    match label {
+        Some(label) => obligation.with_context(label),
+        None => obligation,
+    }
 }
 
 fn execute_c_while_paths(
@@ -4563,6 +4997,558 @@ fn execute_c_statement_paths_with_prefix(
     Ok(paths)
 }
 
+fn execute_c_statement_verification_paths(
+    state: &CState,
+    statement: &CStatement,
+    assumptions: &Assumptions,
+    environment: &CFunctionEnvironment,
+    budget: &mut ExecutionBudget,
+    variables: &mut VerificationVariableGenerator,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    budget.consume_statement_step()?;
+    let paths = match statement {
+        CStatement::Seq(first, second) => {
+            let mut paths = Vec::new();
+            for first_path in execute_c_statement_verification_paths(
+                state,
+                first,
+                assumptions,
+                environment,
+                budget,
+                variables,
+            )? {
+                match first_path.outcome {
+                    CStatementOutcome::Normal(state) => {
+                        paths.extend(execute_c_statement_verification_paths_with_prefix(
+                            &state,
+                            second,
+                            assumptions,
+                            environment,
+                            &first_path.facts,
+                            &first_path.obligations,
+                            budget,
+                            variables,
+                        )?);
+                    }
+                    outcome @ (CStatementOutcome::Return { .. }
+                    | CStatementOutcome::UndefinedBehavior(_)
+                    | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
+                        outcome,
+                        facts: first_path.facts,
+                        obligations: first_path.obligations,
+                    }),
+                }
+            }
+            paths
+        }
+        CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let mut paths = Vec::new();
+            for condition_path in
+                evaluate_c_expression_paths(state, condition, assumptions, budget)?
+            {
+                let CExpressionPath {
+                    outcome,
+                    facts,
+                    obligations,
+                } = condition_path;
+                match outcome {
+                    CExpressionOutcome::Value(value) => {
+                        for truthiness_path in
+                            c_truthiness_paths(value, facts, obligations, assumptions)
+                        {
+                            let branch = if truthiness_path.is_true {
+                                then_branch
+                            } else {
+                                else_branch
+                            };
+                            paths.extend(execute_c_statement_verification_paths_with_prefix(
+                                state,
+                                branch,
+                                assumptions,
+                                environment,
+                                &truthiness_path.facts,
+                                &truthiness_path.obligations,
+                                budget,
+                                variables,
+                            )?);
+                        }
+                    }
+                    CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                        paths.push(CStatementExecutionPath {
+                            outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+                            facts,
+                            obligations,
+                        })
+                    }
+                    CExpressionOutcome::RuntimeError(error) => {
+                        paths.push(CStatementExecutionPath {
+                            outcome: CStatementOutcome::RuntimeError(error),
+                            facts,
+                            obligations,
+                        })
+                    }
+                }
+            }
+            paths
+        }
+        CStatement::While {
+            condition,
+            invariant,
+            invariant_checks,
+            body,
+        } if !invariant_checks.is_empty() => execute_c_while_verification_paths(
+            state,
+            condition,
+            invariant,
+            invariant_checks,
+            body,
+            assumptions,
+            environment,
+            budget,
+            variables,
+        )?,
+        _ => execute_c_statement_paths(state, statement, assumptions, environment, budget)?,
+    };
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn execute_c_statement_verification_paths_with_prefix(
+    state: &CState,
+    statement: &CStatement,
+    assumptions: &Assumptions,
+    environment: &CFunctionEnvironment,
+    prefix_facts: &[PathFact],
+    prefix_obligations: &[ProofObligation],
+    budget: &mut ExecutionBudget,
+    variables: &mut VerificationVariableGenerator,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let effective_assumptions =
+        assumptions_with_path_context(assumptions, prefix_facts, prefix_obligations);
+    let paths = execute_c_statement_verification_paths(
+        state,
+        statement,
+        &effective_assumptions,
+        environment,
+        budget,
+        variables,
+    )?
+    .into_iter()
+    .filter_map(|path| {
+        let (facts, obligations) = merge_path_facts_and_obligations(
+            prefix_facts,
+            prefix_obligations,
+            &path.facts,
+            &path.obligations,
+            assumptions,
+        )?;
+        Some(CStatementExecutionPath {
+            outcome: path.outcome,
+            facts,
+            obligations,
+        })
+    })
+    .collect::<Vec<_>>();
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn execute_c_while_verification_paths(
+    state: &CState,
+    condition: &CExpression,
+    invariant: &[Proposition],
+    invariant_checks: &[CLoopInvariantCheck],
+    body: &CStatement,
+    assumptions: &Assumptions,
+    environment: &CFunctionEnvironment,
+    budget: &mut ExecutionBudget,
+    variables: &mut VerificationVariableGenerator,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let mut base_obligations = Vec::new();
+    for proposition in invariant {
+        if add_proof_obligation(&mut base_obligations, assumptions, proposition.clone()).is_none() {
+            return Ok(Vec::new());
+        }
+    }
+
+    let entry_obligations = collect_invariant_check_obligations(
+        state,
+        invariant_checks,
+        InvariantPhase::Entry,
+        assumptions,
+        budget,
+    )?;
+    let top_state = havoc_loop_modified_locals(state, body, variables);
+    let preservation_summary = collect_loop_preservation_summary(
+        &top_state,
+        condition,
+        invariant_checks,
+        body,
+        assumptions,
+        environment,
+        budget,
+        variables,
+    )?;
+    let base_obligations = merge_obligations(&base_obligations, &entry_obligations, assumptions)
+        .and_then(|obligations| {
+            merge_obligations(&obligations, &preservation_summary.obligations, assumptions)
+        });
+    let Some(base_obligations) = base_obligations else {
+        return Ok(Vec::new());
+    };
+
+    let mut paths = Vec::new();
+    for (invariant_facts, invariant_obligations) in assume_invariant_checks(
+        &top_state,
+        invariant_checks,
+        assumptions,
+        &[],
+        &base_obligations,
+        budget,
+    )? {
+        for (mut facts, obligations) in assume_condition_truthiness(
+            &top_state,
+            condition,
+            assumptions,
+            &invariant_facts,
+            &invariant_obligations,
+            false,
+            budget,
+        )? {
+            add_path_fact(
+                &mut facts,
+                assumptions,
+                Proposition::CMemoryWritesOnly {
+                    before: state.memory.clone(),
+                    after: top_state.memory.clone(),
+                    pointers: preservation_summary.written_pointers.clone(),
+                },
+            )
+            .expect("loop frame fact should be consistent");
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::Normal(top_state.clone()),
+                facts,
+                obligations,
+            });
+        }
+    }
+    if paths.is_empty() {
+        let mut obligations = base_obligations;
+        obligations.push(
+            ProofObligation::new(false_equals_true_proposition())
+                .with_context("loop exit reachability"),
+        );
+        paths.push(CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(top_state.clone()),
+            facts: Vec::new(),
+            obligations,
+        });
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InvariantPhase {
+    Entry,
+    Preservation,
+}
+
+fn invariant_context(check: &CLoopInvariantCheck, phase: InvariantPhase) -> Option<&str> {
+    match phase {
+        InvariantPhase::Entry => check.entry_context(),
+        InvariantPhase::Preservation => check.preservation_context(),
+    }
+}
+
+fn collect_invariant_check_obligations(
+    state: &CState,
+    invariant_checks: &[CLoopInvariantCheck],
+    phase: InvariantPhase,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<ProofObligation>> {
+    let mut contexts = vec![(Vec::new(), Vec::new())];
+    let mut all_obligations = Vec::new();
+    for check in invariant_checks {
+        let mut next_contexts = Vec::new();
+        for (facts, obligations) in contexts {
+            let effective_assumptions =
+                assumptions_with_path_context(assumptions, &facts, &obligations);
+            for path in execute_c_assert_paths(
+                state,
+                check.condition(),
+                invariant_context(check, phase),
+                &effective_assumptions,
+                budget,
+            )? {
+                let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                    &facts,
+                    &obligations,
+                    &path.facts,
+                    &path.obligations,
+                    assumptions,
+                ) else {
+                    continue;
+                };
+                if matches!(path.outcome, CStatementOutcome::Normal(_)) {
+                    all_obligations =
+                        merge_obligations(&all_obligations, &obligations, assumptions)
+                            .expect("invariant obligations should remain consistent");
+                    next_contexts.push((facts, obligations));
+                } else {
+                    let mut obligations = obligations;
+                    obligations.push(invariant_failure_obligation(invariant_context(
+                        check, phase,
+                    )));
+                    all_obligations =
+                        merge_obligations(&all_obligations, &obligations, assumptions)
+                            .expect("invariant failure obligation should remain consistent");
+                }
+            }
+        }
+        contexts = next_contexts;
+    }
+    Ok(all_obligations)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LoopPreservationSummary {
+    obligations: Vec<ProofObligation>,
+    written_pointers: Vec<Pointer>,
+}
+
+fn collect_loop_preservation_summary(
+    top_state: &CState,
+    condition: &CExpression,
+    invariant_checks: &[CLoopInvariantCheck],
+    body: &CStatement,
+    assumptions: &Assumptions,
+    environment: &CFunctionEnvironment,
+    budget: &mut ExecutionBudget,
+    variables: &mut VerificationVariableGenerator,
+) -> ExecutionResult<LoopPreservationSummary> {
+    let mut obligations = Vec::new();
+    let mut written_pointers = Vec::new();
+    for (invariant_facts, invariant_obligations) in
+        assume_invariant_checks(top_state, invariant_checks, assumptions, &[], &[], budget)?
+    {
+        for (condition_facts, condition_obligations) in assume_condition_truthiness(
+            top_state,
+            condition,
+            assumptions,
+            &invariant_facts,
+            &invariant_obligations,
+            true,
+            budget,
+        )? {
+            for body_path in execute_c_statement_verification_paths_with_prefix(
+                top_state,
+                body,
+                assumptions,
+                environment,
+                &condition_facts,
+                &condition_obligations,
+                budget,
+                variables,
+            )? {
+                match body_path.outcome {
+                    CStatementOutcome::Normal(next_state) => {
+                        collect_written_pointers_from_memory_delta(
+                            top_state.memory(),
+                            next_state.memory(),
+                            &mut written_pointers,
+                        );
+                        let path_obligations = collect_invariant_check_obligations(
+                            &next_state,
+                            invariant_checks,
+                            InvariantPhase::Preservation,
+                            &assumptions_with_path_context(
+                                assumptions,
+                                &body_path.facts,
+                                &body_path.obligations,
+                            ),
+                            budget,
+                        )?;
+                        obligations =
+                            merge_obligations(&obligations, &body_path.obligations, assumptions)
+                                .and_then(|obligations| {
+                                    merge_obligations(&obligations, &path_obligations, assumptions)
+                                })
+                                .expect("loop preservation obligations should remain consistent");
+                    }
+                    CStatementOutcome::Return { .. }
+                    | CStatementOutcome::UndefinedBehavior(_)
+                    | CStatementOutcome::RuntimeError(_) => {
+                        let mut path_obligations = body_path.obligations;
+                        path_obligations.push(
+                            ProofObligation::new(false_equals_true_proposition())
+                                .with_context("loop preservation body safety"),
+                        );
+                        obligations =
+                            merge_obligations(&obligations, &path_obligations, assumptions)
+                                .expect("loop body safety obligations should remain consistent");
+                    }
+                }
+            }
+        }
+    }
+    Ok(LoopPreservationSummary {
+        obligations,
+        written_pointers,
+    })
+}
+
+fn collect_written_pointers_from_memory_delta(
+    before: &CMemory,
+    after: &CMemory,
+    written_pointers: &mut Vec<Pointer>,
+) {
+    for (pointer, value) in &after.cells {
+        if pointer.block.starts_with("local:") || before.cells.get(pointer) == Some(value) {
+            continue;
+        }
+        if !written_pointers.contains(pointer) {
+            written_pointers.push(pointer.clone());
+        }
+    }
+}
+
+fn invariant_failure_obligation(context: Option<&str>) -> ProofObligation {
+    let obligation = ProofObligation::new(false_equals_true_proposition());
+    match context {
+        Some(context) => obligation.with_context(context),
+        None => obligation,
+    }
+}
+
+fn false_equals_true_proposition() -> Proposition {
+    Proposition::Equal(
+        Term::Condition(ConditionTerm::Constant(false)),
+        Term::Condition(ConditionTerm::Constant(true)),
+    )
+}
+
+fn assume_invariant_checks(
+    state: &CState,
+    invariant_checks: &[CLoopInvariantCheck],
+    assumptions: &Assumptions,
+    prefix_facts: &[PathFact],
+    prefix_obligations: &[ProofObligation],
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<(Vec<PathFact>, Vec<ProofObligation>)>> {
+    let mut contexts = vec![(prefix_facts.to_vec(), prefix_obligations.to_vec())];
+    for check in invariant_checks {
+        let mut next_contexts = Vec::new();
+        for (facts, obligations) in contexts {
+            next_contexts.extend(assume_condition_truthiness(
+                state,
+                check.condition(),
+                assumptions,
+                &facts,
+                &obligations,
+                true,
+                budget,
+            )?);
+        }
+        contexts = next_contexts;
+    }
+    Ok(contexts)
+}
+
+fn assume_condition_truthiness(
+    state: &CState,
+    condition: &CExpression,
+    assumptions: &Assumptions,
+    prefix_facts: &[PathFact],
+    prefix_obligations: &[ProofObligation],
+    desired_truthiness: bool,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<(Vec<PathFact>, Vec<ProofObligation>)>> {
+    let effective_assumptions =
+        assumptions_with_path_context(assumptions, prefix_facts, prefix_obligations);
+    let mut contexts = Vec::new();
+    for condition_path in
+        evaluate_c_expression_paths(state, condition, &effective_assumptions, budget)?
+    {
+        let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            prefix_facts,
+            prefix_obligations,
+            &condition_path.facts,
+            &condition_path.obligations,
+            assumptions,
+        ) else {
+            continue;
+        };
+        let CExpressionOutcome::Value(value) = condition_path.outcome else {
+            continue;
+        };
+        for truthiness_path in c_truthiness_paths(value, facts, obligations, assumptions) {
+            if truthiness_path.is_true == desired_truthiness {
+                contexts.push((truthiness_path.facts, truthiness_path.obligations));
+            }
+        }
+    }
+    Ok(contexts)
+}
+
+fn havoc_loop_modified_locals(
+    state: &CState,
+    body: &CStatement,
+    variables: &mut VerificationVariableGenerator,
+) -> CState {
+    let mut state = state.clone();
+    let mut names = BTreeSet::new();
+    collect_loop_modified_locals(body, &mut names);
+    for name in names {
+        let Some(value) = state.locals.get(&name) else {
+            continue;
+        };
+        let value = match value.c_type() {
+            CType::Int32 => int32(Bitvector32Term::Variable(variables.next())),
+            CType::Int32Pointer => continue,
+        };
+        sync_stack_local(&mut state, &name, &value);
+        state.locals.set(name, value);
+    }
+    state
+}
+
+fn collect_loop_modified_locals(statement: &CStatement, names: &mut BTreeSet<String>) {
+    match statement {
+        CStatement::Declare { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Return(_)
+        | CStatement::Store { .. } => {}
+        CStatement::Assign { name, .. } => {
+            names.insert(name.clone());
+        }
+        CStatement::CallAssign { target, .. } => {
+            names.insert(target.clone());
+        }
+        CStatement::Seq(first, second) => {
+            collect_loop_modified_locals(first, names);
+            collect_loop_modified_locals(second, names);
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_loop_modified_locals(then_branch, names);
+            collect_loop_modified_locals(else_branch, names);
+        }
+        CStatement::While { body, .. } => {
+            collect_loop_modified_locals(body, names);
+        }
+    }
+}
+
 fn execute_c_function_paths(
     caller_state: &CState,
     function: &CFunction,
@@ -4617,6 +5603,85 @@ fn execute_c_function_paths(
             &body_assumptions,
             environment,
             budget,
+        )? {
+            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &arguments_path.facts,
+                &arguments_path.obligations,
+                &body_path.facts,
+                &body_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+
+            paths.push(CFunctionPath {
+                outcome: function_outcome_from_body(caller_state, function, body_path.outcome),
+                facts,
+                obligations,
+            });
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn execute_c_function_verification_paths(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    assumptions: &Assumptions,
+    environment: &CFunctionEnvironment,
+    budget: &mut ExecutionBudget,
+    variables: &mut VerificationVariableGenerator,
+) -> ExecutionResult<Vec<CFunctionPath>> {
+    budget.consume_function_call()?;
+    if arguments.len() != function.parameters.len() {
+        return Ok(vec![CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::WrongArity {
+                expected: function.parameters.len(),
+                actual: arguments.len(),
+            }),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }]);
+    }
+
+    let mut paths = Vec::new();
+    for arguments_path in evaluate_c_arguments_paths(caller_state, arguments, assumptions, budget)?
+    {
+        if let Some(outcome) = arguments_path.outcome {
+            paths.push(CFunctionPath {
+                outcome,
+                facts: arguments_path.facts,
+                obligations: arguments_path.obligations,
+            });
+            continue;
+        }
+
+        let Some(callee_state) =
+            bind_c_function_arguments(caller_state, function, &arguments_path.values)
+        else {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts: arguments_path.facts,
+                obligations: arguments_path.obligations,
+            });
+            continue;
+        };
+
+        let body_assumptions = assumptions_with_path_context(
+            assumptions,
+            &arguments_path.facts,
+            &arguments_path.obligations,
+        );
+        for body_path in execute_c_statement_verification_paths(
+            &callee_state,
+            function.body(),
+            &body_assumptions,
+            environment,
+            budget,
+            variables,
         )? {
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &arguments_path.facts,
@@ -6394,6 +7459,74 @@ mod tests {
         .expect("interval facts should prove i + 1 bounds and no signed overflow");
 
         assert!(matches!(theorem.proposition(), Proposition::Implies(_, _)));
+    }
+
+    #[test]
+    fn interval_arithmetic_uses_lower_bound_for_incremented_values() {
+        let i = Variable(73);
+        let i_bits = Bitvector32Term::Variable(i);
+        let incremented = Bitvector32Term::Add(
+            Box::new(i_bits.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        );
+        let assumptions = Assumptions::new().assume_condition(
+            ConditionTerm::signed_greater_equal(i_bits, Bitvector32Term::Constant(1)),
+            true,
+        );
+
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(incremented.clone(), Bitvector32Term::Constant(1),),
+            true,
+        )));
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_greater_than(incremented, Bitvector32Term::Constant(0)),
+            true,
+        )));
+    }
+
+    #[test]
+    fn writes_only_frame_proves_unwritten_load_equal_across_stack_locals() {
+        let i = Variable(74);
+        let i_bits = Bitvector32Term::Variable(i);
+        let old_memory = CMemory::new();
+        let loop_entry_memory = CMemory::new()
+            .with_block("local:i", 4)
+            .store(CMemory::local_pointer("i"), int32(1));
+        let loop_exit_memory = CMemory::new()
+            .with_block("local:i", 4)
+            .store(CMemory::local_pointer("i"), int32(i_bits.clone()));
+        let first_cell = Pointer {
+            block: "p".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let written_cell = Pointer {
+            block: "p".to_string(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(i_bits.clone()),
+                byte_width: 4,
+            },
+        };
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(i_bits, Bitvector32Term::Constant(1)),
+                true,
+            )
+            .assume_proposition(Proposition::CMemoryWritesOnly {
+                before: loop_entry_memory,
+                after: loop_exit_memory.clone(),
+                pointers: vec![written_cell],
+            });
+
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::MemoryLoad(
+                    Box::new(loop_exit_memory),
+                    Box::new(first_cell.clone()),
+                ),
+                Bitvector32Term::MemoryLoad(Box::new(old_memory), Box::new(first_cell)),
+            ),
+            true,
+        )));
     }
 
     #[test]

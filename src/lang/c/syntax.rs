@@ -327,6 +327,7 @@ impl Parser {
         loop {
             let c_type = self.parse_type()?;
             let name = self.expect_ident("parameter name")?;
+            let c_type = self.parse_parameter_array_suffix(c_type)?;
             parameters.push(C0Parameter { c_type, name });
 
             if self.peek() != Some(&Token::Comma) {
@@ -353,6 +354,24 @@ impl Parser {
                 "expected type `int32`, got end of input",
             )),
         }
+    }
+
+    fn parse_parameter_array_suffix(&mut self, c_type: C0Type) -> Result<C0Type, C0SyntaxError> {
+        if self.peek() != Some(&Token::LBracket) {
+            return Ok(c_type);
+        }
+        if c_type != C0Type::Int32 {
+            return Err(C0SyntaxError::new(
+                "only `int32 name[]` array parameters are supported",
+            ));
+        }
+
+        self.position += 1;
+        if matches!(self.peek(), Some(Token::Number(_))) {
+            self.position += 1;
+        }
+        self.expect(Token::RBracket)?;
+        Ok(C0Type::Int32Pointer)
     }
 
     fn parse_block_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {

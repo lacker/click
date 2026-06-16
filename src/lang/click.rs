@@ -10,11 +10,13 @@ use std::fmt;
 use crate::lang::c::syntax::{self, C0Expression, C0Type};
 use crate::megakernel::{
     Assumptions, Bitvector32Term, CExpression, CFunction, CFunctionEnvironment, CFunctionOutcome,
-    CFunctionSpecification, CMemory, CState, CStatement, CValue, ConditionTerm, Pointer,
-    PointerOffsetTerm, Proposition, Theorem, Variable, c_assert, c_function,
-    c_function_specification, c_pointer_value, c_seq,
+    CFunctionSpecification, CLoopInvariantCheck, CMemory, CState, CStatement, CValue,
+    ConditionTerm, PathFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition, Theorem,
+    Variable, c_function, c_function_specification, c_labeled_assert, c_pointer_value, c_seq,
+    c_while_with_invariant_checks, prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
+    prove_symbolic_c_function_verification_paths_with_environment,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,8 +48,17 @@ pub struct FunctionParameter {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Requirement {
-    ValidRange { name: String, bytes: u32 },
+    ValidRange { name: String, bytes: RangeBytes },
     Condition(CExpression),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RangeBytes {
+    Constant(u32),
+    Parameter(String),
+    Add(Box<RangeBytes>, Box<RangeBytes>),
+    Subtract(Box<RangeBytes>, Box<RangeBytes>),
+    Multiply(Box<RangeBytes>, Box<RangeBytes>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -301,6 +312,39 @@ pub fn verify_c0_sources(
                 parsed_function.parameters(),
             )?;
             let assumptions = assumptions_from_propositions(&requirement_propositions);
+            let vc_execution = prove_symbolic_c_function_verification_paths_with_environment(
+                state.clone(),
+                function.clone(),
+                arguments.clone(),
+                assumptions.clone(),
+                function_environment.clone(),
+            );
+            if let Some(error) =
+                execution_obligation_error(&vc_execution, &ensure_label, &requirement_propositions)
+            {
+                return Err(error);
+            }
+            match prove_ensure_from_execution(
+                &vc_execution,
+                AutoExecutionKind::LoopVerification,
+                source_path,
+                &function_block,
+                ensure_index,
+                ensure_clause,
+                &ensure_label,
+                parsed_function.parameters(),
+                &function,
+                &state,
+                &arguments,
+                &requirement_propositions,
+            ) {
+                Ok(theorems) => {
+                    verified.extend(theorems);
+                    continue;
+                }
+                Err(_) => {}
+            }
+
             let execution = prove_symbolic_c_function_execution_paths_with_environment(
                 state.clone(),
                 function.clone(),
@@ -308,75 +352,164 @@ pub fn verify_c0_sources(
                 assumptions,
                 function_environment.clone(),
             );
-            if let Some(limit) = execution.limit() {
+            if let Some(error) =
+                execution_obligation_error(&execution, &ensure_label, &requirement_propositions)
+            {
+                return Err(error);
+            }
+            let theorems = prove_ensure_from_execution(
+                &execution,
+                AutoExecutionKind::BoundedExecution {
+                    environment: &function_environment,
+                },
+                source_path,
+                &function_block,
+                ensure_index,
+                ensure_clause,
+                &ensure_label,
+                parsed_function.parameters(),
+                &function,
+                &state,
+                &arguments,
+                &requirement_propositions,
+            )?;
+            verified.extend(theorems);
+        }
+    }
+
+    Ok(verified)
+}
+
+enum AutoExecutionKind<'a> {
+    LoopVerification,
+    BoundedExecution {
+        environment: &'a CFunctionEnvironment,
+    },
+}
+
+fn execution_obligation_error(
+    execution: &crate::megakernel::SymbolicCExecution,
+    ensure_label: &str,
+    requirement_propositions: &[Proposition],
+) -> Option<ClickError> {
+    if let Some(limit) = execution.limit() {
+        return Some(ClickError::new(format!(
+            "`auto` hit execution limit {limit:?} for `{ensure_label}`"
+        )));
+    }
+    if execution.paths().is_empty() {
+        return Some(ClickError::new(format!(
+            "`auto` could not prove any complete execution path for `{ensure_label}`"
+        )));
+    }
+
+    for (path_index, path) in execution.paths().iter().enumerate() {
+        if !path.obligations().is_empty() {
+            return Some(ClickError::new(format!(
+                "`auto` failed for `{ensure_label}` path {path_index}: remaining proof obligations: {}\n  available requirements: {}\n  path facts: {}",
+                describe_obligations(path.obligations()),
+                describe_propositions(&requirement_propositions),
+                describe_facts(path.facts())
+            )));
+        }
+    }
+
+    None
+}
+
+fn prove_ensure_from_execution(
+    execution: &crate::megakernel::SymbolicCExecution,
+    execution_kind: AutoExecutionKind<'_>,
+    source_path: &str,
+    function_block: &FunctionBlock,
+    ensure_index: usize,
+    ensure_clause: &EnsureClause,
+    ensure_label: &str,
+    parameters: &[syntax::C0Parameter],
+    function: &CFunction,
+    state: &CState,
+    arguments: &[CExpression],
+    requirement_propositions: &[Proposition],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    if let Some(limit) = execution.limit() {
+        return Err(ClickError::new(format!(
+            "`auto` hit execution limit {limit:?} for `{ensure_label}`"
+        )));
+    }
+    if execution.paths().is_empty() {
+        return Err(ClickError::new(format!(
+            "`auto` could not prove any complete execution path for `{ensure_label}`"
+        )));
+    }
+
+    let mut verified = Vec::new();
+    for (path_index, path) in execution.paths().iter().enumerate() {
+        let outcome = match implication_body(path.theorem().proposition()) {
+            Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
+            proposition => {
                 return Err(ClickError::new(format!(
-                    "`auto` hit execution limit {limit:?} for `{ensure_label}`"
+                    "`auto` failed for `{ensure_label}` path {path_index}: unexpected theorem body {proposition:?}\n  available requirements: {}\n  path facts: {}",
+                    describe_propositions(&requirement_propositions),
+                    describe_facts(path.facts())
                 )));
             }
-            if execution.paths().is_empty() {
-                return Err(ClickError::new(format!(
-                    "`auto` could not prove any complete execution path for `{ensure_label}`"
-                )));
-            }
+        };
 
-            for (path_index, path) in execution.paths().iter().enumerate() {
-                if !path.obligations().is_empty() {
-                    return Err(ClickError::new(format!(
-                        "`auto` left proof obligations on path {} for `{ensure_label}`: {:?}",
-                        path_index,
-                        path.obligations()
-                    )));
-                }
-                let outcome = match implication_body(path.theorem().proposition()) {
-                    Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
-                    proposition => {
-                        return Err(ClickError::new(format!(
-                            "`auto` produced an unexpected theorem on path {path_index} for `{ensure_label}`: {proposition:?}"
-                        )));
-                    }
-                };
-
-                check_ensure(
-                    &ensure_label,
-                    path_index,
-                    path.facts(),
-                    ensure_clause,
-                    parsed_function.parameters(),
-                    &arguments,
-                    &state,
-                    &outcome,
-                )?;
-                let mut path_requirements = requirement_propositions.clone();
-                path_requirements
-                    .extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-                let specification = c_function_specification(
-                    state.clone(),
-                    arguments.clone(),
-                    path_requirements,
-                    outcome.clone(),
-                );
-                let theorem = prove_c_function_satisfies_specification_with_environment(
+        let mut path_requirements = requirement_propositions.to_vec();
+        path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+        check_ensure(
+            ensure_label,
+            path_index,
+            path.facts(),
+            &path_requirements,
+            ensure_clause,
+            parameters,
+            arguments,
+            state,
+            &outcome,
+        )?;
+        let path_requirements_description = describe_propositions(&path_requirements);
+        let specification = c_function_specification(
+            state.clone(),
+            arguments.to_vec(),
+            path_requirements,
+            outcome.clone(),
+        );
+        let theorem = match execution_kind {
+            AutoExecutionKind::LoopVerification => {
+                prove_c_function_satisfies_specification_from_symbolic_path(
                     function.clone(),
                     specification.clone(),
                     Assumptions::new(),
-                    function_environment.clone(),
+                    path.facts(),
+                    path.obligations(),
+                )
+            }
+            AutoExecutionKind::BoundedExecution { environment } => {
+                prove_c_function_satisfies_specification_with_environment(
+                    function.clone(),
+                    specification.clone(),
+                    Assumptions::new(),
+                    (*environment).clone(),
                 )
                 .ok_or_else(|| {
                     ClickError::new(format!(
-                        "`auto` execution for `{ensure_label}` path {path_index} did not satisfy the packaged specification"
+                        "`auto` failed for `{ensure_label}` path {path_index}: execution did not satisfy the packaged specification\n  available requirements: {}\n  path facts: {}",
+                        path_requirements_description,
+                        describe_facts(path.facts())
                     ))
-                })?;
-
-                verified.push(VerifiedCTheorem {
-                    source_path: source_path.clone(),
-                    function_block: function_block.clone(),
-                    ensure_index,
-                    ensure_clause: ensure_clause.clone(),
-                    specification,
-                    theorem,
-                });
+                })?
             }
-        }
+        };
+
+        verified.push(VerifiedCTheorem {
+            source_path: source_path.to_string(),
+            function_block: function_block.clone(),
+            ensure_index,
+            ensure_clause: ensure_clause.clone(),
+            specification,
+            theorem,
+        });
     }
 
     Ok(verified)
@@ -446,6 +579,41 @@ fn assumptions_from_propositions(propositions: &[Proposition]) -> Assumptions {
         .iter()
         .cloned()
         .fold(Assumptions::new(), Assumptions::assume_proposition)
+}
+
+fn describe_propositions(propositions: &[Proposition]) -> String {
+    if propositions.is_empty() {
+        return "[]".to_string();
+    }
+
+    format!("{propositions:?}")
+}
+
+fn describe_facts(facts: &[PathFact]) -> String {
+    if facts.is_empty() {
+        return "[]".to_string();
+    }
+
+    let entries = facts
+        .iter()
+        .map(|fact| format!("{:?}", fact.proposition()))
+        .collect::<Vec<_>>();
+    format!("[{}]", entries.join(", "))
+}
+
+fn describe_obligations(obligations: &[ProofObligation]) -> String {
+    if obligations.is_empty() {
+        return "[]".to_string();
+    }
+
+    let entries = obligations
+        .iter()
+        .map(|obligation| match obligation.context() {
+            Some(context) => format!("{context}: {:?}", obligation.proposition()),
+            None => format!("{:?}", obligation.proposition()),
+        })
+        .collect::<Vec<_>>();
+    format!("[{}]", entries.join(", "))
 }
 
 fn check_signature(
@@ -564,6 +732,12 @@ struct AnnotationLowerer<'a> {
     statement_index: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LabeledCheck {
+    condition: CExpression,
+    label: String,
+}
+
 impl AnnotationLowerer<'_> {
     fn lower_statement(&mut self, statement: &syntax::C0Statement) -> CStatement {
         match statement {
@@ -574,14 +748,15 @@ impl AnnotationLowerer<'_> {
                 let statement_index = self.next_statement_index();
                 let loop_index = self.next_loop_index();
                 let lowered_body = self.lower_statement(body);
-                let loop_checks = self.loop_checks(loop_index);
-                let checked_body = append_asserts(lowered_body, &loop_checks);
-                let lowered_loop = crate::megakernel::c_while(
+                let loop_asserts = self.loop_assert_checks(loop_index);
+                let invariant_checks = self.loop_invariant_checks(loop_index);
+                let lowered_loop = c_while_with_invariant_checks(
                     condition.to_megakernel_expression(),
                     Vec::new(),
-                    checked_body,
+                    invariant_checks,
+                    lowered_body,
                 );
-                let lowered_loop = prepend_asserts(lowered_loop, &loop_checks);
+                let lowered_loop = prepend_labeled_asserts(lowered_loop, &loop_asserts);
                 self.prepend_statement_asserts(statement_index, lowered_loop)
             }
             statement => {
@@ -614,35 +789,65 @@ impl AnnotationLowerer<'_> {
             .iter()
             .filter(|clause| clause.target() == &AtTarget::Statement(statement_index))
             .flat_map(AtClause::items)
-            .map(AtItem::condition)
-            .cloned()
+            .enumerate()
+            .map(|(item_index, item)| LabeledCheck {
+                condition: item.condition().clone(),
+                label: format!(
+                    "at statement {statement_index} {} {item_index}",
+                    at_item_kind_label(item.kind())
+                ),
+            })
             .collect::<Vec<_>>();
-        prepend_asserts(statement, &checks)
+        prepend_labeled_asserts(statement, &checks)
     }
 
-    fn loop_checks(&self, loop_index: usize) -> Vec<CExpression> {
+    fn loop_invariant_checks(&self, loop_index: usize) -> Vec<CLoopInvariantCheck> {
         self.at_clauses
             .iter()
             .filter(|clause| clause.target() == &AtTarget::Loop(loop_index))
             .flat_map(AtClause::items)
-            .map(AtItem::condition)
-            .cloned()
+            .filter(|item| item.kind() == AtItemKind::Invariant)
+            .enumerate()
+            .map(|(item_index, item)| {
+                CLoopInvariantCheck::new(
+                    item.condition().clone(),
+                    Some(format!("at loop {loop_index} invariant {item_index} entry")),
+                    Some(format!(
+                        "at loop {loop_index} invariant {item_index} preservation"
+                    )),
+                )
+            })
+            .collect()
+    }
+
+    fn loop_assert_checks(&self, loop_index: usize) -> Vec<LabeledCheck> {
+        self.at_clauses
+            .iter()
+            .filter(|clause| clause.target() == &AtTarget::Loop(loop_index))
+            .flat_map(AtClause::items)
+            .filter(|item| item.kind() == AtItemKind::Assert)
+            .enumerate()
+            .map(|(item_index, item)| LabeledCheck {
+                condition: item.condition().clone(),
+                label: format!("at loop {loop_index} assert {item_index}"),
+            })
             .collect()
     }
 }
 
-fn prepend_asserts(statement: CStatement, conditions: &[CExpression]) -> CStatement {
-    conditions
-        .iter()
-        .rev()
-        .fold(statement, |statement, condition| {
-            c_seq(c_assert(condition.clone()), statement)
-        })
+fn at_item_kind_label(kind: AtItemKind) -> &'static str {
+    match kind {
+        AtItemKind::Assert => "assert",
+        AtItemKind::Invariant => "invariant",
+    }
 }
 
-fn append_asserts(statement: CStatement, conditions: &[CExpression]) -> CStatement {
-    conditions.iter().fold(statement, |statement, condition| {
-        c_seq(statement, c_assert(condition.clone()))
+fn prepend_labeled_asserts(statement: CStatement, checks: &[LabeledCheck]) -> CStatement {
+    checks.iter().rev().fold(statement, |statement, check| {
+        c_seq(
+            c_labeled_assert(check.condition.clone(), check.label.clone()),
+            statement,
+        )
     })
 }
 
@@ -682,7 +887,9 @@ fn initial_call(
     let valid_ranges: BTreeMap<&str, u32> = requires
         .iter()
         .filter_map(|requirement| match requirement {
-            Requirement::ValidRange { name, bytes } => Some((name.as_str(), *bytes)),
+            Requirement::ValidRange { name, bytes } => {
+                range_bytes_constant(bytes).map(|bytes| (name.as_str(), bytes))
+            }
             Requirement::Condition(_) => None,
         })
         .collect();
@@ -716,9 +923,21 @@ fn initial_call(
             )));
         }
     }
+    for requirement in requires {
+        let Requirement::ValidRange { name, .. } = requirement else {
+            continue;
+        };
+        if !parameters.iter().any(|parameter| parameter.name() == name) {
+            return Err(ClickError::new(format!(
+                "`valid_range` names `{name}`, but `{}` has no such parameter",
+                function_name
+            )));
+        }
+    }
 
     memory = memory_with_symbolic_valid_range_cells(memory, &valid_ranges);
-    let requirement_propositions = requirement_propositions(requires, parameters, &arguments)?;
+    let requirement_propositions =
+        requirement_propositions(requires, parameters, &arguments, &memory)?;
     Ok((
         CState::new().with_memory(memory),
         arguments,
@@ -753,16 +972,94 @@ fn requirement_propositions(
     requires: &[Requirement],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
+    memory: &CMemory,
 ) -> Result<Vec<Proposition>, ClickError> {
     requires
         .iter()
-        .filter_map(|requirement| match requirement {
-            Requirement::ValidRange { .. } => None,
+        .map(|requirement| match requirement {
+            Requirement::ValidRange { name, bytes } => {
+                valid_range_requirement_prop(name, bytes, parameters, arguments, memory)
+            }
             Requirement::Condition(condition) => {
-                Some(condition_requirement_prop(parameters, arguments, condition))
+                condition_requirement_prop(parameters, arguments, condition)
             }
         })
         .collect()
+}
+
+fn valid_range_requirement_prop(
+    name: &str,
+    bytes: &RangeBytes,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    memory: &CMemory,
+) -> Result<Proposition, ClickError> {
+    let Some((_, argument)) = parameters
+        .iter()
+        .zip(arguments)
+        .find(|(parameter, _)| parameter.name() == name)
+    else {
+        return Err(ClickError::new(format!(
+            "`valid_range` names `{name}`, but no such parameter exists"
+        )));
+    };
+    let CExpression::Value(CValue::Pointer(base)) = argument else {
+        return Err(ClickError::new(format!(
+            "`valid_range` names `{name}`, but it is not a pointer parameter"
+        )));
+    };
+
+    Ok(Proposition::CMemoryValidRange {
+        memory: memory.clone(),
+        base: base.clone(),
+        bytes: lower_range_bytes(bytes, &parameter_values(parameters, arguments)?)?,
+    })
+}
+
+fn range_bytes_constant(bytes: &RangeBytes) -> Option<u32> {
+    match bytes {
+        RangeBytes::Constant(value) => Some(*value),
+        RangeBytes::Parameter(_) => None,
+        RangeBytes::Add(left, right) => {
+            Some(range_bytes_constant(left)?.wrapping_add(range_bytes_constant(right)?))
+        }
+        RangeBytes::Subtract(left, right) => {
+            Some(range_bytes_constant(left)?.wrapping_sub(range_bytes_constant(right)?))
+        }
+        RangeBytes::Multiply(left, right) => {
+            Some(range_bytes_constant(left)?.wrapping_mul(range_bytes_constant(right)?))
+        }
+    }
+}
+
+fn lower_range_bytes(
+    bytes: &RangeBytes,
+    parameter_values: &BTreeMap<String, CValue>,
+) -> Result<Bitvector32Term, ClickError> {
+    match bytes {
+        RangeBytes::Constant(value) => Ok(Bitvector32Term::Constant(*value)),
+        RangeBytes::Parameter(name) => match parameter_values.get(name) {
+            Some(CValue::Int32(bits)) => Ok(bits.clone()),
+            Some(_) => Err(ClickError::new(format!(
+                "`valid_range` byte expression references pointer parameter `{name}`"
+            ))),
+            None => Err(ClickError::new(format!(
+                "`valid_range` byte expression references unknown parameter `{name}`"
+            ))),
+        },
+        RangeBytes::Add(left, right) => Ok(bitvector32_add(
+            lower_range_bytes(left, parameter_values)?,
+            lower_range_bytes(right, parameter_values)?,
+        )),
+        RangeBytes::Subtract(left, right) => Ok(bitvector32_subtract(
+            lower_range_bytes(left, parameter_values)?,
+            lower_range_bytes(right, parameter_values)?,
+        )),
+        RangeBytes::Multiply(left, right) => Ok(bitvector32_multiply(
+            lower_range_bytes(left, parameter_values)?,
+            lower_range_bytes(right, parameter_values)?,
+        )),
+    }
 }
 
 fn condition_requirement_prop(
@@ -897,6 +1194,15 @@ fn bitvector32_subtract(left: Bitvector32Term, right: Bitvector32Term) -> Bitvec
     }
 }
 
+fn bitvector32_multiply(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
+    match (&left, &right) {
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            Bitvector32Term::Constant(left.wrapping_mul(*right))
+        }
+        _ => Bitvector32Term::Multiply(Box::new(left), Box::new(right)),
+    }
+}
+
 fn signed_less_than(left: Bitvector32Term, right: Bitvector32Term) -> ConditionTerm {
     match (&left, &right) {
         (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
@@ -946,6 +1252,7 @@ fn check_ensure(
     ensure_label: &str,
     path_index: usize,
     path_facts: &[crate::megakernel::PathFact],
+    available_propositions: &[Proposition],
     ensure_clause: &EnsureClause,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -959,32 +1266,51 @@ fn check_ensure(
             right,
         } => match outcome {
             CFunctionOutcome::Return { value, state } => {
-                let left_value =
-                    evaluate_contract_expression(parameters, arguments, pre_state, state, value, left).map_err(
-                        |message| {
-                            ClickError::new(format!(
-                                "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: could not evaluate left side: {message}"
-                            ))
-                        },
-                    )?;
-                let right_value =
-                    evaluate_contract_expression(parameters, arguments, pre_state, state, value, right).map_err(
-                        |message| {
-                            ClickError::new(format!(
-                                "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: could not evaluate right side: {message}"
-                            ))
-                        },
-                    )?;
-                prove_value_comparison(&left_value, *operator, &right_value, path_facts)
+                let left_value = evaluate_contract_expression(
+                    parameters,
+                    arguments,
+                    pre_state,
+                    state,
+                    value,
+                    available_propositions,
+                    left,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: could not evaluate left side: {message}"
+                    ))
+                })?;
+                let right_value = evaluate_contract_expression(
+                    parameters,
+                    arguments,
+                    pre_state,
+                    state,
+                    value,
+                    available_propositions,
+                    right,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: could not evaluate right side: {message}"
+                    ))
+                })?;
+                prove_value_comparison(
+                    &left_value,
+                    *operator,
+                    &right_value,
+                    available_propositions,
+                )
                     .ok_or_else(|| {
                         ClickError::new(format!(
-                            "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: left side evaluated to {left_value:?}, right side evaluated to {right_value:?}"
+                            "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: left side evaluated to {left_value:?}, right side evaluated to {right_value:?}\n  path facts: {}",
+                            describe_facts(path_facts)
                         ))
                     })?;
             }
             other => {
                 return Err(ClickError::new(format!(
-                    "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: outcome was {other:?}"
+                    "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: outcome was {other:?}\n  path facts: {}",
+                    describe_facts(path_facts)
                 )));
             }
         },
@@ -997,7 +1323,7 @@ fn prove_value_comparison(
     actual: &CValue,
     operator: ComparisonOperator,
     expected: &CValue,
-    path_facts: &[crate::megakernel::PathFact],
+    available_propositions: &[Proposition],
 ) -> Option<()> {
     let CValue::Int32(actual) = actual else {
         return None;
@@ -1006,11 +1332,10 @@ fn prove_value_comparison(
         return None;
     };
     let (condition, value) = comparison_condition(actual.clone(), operator, expected.clone())?;
-    let assumptions = path_facts
+    let assumptions = available_propositions
         .iter()
-        .fold(Assumptions::new(), |assumptions, fact| {
-            assumptions.assume_proposition(fact.proposition().clone())
-        });
+        .cloned()
+        .fold(Assumptions::new(), Assumptions::assume_proposition);
     assumptions
         .proves(&Proposition::ConditionIs(condition, value))
         .then_some(())
@@ -1037,15 +1362,18 @@ fn evaluate_contract_expression(
     pre_state: &CState,
     post_state: &CState,
     result: &CValue,
+    available_propositions: &[Proposition],
     expression: &ContractExpression,
 ) -> Result<CValue, String> {
     let parameter_values =
         parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let assumptions = assumptions_from_propositions(available_propositions);
     evaluate_contract_expression_with_environment(
         &parameter_values,
         pre_state,
         post_state,
         result,
+        &assumptions,
         expression,
     )
 }
@@ -1055,21 +1383,31 @@ fn evaluate_contract_expression_with_environment(
     pre_state: &CState,
     post_state: &CState,
     result: &CValue,
+    assumptions: &Assumptions,
     expression: &ContractExpression,
 ) -> Result<CValue, String> {
     match expression {
-        ContractExpression::Current(expression) => {
-            evaluate_c_contract_expression(parameter_values, post_state, Some(result), expression)
-        }
-        ContractExpression::Old(expression) => {
-            evaluate_c_contract_expression(parameter_values, pre_state, None, expression)
-        }
+        ContractExpression::Current(expression) => evaluate_c_contract_expression(
+            parameter_values,
+            post_state,
+            Some(result),
+            assumptions,
+            expression,
+        ),
+        ContractExpression::Old(expression) => evaluate_c_contract_expression(
+            parameter_values,
+            pre_state,
+            None,
+            assumptions,
+            expression,
+        ),
         ContractExpression::Add(left, right) => {
             let left = evaluate_contract_expression_with_environment(
                 parameter_values,
                 pre_state,
                 post_state,
                 result,
+                assumptions,
                 left,
             )?;
             let right = evaluate_contract_expression_with_environment(
@@ -1077,6 +1415,7 @@ fn evaluate_contract_expression_with_environment(
                 pre_state,
                 post_state,
                 result,
+                assumptions,
                 right,
             )?;
             evaluate_postcondition_add(left, right)
@@ -1087,6 +1426,7 @@ fn evaluate_contract_expression_with_environment(
                 pre_state,
                 post_state,
                 result,
+                assumptions,
                 left,
             )?;
             let right = evaluate_contract_expression_with_environment(
@@ -1094,6 +1434,7 @@ fn evaluate_contract_expression_with_environment(
                 pre_state,
                 post_state,
                 result,
+                assumptions,
                 right,
             )?;
             evaluate_postcondition_sub(left, right)
@@ -1104,6 +1445,7 @@ fn evaluate_contract_expression_with_environment(
                 pre_state,
                 post_state,
                 result,
+                assumptions,
                 base,
             )?;
             let index = evaluate_contract_expression_with_environment(
@@ -1111,13 +1453,11 @@ fn evaluate_contract_expression_with_environment(
                 pre_state,
                 post_state,
                 result,
+                assumptions,
                 index,
             )?;
             let pointer = evaluate_postcondition_pointer_add(base, index)?;
-            match post_state.memory().load(&pointer) {
-                crate::megakernel::CExpressionOutcome::Value(value) => Ok(value),
-                outcome => Err(format!("load from {pointer:?} produced {outcome:?}")),
-            }
+            evaluate_contract_memory_load(post_state, pointer, assumptions)
         }
     }
 }
@@ -1126,6 +1466,7 @@ fn evaluate_c_contract_expression(
     parameter_values: &BTreeMap<String, CValue>,
     state: &CState,
     result: Option<&CValue>,
+    assumptions: &Assumptions,
     expression: &CExpression,
 ) -> Result<CValue, String> {
     match expression {
@@ -1138,27 +1479,66 @@ fn evaluate_c_contract_expression(
             .cloned()
             .ok_or_else(|| format!("unknown contract variable `{name}`")),
         CExpression::Add(left, right) => {
-            let left = evaluate_c_contract_expression(parameter_values, state, result, left)?;
-            let right = evaluate_c_contract_expression(parameter_values, state, result, right)?;
+            let left =
+                evaluate_c_contract_expression(parameter_values, state, result, assumptions, left)?;
+            let right = evaluate_c_contract_expression(
+                parameter_values,
+                state,
+                result,
+                assumptions,
+                right,
+            )?;
             evaluate_postcondition_add(left, right)
         }
         CExpression::Subtract(left, right) => {
-            let left = evaluate_c_contract_expression(parameter_values, state, result, left)?;
-            let right = evaluate_c_contract_expression(parameter_values, state, result, right)?;
+            let left =
+                evaluate_c_contract_expression(parameter_values, state, result, assumptions, left)?;
+            let right = evaluate_c_contract_expression(
+                parameter_values,
+                state,
+                result,
+                assumptions,
+                right,
+            )?;
             evaluate_postcondition_sub(left, right)
         }
         CExpression::Index(base, index) => {
-            let base = evaluate_c_contract_expression(parameter_values, state, result, base)?;
-            let index = evaluate_c_contract_expression(parameter_values, state, result, index)?;
+            let base =
+                evaluate_c_contract_expression(parameter_values, state, result, assumptions, base)?;
+            let index = evaluate_c_contract_expression(
+                parameter_values,
+                state,
+                result,
+                assumptions,
+                index,
+            )?;
             let pointer = evaluate_postcondition_pointer_add(base, index)?;
-            match state.memory().load(&pointer) {
-                crate::megakernel::CExpressionOutcome::Value(value) => Ok(value),
-                outcome => Err(format!("load from {pointer:?} produced {outcome:?}")),
-            }
+            evaluate_contract_memory_load(state, pointer, assumptions)
         }
         _ => Err(format!(
             "unsupported postcondition expression `{expression:?}`"
         )),
+    }
+}
+
+fn evaluate_contract_memory_load(
+    state: &CState,
+    pointer: Pointer,
+    assumptions: &Assumptions,
+) -> Result<CValue, String> {
+    match state.memory().load(&pointer) {
+        crate::megakernel::CExpressionOutcome::Value(value) => Ok(value),
+        _ if assumptions.proves(&Proposition::CMemoryCanLoad {
+            memory: state.memory().clone(),
+            pointer: pointer.clone(),
+        }) =>
+        {
+            Ok(CValue::Int32(Bitvector32Term::MemoryLoad(
+                Box::new(state.memory().clone()),
+                Box::new(pointer),
+            )))
+        }
+        outcome => Err(format!("load from {pointer:?} produced {outcome:?}")),
     }
 }
 
@@ -1358,6 +1738,7 @@ impl Parser {
         loop {
             let c_type = self.parse_type()?;
             let name = self.expect_ident("parameter name")?;
+            let c_type = self.parse_parameter_array_suffix(c_type)?;
             parameters.push(FunctionParameter { c_type, name });
 
             match self.peek() {
@@ -1383,6 +1764,22 @@ impl Parser {
         }
     }
 
+    fn parse_parameter_array_suffix(&mut self, c_type: C0Type) -> Result<C0Type, ClickError> {
+        if self.peek() != Some(&Token::LBracket) {
+            return Ok(c_type);
+        }
+        if c_type != C0Type::Int32 {
+            return Err(self.error("only `int32 name[]` array parameters are supported"));
+        }
+
+        self.position += 1;
+        if matches!(self.peek(), Some(Token::Number(_))) {
+            self.position += 1;
+        }
+        self.expect(Token::RBracket)?;
+        Ok(C0Type::Int32Pointer)
+    }
+
     fn parse_requirement(&mut self) -> Result<Requirement, ClickError> {
         self.expect_ident_spelling("requires")?;
         if self.peek_ident() != Some("valid_range") || self.peek_next() != Some(&Token::LParen) {
@@ -1395,11 +1792,60 @@ impl Parser {
         self.expect(Token::LParen)?;
         let name = self.expect_ident("range base name")?;
         self.expect(Token::Comma)?;
-        let bytes = self.expect_number("range byte size")?;
+        let bytes = self.parse_range_bytes()?;
         self.expect(Token::RParen)?;
         self.expect(Token::Semicolon)?;
 
         Ok(Requirement::ValidRange { name, bytes })
+    }
+
+    fn parse_range_bytes(&mut self) -> Result<RangeBytes, ClickError> {
+        self.parse_range_bytes_add()
+    }
+
+    fn parse_range_bytes_add(&mut self) -> Result<RangeBytes, ClickError> {
+        let mut expression = self.parse_range_bytes_multiply()?;
+        loop {
+            expression = match self.peek() {
+                Some(Token::Plus) => {
+                    self.position += 1;
+                    let right = self.parse_range_bytes_multiply()?;
+                    RangeBytes::Add(Box::new(expression), Box::new(right))
+                }
+                Some(Token::Minus) => {
+                    self.position += 1;
+                    let right = self.parse_range_bytes_multiply()?;
+                    RangeBytes::Subtract(Box::new(expression), Box::new(right))
+                }
+                _ => return Ok(expression),
+            };
+        }
+    }
+
+    fn parse_range_bytes_multiply(&mut self) -> Result<RangeBytes, ClickError> {
+        let mut expression = self.parse_range_bytes_primary()?;
+        while self.peek() == Some(&Token::Star) {
+            self.position += 1;
+            let right = self.parse_range_bytes_primary()?;
+            expression = RangeBytes::Multiply(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_range_bytes_primary(&mut self) -> Result<RangeBytes, ClickError> {
+        match self.next() {
+            Some(Token::Ident(name)) => Ok(RangeBytes::Parameter(name)),
+            Some(Token::Number(value)) => Ok(RangeBytes::Constant(value)),
+            Some(Token::LParen) => {
+                let expression = self.parse_range_bytes()?;
+                self.expect(Token::RParen)?;
+                Ok(expression)
+            }
+            Some(token) => Err(self.error(format!(
+                "expected valid_range byte expression, got {token:?}"
+            ))),
+            None => Err(self.error("expected valid_range byte expression, got end of input")),
+        }
     }
 
     fn parse_requirement_condition(&mut self) -> Result<C0Expression, ClickError> {
@@ -2006,7 +2452,7 @@ mod tests {
             function.requires(),
             &[Requirement::ValidRange {
                 name: "p".to_string(),
-                bytes: 12
+                bytes: RangeBytes::Constant(12)
             }]
         );
         assert_eq!(function.ensures().len(), 1);
@@ -2021,6 +2467,46 @@ mod tests {
             }
         );
         assert_eq!(ensure.proof().tactics(), &[Tactic::Auto]);
+    }
+
+    #[test]
+    fn parses_symbolic_valid_range_bytes() {
+        let source = r#"
+            verifying "fill.c";
+
+            int32 fill(int32* p, int32 n) {
+                requires valid_range(p, n * 4);
+                ensures result == n by auto;
+            }
+        "#;
+        let file = parse(source).expect("symbolic valid_range should parse");
+        let function = &file.function_blocks()[0];
+
+        assert_eq!(
+            function.requires(),
+            &[Requirement::ValidRange {
+                name: "p".to_string(),
+                bytes: RangeBytes::Multiply(
+                    Box::new(RangeBytes::Parameter("n".to_string())),
+                    Box::new(RangeBytes::Constant(4)),
+                )
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_array_parameter_signature_as_pointer() {
+        let source = FILL3_CLICK.replace("int32* p", "int32 p[3]");
+        let file = parse(&source).expect("array parameter signature should parse");
+        let function = &file.function_blocks()[0];
+
+        assert_eq!(
+            function.signature().parameters(),
+            &[FunctionParameter {
+                c_type: C0Type::Int32Pointer,
+                name: "p".to_string(),
+            }]
+        );
     }
 
     #[test]
@@ -2290,7 +2776,9 @@ mod tests {
             .expect_err("false loop invariant should fail");
 
         assert!(
-            error.message().contains("left proof obligations"),
+            error
+                .message()
+                .contains("at loop 0 invariant 0 preservation"),
             "{}",
             error.message()
         );
@@ -2398,7 +2886,7 @@ mod tests {
             }
         );
         assert_eq!(
-            verified.theorem.proposition(),
+            implication_body(verified.theorem.proposition()),
             &Proposition::CFunctionSatisfiesSpecification {
                 function: syntax::parse_function(FILL3_C)
                     .expect("fill3 should parse")

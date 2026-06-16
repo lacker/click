@@ -112,6 +112,8 @@ C0 is not a standard language name here; it is this repo's tiny C subset used
 to drive the design. It currently supports:
 
 - `int32` and `int32*`
+- C-style `int32 p[]` / `int32 p[3]` function-parameter syntax, lowered to
+  `int32*` like C
 - integer literals and variables
 - signed comparisons and equality, returning `int32` `0` or `1` like C
 - signed addition and subtraction, with signed-overflow undefined behavior
@@ -135,8 +137,9 @@ or undefined behavior depending on the execution path.
 ## Proof Surface
 
 The primary proof engine today is the `auto` tactic backed by native symbolic
-execution in the megakernel. The underlying axioms produce theorem objects for
-expression evaluation, statement execution, function execution, and
+execution and a first loop verification-condition path in the megakernel. The
+underlying axioms produce theorem objects for expression evaluation, statement
+execution, function execution, loop-invariant checking, and
 function-specification satisfaction.
 
 Symbolic execution is bounded by an explicit `ExecutionBudget`: expression
@@ -171,15 +174,19 @@ The C0 signature in the `.click` file is checked against the C source and a
 mismatch is reported directly. Function-level `requires` clauses are shared by
 all guarantees. Each `ensures` clause is a separately proven guarantee with its
 own `by` proof clause. For now, `requires` supports `valid_range(pointer,
-bytes)` and signed integer comparisons over parameters and literals.
+bytes)` with concrete byte counts or small byte-count expressions such as
+`n * 4`, plus signed integer comparisons over parameters and literals.
 `ensures` supports comparisons between small C0 integer expressions over
 `result`, parameters, literals, parentheses, `+`, `-`, and post-state
 `p[i]` memory reads. Postconditions can use `old(expression)` to evaluate an
 expression in the pre-call state, which supports first-frame claims like
 `p[0] == old(p[0])`. `auto` checks each guarantee on every symbolic execution
 path. That sidecar path parses C0 source, builds the requested initial memory,
-runs native symbolic execution, checks the postcondition clause, and packages
-the result as a megakernel `CFunctionSpecification` theorem.
+first tries loop verification conditions for annotated loops, checks the
+postcondition clause, and packages the result as a megakernel
+`CFunctionSpecification` theorem. If the loop VC path cannot prove a
+postcondition but leaves no invariant obligations, `auto` can still use bounded
+execution for finite concrete-loop demos.
 
 The sidecar also has first structural labels for intra-function proof
 obligations:
@@ -196,11 +203,22 @@ at loop 0 {
 ```
 
 `statement N` names the Nth source statement in structural order; `loop N`
-names the Nth `while` loop. In this first slice, `assert` lowers to a ghost
-statement, and `invariant` lowers to ghost checks at loop entry and after each
-completed loop body. That is enough to exercise the syntax and proof-obligation
-flow, but it is not yet the final non-unrolling induction and
-verification-condition-generation story for loops.
+names the Nth `while` loop. `assert` is a one-shot ghost check at the
+structural target. `invariant` generates non-unrolling loop verification
+conditions: entry checks, one-body preservation checks, and exit facts from the
+invariant plus the false loop condition. Failed `auto` proofs report the
+guarantee label, execution path, available requirements, path facts, and
+remaining proof obligations.
+
+The current loop VC path handles scalar loop locals by assigning fresh symbolic
+values at the loop head. That is enough for proofs such as symbolic
+`count_to_n(n)` with invariants `i >= 0` and `i <= n`, and symbolic pointer-loop
+safety with `valid_range(p, n * 4)`. It also has a first frame rule for
+memory-mutating loops: if the one-body symbolic write footprint is provably
+distinct from a postcondition load, `auto` can prove that load equals
+`old(...)`. Richer memory postconditions still need explicit memory invariants
+and more general frame reasoning; the current fixed-size pointer demos continue
+to use bounded execution for some final memory facts.
 
 ## Markdown Tests
 
@@ -233,10 +251,21 @@ test `tests/mdtests.rs` runs all `mdtests/*.md` files.
 
 ## Current Demo
 
-The first memory-safety demo is `fill3(int32* p)`: it writes three consecutive
-`int32` cells through `p[i]` in a loop and reads back the final cell. With a
-12-byte backing block, the megakernel proves the execution without leftover
-memory-safety premises. The sidecar can also prove post-state memory
+The first memory-safety demos are fixed-size pointer loops:
+
+- `fill3(int32* p)` / `fill3_array_loop(int32 p[3])` write three consecutive
+  `int32` cells through `p[i]` and read back the final cell.
+- `copy3(int32 dst[3], int32 src[3])` copies three cells from `src` to `dst`
+  and proves `old(src[i])` postconditions.
+- `count_to_n_loop_invariant(int32 n)` proves `result == n` for a symbolic loop
+  bound using loop invariants instead of unrolling.
+- `fill_n_symbolic_pointer_loop(int32 p[], int32 n)` proves symbolic pointer
+  loop safety and `result == n` using `valid_range(p, n * 4)`.
+- `fill_tail_preserves_first(int32 p[], int32 n)` proves a symbolic
+  memory-mutating loop preserves `p[0]` while writing `p[i]` for `i >= 1`.
+
+With 12-byte backing blocks, the megakernel proves these executions without
+leftover memory-safety premises. The sidecar can also prove post-state memory
 guarantees such as `ensures p[2] == 2 by auto;` and simple preservation
 guarantees such as `ensures p[0] == old(p[0]) by auto;`.
 
@@ -248,8 +277,8 @@ guarantees such as `ensures p[0] == old(p[0]) by auto;`.
    labels, and simple symbolic arguments.
 3. Add richer C integer coverage: unsigned operations, more widths, casts, and
    promotion rules.
-4. Improve loop verification beyond concrete fuel-capped execution by making
-   invariants useful from `.click`.
+4. Extend loop verification from scalar locals to memory-changing loops with
+   explicit memory invariants and frame reasoning.
 5. Grow memory reasoning toward real local arrays, pointer ranges, and frame
    conditions.
 6. Replace the toy C0 parser with a path toward real C parsing when the proof

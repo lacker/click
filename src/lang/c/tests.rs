@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn c0_array_parameter_syntax_lowers_to_pointer_parameter() {
+    let function = syntax::parse_function(
+        r#"
+        int32 first(int32 p[3]) {
+            return p[0];
+        }
+        "#,
+    )
+    .expect("array parameter should parse");
+
+    assert_eq!(
+        function.parameters()[0].c_type(),
+        syntax::C0Type::Int32Pointer
+    );
+    assert_eq!(
+        function.to_megakernel_function().parameters()[0].c_type(),
+        crate::megakernel::CType::Int32Pointer
+    );
+}
+
+#[test]
 fn c0_syntax_targets_megakernel_max_body() {
     let function = syntax::parse_function(
         r#"

@@ -23,5 +23,5 @@ int32 count_to_three_bad_assert() {
 ```
 
 ```expect
-fail: left proof obligations
+fail: at statement 2 assert 0
 ```
