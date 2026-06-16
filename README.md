@@ -172,11 +172,14 @@ mismatch is reported directly. Function-level `requires` clauses are shared by
 all guarantees. Each `ensures` clause is a separately proven guarantee with its
 own `by` proof clause. For now, `requires` supports `valid_range(pointer,
 bytes)` and signed integer comparisons over parameters and literals.
-`ensures` supports result equality against a small C0 integer expression over
-literals, parameters, parentheses, `+`, and `-`. That sidecar path parses C0
-source, builds the requested initial memory, runs native symbolic execution,
-checks the result clause, and packages the result as a megakernel
-`CFunctionSpec` theorem.
+`ensures` supports comparisons between small C0 integer expressions over
+`result`, parameters, literals, parentheses, `+`, `-`, and post-state
+`p[i]` memory reads. Postconditions can use `old(expr)` to evaluate an
+expression in the pre-call state, which supports first-frame claims like
+`p[0] == old(p[0])`. `auto` checks each guarantee on every symbolic execution
+path. That sidecar path parses C0 source, builds the requested initial memory,
+runs native symbolic execution, checks the postcondition clause, and packages
+the result as a megakernel `CFunctionSpec` theorem.
 
 ## Markdown Tests
 
@@ -211,7 +214,9 @@ test `tests/mdtests.rs` runs all `mdtests/*.md` files.
 The first memory-safety demo is `fill3(int32* p)`: it writes three consecutive
 `int32` cells through `p[i]` in a loop and reads back the final cell. With a
 12-byte backing block, the megakernel proves the execution without leftover
-memory-safety premises.
+memory-safety premises. The sidecar can also prove post-state memory
+guarantees such as `ensures p[2] == 2 by auto;` and simple preservation
+guarantees such as `ensures p[0] == old(p[0]) by auto;`.
 
 ## Near-Term Roadmap
 

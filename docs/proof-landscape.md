@@ -42,27 +42,29 @@ new proof workflow concepts too early.
 
 | Capability | Common source | Click axiom family | Click tactic surface | Current mdtest |
 | --- | --- | --- | --- | --- |
-| Scalar execution | symbolic evaluators, SMT-backed automation | C expression/statement execution | `auto`, later `symbolic_execute` | `mdtests/scalar.md`, `mdtests/argument_result.md` |
+| Scalar execution | symbolic evaluators, SMT-backed automation | C expression/statement execution | `auto`, later `symbolic_execute` | `mdtests/scalar.md`, `mdtests/argument_result.md`, `mdtests/max_symbolic.md` |
 | C undefined behavior | CBMC, Frama-C/WP, UBSan-style checks | UB-aware C execution | `auto`, later `check_ub` or VCG output | `mdtests/overflow.md`, `mdtests/increment_requires_no_overflow.md`, `mdtests/increment_without_requires.md` |
 | Pointer range safety | C verifiers, separation logic | memory-validity and range axioms | `auto`, later `bounds` or `frame` | `mdtests/pointer_range.md` |
+| Memory postconditions | ACSL/Dafny/F* function contracts | final-state memory evaluation | `auto`, later `frame` | `mdtests/fill3_memory_postconditions.md`, `mdtests/fill3_bad_memory_postcondition.md` |
 | Bounded loops | bounded model checking, symbolic execution | budgeted loop execution | `auto`, later `bounded_check` | `mdtests/bounded_loop.md`, `mdtests/fill3.md` |
 | Function calls | modular verification, inlining, call summaries | function environment and spec satisfaction | `auto`, later `use spec` | `mdtests/function_call.md` |
 | Loop invariants | Dafny/F*/Why3/Frama-C | while-invariant checker | later `invariant` / `vcg` | not yet exposed in `.click` |
 | Assertions and facts | Lean/Dafny/F* proof scripts | proposition introduction and checking | later `assert`, `have`, `exact` | not yet exposed in `.click` |
 | Rewriting and simplification | Lean `simp`, Isabelle simplifier | rewrite theorem application | later `simp`, `rewrite`, `calc` | not yet on the C path |
 | Bitvector arithmetic | SMT, CBMC, hardware-oriented provers | bv32 solver/normalizer | later `bv` | partially through `auto` |
-| Frame reasoning | separation logic, C verifiers | memory footprint and non-alias facts | later `frame` | not yet implemented |
+| Frame reasoning | separation logic, C verifiers | pre/post memory evaluation with symbolic initial cells | `auto`, later `frame` | `mdtests/write_second_old_preserves_first.md`, `mdtests/write_second_old_rejects_overwritten_cell.md` |
 
 ## Current C0 Boundary
 
-The current C0 subset is enough to make the first five categories executable:
-scalar code, signed-overflow UB, pointer range checks, bounded loops, and known
-function calls.
+The current C0 subset is enough to make the first several categories
+executable: scalar code, signed-overflow UB, pointer range checks, bounded
+loops, known function calls, memory postconditions, and first-frame
+postconditions with `old(...)`.
 
 It is not yet enough for the full launch-shaped proof story. The main missing
 pieces are `.click` syntax for invariants and intermediate facts, richer C
-integer operations and casts, local arrays, memory postconditions, and frame
-conditions.
+integer operations and casts, local arrays, richer memory predicates, and
+general frame conditions.
 
 That is intentional. The mdtests should make the next missing piece obvious:
 when a proof pattern needs a new C0 feature, add the feature because the proof

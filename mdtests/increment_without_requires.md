@@ -18,6 +18,5 @@ int32 increment(int32 x) {
 ```
 
 ```expect
-fail: could not prove a single complete execution path
+fail: outcome was Ub(SignedOverflow)
 ```
-
