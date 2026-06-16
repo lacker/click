@@ -55,7 +55,7 @@ pub enum C0Stmt {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum C0Expr {
     Var(String),
-    AddressOf(String),
+    AddressOf(Box<C0Expr>),
     Int32Literal(u32),
     Lt(Box<C0Expr>, Box<C0Expr>),
     Le(Box<C0Expr>, Box<C0Expr>),
@@ -181,7 +181,9 @@ impl C0Expr {
     pub fn to_megakernel_expr(&self) -> crate::megakernel::CExpr {
         match self {
             Self::Var(name) => crate::megakernel::c_var(name.clone()),
-            Self::AddressOf(name) => crate::megakernel::c_addr_of(name.clone()),
+            Self::AddressOf(target) => {
+                crate::megakernel::CExpr::AddressOf(Box::new(target.to_megakernel_expr()))
+            }
             Self::Int32Literal(value) => crate::megakernel::c_int32_literal(*value),
             Self::Lt(left, right) => {
                 crate::megakernel::c_lt(left.to_megakernel_expr(), right.to_megakernel_expr())
@@ -215,10 +217,9 @@ impl C0Expr {
                 crate::megakernel::c_sub(left.to_megakernel_expr(), right.to_megakernel_expr())
             }
             Self::Load(ptr) => crate::megakernel::c_load(ptr.to_megakernel_expr()),
-            Self::Index(base, index) => crate::megakernel::c_load(crate::megakernel::c_add(
-                base.to_megakernel_expr(),
-                index.to_megakernel_expr(),
-            )),
+            Self::Index(base, index) => {
+                crate::megakernel::c_index(base.to_megakernel_expr(), index.to_megakernel_expr())
+            }
         }
     }
 }
@@ -571,8 +572,7 @@ impl Parser {
 
         if self.peek() == Some(&Token::Amp) {
             self.position += 1;
-            let name = self.expect_ident("address-of target")?;
-            return Ok(C0Expr::AddressOf(name));
+            return Ok(C0Expr::AddressOf(Box::new(self.parse_unary()?)));
         }
 
         if self.peek() == Some(&Token::Bang) {

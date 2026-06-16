@@ -56,6 +56,13 @@ they are not represented as C `int32` values. The current C0 target layout
 still assumes 8-byte pointer objects; that should become explicit target
 configuration when multiple ABIs matter.
 
+C expression semantics distinguish lvalue evaluation from rvalue evaluation.
+An lvalue identifies a C object, either a named local object or a memory object,
+and rvalue evaluation reads from that object. This is the C-native basis for
+`x`, `*p`, `p[i]`, assignment targets, and address-of expressions; it is also
+the path toward real local array objects rather than treating arrays as secret
+pointers.
+
 ## C0 Status
 
 C0 is not a standard language name here; it is this repo's tiny C subset used
@@ -71,7 +78,7 @@ to drive the design. It currently supports:
 - `while`, currently concrete/budget-capped for execution, plus a native
   invariant-rule checker for symbolic preservation and exit facts
 - `return`
-- address-of locals
+- address-of lvalues
 - pointer arithmetic for `int32*`
 - loads and stores, including `p[i]` syntax for `int32*` indexing
 - known function calls through a small `CFunctionEnv`

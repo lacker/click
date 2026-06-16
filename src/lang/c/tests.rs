@@ -416,6 +416,66 @@ fn c0_syntax_targets_megakernel_array_index_store() {
 }
 
 #[test]
+fn c0_syntax_targets_megakernel_address_of_array_index() {
+    let function = syntax::parse_function(
+        r#"
+        int32 load_second_through_address(int32* p) {
+            int32* q;
+            q = &p[1];
+            return *q;
+        }
+        "#,
+    )
+    .expect("address-of array-index function should parse")
+    .to_megakernel_function();
+
+    let base = crate::megakernel::Ptr {
+        block: "block".to_string(),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
+    };
+    let second = crate::megakernel::Ptr {
+        block: "block".to_string(),
+        offset: crate::megakernel::PtrOffsetTerm::Const(4),
+    };
+    let local_q = crate::megakernel::Ptr {
+        block: "local:q".to_string(),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
+    };
+    let memory = crate::megakernel::CMemory::new()
+        .with_block("block", 16)
+        .store(second.clone(), crate::megakernel::int32(23));
+    let state = crate::megakernel::CState::new().with_memory(memory);
+    let final_state = crate::megakernel::CState::new().with_memory(
+        crate::megakernel::CMemory::new()
+            .with_block("block", 16)
+            .with_block("local:q", 8)
+            .store(second.clone(), crate::megakernel::int32(23))
+            .store(local_q, crate::megakernel::CValue::Ptr(second.clone())),
+    );
+    let args = vec![crate::megakernel::c_ptr_value(base)];
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        args.clone(),
+        Default::default(),
+    )
+    .expect("parsed address-of array-index should execute");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state,
+            function,
+            args,
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(23),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_syntax_targets_megakernel_pointer_null_equality() {
     let function = syntax::parse_function(
         r#"

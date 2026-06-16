@@ -80,10 +80,22 @@ pub enum CType {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CLValue {
+    storage: CLValueStorage,
+    value_type: CType,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+enum CLValueStorage {
+    Local { name: String },
+    Memory { pointer: Ptr },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CExpr {
     Value(CValue),
     Var(String),
-    AddressOf(String),
+    AddressOf(Box<CExpr>),
     Lt(Box<CExpr>, Box<CExpr>),
     Le(Box<CExpr>, Box<CExpr>),
     Gt(Box<CExpr>, Box<CExpr>),
@@ -96,6 +108,7 @@ pub enum CExpr {
     Add(Box<CExpr>, Box<CExpr>),
     Sub(Box<CExpr>, Box<CExpr>),
     Load(Box<CExpr>),
+    Index(Box<CExpr>, Box<CExpr>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -194,6 +207,13 @@ pub struct ExecutionBudget {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CExprOutcome {
     Value(CValue),
+    Ub(CUndefinedBehavior),
+    RuntimeError(CRuntimeError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+enum CLValueOutcome {
+    LValue(CLValue),
     Ub(CUndefinedBehavior),
     RuntimeError(CRuntimeError),
 }
@@ -344,6 +364,13 @@ pub struct SymbolicCExecutionPath {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CExprPath {
     outcome: CExprOutcome,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CLValuePath {
+    outcome: CLValueOutcome,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
 }
@@ -531,13 +558,57 @@ impl CType {
             (Self::Int32, CValue::Int32(_)) | (Self::Int32Ptr, CValue::Ptr(_))
         )
     }
+
+    fn byte_width(self) -> u32 {
+        match self {
+            Self::Int32 => 4,
+            Self::Int32Ptr => C_POINTER_BYTE_WIDTH,
+        }
+    }
 }
 
 impl CValue {
+    fn c_type(&self) -> CType {
+        match self {
+            Self::Int32(_) => CType::Int32,
+            Self::Ptr(_) => CType::Int32Ptr,
+        }
+    }
+
     fn byte_width(&self) -> u32 {
         match self {
             Self::Int32(_) => 4,
             Self::Ptr(_) => C_POINTER_BYTE_WIDTH,
+        }
+    }
+}
+
+impl CLValue {
+    fn local(name: impl Into<String>, value_type: CType) -> Self {
+        Self {
+            storage: CLValueStorage::Local { name: name.into() },
+            value_type,
+        }
+    }
+
+    fn memory(pointer: Ptr, value_type: CType) -> Self {
+        Self {
+            storage: CLValueStorage::Memory { pointer },
+            value_type,
+        }
+    }
+
+    pub fn value_type(&self) -> CType {
+        self.value_type
+    }
+
+    fn pointer(&self, state: &CState) -> Option<Ptr> {
+        match &self.storage {
+            CLValueStorage::Local { name } => {
+                let pointer = CMemory::local_ptr(name);
+                state.memory.has_block(&pointer.block).then_some(pointer)
+            }
+            CLValueStorage::Memory { pointer } => Some(pointer.clone()),
         }
     }
 }
@@ -740,8 +811,8 @@ impl CMemory {
         self.blocks.contains_key(block)
     }
 
-    fn can_load_concretely(&self, ptr: &Ptr) -> bool {
-        self.cells.contains_key(ptr) || self.access_in_bounds(ptr, 4)
+    fn can_load_concretely(&self, ptr: &Ptr, byte_width: u32) -> bool {
+        self.cells.contains_key(ptr) || self.access_in_bounds(ptr, byte_width)
     }
 
     fn can_store_concretely(&self, ptr: &Ptr, value: &CValue) -> bool {
@@ -1233,7 +1304,7 @@ pub fn c_var(name: impl Into<String>) -> CExpr {
 }
 
 pub fn c_addr_of(name: impl Into<String>) -> CExpr {
-    CExpr::AddressOf(name.into())
+    CExpr::AddressOf(Box::new(c_var(name)))
 }
 
 pub fn c_int32_literal(value: u32) -> CExpr {
@@ -1290,6 +1361,10 @@ pub fn c_sub(left: CExpr, right: CExpr) -> CExpr {
 
 pub fn c_load(ptr: CExpr) -> CExpr {
     CExpr::Load(Box::new(ptr))
+}
+
+pub fn c_index(base: CExpr, index: CExpr) -> CExpr {
+    CExpr::Index(Box::new(base), Box::new(index))
 }
 
 pub fn c_assign(name: impl Into<String>, expr: CExpr) -> CStmt {
@@ -2176,7 +2251,7 @@ fn solve_builtin_prop(prop: &Prop) -> bool {
         } => bytes
             .as_const()
             .is_some_and(|bytes| memory.access_in_bounds(base, bytes)),
-        Prop::CMemoryCanLoad { memory, ptr } => memory.can_load_concretely(ptr),
+        Prop::CMemoryCanLoad { memory, ptr } => memory.can_load_concretely(ptr, 4),
         Prop::CMemoryCanStore { memory, ptr } => memory.access_in_bounds(ptr, 4),
         _ => false,
     }
@@ -2406,26 +2481,8 @@ fn eval_c_expr_paths(
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
-        CExpr::Var(name) => vec![CExprPath {
-            outcome: match state.locals.get(name) {
-                Some(value) => CExprOutcome::Value(value.clone()),
-                None => CExprOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone())),
-            },
-            facts: Vec::new(),
-            obligations: Vec::new(),
-        }],
-        CExpr::AddressOf(name) => {
-            let ptr = CMemory::local_ptr(name);
-            vec![CExprPath {
-                outcome: if state.memory.has_block(&ptr.block) {
-                    CExprOutcome::Value(CValue::Ptr(ptr))
-                } else {
-                    CExprOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone()))
-                },
-                facts: Vec::new(),
-                obligations: Vec::new(),
-            }]
-        }
+        CExpr::Var(_) => read_c_lvalue_expr_paths(state, expr, assumptions, budget)?,
+        CExpr::AddressOf(target) => address_of_lvalue_paths(state, target, assumptions, budget)?,
         CExpr::Lt(left, right) => eval_c_int32_binary_paths(
             state,
             left,
@@ -2504,39 +2561,195 @@ fn eval_c_expr_paths(
                 apply_c_int32_sub(left, right, facts, obligations, assumptions)
             },
         )?,
-        CExpr::Load(ptr) => {
+        CExpr::Load(_) | CExpr::Index(_, _) => {
+            read_c_lvalue_expr_paths(state, expr, assumptions, budget)?
+        }
+    };
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn eval_c_lvalue_paths(
+    state: &CState,
+    expr: &CExpr,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CLValuePath>> {
+    budget.consume_expression_step()?;
+    let paths = match expr {
+        CExpr::Var(name) => vec![CLValuePath {
+            outcome: match state.locals.get(name) {
+                Some(value) => CLValueOutcome::LValue(CLValue::local(name.clone(), value.c_type())),
+                None => CLValueOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone())),
+            },
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }],
+        CExpr::Load(pointer_expr) => {
             let mut paths = Vec::new();
-            for path in eval_c_expr_paths(state, ptr, assumptions, budget)? {
-                match path.outcome {
-                    CExprOutcome::Value(CValue::Ptr(ptr)) => {
-                        paths.extend(eval_c_memory_load_paths(
-                            &state.memory,
-                            ptr,
-                            path.facts,
-                            path.obligations,
-                            assumptions,
-                        ))
-                    }
-                    CExprOutcome::Value(_) => paths.push(CExprPath {
-                        outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                        facts: path.facts,
-                        obligations: path.obligations,
-                    }),
-                    CExprOutcome::Ub(ub) => paths.push(CExprPath {
-                        outcome: CExprOutcome::Ub(ub),
-                        facts: path.facts,
-                        obligations: path.obligations,
-                    }),
-                    CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
-                        outcome: CExprOutcome::RuntimeError(error),
-                        facts: path.facts,
-                        obligations: path.obligations,
-                    }),
-                }
+            for pointer_path in eval_c_expr_paths(state, pointer_expr, assumptions, budget)? {
+                paths.push(match pointer_path.outcome {
+                    CExprOutcome::Value(CValue::Ptr(pointer)) => CLValuePath {
+                        outcome: CLValueOutcome::LValue(CLValue::memory(pointer, CType::Int32)),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExprOutcome::Value(_) => CLValuePath {
+                        outcome: CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExprOutcome::Ub(ub) => CLValuePath {
+                        outcome: CLValueOutcome::Ub(ub),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExprOutcome::RuntimeError(error) => CLValuePath {
+                        outcome: CLValueOutcome::RuntimeError(error),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                });
             }
             paths
         }
+        CExpr::Index(base, index) => {
+            let mut paths = Vec::new();
+            for pointer_path in eval_c_add_paths(state, base, index, assumptions, budget)? {
+                paths.push(match pointer_path.outcome {
+                    CExprOutcome::Value(CValue::Ptr(pointer)) => CLValuePath {
+                        outcome: CLValueOutcome::LValue(CLValue::memory(pointer, CType::Int32)),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExprOutcome::Value(_) => CLValuePath {
+                        outcome: CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExprOutcome::Ub(ub) => CLValuePath {
+                        outcome: CLValueOutcome::Ub(ub),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExprOutcome::RuntimeError(error) => CLValuePath {
+                        outcome: CLValueOutcome::RuntimeError(error),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                });
+            }
+            paths
+        }
+        _ => vec![CLValuePath {
+            outcome: CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }],
     };
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn read_c_lvalue_expr_paths(
+    state: &CState,
+    expr: &CExpr,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExprPath>> {
+    let mut paths = Vec::new();
+    for lvalue_path in eval_c_lvalue_paths(state, expr, assumptions, budget)? {
+        paths.extend(read_c_lvalue_paths(
+            state,
+            lvalue_path.outcome,
+            lvalue_path.facts,
+            lvalue_path.obligations,
+            assumptions,
+        ));
+    }
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn read_c_lvalue_paths(
+    state: &CState,
+    outcome: CLValueOutcome,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExprPath> {
+    match outcome {
+        CLValueOutcome::LValue(lvalue) => match &lvalue.storage {
+            CLValueStorage::Local { name } => vec![CExprPath {
+                outcome: match state.locals.get(name) {
+                    Some(value) if lvalue.value_type.accepts(value) => {
+                        CExprOutcome::Value(value.clone())
+                    }
+                    Some(_) => CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    None => {
+                        CExprOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone()))
+                    }
+                },
+                facts,
+                obligations,
+            }],
+            CLValueStorage::Memory { pointer } => eval_c_memory_load_paths(
+                &state.memory,
+                pointer.clone(),
+                lvalue.value_type,
+                facts,
+                obligations,
+                assumptions,
+            ),
+        },
+        CLValueOutcome::Ub(ub) => vec![CExprPath {
+            outcome: CExprOutcome::Ub(ub),
+            facts,
+            obligations,
+        }],
+        CLValueOutcome::RuntimeError(error) => vec![CExprPath {
+            outcome: CExprOutcome::RuntimeError(error),
+            facts,
+            obligations,
+        }],
+    }
+}
+
+fn address_of_lvalue_paths(
+    state: &CState,
+    target: &CExpr,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExprPath>> {
+    let mut paths = Vec::new();
+    for lvalue_path in eval_c_lvalue_paths(state, target, assumptions, budget)? {
+        paths.push(match lvalue_path.outcome {
+            CLValueOutcome::LValue(lvalue) => match lvalue.pointer(state) {
+                Some(pointer) => CExprPath {
+                    outcome: CExprOutcome::Value(CValue::Ptr(pointer)),
+                    facts: lvalue_path.facts,
+                    obligations: lvalue_path.obligations,
+                },
+                None => CExprPath {
+                    outcome: CExprOutcome::RuntimeError(CRuntimeError::UnboundVariable(format!(
+                        "{target:?}"
+                    ))),
+                    facts: lvalue_path.facts,
+                    obligations: lvalue_path.obligations,
+                },
+            },
+            CLValueOutcome::Ub(ub) => CExprPath {
+                outcome: CExprOutcome::Ub(ub),
+                facts: lvalue_path.facts,
+                obligations: lvalue_path.obligations,
+            },
+            CLValueOutcome::RuntimeError(error) => CExprPath {
+                outcome: CExprOutcome::RuntimeError(error),
+                facts: lvalue_path.facts,
+                obligations: lvalue_path.obligations,
+            },
+        });
+    }
     budget.consume_paths(paths.len())?;
     Ok(paths)
 }
@@ -2710,11 +2923,19 @@ fn c_truthiness_as_c_int32_paths(
 fn eval_c_memory_load_paths(
     memory: &CMemory,
     ptr: Ptr,
+    value_type: CType,
     facts: Vec<PathFact>,
     mut obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExprPath> {
     if let Some(value) = memory.known_value(&ptr) {
+        if !value_type.accepts(&value) {
+            return vec![CExprPath {
+                outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            }];
+        }
         return vec![CExprPath {
             outcome: CExprOutcome::Value(value),
             facts,
@@ -2722,7 +2943,14 @@ fn eval_c_memory_load_paths(
         }];
     }
 
-    if memory.can_load_concretely(&ptr) {
+    if memory.can_load_concretely(&ptr, value_type.byte_width()) {
+        if value_type != CType::Int32 {
+            return vec![CExprPath {
+                outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            }];
+        }
         return vec![CExprPath {
             outcome: CExprOutcome::Value(memory.symbolic_int32_load(&ptr)),
             facts,
@@ -2736,6 +2964,14 @@ fn eval_c_memory_load_paths(
     };
     if add_proof_obligation(&mut obligations, assumptions, prop).is_none() {
         return Vec::new();
+    }
+
+    if value_type != CType::Int32 {
+        return vec![CExprPath {
+            outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts,
+            obligations,
+        }];
     }
 
     vec![CExprPath {
@@ -3488,6 +3724,140 @@ fn exec_c_stmt(state: &CState, stmt: &CStmt, assumptions: &Assumptions) -> Optio
     Some(path.outcome)
 }
 
+fn exec_c_lvalue_assignment_paths(
+    state: &CState,
+    target: &CExpr,
+    value: &CExpr,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStmtPath>> {
+    let mut paths = Vec::new();
+    for target_path in eval_c_lvalue_paths(state, target, assumptions, budget)? {
+        let CLValuePath {
+            outcome: target_outcome,
+            facts: target_facts,
+            obligations: target_obligations,
+        } = target_path;
+
+        let target_lvalue = match target_outcome {
+            CLValueOutcome::LValue(lvalue) => lvalue,
+            CLValueOutcome::Ub(ub) => {
+                paths.push(CStmtPath {
+                    outcome: CStmtOutcome::Ub(ub),
+                    facts: target_facts,
+                    obligations: target_obligations,
+                });
+                continue;
+            }
+            CLValueOutcome::RuntimeError(error) => {
+                paths.push(CStmtPath {
+                    outcome: CStmtOutcome::RuntimeError(error),
+                    facts: target_facts,
+                    obligations: target_obligations,
+                });
+                continue;
+            }
+        };
+
+        let value_assumptions =
+            assumptions_with_path_context(assumptions, &target_facts, &target_obligations);
+        for value_path in eval_c_expr_paths(state, value, &value_assumptions, budget)? {
+            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &target_facts,
+                &target_obligations,
+                &value_path.facts,
+                &value_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+
+            match value_path.outcome {
+                CExprOutcome::Value(value) => paths.extend(write_c_lvalue_paths(
+                    state,
+                    target_lvalue.clone(),
+                    value,
+                    facts,
+                    obligations,
+                    assumptions,
+                )),
+                CExprOutcome::Ub(ub) => paths.push(CStmtPath {
+                    outcome: CStmtOutcome::Ub(ub),
+                    facts,
+                    obligations,
+                }),
+                CExprOutcome::RuntimeError(error) => paths.push(CStmtPath {
+                    outcome: CStmtOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+                }),
+            }
+        }
+    }
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn write_c_lvalue_paths(
+    state: &CState,
+    lvalue: CLValue,
+    value: CValue,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CStmtPath> {
+    if !lvalue.value_type.accepts(&value) {
+        return vec![CStmtPath {
+            outcome: CStmtOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts,
+            obligations,
+        }];
+    }
+
+    match lvalue.storage {
+        CLValueStorage::Local { name } => {
+            let mut state = state.clone();
+            sync_stack_local(&mut state, &name, &value);
+            state.locals.set(name, value);
+            vec![CStmtPath {
+                outcome: CStmtOutcome::Normal(state),
+                facts,
+                obligations,
+            }]
+        }
+        CLValueStorage::Memory { pointer } => {
+            let Some(obligations) = add_memory_store_obligation(
+                &state.memory,
+                &pointer,
+                &value,
+                obligations,
+                assumptions,
+            ) else {
+                return Vec::new();
+            };
+            let mut state = state.clone();
+            state.memory = state.memory.store(pointer.clone(), value.clone());
+            if let Some(name) = local_name_from_pointer(&pointer) {
+                if state.locals.get(name).is_some() {
+                    state.locals.set(name.to_string(), value);
+                }
+            }
+            vec![CStmtPath {
+                outcome: CStmtOutcome::Normal(state),
+                facts,
+                obligations,
+            }]
+        }
+    }
+}
+
+fn local_name_from_pointer(pointer: &Ptr) -> Option<&str> {
+    if pointer.offset != PtrOffsetTerm::Const(0) {
+        return None;
+    }
+    pointer.block.strip_prefix("local:")
+}
+
 fn exec_c_stmt_paths(
     state: &CState,
     stmt: &CStmt,
@@ -3502,23 +3872,9 @@ fn exec_c_stmt_paths(
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
-        CStmt::Assign { name, expr } => eval_c_expr_paths(state, expr, assumptions, budget)?
-            .into_iter()
-            .map(|path| CStmtPath {
-                outcome: match path.outcome {
-                    CExprOutcome::Value(value) => {
-                        let mut state = state.clone();
-                        sync_stack_local(&mut state, name, &value);
-                        state.locals.set(name.clone(), value);
-                        CStmtOutcome::Normal(state)
-                    }
-                    CExprOutcome::Ub(ub) => CStmtOutcome::Ub(ub),
-                    CExprOutcome::RuntimeError(error) => CStmtOutcome::RuntimeError(error),
-                },
-                facts: path.facts,
-                obligations: path.obligations,
-            })
-            .collect(),
+        CStmt::Assign { name, expr } => {
+            exec_c_lvalue_assignment_paths(state, &c_var(name.clone()), expr, assumptions, budget)?
+        }
         CStmt::CallAssign {
             target,
             function_name,
@@ -3567,90 +3923,13 @@ fn exec_c_stmt_paths(
                 obligations: path.obligations,
             })
             .collect(),
-        CStmt::Store { ptr, value } => {
-            let mut paths = Vec::new();
-            for ptr_path in eval_c_expr_paths(state, ptr, assumptions, budget)? {
-                let CExprPath {
-                    outcome: ptr_outcome,
-                    facts: ptr_facts,
-                    obligations: ptr_obligations,
-                } = ptr_path;
-
-                let ptr = match ptr_outcome {
-                    CExprOutcome::Value(CValue::Ptr(ptr)) => ptr,
-                    CExprOutcome::Value(_) => {
-                        paths.push(CStmtPath {
-                            outcome: CStmtOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                            facts: ptr_facts,
-                            obligations: ptr_obligations,
-                        });
-                        continue;
-                    }
-                    CExprOutcome::Ub(ub) => {
-                        paths.push(CStmtPath {
-                            outcome: CStmtOutcome::Ub(ub),
-                            facts: ptr_facts,
-                            obligations: ptr_obligations,
-                        });
-                        continue;
-                    }
-                    CExprOutcome::RuntimeError(error) => {
-                        paths.push(CStmtPath {
-                            outcome: CStmtOutcome::RuntimeError(error),
-                            facts: ptr_facts,
-                            obligations: ptr_obligations,
-                        });
-                        continue;
-                    }
-                };
-
-                let value_assumptions =
-                    assumptions_with_path_context(assumptions, &ptr_facts, &ptr_obligations);
-                for value_path in eval_c_expr_paths(state, value, &value_assumptions, budget)? {
-                    let Some((facts, obligations)) = merge_path_facts_and_obligations(
-                        &ptr_facts,
-                        &ptr_obligations,
-                        &value_path.facts,
-                        &value_path.obligations,
-                        assumptions,
-                    ) else {
-                        continue;
-                    };
-
-                    match value_path.outcome {
-                        CExprOutcome::Value(value) => {
-                            let Some(obligations) = add_memory_store_obligation(
-                                &state.memory,
-                                &ptr,
-                                &value,
-                                obligations,
-                                assumptions,
-                            ) else {
-                                continue;
-                            };
-                            let mut state = state.clone();
-                            state.memory = state.memory.store(ptr.clone(), value);
-                            paths.push(CStmtPath {
-                                outcome: CStmtOutcome::Normal(state),
-                                facts,
-                                obligations,
-                            });
-                        }
-                        CExprOutcome::Ub(ub) => paths.push(CStmtPath {
-                            outcome: CStmtOutcome::Ub(ub),
-                            facts,
-                            obligations,
-                        }),
-                        CExprOutcome::RuntimeError(error) => paths.push(CStmtPath {
-                            outcome: CStmtOutcome::RuntimeError(error),
-                            facts,
-                            obligations,
-                        }),
-                    }
-                }
-            }
-            paths
-        }
+        CStmt::Store { ptr, value } => exec_c_lvalue_assignment_paths(
+            state,
+            &CExpr::Load(Box::new(ptr.clone())),
+            value,
+            assumptions,
+            budget,
+        )?,
         CStmt::If {
             condition,
             then_branch,
@@ -5261,7 +5540,7 @@ mod tests {
 
     #[test]
     fn assignment_and_sequence_update_native_state() {
-        let state = CState::new();
+        let state = CState::new().with_local("x", int32(0));
         let stmt = c_seq(c_assign("x", c_int32_literal(2)), c_return(c_var("x")));
         let final_state = CState::new().with_local("x", int32(2));
         let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
@@ -5947,6 +6226,40 @@ mod tests {
                     },
                 }),
             )
+        );
+    }
+
+    #[test]
+    fn pointer_store_through_local_address_updates_named_lvalue() {
+        let local_ptr = Ptr {
+            block: "local:x".to_string(),
+            offset: PtrOffsetTerm::Const(0),
+        };
+        let stmt = c_seq(
+            c_declare("x", CType::Int32),
+            c_seq(
+                c_store(c_addr_of("x"), c_int32_literal(5)),
+                c_return(c_var("x")),
+            ),
+        );
+        let final_state = CState::new().with_local("x", int32(5)).with_memory(
+            CMemory::new()
+                .with_block("local:x", 4)
+                .store(local_ptr, int32(5)),
+        );
+        let theorem = prove_symbolic_c_execution(CState::new(), stmt.clone(), Assumptions::new())
+            .expect("pointer store through local address should execute");
+
+        assert_eq!(
+            theorem.prop(),
+            &Prop::CStmtExecutes {
+                state: CState::new(),
+                stmt,
+                outcome: CStmtOutcome::Return {
+                    value: int32(5),
+                    state: final_state,
+                },
+            }
         );
     }
 
