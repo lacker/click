@@ -7,11 +7,14 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::lang::c::syntax::{self, C0Expr, C0Type};
+use crate::lang::c::syntax::{self, C0Expression, C0Type};
 use crate::megakernel::{
-    Assumptions, Bv32Term, CExpr, CFunctionEnv, CFunctionOutcome, CFunctionSpec, CMemory, CState,
-    CValue, ConditionTerm, Prop, Ptr, PtrOffsetTerm, Theorem, Var, c_function_spec, c_ptr_value,
-    prove_c_function_satisfies_spec_with_env, prove_symbolic_c_function_execution_paths_with_env,
+    Assumptions, Bitvector32Term, CExpression, CFunction, CFunctionEnvironment, CFunctionOutcome,
+    CFunctionSpecification, CMemory, CState, CStatement, CValue, ConditionTerm, Pointer,
+    PointerOffsetTerm, Proposition, Theorem, Variable, c_assert, c_function,
+    c_function_specification, c_pointer_value, c_seq,
+    prove_c_function_satisfies_specification_with_environment,
+    prove_symbolic_c_function_execution_paths_with_environment,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -24,6 +27,7 @@ pub struct ClickFile {
 pub struct FunctionBlock {
     signature: FunctionSignature,
     requires: Vec<Requirement>,
+    at_clauses: Vec<AtClause>,
     ensures: Vec<EnsureClause>,
 }
 
@@ -31,19 +35,19 @@ pub struct FunctionBlock {
 pub struct FunctionSignature {
     return_type: C0Type,
     name: String,
-    params: Vec<FunctionParam>,
+    parameters: Vec<FunctionParameter>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FunctionParam {
-    ty: C0Type,
+pub struct FunctionParameter {
+    c_type: C0Type,
     name: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Requirement {
     ValidRange { name: String, bytes: u32 },
-    Condition(CExpr),
+    Condition(CExpression),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -54,42 +58,67 @@ pub struct EnsureClause {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AtClause {
+    target: AtTarget,
+    items: Vec<AtItem>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum AtTarget {
+    Loop(usize),
+    Statement(usize),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AtItem {
+    kind: AtItemKind,
+    condition: CExpression,
+    proof: Proof,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AtItemKind {
+    Invariant,
+    Assert,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Ensure {
     Comparison {
-        left: ContractExpr,
+        left: ContractExpression,
         operator: ComparisonOperator,
-        right: ContractExpr,
+        right: ContractExpression,
     },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ContractExpr {
-    Current(CExpr),
-    Old(CExpr),
-    Add(Box<ContractExpr>, Box<ContractExpr>),
-    Sub(Box<ContractExpr>, Box<ContractExpr>),
-    Index(Box<ContractExpr>, Box<ContractExpr>),
+pub enum ContractExpression {
+    Current(CExpression),
+    Old(CExpression),
+    Add(Box<ContractExpression>, Box<ContractExpression>),
+    Subtract(Box<ContractExpression>, Box<ContractExpression>),
+    Index(Box<ContractExpression>, Box<ContractExpression>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ComparisonOperator {
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
+    Equal,
+    NotEqual,
+    LessThan,
+    LessEqual,
+    GreaterThan,
+    GreaterEqual,
 }
 
 impl fmt::Display for ComparisonOperator {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let spelling = match self {
-            Self::Eq => "==",
-            Self::Ne => "!=",
-            Self::Lt => "<",
-            Self::Le => "<=",
-            Self::Gt => ">",
-            Self::Ge => ">=",
+            Self::Equal => "==",
+            Self::NotEqual => "!=",
+            Self::LessThan => "<",
+            Self::LessEqual => "<=",
+            Self::GreaterThan => ">",
+            Self::GreaterEqual => ">=",
         };
         formatter.write_str(spelling)
     }
@@ -113,7 +142,7 @@ pub struct VerifiedCTheorem {
     pub function_block: FunctionBlock,
     pub ensure_index: usize,
     pub ensure_clause: EnsureClause,
-    pub spec: CFunctionSpec,
+    pub specification: CFunctionSpecification,
     pub theorem: Theorem,
 }
 
@@ -141,6 +170,10 @@ impl FunctionBlock {
         &self.requires
     }
 
+    pub fn at_clauses(&self) -> &[AtClause] {
+        &self.at_clauses
+    }
+
     pub fn ensures(&self) -> &[EnsureClause] {
         &self.ensures
     }
@@ -155,14 +188,14 @@ impl FunctionSignature {
         &self.name
     }
 
-    pub fn params(&self) -> &[FunctionParam] {
-        &self.params
+    pub fn parameters(&self) -> &[FunctionParameter] {
+        &self.parameters
     }
 }
 
-impl FunctionParam {
-    pub fn ty(&self) -> C0Type {
-        self.ty
+impl FunctionParameter {
+    pub fn c_type(&self) -> C0Type {
+        self.c_type
     }
 
     pub fn name(&self) -> &str {
@@ -177,6 +210,30 @@ impl EnsureClause {
 
     pub fn ensure(&self) -> &Ensure {
         &self.ensure
+    }
+
+    pub fn proof(&self) -> &Proof {
+        &self.proof
+    }
+}
+
+impl AtClause {
+    pub fn target(&self) -> &AtTarget {
+        &self.target
+    }
+
+    pub fn items(&self) -> &[AtItem] {
+        &self.items
+    }
+}
+
+impl AtItem {
+    pub fn kind(&self) -> AtItemKind {
+        self.kind
+    }
+
+    pub fn condition(&self) -> &CExpression {
+        &self.condition
     }
 
     pub fn proof(&self) -> &Proof {
@@ -213,7 +270,7 @@ pub fn verify_c0_sources(
     let file = parse(click_source)?;
     let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
     let parsed_sources = parse_verified_sources(&file, &c_sources)?;
-    let function_env = function_env(&parsed_sources);
+    let function_environment = build_function_environment(&parsed_sources);
     let mut verified = Vec::new();
 
     for function_block in file.function_blocks {
@@ -226,6 +283,8 @@ pub fn verify_c0_sources(
                 ))
             })?;
         check_signature(&function_block.signature, parsed_function, source_path)?;
+        validate_at_clauses(&function_block, parsed_function)?;
+        let function = annotated_function(&function_block, parsed_function)?;
 
         for (ensure_index, ensure_clause) in function_block.ensures.iter().enumerate() {
             let ensure_label =
@@ -236,19 +295,18 @@ pub fn verify_c0_sources(
                 )));
             }
 
-            let (state, args, requirement_props) = initial_call(
+            let (state, arguments, requirement_propositions) = initial_call(
                 function_block.signature.name(),
                 function_block.requires(),
-                parsed_function.params(),
+                parsed_function.parameters(),
             )?;
-            let assumptions = assumptions_from_props(&requirement_props);
-            let function = parsed_function.to_megakernel_function();
-            let execution = prove_symbolic_c_function_execution_paths_with_env(
+            let assumptions = assumptions_from_propositions(&requirement_propositions);
+            let execution = prove_symbolic_c_function_execution_paths_with_environment(
                 state.clone(),
                 function.clone(),
-                args.clone(),
+                arguments.clone(),
                 assumptions,
-                function_env.clone(),
+                function_environment.clone(),
             );
             if let Some(limit) = execution.limit() {
                 return Err(ClickError::new(format!(
@@ -269,11 +327,11 @@ pub fn verify_c0_sources(
                         path.obligations()
                     )));
                 }
-                let outcome = match implication_body(path.theorem().prop()) {
-                    Prop::CFunctionExecutes { outcome, .. } => outcome.clone(),
-                    prop => {
+                let outcome = match implication_body(path.theorem().proposition()) {
+                    Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
+                    proposition => {
                         return Err(ClickError::new(format!(
-                            "`auto` produced an unexpected theorem on path {path_index} for `{ensure_label}`: {prop:?}"
+                            "`auto` produced an unexpected theorem on path {path_index} for `{ensure_label}`: {proposition:?}"
                         )));
                     }
                 };
@@ -283,28 +341,29 @@ pub fn verify_c0_sources(
                     path_index,
                     path.facts(),
                     ensure_clause,
-                    parsed_function.params(),
-                    &args,
+                    parsed_function.parameters(),
+                    &arguments,
                     &state,
                     &outcome,
                 )?;
-                let mut path_requirements = requirement_props.clone();
-                path_requirements.extend(path.facts().iter().map(|fact| fact.prop().clone()));
-                let spec = c_function_spec(
+                let mut path_requirements = requirement_propositions.clone();
+                path_requirements
+                    .extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+                let specification = c_function_specification(
                     state.clone(),
-                    args.clone(),
+                    arguments.clone(),
                     path_requirements,
                     outcome.clone(),
                 );
-                let theorem = prove_c_function_satisfies_spec_with_env(
+                let theorem = prove_c_function_satisfies_specification_with_environment(
                     function.clone(),
-                    spec.clone(),
+                    specification.clone(),
                     Assumptions::new(),
-                    function_env.clone(),
+                    function_environment.clone(),
                 )
                 .ok_or_else(|| {
                     ClickError::new(format!(
-                        "`auto` execution for `{ensure_label}` path {path_index} did not satisfy the packaged spec"
+                        "`auto` execution for `{ensure_label}` path {path_index} did not satisfy the packaged specification"
                     ))
                 })?;
 
@@ -313,7 +372,7 @@ pub fn verify_c0_sources(
                     function_block: function_block.clone(),
                     ensure_index,
                     ensure_clause: ensure_clause.clone(),
-                    spec,
+                    specification,
                     theorem,
                 });
             }
@@ -358,11 +417,13 @@ fn parse_verified_sources<'a>(
     Ok(parsed)
 }
 
-fn function_env(parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>) -> CFunctionEnv {
+fn build_function_environment(
+    parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
+) -> CFunctionEnvironment {
     parsed_sources
         .values()
-        .fold(CFunctionEnv::new(), |env, (_, function)| {
-            env.with_function(function.to_megakernel_function())
+        .fold(CFunctionEnvironment::new(), |environment, (_, function)| {
+            environment.with_function(function.to_megakernel_function())
         })
 }
 
@@ -373,18 +434,18 @@ fn ensure_label(function_name: &str, ensure: &EnsureClause, index: usize) -> Str
     }
 }
 
-fn implication_body(prop: &Prop) -> &Prop {
-    match prop {
-        Prop::Implies(_, body) => implication_body(body),
-        _ => prop,
+fn implication_body(proposition: &Proposition) -> &Proposition {
+    match proposition {
+        Proposition::Implies(_, body) => implication_body(body),
+        _ => proposition,
     }
 }
 
-fn assumptions_from_props(props: &[Prop]) -> Assumptions {
-    props
+fn assumptions_from_propositions(propositions: &[Proposition]) -> Assumptions {
+    propositions
         .iter()
         .cloned()
-        .fold(Assumptions::new(), Assumptions::assume_prop)
+        .fold(Assumptions::new(), Assumptions::assume_proposition)
 }
 
 fn check_signature(
@@ -401,29 +462,29 @@ fn check_signature(
         )));
     }
 
-    if signature.params().len() != parsed_function.params().len() {
+    if signature.parameters().len() != parsed_function.parameters().len() {
         return Err(ClickError::new(format!(
             "signature mismatch for `{}` in `{source_path}`: .click has {} parameters, C has {}",
             signature.name(),
-            signature.params().len(),
-            parsed_function.params().len()
+            signature.parameters().len(),
+            parsed_function.parameters().len()
         )));
     }
 
     for (index, (expected, actual)) in signature
-        .params()
+        .parameters()
         .iter()
-        .zip(parsed_function.params())
+        .zip(parsed_function.parameters())
         .enumerate()
     {
-        if expected.ty() != actual.ty() || expected.name() != actual.name() {
+        if expected.c_type() != actual.c_type() || expected.name() != actual.name() {
             return Err(ClickError::new(format!(
                 "signature mismatch for `{}` parameter {} in `{source_path}`: .click has {:?} {}, C has {:?} {}",
                 signature.name(),
                 index + 1,
-                expected.ty(),
+                expected.c_type(),
                 expected.name(),
-                actual.ty(),
+                actual.c_type(),
                 actual.name()
             )));
         }
@@ -432,11 +493,192 @@ fn check_signature(
     Ok(())
 }
 
+fn validate_at_clauses(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+) -> Result<(), ClickError> {
+    let loop_count = count_loops(parsed_function.body());
+    let statement_count = count_statements(parsed_function.body());
+    for at_clause in function_block.at_clauses() {
+        match at_clause.target() {
+            AtTarget::Loop(index) if *index >= loop_count => {
+                return Err(ClickError::new(format!(
+                    "`{}` has no `loop {index}` target; it contains {loop_count} loop(s)",
+                    function_block.signature().name()
+                )));
+            }
+            AtTarget::Statement(index) if *index >= statement_count => {
+                return Err(ClickError::new(format!(
+                    "`{}` has no `statement {index}` target; it contains {statement_count} statement(s)",
+                    function_block.signature().name()
+                )));
+            }
+            AtTarget::Statement(_) => {
+                for item in at_clause.items() {
+                    if item.kind() == AtItemKind::Invariant {
+                        return Err(ClickError::new(
+                            "`invariant` is only supported at `loop` targets",
+                        ));
+                    }
+                }
+            }
+            AtTarget::Loop(_) => {}
+        }
+
+        for item in at_clause.items() {
+            if item.proof().tactics() != [Tactic::Auto] {
+                return Err(ClickError::new(
+                    "`at` clauses must use exactly `by auto;` in this first slice",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn annotated_function(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+) -> Result<CFunction, ClickError> {
+    let mut lowerer = AnnotationLowerer {
+        at_clauses: function_block.at_clauses(),
+        loop_index: 0,
+        statement_index: 0,
+    };
+    let body = lowerer.lower_statement(parsed_function.body());
+    Ok(c_function(
+        parsed_function.return_type().to_megakernel_type(),
+        parsed_function.name().to_string(),
+        parsed_function
+            .parameters()
+            .iter()
+            .map(syntax::C0Parameter::to_megakernel_parameter)
+            .collect(),
+        body,
+    ))
+}
+
+struct AnnotationLowerer<'a> {
+    at_clauses: &'a [AtClause],
+    loop_index: usize,
+    statement_index: usize,
+}
+
+impl AnnotationLowerer<'_> {
+    fn lower_statement(&mut self, statement: &syntax::C0Statement) -> CStatement {
+        match statement {
+            syntax::C0Statement::Seq(first, second) => {
+                c_seq(self.lower_statement(first), self.lower_statement(second))
+            }
+            syntax::C0Statement::While { condition, body } => {
+                let statement_index = self.next_statement_index();
+                let loop_index = self.next_loop_index();
+                let lowered_body = self.lower_statement(body);
+                let loop_checks = self.loop_checks(loop_index);
+                let checked_body = append_asserts(lowered_body, &loop_checks);
+                let lowered_loop = crate::megakernel::c_while(
+                    condition.to_megakernel_expression(),
+                    Vec::new(),
+                    checked_body,
+                );
+                let lowered_loop = prepend_asserts(lowered_loop, &loop_checks);
+                self.prepend_statement_asserts(statement_index, lowered_loop)
+            }
+            statement => {
+                let statement_index = self.next_statement_index();
+                let lowered = statement.to_megakernel_statement();
+                self.prepend_statement_asserts(statement_index, lowered)
+            }
+        }
+    }
+
+    fn next_statement_index(&mut self) -> usize {
+        let index = self.statement_index;
+        self.statement_index += 1;
+        index
+    }
+
+    fn next_loop_index(&mut self) -> usize {
+        let index = self.loop_index;
+        self.loop_index += 1;
+        index
+    }
+
+    fn prepend_statement_asserts(
+        &self,
+        statement_index: usize,
+        statement: CStatement,
+    ) -> CStatement {
+        let checks = self
+            .at_clauses
+            .iter()
+            .filter(|clause| clause.target() == &AtTarget::Statement(statement_index))
+            .flat_map(AtClause::items)
+            .map(AtItem::condition)
+            .cloned()
+            .collect::<Vec<_>>();
+        prepend_asserts(statement, &checks)
+    }
+
+    fn loop_checks(&self, loop_index: usize) -> Vec<CExpression> {
+        self.at_clauses
+            .iter()
+            .filter(|clause| clause.target() == &AtTarget::Loop(loop_index))
+            .flat_map(AtClause::items)
+            .map(AtItem::condition)
+            .cloned()
+            .collect()
+    }
+}
+
+fn prepend_asserts(statement: CStatement, conditions: &[CExpression]) -> CStatement {
+    conditions
+        .iter()
+        .rev()
+        .fold(statement, |statement, condition| {
+            c_seq(c_assert(condition.clone()), statement)
+        })
+}
+
+fn append_asserts(statement: CStatement, conditions: &[CExpression]) -> CStatement {
+    conditions.iter().fold(statement, |statement, condition| {
+        c_seq(statement, c_assert(condition.clone()))
+    })
+}
+
+fn count_loops(statement: &syntax::C0Statement) -> usize {
+    match statement {
+        syntax::C0Statement::Seq(first, second) => count_loops(first) + count_loops(second),
+        syntax::C0Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => count_loops(then_branch) + count_loops(else_branch),
+        syntax::C0Statement::While { body, .. } => 1 + count_loops(body),
+        _ => 0,
+    }
+}
+
+fn count_statements(statement: &syntax::C0Statement) -> usize {
+    match statement {
+        syntax::C0Statement::Seq(first, second) => {
+            count_statements(first) + count_statements(second)
+        }
+        syntax::C0Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => 1 + count_statements(then_branch) + count_statements(else_branch),
+        syntax::C0Statement::While { body, .. } => 1 + count_statements(body),
+        _ => 1,
+    }
+}
+
 fn initial_call(
     function_name: &str,
     requires: &[Requirement],
-    params: &[syntax::C0Param],
-) -> Result<(CState, Vec<CExpr>, Vec<Prop>), ClickError> {
+    parameters: &[syntax::C0Parameter],
+) -> Result<(CState, Vec<CExpression>, Vec<Proposition>), ClickError> {
     let valid_ranges: BTreeMap<&str, u32> = requires
         .iter()
         .filter_map(|requirement| match requirement {
@@ -445,29 +687,29 @@ fn initial_call(
         })
         .collect();
     let mut memory = CMemory::new();
-    let mut args = Vec::new();
+    let mut arguments = Vec::new();
 
-    for param in params {
-        match param.ty() {
-            C0Type::Int32Ptr => {
-                if let Some(bytes) = valid_ranges.get(param.name()) {
-                    memory = memory.with_block(param.name(), *bytes);
+    for parameter in parameters {
+        match parameter.c_type() {
+            C0Type::Int32Pointer => {
+                if let Some(bytes) = valid_ranges.get(parameter.name()) {
+                    memory = memory.with_block(parameter.name(), *bytes);
                 }
-                args.push(c_ptr_value(Ptr {
-                    block: param.name().to_string(),
-                    offset: PtrOffsetTerm::Const(0),
+                arguments.push(c_pointer_value(Pointer {
+                    block: parameter.name().to_string(),
+                    offset: PointerOffsetTerm::Constant(0),
                 }));
             }
             C0Type::Int32 => {
-                args.push(CExpr::Value(CValue::Int32(Bv32Term::Var(Var(
-                    args.len() as u64
-                )))));
+                arguments.push(CExpression::Value(CValue::Int32(
+                    Bitvector32Term::Variable(Variable(arguments.len() as u64)),
+                )));
             }
         }
     }
 
     for name in valid_ranges.keys() {
-        if !params.iter().any(|param| param.name() == *name) {
+        if !parameters.iter().any(|parameter| parameter.name() == *name) {
             return Err(ClickError::new(format!(
                 "`valid_range` names `{name}`, but `{}` has no such parameter",
                 function_name
@@ -476,8 +718,12 @@ fn initial_call(
     }
 
     memory = memory_with_symbolic_valid_range_cells(memory, &valid_ranges);
-    let requirement_props = requirement_props(requires, params, &args)?;
-    Ok((CState::new().with_memory(memory), args, requirement_props))
+    let requirement_propositions = requirement_propositions(requires, parameters, &arguments)?;
+    Ok((
+        CState::new().with_memory(memory),
+        arguments,
+        requirement_propositions,
+    ))
 }
 
 fn memory_with_symbolic_valid_range_cells(
@@ -488,110 +734,110 @@ fn memory_with_symbolic_valid_range_cells(
     for (name, bytes) in valid_ranges {
         let mut offset: u32 = 0;
         while offset.checked_add(4).is_some_and(|end| end <= *bytes) {
-            let ptr = Ptr {
+            let pointer = Pointer {
                 block: (*name).to_string(),
-                offset: PtrOffsetTerm::Const(i64::from(offset)),
+                offset: PointerOffsetTerm::Constant(i64::from(offset)),
             };
-            let value = CValue::Int32(Bv32Term::MemoryLoad(
+            let value = CValue::Int32(Bitvector32Term::MemoryLoad(
                 Box::new(base_memory.clone()),
-                Box::new(ptr.clone()),
+                Box::new(pointer.clone()),
             ));
-            memory = memory.store(ptr, value);
+            memory = memory.store(pointer, value);
             offset += 4;
         }
     }
     memory
 }
 
-fn requirement_props(
+fn requirement_propositions(
     requires: &[Requirement],
-    params: &[syntax::C0Param],
-    args: &[CExpr],
-) -> Result<Vec<Prop>, ClickError> {
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Result<Vec<Proposition>, ClickError> {
     requires
         .iter()
         .filter_map(|requirement| match requirement {
             Requirement::ValidRange { .. } => None,
             Requirement::Condition(condition) => {
-                Some(condition_requirement_prop(params, args, condition))
+                Some(condition_requirement_prop(parameters, arguments, condition))
             }
         })
         .collect()
 }
 
 fn condition_requirement_prop(
-    params: &[syntax::C0Param],
-    args: &[CExpr],
-    condition: &CExpr,
-) -> Result<Prop, ClickError> {
-    let parameter_values = parameter_values(params, args)?;
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    condition: &CExpression,
+) -> Result<Proposition, ClickError> {
+    let parameter_values = parameter_values(parameters, arguments)?;
     let (condition, value) = lower_condition_requirement(condition, &parameter_values)?;
-    Ok(Prop::ConditionIs(condition, value))
+    Ok(Proposition::ConditionIs(condition, value))
 }
 
 fn parameter_values(
-    params: &[syntax::C0Param],
-    args: &[CExpr],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
 ) -> Result<BTreeMap<String, CValue>, ClickError> {
-    params
+    parameters
         .iter()
-        .zip(args)
-        .map(|(param, arg)| {
-            let CExpr::Value(value) = arg else {
+        .zip(arguments)
+        .map(|(parameter, argument)| {
+            let CExpression::Value(value) = argument else {
                 return Err(ClickError::new(format!(
                     "could not build contract environment for parameter `{}`",
-                    param.name()
+                    parameter.name()
                 )));
             };
-            Ok((param.name().to_string(), value.clone()))
+            Ok((parameter.name().to_string(), value.clone()))
         })
         .collect()
 }
 
 fn lower_condition_requirement(
-    condition: &CExpr,
+    condition: &CExpression,
     parameter_values: &BTreeMap<String, CValue>,
 ) -> Result<(ConditionTerm, bool), ClickError> {
     match condition {
-        CExpr::Lt(left, right) => Ok((
-            signed_lt(
-                lower_bv32_expr(left, parameter_values)?,
-                lower_bv32_expr(right, parameter_values)?,
+        CExpression::LessThan(left, right) => Ok((
+            signed_less_than(
+                lower_bitvector32_expression(left, parameter_values)?,
+                lower_bitvector32_expression(right, parameter_values)?,
             ),
             true,
         )),
-        CExpr::Le(left, right) => Ok((
-            signed_le(
-                lower_bv32_expr(left, parameter_values)?,
-                lower_bv32_expr(right, parameter_values)?,
+        CExpression::LessEqual(left, right) => Ok((
+            signed_less_equal(
+                lower_bitvector32_expression(left, parameter_values)?,
+                lower_bitvector32_expression(right, parameter_values)?,
             ),
             true,
         )),
-        CExpr::Gt(left, right) => Ok((
-            signed_gt(
-                lower_bv32_expr(left, parameter_values)?,
-                lower_bv32_expr(right, parameter_values)?,
+        CExpression::GreaterThan(left, right) => Ok((
+            signed_greater_than(
+                lower_bitvector32_expression(left, parameter_values)?,
+                lower_bitvector32_expression(right, parameter_values)?,
             ),
             true,
         )),
-        CExpr::Ge(left, right) => Ok((
-            signed_ge(
-                lower_bv32_expr(left, parameter_values)?,
-                lower_bv32_expr(right, parameter_values)?,
+        CExpression::GreaterEqual(left, right) => Ok((
+            signed_greater_equal(
+                lower_bitvector32_expression(left, parameter_values)?,
+                lower_bitvector32_expression(right, parameter_values)?,
             ),
             true,
         )),
-        CExpr::Eq(left, right) => Ok((
-            bv32_eq(
-                lower_bv32_expr(left, parameter_values)?,
-                lower_bv32_expr(right, parameter_values)?,
+        CExpression::Equal(left, right) => Ok((
+            bitvector32_equal(
+                lower_bitvector32_expression(left, parameter_values)?,
+                lower_bitvector32_expression(right, parameter_values)?,
             ),
             true,
         )),
-        CExpr::Ne(left, right) => Ok((
-            bv32_eq(
-                lower_bv32_expr(left, parameter_values)?,
-                lower_bv32_expr(right, parameter_values)?,
+        CExpression::NotEqual(left, right) => Ok((
+            bitvector32_equal(
+                lower_bitvector32_expression(left, parameter_values)?,
+                lower_bitvector32_expression(right, parameter_values)?,
             ),
             false,
         )),
@@ -601,16 +847,16 @@ fn lower_condition_requirement(
     }
 }
 
-fn lower_bv32_expr(
-    expr: &CExpr,
+fn lower_bitvector32_expression(
+    expression: &CExpression,
     parameter_values: &BTreeMap<String, CValue>,
-) -> Result<Bv32Term, ClickError> {
-    match expr {
-        CExpr::Value(CValue::Int32(bits)) => Ok(bits.clone()),
-        CExpr::Value(_) => Err(ClickError::new(format!(
-            "expected int32 expression in contract, got `{expr:?}`"
+) -> Result<Bitvector32Term, ClickError> {
+    match expression {
+        CExpression::Value(CValue::Int32(bits)) => Ok(bits.clone()),
+        CExpression::Value(_) => Err(ClickError::new(format!(
+            "expected int32 expression in contract, got `{expression:?}`"
         ))),
-        CExpr::Var(name) => match parameter_values.get(name) {
+        CExpression::Variable(name) => match parameter_values.get(name) {
             Some(CValue::Int32(bits)) => Ok(bits.clone()),
             Some(_) => Err(ClickError::new(format!(
                 "parameter `{name}` is not an int32 parameter"
@@ -619,78 +865,80 @@ fn lower_bv32_expr(
                 "contract expression references unknown parameter `{name}`"
             ))),
         },
-        CExpr::Add(left, right) => Ok(bv32_add(
-            lower_bv32_expr(left, parameter_values)?,
-            lower_bv32_expr(right, parameter_values)?,
+        CExpression::Add(left, right) => Ok(bitvector32_add(
+            lower_bitvector32_expression(left, parameter_values)?,
+            lower_bitvector32_expression(right, parameter_values)?,
         )),
-        CExpr::Sub(left, right) => Ok(bv32_sub(
-            lower_bv32_expr(left, parameter_values)?,
-            lower_bv32_expr(right, parameter_values)?,
+        CExpression::Subtract(left, right) => Ok(bitvector32_subtract(
+            lower_bitvector32_expression(left, parameter_values)?,
+            lower_bitvector32_expression(right, parameter_values)?,
         )),
         _ => Err(ClickError::new(format!(
-            "unsupported int32 expression in contract: `{expr:?}`"
+            "unsupported int32 expression in contract: `{expression:?}`"
         ))),
     }
 }
 
-fn bv32_add(left: Bv32Term, right: Bv32Term) -> Bv32Term {
+fn bitvector32_add(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
     match (&left, &right) {
-        (Bv32Term::Const(left), Bv32Term::Const(right)) => {
-            Bv32Term::Const(left.wrapping_add(*right))
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            Bitvector32Term::Constant(left.wrapping_add(*right))
         }
-        _ => Bv32Term::Add(Box::new(left), Box::new(right)),
+        _ => Bitvector32Term::Add(Box::new(left), Box::new(right)),
     }
 }
 
-fn bv32_sub(left: Bv32Term, right: Bv32Term) -> Bv32Term {
+fn bitvector32_subtract(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
     match (&left, &right) {
-        (Bv32Term::Const(left), Bv32Term::Const(right)) => {
-            Bv32Term::Const(left.wrapping_sub(*right))
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            Bitvector32Term::Constant(left.wrapping_sub(*right))
         }
-        _ => Bv32Term::Sub(Box::new(left), Box::new(right)),
+        _ => Bitvector32Term::Subtract(Box::new(left), Box::new(right)),
     }
 }
 
-fn signed_lt(left: Bv32Term, right: Bv32Term) -> ConditionTerm {
+fn signed_less_than(left: Bitvector32Term, right: Bitvector32Term) -> ConditionTerm {
     match (&left, &right) {
-        (Bv32Term::Const(left), Bv32Term::Const(right)) => {
-            ConditionTerm::Const((*left as i32) < (*right as i32))
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            ConditionTerm::Constant((*left as i32) < (*right as i32))
         }
-        _ => ConditionTerm::Bv32Slt(Box::new(left), Box::new(right)),
+        _ => ConditionTerm::Bitvector32SignedLessThan(Box::new(left), Box::new(right)),
     }
 }
 
-fn signed_le(left: Bv32Term, right: Bv32Term) -> ConditionTerm {
+fn signed_less_equal(left: Bitvector32Term, right: Bitvector32Term) -> ConditionTerm {
     match (&left, &right) {
-        (Bv32Term::Const(left), Bv32Term::Const(right)) => {
-            ConditionTerm::Const((*left as i32) <= (*right as i32))
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            ConditionTerm::Constant((*left as i32) <= (*right as i32))
         }
-        _ => ConditionTerm::Bv32Sle(Box::new(left), Box::new(right)),
+        _ => ConditionTerm::Bitvector32SignedLessEqual(Box::new(left), Box::new(right)),
     }
 }
 
-fn signed_gt(left: Bv32Term, right: Bv32Term) -> ConditionTerm {
+fn signed_greater_than(left: Bitvector32Term, right: Bitvector32Term) -> ConditionTerm {
     match (&left, &right) {
-        (Bv32Term::Const(left), Bv32Term::Const(right)) => {
-            ConditionTerm::Const((*left as i32) > (*right as i32))
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            ConditionTerm::Constant((*left as i32) > (*right as i32))
         }
-        _ => ConditionTerm::Bv32Sgt(Box::new(left), Box::new(right)),
+        _ => ConditionTerm::Bitvector32SignedGreaterThan(Box::new(left), Box::new(right)),
     }
 }
 
-fn signed_ge(left: Bv32Term, right: Bv32Term) -> ConditionTerm {
+fn signed_greater_equal(left: Bitvector32Term, right: Bitvector32Term) -> ConditionTerm {
     match (&left, &right) {
-        (Bv32Term::Const(left), Bv32Term::Const(right)) => {
-            ConditionTerm::Const((*left as i32) >= (*right as i32))
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            ConditionTerm::Constant((*left as i32) >= (*right as i32))
         }
-        _ => ConditionTerm::Bv32Sge(Box::new(left), Box::new(right)),
+        _ => ConditionTerm::Bitvector32SignedGreaterEqual(Box::new(left), Box::new(right)),
     }
 }
 
-fn bv32_eq(left: Bv32Term, right: Bv32Term) -> ConditionTerm {
+fn bitvector32_equal(left: Bitvector32Term, right: Bitvector32Term) -> ConditionTerm {
     match (&left, &right) {
-        (Bv32Term::Const(left), Bv32Term::Const(right)) => ConditionTerm::Const(left == right),
-        _ => ConditionTerm::Bv32Eq(Box::new(left), Box::new(right)),
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            ConditionTerm::Constant(left == right)
+        }
+        _ => ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
     }
 }
 
@@ -699,8 +947,8 @@ fn check_ensure(
     path_index: usize,
     path_facts: &[crate::megakernel::PathFact],
     ensure_clause: &EnsureClause,
-    params: &[syntax::C0Param],
-    args: &[CExpr],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
     pre_state: &CState,
     outcome: &CFunctionOutcome,
 ) -> Result<(), ClickError> {
@@ -712,7 +960,7 @@ fn check_ensure(
         } => match outcome {
             CFunctionOutcome::Return { value, state } => {
                 let left_value =
-                    evaluate_contract_expr(params, args, pre_state, state, value, left).map_err(
+                    evaluate_contract_expression(parameters, arguments, pre_state, state, value, left).map_err(
                         |message| {
                             ClickError::new(format!(
                                 "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: could not evaluate left side: {message}"
@@ -720,7 +968,7 @@ fn check_ensure(
                         },
                     )?;
                 let right_value =
-                    evaluate_contract_expr(params, args, pre_state, state, value, right).map_err(
+                    evaluate_contract_expression(parameters, arguments, pre_state, state, value, right).map_err(
                         |message| {
                             ClickError::new(format!(
                                 "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: could not evaluate right side: {message}"
@@ -761,63 +1009,70 @@ fn prove_value_comparison(
     let assumptions = path_facts
         .iter()
         .fold(Assumptions::new(), |assumptions, fact| {
-            assumptions.assume_prop(fact.prop().clone())
+            assumptions.assume_proposition(fact.proposition().clone())
         });
     assumptions
-        .proves(&Prop::ConditionIs(condition, value))
+        .proves(&Proposition::ConditionIs(condition, value))
         .then_some(())
 }
 
 fn comparison_condition(
-    actual: Bv32Term,
+    actual: Bitvector32Term,
     operator: ComparisonOperator,
-    expected: Bv32Term,
+    expected: Bitvector32Term,
 ) -> Option<(ConditionTerm, bool)> {
     match operator {
-        ComparisonOperator::Eq => Some((bv32_eq(actual, expected), true)),
-        ComparisonOperator::Ne => Some((bv32_eq(actual, expected), false)),
-        ComparisonOperator::Lt => Some((signed_lt(actual, expected), true)),
-        ComparisonOperator::Le => Some((signed_le(actual, expected), true)),
-        ComparisonOperator::Gt => Some((signed_gt(actual, expected), true)),
-        ComparisonOperator::Ge => Some((signed_ge(actual, expected), true)),
+        ComparisonOperator::Equal => Some((bitvector32_equal(actual, expected), true)),
+        ComparisonOperator::NotEqual => Some((bitvector32_equal(actual, expected), false)),
+        ComparisonOperator::LessThan => Some((signed_less_than(actual, expected), true)),
+        ComparisonOperator::LessEqual => Some((signed_less_equal(actual, expected), true)),
+        ComparisonOperator::GreaterThan => Some((signed_greater_than(actual, expected), true)),
+        ComparisonOperator::GreaterEqual => Some((signed_greater_equal(actual, expected), true)),
     }
 }
 
-fn evaluate_contract_expr(
-    params: &[syntax::C0Param],
-    args: &[CExpr],
+fn evaluate_contract_expression(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
     pre_state: &CState,
     post_state: &CState,
     result: &CValue,
-    expr: &ContractExpr,
+    expression: &ContractExpression,
 ) -> Result<CValue, String> {
-    let parameter_values = parameter_values(params, args).map_err(|error| error.message)?;
-    evaluate_contract_expr_with_env(&parameter_values, pre_state, post_state, result, expr)
+    let parameter_values =
+        parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    evaluate_contract_expression_with_environment(
+        &parameter_values,
+        pre_state,
+        post_state,
+        result,
+        expression,
+    )
 }
 
-fn evaluate_contract_expr_with_env(
+fn evaluate_contract_expression_with_environment(
     parameter_values: &BTreeMap<String, CValue>,
     pre_state: &CState,
     post_state: &CState,
     result: &CValue,
-    expr: &ContractExpr,
+    expression: &ContractExpression,
 ) -> Result<CValue, String> {
-    match expr {
-        ContractExpr::Current(expr) => {
-            evaluate_c_contract_expr(parameter_values, post_state, Some(result), expr)
+    match expression {
+        ContractExpression::Current(expression) => {
+            evaluate_c_contract_expression(parameter_values, post_state, Some(result), expression)
         }
-        ContractExpr::Old(expr) => {
-            evaluate_c_contract_expr(parameter_values, pre_state, None, expr)
+        ContractExpression::Old(expression) => {
+            evaluate_c_contract_expression(parameter_values, pre_state, None, expression)
         }
-        ContractExpr::Add(left, right) => {
-            let left = evaluate_contract_expr_with_env(
+        ContractExpression::Add(left, right) => {
+            let left = evaluate_contract_expression_with_environment(
                 parameter_values,
                 pre_state,
                 post_state,
                 result,
                 left,
             )?;
-            let right = evaluate_contract_expr_with_env(
+            let right = evaluate_contract_expression_with_environment(
                 parameter_values,
                 pre_state,
                 post_state,
@@ -826,15 +1081,15 @@ fn evaluate_contract_expr_with_env(
             )?;
             evaluate_postcondition_add(left, right)
         }
-        ContractExpr::Sub(left, right) => {
-            let left = evaluate_contract_expr_with_env(
+        ContractExpression::Subtract(left, right) => {
+            let left = evaluate_contract_expression_with_environment(
                 parameter_values,
                 pre_state,
                 post_state,
                 result,
                 left,
             )?;
-            let right = evaluate_contract_expr_with_env(
+            let right = evaluate_contract_expression_with_environment(
                 parameter_values,
                 pre_state,
                 post_state,
@@ -843,15 +1098,15 @@ fn evaluate_contract_expr_with_env(
             )?;
             evaluate_postcondition_sub(left, right)
         }
-        ContractExpr::Index(base, index) => {
-            let base = evaluate_contract_expr_with_env(
+        ContractExpression::Index(base, index) => {
+            let base = evaluate_contract_expression_with_environment(
                 parameter_values,
                 pre_state,
                 post_state,
                 result,
                 base,
             )?;
-            let index = evaluate_contract_expr_with_env(
+            let index = evaluate_contract_expression_with_environment(
                 parameter_values,
                 pre_state,
                 post_state,
@@ -860,56 +1115,60 @@ fn evaluate_contract_expr_with_env(
             )?;
             let pointer = evaluate_postcondition_pointer_add(base, index)?;
             match post_state.memory().load(&pointer) {
-                crate::megakernel::CExprOutcome::Value(value) => Ok(value),
+                crate::megakernel::CExpressionOutcome::Value(value) => Ok(value),
                 outcome => Err(format!("load from {pointer:?} produced {outcome:?}")),
             }
         }
     }
 }
 
-fn evaluate_c_contract_expr(
+fn evaluate_c_contract_expression(
     parameter_values: &BTreeMap<String, CValue>,
     state: &CState,
     result: Option<&CValue>,
-    expr: &CExpr,
+    expression: &CExpression,
 ) -> Result<CValue, String> {
-    match expr {
-        CExpr::Value(value) => Ok(value.clone()),
-        CExpr::Var(name) if name == "result" => result
+    match expression {
+        CExpression::Value(value) => Ok(value.clone()),
+        CExpression::Variable(name) if name == "result" => result
             .cloned()
             .ok_or_else(|| "`result` is not available inside `old(...)`".to_string()),
-        CExpr::Var(name) => parameter_values
+        CExpression::Variable(name) => parameter_values
             .get(name)
             .cloned()
             .ok_or_else(|| format!("unknown contract variable `{name}`")),
-        CExpr::Add(left, right) => {
-            let left = evaluate_c_contract_expr(parameter_values, state, result, left)?;
-            let right = evaluate_c_contract_expr(parameter_values, state, result, right)?;
+        CExpression::Add(left, right) => {
+            let left = evaluate_c_contract_expression(parameter_values, state, result, left)?;
+            let right = evaluate_c_contract_expression(parameter_values, state, result, right)?;
             evaluate_postcondition_add(left, right)
         }
-        CExpr::Sub(left, right) => {
-            let left = evaluate_c_contract_expr(parameter_values, state, result, left)?;
-            let right = evaluate_c_contract_expr(parameter_values, state, result, right)?;
+        CExpression::Subtract(left, right) => {
+            let left = evaluate_c_contract_expression(parameter_values, state, result, left)?;
+            let right = evaluate_c_contract_expression(parameter_values, state, result, right)?;
             evaluate_postcondition_sub(left, right)
         }
-        CExpr::Index(base, index) => {
-            let base = evaluate_c_contract_expr(parameter_values, state, result, base)?;
-            let index = evaluate_c_contract_expr(parameter_values, state, result, index)?;
+        CExpression::Index(base, index) => {
+            let base = evaluate_c_contract_expression(parameter_values, state, result, base)?;
+            let index = evaluate_c_contract_expression(parameter_values, state, result, index)?;
             let pointer = evaluate_postcondition_pointer_add(base, index)?;
             match state.memory().load(&pointer) {
-                crate::megakernel::CExprOutcome::Value(value) => Ok(value),
+                crate::megakernel::CExpressionOutcome::Value(value) => Ok(value),
                 outcome => Err(format!("load from {pointer:?} produced {outcome:?}")),
             }
         }
-        _ => Err(format!("unsupported postcondition expression `{expr:?}`")),
+        _ => Err(format!(
+            "unsupported postcondition expression `{expression:?}`"
+        )),
     }
 }
 
 fn evaluate_postcondition_add(left: CValue, right: CValue) -> Result<CValue, String> {
     match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => Ok(CValue::Int32(bv32_add(left, right))),
-        (CValue::Ptr(pointer), CValue::Int32(index))
-        | (CValue::Int32(index), CValue::Ptr(pointer)) => Ok(CValue::Ptr(
+        (CValue::Int32(left), CValue::Int32(right)) => {
+            Ok(CValue::Int32(bitvector32_add(left, right)))
+        }
+        (CValue::Pointer(pointer), CValue::Int32(index))
+        | (CValue::Int32(index), CValue::Pointer(pointer)) => Ok(CValue::Pointer(
             offset_pointer_by_int32_elements(pointer, index),
         )),
         (left, right) => Err(format!("cannot add `{left:?}` and `{right:?}`")),
@@ -918,45 +1177,52 @@ fn evaluate_postcondition_add(left: CValue, right: CValue) -> Result<CValue, Str
 
 fn evaluate_postcondition_sub(left: CValue, right: CValue) -> Result<CValue, String> {
     match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => Ok(CValue::Int32(bv32_sub(left, right))),
-        (CValue::Ptr(pointer), CValue::Int32(index)) => Ok(CValue::Ptr(
-            offset_pointer_by_int32_elements(pointer, bv32_sub(Bv32Term::Const(0), index)),
-        )),
+        (CValue::Int32(left), CValue::Int32(right)) => {
+            Ok(CValue::Int32(bitvector32_subtract(left, right)))
+        }
+        (CValue::Pointer(pointer), CValue::Int32(index)) => {
+            Ok(CValue::Pointer(offset_pointer_by_int32_elements(
+                pointer,
+                bitvector32_subtract(Bitvector32Term::Constant(0), index),
+            )))
+        }
         (left, right) => Err(format!("cannot subtract `{right:?}` from `{left:?}`")),
     }
 }
 
-fn evaluate_postcondition_pointer_add(left: CValue, right: CValue) -> Result<Ptr, String> {
+fn evaluate_postcondition_pointer_add(left: CValue, right: CValue) -> Result<Pointer, String> {
     match evaluate_postcondition_add(left, right)? {
-        CValue::Ptr(pointer) => Ok(pointer),
+        CValue::Pointer(pointer) => Ok(pointer),
         value => Err(format!(
             "index base did not evaluate to a pointer: `{value:?}`"
         )),
     }
 }
 
-fn offset_pointer_by_int32_elements(pointer: Ptr, elements: Bv32Term) -> Ptr {
-    Ptr {
+fn offset_pointer_by_int32_elements(pointer: Pointer, elements: Bitvector32Term) -> Pointer {
+    Pointer {
         block: pointer.block,
-        offset: add_ptr_offset(pointer.offset, scale_int32_offset(elements, 4)),
+        offset: add_pointer_offset(pointer.offset, scale_int32_offset(elements, 4)),
     }
 }
 
-fn add_ptr_offset(left: PtrOffsetTerm, right: PtrOffsetTerm) -> PtrOffsetTerm {
+fn add_pointer_offset(left: PointerOffsetTerm, right: PointerOffsetTerm) -> PointerOffsetTerm {
     match (&left, &right) {
-        (PtrOffsetTerm::Const(left), PtrOffsetTerm::Const(right)) => {
-            PtrOffsetTerm::Const(left + right)
+        (PointerOffsetTerm::Constant(left), PointerOffsetTerm::Constant(right)) => {
+            PointerOffsetTerm::Constant(left + right)
         }
-        (PtrOffsetTerm::Const(0), _) => right,
-        (_, PtrOffsetTerm::Const(0)) => left,
-        _ => PtrOffsetTerm::Add(Box::new(left), Box::new(right)),
+        (PointerOffsetTerm::Constant(0), _) => right,
+        (_, PointerOffsetTerm::Constant(0)) => left,
+        _ => PointerOffsetTerm::Add(Box::new(left), Box::new(right)),
     }
 }
 
-fn scale_int32_offset(value: Bv32Term, byte_width: i64) -> PtrOffsetTerm {
+fn scale_int32_offset(value: Bitvector32Term, byte_width: i64) -> PointerOffsetTerm {
     match value {
-        Bv32Term::Const(value) => PtrOffsetTerm::Const((value as i32 as i64) * byte_width),
-        value => PtrOffsetTerm::Int32Scaled {
+        Bitvector32Term::Constant(value) => {
+            PointerOffsetTerm::Constant((value as i32 as i64) * byte_width)
+        }
+        value => PointerOffsetTerm::Int32Scaled {
             value: Box::new(value),
             byte_width,
         },
@@ -977,12 +1243,12 @@ enum Token {
     Colon,
     Comma,
     Semicolon,
-    EqEq,
-    BangEq,
-    Lt,
-    Le,
-    Gt,
-    Ge,
+    EqualEqual,
+    BangEqual,
+    LessThan,
+    LessEqual,
+    GreaterThan,
+    GreaterEqual,
     Plus,
     Minus,
     Star,
@@ -1031,20 +1297,22 @@ impl Parser {
         self.expect(Token::LBrace)?;
 
         let mut requires = Vec::new();
+        let mut at_clauses = Vec::new();
         let mut ensures = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
                 Some("requires") => requires.push(self.parse_requirement()?),
+                Some("at") => at_clauses.push(self.parse_at_clause()?),
                 Some("ensures") => ensures.push(self.parse_ensure_clause()?),
                 Some(keyword) => {
                     return Err(self.error(format!(
-                        "expected `requires`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        "expected `requires`, `at`, `ensures`, or `}}` in `{}`, got `{keyword}`",
                         signature.name()
                     )));
                 }
                 None => {
                     return Err(self.error(format!(
-                        "expected `requires`, `ensures`, or `}}` in `{}`",
+                        "expected `requires`, `at`, `ensures`, or `}}` in `{}`",
                         signature.name()
                     )));
                 }
@@ -1062,6 +1330,7 @@ impl Parser {
         Ok(FunctionBlock {
             signature,
             requires,
+            at_clauses,
             ensures,
         })
     }
@@ -1070,32 +1339,32 @@ impl Parser {
         let return_type = self.parse_type()?;
         let name = self.expect_ident("function name")?;
         self.expect(Token::LParen)?;
-        let params = self.parse_params()?;
+        let parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
 
         Ok(FunctionSignature {
             return_type,
             name,
-            params,
+            parameters,
         })
     }
 
-    fn parse_params(&mut self) -> Result<Vec<FunctionParam>, ClickError> {
-        let mut params = Vec::new();
+    fn parse_parameters(&mut self) -> Result<Vec<FunctionParameter>, ClickError> {
+        let mut parameters = Vec::new();
         if self.peek() == Some(&Token::RParen) {
-            return Ok(params);
+            return Ok(parameters);
         }
 
         loop {
-            let ty = self.parse_type()?;
+            let c_type = self.parse_type()?;
             let name = self.expect_ident("parameter name")?;
-            params.push(FunctionParam { ty, name });
+            parameters.push(FunctionParameter { c_type, name });
 
             match self.peek() {
                 Some(Token::Comma) => {
                     self.position += 1;
                 }
-                Some(Token::RParen) => return Ok(params),
+                Some(Token::RParen) => return Ok(parameters),
                 Some(token) => {
                     return Err(self.error(format!("expected `,` or `)`, got {token:?}")));
                 }
@@ -1108,7 +1377,7 @@ impl Parser {
         self.expect_ident_spelling("int32")?;
         if self.peek() == Some(&Token::Star) {
             self.position += 1;
-            Ok(C0Type::Int32Ptr)
+            Ok(C0Type::Int32Pointer)
         } else {
             Ok(C0Type::Int32)
         }
@@ -1119,7 +1388,7 @@ impl Parser {
         if self.peek_ident() != Some("valid_range") || self.peek_next() != Some(&Token::LParen) {
             let condition = self.parse_requirement_condition()?;
             self.expect(Token::Semicolon)?;
-            return Ok(Requirement::Condition(condition.to_megakernel_expr()));
+            return Ok(Requirement::Condition(condition.to_megakernel_expression()));
         }
 
         self.expect_ident_spelling("valid_range")?;
@@ -1133,19 +1402,87 @@ impl Parser {
         Ok(Requirement::ValidRange { name, bytes })
     }
 
-    fn parse_requirement_condition(&mut self) -> Result<C0Expr, ClickError> {
-        let left = self.parse_ensure_expr()?;
+    fn parse_requirement_condition(&mut self) -> Result<C0Expression, ClickError> {
+        let left = self.parse_ensure_expression()?;
         let operator = self.parse_comparison_operator("requires")?;
-        let right = self.parse_ensure_expr()?;
+        let right = self.parse_ensure_expression()?;
 
         match operator {
-            ComparisonOperator::Lt => Ok(C0Expr::Lt(Box::new(left), Box::new(right))),
-            ComparisonOperator::Le => Ok(C0Expr::Le(Box::new(left), Box::new(right))),
-            ComparisonOperator::Gt => Ok(C0Expr::Gt(Box::new(left), Box::new(right))),
-            ComparisonOperator::Ge => Ok(C0Expr::Ge(Box::new(left), Box::new(right))),
-            ComparisonOperator::Eq => Ok(C0Expr::Eq(Box::new(left), Box::new(right))),
-            ComparisonOperator::Ne => Ok(C0Expr::Ne(Box::new(left), Box::new(right))),
+            ComparisonOperator::LessThan => {
+                Ok(C0Expression::LessThan(Box::new(left), Box::new(right)))
+            }
+            ComparisonOperator::LessEqual => {
+                Ok(C0Expression::LessEqual(Box::new(left), Box::new(right)))
+            }
+            ComparisonOperator::GreaterThan => {
+                Ok(C0Expression::GreaterThan(Box::new(left), Box::new(right)))
+            }
+            ComparisonOperator::GreaterEqual => {
+                Ok(C0Expression::GreaterEqual(Box::new(left), Box::new(right)))
+            }
+            ComparisonOperator::Equal => Ok(C0Expression::Equal(Box::new(left), Box::new(right))),
+            ComparisonOperator::NotEqual => {
+                Ok(C0Expression::NotEqual(Box::new(left), Box::new(right)))
+            }
         }
+    }
+
+    fn parse_at_clause(&mut self) -> Result<AtClause, ClickError> {
+        self.expect_ident_spelling("at")?;
+        let target = self.parse_at_target()?;
+        self.expect(Token::LBrace)?;
+        let mut items = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            items.push(self.parse_at_item()?);
+        }
+        self.expect(Token::RBrace)?;
+        if items.is_empty() {
+            return Err(self.error("`at` block must contain at least one item"));
+        }
+        Ok(AtClause { target, items })
+    }
+
+    fn parse_at_target(&mut self) -> Result<AtTarget, ClickError> {
+        match self.next() {
+            Some(Token::Ident(kind)) if kind == "loop" => {
+                Ok(AtTarget::Loop(self.expect_index("loop index")?))
+            }
+            Some(Token::Ident(kind)) if kind == "statement" => {
+                Ok(AtTarget::Statement(self.expect_index("statement index")?))
+            }
+            Some(Token::Ident(kind)) => {
+                Err(self.error(format!("expected `loop` or `statement`, got `{kind}`")))
+            }
+            Some(token) => {
+                Err(self.error(format!("expected `loop` or `statement`, got {token:?}")))
+            }
+            None => Err(self.error("expected `loop` or `statement`, got end of input")),
+        }
+    }
+
+    fn parse_at_item(&mut self) -> Result<AtItem, ClickError> {
+        let kind = match self.next() {
+            Some(Token::Ident(kind)) if kind == "invariant" => AtItemKind::Invariant,
+            Some(Token::Ident(kind)) if kind == "assert" => AtItemKind::Assert,
+            Some(Token::Ident(kind)) => {
+                return Err(self.error(format!("expected `invariant` or `assert`, got `{kind}`")));
+            }
+            Some(token) => {
+                return Err(self.error(format!("expected `invariant` or `assert`, got {token:?}")));
+            }
+            None => {
+                return Err(self.error("expected `invariant` or `assert`, got end of input"));
+            }
+        };
+        let condition = self
+            .parse_requirement_condition()?
+            .to_megakernel_expression();
+        let proof = self.parse_by_clause()?;
+        Ok(AtItem {
+            kind,
+            condition,
+            proof,
+        })
     }
 
     fn parse_ensure_clause(&mut self) -> Result<EnsureClause, ClickError> {
@@ -1170,9 +1507,9 @@ impl Parser {
     }
 
     fn parse_ensure_condition(&mut self) -> Result<Ensure, ClickError> {
-        let left = self.parse_contract_expr()?;
+        let left = self.parse_contract_expression()?;
         let operator = self.parse_comparison_operator("ensures")?;
-        let right = self.parse_contract_expr()?;
+        let right = self.parse_contract_expression()?;
 
         Ok(Ensure::Comparison {
             left,
@@ -1192,12 +1529,12 @@ impl Parser {
         })?;
 
         match operator {
-            Token::Lt => Ok(ComparisonOperator::Lt),
-            Token::Le => Ok(ComparisonOperator::Le),
-            Token::Gt => Ok(ComparisonOperator::Gt),
-            Token::Ge => Ok(ComparisonOperator::Ge),
-            Token::EqEq => Ok(ComparisonOperator::Eq),
-            Token::BangEq => Ok(ComparisonOperator::Ne),
+            Token::LessThan => Ok(ComparisonOperator::LessThan),
+            Token::LessEqual => Ok(ComparisonOperator::LessEqual),
+            Token::GreaterThan => Ok(ComparisonOperator::GreaterThan),
+            Token::GreaterEqual => Ok(ComparisonOperator::GreaterEqual),
+            Token::EqualEqual => Ok(ComparisonOperator::Equal),
+            Token::BangEqual => Ok(ComparisonOperator::NotEqual),
             token => Err(self.error(format!(
                 "expected comparison operator in `{clause}`, got {token:?}"
             ))),
@@ -1225,111 +1562,115 @@ impl Parser {
         Ok(Proof { tactics })
     }
 
-    fn parse_ensure_expr(&mut self) -> Result<C0Expr, ClickError> {
+    fn parse_ensure_expression(&mut self) -> Result<C0Expression, ClickError> {
         self.parse_ensure_add()
     }
 
-    fn parse_contract_expr(&mut self) -> Result<ContractExpr, ClickError> {
+    fn parse_contract_expression(&mut self) -> Result<ContractExpression, ClickError> {
         self.parse_contract_add()
     }
 
-    fn parse_contract_add(&mut self) -> Result<ContractExpr, ClickError> {
-        let mut expr = self.parse_contract_postfix()?;
+    fn parse_contract_add(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut expression = self.parse_contract_postfix()?;
         loop {
-            expr = match self.peek() {
+            expression = match self.peek() {
                 Some(Token::Plus) => {
                     self.position += 1;
                     let right = self.parse_contract_postfix()?;
-                    ContractExpr::Add(Box::new(expr), Box::new(right))
+                    ContractExpression::Add(Box::new(expression), Box::new(right))
                 }
                 Some(Token::Minus) => {
                     self.position += 1;
                     let right = self.parse_contract_postfix()?;
-                    ContractExpr::Sub(Box::new(expr), Box::new(right))
+                    ContractExpression::Subtract(Box::new(expression), Box::new(right))
                 }
-                _ => return Ok(expr),
+                _ => return Ok(expression),
             };
         }
     }
 
-    fn parse_contract_postfix(&mut self) -> Result<ContractExpr, ClickError> {
-        let mut expr = self.parse_contract_primary()?;
+    fn parse_contract_postfix(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut expression = self.parse_contract_primary()?;
         while self.peek() == Some(&Token::LBracket) {
             self.position += 1;
-            let index = self.parse_contract_expr()?;
+            let index = self.parse_contract_expression()?;
             self.expect(Token::RBracket)?;
-            expr = ContractExpr::Index(Box::new(expr), Box::new(index));
+            expression = ContractExpression::Index(Box::new(expression), Box::new(index));
         }
-        Ok(expr)
+        Ok(expression)
     }
 
-    fn parse_contract_primary(&mut self) -> Result<ContractExpr, ClickError> {
+    fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
         if self.peek_ident() == Some("old") && self.peek_next() == Some(&Token::LParen) {
             self.position += 2;
-            let expr = self.parse_ensure_expr()?;
+            let expression = self.parse_ensure_expression()?;
             self.expect(Token::RParen)?;
-            return Ok(ContractExpr::Old(expr.to_megakernel_expr()));
+            return Ok(ContractExpression::Old(
+                expression.to_megakernel_expression(),
+            ));
         }
 
         match self.next() {
             Some(Token::Ident(name)) if name == "by" => {
                 Err(self.error("expected contract expression, got `by`"))
             }
-            Some(Token::Ident(name)) => Ok(ContractExpr::Current(CExpr::Var(name))),
-            Some(Token::Number(value)) => Ok(ContractExpr::Current(CExpr::Value(CValue::Int32(
-                Bv32Term::Const(value),
-            )))),
+            Some(Token::Ident(name)) => {
+                Ok(ContractExpression::Current(CExpression::Variable(name)))
+            }
+            Some(Token::Number(value)) => Ok(ContractExpression::Current(CExpression::Value(
+                CValue::Int32(Bitvector32Term::Constant(value)),
+            ))),
             Some(Token::LParen) => {
-                let expr = self.parse_contract_expr()?;
+                let expression = self.parse_contract_expression()?;
                 self.expect(Token::RParen)?;
-                Ok(expr)
+                Ok(expression)
             }
             Some(token) => Err(self.error(format!("expected contract expression, got {token:?}"))),
             None => Err(self.error("expected contract expression, got end of input")),
         }
     }
 
-    fn parse_ensure_add(&mut self) -> Result<C0Expr, ClickError> {
-        let mut expr = self.parse_ensure_postfix()?;
+    fn parse_ensure_add(&mut self) -> Result<C0Expression, ClickError> {
+        let mut expression = self.parse_ensure_postfix()?;
         loop {
-            expr = match self.peek() {
+            expression = match self.peek() {
                 Some(Token::Plus) => {
                     self.position += 1;
                     let right = self.parse_ensure_postfix()?;
-                    C0Expr::Add(Box::new(expr), Box::new(right))
+                    C0Expression::Add(Box::new(expression), Box::new(right))
                 }
                 Some(Token::Minus) => {
                     self.position += 1;
                     let right = self.parse_ensure_postfix()?;
-                    C0Expr::Sub(Box::new(expr), Box::new(right))
+                    C0Expression::Subtract(Box::new(expression), Box::new(right))
                 }
-                _ => return Ok(expr),
+                _ => return Ok(expression),
             };
         }
     }
 
-    fn parse_ensure_postfix(&mut self) -> Result<C0Expr, ClickError> {
-        let mut expr = self.parse_ensure_primary()?;
+    fn parse_ensure_postfix(&mut self) -> Result<C0Expression, ClickError> {
+        let mut expression = self.parse_ensure_primary()?;
         while self.peek() == Some(&Token::LBracket) {
             self.position += 1;
-            let index = self.parse_ensure_expr()?;
+            let index = self.parse_ensure_expression()?;
             self.expect(Token::RBracket)?;
-            expr = C0Expr::Index(Box::new(expr), Box::new(index));
+            expression = C0Expression::Index(Box::new(expression), Box::new(index));
         }
-        Ok(expr)
+        Ok(expression)
     }
 
-    fn parse_ensure_primary(&mut self) -> Result<C0Expr, ClickError> {
+    fn parse_ensure_primary(&mut self) -> Result<C0Expression, ClickError> {
         match self.next() {
             Some(Token::Ident(name)) if name == "by" => {
                 Err(self.error("expected result expression, got `by`"))
             }
-            Some(Token::Ident(name)) => Ok(C0Expr::Var(name)),
-            Some(Token::Number(value)) => Ok(C0Expr::Int32Literal(value)),
+            Some(Token::Ident(name)) => Ok(C0Expression::Variable(name)),
+            Some(Token::Number(value)) => Ok(C0Expression::Int32Literal(value)),
             Some(Token::LParen) => {
-                let expr = self.parse_ensure_expr()?;
+                let expression = self.parse_ensure_expression()?;
                 self.expect(Token::RParen)?;
-                Ok(expr)
+                Ok(expression)
             }
             Some(token) => Err(self.error(format!("expected result expression, got {token:?}"))),
             None => Err(self.error("expected result expression, got end of input")),
@@ -1373,6 +1714,11 @@ impl Parser {
             Some(token) => Err(self.error(format!("expected {expected}, got {token:?}"))),
             None => Err(self.error(format!("expected {expected}, got end of input"))),
         }
+    }
+
+    fn expect_index(&mut self, expected: &str) -> Result<usize, ClickError> {
+        usize::try_from(self.expect_number(expected)?)
+            .map_err(|_| self.error(format!("{expected} does not fit in usize")))
     }
 
     fn expect_string(&mut self, expected: &str) -> Result<String, ClickError> {
@@ -1477,25 +1823,25 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
             }
             '<' => {
                 if chars.get(index + 1) == Some(&'=') {
-                    tokens.push(Token::Le);
+                    tokens.push(Token::LessEqual);
                     index += 2;
                 } else {
-                    tokens.push(Token::Lt);
+                    tokens.push(Token::LessThan);
                     index += 1;
                 }
             }
             '>' => {
                 if chars.get(index + 1) == Some(&'=') {
-                    tokens.push(Token::Ge);
+                    tokens.push(Token::GreaterEqual);
                     index += 2;
                 } else {
-                    tokens.push(Token::Gt);
+                    tokens.push(Token::GreaterThan);
                     index += 1;
                 }
             }
             '!' => {
                 if chars.get(index + 1) == Some(&'=') {
-                    tokens.push(Token::BangEq);
+                    tokens.push(Token::BangEqual);
                     index += 2;
                 } else {
                     return Err(ClickError::new(format!(
@@ -1505,7 +1851,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
             }
             '=' => {
                 if chars.get(index + 1) == Some(&'=') {
-                    tokens.push(Token::EqEq);
+                    tokens.push(Token::EqualEqual);
                     index += 2;
                 } else {
                     return Err(ClickError::new(format!(
@@ -1617,26 +1963,26 @@ mod tests {
         }
     "#;
 
-    fn current(expr: CExpr) -> ContractExpr {
-        ContractExpr::Current(expr)
+    fn current(expression: CExpression) -> ContractExpression {
+        ContractExpression::Current(expression)
     }
 
-    fn current_var(name: &str) -> ContractExpr {
-        current(CExpr::Var(name.to_string()))
+    fn current_var(name: &str) -> ContractExpression {
+        current(CExpression::Variable(name.to_string()))
     }
 
-    fn current_int(value: u32) -> ContractExpr {
-        current(CExpr::Value(int32(value)))
+    fn current_int(value: u32) -> ContractExpression {
+        current(CExpression::Value(int32(value)))
     }
 
-    fn current_index(base: &str, index: u32) -> ContractExpr {
-        ContractExpr::Index(Box::new(current_var(base)), Box::new(current_int(index)))
+    fn current_index(base: &str, index: u32) -> ContractExpression {
+        ContractExpression::Index(Box::new(current_var(base)), Box::new(current_int(index)))
     }
 
-    fn old_index(base: &str, index: u32) -> ContractExpr {
-        ContractExpr::Old(CExpr::Index(
-            Box::new(CExpr::Var(base.to_string())),
-            Box::new(CExpr::Value(int32(index))),
+    fn old_index(base: &str, index: u32) -> ContractExpression {
+        ContractExpression::Old(CExpression::Index(
+            Box::new(CExpression::Variable(base.to_string())),
+            Box::new(CExpression::Value(int32(index))),
         ))
     }
 
@@ -1650,9 +1996,9 @@ mod tests {
         assert_eq!(function.signature().return_type(), C0Type::Int32);
         assert_eq!(function.signature().name(), "fill3");
         assert_eq!(
-            function.signature().params(),
-            &[FunctionParam {
-                ty: C0Type::Int32Ptr,
+            function.signature().parameters(),
+            &[FunctionParameter {
+                c_type: C0Type::Int32Pointer,
                 name: "p".to_string()
             }]
         );
@@ -1670,7 +2016,7 @@ mod tests {
             ensure.ensure(),
             &Ensure::Comparison {
                 left: current_var("result"),
-                operator: ComparisonOperator::Eq,
+                operator: ComparisonOperator::Equal,
                 right: current_int(2)
             }
         );
@@ -1698,7 +2044,7 @@ mod tests {
             ensure.ensure(),
             &Ensure::Comparison {
                 left: current_var("result"),
-                operator: ComparisonOperator::Eq,
+                operator: ComparisonOperator::Equal,
                 right: current_int(2)
             }
         );
@@ -1714,7 +2060,7 @@ mod tests {
             ensure.ensure(),
             &Ensure::Comparison {
                 left: current_index("p", 2),
-                operator: ComparisonOperator::Eq,
+                operator: ComparisonOperator::Equal,
                 right: current_int(2)
             }
         );
@@ -1730,9 +2076,44 @@ mod tests {
             ensure.ensure(),
             &Ensure::Comparison {
                 left: current_index("p", 0),
-                operator: ComparisonOperator::Eq,
+                operator: ComparisonOperator::Equal,
                 right: old_index("p", 0)
             }
+        );
+    }
+
+    #[test]
+    fn parses_at_loop_invariants_and_statement_asserts() {
+        let source = r#"
+            verifying "count.c";
+
+            int32 count() {
+                at statement 2 {
+                    assert i == 0 by auto;
+                }
+
+                at loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= 3 by auto;
+                }
+
+                ensures result == 3 by auto;
+            }
+        "#;
+        let file = parse(source).expect("sidecar should parse");
+        let function = &file.function_blocks()[0];
+
+        assert_eq!(function.at_clauses().len(), 2);
+        assert_eq!(function.at_clauses()[0].target(), &AtTarget::Statement(2));
+        assert_eq!(
+            function.at_clauses()[0].items()[0].kind(),
+            AtItemKind::Assert
+        );
+        assert_eq!(function.at_clauses()[1].target(), &AtTarget::Loop(0));
+        assert_eq!(function.at_clauses()[1].items().len(), 2);
+        assert_eq!(
+            function.at_clauses()[1].items()[0].kind(),
+            AtItemKind::Invariant
         );
     }
 
@@ -1759,7 +2140,7 @@ mod tests {
             verified[0].ensure_clause.ensure(),
             &Ensure::Comparison {
                 left: current_var("result"),
-                operator: ComparisonOperator::Eq,
+                operator: ComparisonOperator::Equal,
                 right: current_var("x")
             }
         );
@@ -1779,7 +2160,7 @@ mod tests {
             verified[0].ensure_clause.ensure(),
             &Ensure::Comparison {
                 left: current_index("p", 2),
-                operator: ComparisonOperator::Eq,
+                operator: ComparisonOperator::Equal,
                 right: current_int(2)
             }
         );
@@ -1811,7 +2192,7 @@ mod tests {
             verified[1].ensure_clause.ensure(),
             &Ensure::Comparison {
                 left: current_index("p", 0),
-                operator: ComparisonOperator::Eq,
+                operator: ComparisonOperator::Equal,
                 right: old_index("p", 0)
             }
         );
@@ -1840,7 +2221,76 @@ mod tests {
         assert!(
             error
                 .message()
-                .contains("left side evaluated to Int32(Const(9))"),
+                .contains("left side evaluated to Int32(Constant(9))"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn verifies_loop_invariants_and_statement_assert() {
+        let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                at statement 2 {
+                    assert i == 0 by auto;
+                }
+
+                at loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= 3 by auto;
+                }
+
+                ensures result == 3 by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
+            .expect("loop invariants and statement assert should verify");
+
+        assert_eq!(verified.len(), 1);
+    }
+
+    #[test]
+    fn false_loop_invariant_fails() {
+        let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                at loop 0 {
+                    invariant i < 3 by auto;
+                }
+
+                ensures result == 3 by auto;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
+            .expect_err("false loop invariant should fail");
+
+        assert!(
+            error.message().contains("left proof obligations"),
             "{}",
             error.message()
         );
@@ -1866,7 +2316,7 @@ mod tests {
             .expect("increment sidecar should verify");
 
         assert_eq!(verified.len(), 1);
-        assert_eq!(verified[0].spec.requires().len(), 1);
+        assert_eq!(verified[0].specification.requires().len(), 1);
     }
 
     #[test]
@@ -1897,31 +2347,31 @@ mod tests {
     }
 
     #[test]
-    fn verifies_fill3_c0_source_with_sidecar_spec() {
+    fn verifies_fill3_c0_source_with_sidecar_specification() {
         let verified = verify_c0_sources(FILL3_CLICK, &[("fill3.c", FILL3_C)])
             .expect("fill3 sidecar should verify");
 
         assert_eq!(verified.len(), 1);
         let verified = &verified[0];
-        let base = Ptr {
+        let base = Pointer {
             block: "p".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let first = Ptr {
+        let first = Pointer {
             block: "p".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let second = Ptr {
+        let second = Pointer {
             block: "p".to_string(),
-            offset: PtrOffsetTerm::Const(4),
+            offset: PointerOffsetTerm::Constant(4),
         };
-        let third = Ptr {
+        let third = Pointer {
             block: "p".to_string(),
-            offset: PtrOffsetTerm::Const(8),
+            offset: PointerOffsetTerm::Constant(8),
         };
-        let local_i = Ptr {
+        let local_i = Pointer {
             block: "local:i".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
         let initial_memory = memory_with_symbolic_valid_range_cells(
             CMemory::new().with_block("p", 12),
@@ -1936,24 +2386,24 @@ mod tests {
             .store(local_i, int32(3));
 
         assert_eq!(
-            verified.spec.state(),
+            verified.specification.state(),
             &CState::new().with_memory(initial_memory)
         );
-        assert_eq!(verified.spec.args(), &[c_ptr_value(base)]);
+        assert_eq!(verified.specification.arguments(), &[c_pointer_value(base)]);
         assert_eq!(
-            verified.spec.outcome(),
+            verified.specification.outcome(),
             &CFunctionOutcome::Return {
                 value: int32(2),
                 state: CState::new().with_memory(final_memory),
             }
         );
         assert_eq!(
-            verified.theorem.prop(),
-            &Prop::CFunctionSatisfiesSpec {
+            verified.theorem.proposition(),
+            &Proposition::CFunctionSatisfiesSpecification {
                 function: syntax::parse_function(FILL3_C)
                     .expect("fill3 should parse")
                     .to_megakernel_function(),
-                spec: verified.spec.clone(),
+                specification: verified.specification.clone(),
             }
         );
     }
@@ -1980,7 +2430,7 @@ mod tests {
         assert!(
             error
                 .message()
-                .contains("left side evaluated to Int32(Const(2))"),
+                .contains("left side evaluated to Int32(Constant(2))"),
             "{}",
             error.message()
         );
@@ -1998,7 +2448,7 @@ mod tests {
         assert!(
             error
                 .message()
-                .contains("left side evaluated to Int32(Const(2))"),
+                .contains("left side evaluated to Int32(Constant(2))"),
             "{}",
             error.message()
         );

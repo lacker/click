@@ -4,72 +4,72 @@
 pub struct C0Function {
     return_type: C0Type,
     name: String,
-    params: Vec<C0Param>,
-    body: C0Stmt,
+    parameters: Vec<C0Parameter>,
+    body: C0Statement,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct C0Param {
-    ty: C0Type,
+pub struct C0Parameter {
+    c_type: C0Type,
     name: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum C0Type {
     Int32,
-    Int32Ptr,
+    Int32Pointer,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum C0Stmt {
+pub enum C0Statement {
     Declare {
-        ty: C0Type,
+        c_type: C0Type,
         name: String,
     },
     Assign {
         name: String,
-        expr: C0Expr,
+        expression: C0Expression,
     },
     CallAssign {
         target: String,
         function_name: String,
-        args: Vec<C0Expr>,
+        arguments: Vec<C0Expression>,
     },
-    Seq(Box<C0Stmt>, Box<C0Stmt>),
-    Return(C0Expr),
+    Seq(Box<C0Statement>, Box<C0Statement>),
+    Return(C0Expression),
     Store {
-        ptr: C0Expr,
-        value: C0Expr,
+        pointer: C0Expression,
+        value: C0Expression,
     },
     If {
-        condition: C0Expr,
-        then_branch: Box<C0Stmt>,
-        else_branch: Box<C0Stmt>,
+        condition: C0Expression,
+        then_branch: Box<C0Statement>,
+        else_branch: Box<C0Statement>,
     },
     While {
-        condition: C0Expr,
-        body: Box<C0Stmt>,
+        condition: C0Expression,
+        body: Box<C0Statement>,
     },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum C0Expr {
-    Var(String),
-    AddressOf(Box<C0Expr>),
+pub enum C0Expression {
+    Variable(String),
+    AddressOf(Box<C0Expression>),
     Int32Literal(u32),
-    Lt(Box<C0Expr>, Box<C0Expr>),
-    Le(Box<C0Expr>, Box<C0Expr>),
-    Gt(Box<C0Expr>, Box<C0Expr>),
-    Ge(Box<C0Expr>, Box<C0Expr>),
-    Eq(Box<C0Expr>, Box<C0Expr>),
-    Ne(Box<C0Expr>, Box<C0Expr>),
-    Not(Box<C0Expr>),
-    And(Box<C0Expr>, Box<C0Expr>),
-    Or(Box<C0Expr>, Box<C0Expr>),
-    Add(Box<C0Expr>, Box<C0Expr>),
-    Sub(Box<C0Expr>, Box<C0Expr>),
-    Load(Box<C0Expr>),
-    Index(Box<C0Expr>, Box<C0Expr>),
+    LessThan(Box<C0Expression>, Box<C0Expression>),
+    LessEqual(Box<C0Expression>, Box<C0Expression>),
+    GreaterThan(Box<C0Expression>, Box<C0Expression>),
+    GreaterEqual(Box<C0Expression>, Box<C0Expression>),
+    Equal(Box<C0Expression>, Box<C0Expression>),
+    NotEqual(Box<C0Expression>, Box<C0Expression>),
+    Not(Box<C0Expression>),
+    And(Box<C0Expression>, Box<C0Expression>),
+    Or(Box<C0Expression>, Box<C0Expression>),
+    Add(Box<C0Expression>, Box<C0Expression>),
+    Subtract(Box<C0Expression>, Box<C0Expression>),
+    Load(Box<C0Expression>),
+    Index(Box<C0Expression>, Box<C0Expression>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -82,46 +82,46 @@ impl C0Function {
         &self.name
     }
 
-    pub fn params(&self) -> &[C0Param] {
-        &self.params
+    pub fn parameters(&self) -> &[C0Parameter] {
+        &self.parameters
     }
 
     pub fn return_type(&self) -> C0Type {
         self.return_type
     }
 
-    pub fn body(&self) -> &C0Stmt {
+    pub fn body(&self) -> &C0Statement {
         &self.body
     }
 
-    pub fn body_megakernel_stmt(&self) -> crate::megakernel::CStmt {
-        self.body.to_megakernel_stmt()
+    pub fn body_megakernel_statement(&self) -> crate::megakernel::CStatement {
+        self.body.to_megakernel_statement()
     }
 
     pub fn to_megakernel_function(&self) -> crate::megakernel::CFunction {
         crate::megakernel::c_function(
             self.return_type.to_megakernel_type(),
             self.name.clone(),
-            self.params
+            self.parameters
                 .iter()
-                .map(C0Param::to_megakernel_param)
+                .map(C0Parameter::to_megakernel_parameter)
                 .collect(),
-            self.body.to_megakernel_stmt(),
+            self.body.to_megakernel_statement(),
         )
     }
 }
 
-impl C0Param {
+impl C0Parameter {
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    pub fn ty(&self) -> C0Type {
-        self.ty
+    pub fn c_type(&self) -> C0Type {
+        self.c_type
     }
 
-    pub fn to_megakernel_param(&self) -> crate::megakernel::CParam {
-        crate::megakernel::c_param(self.name.clone(), self.ty.to_megakernel_type())
+    pub fn to_megakernel_parameter(&self) -> crate::megakernel::CParameter {
+        crate::megakernel::c_parameter(self.name.clone(), self.c_type.to_megakernel_type())
     }
 }
 
@@ -129,97 +129,117 @@ impl C0Type {
     pub fn to_megakernel_type(self) -> crate::megakernel::CType {
         match self {
             Self::Int32 => crate::megakernel::CType::Int32,
-            Self::Int32Ptr => crate::megakernel::CType::Int32Ptr,
+            Self::Int32Pointer => crate::megakernel::CType::Int32Pointer,
         }
     }
 }
 
-impl C0Stmt {
-    pub fn to_megakernel_stmt(&self) -> crate::megakernel::CStmt {
+impl C0Statement {
+    pub fn to_megakernel_statement(&self) -> crate::megakernel::CStatement {
         match self {
-            Self::Declare { ty, name } => {
-                crate::megakernel::c_declare(name.clone(), ty.to_megakernel_type())
+            Self::Declare { c_type, name } => {
+                crate::megakernel::c_declare(name.clone(), c_type.to_megakernel_type())
             }
-            Self::Assign { name, expr } => {
-                crate::megakernel::c_assign(name.clone(), expr.to_megakernel_expr())
+            Self::Assign { name, expression } => {
+                crate::megakernel::c_assign(name.clone(), expression.to_megakernel_expression())
             }
             Self::CallAssign {
                 target,
                 function_name,
-                args,
+                arguments,
             } => crate::megakernel::c_call_assign(
                 target.clone(),
                 function_name.clone(),
-                args.iter().map(C0Expr::to_megakernel_expr).collect(),
+                arguments
+                    .iter()
+                    .map(C0Expression::to_megakernel_expression)
+                    .collect(),
             ),
-            Self::Seq(first, second) => {
-                crate::megakernel::c_seq(first.to_megakernel_stmt(), second.to_megakernel_stmt())
+            Self::Seq(first, second) => crate::megakernel::c_seq(
+                first.to_megakernel_statement(),
+                second.to_megakernel_statement(),
+            ),
+            Self::Return(expression) => {
+                crate::megakernel::c_return(expression.to_megakernel_expression())
             }
-            Self::Return(expr) => crate::megakernel::c_return(expr.to_megakernel_expr()),
-            Self::Store { ptr, value } => {
-                crate::megakernel::c_store(ptr.to_megakernel_expr(), value.to_megakernel_expr())
-            }
+            Self::Store { pointer, value } => crate::megakernel::c_store(
+                pointer.to_megakernel_expression(),
+                value.to_megakernel_expression(),
+            ),
             Self::If {
                 condition,
                 then_branch,
                 else_branch,
             } => crate::megakernel::c_if(
-                condition.to_megakernel_expr(),
-                then_branch.to_megakernel_stmt(),
-                else_branch.to_megakernel_stmt(),
+                condition.to_megakernel_expression(),
+                then_branch.to_megakernel_statement(),
+                else_branch.to_megakernel_statement(),
             ),
             Self::While { condition, body } => crate::megakernel::c_while(
-                condition.to_megakernel_expr(),
+                condition.to_megakernel_expression(),
                 Vec::new(),
-                body.to_megakernel_stmt(),
+                body.to_megakernel_statement(),
             ),
         }
     }
 }
 
-impl C0Expr {
-    pub fn to_megakernel_expr(&self) -> crate::megakernel::CExpr {
+impl C0Expression {
+    pub fn to_megakernel_expression(&self) -> crate::megakernel::CExpression {
         match self {
-            Self::Var(name) => crate::megakernel::c_var(name.clone()),
-            Self::AddressOf(target) => {
-                crate::megakernel::CExpr::AddressOf(Box::new(target.to_megakernel_expr()))
-            }
+            Self::Variable(name) => crate::megakernel::c_variable(name.clone()),
+            Self::AddressOf(target) => crate::megakernel::CExpression::AddressOf(Box::new(
+                target.to_megakernel_expression(),
+            )),
             Self::Int32Literal(value) => crate::megakernel::c_int32_literal(*value),
-            Self::Lt(left, right) => {
-                crate::megakernel::c_lt(left.to_megakernel_expr(), right.to_megakernel_expr())
+            Self::LessThan(left, right) => crate::megakernel::c_less_than(
+                left.to_megakernel_expression(),
+                right.to_megakernel_expression(),
+            ),
+            Self::LessEqual(left, right) => crate::megakernel::c_less_equal(
+                left.to_megakernel_expression(),
+                right.to_megakernel_expression(),
+            ),
+            Self::GreaterThan(left, right) => crate::megakernel::c_greater_than(
+                left.to_megakernel_expression(),
+                right.to_megakernel_expression(),
+            ),
+            Self::GreaterEqual(left, right) => crate::megakernel::c_greater_equal(
+                left.to_megakernel_expression(),
+                right.to_megakernel_expression(),
+            ),
+            Self::Equal(left, right) => crate::megakernel::c_equal(
+                left.to_megakernel_expression(),
+                right.to_megakernel_expression(),
+            ),
+            Self::NotEqual(left, right) => crate::megakernel::c_not_equal(
+                left.to_megakernel_expression(),
+                right.to_megakernel_expression(),
+            ),
+            Self::Not(expression) => {
+                crate::megakernel::c_not(expression.to_megakernel_expression())
             }
-            Self::Le(left, right) => {
-                crate::megakernel::c_le(left.to_megakernel_expr(), right.to_megakernel_expr())
-            }
-            Self::Gt(left, right) => {
-                crate::megakernel::c_gt(left.to_megakernel_expr(), right.to_megakernel_expr())
-            }
-            Self::Ge(left, right) => {
-                crate::megakernel::c_ge(left.to_megakernel_expr(), right.to_megakernel_expr())
-            }
-            Self::Eq(left, right) => {
-                crate::megakernel::c_eq(left.to_megakernel_expr(), right.to_megakernel_expr())
-            }
-            Self::Ne(left, right) => {
-                crate::megakernel::c_ne(left.to_megakernel_expr(), right.to_megakernel_expr())
-            }
-            Self::Not(expr) => crate::megakernel::c_not(expr.to_megakernel_expr()),
-            Self::And(left, right) => {
-                crate::megakernel::c_and(left.to_megakernel_expr(), right.to_megakernel_expr())
-            }
-            Self::Or(left, right) => {
-                crate::megakernel::c_or(left.to_megakernel_expr(), right.to_megakernel_expr())
-            }
-            Self::Add(left, right) => {
-                crate::megakernel::c_add(left.to_megakernel_expr(), right.to_megakernel_expr())
-            }
-            Self::Sub(left, right) => {
-                crate::megakernel::c_sub(left.to_megakernel_expr(), right.to_megakernel_expr())
-            }
-            Self::Load(ptr) => crate::megakernel::c_load(ptr.to_megakernel_expr()),
-            Self::Index(base, index) => {
-                crate::megakernel::c_index(base.to_megakernel_expr(), index.to_megakernel_expr())
-            }
+            Self::And(left, right) => crate::megakernel::c_and(
+                left.to_megakernel_expression(),
+                right.to_megakernel_expression(),
+            ),
+            Self::Or(left, right) => crate::megakernel::c_or(
+                left.to_megakernel_expression(),
+                right.to_megakernel_expression(),
+            ),
+            Self::Add(left, right) => crate::megakernel::c_add(
+                left.to_megakernel_expression(),
+                right.to_megakernel_expression(),
+            ),
+            Self::Subtract(left, right) => crate::megakernel::c_subtract(
+                left.to_megakernel_expression(),
+                right.to_megakernel_expression(),
+            ),
+            Self::Load(pointer) => crate::megakernel::c_load(pointer.to_megakernel_expression()),
+            Self::Index(base, index) => crate::megakernel::c_index(
+                base.to_megakernel_expression(),
+                index.to_megakernel_expression(),
+            ),
         }
     }
 }
@@ -254,12 +274,12 @@ enum Token {
     Semicolon,
     Plus,
     Minus,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-    EqEq,
-    BangEq,
+    LessThan,
+    LessEqual,
+    GreaterThan,
+    GreaterEqual,
+    EqualEqual,
+    BangEqual,
     Bang,
     AmpAmp,
     PipePipe,
@@ -285,32 +305,32 @@ impl Parser {
         let return_type = self.parse_type()?;
         let name = self.expect_ident("function name")?;
         self.expect(Token::LParen)?;
-        let params = self.parse_params()?;
+        let parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
-        let body = self.parse_block_stmt()?;
+        let body = self.parse_block_statement()?;
         self.expect_end()?;
 
         Ok(C0Function {
             return_type,
             name,
-            params,
+            parameters,
             body,
         })
     }
 
-    fn parse_params(&mut self) -> Result<Vec<C0Param>, C0SyntaxError> {
-        let mut params = Vec::new();
+    fn parse_parameters(&mut self) -> Result<Vec<C0Parameter>, C0SyntaxError> {
+        let mut parameters = Vec::new();
         if self.peek() == Some(&Token::RParen) {
-            return Ok(params);
+            return Ok(parameters);
         }
 
         loop {
-            let ty = self.parse_type()?;
+            let c_type = self.parse_type()?;
             let name = self.expect_ident("parameter name")?;
-            params.push(C0Param { ty, name });
+            parameters.push(C0Parameter { c_type, name });
 
             if self.peek() != Some(&Token::Comma) {
-                return Ok(params);
+                return Ok(parameters);
             }
             self.position += 1;
         }
@@ -321,7 +341,7 @@ impl Parser {
             Some(Token::Ident(name)) if name == "int32" => {
                 if self.peek() == Some(&Token::Star) {
                     self.position += 1;
-                    Ok(C0Type::Int32Ptr)
+                    Ok(C0Type::Int32Pointer)
                 } else {
                     Ok(C0Type::Int32)
                 }
@@ -335,7 +355,7 @@ impl Parser {
         }
     }
 
-    fn parse_block_stmt(&mut self) -> Result<C0Stmt, C0SyntaxError> {
+    fn parse_block_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
         self.expect(Token::LBrace)?;
         let mut statements = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
@@ -344,7 +364,7 @@ impl Parser {
                     "expected statement or `}`, got end of input",
                 ));
             }
-            statements.push(self.parse_stmt()?);
+            statements.push(self.parse_statement()?);
         }
         self.expect(Token::RBrace)?;
 
@@ -355,28 +375,28 @@ impl Parser {
             ));
         };
         for next in statements {
-            statement = C0Stmt::Seq(Box::new(statement), Box::new(next));
+            statement = C0Statement::Seq(Box::new(statement), Box::new(next));
         }
 
         Ok(statement)
     }
 
-    fn parse_stmt(&mut self) -> Result<C0Stmt, C0SyntaxError> {
+    fn parse_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
         match self.peek() {
             Some(Token::Star) => {
                 self.position += 1;
-                let ptr = self.parse_unary()?;
+                let pointer = self.parse_unary()?;
                 self.expect(Token::Equal)?;
-                let value = self.parse_expr()?;
+                let value = self.parse_expression()?;
                 self.expect(Token::Semicolon)?;
-                Ok(C0Stmt::Store { ptr, value })
+                Ok(C0Statement::Store { pointer, value })
             }
             Some(Token::Ident(_)) if self.peek_next() == Some(&Token::LBracket) => {
-                let ptr = self.parse_indexed_lvalue_ptr()?;
+                let pointer = self.parse_indexed_lvalue_pointer()?;
                 self.expect(Token::Equal)?;
-                let value = self.parse_expr()?;
+                let value = self.parse_expression()?;
                 self.expect(Token::Semicolon)?;
-                Ok(C0Stmt::Store { ptr, value })
+                Ok(C0Statement::Store { pointer, value })
             }
             Some(Token::Ident(name)) if self.peek_next() == Some(&Token::Equal) => {
                 let name = name.clone();
@@ -385,40 +405,40 @@ impl Parser {
                     && self.peek_next() == Some(&Token::LParen)
                 {
                     let function_name = self.expect_ident("function name")?;
-                    let args = self.parse_call_args()?;
+                    let arguments = self.parse_call_arguments()?;
                     self.expect(Token::Semicolon)?;
-                    return Ok(C0Stmt::CallAssign {
+                    return Ok(C0Statement::CallAssign {
                         target: name,
                         function_name,
-                        args,
+                        arguments,
                     });
                 }
-                let expr = self.parse_expr()?;
+                let expression = self.parse_expression()?;
                 self.expect(Token::Semicolon)?;
-                Ok(C0Stmt::Assign { name, expr })
+                Ok(C0Statement::Assign { name, expression })
             }
             Some(Token::Ident(name)) if name == "int32" => {
-                let ty = self.parse_type()?;
+                let c_type = self.parse_type()?;
                 let name = self.expect_ident("local name")?;
                 self.expect(Token::Semicolon)?;
-                Ok(C0Stmt::Declare { ty, name })
+                Ok(C0Statement::Declare { c_type, name })
             }
             Some(Token::Ident(_)) => match self.peek_ident() {
                 Some("return") => {
                     self.position += 1;
-                    let expr = self.parse_expr()?;
+                    let expression = self.parse_expression()?;
                     self.expect(Token::Semicolon)?;
-                    Ok(C0Stmt::Return(expr))
+                    Ok(C0Statement::Return(expression))
                 }
                 Some("if") => {
                     self.position += 1;
                     self.expect(Token::LParen)?;
-                    let condition = self.parse_expr()?;
+                    let condition = self.parse_expression()?;
                     self.expect(Token::RParen)?;
-                    let then_branch = Box::new(self.parse_block_stmt()?);
+                    let then_branch = Box::new(self.parse_block_statement()?);
                     self.expect_ident_spelling("else")?;
-                    let else_branch = Box::new(self.parse_block_stmt()?);
-                    Ok(C0Stmt::If {
+                    let else_branch = Box::new(self.parse_block_statement()?);
+                    Ok(C0Statement::If {
                         condition,
                         then_branch,
                         else_branch,
@@ -427,10 +447,10 @@ impl Parser {
                 Some("while") => {
                     self.position += 1;
                     self.expect(Token::LParen)?;
-                    let condition = self.parse_expr()?;
+                    let condition = self.parse_expression()?;
                     self.expect(Token::RParen)?;
-                    let body = Box::new(self.parse_block_stmt()?);
-                    Ok(C0Stmt::While { condition, body })
+                    let body = Box::new(self.parse_block_statement()?);
+                    Ok(C0Statement::While { condition, body })
                 }
                 Some(other) => Err(C0SyntaxError::new(format!(
                     "expected statement, got identifier `{other}`"
@@ -444,27 +464,27 @@ impl Parser {
         }
     }
 
-    fn parse_expr(&mut self) -> Result<C0Expr, C0SyntaxError> {
+    fn parse_expression(&mut self) -> Result<C0Expression, C0SyntaxError> {
         self.parse_logical_or()
     }
 
-    fn parse_call_args(&mut self) -> Result<Vec<C0Expr>, C0SyntaxError> {
+    fn parse_call_arguments(&mut self) -> Result<Vec<C0Expression>, C0SyntaxError> {
         self.expect(Token::LParen)?;
-        let mut args = Vec::new();
+        let mut arguments = Vec::new();
         if self.peek() == Some(&Token::RParen) {
             self.position += 1;
-            return Ok(args);
+            return Ok(arguments);
         }
 
         loop {
-            args.push(self.parse_expr()?);
+            arguments.push(self.parse_expression()?);
             match self.peek() {
                 Some(Token::Comma) => {
                     self.position += 1;
                 }
                 Some(Token::RParen) => {
                     self.position += 1;
-                    return Ok(args);
+                    return Ok(arguments);
                 }
                 Some(token) => {
                     return Err(C0SyntaxError::new(format!(
@@ -478,138 +498,138 @@ impl Parser {
         }
     }
 
-    fn parse_logical_or(&mut self) -> Result<C0Expr, C0SyntaxError> {
-        let mut expr = self.parse_logical_and()?;
+    fn parse_logical_or(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let mut expression = self.parse_logical_and()?;
         loop {
-            expr = match self.peek() {
+            expression = match self.peek() {
                 Some(Token::PipePipe) => {
                     self.position += 1;
                     let right = self.parse_logical_and()?;
-                    C0Expr::Or(Box::new(expr), Box::new(right))
+                    C0Expression::Or(Box::new(expression), Box::new(right))
                 }
-                _ => return Ok(expr),
+                _ => return Ok(expression),
             };
         }
     }
 
-    fn parse_logical_and(&mut self) -> Result<C0Expr, C0SyntaxError> {
-        let mut expr = self.parse_compare()?;
+    fn parse_logical_and(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let mut expression = self.parse_compare()?;
         loop {
-            expr = match self.peek() {
+            expression = match self.peek() {
                 Some(Token::AmpAmp) => {
                     self.position += 1;
                     let right = self.parse_compare()?;
-                    C0Expr::And(Box::new(expr), Box::new(right))
+                    C0Expression::And(Box::new(expression), Box::new(right))
                 }
-                _ => return Ok(expr),
+                _ => return Ok(expression),
             };
         }
     }
 
-    fn parse_compare(&mut self) -> Result<C0Expr, C0SyntaxError> {
-        let mut expr = self.parse_add()?;
+    fn parse_compare(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let mut expression = self.parse_add()?;
         loop {
-            expr = match self.peek() {
-                Some(Token::Lt) => {
+            expression = match self.peek() {
+                Some(Token::LessThan) => {
                     self.position += 1;
                     let right = self.parse_add()?;
-                    C0Expr::Lt(Box::new(expr), Box::new(right))
+                    C0Expression::LessThan(Box::new(expression), Box::new(right))
                 }
-                Some(Token::Le) => {
+                Some(Token::LessEqual) => {
                     self.position += 1;
                     let right = self.parse_add()?;
-                    C0Expr::Le(Box::new(expr), Box::new(right))
+                    C0Expression::LessEqual(Box::new(expression), Box::new(right))
                 }
-                Some(Token::Gt) => {
+                Some(Token::GreaterThan) => {
                     self.position += 1;
                     let right = self.parse_add()?;
-                    C0Expr::Gt(Box::new(expr), Box::new(right))
+                    C0Expression::GreaterThan(Box::new(expression), Box::new(right))
                 }
-                Some(Token::Ge) => {
+                Some(Token::GreaterEqual) => {
                     self.position += 1;
                     let right = self.parse_add()?;
-                    C0Expr::Ge(Box::new(expr), Box::new(right))
+                    C0Expression::GreaterEqual(Box::new(expression), Box::new(right))
                 }
-                Some(Token::EqEq) => {
+                Some(Token::EqualEqual) => {
                     self.position += 1;
                     let right = self.parse_add()?;
-                    C0Expr::Eq(Box::new(expr), Box::new(right))
+                    C0Expression::Equal(Box::new(expression), Box::new(right))
                 }
-                Some(Token::BangEq) => {
+                Some(Token::BangEqual) => {
                     self.position += 1;
                     let right = self.parse_add()?;
-                    C0Expr::Ne(Box::new(expr), Box::new(right))
+                    C0Expression::NotEqual(Box::new(expression), Box::new(right))
                 }
-                _ => return Ok(expr),
+                _ => return Ok(expression),
             };
         }
     }
 
-    fn parse_add(&mut self) -> Result<C0Expr, C0SyntaxError> {
-        let mut expr = self.parse_unary()?;
+    fn parse_add(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let mut expression = self.parse_unary()?;
         loop {
-            expr = match self.peek() {
+            expression = match self.peek() {
                 Some(Token::Plus) => {
                     self.position += 1;
                     let right = self.parse_unary()?;
-                    C0Expr::Add(Box::new(expr), Box::new(right))
+                    C0Expression::Add(Box::new(expression), Box::new(right))
                 }
                 Some(Token::Minus) => {
                     self.position += 1;
                     let right = self.parse_unary()?;
-                    C0Expr::Sub(Box::new(expr), Box::new(right))
+                    C0Expression::Subtract(Box::new(expression), Box::new(right))
                 }
-                _ => return Ok(expr),
+                _ => return Ok(expression),
             };
         }
     }
 
-    fn parse_unary(&mut self) -> Result<C0Expr, C0SyntaxError> {
+    fn parse_unary(&mut self) -> Result<C0Expression, C0SyntaxError> {
         if self.peek() == Some(&Token::Star) {
             self.position += 1;
-            return Ok(C0Expr::Load(Box::new(self.parse_unary()?)));
+            return Ok(C0Expression::Load(Box::new(self.parse_unary()?)));
         }
 
         if self.peek() == Some(&Token::Amp) {
             self.position += 1;
-            return Ok(C0Expr::AddressOf(Box::new(self.parse_unary()?)));
+            return Ok(C0Expression::AddressOf(Box::new(self.parse_unary()?)));
         }
 
         if self.peek() == Some(&Token::Bang) {
             self.position += 1;
-            return Ok(C0Expr::Not(Box::new(self.parse_unary()?)));
+            return Ok(C0Expression::Not(Box::new(self.parse_unary()?)));
         }
 
         self.parse_postfix()
     }
 
-    fn parse_postfix(&mut self) -> Result<C0Expr, C0SyntaxError> {
-        let mut expr = self.parse_primary()?;
+    fn parse_postfix(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let mut expression = self.parse_primary()?;
         while self.peek() == Some(&Token::LBracket) {
             self.position += 1;
-            let index = self.parse_expr()?;
+            let index = self.parse_expression()?;
             self.expect(Token::RBracket)?;
-            expr = C0Expr::Index(Box::new(expr), Box::new(index));
+            expression = C0Expression::Index(Box::new(expression), Box::new(index));
         }
-        Ok(expr)
+        Ok(expression)
     }
 
-    fn parse_indexed_lvalue_ptr(&mut self) -> Result<C0Expr, C0SyntaxError> {
+    fn parse_indexed_lvalue_pointer(&mut self) -> Result<C0Expression, C0SyntaxError> {
         let mut base = self.parse_primary()?;
         loop {
             self.expect(Token::LBracket)?;
-            let index = self.parse_expr()?;
+            let index = self.parse_expression()?;
             self.expect(Token::RBracket)?;
             if self.peek() != Some(&Token::LBracket) {
-                return Ok(C0Expr::Add(Box::new(base), Box::new(index)));
+                return Ok(C0Expression::Add(Box::new(base), Box::new(index)));
             }
-            base = C0Expr::Index(Box::new(base), Box::new(index));
+            base = C0Expression::Index(Box::new(base), Box::new(index));
         }
     }
 
-    fn parse_primary(&mut self) -> Result<C0Expr, C0SyntaxError> {
+    fn parse_primary(&mut self) -> Result<C0Expression, C0SyntaxError> {
         match self.next() {
-            Some(Token::Ident(name)) => Ok(C0Expr::Var(name)),
+            Some(Token::Ident(name)) => Ok(C0Expression::Variable(name)),
             Some(Token::Number(number)) => {
                 let value = number.parse::<u32>().map_err(|_| {
                     C0SyntaxError::new(format!("int32 literal `{number}` is out of range"))
@@ -619,12 +639,12 @@ impl Parser {
                         "int32 literal `{number}` is out of range"
                     )));
                 }
-                Ok(C0Expr::Int32Literal(value))
+                Ok(C0Expression::Int32Literal(value))
             }
             Some(Token::LParen) => {
-                let expr = self.parse_expr()?;
+                let expression = self.parse_expression()?;
                 self.expect(Token::RParen)?;
-                Ok(expr)
+                Ok(expression)
             }
             Some(token) => Err(C0SyntaxError::new(format!(
                 "expected expression, got {token:?}"
@@ -741,12 +761,12 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
 
         if index + 1 < chars.len() {
             let token = match (ch, chars[index + 1]) {
-                ('=', '=') => Some(Token::EqEq),
-                ('!', '=') => Some(Token::BangEq),
+                ('=', '=') => Some(Token::EqualEqual),
+                ('!', '=') => Some(Token::BangEqual),
                 ('&', '&') => Some(Token::AmpAmp),
                 ('|', '|') => Some(Token::PipePipe),
-                ('<', '=') => Some(Token::Le),
-                ('>', '=') => Some(Token::Ge),
+                ('<', '=') => Some(Token::LessEqual),
+                ('>', '=') => Some(Token::GreaterEqual),
                 _ => None,
             };
             if let Some(token) = token {
@@ -767,8 +787,8 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
             ';' => Token::Semicolon,
             '+' => Token::Plus,
             '-' => Token::Minus,
-            '<' => Token::Lt,
-            '>' => Token::Gt,
+            '<' => Token::LessThan,
+            '>' => Token::GreaterThan,
             '*' => Token::Star,
             '&' => Token::Amp,
             '!' => Token::Bang,

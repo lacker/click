@@ -62,7 +62,7 @@ language support under `src/lang/`:
 
 The megakernel currently has native data structures for:
 
-- `Bv32Term`, `PtrOffsetTerm`, and `ConditionTerm`
+- `Bitvector32Term`, `PointerOffsetTerm`, and `ConditionTerm`
 - C values, lvalues, expressions, statements, functions, and function
   environments
 - local state and memory with explicit byte-sized blocks
@@ -104,7 +104,7 @@ The current `.click` proof language has only one tactic, `auto`. Function
 contracts attach `requires` clauses to the function and attach a `by` proof
 clause to each `ensures` guarantee. An `ensures` clause can say `by auto;`, or
 use block form `by { auto; }`. The tactic invokes the megakernel's C
-symbolic-execution axioms and spec-checking axioms to prove the named guarantee.
+symbolic-execution axioms and specification-checking axioms to prove the named guarantee.
 
 ## C0 Status
 
@@ -114,7 +114,7 @@ to drive the design. It currently supports:
 - `int32` and `int32*`
 - integer literals and variables
 - signed comparisons and equality, returning `int32` `0` or `1` like C
-- signed addition and subtraction, with signed-overflow UB
+- signed addition and subtraction, with signed-overflow undefined behavior
 - local `int32` and `int32*` declarations
 - assignment and sequencing
 - `if` / `else` with C scalar truthiness
@@ -124,34 +124,34 @@ to drive the design. It currently supports:
 - address-of lvalues
 - pointer arithmetic for `int32*`
 - loads and stores, including `p[i]` syntax for `int32*` indexing
-- known function calls through a small `CFunctionEnv`
+- known function calls through a small `CFunctionEnvironment`
 
 The memory model has named blocks with byte sizes. Concrete in-range loads and
 stores discharge memory-validity obligations directly. Symbolic accesses can
 also be discharged from valid-range facts plus simple index bounds such as
 `0 <= i < n`. Out-of-range or unknown memory accesses become proof obligations
-or UB depending on the execution path.
+or undefined behavior depending on the execution path.
 
 ## Proof Surface
 
 The primary proof engine today is the `auto` tactic backed by native symbolic
 execution in the megakernel. The underlying axioms produce theorem objects for
 expression evaluation, statement execution, function execution, and
-function-spec satisfaction.
+function-specification satisfaction.
 
 Symbolic execution is bounded by an explicit `ExecutionBudget`: expression
 steps, statement steps, function calls, loop unrolls, and path count. Exhausting
 that budget is a Click proof/executor failure, reported as an `ExecutionLimit`;
 it is not modeled as C undefined behavior or as a C runtime error.
 
-Function specs package:
+Function specifications package:
 
 - initial state
 - arguments
 - required propositions
 - expected outcome
 
-The spec prover checks that requirements are strong enough to leave no
+The specification prover checks that requirements are strong enough to leave no
 unresolved path facts or proof obligations and that execution reaches the
 expected outcome.
 
@@ -174,17 +174,39 @@ own `by` proof clause. For now, `requires` supports `valid_range(pointer,
 bytes)` and signed integer comparisons over parameters and literals.
 `ensures` supports comparisons between small C0 integer expressions over
 `result`, parameters, literals, parentheses, `+`, `-`, and post-state
-`p[i]` memory reads. Postconditions can use `old(expr)` to evaluate an
+`p[i]` memory reads. Postconditions can use `old(expression)` to evaluate an
 expression in the pre-call state, which supports first-frame claims like
 `p[0] == old(p[0])`. `auto` checks each guarantee on every symbolic execution
 path. That sidecar path parses C0 source, builds the requested initial memory,
 runs native symbolic execution, checks the postcondition clause, and packages
-the result as a megakernel `CFunctionSpec` theorem.
+the result as a megakernel `CFunctionSpecification` theorem.
+
+The sidecar also has first structural labels for intra-function proof
+obligations:
+
+```text
+at statement 2 {
+    assert i == 0 by auto;
+}
+
+at loop 0 {
+    invariant i >= 0 by auto;
+    invariant i <= 3 by auto;
+}
+```
+
+`statement N` names the Nth source statement in structural order; `loop N`
+names the Nth `while` loop. In this first slice, `assert` lowers to a ghost
+statement, and `invariant` lowers to ghost checks at loop entry and after each
+completed loop body. That is enough to exercise the syntax and proof-obligation
+flow, but it is not yet the final non-unrolling induction and
+verification-condition-generation story for loops.
 
 ## Markdown Tests
 
-End-to-end examples live in `mdtests/`. Each markdown test can include prose,
-one or more C source blocks, one Click sidecar block, and an expected result:
+End-to-end examples live in `mdtests/`. Each mdtest can include
+prose, one or more C source blocks, one Click sidecar block, and an expected
+result:
 
 ````text
 ```c filename=example.c
@@ -222,8 +244,8 @@ guarantees such as `ensures p[0] == old(p[0]) by auto;`.
 
 1. Split `src/megakernel.rs` into smaller modules without changing semantics.
 2. Expand the `.click` sidecar language just enough to express more realistic
-   C specs: named preconditions, multiple ensures clauses, and simple symbolic
-   arguments.
+   C specifications: named preconditions, multiple ensures clauses, structural `at`
+   labels, and simple symbolic arguments.
 3. Add richer C integer coverage: unsigned operations, more widths, casts, and
    promotion rules.
 4. Improve loop verification beyond concrete fuel-capped execution by making

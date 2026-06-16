@@ -10,74 +10,74 @@ use std::collections::{BTreeMap, BTreeSet};
 const C_POINTER_BYTE_WIDTH: u32 = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct Var(pub u64);
+pub struct Variable(pub u64);
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Sort {
     Condition,
-    Bv32,
-    PtrOffset,
+    Bitvector32,
+    PointerOffset,
     CType,
     CInt32,
-    CPtr,
+    CPointer,
     CValue,
     CMemory,
     CState,
-    CStmtOutcome,
+    CStatementOutcome,
     CFunctionOutcome,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum Bv32Term {
-    Const(u32),
-    Var(Var),
-    Add(Box<Bv32Term>, Box<Bv32Term>),
-    Sub(Box<Bv32Term>, Box<Bv32Term>),
-    Mul(Box<Bv32Term>, Box<Bv32Term>),
-    MemoryLoad(Box<CMemory>, Box<Ptr>),
+pub enum Bitvector32Term {
+    Constant(u32),
+    Variable(Variable),
+    Add(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Subtract(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Multiply(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    MemoryLoad(Box<CMemory>, Box<Pointer>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum PtrOffsetTerm {
-    Const(i64),
-    Var(Var),
-    Add(Box<PtrOffsetTerm>, Box<PtrOffsetTerm>),
+pub enum PointerOffsetTerm {
+    Constant(i64),
+    Variable(Variable),
+    Add(Box<PointerOffsetTerm>, Box<PointerOffsetTerm>),
     Int32Scaled {
-        value: Box<Bv32Term>,
+        value: Box<Bitvector32Term>,
         byte_width: i64,
     },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum ConditionTerm {
-    Const(bool),
-    Var(Var),
-    Bv32Slt(Box<Bv32Term>, Box<Bv32Term>),
-    Bv32Sle(Box<Bv32Term>, Box<Bv32Term>),
-    Bv32Sgt(Box<Bv32Term>, Box<Bv32Term>),
-    Bv32Sge(Box<Bv32Term>, Box<Bv32Term>),
-    Bv32Eq(Box<Bv32Term>, Box<Bv32Term>),
-    Bv32SignedAddOverflows(Box<Bv32Term>, Box<Bv32Term>),
-    Bv32SignedSubOverflows(Box<Bv32Term>, Box<Bv32Term>),
-    PtrOffsetEq(Box<PtrOffsetTerm>, Box<PtrOffsetTerm>),
+    Constant(bool),
+    Variable(Variable),
+    Bitvector32SignedLessThan(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32SignedLessEqual(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32SignedGreaterThan(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32SignedGreaterEqual(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32Equal(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32SignedAddOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32SignedSubtractOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    PointerOffsetEqual(Box<PointerOffsetTerm>, Box<PointerOffsetTerm>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct Ptr {
+pub struct Pointer {
     pub block: String,
-    pub offset: PtrOffsetTerm,
+    pub offset: PointerOffsetTerm,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CValue {
-    Int32(Bv32Term),
-    Ptr(Ptr),
+    Int32(Bitvector32Term),
+    Pointer(Pointer),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CType {
     Int32,
-    Int32Ptr,
+    Int32Pointer,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -89,86 +89,89 @@ pub struct CLValue {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 enum CLValueStorage {
     Local { name: String },
-    Memory { pointer: Ptr },
+    Memory { pointer: Pointer },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum CExpr {
+pub enum CExpression {
     Value(CValue),
-    Var(String),
-    AddressOf(Box<CExpr>),
-    Lt(Box<CExpr>, Box<CExpr>),
-    Le(Box<CExpr>, Box<CExpr>),
-    Gt(Box<CExpr>, Box<CExpr>),
-    Ge(Box<CExpr>, Box<CExpr>),
-    Eq(Box<CExpr>, Box<CExpr>),
-    Ne(Box<CExpr>, Box<CExpr>),
-    Not(Box<CExpr>),
-    And(Box<CExpr>, Box<CExpr>),
-    Or(Box<CExpr>, Box<CExpr>),
-    Add(Box<CExpr>, Box<CExpr>),
-    Sub(Box<CExpr>, Box<CExpr>),
-    Load(Box<CExpr>),
-    Index(Box<CExpr>, Box<CExpr>),
+    Variable(String),
+    AddressOf(Box<CExpression>),
+    LessThan(Box<CExpression>, Box<CExpression>),
+    LessEqual(Box<CExpression>, Box<CExpression>),
+    GreaterThan(Box<CExpression>, Box<CExpression>),
+    GreaterEqual(Box<CExpression>, Box<CExpression>),
+    Equal(Box<CExpression>, Box<CExpression>),
+    NotEqual(Box<CExpression>, Box<CExpression>),
+    Not(Box<CExpression>),
+    And(Box<CExpression>, Box<CExpression>),
+    Or(Box<CExpression>, Box<CExpression>),
+    Add(Box<CExpression>, Box<CExpression>),
+    Subtract(Box<CExpression>, Box<CExpression>),
+    Load(Box<CExpression>),
+    Index(Box<CExpression>, Box<CExpression>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum CStmt {
+pub enum CStatement {
     Declare {
         name: String,
-        ty: CType,
+        c_type: CType,
     },
     Assign {
         name: String,
-        expr: CExpr,
+        expression: CExpression,
     },
     CallAssign {
         target: String,
         function_name: String,
-        args: Vec<CExpr>,
+        arguments: Vec<CExpression>,
     },
-    Seq(Box<CStmt>, Box<CStmt>),
-    Return(CExpr),
+    Assert {
+        condition: CExpression,
+    },
+    Seq(Box<CStatement>, Box<CStatement>),
+    Return(CExpression),
     Store {
-        ptr: CExpr,
-        value: CExpr,
+        pointer: CExpression,
+        value: CExpression,
     },
     If {
-        condition: CExpr,
-        then_branch: Box<CStmt>,
-        else_branch: Box<CStmt>,
+        condition: CExpression,
+        then_branch: Box<CStatement>,
+        else_branch: Box<CStatement>,
     },
     While {
-        condition: CExpr,
-        invariant: Vec<Prop>,
-        body: Box<CStmt>,
+        condition: CExpression,
+        invariant: Vec<Proposition>,
+        body: Box<CStatement>,
     },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct CParam {
+pub struct CParameter {
     name: String,
-    ty: CType,
+    c_type: CType,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CFunction {
     return_type: CType,
     name: String,
-    params: Vec<CParam>,
-    body: CStmt,
+    parameters: Vec<CParameter>,
+    body: CStatement,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct CFunctionSpec {
+pub struct CFunctionSpecification {
     state: CState,
-    args: Vec<CExpr>,
-    requires: Vec<Prop>,
+    arguments: Vec<CExpression>,
+    requires: Vec<Proposition>,
     outcome: CFunctionOutcome,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct CFunctionEnv {
+pub struct CFunctionEnvironment {
     functions: BTreeMap<String, CFunction>,
 }
 
@@ -206,43 +209,43 @@ pub struct ExecutionBudget {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum CExprOutcome {
+pub enum CExpressionOutcome {
     Value(CValue),
-    Ub(CUndefinedBehavior),
+    UndefinedBehavior(CUndefinedBehavior),
     RuntimeError(CRuntimeError),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 enum CLValueOutcome {
     LValue(CLValue),
-    Ub(CUndefinedBehavior),
+    UndefinedBehavior(CUndefinedBehavior),
     RuntimeError(CRuntimeError),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum CStmtOutcome {
+pub enum CStatementOutcome {
     Normal(CState),
     Return { value: CValue, state: CState },
-    Ub(CUndefinedBehavior),
+    UndefinedBehavior(CUndefinedBehavior),
     RuntimeError(CRuntimeError),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CFunctionOutcome {
     Return { value: CValue, state: CState },
-    Ub(CUndefinedBehavior),
+    UndefinedBehavior(CUndefinedBehavior),
     RuntimeError(CRuntimeError),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct CLocalEnv {
+pub struct CLocalEnvironment {
     bindings: BTreeMap<String, CValue>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CMemory {
     blocks: BTreeMap<String, CBlock>,
-    cells: BTreeMap<Ptr, CValue>,
+    cells: BTreeMap<Pointer, CValue>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -252,102 +255,102 @@ pub struct CBlock {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CState {
-    locals: CLocalEnv,
+    locals: CLocalEnvironment,
     memory: CMemory,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Term {
     Condition(ConditionTerm),
-    Bv32(Bv32Term),
-    PtrOffset(PtrOffsetTerm),
+    Bitvector32(Bitvector32Term),
+    PointerOffset(PointerOffsetTerm),
     CValue(CValue),
-    CExprOutcome(CExprOutcome),
-    CStmtOutcome(CStmtOutcome),
+    CExpressionOutcome(CExpressionOutcome),
+    CStatementOutcome(CStatementOutcome),
     CFunctionOutcome(CFunctionOutcome),
     CMemory(CMemory),
     CState(CState),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum Prop {
+pub enum Proposition {
     Equal(Term, Term),
     ConditionIs(ConditionTerm, bool),
-    CExprEvaluates {
+    CExpressionEvaluates {
         state: CState,
-        expr: CExpr,
-        outcome: CExprOutcome,
+        expression: CExpression,
+        outcome: CExpressionOutcome,
     },
-    CStmtExecutes {
+    CStatementExecutes {
         state: CState,
-        stmt: CStmt,
-        outcome: CStmtOutcome,
+        statement: CStatement,
+        outcome: CStatementOutcome,
     },
     CFunctionExecutes {
         state: CState,
         function: CFunction,
-        args: Vec<CExpr>,
+        arguments: Vec<CExpression>,
         outcome: CFunctionOutcome,
     },
-    CFunctionSatisfiesSpec {
+    CFunctionSatisfiesSpecification {
         function: CFunction,
-        spec: CFunctionSpec,
+        specification: CFunctionSpecification,
     },
     CMemoryLoads {
         memory: CMemory,
-        ptr: Ptr,
-        outcome: CExprOutcome,
+        pointer: Pointer,
+        outcome: CExpressionOutcome,
     },
     CMemoryCanLoad {
         memory: CMemory,
-        ptr: Ptr,
+        pointer: Pointer,
     },
     CMemoryCanStore {
         memory: CMemory,
-        ptr: Ptr,
+        pointer: Pointer,
     },
     CMemoryValidRange {
         memory: CMemory,
-        base: Ptr,
-        bytes: Bv32Term,
+        base: Pointer,
+        bytes: Bitvector32Term,
     },
     CWhileInvariantRule {
         state: CState,
-        condition: CExpr,
-        invariant: Vec<Prop>,
-        body: CStmt,
-        preserved: Vec<Prop>,
-        postcondition: Box<Prop>,
+        condition: CExpression,
+        invariant: Vec<Proposition>,
+        body: CStatement,
+        preserved: Vec<Proposition>,
+        postcondition: Box<Proposition>,
     },
-    And(Box<Prop>, Box<Prop>),
-    Implies(Box<Prop>, Box<Prop>),
+    And(Box<Proposition>, Box<Proposition>),
+    Implies(Box<Proposition>, Box<Proposition>),
     ForAll {
-        var: Var,
+        var: Variable,
         sort: Sort,
-        body: Box<Prop>,
+        body: Box<Proposition>,
     },
 }
 
 /// An abstract proven proposition produced by megakernel axioms.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Theorem {
-    prop: Prop,
+    proposition: Proposition,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Assumptions {
     condition_facts: BTreeMap<ConditionTerm, bool>,
-    prop_facts: BTreeSet<Prop>,
+    prop_facts: BTreeSet<Proposition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ProofObligation {
-    prop: Prop,
+    proposition: Proposition,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct PathFact {
-    prop: Prop,
+    proposition: Proposition,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -364,8 +367,8 @@ pub struct SymbolicCExecutionPath {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct CExprPath {
-    outcome: CExprOutcome,
+struct CExpressionPath {
+    outcome: CExpressionOutcome,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
 }
@@ -378,8 +381,8 @@ struct CLValuePath {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct CStmtPath {
-    outcome: CStmtOutcome,
+struct CStatementExecutionPath {
+    outcome: CStatementOutcome,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
 }
@@ -392,35 +395,35 @@ struct CFunctionPath {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct CArgsPath {
+struct CArgumentsPath {
     values: Vec<CValue>,
     outcome: Option<CFunctionOutcome>,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
 }
 
-impl Bv32Term {
-    pub fn var(var: Var) -> Self {
-        Self::Var(var)
+impl Bitvector32Term {
+    pub fn var(var: Variable) -> Self {
+        Self::Variable(var)
     }
 
     pub fn constant(value: u32) -> Self {
-        Self::Const(value)
+        Self::Constant(value)
     }
 
     fn as_const(&self) -> Option<u32> {
         match self {
-            Self::Const(value) => Some(*value),
-            Self::Var(_) | Self::MemoryLoad(_, _) => None,
+            Self::Constant(value) => Some(*value),
+            Self::Variable(_) | Self::MemoryLoad(_, _) => None,
             Self::Add(left, right) => Some(left.as_const()?.wrapping_add(right.as_const()?)),
-            Self::Sub(left, right) => Some(left.as_const()?.wrapping_sub(right.as_const()?)),
-            Self::Mul(left, right) => Some(left.as_const()?.wrapping_mul(right.as_const()?)),
+            Self::Subtract(left, right) => Some(left.as_const()?.wrapping_sub(right.as_const()?)),
+            Self::Multiply(left, right) => Some(left.as_const()?.wrapping_mul(right.as_const()?)),
         }
     }
 
     fn subtract_one_base(&self) -> Option<Self> {
         match self {
-            Self::Sub(left, right) if right.as_ref() == &Self::Const(1) => {
+            Self::Subtract(left, right) if right.as_ref() == &Self::Constant(1) => {
                 Some(left.as_ref().clone())
             }
             _ => None,
@@ -433,10 +436,10 @@ impl Bv32Term {
 
     fn add_const_base(&self, value: u32) -> Option<Self> {
         match self {
-            Self::Add(left, right) if right.as_ref() == &Self::Const(value) => {
+            Self::Add(left, right) if right.as_ref() == &Self::Constant(value) => {
                 Some(left.as_ref().clone())
             }
-            Self::Add(left, right) if left.as_ref() == &Self::Const(value) => {
+            Self::Add(left, right) if left.as_ref() == &Self::Constant(value) => {
                 Some(right.as_ref().clone())
             }
             _ => None,
@@ -445,28 +448,28 @@ impl Bv32Term {
 
     fn add(left: Self, right: Self) -> Self {
         match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Const(left.wrapping_add(right)),
+            (Some(left), Some(right)) => Self::Constant(left.wrapping_add(right)),
             _ => Self::Add(Box::new(left), Box::new(right)),
         }
     }
 
-    fn sub(left: Self, right: Self) -> Self {
+    fn subtract(left: Self, right: Self) -> Self {
         match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Const(left.wrapping_sub(right)),
-            _ => Self::Sub(Box::new(left), Box::new(right)),
+            (Some(left), Some(right)) => Self::Constant(left.wrapping_sub(right)),
+            _ => Self::Subtract(Box::new(left), Box::new(right)),
         }
     }
 }
 
-impl PtrOffsetTerm {
+impl PointerOffsetTerm {
     pub fn constant(value: i64) -> Self {
-        Self::Const(value)
+        Self::Constant(value)
     }
 
     fn as_const(&self) -> Option<i64> {
         match self {
-            Self::Const(value) => Some(*value),
-            Self::Var(_) => None,
+            Self::Constant(value) => Some(*value),
+            Self::Variable(_) => None,
             Self::Add(left, right) => left.as_const()?.checked_add(right.as_const()?),
             Self::Int32Scaled { value, byte_width } => {
                 let value = value.as_const()? as i32 as i64;
@@ -477,16 +480,16 @@ impl PtrOffsetTerm {
 
     fn add(left: Self, right: Self) -> Self {
         match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Const(left + right),
+            (Some(left), Some(right)) => Self::Constant(left + right),
             (Some(0), _) => right,
             (_, Some(0)) => left,
             _ => Self::Add(Box::new(left), Box::new(right)),
         }
     }
 
-    fn scale_int32(value: Bv32Term, byte_width: i64) -> Self {
+    fn scale_int32(value: Bitvector32Term, byte_width: i64) -> Self {
         match value.as_const() {
-            Some(value) => Self::Const((value as i32 as i64) * byte_width),
+            Some(value) => Self::Constant((value as i32 as i64) * byte_width),
             None => Self::Int32Scaled {
                 value: Box::new(value),
                 byte_width,
@@ -496,59 +499,63 @@ impl PtrOffsetTerm {
 }
 
 impl ConditionTerm {
-    fn slt(left: Bv32Term, right: Bv32Term) -> Self {
+    fn signed_less_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
         match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Const((left as i32) < (right as i32)),
-            _ => Self::Bv32Slt(Box::new(left), Box::new(right)),
+            (Some(left), Some(right)) => Self::Constant((left as i32) < (right as i32)),
+            _ => Self::Bitvector32SignedLessThan(Box::new(left), Box::new(right)),
         }
     }
 
-    fn sle(left: Bv32Term, right: Bv32Term) -> Self {
+    fn signed_less_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
         match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Const((left as i32) <= (right as i32)),
-            _ => Self::Bv32Sle(Box::new(left), Box::new(right)),
+            (Some(left), Some(right)) => Self::Constant((left as i32) <= (right as i32)),
+            _ => Self::Bitvector32SignedLessEqual(Box::new(left), Box::new(right)),
         }
     }
 
-    fn sgt(left: Bv32Term, right: Bv32Term) -> Self {
+    fn signed_greater_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
         match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Const((left as i32) > (right as i32)),
-            _ => Self::Bv32Sgt(Box::new(left), Box::new(right)),
+            (Some(left), Some(right)) => Self::Constant((left as i32) > (right as i32)),
+            _ => Self::Bitvector32SignedGreaterThan(Box::new(left), Box::new(right)),
         }
     }
 
-    fn sge(left: Bv32Term, right: Bv32Term) -> Self {
+    fn signed_greater_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
         match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Const((left as i32) >= (right as i32)),
-            _ => Self::Bv32Sge(Box::new(left), Box::new(right)),
+            (Some(left), Some(right)) => Self::Constant((left as i32) >= (right as i32)),
+            _ => Self::Bitvector32SignedGreaterEqual(Box::new(left), Box::new(right)),
         }
     }
 
-    fn eq(left: Bv32Term, right: Bv32Term) -> Self {
+    fn equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
         match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Const(left == right),
-            _ => Self::Bv32Eq(Box::new(left), Box::new(right)),
+            (Some(left), Some(right)) => Self::Constant(left == right),
+            _ => Self::Bitvector32Equal(Box::new(left), Box::new(right)),
         }
     }
 
-    fn signed_add_overflows(left: Bv32Term, right: Bv32Term) -> Self {
+    fn signed_add_overflows(left: Bitvector32Term, right: Bitvector32Term) -> Self {
         match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Const((left as i32).overflowing_add(right as i32).1),
-            _ => Self::Bv32SignedAddOverflows(Box::new(left), Box::new(right)),
+            (Some(left), Some(right)) => {
+                Self::Constant((left as i32).overflowing_add(right as i32).1)
+            }
+            _ => Self::Bitvector32SignedAddOverflows(Box::new(left), Box::new(right)),
         }
     }
 
-    fn signed_sub_overflows(left: Bv32Term, right: Bv32Term) -> Self {
+    fn signed_subtract_overflows(left: Bitvector32Term, right: Bitvector32Term) -> Self {
         match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Const((left as i32).overflowing_sub(right as i32).1),
-            _ => Self::Bv32SignedSubOverflows(Box::new(left), Box::new(right)),
+            (Some(left), Some(right)) => {
+                Self::Constant((left as i32).overflowing_sub(right as i32).1)
+            }
+            _ => Self::Bitvector32SignedSubtractOverflows(Box::new(left), Box::new(right)),
         }
     }
 
-    fn ptr_offset_eq(left: PtrOffsetTerm, right: PtrOffsetTerm) -> Self {
+    fn pointer_offset_equal(left: PointerOffsetTerm, right: PointerOffsetTerm) -> Self {
         match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Const(left == right),
-            _ => Self::PtrOffsetEq(Box::new(left), Box::new(right)),
+            (Some(left), Some(right)) => Self::Constant(left == right),
+            _ => Self::PointerOffsetEqual(Box::new(left), Box::new(right)),
         }
     }
 }
@@ -557,14 +564,14 @@ impl CType {
     fn accepts(self, value: &CValue) -> bool {
         matches!(
             (self, value),
-            (Self::Int32, CValue::Int32(_)) | (Self::Int32Ptr, CValue::Ptr(_))
+            (Self::Int32, CValue::Int32(_)) | (Self::Int32Pointer, CValue::Pointer(_))
         )
     }
 
     fn byte_width(self) -> u32 {
         match self {
             Self::Int32 => 4,
-            Self::Int32Ptr => C_POINTER_BYTE_WIDTH,
+            Self::Int32Pointer => C_POINTER_BYTE_WIDTH,
         }
     }
 }
@@ -573,14 +580,14 @@ impl CValue {
     fn c_type(&self) -> CType {
         match self {
             Self::Int32(_) => CType::Int32,
-            Self::Ptr(_) => CType::Int32Ptr,
+            Self::Pointer(_) => CType::Int32Pointer,
         }
     }
 
     fn byte_width(&self) -> u32 {
         match self {
             Self::Int32(_) => 4,
-            Self::Ptr(_) => C_POINTER_BYTE_WIDTH,
+            Self::Pointer(_) => C_POINTER_BYTE_WIDTH,
         }
     }
 }
@@ -593,7 +600,7 @@ impl CLValue {
         }
     }
 
-    fn memory(pointer: Ptr, value_type: CType) -> Self {
+    fn memory(pointer: Pointer, value_type: CType) -> Self {
         Self {
             storage: CLValueStorage::Memory { pointer },
             value_type,
@@ -604,10 +611,10 @@ impl CLValue {
         self.value_type
     }
 
-    fn pointer(&self, state: &CState) -> Option<Ptr> {
+    fn pointer(&self, state: &CState) -> Option<Pointer> {
         match &self.storage {
             CLValueStorage::Local { name } => {
-                let pointer = CMemory::local_ptr(name);
+                let pointer = CMemory::local_pointer(name);
                 state.memory.has_block(&pointer.block).then_some(pointer)
             }
             CLValueStorage::Memory { pointer } => Some(pointer.clone()),
@@ -615,35 +622,35 @@ impl CLValue {
     }
 }
 
-impl Ptr {
-    fn offset_by_int32_elements(&self, elements: Bv32Term) -> Self {
+impl Pointer {
+    fn offset_by_int32_elements(&self, elements: Bitvector32Term) -> Self {
         Self {
             block: self.block.clone(),
-            offset: PtrOffsetTerm::add(
+            offset: PointerOffsetTerm::add(
                 self.offset.clone(),
-                PtrOffsetTerm::scale_int32(elements, 4),
+                PointerOffsetTerm::scale_int32(elements, 4),
             ),
         }
     }
 
-    fn element_index_from_base(&self, base: &Self) -> Option<Bv32Term> {
+    fn element_index_from_base(&self, base: &Self) -> Option<Bitvector32Term> {
         if self.block != base.block {
             return None;
         }
 
         if self.offset == base.offset {
-            return Some(Bv32Term::Const(0));
+            return Some(Bitvector32Term::Constant(0));
         }
 
-        if base.offset == PtrOffsetTerm::Const(0) {
+        if base.offset == PointerOffsetTerm::Constant(0) {
             return int32_element_index_from_offset(&self.offset);
         }
 
         match &self.offset {
-            PtrOffsetTerm::Add(left, right) if left.as_ref() == &base.offset => {
+            PointerOffsetTerm::Add(left, right) if left.as_ref() == &base.offset => {
                 int32_element_index_from_offset(right)
             }
-            PtrOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
+            PointerOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
                 int32_element_index_from_offset(left)
             }
             _ => None,
@@ -651,11 +658,11 @@ impl Ptr {
     }
 }
 
-impl CParam {
-    pub fn new(name: impl Into<String>, ty: CType) -> Self {
+impl CParameter {
+    pub fn new(name: impl Into<String>, c_type: CType) -> Self {
         Self {
             name: name.into(),
-            ty,
+            c_type,
         }
     }
 
@@ -663,8 +670,8 @@ impl CParam {
         &self.name
     }
 
-    pub fn ty(&self) -> CType {
-        self.ty
+    pub fn c_type(&self) -> CType {
+        self.c_type
     }
 }
 
@@ -672,13 +679,13 @@ impl CFunction {
     pub fn new(
         return_type: CType,
         name: impl Into<String>,
-        params: Vec<CParam>,
-        body: CStmt,
+        parameters: Vec<CParameter>,
+        body: CStatement,
     ) -> Self {
         Self {
             return_type,
             name: name.into(),
-            params,
+            parameters,
             body,
         }
     }
@@ -691,25 +698,25 @@ impl CFunction {
         &self.name
     }
 
-    pub fn params(&self) -> &[CParam] {
-        &self.params
+    pub fn parameters(&self) -> &[CParameter] {
+        &self.parameters
     }
 
-    pub fn body(&self) -> &CStmt {
+    pub fn body(&self) -> &CStatement {
         &self.body
     }
 }
 
-impl CFunctionSpec {
+impl CFunctionSpecification {
     pub fn new(
         state: CState,
-        args: Vec<CExpr>,
-        requires: Vec<Prop>,
+        arguments: Vec<CExpression>,
+        requires: Vec<Proposition>,
         outcome: CFunctionOutcome,
     ) -> Self {
         Self {
             state,
-            args,
+            arguments,
             requires,
             outcome,
         }
@@ -719,11 +726,11 @@ impl CFunctionSpec {
         &self.state
     }
 
-    pub fn args(&self) -> &[CExpr] {
-        &self.args
+    pub fn arguments(&self) -> &[CExpression] {
+        &self.arguments
     }
 
-    pub fn requires(&self) -> &[Prop] {
+    pub fn requires(&self) -> &[Proposition] {
         &self.requires
     }
 
@@ -732,7 +739,7 @@ impl CFunctionSpec {
     }
 }
 
-impl CFunctionEnv {
+impl CFunctionEnvironment {
     pub fn new() -> Self {
         Self::default()
     }
@@ -747,7 +754,7 @@ impl CFunctionEnv {
     }
 }
 
-impl CLocalEnv {
+impl CLocalEnvironment {
     pub fn new() -> Self {
         Self::default()
     }
@@ -786,26 +793,26 @@ impl CMemory {
         self
     }
 
-    pub fn store(mut self, ptr: Ptr, value: CValue) -> Self {
-        self.cells.insert(ptr, value);
+    pub fn store(mut self, pointer: Pointer, value: CValue) -> Self {
+        self.cells.insert(pointer, value);
         self
     }
 
-    pub fn load(&self, ptr: &Ptr) -> CExprOutcome {
-        match self.cells.get(ptr) {
-            Some(value) => CExprOutcome::Value(value.clone()),
-            None => CExprOutcome::Ub(CUndefinedBehavior::InvalidMemory),
+    pub fn load(&self, pointer: &Pointer) -> CExpressionOutcome {
+        match self.cells.get(pointer) {
+            Some(value) => CExpressionOutcome::Value(value.clone()),
+            None => CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
         }
     }
 
-    fn known_value(&self, ptr: &Ptr) -> Option<CValue> {
-        self.cells.get(ptr).cloned()
+    fn known_value(&self, pointer: &Pointer) -> Option<CValue> {
+        self.cells.get(pointer).cloned()
     }
 
-    fn local_ptr(name: &str) -> Ptr {
-        Ptr {
+    fn local_pointer(name: &str) -> Pointer {
+        Pointer {
             block: format!("local:{name}"),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         }
     }
 
@@ -813,22 +820,22 @@ impl CMemory {
         self.blocks.contains_key(block)
     }
 
-    fn can_load_concretely(&self, ptr: &Ptr, byte_width: u32) -> bool {
-        self.cells.contains_key(ptr) || self.access_in_bounds(ptr, byte_width)
+    fn can_load_concretely(&self, pointer: &Pointer, byte_width: u32) -> bool {
+        self.cells.contains_key(pointer) || self.access_in_bounds(pointer, byte_width)
     }
 
-    fn can_store_concretely(&self, ptr: &Ptr, value: &CValue) -> bool {
-        self.cells.contains_key(ptr) || self.access_in_bounds(ptr, value.byte_width())
+    fn can_store_concretely(&self, pointer: &Pointer, value: &CValue) -> bool {
+        self.cells.contains_key(pointer) || self.access_in_bounds(pointer, value.byte_width())
     }
 
-    fn access_in_bounds(&self, ptr: &Ptr, byte_width: u32) -> bool {
-        let Some(offset) = ptr.offset.as_const() else {
+    fn access_in_bounds(&self, pointer: &Pointer, byte_width: u32) -> bool {
+        let Some(offset) = pointer.offset.as_const() else {
             return false;
         };
         let Ok(offset) = u32::try_from(offset) else {
             return false;
         };
-        let Some(block) = self.blocks.get(&ptr.block) else {
+        let Some(block) = self.blocks.get(&pointer.block) else {
             return false;
         };
         offset
@@ -836,10 +843,10 @@ impl CMemory {
             .is_some_and(|end| end <= block.size())
     }
 
-    fn symbolic_int32_load(&self, ptr: &Ptr) -> CValue {
-        int32(Bv32Term::MemoryLoad(
+    fn symbolic_int32_load(&self, pointer: &Pointer) -> CValue {
+        int32(Bitvector32Term::MemoryLoad(
             Box::new(self.clone()),
-            Box::new(ptr.clone()),
+            Box::new(pointer.clone()),
         ))
     }
 }
@@ -859,7 +866,7 @@ impl CState {
         self
     }
 
-    pub fn locals(&self) -> &CLocalEnv {
+    pub fn locals(&self) -> &CLocalEnvironment {
         &self.locals
     }
 
@@ -869,12 +876,12 @@ impl CState {
 }
 
 impl Theorem {
-    fn new(prop: Prop) -> Self {
-        Self { prop }
+    fn new(proposition: Proposition) -> Self {
+        Self { proposition }
     }
 
-    pub fn prop(&self) -> &Prop {
-        &self.prop
+    pub fn proposition(&self) -> &Proposition {
+        &self.proposition
     }
 }
 
@@ -956,7 +963,7 @@ fn consume_budget(remaining: &mut usize, limit: ExecutionLimit) -> ExecutionResu
 }
 
 #[cfg(test)]
-impl Prop {
+impl Proposition {
     fn peel_implications(&self) -> &Self {
         match self {
             Self::Implies(_, body) => body.peel_implications(),
@@ -975,17 +982,17 @@ impl Assumptions {
         self
     }
 
-    pub fn assume_prop(mut self, prop: Prop) -> Self {
-        match prop {
-            Prop::ConditionIs(condition, value) => {
+    pub fn assume_proposition(mut self, proposition: Proposition) -> Self {
+        match proposition {
+            Proposition::ConditionIs(condition, value) => {
                 self.condition_facts.insert(condition, value);
             }
-            Prop::And(left, right) => {
-                self = self.assume_prop(*left);
-                self = self.assume_prop(*right);
+            Proposition::And(left, right) => {
+                self = self.assume_proposition(*left);
+                self = self.assume_proposition(*right);
             }
-            prop => {
-                self.prop_facts.insert(prop);
+            proposition => {
+                self.prop_facts.insert(proposition);
             }
         }
         self
@@ -993,7 +1000,7 @@ impl Assumptions {
 
     fn decide(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
-            ConditionTerm::Const(value) => Some(*value),
+            ConditionTerm::Constant(value) => Some(*value),
             _ => self
                 .condition_facts
                 .get(condition)
@@ -1009,119 +1016,158 @@ impl Assumptions {
 
     fn decide_from_order_facts(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
-            ConditionTerm::PtrOffsetEq(left, right) if left == right => Some(true),
-            ConditionTerm::PtrOffsetEq(left, right) => {
+            ConditionTerm::PointerOffsetEqual(left, right) if left == right => Some(true),
+            ConditionTerm::PointerOffsetEqual(left, right) => {
                 match (left.as_ref().as_const(), right.as_ref().as_const()) {
                     (Some(left), Some(right)) => Some(left == right),
                     _ => None,
                 }
             }
-            ConditionTerm::Bv32Eq(left, right) if left == right => Some(true),
-            ConditionTerm::Bv32Eq(left, right) => {
+            ConditionTerm::Bitvector32Equal(left, right) if left == right => Some(true),
+            ConditionTerm::Bitvector32Equal(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
-                if self.has_condition_fact(ConditionTerm::sle(left.clone(), right.clone()), true)
-                    && self
-                        .has_condition_fact(ConditionTerm::sge(left.clone(), right.clone()), true)
-                {
+                if self.has_condition_fact(
+                    ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+                    true,
+                ) && self.has_condition_fact(
+                    ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
+                    true,
+                ) {
                     Some(true)
-                } else if self
-                    .has_condition_fact(ConditionTerm::sle(left.clone(), right.clone()), true)
-                    && self
-                        .has_condition_fact(ConditionTerm::slt(left.clone(), right.clone()), false)
-                {
+                } else if self.has_condition_fact(
+                    ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+                    true,
+                ) && self.has_condition_fact(
+                    ConditionTerm::signed_less_than(left.clone(), right.clone()),
+                    false,
+                ) {
                     Some(true)
-                } else if self
-                    .has_condition_fact(ConditionTerm::sge(left.clone(), right.clone()), true)
-                    && self
-                        .has_condition_fact(ConditionTerm::sgt(left.clone(), right.clone()), false)
-                {
+                } else if self.has_condition_fact(
+                    ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
+                    true,
+                ) && self.has_condition_fact(
+                    ConditionTerm::signed_greater_than(left.clone(), right.clone()),
+                    false,
+                ) {
                     Some(true)
-                } else if self
-                    .has_condition_fact(ConditionTerm::slt(left.clone(), right.clone()), true)
-                    || self.has_condition_fact(ConditionTerm::sgt(left, right), true)
+                } else if self.has_condition_fact(
+                    ConditionTerm::signed_less_than(left.clone(), right.clone()),
+                    true,
+                ) || self
+                    .has_condition_fact(ConditionTerm::signed_greater_than(left, right), true)
                 {
                     Some(false)
                 } else {
                     None
                 }
             }
-            ConditionTerm::Bv32Slt(left, right) if left == right => Some(false),
-            ConditionTerm::Bv32Sgt(left, right) if left == right => Some(false),
-            ConditionTerm::Bv32Sle(left, right) if left == right => Some(true),
-            ConditionTerm::Bv32Sge(left, right) if left == right => Some(true),
-            ConditionTerm::Bv32Slt(left, right) => {
+            ConditionTerm::Bitvector32SignedLessThan(left, right) if left == right => Some(false),
+            ConditionTerm::Bitvector32SignedGreaterThan(left, right) if left == right => {
+                Some(false)
+            }
+            ConditionTerm::Bitvector32SignedLessEqual(left, right) if left == right => Some(true),
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right) if left == right => {
+                Some(true)
+            }
+            ConditionTerm::Bitvector32SignedLessThan(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
-                if self.has_condition_fact(ConditionTerm::sgt(right.clone(), left.clone()), true)
-                    || self
-                        .has_condition_fact(ConditionTerm::sge(left.clone(), right.clone()), false)
-                    || self.has_upper_bound_below(&left, &right)
+                if self.has_condition_fact(
+                    ConditionTerm::signed_greater_than(right.clone(), left.clone()),
+                    true,
+                ) || self.has_condition_fact(
+                    ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
+                    false,
+                ) || self.has_upper_bound_below(&left, &right)
                 {
                     Some(true)
-                } else if self
-                    .has_condition_fact(ConditionTerm::sge(left.clone(), right.clone()), true)
-                    || self.has_condition_fact(ConditionTerm::sle(right, left), true)
+                } else if self.has_condition_fact(
+                    ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
+                    true,
+                ) || self
+                    .has_condition_fact(ConditionTerm::signed_less_equal(right, left), true)
                 {
                     Some(false)
                 } else {
                     None
                 }
             }
-            ConditionTerm::Bv32Sle(left, right) => {
+            ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
                 if left.add_const_base(1).is_some_and(|base| {
-                    self.has_condition_fact(ConditionTerm::slt(base, right.clone()), true)
-                }) || self
-                    .has_condition_fact(ConditionTerm::slt(left.clone(), right.clone()), true)
-                    || self
-                        .has_condition_fact(ConditionTerm::sgt(right.clone(), left.clone()), true)
-                    || self
-                        .has_condition_fact(ConditionTerm::sgt(left.clone(), right.clone()), false)
-                {
-                    Some(true)
-                } else if self.has_condition_fact(ConditionTerm::sgt(left, right), true) {
-                    Some(false)
-                } else {
-                    None
-                }
-            }
-            ConditionTerm::Bv32Sgt(left, right) => {
-                let left = left.as_ref().clone();
-                let right = right.as_ref().clone();
-                if self.has_condition_fact(ConditionTerm::slt(right.clone(), left.clone()), true)
-                    || self
-                        .has_condition_fact(ConditionTerm::sle(left.clone(), right.clone()), false)
-                {
+                    self.has_condition_fact(
+                        ConditionTerm::signed_less_than(base, right.clone()),
+                        true,
+                    )
+                }) || self.has_condition_fact(
+                    ConditionTerm::signed_less_than(left.clone(), right.clone()),
+                    true,
+                ) || self.has_condition_fact(
+                    ConditionTerm::signed_greater_than(right.clone(), left.clone()),
+                    true,
+                ) || self.has_condition_fact(
+                    ConditionTerm::signed_greater_than(left.clone(), right.clone()),
+                    false,
+                ) {
                     Some(true)
                 } else if self
-                    .has_condition_fact(ConditionTerm::sle(left.clone(), right.clone()), true)
-                    || self.has_condition_fact(ConditionTerm::sge(right, left), true)
+                    .has_condition_fact(ConditionTerm::signed_greater_than(left, right), true)
                 {
                     Some(false)
                 } else {
                     None
                 }
             }
-            ConditionTerm::Bv32Sge(left, right) => {
+            ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+                let left = left.as_ref().clone();
+                let right = right.as_ref().clone();
+                if self.has_condition_fact(
+                    ConditionTerm::signed_less_than(right.clone(), left.clone()),
+                    true,
+                ) || self.has_condition_fact(
+                    ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+                    false,
+                ) {
+                    Some(true)
+                } else if self.has_condition_fact(
+                    ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+                    true,
+                ) || self
+                    .has_condition_fact(ConditionTerm::signed_greater_equal(right, left), true)
+                {
+                    Some(false)
+                } else {
+                    None
+                }
+            }
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
                 if left.add_const_base(1).is_some_and(|base| {
-                    right == Bv32Term::Const(0)
-                        && self
-                            .has_condition_fact(ConditionTerm::sge(base, Bv32Term::Const(0)), true)
-                }) || self
-                    .has_condition_fact(ConditionTerm::sgt(left.clone(), right.clone()), true)
-                    || self
-                        .has_condition_fact(ConditionTerm::slt(right.clone(), left.clone()), true)
-                    || self
-                        .has_condition_fact(ConditionTerm::sle(right.clone(), left.clone()), true)
-                    || self
-                        .has_condition_fact(ConditionTerm::slt(left.clone(), right.clone()), false)
-                {
+                    right == Bitvector32Term::Constant(0)
+                        && self.has_condition_fact(
+                            ConditionTerm::signed_greater_equal(base, Bitvector32Term::Constant(0)),
+                            true,
+                        )
+                }) || self.has_condition_fact(
+                    ConditionTerm::signed_greater_than(left.clone(), right.clone()),
+                    true,
+                ) || self.has_condition_fact(
+                    ConditionTerm::signed_less_than(right.clone(), left.clone()),
+                    true,
+                ) || self.has_condition_fact(
+                    ConditionTerm::signed_less_equal(right.clone(), left.clone()),
+                    true,
+                ) || self.has_condition_fact(
+                    ConditionTerm::signed_less_than(left.clone(), right.clone()),
+                    false,
+                ) {
                     Some(true)
-                } else if self.has_condition_fact(ConditionTerm::slt(left, right), true) {
+                } else if self
+                    .has_condition_fact(ConditionTerm::signed_less_than(left, right), true)
+                {
                     Some(false)
                 } else {
                     None
@@ -1131,13 +1177,15 @@ impl Assumptions {
         }
     }
 
-    fn has_upper_bound_below(&self, left: &Bv32Term, right: &Bv32Term) -> bool {
+    fn has_upper_bound_below(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
         self.condition_facts
             .iter()
             .any(|(fact, value)| match (fact, value) {
-                (ConditionTerm::Bv32Slt(fact_left, upper), true) if fact_left.as_ref() == left => {
+                (ConditionTerm::Bitvector32SignedLessThan(fact_left, upper), true)
+                    if fact_left.as_ref() == left =>
+                {
                     self.has_condition_fact(
-                        ConditionTerm::sle(upper.as_ref().clone(), right.clone()),
+                        ConditionTerm::signed_less_equal(upper.as_ref().clone(), right.clone()),
                         true,
                     )
                 }
@@ -1147,31 +1195,37 @@ impl Assumptions {
 
     fn decide_from_overflow_facts(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
-            ConditionTerm::Bv32SignedAddOverflows(left, right)
-                if right.as_ref() == &Bv32Term::Const(1) =>
+            ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+                if right.as_ref() == &Bitvector32Term::Constant(1) =>
             {
-                let int_max = Bv32Term::Const(i32::MAX as u32);
+                let int_max = Bitvector32Term::Constant(i32::MAX as u32);
                 let left = left.as_ref().clone();
-                (self.has_condition_fact(ConditionTerm::slt(left.clone(), int_max.clone()), true)
-                    || self.has_upper_bound_below(&left, &int_max))
+                (self.has_condition_fact(
+                    ConditionTerm::signed_less_than(left.clone(), int_max.clone()),
+                    true,
+                ) || self.has_upper_bound_below(&left, &int_max))
                 .then_some(false)
             }
-            ConditionTerm::Bv32SignedSubOverflows(left, right)
-                if right.as_ref() == &Bv32Term::Const(1) =>
+            ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+                if right.as_ref() == &Bitvector32Term::Constant(1) =>
             {
-                let zero = Bv32Term::Const(0);
+                let zero = Bitvector32Term::Constant(0);
                 let left = left.as_ref().clone();
-                self.has_condition_fact(ConditionTerm::sgt(left, zero), true)
+                self.has_condition_fact(ConditionTerm::signed_greater_than(left, zero), true)
                     .then_some(false)
             }
-            ConditionTerm::Bv32Sge(left, right)
-                if left.as_ref().is_subtract_one() && right.as_ref() == &Bv32Term::Const(0) =>
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+                if left.as_ref().is_subtract_one()
+                    && right.as_ref() == &Bitvector32Term::Constant(0) =>
             {
                 let Some(left_before_sub) = left.as_ref().subtract_one_base() else {
                     return None;
                 };
                 self.has_condition_fact(
-                    ConditionTerm::sgt(left_before_sub, Bv32Term::Const(0)),
+                    ConditionTerm::signed_greater_than(
+                        left_before_sub,
+                        Bitvector32Term::Constant(0),
+                    ),
                     true,
                 )
                 .then_some(true)
@@ -1180,96 +1234,103 @@ impl Assumptions {
         }
     }
 
-    pub fn proves(&self, prop: &Prop) -> bool {
-        if solve_builtin_prop(prop) {
+    pub fn proves(&self, proposition: &Proposition) -> bool {
+        if solve_builtin_prop(proposition) {
             return true;
         }
 
-        match prop {
-            Prop::ConditionIs(condition, value) => self.decide(condition) == Some(*value),
-            Prop::And(left, right) => self.proves(left) && self.proves(right),
-            Prop::CMemoryCanLoad { memory, ptr } => self.proves_memory_access(memory, ptr, 4),
-            Prop::CMemoryCanStore { memory, ptr } => self.proves_memory_access(memory, ptr, 4),
-            _ => self.prop_facts.contains(prop),
+        match proposition {
+            Proposition::ConditionIs(condition, value) => self.decide(condition) == Some(*value),
+            Proposition::And(left, right) => self.proves(left) && self.proves(right),
+            Proposition::CMemoryCanLoad { memory, pointer } => {
+                self.proves_memory_access(memory, pointer, 4)
+            }
+            Proposition::CMemoryCanStore { memory, pointer } => {
+                self.proves_memory_access(memory, pointer, 4)
+            }
+            _ => self.prop_facts.contains(proposition),
         }
     }
 
-    fn proves_memory_access(&self, memory: &CMemory, ptr: &Ptr, byte_width: u32) -> bool {
-        if memory.access_in_bounds(ptr, byte_width) {
+    fn proves_memory_access(&self, memory: &CMemory, pointer: &Pointer, byte_width: u32) -> bool {
+        if memory.access_in_bounds(pointer, byte_width) {
             return true;
         }
 
-        self.prop_facts.iter().any(|prop| {
-            let Prop::CMemoryValidRange {
+        self.prop_facts.iter().any(|proposition| {
+            let Proposition::CMemoryValidRange {
                 memory: range_memory,
                 base,
                 bytes,
-            } = prop
+            } = proposition
             else {
                 return false;
             };
 
             range_memory == memory
-                && self.proves_access_from_valid_range(base, bytes, ptr, byte_width)
+                && self.proves_access_from_valid_range(base, bytes, pointer, byte_width)
         })
     }
 
     fn proves_access_from_valid_range(
         &self,
-        base: &Ptr,
-        bytes: &Bv32Term,
-        ptr: &Ptr,
+        base: &Pointer,
+        bytes: &Bitvector32Term,
+        pointer: &Pointer,
         byte_width: u32,
     ) -> bool {
-        if byte_width != 4 || base.block != ptr.block {
+        if byte_width != 4 || base.block != pointer.block {
             return false;
         }
 
-        let Some(index) = ptr.element_index_from_base(base) else {
+        let Some(index) = pointer.element_index_from_base(base) else {
             return false;
         };
         let Some(element_count) = int32_element_count_from_bytes(bytes) else {
             return false;
         };
 
-        self.decide(&ConditionTerm::sge(index.clone(), Bv32Term::Const(0))) == Some(true)
-            && self.decide(&ConditionTerm::slt(index, element_count)) == Some(true)
+        self.decide(&ConditionTerm::signed_greater_equal(
+            index.clone(),
+            Bitvector32Term::Constant(0),
+        )) == Some(true)
+            && self.decide(&ConditionTerm::signed_less_than(index, element_count)) == Some(true)
     }
 }
 
 impl ProofObligation {
-    pub fn new(prop: Prop) -> Self {
-        Self { prop }
+    pub fn new(proposition: Proposition) -> Self {
+        Self { proposition }
     }
 
     pub fn condition(condition: ConditionTerm, value: bool) -> Self {
-        Self::new(Prop::ConditionIs(condition, value))
+        Self::new(Proposition::ConditionIs(condition, value))
     }
 
-    pub fn memory_can_load(memory: CMemory, ptr: Ptr) -> Self {
-        Self::new(Prop::CMemoryCanLoad { memory, ptr })
+    pub fn memory_can_load(memory: CMemory, pointer: Pointer) -> Self {
+        Self::new(Proposition::CMemoryCanLoad { memory, pointer })
     }
 
-    pub fn memory_can_store(memory: CMemory, ptr: Ptr) -> Self {
-        Self::new(Prop::CMemoryCanStore { memory, ptr })
+    pub fn memory_can_store(memory: CMemory, pointer: Pointer) -> Self {
+        Self::new(Proposition::CMemoryCanStore { memory, pointer })
     }
 
-    pub fn prop(&self) -> &Prop {
-        &self.prop
+    pub fn proposition(&self) -> &Proposition {
+        &self.proposition
     }
 }
 
 impl PathFact {
-    pub fn new(prop: Prop) -> Self {
-        Self { prop }
+    pub fn new(proposition: Proposition) -> Self {
+        Self { proposition }
     }
 
     pub fn condition(condition: ConditionTerm, value: bool) -> Self {
-        Self::new(Prop::ConditionIs(condition, value))
+        Self::new(Proposition::ConditionIs(condition, value))
     }
 
-    pub fn prop(&self) -> &Prop {
-        &self.prop
+    pub fn proposition(&self) -> &Proposition {
+        &self.proposition
     }
 }
 
@@ -1297,174 +1358,186 @@ impl SymbolicCExecutionPath {
     }
 }
 
-pub fn int32(bits: impl Into<Bv32Term>) -> CValue {
+pub fn int32(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::Int32(bits.into())
 }
 
-pub fn c_var(name: impl Into<String>) -> CExpr {
-    CExpr::Var(name.into())
+pub fn c_variable(name: impl Into<String>) -> CExpression {
+    CExpression::Variable(name.into())
 }
 
-pub fn c_addr_of(name: impl Into<String>) -> CExpr {
-    CExpr::AddressOf(Box::new(c_var(name)))
+pub fn c_addr_of(name: impl Into<String>) -> CExpression {
+    CExpression::AddressOf(Box::new(c_variable(name)))
 }
 
-pub fn c_int32_literal(value: u32) -> CExpr {
-    CExpr::Value(int32(Bv32Term::Const(value)))
+pub fn c_int32_literal(value: u32) -> CExpression {
+    CExpression::Value(int32(Bitvector32Term::Constant(value)))
 }
 
-pub fn c_ptr_value(ptr: Ptr) -> CExpr {
-    CExpr::Value(CValue::Ptr(ptr))
+pub fn c_pointer_value(pointer: Pointer) -> CExpression {
+    CExpression::Value(CValue::Pointer(pointer))
 }
 
-pub fn c_lt(left: CExpr, right: CExpr) -> CExpr {
-    CExpr::Lt(Box::new(left), Box::new(right))
+pub fn c_less_than(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::LessThan(Box::new(left), Box::new(right))
 }
 
-pub fn c_le(left: CExpr, right: CExpr) -> CExpr {
-    CExpr::Le(Box::new(left), Box::new(right))
+pub fn c_less_equal(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::LessEqual(Box::new(left), Box::new(right))
 }
 
-pub fn c_gt(left: CExpr, right: CExpr) -> CExpr {
-    CExpr::Gt(Box::new(left), Box::new(right))
+pub fn c_greater_than(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::GreaterThan(Box::new(left), Box::new(right))
 }
 
-pub fn c_ge(left: CExpr, right: CExpr) -> CExpr {
-    CExpr::Ge(Box::new(left), Box::new(right))
+pub fn c_greater_equal(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::GreaterEqual(Box::new(left), Box::new(right))
 }
 
-pub fn c_eq(left: CExpr, right: CExpr) -> CExpr {
-    CExpr::Eq(Box::new(left), Box::new(right))
+pub fn c_equal(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::Equal(Box::new(left), Box::new(right))
 }
 
-pub fn c_ne(left: CExpr, right: CExpr) -> CExpr {
-    CExpr::Ne(Box::new(left), Box::new(right))
+pub fn c_not_equal(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::NotEqual(Box::new(left), Box::new(right))
 }
 
-pub fn c_not(expr: CExpr) -> CExpr {
-    CExpr::Not(Box::new(expr))
+pub fn c_not(expression: CExpression) -> CExpression {
+    CExpression::Not(Box::new(expression))
 }
 
-pub fn c_and(left: CExpr, right: CExpr) -> CExpr {
-    CExpr::And(Box::new(left), Box::new(right))
+pub fn c_and(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::And(Box::new(left), Box::new(right))
 }
 
-pub fn c_or(left: CExpr, right: CExpr) -> CExpr {
-    CExpr::Or(Box::new(left), Box::new(right))
+pub fn c_or(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::Or(Box::new(left), Box::new(right))
 }
 
-pub fn c_add(left: CExpr, right: CExpr) -> CExpr {
-    CExpr::Add(Box::new(left), Box::new(right))
+pub fn c_add(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::Add(Box::new(left), Box::new(right))
 }
 
-pub fn c_sub(left: CExpr, right: CExpr) -> CExpr {
-    CExpr::Sub(Box::new(left), Box::new(right))
+pub fn c_subtract(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::Subtract(Box::new(left), Box::new(right))
 }
 
-pub fn c_load(ptr: CExpr) -> CExpr {
-    CExpr::Load(Box::new(ptr))
+pub fn c_load(pointer: CExpression) -> CExpression {
+    CExpression::Load(Box::new(pointer))
 }
 
-pub fn c_index(base: CExpr, index: CExpr) -> CExpr {
-    CExpr::Index(Box::new(base), Box::new(index))
+pub fn c_index(base: CExpression, index: CExpression) -> CExpression {
+    CExpression::Index(Box::new(base), Box::new(index))
 }
 
-pub fn c_assign(name: impl Into<String>, expr: CExpr) -> CStmt {
-    CStmt::Assign {
+pub fn c_assign(name: impl Into<String>, expression: CExpression) -> CStatement {
+    CStatement::Assign {
         name: name.into(),
-        expr,
+        expression,
     }
 }
 
 pub fn c_call_assign(
     target: impl Into<String>,
     function_name: impl Into<String>,
-    args: Vec<CExpr>,
-) -> CStmt {
-    CStmt::CallAssign {
+    arguments: Vec<CExpression>,
+) -> CStatement {
+    CStatement::CallAssign {
         target: target.into(),
         function_name: function_name.into(),
-        args,
+        arguments,
     }
 }
 
-pub fn c_declare(name: impl Into<String>, ty: CType) -> CStmt {
-    CStmt::Declare {
+pub fn c_declare(name: impl Into<String>, c_type: CType) -> CStatement {
+    CStatement::Declare {
         name: name.into(),
-        ty,
+        c_type,
     }
 }
 
-pub fn c_seq(first: CStmt, second: CStmt) -> CStmt {
-    CStmt::Seq(Box::new(first), Box::new(second))
+pub fn c_assert(condition: CExpression) -> CStatement {
+    CStatement::Assert { condition }
 }
 
-pub fn c_return(expr: CExpr) -> CStmt {
-    CStmt::Return(expr)
+pub fn c_seq(first: CStatement, second: CStatement) -> CStatement {
+    CStatement::Seq(Box::new(first), Box::new(second))
 }
 
-pub fn c_store(ptr: CExpr, value: CExpr) -> CStmt {
-    CStmt::Store { ptr, value }
+pub fn c_return(expression: CExpression) -> CStatement {
+    CStatement::Return(expression)
 }
 
-pub fn c_if(condition: CExpr, then_branch: CStmt, else_branch: CStmt) -> CStmt {
-    CStmt::If {
+pub fn c_store(pointer: CExpression, value: CExpression) -> CStatement {
+    CStatement::Store { pointer, value }
+}
+
+pub fn c_if(
+    condition: CExpression,
+    then_branch: CStatement,
+    else_branch: CStatement,
+) -> CStatement {
+    CStatement::If {
         condition,
         then_branch: Box::new(then_branch),
         else_branch: Box::new(else_branch),
     }
 }
 
-pub fn c_while(condition: CExpr, invariant: Vec<Prop>, body: CStmt) -> CStmt {
-    CStmt::While {
+pub fn c_while(
+    condition: CExpression,
+    invariant: Vec<Proposition>,
+    body: CStatement,
+) -> CStatement {
+    CStatement::While {
         condition,
         invariant,
         body: Box::new(body),
     }
 }
 
-pub fn c_param(name: impl Into<String>, ty: CType) -> CParam {
-    CParam::new(name, ty)
+pub fn c_parameter(name: impl Into<String>, c_type: CType) -> CParameter {
+    CParameter::new(name, c_type)
 }
 
 pub fn c_function(
     return_type: CType,
     name: impl Into<String>,
-    params: Vec<CParam>,
-    body: CStmt,
+    parameters: Vec<CParameter>,
+    body: CStatement,
 ) -> CFunction {
-    CFunction::new(return_type, name, params, body)
+    CFunction::new(return_type, name, parameters, body)
 }
 
-pub fn c_function_spec(
+pub fn c_function_specification(
     state: CState,
-    args: Vec<CExpr>,
-    requires: Vec<Prop>,
+    arguments: Vec<CExpression>,
+    requires: Vec<Proposition>,
     outcome: CFunctionOutcome,
-) -> CFunctionSpec {
-    CFunctionSpec::new(state, args, requires, outcome)
+) -> CFunctionSpecification {
+    CFunctionSpecification::new(state, arguments, requires, outcome)
 }
 
-pub fn prop_and(left: Prop, right: Prop) -> Prop {
-    Prop::And(Box::new(left), Box::new(right))
+pub fn proposition_and(left: Proposition, right: Proposition) -> Proposition {
+    Proposition::And(Box::new(left), Box::new(right))
 }
 
-pub fn prop_and_all(mut props: Vec<Prop>) -> Prop {
-    let Some(first) = props.pop() else {
-        return Prop::ConditionIs(ConditionTerm::Const(true), true);
+pub fn proposition_and_all(mut propositions: Vec<Proposition>) -> Proposition {
+    let Some(first) = propositions.pop() else {
+        return Proposition::ConditionIs(ConditionTerm::Constant(true), true);
     };
 
-    props
+    propositions
         .into_iter()
         .rev()
-        .fold(first, |right, left| prop_and(left, right))
+        .fold(first, |right, left| proposition_and(left, right))
 }
 
-pub fn c_max_body() -> CStmt {
+pub fn c_max_body() -> CStatement {
     c_if(
-        c_lt(c_var("a"), c_var("b")),
-        c_return(c_var("b")),
-        c_return(c_var("a")),
+        c_less_than(c_variable("a"), c_variable("b")),
+        c_return(c_variable("b")),
+        c_return(c_variable("a")),
     )
 }
 
@@ -1472,96 +1545,109 @@ pub fn c_max_function() -> CFunction {
     c_function(
         CType::Int32,
         "max",
-        vec![c_param("a", CType::Int32), c_param("b", CType::Int32)],
+        vec![
+            c_parameter("a", CType::Int32),
+            c_parameter("b", CType::Int32),
+        ],
         c_max_body(),
     )
 }
 
-pub fn c_max_env(a: CValue, b: CValue) -> CLocalEnv {
-    CLocalEnv::new().with("a", a).with("b", b)
+pub fn c_max_environment(a: CValue, b: CValue) -> CLocalEnvironment {
+    CLocalEnvironment::new().with("a", a).with("b", b)
 }
 
 pub fn c_max_state(a: CValue, b: CValue) -> CState {
     CState::new().with_local("a", a).with_local("b", b)
 }
 
-pub fn c_max_lt_condition(a: Bv32Term, b: Bv32Term) -> ConditionTerm {
-    ConditionTerm::slt(a, b)
+pub fn c_max_lt_condition(a: Bitvector32Term, b: Bitvector32Term) -> ConditionTerm {
+    ConditionTerm::signed_less_than(a, b)
 }
 
-pub fn prove_c_expr_eval(state: CState, expr: CExpr) -> Option<Theorem> {
-    let outcome = eval_c_expr(
+pub fn prove_c_expression_evaluation(state: CState, expression: CExpression) -> Option<Theorem> {
+    let outcome = evaluate_c_expression(
         &state,
-        &expr,
+        &expression,
         &Assumptions::new(),
         &mut ExecutionBudget::default(),
     )?;
-    Some(Theorem::new(Prop::CExprEvaluates {
+    Some(Theorem::new(Proposition::CExpressionEvaluates {
         state,
-        expr,
+        expression,
         outcome,
     }))
 }
 
-pub fn prove_c_stmt_exec(state: CState, stmt: CStmt) -> Option<Theorem> {
-    prove_symbolic_c_execution(state, stmt, Assumptions::new())
+pub fn prove_c_statement_execution(state: CState, statement: CStatement) -> Option<Theorem> {
+    prove_symbolic_c_execution(state, statement, Assumptions::new())
 }
 
-pub fn prove_c_stmt_exec_under_assumptions(
+pub fn prove_c_statement_execution_under_assumptions(
     state: CState,
-    stmt: CStmt,
+    statement: CStatement,
     assumptions: Assumptions,
 ) -> Option<Theorem> {
-    prove_symbolic_c_execution(state, stmt, assumptions)
+    prove_symbolic_c_execution(state, statement, assumptions)
 }
 
 pub fn prove_symbolic_c_execution(
     state: CState,
-    stmt: CStmt,
+    statement: CStatement,
     assumptions: Assumptions,
 ) -> Option<Theorem> {
-    prove_symbolic_c_execution_with_budget(state, stmt, assumptions, ExecutionBudget::default())
-}
-
-pub fn prove_symbolic_c_execution_with_budget(
-    state: CState,
-    stmt: CStmt,
-    assumptions: Assumptions,
-    budget: ExecutionBudget,
-) -> Option<Theorem> {
-    prove_symbolic_c_execution_with_env_and_budget(
+    prove_symbolic_c_execution_with_budget(
         state,
-        stmt,
+        statement,
         assumptions,
-        CFunctionEnv::new(),
-        budget,
-    )
-}
-
-pub fn prove_symbolic_c_execution_with_env(
-    state: CState,
-    stmt: CStmt,
-    assumptions: Assumptions,
-    env: CFunctionEnv,
-) -> Option<Theorem> {
-    prove_symbolic_c_execution_with_env_and_budget(
-        state,
-        stmt,
-        assumptions,
-        env,
         ExecutionBudget::default(),
     )
 }
 
-pub fn prove_symbolic_c_execution_with_env_and_budget(
+pub fn prove_symbolic_c_execution_with_budget(
     state: CState,
-    stmt: CStmt,
+    statement: CStatement,
     assumptions: Assumptions,
-    env: CFunctionEnv,
     budget: ExecutionBudget,
 ) -> Option<Theorem> {
-    let execution =
-        prove_symbolic_c_execution_paths_with_env_and_budget(state, stmt, assumptions, env, budget);
+    prove_symbolic_c_execution_with_environment_and_budget(
+        state,
+        statement,
+        assumptions,
+        CFunctionEnvironment::new(),
+        budget,
+    )
+}
+
+pub fn prove_symbolic_c_execution_with_environment(
+    state: CState,
+    statement: CStatement,
+    assumptions: Assumptions,
+    environment: CFunctionEnvironment,
+) -> Option<Theorem> {
+    prove_symbolic_c_execution_with_environment_and_budget(
+        state,
+        statement,
+        assumptions,
+        environment,
+        ExecutionBudget::default(),
+    )
+}
+
+pub fn prove_symbolic_c_execution_with_environment_and_budget(
+    state: CState,
+    statement: CStatement,
+    assumptions: Assumptions,
+    environment: CFunctionEnvironment,
+    budget: ExecutionBudget,
+) -> Option<Theorem> {
+    let execution = prove_symbolic_c_execution_paths_with_environment_and_budget(
+        state,
+        statement,
+        assumptions,
+        environment,
+        budget,
+    );
     if execution.limit().is_some() {
         return None;
     }
@@ -1575,12 +1661,12 @@ pub fn prove_symbolic_c_execution_with_env_and_budget(
 
 pub fn prove_symbolic_c_execution_paths(
     state: CState,
-    stmt: CStmt,
+    statement: CStatement,
     assumptions: Assumptions,
 ) -> SymbolicCExecution {
     prove_symbolic_c_execution_paths_with_budget(
         state,
-        stmt,
+        statement,
         assumptions,
         ExecutionBudget::default(),
     )
@@ -1588,42 +1674,48 @@ pub fn prove_symbolic_c_execution_paths(
 
 pub fn prove_symbolic_c_execution_paths_with_budget(
     state: CState,
-    stmt: CStmt,
+    statement: CStatement,
     assumptions: Assumptions,
     budget: ExecutionBudget,
 ) -> SymbolicCExecution {
-    prove_symbolic_c_execution_paths_with_env_and_budget(
+    prove_symbolic_c_execution_paths_with_environment_and_budget(
         state,
-        stmt,
+        statement,
         assumptions,
-        CFunctionEnv::new(),
+        CFunctionEnvironment::new(),
         budget,
     )
 }
 
-pub fn prove_symbolic_c_execution_paths_with_env(
+pub fn prove_symbolic_c_execution_paths_with_environment(
     state: CState,
-    stmt: CStmt,
+    statement: CStatement,
     assumptions: Assumptions,
-    env: CFunctionEnv,
+    environment: CFunctionEnvironment,
 ) -> SymbolicCExecution {
-    prove_symbolic_c_execution_paths_with_env_and_budget(
+    prove_symbolic_c_execution_paths_with_environment_and_budget(
         state,
-        stmt,
+        statement,
         assumptions,
-        env,
+        environment,
         ExecutionBudget::default(),
     )
 }
 
-pub fn prove_symbolic_c_execution_paths_with_env_and_budget(
+pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
     state: CState,
-    stmt: CStmt,
+    statement: CStatement,
     assumptions: Assumptions,
-    env: CFunctionEnv,
+    environment: CFunctionEnvironment,
     mut budget: ExecutionBudget,
 ) -> SymbolicCExecution {
-    let paths = match exec_c_stmt_paths(&state, &stmt, &assumptions, &env, &mut budget) {
+    let paths = match execute_c_statement_paths(
+        &state,
+        &statement,
+        &assumptions,
+        &environment,
+        &mut budget,
+    ) {
         Ok(paths) => paths,
         Err(limit) => {
             return SymbolicCExecution {
@@ -1635,13 +1727,13 @@ pub fn prove_symbolic_c_execution_paths_with_env_and_budget(
     let paths = paths
         .into_iter()
         .map(|path| {
-            let prop = Prop::CStmtExecutes {
+            let proposition = Proposition::CStatementExecutes {
                 state: state.clone(),
-                stmt: stmt.clone(),
+                statement: statement.clone(),
                 outcome: path.outcome,
             };
             let theorem = Theorem::new(wrap_proof_facts(
-                prop,
+                proposition,
                 &assumptions,
                 &path.facts,
                 &path.obligations,
@@ -1660,13 +1752,13 @@ pub fn prove_symbolic_c_execution_paths_with_env_and_budget(
 pub fn prove_symbolic_c_function_execution(
     state: CState,
     function: CFunction,
-    args: Vec<CExpr>,
+    arguments: Vec<CExpression>,
     assumptions: Assumptions,
 ) -> Option<Theorem> {
     prove_symbolic_c_function_execution_with_budget(
         state,
         function,
-        args,
+        arguments,
         assumptions,
         ExecutionBudget::default(),
     )
@@ -1675,51 +1767,51 @@ pub fn prove_symbolic_c_function_execution(
 pub fn prove_symbolic_c_function_execution_with_budget(
     state: CState,
     function: CFunction,
-    args: Vec<CExpr>,
+    arguments: Vec<CExpression>,
     assumptions: Assumptions,
     budget: ExecutionBudget,
 ) -> Option<Theorem> {
-    prove_symbolic_c_function_execution_with_env_and_budget(
+    prove_symbolic_c_function_execution_with_environment_and_budget(
         state,
         function,
-        args,
+        arguments,
         assumptions,
-        CFunctionEnv::new(),
+        CFunctionEnvironment::new(),
         budget,
     )
 }
 
-pub fn prove_symbolic_c_function_execution_with_env(
+pub fn prove_symbolic_c_function_execution_with_environment(
     state: CState,
     function: CFunction,
-    args: Vec<CExpr>,
+    arguments: Vec<CExpression>,
     assumptions: Assumptions,
-    env: CFunctionEnv,
+    environment: CFunctionEnvironment,
 ) -> Option<Theorem> {
-    prove_symbolic_c_function_execution_with_env_and_budget(
+    prove_symbolic_c_function_execution_with_environment_and_budget(
         state,
         function,
-        args,
+        arguments,
         assumptions,
-        env,
+        environment,
         ExecutionBudget::default(),
     )
 }
 
-pub fn prove_symbolic_c_function_execution_with_env_and_budget(
+pub fn prove_symbolic_c_function_execution_with_environment_and_budget(
     state: CState,
     function: CFunction,
-    args: Vec<CExpr>,
+    arguments: Vec<CExpression>,
     assumptions: Assumptions,
-    env: CFunctionEnv,
+    environment: CFunctionEnvironment,
     budget: ExecutionBudget,
 ) -> Option<Theorem> {
-    let execution = prove_symbolic_c_function_execution_paths_with_env_and_budget(
+    let execution = prove_symbolic_c_function_execution_paths_with_environment_and_budget(
         state,
         function,
-        args,
+        arguments,
         assumptions,
-        env,
+        environment,
         budget,
     );
     if execution.limit().is_some() {
@@ -1736,13 +1828,13 @@ pub fn prove_symbolic_c_function_execution_with_env_and_budget(
 pub fn prove_symbolic_c_function_execution_paths(
     state: CState,
     function: CFunction,
-    args: Vec<CExpr>,
+    arguments: Vec<CExpression>,
     assumptions: Assumptions,
 ) -> SymbolicCExecution {
     prove_symbolic_c_function_execution_paths_with_budget(
         state,
         function,
-        args,
+        arguments,
         assumptions,
         ExecutionBudget::default(),
     )
@@ -1751,66 +1843,72 @@ pub fn prove_symbolic_c_function_execution_paths(
 pub fn prove_symbolic_c_function_execution_paths_with_budget(
     state: CState,
     function: CFunction,
-    args: Vec<CExpr>,
+    arguments: Vec<CExpression>,
     assumptions: Assumptions,
     budget: ExecutionBudget,
 ) -> SymbolicCExecution {
-    prove_symbolic_c_function_execution_paths_with_env_and_budget(
+    prove_symbolic_c_function_execution_paths_with_environment_and_budget(
         state,
         function,
-        args,
+        arguments,
         assumptions,
-        CFunctionEnv::new(),
+        CFunctionEnvironment::new(),
         budget,
     )
 }
 
-pub fn prove_symbolic_c_function_execution_paths_with_env(
+pub fn prove_symbolic_c_function_execution_paths_with_environment(
     state: CState,
     function: CFunction,
-    args: Vec<CExpr>,
+    arguments: Vec<CExpression>,
     assumptions: Assumptions,
-    env: CFunctionEnv,
+    environment: CFunctionEnvironment,
 ) -> SymbolicCExecution {
-    prove_symbolic_c_function_execution_paths_with_env_and_budget(
+    prove_symbolic_c_function_execution_paths_with_environment_and_budget(
         state,
         function,
-        args,
+        arguments,
         assumptions,
-        env,
+        environment,
         ExecutionBudget::default(),
     )
 }
 
-pub fn prove_symbolic_c_function_execution_paths_with_env_and_budget(
+pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
     state: CState,
     function: CFunction,
-    args: Vec<CExpr>,
+    arguments: Vec<CExpression>,
     assumptions: Assumptions,
-    env: CFunctionEnv,
+    environment: CFunctionEnvironment,
     mut budget: ExecutionBudget,
 ) -> SymbolicCExecution {
-    let paths =
-        match exec_c_function_paths(&state, &function, &args, &assumptions, &env, &mut budget) {
-            Ok(paths) => paths,
-            Err(limit) => {
-                return SymbolicCExecution {
-                    paths: Vec::new(),
-                    limit: Some(limit),
-                };
-            }
-        };
+    let paths = match execute_c_function_paths(
+        &state,
+        &function,
+        &arguments,
+        &assumptions,
+        &environment,
+        &mut budget,
+    ) {
+        Ok(paths) => paths,
+        Err(limit) => {
+            return SymbolicCExecution {
+                paths: Vec::new(),
+                limit: Some(limit),
+            };
+        }
+    };
     let paths = paths
         .into_iter()
         .map(|path| {
-            let prop = Prop::CFunctionExecutes {
+            let proposition = Proposition::CFunctionExecutes {
                 state: state.clone(),
                 function: function.clone(),
-                args: args.clone(),
+                arguments: arguments.clone(),
                 outcome: path.outcome,
             };
             let theorem = Theorem::new(wrap_proof_facts(
-                prop,
+                proposition,
                 &assumptions,
                 &path.facts,
                 &path.obligations,
@@ -1826,27 +1924,33 @@ pub fn prove_symbolic_c_function_execution_paths_with_env_and_budget(
     SymbolicCExecution { paths, limit: None }
 }
 
-pub fn prove_c_function_satisfies_spec(
+pub fn prove_c_function_satisfies_specification(
     function: CFunction,
-    spec: CFunctionSpec,
+    specification: CFunctionSpecification,
     assumptions: Assumptions,
 ) -> Option<Theorem> {
-    prove_c_function_satisfies_spec_with_env(function, spec, assumptions, CFunctionEnv::new())
+    prove_c_function_satisfies_specification_with_environment(
+        function,
+        specification,
+        assumptions,
+        CFunctionEnvironment::new(),
+    )
 }
 
-pub fn prove_c_function_satisfies_spec_with_env(
+pub fn prove_c_function_satisfies_specification_with_environment(
     function: CFunction,
-    spec: CFunctionSpec,
+    specification: CFunctionSpecification,
     assumptions: Assumptions,
-    env: CFunctionEnv,
+    environment: CFunctionEnvironment,
 ) -> Option<Theorem> {
-    let spec_assumptions = assumptions_with_props(&assumptions, spec.requires());
-    let paths = exec_c_function_paths(
-        spec.state(),
+    let specification_assumptions =
+        assumptions_with_propositions(&assumptions, specification.requires());
+    let paths = execute_c_function_paths(
+        specification.state(),
         &function,
-        spec.args(),
-        &spec_assumptions,
-        &env,
+        specification.arguments(),
+        &specification_assumptions,
+        &environment,
         &mut ExecutionBudget::default(),
     )
     .ok()?;
@@ -1855,61 +1959,82 @@ pub fn prove_c_function_satisfies_spec_with_env(
     if paths.next().is_some()
         || !path.facts.is_empty()
         || !path.obligations.is_empty()
-        || &path.outcome != spec.outcome()
+        || &path.outcome != specification.outcome()
     {
         return None;
     }
 
-    let requires = spec.requires().to_vec();
-    let prop = requires.iter().rev().fold(
-        Prop::CFunctionSatisfiesSpec { function, spec },
-        |body, requirement| Prop::Implies(Box::new(requirement.clone()), Box::new(body)),
+    let requires = specification.requires().to_vec();
+    let proposition = requires.iter().rev().fold(
+        Proposition::CFunctionSatisfiesSpecification {
+            function,
+            specification,
+        },
+        |body, requirement| Proposition::Implies(Box::new(requirement.clone()), Box::new(body)),
     );
-    Some(Theorem::new(wrap_proof_facts(prop, &assumptions, &[], &[])))
+    Some(Theorem::new(wrap_proof_facts(
+        proposition,
+        &assumptions,
+        &[],
+        &[],
+    )))
 }
 
-pub fn prove_c_function_satisfies_spec_and_props(
+pub fn prove_c_function_satisfies_specification_and_propositions(
     function: CFunction,
-    spec: CFunctionSpec,
+    specification: CFunctionSpecification,
     assumptions: Assumptions,
-    props: Vec<Prop>,
+    propositions: Vec<Proposition>,
 ) -> Option<Theorem> {
-    prove_c_function_satisfies_spec(function.clone(), spec.clone(), assumptions.clone())?;
+    prove_c_function_satisfies_specification(
+        function.clone(),
+        specification.clone(),
+        assumptions.clone(),
+    )?;
 
-    let spec_assumptions = assumptions_with_props(&assumptions, spec.requires());
-    if props.iter().any(|prop| !spec_assumptions.proves(prop)) {
+    let specification_assumptions =
+        assumptions_with_propositions(&assumptions, specification.requires());
+    if propositions
+        .iter()
+        .any(|proposition| !specification_assumptions.proves(proposition))
+    {
         return None;
     }
 
-    let conclusion = prop_and_all(
-        std::iter::once(Prop::CFunctionSatisfiesSpec {
+    let conclusion = proposition_and_all(
+        std::iter::once(Proposition::CFunctionSatisfiesSpecification {
             function: function.clone(),
-            spec: spec.clone(),
+            specification: specification.clone(),
         })
-        .chain(props)
+        .chain(propositions)
         .collect(),
     );
-    let prop = spec
+    let proposition = specification
         .requires()
         .iter()
         .rev()
         .fold(conclusion, |body, requirement| {
-            Prop::Implies(Box::new(requirement.clone()), Box::new(body))
+            Proposition::Implies(Box::new(requirement.clone()), Box::new(body))
         });
-    Some(Theorem::new(wrap_proof_facts(prop, &assumptions, &[], &[])))
+    Some(Theorem::new(wrap_proof_facts(
+        proposition,
+        &assumptions,
+        &[],
+        &[],
+    )))
 }
 
-pub fn prove_c_stmt_executes_and_props(
+pub fn prove_c_statement_executes_and_propositions(
     state: CState,
-    stmt: CStmt,
+    statement: CStatement,
     assumptions: Assumptions,
-    props: Vec<Prop>,
+    propositions: Vec<Proposition>,
 ) -> Option<Theorem> {
-    let paths = exec_c_stmt_paths(
+    let paths = execute_c_statement_paths(
         &state,
-        &stmt,
+        &statement,
         &assumptions,
-        &CFunctionEnv::new(),
+        &CFunctionEnvironment::new(),
         &mut ExecutionBudget::default(),
     )
     .ok()?;
@@ -1918,16 +2043,19 @@ pub fn prove_c_stmt_executes_and_props(
     if paths.next().is_some() || !path.facts.is_empty() || !path.obligations.is_empty() {
         return None;
     }
-    if props.iter().any(|prop| !assumptions.proves(prop)) {
+    if propositions
+        .iter()
+        .any(|proposition| !assumptions.proves(proposition))
+    {
         return None;
     }
-    let conclusion = prop_and_all(
-        std::iter::once(Prop::CStmtExecutes {
+    let conclusion = proposition_and_all(
+        std::iter::once(Proposition::CStatementExecutes {
             state,
-            stmt,
+            statement,
             outcome: path.outcome,
         })
-        .chain(props)
+        .chain(propositions)
         .collect(),
     );
     Some(Theorem::new(wrap_proof_facts(
@@ -1938,18 +2066,18 @@ pub fn prove_c_stmt_executes_and_props(
     )))
 }
 
-pub fn prove_c_max_lt_returns_right(a: Var, b: Var) -> Option<Theorem> {
-    let a_bits = Bv32Term::Var(a);
-    let b_bits = Bv32Term::Var(b);
+pub fn prove_c_max_lt_returns_right(a: Variable, b: Variable) -> Option<Theorem> {
+    let a_bits = Bitvector32Term::Variable(a);
+    let b_bits = Bitvector32Term::Variable(b);
     let a_value = int32(a_bits.clone());
     let b_value = int32(b_bits.clone());
     let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
     let state = c_max_state(a_value, b_value.clone());
     let assumptions = Assumptions::new().assume_condition(condition.clone(), true);
-    let outcome = exec_c_stmt(&state, &c_max_body(), &assumptions)?;
+    let outcome = execute_c_statement(&state, &c_max_body(), &assumptions)?;
 
     if outcome
-        != (CStmtOutcome::Return {
+        != (CStatementOutcome::Return {
             value: b_value,
             state: state.clone(),
         })
@@ -1961,11 +2089,11 @@ pub fn prove_c_max_lt_returns_right(a: Var, b: Var) -> Option<Theorem> {
         a,
         forall_int32(
             b,
-            Prop::Implies(
-                Box::new(Prop::ConditionIs(condition, true)),
-                Box::new(Prop::CStmtExecutes {
+            Proposition::Implies(
+                Box::new(Proposition::ConditionIs(condition, true)),
+                Box::new(Proposition::CStatementExecutes {
                     state,
-                    stmt: c_max_body(),
+                    statement: c_max_body(),
                     outcome,
                 }),
             ),
@@ -1973,18 +2101,18 @@ pub fn prove_c_max_lt_returns_right(a: Var, b: Var) -> Option<Theorem> {
     )))
 }
 
-pub fn prove_c_max_not_lt_returns_left(a: Var, b: Var) -> Option<Theorem> {
-    let a_bits = Bv32Term::Var(a);
-    let b_bits = Bv32Term::Var(b);
+pub fn prove_c_max_not_lt_returns_left(a: Variable, b: Variable) -> Option<Theorem> {
+    let a_bits = Bitvector32Term::Variable(a);
+    let b_bits = Bitvector32Term::Variable(b);
     let a_value = int32(a_bits.clone());
     let b_value = int32(b_bits.clone());
     let condition = c_max_lt_condition(a_bits, b_bits);
     let state = c_max_state(a_value.clone(), b_value);
     let assumptions = Assumptions::new().assume_condition(condition.clone(), false);
-    let outcome = exec_c_stmt(&state, &c_max_body(), &assumptions)?;
+    let outcome = execute_c_statement(&state, &c_max_body(), &assumptions)?;
 
     if outcome
-        != (CStmtOutcome::Return {
+        != (CStatementOutcome::Return {
             value: a_value,
             state: state.clone(),
         })
@@ -1996,11 +2124,11 @@ pub fn prove_c_max_not_lt_returns_left(a: Var, b: Var) -> Option<Theorem> {
         a,
         forall_int32(
             b,
-            Prop::Implies(
-                Box::new(Prop::ConditionIs(condition, false)),
-                Box::new(Prop::CStmtExecutes {
+            Proposition::Implies(
+                Box::new(Proposition::ConditionIs(condition, false)),
+                Box::new(Proposition::CStatementExecutes {
                     state,
-                    stmt: c_max_body(),
+                    statement: c_max_body(),
                     outcome,
                 }),
             ),
@@ -2008,68 +2136,72 @@ pub fn prove_c_max_not_lt_returns_left(a: Var, b: Var) -> Option<Theorem> {
     )))
 }
 
-pub fn prove_memory_load(memory: CMemory, ptr: Ptr) -> Theorem {
-    let outcome = memory.load(&ptr);
-    Theorem::new(Prop::CMemoryLoads {
+pub fn prove_memory_load(memory: CMemory, pointer: Pointer) -> Theorem {
+    let outcome = memory.load(&pointer);
+    Theorem::new(Proposition::CMemoryLoads {
         memory,
-        ptr,
+        pointer,
         outcome,
     })
 }
 
-pub fn prove_memory_load_after_store_same(memory: CMemory, ptr: Ptr, value: CValue) -> Theorem {
-    let stored = memory.store(ptr.clone(), value.clone());
-    Theorem::new(Prop::CMemoryLoads {
+pub fn prove_memory_load_after_store_same(
+    memory: CMemory,
+    pointer: Pointer,
+    value: CValue,
+) -> Theorem {
+    let stored = memory.store(pointer.clone(), value.clone());
+    Theorem::new(Proposition::CMemoryLoads {
         memory: stored,
-        ptr,
-        outcome: CExprOutcome::Value(value),
+        pointer,
+        outcome: CExpressionOutcome::Value(value),
     })
 }
 
 pub fn prove_memory_load_after_store_other(
     memory: CMemory,
-    stored_ptr: Ptr,
+    stored_pointer: Pointer,
     stored_value: CValue,
-    loaded_ptr: Ptr,
+    loaded_pointer: Pointer,
 ) -> Option<Theorem> {
-    if stored_ptr == loaded_ptr {
+    if stored_pointer == loaded_pointer {
         return None;
     }
 
-    let outcome = memory.load(&loaded_ptr);
-    let stored = memory.store(stored_ptr, stored_value);
-    if stored.load(&loaded_ptr) != outcome {
+    let outcome = memory.load(&loaded_pointer);
+    let stored = memory.store(stored_pointer, stored_value);
+    if stored.load(&loaded_pointer) != outcome {
         return None;
     }
 
-    Some(Theorem::new(Prop::CMemoryLoads {
+    Some(Theorem::new(Proposition::CMemoryLoads {
         memory: stored,
-        ptr: loaded_ptr,
+        pointer: loaded_pointer,
         outcome,
     }))
 }
 
 pub fn prove_memory_load_after_store_distinct_under_assumptions(
     memory: CMemory,
-    stored_ptr: Ptr,
+    stored_pointer: Pointer,
     stored_value: CValue,
-    loaded_ptr: Ptr,
+    loaded_pointer: Pointer,
     assumptions: Assumptions,
 ) -> Option<Theorem> {
-    if !ptrs_proven_distinct(&stored_ptr, &loaded_ptr, &assumptions) {
+    if !pointers_proven_distinct(&stored_pointer, &loaded_pointer, &assumptions) {
         return None;
     }
 
-    let outcome = memory.load(&loaded_ptr);
-    let stored = memory.store(stored_ptr, stored_value);
-    if stored.load(&loaded_ptr) != outcome {
+    let outcome = memory.load(&loaded_pointer);
+    let stored = memory.store(stored_pointer, stored_value);
+    if stored.load(&loaded_pointer) != outcome {
         return None;
     }
 
     Some(Theorem::new(wrap_proof_facts(
-        Prop::CMemoryLoads {
+        Proposition::CMemoryLoads {
             memory: stored,
-            ptr: loaded_ptr,
+            pointer: loaded_pointer,
             outcome,
         },
         &assumptions,
@@ -2080,12 +2212,12 @@ pub fn prove_memory_load_after_store_distinct_under_assumptions(
 
 pub fn prove_c_while_invariant_rule(
     state: CState,
-    condition: CExpr,
-    invariant: Vec<Prop>,
-    body: CStmt,
+    condition: CExpression,
+    invariant: Vec<Proposition>,
+    body: CStatement,
     assumptions: Assumptions,
-    preserved: Vec<Prop>,
-    postcondition: Prop,
+    preserved: Vec<Proposition>,
+    postcondition: Proposition,
 ) -> Option<Theorem> {
     if invariant
         .iter()
@@ -2094,15 +2226,15 @@ pub fn prove_c_while_invariant_rule(
         return None;
     }
 
-    let loop_assumptions = assumptions_with_props(&assumptions, &invariant);
+    let loop_assumptions = assumptions_with_propositions(&assumptions, &invariant);
     let step_ok = condition_contexts_for_truthiness(&state, &condition, &loop_assumptions, true)
         .into_iter()
         .any(|step_assumptions| {
-            let body_paths = exec_c_stmt_paths(
+            let body_paths = execute_c_statement_paths(
                 &state,
                 &body,
                 &step_assumptions,
-                &CFunctionEnv::new(),
+                &CFunctionEnvironment::new(),
                 &mut ExecutionBudget::default(),
             );
             let Ok(body_paths) = body_paths else {
@@ -2115,7 +2247,7 @@ pub fn prove_c_while_invariant_rule(
             if body_paths.next().is_some()
                 || !body_path.facts.is_empty()
                 || !body_path.obligations.is_empty()
-                || !matches!(body_path.outcome, CStmtOutcome::Normal(_))
+                || !matches!(body_path.outcome, CStatementOutcome::Normal(_))
             {
                 return false;
             }
@@ -2137,7 +2269,7 @@ pub fn prove_c_while_invariant_rule(
     }
 
     Some(Theorem::new(wrap_proof_facts(
-        Prop::CWhileInvariantRule {
+        Proposition::CWhileInvariantRule {
             state,
             condition,
             invariant,
@@ -2153,12 +2285,12 @@ pub fn prove_c_while_invariant_rule(
 
 fn condition_contexts_for_truthiness(
     state: &CState,
-    condition: &CExpr,
+    condition: &CExpression,
     assumptions: &Assumptions,
     desired_truthiness: bool,
 ) -> Vec<Assumptions> {
     let mut contexts = Vec::new();
-    let Ok(condition_paths) = eval_c_expr_paths(
+    let Ok(condition_paths) = evaluate_c_expression_paths(
         state,
         condition,
         assumptions,
@@ -2167,12 +2299,12 @@ fn condition_contexts_for_truthiness(
         return contexts;
     };
     for condition_path in condition_paths {
-        let CExprPath {
+        let CExpressionPath {
             outcome,
             facts,
             obligations,
         } = condition_path;
-        let CExprOutcome::Value(value) = outcome else {
+        let CExpressionOutcome::Value(value) = outcome else {
             continue;
         };
 
@@ -2191,16 +2323,16 @@ fn condition_contexts_for_truthiness(
     contexts
 }
 
-fn ptrs_proven_distinct(left: &Ptr, right: &Ptr, assumptions: &Assumptions) -> bool {
+fn pointers_proven_distinct(left: &Pointer, right: &Pointer, assumptions: &Assumptions) -> bool {
     left.block != right.block
-        || assumptions.decide(&ConditionTerm::ptr_offset_eq(
+        || assumptions.decide(&ConditionTerm::pointer_offset_equal(
             left.offset.clone(),
             right.offset.clone(),
         )) == Some(false)
 }
 
-fn forall_int32(var: Var, body: Prop) -> Prop {
-    Prop::ForAll {
+fn forall_int32(var: Variable, body: Proposition) -> Proposition {
+    Proposition::ForAll {
         var,
         sort: Sort::CInt32,
         body: Box::new(body),
@@ -2208,101 +2340,117 @@ fn forall_int32(var: Var, body: Prop) -> Prop {
 }
 
 fn wrap_proof_facts(
-    prop: Prop,
+    proposition: Proposition,
     assumptions: &Assumptions,
     facts: &[PathFact],
     obligations: &[ProofObligation],
-) -> Prop {
-    let prop = obligations.iter().rev().fold(prop, |body, obligation| {
-        Prop::Implies(Box::new(obligation.prop().clone()), Box::new(body))
+) -> Proposition {
+    let proposition = obligations
+        .iter()
+        .rev()
+        .fold(proposition, |body, obligation| {
+            Proposition::Implies(Box::new(obligation.proposition().clone()), Box::new(body))
+        });
+
+    let proposition = facts.iter().rev().fold(proposition, |body, fact| {
+        Proposition::Implies(Box::new(fact.proposition().clone()), Box::new(body))
     });
 
-    let prop = facts.iter().rev().fold(prop, |body, fact| {
-        Prop::Implies(Box::new(fact.prop().clone()), Box::new(body))
-    });
-
-    let prop = assumptions
+    let proposition = assumptions
         .prop_facts
         .iter()
         .rev()
-        .fold(prop, |body, prop| {
-            Prop::Implies(Box::new(prop.clone()), Box::new(body))
+        .fold(proposition, |body, proposition| {
+            Proposition::Implies(Box::new(proposition.clone()), Box::new(body))
         });
 
     assumptions
         .condition_facts
         .iter()
         .rev()
-        .fold(prop, |body, (condition, value)| {
-            Prop::Implies(
-                Box::new(Prop::ConditionIs(condition.clone(), *value)),
+        .fold(proposition, |body, (condition, value)| {
+            Proposition::Implies(
+                Box::new(Proposition::ConditionIs(condition.clone(), *value)),
                 Box::new(body),
             )
         })
 }
 
-fn solve_builtin_prop(prop: &Prop) -> bool {
-    match prop {
-        Prop::Equal(left, right) => left == right,
-        Prop::ConditionIs(ConditionTerm::Const(actual), expected) => actual == expected,
-        Prop::And(left, right) => solve_builtin_prop(left) && solve_builtin_prop(right),
-        Prop::CMemoryValidRange {
+fn solve_builtin_prop(proposition: &Proposition) -> bool {
+    match proposition {
+        Proposition::Equal(left, right) => left == right,
+        Proposition::ConditionIs(ConditionTerm::Constant(actual), expected) => actual == expected,
+        Proposition::And(left, right) => solve_builtin_prop(left) && solve_builtin_prop(right),
+        Proposition::CMemoryValidRange {
             memory,
             base,
             bytes,
         } => bytes
             .as_const()
             .is_some_and(|bytes| memory.access_in_bounds(base, bytes)),
-        Prop::CMemoryCanLoad { memory, ptr } => memory.can_load_concretely(ptr, 4),
-        Prop::CMemoryCanStore { memory, ptr } => memory.access_in_bounds(ptr, 4),
+        Proposition::CMemoryCanLoad { memory, pointer } => memory.can_load_concretely(pointer, 4),
+        Proposition::CMemoryCanStore { memory, pointer } => memory.access_in_bounds(pointer, 4),
         _ => false,
     }
 }
 
-fn int32_element_index_from_offset(offset: &PtrOffsetTerm) -> Option<Bv32Term> {
+fn int32_element_index_from_offset(offset: &PointerOffsetTerm) -> Option<Bitvector32Term> {
     match offset {
-        PtrOffsetTerm::Add(left, right) if left.as_ref() == &PtrOffsetTerm::Const(0) => {
+        PointerOffsetTerm::Add(left, right) if left.as_ref() == &PointerOffsetTerm::Constant(0) => {
             int32_element_index_from_offset(right)
         }
-        PtrOffsetTerm::Add(left, right) if right.as_ref() == &PtrOffsetTerm::Const(0) => {
+        PointerOffsetTerm::Add(left, right)
+            if right.as_ref() == &PointerOffsetTerm::Constant(0) =>
+        {
             int32_element_index_from_offset(left)
         }
-        PtrOffsetTerm::Int32Scaled { value, byte_width } if *byte_width == 4 => {
+        PointerOffsetTerm::Int32Scaled { value, byte_width } if *byte_width == 4 => {
             Some(value.as_ref().clone())
         }
-        PtrOffsetTerm::Const(offset) if offset % 4 == 0 => {
+        PointerOffsetTerm::Constant(offset) if offset % 4 == 0 => {
             let index = offset / 4;
             (i32::MIN as i64..=i32::MAX as i64)
                 .contains(&index)
-                .then_some(Bv32Term::Const((index as i32) as u32))
+                .then_some(Bitvector32Term::Constant((index as i32) as u32))
         }
         _ => None,
     }
 }
 
-fn int32_element_count_from_bytes(bytes: &Bv32Term) -> Option<Bv32Term> {
+fn int32_element_count_from_bytes(bytes: &Bitvector32Term) -> Option<Bitvector32Term> {
     match bytes {
-        Bv32Term::Mul(left, right) if right.as_ref() == &Bv32Term::Const(4) => {
+        Bitvector32Term::Multiply(left, right)
+            if right.as_ref() == &Bitvector32Term::Constant(4) =>
+        {
             Some(left.as_ref().clone())
         }
-        Bv32Term::Mul(left, right) if left.as_ref() == &Bv32Term::Const(4) => {
+        Bitvector32Term::Multiply(left, right)
+            if left.as_ref() == &Bitvector32Term::Constant(4) =>
+        {
             Some(right.as_ref().clone())
         }
-        Bv32Term::Const(bytes) if bytes % 4 == 0 => Some(Bv32Term::Const(bytes / 4)),
+        Bitvector32Term::Constant(bytes) if bytes % 4 == 0 => {
+            Some(Bitvector32Term::Constant(bytes / 4))
+        }
         _ => None,
     }
 }
 
-fn add_path_fact(facts: &mut Vec<PathFact>, assumptions: &Assumptions, prop: Prop) -> Option<()> {
-    if let Prop::ConditionIs(condition, value) = prop {
+fn add_path_fact(
+    facts: &mut Vec<PathFact>,
+    assumptions: &Assumptions,
+    proposition: Proposition,
+) -> Option<()> {
+    if let Proposition::ConditionIs(condition, value) = proposition {
         return add_condition_path_fact(facts, assumptions, condition, value);
     }
 
-    if assumptions.proves(&prop) || facts.iter().any(|fact| fact.prop == prop) {
+    if assumptions.proves(&proposition) || facts.iter().any(|fact| fact.proposition == proposition)
+    {
         return Some(());
     }
 
-    facts.push(PathFact::new(prop));
+    facts.push(PathFact::new(proposition));
     Some(())
 }
 
@@ -2318,8 +2466,8 @@ fn add_condition_path_fact(
 
     if let Some(existing) = facts
         .iter()
-        .filter_map(|fact| match fact.prop() {
-            Prop::ConditionIs(existing_condition, existing_value)
+        .filter_map(|fact| match fact.proposition() {
+            Proposition::ConditionIs(existing_condition, existing_value)
                 if existing_condition == &condition =>
             {
                 Some(*existing_value)
@@ -2338,17 +2486,21 @@ fn add_condition_path_fact(
 fn add_proof_obligation(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &Assumptions,
-    prop: Prop,
+    proposition: Proposition,
 ) -> Option<()> {
-    if let Prop::ConditionIs(condition, value) = prop {
+    if let Proposition::ConditionIs(condition, value) = proposition {
         return add_condition_obligation(obligations, assumptions, condition, value);
     }
 
-    if assumptions.proves(&prop) || obligations.iter().any(|obligation| obligation.prop == prop) {
+    if assumptions.proves(&proposition)
+        || obligations
+            .iter()
+            .any(|obligation| obligation.proposition == proposition)
+    {
         return Some(());
     }
 
-    obligations.push(ProofObligation::new(prop));
+    obligations.push(ProofObligation::new(proposition));
     Some(())
 }
 
@@ -2364,8 +2516,8 @@ fn add_condition_obligation(
 
     if let Some(existing) = obligations
         .iter()
-        .filter_map(|obligation| match obligation.prop() {
-            Prop::ConditionIs(existing_condition, existing_value)
+        .filter_map(|obligation| match obligation.proposition() {
+            Proposition::ConditionIs(existing_condition, existing_value)
                 if existing_condition == &condition =>
             {
                 Some(*existing_value)
@@ -2388,7 +2540,11 @@ fn merge_obligations(
 ) -> Option<Vec<ProofObligation>> {
     let mut obligations = left.to_vec();
     for obligation in right {
-        add_proof_obligation(&mut obligations, assumptions, obligation.prop().clone())?;
+        add_proof_obligation(
+            &mut obligations,
+            assumptions,
+            obligation.proposition().clone(),
+        )?;
     }
     Some(obligations)
 }
@@ -2400,7 +2556,7 @@ fn merge_facts(
 ) -> Option<Vec<PathFact>> {
     let mut facts = left.to_vec();
     for fact in right {
-        add_path_fact(&mut facts, assumptions, fact.prop().clone())?;
+        add_path_fact(&mut facts, assumptions, fact.proposition().clone())?;
     }
     Some(facts)
 }
@@ -2423,8 +2579,10 @@ fn decide_with_facts(
     condition: &ConditionTerm,
 ) -> Option<bool> {
     assumptions.decide(condition).or_else(|| {
-        facts.iter().find_map(|fact| match fact.prop() {
-            Prop::ConditionIs(existing_condition, value) if existing_condition == condition => {
+        facts.iter().find_map(|fact| match fact.proposition() {
+            Proposition::ConditionIs(existing_condition, value)
+                if existing_condition == condition =>
+            {
                 Some(*value)
             }
             _ => None,
@@ -2439,29 +2597,32 @@ fn assumptions_with_path_context(
 ) -> Assumptions {
     let mut assumptions = assumptions.clone();
     for fact in facts {
-        assumptions = assumptions.assume_prop(fact.prop().clone());
+        assumptions = assumptions.assume_proposition(fact.proposition().clone());
     }
     for obligation in obligations {
-        assumptions = assumptions.assume_prop(obligation.prop().clone());
+        assumptions = assumptions.assume_proposition(obligation.proposition().clone());
     }
     assumptions
 }
 
-fn assumptions_with_props(assumptions: &Assumptions, props: &[Prop]) -> Assumptions {
+fn assumptions_with_propositions(
+    assumptions: &Assumptions,
+    propositions: &[Proposition],
+) -> Assumptions {
     let mut assumptions = assumptions.clone();
-    for prop in props {
-        assumptions = assumptions.assume_prop(prop.clone());
+    for proposition in propositions {
+        assumptions = assumptions.assume_proposition(proposition.clone());
     }
     assumptions
 }
 
-fn eval_c_expr(
+fn evaluate_c_expression(
     state: &CState,
-    expr: &CExpr,
+    expression: &CExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> Option<CExprOutcome> {
-    let paths = eval_c_expr_paths(state, expr, assumptions, budget).ok()?;
+) -> Option<CExpressionOutcome> {
+    let paths = evaluate_c_expression_paths(state, expression, assumptions, budget).ok()?;
     let mut paths = paths.into_iter();
     let path = paths.next()?;
     if paths.next().is_some() || !path.obligations.is_empty() {
@@ -2470,116 +2631,130 @@ fn eval_c_expr(
     Some(path.outcome)
 }
 
-fn eval_c_expr_paths(
+fn evaluate_c_expression_paths(
     state: &CState,
-    expr: &CExpr,
+    expression: &CExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CExprPath>> {
+) -> ExecutionResult<Vec<CExpressionPath>> {
     budget.consume_expression_step()?;
-    let paths = match expr {
-        CExpr::Value(value) => vec![CExprPath {
-            outcome: CExprOutcome::Value(value.clone()),
+    let paths = match expression {
+        CExpression::Value(value) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(value.clone()),
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
-        CExpr::Var(_) => read_c_lvalue_expr_paths(state, expr, assumptions, budget)?,
-        CExpr::AddressOf(target) => address_of_lvalue_paths(state, target, assumptions, budget)?,
-        CExpr::Lt(left, right) => eval_c_int32_binary_paths(
-            state,
-            left,
-            right,
-            assumptions,
-            budget,
-            |left, right, facts, obligations| {
-                condition_as_c_int32_paths(
-                    ConditionTerm::slt(left, right),
-                    facts,
-                    obligations,
-                    assumptions,
-                )
-            },
-        )?,
-        CExpr::Le(left, right) => eval_c_int32_binary_paths(
-            state,
-            left,
-            right,
-            assumptions,
-            budget,
-            |left, right, facts, obligations| {
-                condition_as_c_int32_paths(
-                    ConditionTerm::sle(left, right),
-                    facts,
-                    obligations,
-                    assumptions,
-                )
-            },
-        )?,
-        CExpr::Gt(left, right) => eval_c_int32_binary_paths(
-            state,
-            left,
-            right,
-            assumptions,
-            budget,
-            |left, right, facts, obligations| {
-                condition_as_c_int32_paths(
-                    ConditionTerm::sgt(left, right),
-                    facts,
-                    obligations,
-                    assumptions,
-                )
-            },
-        )?,
-        CExpr::Ge(left, right) => eval_c_int32_binary_paths(
-            state,
-            left,
-            right,
-            assumptions,
-            budget,
-            |left, right, facts, obligations| {
-                condition_as_c_int32_paths(
-                    ConditionTerm::sge(left, right),
-                    facts,
-                    obligations,
-                    assumptions,
-                )
-            },
-        )?,
-        CExpr::Eq(left, right) => eval_c_eq_paths(state, left, right, assumptions, budget)?,
-        CExpr::Ne(left, right) => eval_c_ne_paths(state, left, right, assumptions, budget)?,
-        CExpr::Not(expr) => eval_c_not_paths(state, expr, assumptions, budget)?,
-        CExpr::And(left, right) => {
-            eval_c_logical_and_paths(state, left, right, assumptions, budget)?
+        CExpression::Variable(_) => {
+            read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
         }
-        CExpr::Or(left, right) => eval_c_logical_or_paths(state, left, right, assumptions, budget)?,
-        CExpr::Add(left, right) => eval_c_add_paths(state, left, right, assumptions, budget)?,
-        CExpr::Sub(left, right) => eval_c_int32_binary_paths(
+        CExpression::AddressOf(target) => {
+            address_of_lvalue_paths(state, target, assumptions, budget)?
+        }
+        CExpression::LessThan(left, right) => evaluate_c_int32_binary_paths(
             state,
             left,
             right,
             assumptions,
             budget,
             |left, right, facts, obligations| {
-                apply_c_int32_sub(left, right, facts, obligations, assumptions)
+                condition_as_c_int32_paths(
+                    ConditionTerm::signed_less_than(left, right),
+                    facts,
+                    obligations,
+                    assumptions,
+                )
             },
         )?,
-        CExpr::Load(_) | CExpr::Index(_, _) => {
-            read_c_lvalue_expr_paths(state, expr, assumptions, budget)?
+        CExpression::LessEqual(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                condition_as_c_int32_paths(
+                    ConditionTerm::signed_less_equal(left, right),
+                    facts,
+                    obligations,
+                    assumptions,
+                )
+            },
+        )?,
+        CExpression::GreaterThan(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                condition_as_c_int32_paths(
+                    ConditionTerm::signed_greater_than(left, right),
+                    facts,
+                    obligations,
+                    assumptions,
+                )
+            },
+        )?,
+        CExpression::GreaterEqual(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                condition_as_c_int32_paths(
+                    ConditionTerm::signed_greater_equal(left, right),
+                    facts,
+                    obligations,
+                    assumptions,
+                )
+            },
+        )?,
+        CExpression::Equal(left, right) => {
+            evaluate_c_equal_paths(state, left, right, assumptions, budget)?
+        }
+        CExpression::NotEqual(left, right) => {
+            evaluate_c_not_equal_paths(state, left, right, assumptions, budget)?
+        }
+        CExpression::Not(expression) => {
+            evaluate_c_not_paths(state, expression, assumptions, budget)?
+        }
+        CExpression::And(left, right) => {
+            evaluate_c_logical_and_paths(state, left, right, assumptions, budget)?
+        }
+        CExpression::Or(left, right) => {
+            evaluate_c_logical_or_paths(state, left, right, assumptions, budget)?
+        }
+        CExpression::Add(left, right) => {
+            evaluate_c_add_paths(state, left, right, assumptions, budget)?
+        }
+        CExpression::Subtract(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_subtract(left, right, facts, obligations, assumptions)
+            },
+        )?,
+        CExpression::Load(_) | CExpression::Index(_, _) => {
+            read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
         }
     };
     budget.consume_paths(paths.len())?;
     Ok(paths)
 }
 
-fn eval_c_lvalue_paths(
+fn evaluate_c_lvalue_paths(
     state: &CState,
-    expr: &CExpr,
+    expression: &CExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CLValuePath>> {
     budget.consume_expression_step()?;
-    let paths = match expr {
-        CExpr::Var(name) => vec![CLValuePath {
+    let paths = match expression {
+        CExpression::Variable(name) => vec![CLValuePath {
             outcome: match state.locals.get(name) {
                 Some(value) => CLValueOutcome::LValue(CLValue::local(name.clone(), value.c_type())),
                 None => CLValueOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone())),
@@ -2587,26 +2762,28 @@ fn eval_c_lvalue_paths(
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
-        CExpr::Load(pointer_expr) => {
+        CExpression::Load(pointer_expression) => {
             let mut paths = Vec::new();
-            for pointer_path in eval_c_expr_paths(state, pointer_expr, assumptions, budget)? {
+            for pointer_path in
+                evaluate_c_expression_paths(state, pointer_expression, assumptions, budget)?
+            {
                 paths.push(match pointer_path.outcome {
-                    CExprOutcome::Value(CValue::Ptr(pointer)) => CLValuePath {
+                    CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
                         outcome: CLValueOutcome::LValue(CLValue::memory(pointer, CType::Int32)),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
                     },
-                    CExprOutcome::Value(_) => CLValuePath {
+                    CExpressionOutcome::Value(_) => CLValuePath {
                         outcome: CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
                     },
-                    CExprOutcome::Ub(ub) => CLValuePath {
-                        outcome: CLValueOutcome::Ub(ub),
+                    CExpressionOutcome::UndefinedBehavior(undefined_behavior) => CLValuePath {
+                        outcome: CLValueOutcome::UndefinedBehavior(undefined_behavior),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
                     },
-                    CExprOutcome::RuntimeError(error) => CLValuePath {
+                    CExpressionOutcome::RuntimeError(error) => CLValuePath {
                         outcome: CLValueOutcome::RuntimeError(error),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
@@ -2615,26 +2792,26 @@ fn eval_c_lvalue_paths(
             }
             paths
         }
-        CExpr::Index(base, index) => {
+        CExpression::Index(base, index) => {
             let mut paths = Vec::new();
-            for pointer_path in eval_c_add_paths(state, base, index, assumptions, budget)? {
+            for pointer_path in evaluate_c_add_paths(state, base, index, assumptions, budget)? {
                 paths.push(match pointer_path.outcome {
-                    CExprOutcome::Value(CValue::Ptr(pointer)) => CLValuePath {
+                    CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
                         outcome: CLValueOutcome::LValue(CLValue::memory(pointer, CType::Int32)),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
                     },
-                    CExprOutcome::Value(_) => CLValuePath {
+                    CExpressionOutcome::Value(_) => CLValuePath {
                         outcome: CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
                     },
-                    CExprOutcome::Ub(ub) => CLValuePath {
-                        outcome: CLValueOutcome::Ub(ub),
+                    CExpressionOutcome::UndefinedBehavior(undefined_behavior) => CLValuePath {
+                        outcome: CLValueOutcome::UndefinedBehavior(undefined_behavior),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
                     },
-                    CExprOutcome::RuntimeError(error) => CLValuePath {
+                    CExpressionOutcome::RuntimeError(error) => CLValuePath {
                         outcome: CLValueOutcome::RuntimeError(error),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
@@ -2653,14 +2830,14 @@ fn eval_c_lvalue_paths(
     Ok(paths)
 }
 
-fn read_c_lvalue_expr_paths(
+fn read_c_lvalue_expression_paths(
     state: &CState,
-    expr: &CExpr,
+    expression: &CExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CExprPath>> {
+) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
-    for lvalue_path in eval_c_lvalue_paths(state, expr, assumptions, budget)? {
+    for lvalue_path in evaluate_c_lvalue_paths(state, expression, assumptions, budget)? {
         paths.extend(read_c_lvalue_paths(
             state,
             lvalue_path.outcome,
@@ -2679,23 +2856,23 @@ fn read_c_lvalue_paths(
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
-) -> Vec<CExprPath> {
+) -> Vec<CExpressionPath> {
     match outcome {
         CLValueOutcome::LValue(lvalue) => match &lvalue.storage {
-            CLValueStorage::Local { name } => vec![CExprPath {
+            CLValueStorage::Local { name } => vec![CExpressionPath {
                 outcome: match state.locals.get(name) {
                     Some(value) if lvalue.value_type.accepts(value) => {
-                        CExprOutcome::Value(value.clone())
+                        CExpressionOutcome::Value(value.clone())
                     }
-                    Some(_) => CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                    None => {
-                        CExprOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone()))
-                    }
+                    Some(_) => CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    None => CExpressionOutcome::RuntimeError(CRuntimeError::UnboundVariable(
+                        name.clone(),
+                    )),
                 },
                 facts,
                 obligations,
             }],
-            CLValueStorage::Memory { pointer } => eval_c_memory_load_paths(
+            CLValueStorage::Memory { pointer } => evaluate_c_memory_load_paths(
                 &state.memory,
                 pointer.clone(),
                 lvalue.value_type,
@@ -2704,13 +2881,13 @@ fn read_c_lvalue_paths(
                 assumptions,
             ),
         },
-        CLValueOutcome::Ub(ub) => vec![CExprPath {
-            outcome: CExprOutcome::Ub(ub),
+        CLValueOutcome::UndefinedBehavior(undefined_behavior) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
             facts,
             obligations,
         }],
-        CLValueOutcome::RuntimeError(error) => vec![CExprPath {
-            outcome: CExprOutcome::RuntimeError(error),
+        CLValueOutcome::RuntimeError(error) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(error),
             facts,
             obligations,
         }],
@@ -2719,34 +2896,34 @@ fn read_c_lvalue_paths(
 
 fn address_of_lvalue_paths(
     state: &CState,
-    target: &CExpr,
+    target: &CExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CExprPath>> {
+) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
-    for lvalue_path in eval_c_lvalue_paths(state, target, assumptions, budget)? {
+    for lvalue_path in evaluate_c_lvalue_paths(state, target, assumptions, budget)? {
         paths.push(match lvalue_path.outcome {
             CLValueOutcome::LValue(lvalue) => match lvalue.pointer(state) {
-                Some(pointer) => CExprPath {
-                    outcome: CExprOutcome::Value(CValue::Ptr(pointer)),
+                Some(pointer) => CExpressionPath {
+                    outcome: CExpressionOutcome::Value(CValue::Pointer(pointer)),
                     facts: lvalue_path.facts,
                     obligations: lvalue_path.obligations,
                 },
-                None => CExprPath {
-                    outcome: CExprOutcome::RuntimeError(CRuntimeError::UnboundVariable(format!(
-                        "{target:?}"
-                    ))),
+                None => CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(CRuntimeError::UnboundVariable(
+                        format!("{target:?}"),
+                    )),
                     facts: lvalue_path.facts,
                     obligations: lvalue_path.obligations,
                 },
             },
-            CLValueOutcome::Ub(ub) => CExprPath {
-                outcome: CExprOutcome::Ub(ub),
+            CLValueOutcome::UndefinedBehavior(undefined_behavior) => CExpressionPath {
+                outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
                 facts: lvalue_path.facts,
                 obligations: lvalue_path.obligations,
             },
-            CLValueOutcome::RuntimeError(error) => CExprPath {
-                outcome: CExprOutcome::RuntimeError(error),
+            CLValueOutcome::RuntimeError(error) => CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(error),
                 facts: lvalue_path.facts,
                 obligations: lvalue_path.obligations,
             },
@@ -2761,15 +2938,15 @@ fn condition_as_c_int32_paths(
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
-) -> Vec<CExprPath> {
+) -> Vec<CExpressionPath> {
     match decide_with_facts(assumptions, &facts, &condition) {
-        Some(true) => vec![CExprPath {
-            outcome: CExprOutcome::Value(int32(1)),
+        Some(true) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(1)),
             facts,
             obligations,
         }],
-        Some(false) => vec![CExprPath {
-            outcome: CExprOutcome::Value(int32(0)),
+        Some(false) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(0)),
             facts,
             obligations,
         }],
@@ -2783,13 +2960,13 @@ fn condition_as_c_int32_paths(
                 .expect("unknown comparison fact should be consistent");
 
             vec![
-                CExprPath {
-                    outcome: CExprOutcome::Value(int32(1)),
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(1)),
                     facts: true_facts,
                     obligations: obligations.clone(),
                 },
-                CExprPath {
-                    outcome: CExprOutcome::Value(int32(0)),
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(0)),
                     facts: false_facts,
                     obligations,
                 },
@@ -2803,15 +2980,15 @@ fn condition_as_c_int32_not_paths(
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
-) -> Vec<CExprPath> {
+) -> Vec<CExpressionPath> {
     match decide_with_facts(assumptions, &facts, &condition) {
-        Some(true) => vec![CExprPath {
-            outcome: CExprOutcome::Value(int32(0)),
+        Some(true) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(0)),
             facts,
             obligations,
         }],
-        Some(false) => vec![CExprPath {
-            outcome: CExprOutcome::Value(int32(1)),
+        Some(false) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(1)),
             facts,
             obligations,
         }],
@@ -2825,13 +3002,13 @@ fn condition_as_c_int32_not_paths(
                 .expect("unknown comparison fact should be consistent");
 
             vec![
-                CExprPath {
-                    outcome: CExprOutcome::Value(int32(0)),
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(0)),
                     facts: true_facts,
                     obligations: obligations.clone(),
                 },
-                CExprPath {
-                    outcome: CExprOutcome::Value(int32(1)),
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(1)),
                     facts: false_facts,
                     obligations,
                 },
@@ -2855,7 +3032,7 @@ fn c_truthiness_paths(
 ) -> Vec<CTruthinessPath> {
     match value {
         CValue::Int32(bits) => {
-            let is_zero = ConditionTerm::eq(bits, Bv32Term::Const(0));
+            let is_zero = ConditionTerm::equal(bits, Bitvector32Term::Constant(0));
             match decide_with_facts(assumptions, &facts, &is_zero) {
                 Some(true) => vec![CTruthinessPath {
                     is_true: false,
@@ -2891,8 +3068,8 @@ fn c_truthiness_paths(
                 }
             }
         }
-        CValue::Ptr(ptr) => match (&ptr.block[..], &ptr.offset) {
-            ("null", PtrOffsetTerm::Const(0)) => vec![CTruthinessPath {
+        CValue::Pointer(pointer) => match (&pointer.block[..], &pointer.offset) {
+            ("null", PointerOffsetTerm::Constant(0)) => vec![CTruthinessPath {
                 is_true: false,
                 facts,
                 obligations,
@@ -2911,106 +3088,106 @@ fn c_truthiness_as_c_int32_paths(
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
-) -> Vec<CExprPath> {
+) -> Vec<CExpressionPath> {
     c_truthiness_paths(value, facts, obligations, assumptions)
         .into_iter()
-        .map(|path| CExprPath {
-            outcome: CExprOutcome::Value(int32(if path.is_true { 1 } else { 0 })),
+        .map(|path| CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(if path.is_true { 1 } else { 0 })),
             facts: path.facts,
             obligations: path.obligations,
         })
         .collect()
 }
 
-fn eval_c_memory_load_paths(
+fn evaluate_c_memory_load_paths(
     memory: &CMemory,
-    ptr: Ptr,
+    pointer: Pointer,
     value_type: CType,
     facts: Vec<PathFact>,
     mut obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
-) -> Vec<CExprPath> {
-    if let Some(value) = memory.known_value(&ptr) {
+) -> Vec<CExpressionPath> {
+    if let Some(value) = memory.known_value(&pointer) {
         if !value_type.accepts(&value) {
-            return vec![CExprPath {
-                outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
                 obligations,
             }];
         }
-        return vec![CExprPath {
-            outcome: CExprOutcome::Value(value),
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(value),
             facts,
             obligations,
         }];
     }
 
-    if memory.can_load_concretely(&ptr, value_type.byte_width()) {
+    if memory.can_load_concretely(&pointer, value_type.byte_width()) {
         if value_type != CType::Int32 {
-            return vec![CExprPath {
-                outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
                 obligations,
             }];
         }
-        return vec![CExprPath {
-            outcome: CExprOutcome::Value(memory.symbolic_int32_load(&ptr)),
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(memory.symbolic_int32_load(&pointer)),
             facts,
             obligations,
         }];
     }
 
-    let prop = Prop::CMemoryCanLoad {
+    let proposition = Proposition::CMemoryCanLoad {
         memory: memory.clone(),
-        ptr: ptr.clone(),
+        pointer: pointer.clone(),
     };
-    if add_proof_obligation(&mut obligations, assumptions, prop).is_none() {
+    if add_proof_obligation(&mut obligations, assumptions, proposition).is_none() {
         return Vec::new();
     }
 
     if value_type != CType::Int32 {
-        return vec![CExprPath {
-            outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts,
             obligations,
         }];
     }
 
-    vec![CExprPath {
-        outcome: CExprOutcome::Value(memory.symbolic_int32_load(&ptr)),
+    vec![CExpressionPath {
+        outcome: CExpressionOutcome::Value(memory.symbolic_int32_load(&pointer)),
         facts,
         obligations,
     }]
 }
 
-fn eval_c_add_paths(
+fn evaluate_c_add_paths(
     state: &CState,
-    left: &CExpr,
-    right: &CExpr,
+    left: &CExpression,
+    right: &CExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CExprPath>> {
+) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
-    for left_path in eval_c_expr_paths(state, left, assumptions, budget)? {
-        let CExprPath {
+    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
+        let CExpressionPath {
             outcome: left_outcome,
             facts: left_facts,
             obligations: left_obligations,
         } = left_path;
 
         let left = match left_outcome {
-            CExprOutcome::Value(value) => value,
-            CExprOutcome::Ub(ub) => {
-                paths.push(CExprPath {
-                    outcome: CExprOutcome::Ub(ub),
+            CExpressionOutcome::Value(value) => value,
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
                     facts: left_facts,
                     obligations: left_obligations,
                 });
                 continue;
             }
-            CExprOutcome::RuntimeError(error) => {
-                paths.push(CExprPath {
-                    outcome: CExprOutcome::RuntimeError(error),
+            CExpressionOutcome::RuntimeError(error) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
                     facts: left_facts,
                     obligations: left_obligations,
                 });
@@ -3020,7 +3197,7 @@ fn eval_c_add_paths(
 
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
-        for right_path in eval_c_expr_paths(state, right, &right_assumptions, budget)? {
+        for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &left_facts,
                 &left_obligations,
@@ -3032,18 +3209,18 @@ fn eval_c_add_paths(
             };
 
             let right = match right_path.outcome {
-                CExprOutcome::Value(value) => value,
-                CExprOutcome::Ub(ub) => {
-                    paths.push(CExprPath {
-                        outcome: CExprOutcome::Ub(ub),
+                CExpressionOutcome::Value(value) => value,
+                CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                    paths.push(CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
                         facts,
                         obligations,
                     });
                     continue;
                 }
-                CExprOutcome::RuntimeError(error) => {
-                    paths.push(CExprPath {
-                        outcome: CExprOutcome::RuntimeError(error),
+                CExpressionOutcome::RuntimeError(error) => {
+                    paths.push(CExpressionPath {
+                        outcome: CExpressionOutcome::RuntimeError(error),
                         facts,
                         obligations,
                     });
@@ -3071,20 +3248,23 @@ fn apply_c_add(
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
-) -> Vec<CExprPath> {
+) -> Vec<CExpressionPath> {
     match (left, right) {
         (CValue::Int32(left), CValue::Int32(right)) => {
             apply_c_int32_add(left, right, facts, obligations, assumptions)
         }
-        (CValue::Ptr(ptr), CValue::Int32(offset)) | (CValue::Int32(offset), CValue::Ptr(ptr)) => {
-            vec![CExprPath {
-                outcome: CExprOutcome::Value(CValue::Ptr(ptr.offset_by_int32_elements(offset))),
+        (CValue::Pointer(pointer), CValue::Int32(offset))
+        | (CValue::Int32(offset), CValue::Pointer(pointer)) => {
+            vec![CExpressionPath {
+                outcome: CExpressionOutcome::Value(CValue::Pointer(
+                    pointer.offset_by_int32_elements(offset),
+                )),
                 facts,
                 obligations,
             }]
         }
-        _ => vec![CExprPath {
-            outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+        _ => vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts,
             obligations,
         }],
@@ -3092,21 +3272,21 @@ fn apply_c_add(
 }
 
 fn apply_c_int32_add(
-    left: Bv32Term,
-    right: Bv32Term,
+    left: Bitvector32Term,
+    right: Bitvector32Term,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
-) -> Vec<CExprPath> {
+) -> Vec<CExpressionPath> {
     let overflow = ConditionTerm::signed_add_overflows(left.clone(), right.clone());
     match decide_with_facts(assumptions, &facts, &overflow) {
-        Some(true) => vec![CExprPath {
-            outcome: CExprOutcome::Ub(CUndefinedBehavior::SignedOverflow),
+        Some(true) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
             facts,
             obligations,
         }],
-        Some(false) => vec![CExprPath {
-            outcome: CExprOutcome::Value(int32(Bv32Term::add(left, right))),
+        Some(false) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(Bitvector32Term::add(left, right))),
             facts,
             obligations,
         }],
@@ -3120,13 +3300,15 @@ fn apply_c_int32_add(
                 .expect("unknown overflow fact should be consistent");
 
             vec![
-                CExprPath {
-                    outcome: CExprOutcome::Value(int32(Bv32Term::add(left, right))),
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(Bitvector32Term::add(left, right))),
                     facts: normal_facts,
                     obligations: obligations.clone(),
                 },
-                CExprPath {
-                    outcome: CExprOutcome::Ub(CUndefinedBehavior::SignedOverflow),
+                CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::SignedOverflow,
+                    ),
                     facts: overflow_facts,
                     obligations,
                 },
@@ -3135,22 +3317,22 @@ fn apply_c_int32_add(
     }
 }
 
-fn apply_c_int32_sub(
-    left: Bv32Term,
-    right: Bv32Term,
+fn apply_c_int32_subtract(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
-) -> Vec<CExprPath> {
-    let overflow = ConditionTerm::signed_sub_overflows(left.clone(), right.clone());
+) -> Vec<CExpressionPath> {
+    let overflow = ConditionTerm::signed_subtract_overflows(left.clone(), right.clone());
     match decide_with_facts(assumptions, &facts, &overflow) {
-        Some(true) => vec![CExprPath {
-            outcome: CExprOutcome::Ub(CUndefinedBehavior::SignedOverflow),
+        Some(true) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
             facts,
             obligations,
         }],
-        Some(false) => vec![CExprPath {
-            outcome: CExprOutcome::Value(int32(Bv32Term::sub(left, right))),
+        Some(false) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(Bitvector32Term::subtract(left, right))),
             facts,
             obligations,
         }],
@@ -3164,13 +3346,17 @@ fn apply_c_int32_sub(
                 .expect("unknown overflow fact should be consistent");
 
             vec![
-                CExprPath {
-                    outcome: CExprOutcome::Value(int32(Bv32Term::sub(left, right))),
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(Bitvector32Term::subtract(
+                        left, right,
+                    ))),
                     facts: normal_facts,
                     obligations: obligations.clone(),
                 },
-                CExprPath {
-                    outcome: CExprOutcome::Ub(CUndefinedBehavior::SignedOverflow),
+                CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::SignedOverflow,
+                    ),
                     facts: overflow_facts,
                     obligations,
                 },
@@ -3179,34 +3365,34 @@ fn apply_c_int32_sub(
     }
 }
 
-fn eval_c_eq_paths(
+fn evaluate_c_equal_paths(
     state: &CState,
-    left: &CExpr,
-    right: &CExpr,
+    left: &CExpression,
+    right: &CExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CExprPath>> {
+) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
-    for left_path in eval_c_expr_paths(state, left, assumptions, budget)? {
-        let CExprPath {
+    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
+        let CExpressionPath {
             outcome: left_outcome,
             facts: left_facts,
             obligations: left_obligations,
         } = left_path;
 
         let left = match left_outcome {
-            CExprOutcome::Value(left) => left,
-            CExprOutcome::Ub(ub) => {
-                paths.push(CExprPath {
-                    outcome: CExprOutcome::Ub(ub),
+            CExpressionOutcome::Value(left) => left,
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
                     facts: left_facts,
                     obligations: left_obligations,
                 });
                 continue;
             }
-            CExprOutcome::RuntimeError(error) => {
-                paths.push(CExprPath {
-                    outcome: CExprOutcome::RuntimeError(error),
+            CExpressionOutcome::RuntimeError(error) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
                     facts: left_facts,
                     obligations: left_obligations,
                 });
@@ -3216,7 +3402,7 @@ fn eval_c_eq_paths(
 
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
-        for right_path in eval_c_expr_paths(state, right, &right_assumptions, budget)? {
+        for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &left_facts,
                 &left_obligations,
@@ -3228,8 +3414,8 @@ fn eval_c_eq_paths(
             };
 
             match right_path.outcome {
-                CExprOutcome::Value(right) => {
-                    paths.extend(apply_c_eq(
+                CExpressionOutcome::Value(right) => {
+                    paths.extend(apply_c_equal(
                         left.clone(),
                         right,
                         facts,
@@ -3237,13 +3423,15 @@ fn eval_c_eq_paths(
                         assumptions,
                     ));
                 }
-                CExprOutcome::Ub(ub) => paths.push(CExprPath {
-                    outcome: CExprOutcome::Ub(ub),
-                    facts,
-                    obligations,
-                }),
-                CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
-                    outcome: CExprOutcome::RuntimeError(error),
+                CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                    paths.push(CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                        facts,
+                        obligations,
+                    })
+                }
+                CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
                     facts,
                     obligations,
                 }),
@@ -3255,168 +3443,177 @@ fn eval_c_eq_paths(
     Ok(paths)
 }
 
-fn apply_c_eq(
+fn apply_c_equal(
     left: CValue,
     right: CValue,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
-) -> Vec<CExprPath> {
+) -> Vec<CExpressionPath> {
     match (left, right) {
         (CValue::Int32(left), CValue::Int32(right)) => condition_as_c_int32_paths(
-            ConditionTerm::eq(left, right),
+            ConditionTerm::equal(left, right),
             facts,
             obligations,
             assumptions,
         ),
-        (CValue::Ptr(left), CValue::Ptr(right)) => condition_as_c_int32_paths(
-            ptr_equality_condition(left, right),
+        (CValue::Pointer(left), CValue::Pointer(right)) => condition_as_c_int32_paths(
+            pointer_equality_condition(left, right),
             facts,
             obligations,
             assumptions,
         ),
-        (CValue::Ptr(ptr), CValue::Int32(bits)) | (CValue::Int32(bits), CValue::Ptr(ptr))
+        (CValue::Pointer(pointer), CValue::Int32(bits))
+        | (CValue::Int32(bits), CValue::Pointer(pointer))
             if bits.as_const() == Some(0) =>
         {
-            condition_as_c_int32_paths(ptr_is_null_condition(ptr), facts, obligations, assumptions)
-        }
-        _ => vec![CExprPath {
-            outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-            facts,
-            obligations,
-        }],
-    }
-}
-
-fn eval_c_ne_paths(
-    state: &CState,
-    left: &CExpr,
-    right: &CExpr,
-    assumptions: &Assumptions,
-    budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CExprPath>> {
-    let mut paths = Vec::new();
-    for left_path in eval_c_expr_paths(state, left, assumptions, budget)? {
-        let CExprPath {
-            outcome: left_outcome,
-            facts: left_facts,
-            obligations: left_obligations,
-        } = left_path;
-
-        let left = match left_outcome {
-            CExprOutcome::Value(left) => left,
-            CExprOutcome::Ub(ub) => {
-                paths.push(CExprPath {
-                    outcome: CExprOutcome::Ub(ub),
-                    facts: left_facts,
-                    obligations: left_obligations,
-                });
-                continue;
-            }
-            CExprOutcome::RuntimeError(error) => {
-                paths.push(CExprPath {
-                    outcome: CExprOutcome::RuntimeError(error),
-                    facts: left_facts,
-                    obligations: left_obligations,
-                });
-                continue;
-            }
-        };
-
-        let right_assumptions =
-            assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
-        for right_path in eval_c_expr_paths(state, right, &right_assumptions, budget)? {
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
-                &left_facts,
-                &left_obligations,
-                &right_path.facts,
-                &right_path.obligations,
-                assumptions,
-            ) else {
-                continue;
-            };
-
-            match right_path.outcome {
-                CExprOutcome::Value(right) => {
-                    paths.extend(apply_c_ne(
-                        left.clone(),
-                        right,
-                        facts,
-                        obligations,
-                        assumptions,
-                    ));
-                }
-                CExprOutcome::Ub(ub) => paths.push(CExprPath {
-                    outcome: CExprOutcome::Ub(ub),
-                    facts,
-                    obligations,
-                }),
-                CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
-                    outcome: CExprOutcome::RuntimeError(error),
-                    facts,
-                    obligations,
-                }),
-            }
-        }
-    }
-
-    budget.consume_paths(paths.len())?;
-    Ok(paths)
-}
-
-fn apply_c_ne(
-    left: CValue,
-    right: CValue,
-    facts: Vec<PathFact>,
-    obligations: Vec<ProofObligation>,
-    assumptions: &Assumptions,
-) -> Vec<CExprPath> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => condition_as_c_int32_not_paths(
-            ConditionTerm::eq(left, right),
-            facts,
-            obligations,
-            assumptions,
-        ),
-        (CValue::Ptr(left), CValue::Ptr(right)) => condition_as_c_int32_not_paths(
-            ptr_equality_condition(left, right),
-            facts,
-            obligations,
-            assumptions,
-        ),
-        (CValue::Ptr(ptr), CValue::Int32(bits)) | (CValue::Int32(bits), CValue::Ptr(ptr))
-            if bits.as_const() == Some(0) =>
-        {
-            condition_as_c_int32_not_paths(
-                ptr_is_null_condition(ptr),
+            condition_as_c_int32_paths(
+                pointer_is_null_condition(pointer),
                 facts,
                 obligations,
                 assumptions,
             )
         }
-        _ => vec![CExprPath {
-            outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+        _ => vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts,
             obligations,
         }],
     }
 }
 
-fn eval_c_not_paths(
+fn evaluate_c_not_equal_paths(
     state: &CState,
-    expr: &CExpr,
+    left: &CExpression,
+    right: &CExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CExprPath>> {
+) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
-    for path in eval_c_expr_paths(state, expr, assumptions, budget)? {
+    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
+        let CExpressionPath {
+            outcome: left_outcome,
+            facts: left_facts,
+            obligations: left_obligations,
+        } = left_path;
+
+        let left = match left_outcome {
+            CExpressionOutcome::Value(left) => left,
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+            CExpressionOutcome::RuntimeError(error) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+        };
+
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
+        for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
+            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &left_facts,
+                &left_obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+
+            match right_path.outcome {
+                CExpressionOutcome::Value(right) => {
+                    paths.extend(apply_c_not_equal(
+                        left.clone(),
+                        right,
+                        facts,
+                        obligations,
+                        assumptions,
+                    ));
+                }
+                CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                    paths.push(CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                        facts,
+                        obligations,
+                    })
+                }
+                CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+                }),
+            }
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn apply_c_not_equal(
+    left: CValue,
+    right: CValue,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right)) => condition_as_c_int32_not_paths(
+            ConditionTerm::equal(left, right),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Pointer(left), CValue::Pointer(right)) => condition_as_c_int32_not_paths(
+            pointer_equality_condition(left, right),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Pointer(pointer), CValue::Int32(bits))
+        | (CValue::Int32(bits), CValue::Pointer(pointer))
+            if bits.as_const() == Some(0) =>
+        {
+            condition_as_c_int32_not_paths(
+                pointer_is_null_condition(pointer),
+                facts,
+                obligations,
+                assumptions,
+            )
+        }
+        _ => vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts,
+            obligations,
+        }],
+    }
+}
+
+fn evaluate_c_not_paths(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
         match path.outcome {
-            CExprOutcome::Value(value) => {
+            CExpressionOutcome::Value(value) => {
                 paths.extend(
                     c_truthiness_paths(value, path.facts, path.obligations, assumptions)
                         .into_iter()
-                        .map(|truthiness| CExprPath {
-                            outcome: CExprOutcome::Value(int32(if truthiness.is_true {
+                        .map(|truthiness| CExpressionPath {
+                            outcome: CExpressionOutcome::Value(int32(if truthiness.is_true {
                                 0
                             } else {
                                 1
@@ -3426,13 +3623,15 @@ fn eval_c_not_paths(
                         }),
                 );
             }
-            CExprOutcome::Ub(ub) => paths.push(CExprPath {
-                outcome: CExprOutcome::Ub(ub),
-                facts: path.facts,
-                obligations: path.obligations,
-            }),
-            CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
-                outcome: CExprOutcome::RuntimeError(error),
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: path.facts,
+                    obligations: path.obligations,
+                })
+            }
+            CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(error),
                 facts: path.facts,
                 obligations: path.obligations,
             }),
@@ -3443,17 +3642,17 @@ fn eval_c_not_paths(
     Ok(paths)
 }
 
-fn eval_c_logical_and_paths(
+fn evaluate_c_logical_and_paths(
     state: &CState,
-    left: &CExpr,
-    right: &CExpr,
+    left: &CExpression,
+    right: &CExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CExprPath>> {
+) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
-    for left_path in eval_c_expr_paths(state, left, assumptions, budget)? {
+    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
         match left_path.outcome {
-            CExprOutcome::Value(left_value) => {
+            CExpressionOutcome::Value(left_value) => {
                 for left_truthiness in c_truthiness_paths(
                     left_value,
                     left_path.facts,
@@ -3461,8 +3660,8 @@ fn eval_c_logical_and_paths(
                     assumptions,
                 ) {
                     if !left_truthiness.is_true {
-                        paths.push(CExprPath {
-                            outcome: CExprOutcome::Value(int32(0)),
+                        paths.push(CExpressionPath {
+                            outcome: CExpressionOutcome::Value(int32(0)),
                             facts: left_truthiness.facts,
                             obligations: left_truthiness.obligations,
                         });
@@ -3474,7 +3673,9 @@ fn eval_c_logical_and_paths(
                         &left_truthiness.facts,
                         &left_truthiness.obligations,
                     );
-                    for right_path in eval_c_expr_paths(state, right, &right_assumptions, budget)? {
+                    for right_path in
+                        evaluate_c_expression_paths(state, right, &right_assumptions, budget)?
+                    {
                         let Some((facts, obligations)) = merge_path_facts_and_obligations(
                             &left_truthiness.facts,
                             &left_truthiness.obligations,
@@ -3486,7 +3687,7 @@ fn eval_c_logical_and_paths(
                         };
 
                         match right_path.outcome {
-                            CExprOutcome::Value(value) => {
+                            CExpressionOutcome::Value(value) => {
                                 paths.extend(c_truthiness_as_c_int32_paths(
                                     value,
                                     facts,
@@ -3494,27 +3695,34 @@ fn eval_c_logical_and_paths(
                                     assumptions,
                                 ))
                             }
-                            CExprOutcome::Ub(ub) => paths.push(CExprPath {
-                                outcome: CExprOutcome::Ub(ub),
-                                facts,
-                                obligations,
-                            }),
-                            CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
-                                outcome: CExprOutcome::RuntimeError(error),
-                                facts,
-                                obligations,
-                            }),
+                            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => paths
+                                .push(CExpressionPath {
+                                    outcome: CExpressionOutcome::UndefinedBehavior(
+                                        undefined_behavior,
+                                    ),
+                                    facts,
+                                    obligations,
+                                }),
+                            CExpressionOutcome::RuntimeError(error) => {
+                                paths.push(CExpressionPath {
+                                    outcome: CExpressionOutcome::RuntimeError(error),
+                                    facts,
+                                    obligations,
+                                })
+                            }
                         }
                     }
                 }
             }
-            CExprOutcome::Ub(ub) => paths.push(CExprPath {
-                outcome: CExprOutcome::Ub(ub),
-                facts: left_path.facts,
-                obligations: left_path.obligations,
-            }),
-            CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
-                outcome: CExprOutcome::RuntimeError(error),
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: left_path.facts,
+                    obligations: left_path.obligations,
+                })
+            }
+            CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(error),
                 facts: left_path.facts,
                 obligations: left_path.obligations,
             }),
@@ -3525,17 +3733,17 @@ fn eval_c_logical_and_paths(
     Ok(paths)
 }
 
-fn eval_c_logical_or_paths(
+fn evaluate_c_logical_or_paths(
     state: &CState,
-    left: &CExpr,
-    right: &CExpr,
+    left: &CExpression,
+    right: &CExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CExprPath>> {
+) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
-    for left_path in eval_c_expr_paths(state, left, assumptions, budget)? {
+    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
         match left_path.outcome {
-            CExprOutcome::Value(left_value) => {
+            CExpressionOutcome::Value(left_value) => {
                 for left_truthiness in c_truthiness_paths(
                     left_value,
                     left_path.facts,
@@ -3543,8 +3751,8 @@ fn eval_c_logical_or_paths(
                     assumptions,
                 ) {
                     if left_truthiness.is_true {
-                        paths.push(CExprPath {
-                            outcome: CExprOutcome::Value(int32(1)),
+                        paths.push(CExpressionPath {
+                            outcome: CExpressionOutcome::Value(int32(1)),
                             facts: left_truthiness.facts,
                             obligations: left_truthiness.obligations,
                         });
@@ -3556,7 +3764,9 @@ fn eval_c_logical_or_paths(
                         &left_truthiness.facts,
                         &left_truthiness.obligations,
                     );
-                    for right_path in eval_c_expr_paths(state, right, &right_assumptions, budget)? {
+                    for right_path in
+                        evaluate_c_expression_paths(state, right, &right_assumptions, budget)?
+                    {
                         let Some((facts, obligations)) = merge_path_facts_and_obligations(
                             &left_truthiness.facts,
                             &left_truthiness.obligations,
@@ -3568,7 +3778,7 @@ fn eval_c_logical_or_paths(
                         };
 
                         match right_path.outcome {
-                            CExprOutcome::Value(value) => {
+                            CExpressionOutcome::Value(value) => {
                                 paths.extend(c_truthiness_as_c_int32_paths(
                                     value,
                                     facts,
@@ -3576,27 +3786,34 @@ fn eval_c_logical_or_paths(
                                     assumptions,
                                 ))
                             }
-                            CExprOutcome::Ub(ub) => paths.push(CExprPath {
-                                outcome: CExprOutcome::Ub(ub),
-                                facts,
-                                obligations,
-                            }),
-                            CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
-                                outcome: CExprOutcome::RuntimeError(error),
-                                facts,
-                                obligations,
-                            }),
+                            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => paths
+                                .push(CExpressionPath {
+                                    outcome: CExpressionOutcome::UndefinedBehavior(
+                                        undefined_behavior,
+                                    ),
+                                    facts,
+                                    obligations,
+                                }),
+                            CExpressionOutcome::RuntimeError(error) => {
+                                paths.push(CExpressionPath {
+                                    outcome: CExpressionOutcome::RuntimeError(error),
+                                    facts,
+                                    obligations,
+                                })
+                            }
                         }
                     }
                 }
             }
-            CExprOutcome::Ub(ub) => paths.push(CExprPath {
-                outcome: CExprOutcome::Ub(ub),
-                facts: left_path.facts,
-                obligations: left_path.obligations,
-            }),
-            CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
-                outcome: CExprOutcome::RuntimeError(error),
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: left_path.facts,
+                    obligations: left_path.obligations,
+                })
+            }
+            CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(error),
                 facts: left_path.facts,
                 obligations: left_path.obligations,
             }),
@@ -3607,61 +3824,66 @@ fn eval_c_logical_or_paths(
     Ok(paths)
 }
 
-fn ptr_equality_condition(left: Ptr, right: Ptr) -> ConditionTerm {
+fn pointer_equality_condition(left: Pointer, right: Pointer) -> ConditionTerm {
     if left.block != right.block {
-        ConditionTerm::Const(false)
+        ConditionTerm::Constant(false)
     } else {
-        ConditionTerm::ptr_offset_eq(left.offset, right.offset)
+        ConditionTerm::pointer_offset_equal(left.offset, right.offset)
     }
 }
 
-fn ptr_is_null_condition(ptr: Ptr) -> ConditionTerm {
-    ptr_equality_condition(
-        ptr,
-        Ptr {
+fn pointer_is_null_condition(pointer: Pointer) -> ConditionTerm {
+    pointer_equality_condition(
+        pointer,
+        Pointer {
             block: "null".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         },
     )
 }
 
-fn eval_c_int32_binary_paths(
+fn evaluate_c_int32_binary_paths(
     state: &CState,
-    left: &CExpr,
-    right: &CExpr,
+    left: &CExpression,
+    right: &CExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-    apply: impl Fn(Bv32Term, Bv32Term, Vec<PathFact>, Vec<ProofObligation>) -> Vec<CExprPath>,
-) -> ExecutionResult<Vec<CExprPath>> {
+    apply: impl Fn(
+        Bitvector32Term,
+        Bitvector32Term,
+        Vec<PathFact>,
+        Vec<ProofObligation>,
+    ) -> Vec<CExpressionPath>,
+) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
-    for left_path in eval_c_expr_paths(state, left, assumptions, budget)? {
-        let CExprPath {
+    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
+        let CExpressionPath {
             outcome: left_outcome,
             facts: left_facts,
             obligations: left_obligations,
         } = left_path;
 
         let left = match left_outcome {
-            CExprOutcome::Value(CValue::Int32(left)) => left,
-            CExprOutcome::Value(_) => {
-                paths.push(CExprPath {
-                    outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            CExpressionOutcome::Value(CValue::Int32(left)) => left,
+            CExpressionOutcome::Value(_) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     facts: left_facts,
                     obligations: left_obligations,
                 });
                 continue;
             }
-            CExprOutcome::Ub(ub) => {
-                paths.push(CExprPath {
-                    outcome: CExprOutcome::Ub(ub),
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
                     facts: left_facts,
                     obligations: left_obligations,
                 });
                 continue;
             }
-            CExprOutcome::RuntimeError(error) => {
-                paths.push(CExprPath {
-                    outcome: CExprOutcome::RuntimeError(error),
+            CExpressionOutcome::RuntimeError(error) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
                     facts: left_facts,
                     obligations: left_obligations,
                 });
@@ -3671,7 +3893,7 @@ fn eval_c_int32_binary_paths(
 
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
-        for right_path in eval_c_expr_paths(state, right, &right_assumptions, budget)? {
+        for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &left_facts,
                 &left_obligations,
@@ -3683,21 +3905,23 @@ fn eval_c_int32_binary_paths(
             };
 
             match right_path.outcome {
-                CExprOutcome::Value(CValue::Int32(right)) => {
+                CExpressionOutcome::Value(CValue::Int32(right)) => {
                     paths.extend(apply(left.clone(), right, facts, obligations));
                 }
-                CExprOutcome::Value(_) => paths.push(CExprPath {
-                    outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                CExpressionOutcome::Value(_) => paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     facts,
                     obligations,
                 }),
-                CExprOutcome::Ub(ub) => paths.push(CExprPath {
-                    outcome: CExprOutcome::Ub(ub),
-                    facts,
-                    obligations,
-                }),
-                CExprOutcome::RuntimeError(error) => paths.push(CExprPath {
-                    outcome: CExprOutcome::RuntimeError(error),
+                CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                    paths.push(CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                        facts,
+                        obligations,
+                    })
+                }
+                CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
                     facts,
                     obligations,
                 }),
@@ -3709,12 +3933,16 @@ fn eval_c_int32_binary_paths(
     Ok(paths)
 }
 
-fn exec_c_stmt(state: &CState, stmt: &CStmt, assumptions: &Assumptions) -> Option<CStmtOutcome> {
-    let paths = exec_c_stmt_paths(
+fn execute_c_statement(
+    state: &CState,
+    statement: &CStatement,
+    assumptions: &Assumptions,
+) -> Option<CStatementOutcome> {
+    let paths = execute_c_statement_paths(
         state,
-        stmt,
+        statement,
         assumptions,
-        &CFunctionEnv::new(),
+        &CFunctionEnvironment::new(),
         &mut ExecutionBudget::default(),
     )
     .ok()?;
@@ -3726,15 +3954,15 @@ fn exec_c_stmt(state: &CState, stmt: &CStmt, assumptions: &Assumptions) -> Optio
     Some(path.outcome)
 }
 
-fn exec_c_lvalue_assignment_paths(
+fn execute_c_lvalue_assignment_paths(
     state: &CState,
-    target: &CExpr,
-    value: &CExpr,
+    target: &CExpression,
+    value: &CExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CStmtPath>> {
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let mut paths = Vec::new();
-    for target_path in eval_c_lvalue_paths(state, target, assumptions, budget)? {
+    for target_path in evaluate_c_lvalue_paths(state, target, assumptions, budget)? {
         let CLValuePath {
             outcome: target_outcome,
             facts: target_facts,
@@ -3743,17 +3971,17 @@ fn exec_c_lvalue_assignment_paths(
 
         let target_lvalue = match target_outcome {
             CLValueOutcome::LValue(lvalue) => lvalue,
-            CLValueOutcome::Ub(ub) => {
-                paths.push(CStmtPath {
-                    outcome: CStmtOutcome::Ub(ub),
+            CLValueOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
                     facts: target_facts,
                     obligations: target_obligations,
                 });
                 continue;
             }
             CLValueOutcome::RuntimeError(error) => {
-                paths.push(CStmtPath {
-                    outcome: CStmtOutcome::RuntimeError(error),
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(error),
                     facts: target_facts,
                     obligations: target_obligations,
                 });
@@ -3763,7 +3991,7 @@ fn exec_c_lvalue_assignment_paths(
 
         let value_assumptions =
             assumptions_with_path_context(assumptions, &target_facts, &target_obligations);
-        for value_path in eval_c_expr_paths(state, value, &value_assumptions, budget)? {
+        for value_path in evaluate_c_expression_paths(state, value, &value_assumptions, budget)? {
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &target_facts,
                 &target_obligations,
@@ -3775,7 +4003,7 @@ fn exec_c_lvalue_assignment_paths(
             };
 
             match value_path.outcome {
-                CExprOutcome::Value(value) => paths.extend(write_c_lvalue_paths(
+                CExpressionOutcome::Value(value) => paths.extend(write_c_lvalue_paths(
                     state,
                     target_lvalue.clone(),
                     value,
@@ -3783,13 +4011,15 @@ fn exec_c_lvalue_assignment_paths(
                     obligations,
                     assumptions,
                 )),
-                CExprOutcome::Ub(ub) => paths.push(CStmtPath {
-                    outcome: CStmtOutcome::Ub(ub),
-                    facts,
-                    obligations,
-                }),
-                CExprOutcome::RuntimeError(error) => paths.push(CStmtPath {
-                    outcome: CStmtOutcome::RuntimeError(error),
+                CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                    paths.push(CStatementExecutionPath {
+                        outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+                        facts,
+                        obligations,
+                    })
+                }
+                CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(error),
                     facts,
                     obligations,
                 }),
@@ -3807,10 +4037,10 @@ fn write_c_lvalue_paths(
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
-) -> Vec<CStmtPath> {
+) -> Vec<CStatementExecutionPath> {
     if !lvalue.value_type.accepts(&value) {
-        return vec![CStmtPath {
-            outcome: CStmtOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+        return vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts,
             obligations,
         }];
@@ -3821,8 +4051,8 @@ fn write_c_lvalue_paths(
             let mut state = state.clone();
             sync_stack_local(&mut state, &name, &value);
             state.locals.set(name, value);
-            vec![CStmtPath {
-                outcome: CStmtOutcome::Normal(state),
+            vec![CStatementExecutionPath {
+                outcome: CStatementOutcome::Normal(state),
                 facts,
                 obligations,
             }]
@@ -3844,8 +4074,8 @@ fn write_c_lvalue_paths(
                     state.locals.set(name.to_string(), value);
                 }
             }
-            vec![CStmtPath {
-                outcome: CStmtOutcome::Normal(state),
+            vec![CStatementExecutionPath {
+                outcome: CStatementOutcome::Normal(state),
                 facts,
                 obligations,
             }]
@@ -3853,55 +4083,70 @@ fn write_c_lvalue_paths(
     }
 }
 
-fn local_name_from_pointer(pointer: &Ptr) -> Option<&str> {
-    if pointer.offset != PtrOffsetTerm::Const(0) {
+fn local_name_from_pointer(pointer: &Pointer) -> Option<&str> {
+    if pointer.offset != PointerOffsetTerm::Constant(0) {
         return None;
     }
     pointer.block.strip_prefix("local:")
 }
 
-fn exec_c_stmt_paths(
+fn execute_c_statement_paths(
     state: &CState,
-    stmt: &CStmt,
+    statement: &CStatement,
     assumptions: &Assumptions,
-    env: &CFunctionEnv,
+    environment: &CFunctionEnvironment,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CStmtPath>> {
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     budget.consume_statement_step()?;
-    let paths = match stmt {
-        CStmt::Declare { name, ty } => vec![CStmtPath {
-            outcome: CStmtOutcome::Normal(declare_local(state, name, *ty)),
+    let paths = match statement {
+        CStatement::Declare { name, c_type } => vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(declare_local(state, name, *c_type)),
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
-        CStmt::Assign { name, expr } => {
-            exec_c_lvalue_assignment_paths(state, &c_var(name.clone()), expr, assumptions, budget)?
-        }
-        CStmt::CallAssign {
+        CStatement::Assign { name, expression } => execute_c_lvalue_assignment_paths(
+            state,
+            &c_variable(name.clone()),
+            expression,
+            assumptions,
+            budget,
+        )?,
+        CStatement::CallAssign {
             target,
             function_name,
-            args,
-        } => {
-            exec_c_call_assign_paths(state, target, function_name, args, assumptions, env, budget)?
+            arguments,
+        } => execute_c_call_assign_paths(
+            state,
+            target,
+            function_name,
+            arguments,
+            assumptions,
+            environment,
+            budget,
+        )?,
+        CStatement::Assert { condition } => {
+            execute_c_assert_paths(state, condition, assumptions, budget)?
         }
-        CStmt::Seq(first, second) => {
+        CStatement::Seq(first, second) => {
             let mut paths = Vec::new();
-            for first_path in exec_c_stmt_paths(state, first, assumptions, env, budget)? {
+            for first_path in
+                execute_c_statement_paths(state, first, assumptions, environment, budget)?
+            {
                 match first_path.outcome {
-                    CStmtOutcome::Normal(state) => {
-                        paths.extend(exec_c_stmt_paths_with_prefix(
+                    CStatementOutcome::Normal(state) => {
+                        paths.extend(execute_c_statement_paths_with_prefix(
                             &state,
                             second,
                             assumptions,
-                            env,
+                            environment,
                             &first_path.facts,
                             &first_path.obligations,
                             budget,
                         )?);
                     }
-                    outcome @ (CStmtOutcome::Return { .. }
-                    | CStmtOutcome::Ub(_)
-                    | CStmtOutcome::RuntimeError(_)) => paths.push(CStmtPath {
+                    outcome @ (CStatementOutcome::Return { .. }
+                    | CStatementOutcome::UndefinedBehavior(_)
+                    | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
                         outcome,
                         facts: first_path.facts,
                         obligations: first_path.obligations,
@@ -3910,42 +4155,50 @@ fn exec_c_stmt_paths(
             }
             paths
         }
-        CStmt::Return(expr) => eval_c_expr_paths(state, expr, assumptions, budget)?
-            .into_iter()
-            .map(|path| CStmtPath {
-                outcome: match path.outcome {
-                    CExprOutcome::Value(value) => CStmtOutcome::Return {
-                        value,
-                        state: state.clone(),
+        CStatement::Return(expression) => {
+            evaluate_c_expression_paths(state, expression, assumptions, budget)?
+                .into_iter()
+                .map(|path| CStatementExecutionPath {
+                    outcome: match path.outcome {
+                        CExpressionOutcome::Value(value) => CStatementOutcome::Return {
+                            value,
+                            state: state.clone(),
+                        },
+                        CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                            CStatementOutcome::UndefinedBehavior(undefined_behavior)
+                        }
+                        CExpressionOutcome::RuntimeError(error) => {
+                            CStatementOutcome::RuntimeError(error)
+                        }
                     },
-                    CExprOutcome::Ub(ub) => CStmtOutcome::Ub(ub),
-                    CExprOutcome::RuntimeError(error) => CStmtOutcome::RuntimeError(error),
-                },
-                facts: path.facts,
-                obligations: path.obligations,
-            })
-            .collect(),
-        CStmt::Store { ptr, value } => exec_c_lvalue_assignment_paths(
+                    facts: path.facts,
+                    obligations: path.obligations,
+                })
+                .collect()
+        }
+        CStatement::Store { pointer, value } => execute_c_lvalue_assignment_paths(
             state,
-            &CExpr::Load(Box::new(ptr.clone())),
+            &CExpression::Load(Box::new(pointer.clone())),
             value,
             assumptions,
             budget,
         )?,
-        CStmt::If {
+        CStatement::If {
             condition,
             then_branch,
             else_branch,
         } => {
             let mut paths = Vec::new();
-            for condition_path in eval_c_expr_paths(state, condition, assumptions, budget)? {
-                let CExprPath {
+            for condition_path in
+                evaluate_c_expression_paths(state, condition, assumptions, budget)?
+            {
+                let CExpressionPath {
                     outcome,
                     facts,
                     obligations,
                 } = condition_path;
                 match outcome {
-                    CExprOutcome::Value(value) => {
+                    CExpressionOutcome::Value(value) => {
                         let truthiness_paths =
                             c_truthiness_paths(value, facts, obligations, assumptions);
                         for truthiness_path in truthiness_paths {
@@ -3954,62 +4207,129 @@ fn exec_c_stmt_paths(
                             } else {
                                 else_branch
                             };
-                            paths.extend(exec_c_stmt_paths_with_prefix(
+                            paths.extend(execute_c_statement_paths_with_prefix(
                                 state,
                                 branch,
                                 assumptions,
-                                env,
+                                environment,
                                 &truthiness_path.facts,
                                 &truthiness_path.obligations,
                                 budget,
                             )?);
                         }
                     }
-                    CExprOutcome::Ub(ub) => paths.push(CStmtPath {
-                        outcome: CStmtOutcome::Ub(ub),
-                        facts,
-                        obligations,
-                    }),
-                    CExprOutcome::RuntimeError(error) => paths.push(CStmtPath {
-                        outcome: CStmtOutcome::RuntimeError(error),
-                        facts,
-                        obligations,
-                    }),
+                    CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                        paths.push(CStatementExecutionPath {
+                            outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+                            facts,
+                            obligations,
+                        })
+                    }
+                    CExpressionOutcome::RuntimeError(error) => {
+                        paths.push(CStatementExecutionPath {
+                            outcome: CStatementOutcome::RuntimeError(error),
+                            facts,
+                            obligations,
+                        })
+                    }
                 }
             }
             paths
         }
-        CStmt::While {
+        CStatement::While {
             condition,
             invariant,
             body,
-        } => exec_c_while_paths(state, condition, invariant, body, assumptions, env, budget)?,
+        } => execute_c_while_paths(
+            state,
+            condition,
+            invariant,
+            body,
+            assumptions,
+            environment,
+            budget,
+        )?,
     };
     budget.consume_paths(paths.len())?;
     Ok(paths)
 }
 
-fn exec_c_while_paths(
+fn execute_c_assert_paths(
     state: &CState,
-    condition: &CExpr,
-    invariant: &[Prop],
-    body: &CStmt,
+    condition: &CExpression,
     assumptions: &Assumptions,
-    env: &CFunctionEnv,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CStmtPath>> {
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let mut paths = Vec::new();
+    for condition_path in evaluate_c_expression_paths(state, condition, assumptions, budget)? {
+        let CExpressionPath {
+            outcome,
+            facts,
+            obligations,
+        } = condition_path;
+        match outcome {
+            CExpressionOutcome::Value(value) => {
+                let assertion_obligation = assertion_truthiness_obligation(&value);
+                for truthiness_path in c_truthiness_paths(value, facts, obligations, assumptions) {
+                    let mut obligations = truthiness_path.obligations;
+                    if !truthiness_path.is_true {
+                        obligations.push(assertion_obligation.clone());
+                    }
+                    paths.push(CStatementExecutionPath {
+                        outcome: CStatementOutcome::Normal(state.clone()),
+                        facts: truthiness_path.facts,
+                        obligations,
+                    });
+                }
+            }
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+                    facts,
+                    obligations,
+                })
+            }
+            CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(error),
+                facts,
+                obligations,
+            }),
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn assertion_truthiness_obligation(value: &CValue) -> ProofObligation {
+    ProofObligation::new(Proposition::Equal(
+        Term::CValue(value.clone()),
+        Term::CValue(int32(1)),
+    ))
+}
+
+fn execute_c_while_paths(
+    state: &CState,
+    condition: &CExpression,
+    invariant: &[Proposition],
+    body: &CStatement,
+    assumptions: &Assumptions,
+    environment: &CFunctionEnvironment,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     budget.consume_loop_unroll()?;
 
     let mut base_obligations = Vec::new();
-    for prop in invariant {
-        if add_proof_obligation(&mut base_obligations, assumptions, prop.clone()).is_none() {
+    for proposition in invariant {
+        if add_proof_obligation(&mut base_obligations, assumptions, proposition.clone()).is_none() {
             return Ok(Vec::new());
         }
     }
-    let loop_assumptions = assumptions_with_props(assumptions, invariant);
+    let loop_assumptions = assumptions_with_propositions(assumptions, invariant);
     let mut paths = Vec::new();
 
-    for condition_path in eval_c_expr_paths(state, condition, &loop_assumptions, budget)? {
+    for condition_path in evaluate_c_expression_paths(state, condition, &loop_assumptions, budget)?
+    {
         let Some((condition_facts, condition_obligations)) = merge_path_facts_and_obligations(
             &[],
             &base_obligations,
@@ -4021,38 +4341,40 @@ fn exec_c_while_paths(
         };
 
         match condition_path.outcome {
-            CExprOutcome::Value(value) => {
+            CExpressionOutcome::Value(value) => {
                 let truthiness_paths =
                     c_truthiness_paths(value, condition_facts, condition_obligations, assumptions);
                 for truthiness_path in truthiness_paths {
                     if truthiness_path.is_true {
-                        paths.extend(exec_c_while_body_paths(
+                        paths.extend(execute_c_while_body_paths(
                             state,
                             condition,
                             invariant,
                             body,
                             assumptions,
-                            env,
+                            environment,
                             truthiness_path.facts,
                             truthiness_path.obligations,
                             budget,
                         )?);
                     } else {
-                        paths.push(CStmtPath {
-                            outcome: CStmtOutcome::Normal(state.clone()),
+                        paths.push(CStatementExecutionPath {
+                            outcome: CStatementOutcome::Normal(state.clone()),
                             facts: truthiness_path.facts,
                             obligations: truthiness_path.obligations,
                         });
                     }
                 }
             }
-            CExprOutcome::Ub(ub) => paths.push(CStmtPath {
-                outcome: CStmtOutcome::Ub(ub),
-                facts: condition_facts,
-                obligations: condition_obligations,
-            }),
-            CExprOutcome::RuntimeError(error) => paths.push(CStmtPath {
-                outcome: CStmtOutcome::RuntimeError(error),
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: condition_facts,
+                    obligations: condition_obligations,
+                })
+            }
+            CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(error),
                 facts: condition_facts,
                 obligations: condition_obligations,
             }),
@@ -4063,20 +4385,21 @@ fn exec_c_while_paths(
     Ok(paths)
 }
 
-fn exec_c_while_body_paths(
+fn execute_c_while_body_paths(
     state: &CState,
-    condition: &CExpr,
-    invariant: &[Prop],
-    body: &CStmt,
+    condition: &CExpression,
+    invariant: &[Proposition],
+    body: &CStatement,
     assumptions: &Assumptions,
-    env: &CFunctionEnv,
+    environment: &CFunctionEnvironment,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CStmtPath>> {
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let body_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
     let mut paths = Vec::new();
-    for body_path in exec_c_stmt_paths(state, body, &body_assumptions, env, budget)? {
+    for body_path in execute_c_statement_paths(state, body, &body_assumptions, environment, budget)?
+    {
         let Some((facts, obligations)) = merge_path_facts_and_obligations(
             &facts,
             &obligations,
@@ -4088,16 +4411,16 @@ fn exec_c_while_body_paths(
         };
 
         match body_path.outcome {
-            CStmtOutcome::Normal(next_state) => {
+            CStatementOutcome::Normal(next_state) => {
                 let next_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
-                for path in exec_c_while_paths(
+                for path in execute_c_while_paths(
                     &next_state,
                     condition,
                     invariant,
                     body,
                     &next_assumptions,
-                    env,
+                    environment,
                     budget,
                 )? {
                     let (facts, obligations) = merge_path_facts_and_obligations(
@@ -4108,16 +4431,16 @@ fn exec_c_while_body_paths(
                         assumptions,
                     )
                     .expect("merged loop path facts should remain consistent");
-                    paths.push(CStmtPath {
+                    paths.push(CStatementExecutionPath {
                         outcome: path.outcome,
                         facts,
                         obligations,
                     });
                 }
             }
-            outcome @ (CStmtOutcome::Return { .. }
-            | CStmtOutcome::Ub(_)
-            | CStmtOutcome::RuntimeError(_)) => paths.push(CStmtPath {
+            outcome @ (CStatementOutcome::Return { .. }
+            | CStatementOutcome::UndefinedBehavior(_)
+            | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
                 outcome,
                 facts,
                 obligations,
@@ -4128,46 +4451,46 @@ fn exec_c_while_body_paths(
     Ok(paths)
 }
 
-fn declare_local(state: &CState, name: &str, ty: CType) -> CState {
+fn declare_local(state: &CState, name: &str, c_type: CType) -> CState {
     let mut state = state.clone();
-    let (initial_value, byte_width) = match ty {
+    let (initial_value, byte_width) = match c_type {
         CType::Int32 => (int32(0), 4),
-        CType::Int32Ptr => (
-            CValue::Ptr(Ptr {
+        CType::Int32Pointer => (
+            CValue::Pointer(Pointer {
                 block: "null".to_string(),
-                offset: PtrOffsetTerm::Const(0),
+                offset: PointerOffsetTerm::Constant(0),
             }),
             C_POINTER_BYTE_WIDTH,
         ),
     };
-    let ptr = CMemory::local_ptr(name);
+    let pointer = CMemory::local_pointer(name);
     state.memory = state
         .memory
-        .with_block(ptr.block.clone(), byte_width)
-        .store(ptr, initial_value.clone());
+        .with_block(pointer.block.clone(), byte_width)
+        .store(pointer, initial_value.clone());
     state.locals.set(name.to_string(), initial_value);
     state
 }
 
 fn sync_stack_local(state: &mut CState, name: &str, value: &CValue) {
-    let ptr = CMemory::local_ptr(name);
-    if state.memory.has_block(&ptr.block) {
-        state.memory = state.memory.clone().store(ptr, value.clone());
+    let pointer = CMemory::local_pointer(name);
+    if state.memory.has_block(&pointer.block) {
+        state.memory = state.memory.clone().store(pointer, value.clone());
     }
 }
 
-fn exec_c_call_assign_paths(
+fn execute_c_call_assign_paths(
     state: &CState,
     target: &str,
     function_name: &str,
-    args: &[CExpr],
+    arguments: &[CExpression],
     assumptions: &Assumptions,
-    env: &CFunctionEnv,
+    environment: &CFunctionEnvironment,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CStmtPath>> {
-    let Some(function) = env.get_function(function_name) else {
-        return Ok(vec![CStmtPath {
-            outcome: CStmtOutcome::RuntimeError(CRuntimeError::UnknownFunction(
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let Some(function) = environment.get_function(function_name) else {
+        return Ok(vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::RuntimeError(CRuntimeError::UnknownFunction(
                 function_name.to_string(),
             )),
             facts: Vec::new(),
@@ -4175,76 +4498,85 @@ fn exec_c_call_assign_paths(
         }]);
     };
 
-    let paths = exec_c_function_paths(state, function, args, assumptions, env, budget)?
-        .into_iter()
-        .map(|path| {
-            let outcome = match path.outcome {
-                CFunctionOutcome::Return { value, mut state } => {
-                    sync_stack_local(&mut state, target, &value);
-                    state.locals.set(target.to_string(), value);
-                    CStmtOutcome::Normal(state)
-                }
-                CFunctionOutcome::Ub(ub) => CStmtOutcome::Ub(ub),
-                CFunctionOutcome::RuntimeError(error) => CStmtOutcome::RuntimeError(error),
-            };
+    let paths =
+        execute_c_function_paths(state, function, arguments, assumptions, environment, budget)?
+            .into_iter()
+            .map(|path| {
+                let outcome = match path.outcome {
+                    CFunctionOutcome::Return { value, mut state } => {
+                        sync_stack_local(&mut state, target, &value);
+                        state.locals.set(target.to_string(), value);
+                        CStatementOutcome::Normal(state)
+                    }
+                    CFunctionOutcome::UndefinedBehavior(undefined_behavior) => {
+                        CStatementOutcome::UndefinedBehavior(undefined_behavior)
+                    }
+                    CFunctionOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
+                };
 
-            CStmtPath {
-                outcome,
-                facts: path.facts,
-                obligations: path.obligations,
-            }
-        })
-        .collect::<Vec<_>>();
+                CStatementExecutionPath {
+                    outcome,
+                    facts: path.facts,
+                    obligations: path.obligations,
+                }
+            })
+            .collect::<Vec<_>>();
     budget.consume_paths(paths.len())?;
     Ok(paths)
 }
 
-fn exec_c_stmt_paths_with_prefix(
+fn execute_c_statement_paths_with_prefix(
     state: &CState,
-    stmt: &CStmt,
+    statement: &CStatement,
     assumptions: &Assumptions,
-    env: &CFunctionEnv,
+    environment: &CFunctionEnvironment,
     prefix_facts: &[PathFact],
     prefix_obligations: &[ProofObligation],
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CStmtPath>> {
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let effective_assumptions =
         assumptions_with_path_context(assumptions, prefix_facts, prefix_obligations);
-    let paths = exec_c_stmt_paths(state, stmt, &effective_assumptions, env, budget)?
-        .into_iter()
-        .filter_map(|path| {
-            let (facts, obligations) = merge_path_facts_and_obligations(
-                prefix_facts,
-                prefix_obligations,
-                &path.facts,
-                &path.obligations,
-                assumptions,
-            )?;
-            Some(CStmtPath {
-                outcome: path.outcome,
-                facts,
-                obligations,
-            })
+    let paths = execute_c_statement_paths(
+        state,
+        statement,
+        &effective_assumptions,
+        environment,
+        budget,
+    )?
+    .into_iter()
+    .filter_map(|path| {
+        let (facts, obligations) = merge_path_facts_and_obligations(
+            prefix_facts,
+            prefix_obligations,
+            &path.facts,
+            &path.obligations,
+            assumptions,
+        )?;
+        Some(CStatementExecutionPath {
+            outcome: path.outcome,
+            facts,
+            obligations,
         })
-        .collect::<Vec<_>>();
+    })
+    .collect::<Vec<_>>();
     budget.consume_paths(paths.len())?;
     Ok(paths)
 }
 
-fn exec_c_function_paths(
+fn execute_c_function_paths(
     caller_state: &CState,
     function: &CFunction,
-    args: &[CExpr],
+    arguments: &[CExpression],
     assumptions: &Assumptions,
-    env: &CFunctionEnv,
+    environment: &CFunctionEnvironment,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     budget.consume_function_call()?;
-    if args.len() != function.params.len() {
+    if arguments.len() != function.parameters.len() {
         return Ok(vec![CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::WrongArity {
-                expected: function.params.len(),
-                actual: args.len(),
+                expected: function.parameters.len(),
+                actual: arguments.len(),
             }),
             facts: Vec::new(),
             obligations: Vec::new(),
@@ -4252,38 +4584,43 @@ fn exec_c_function_paths(
     }
 
     let mut paths = Vec::new();
-    for args_path in eval_c_args_paths(caller_state, args, assumptions, budget)? {
-        if let Some(outcome) = args_path.outcome {
+    for arguments_path in evaluate_c_arguments_paths(caller_state, arguments, assumptions, budget)?
+    {
+        if let Some(outcome) = arguments_path.outcome {
             paths.push(CFunctionPath {
                 outcome,
-                facts: args_path.facts,
-                obligations: args_path.obligations,
+                facts: arguments_path.facts,
+                obligations: arguments_path.obligations,
             });
             continue;
         }
 
-        let Some(callee_state) = bind_c_function_args(caller_state, function, &args_path.values)
+        let Some(callee_state) =
+            bind_c_function_arguments(caller_state, function, &arguments_path.values)
         else {
             paths.push(CFunctionPath {
                 outcome: CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                facts: args_path.facts,
-                obligations: args_path.obligations,
+                facts: arguments_path.facts,
+                obligations: arguments_path.obligations,
             });
             continue;
         };
 
-        let body_assumptions =
-            assumptions_with_path_context(assumptions, &args_path.facts, &args_path.obligations);
-        for body_path in exec_c_stmt_paths(
+        let body_assumptions = assumptions_with_path_context(
+            assumptions,
+            &arguments_path.facts,
+            &arguments_path.obligations,
+        );
+        for body_path in execute_c_statement_paths(
             &callee_state,
             function.body(),
             &body_assumptions,
-            env,
+            environment,
             budget,
         )? {
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
-                &args_path.facts,
-                &args_path.obligations,
+                &arguments_path.facts,
+                &arguments_path.obligations,
                 &body_path.facts,
                 &body_path.obligations,
                 assumptions,
@@ -4305,40 +4642,40 @@ fn exec_c_function_paths(
 
 fn add_memory_store_obligation(
     memory: &CMemory,
-    ptr: &Ptr,
+    pointer: &Pointer,
     value: &CValue,
     mut obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Option<Vec<ProofObligation>> {
-    if memory.can_store_concretely(ptr, value) {
+    if memory.can_store_concretely(pointer, value) {
         return Some(obligations);
     }
 
     add_proof_obligation(
         &mut obligations,
         assumptions,
-        Prop::CMemoryCanStore {
+        Proposition::CMemoryCanStore {
             memory: memory.clone(),
-            ptr: ptr.clone(),
+            pointer: pointer.clone(),
         },
     )?;
     Some(obligations)
 }
 
-fn eval_c_args_paths(
+fn evaluate_c_arguments_paths(
     state: &CState,
-    args: &[CExpr],
+    arguments: &[CExpression],
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CArgsPath>> {
-    let mut paths = vec![CArgsPath {
+) -> ExecutionResult<Vec<CArgumentsPath>> {
+    let mut paths = vec![CArgumentsPath {
         values: Vec::new(),
         outcome: None,
         facts: Vec::new(),
         obligations: Vec::new(),
     }];
 
-    for arg in args {
+    for argument in arguments {
         let mut next_paths = Vec::new();
         for path in paths {
             if path.outcome.is_some() {
@@ -4346,37 +4683,41 @@ fn eval_c_args_paths(
                 continue;
             }
 
-            let arg_assumptions =
+            let argument_assumptions =
                 assumptions_with_path_context(assumptions, &path.facts, &path.obligations);
-            for arg_path in eval_c_expr_paths(state, arg, &arg_assumptions, budget)? {
+            for argument_path in
+                evaluate_c_expression_paths(state, argument, &argument_assumptions, budget)?
+            {
                 let Some((facts, obligations)) = merge_path_facts_and_obligations(
                     &path.facts,
                     &path.obligations,
-                    &arg_path.facts,
-                    &arg_path.obligations,
+                    &argument_path.facts,
+                    &argument_path.obligations,
                     assumptions,
                 ) else {
                     continue;
                 };
 
-                match arg_path.outcome {
-                    CExprOutcome::Value(value) => {
+                match argument_path.outcome {
+                    CExpressionOutcome::Value(value) => {
                         let mut values = path.values.clone();
                         values.push(value);
-                        next_paths.push(CArgsPath {
+                        next_paths.push(CArgumentsPath {
                             values,
                             outcome: None,
                             facts,
                             obligations,
                         });
                     }
-                    CExprOutcome::Ub(ub) => next_paths.push(CArgsPath {
-                        values: path.values.clone(),
-                        outcome: Some(CFunctionOutcome::Ub(ub)),
-                        facts,
-                        obligations,
-                    }),
-                    CExprOutcome::RuntimeError(error) => next_paths.push(CArgsPath {
+                    CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                        next_paths.push(CArgumentsPath {
+                            values: path.values.clone(),
+                            outcome: Some(CFunctionOutcome::UndefinedBehavior(undefined_behavior)),
+                            facts,
+                            obligations,
+                        })
+                    }
+                    CExpressionOutcome::RuntimeError(error) => next_paths.push(CArgumentsPath {
                         values: path.values.clone(),
                         outcome: Some(CFunctionOutcome::RuntimeError(error)),
                         facts,
@@ -4393,19 +4734,19 @@ fn eval_c_args_paths(
     Ok(paths)
 }
 
-fn bind_c_function_args(
+fn bind_c_function_arguments(
     caller_state: &CState,
     function: &CFunction,
     values: &[CValue],
 ) -> Option<CState> {
     let mut callee_state = CState::new().with_memory(caller_state.memory.clone());
-    for (param, value) in function.params().iter().zip(values) {
-        if !param.ty().accepts(value) {
+    for (parameter, value) in function.parameters().iter().zip(values) {
+        if !parameter.c_type().accepts(value) {
             return None;
         }
         callee_state
             .locals
-            .set(param.name().to_string(), value.clone());
+            .set(parameter.name().to_string(), value.clone());
     }
     Some(callee_state)
 }
@@ -4413,10 +4754,10 @@ fn bind_c_function_args(
 fn function_outcome_from_body(
     caller_state: &CState,
     function: &CFunction,
-    outcome: CStmtOutcome,
+    outcome: CStatementOutcome,
 ) -> CFunctionOutcome {
     match outcome {
-        CStmtOutcome::Return { value, state } => {
+        CStatementOutcome::Return { value, state } => {
             if !function.return_type().accepts(&value) {
                 return CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch);
             }
@@ -4428,21 +4769,25 @@ fn function_outcome_from_body(
                 state: caller_state,
             }
         }
-        CStmtOutcome::Normal(_) => CFunctionOutcome::RuntimeError(CRuntimeError::MissingReturn),
-        CStmtOutcome::Ub(ub) => CFunctionOutcome::Ub(ub),
-        CStmtOutcome::RuntimeError(error) => CFunctionOutcome::RuntimeError(error),
+        CStatementOutcome::Normal(_) => {
+            CFunctionOutcome::RuntimeError(CRuntimeError::MissingReturn)
+        }
+        CStatementOutcome::UndefinedBehavior(undefined_behavior) => {
+            CFunctionOutcome::UndefinedBehavior(undefined_behavior)
+        }
+        CStatementOutcome::RuntimeError(error) => CFunctionOutcome::RuntimeError(error),
     }
 }
 
-impl From<u32> for Bv32Term {
+impl From<u32> for Bitvector32Term {
     fn from(value: u32) -> Self {
-        Self::Const(value)
+        Self::Constant(value)
     }
 }
 
 impl From<bool> for ConditionTerm {
     fn from(value: bool) -> Self {
-        Self::Const(value)
+        Self::Constant(value)
     }
 }
 
@@ -4453,14 +4798,15 @@ mod tests {
     #[test]
     fn concrete_max_executes_without_list_encoding() {
         let state = c_max_state(int32(0), int32(1));
-        let theorem = prove_c_stmt_exec(state.clone(), c_max_body()).expect("max should execute");
+        let theorem =
+            prove_c_statement_execution(state.clone(), c_max_body()).expect("max should execute");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
                 state: state.clone(),
-                stmt: c_max_body(),
-                outcome: CStmtOutcome::Return {
+                statement: c_max_body(),
+                outcome: CStatementOutcome::Return {
                     value: int32(1),
                     state,
                 },
@@ -4472,21 +4818,21 @@ mod tests {
     fn concrete_max_function_call_preserves_caller_locals() {
         let state = CState::new().with_local("caller", int32(99));
         let function = c_max_function();
-        let args = vec![c_int32_literal(0), c_int32_literal(1)];
+        let arguments = vec![c_int32_literal(0), c_int32_literal(1)];
         let theorem = prove_symbolic_c_function_execution(
             state.clone(),
             function.clone(),
-            args.clone(),
+            arguments.clone(),
             Assumptions::new(),
         )
         .expect("max function call should execute");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CFunctionExecutes {
+            theorem.proposition(),
+            &Proposition::CFunctionExecutes {
                 state: state.clone(),
                 function,
-                args,
+                arguments,
                 outcome: CFunctionOutcome::Return {
                     value: int32(1),
                     state,
@@ -4497,21 +4843,21 @@ mod tests {
 
     #[test]
     fn symbolic_max_function_call_reports_branch_facts() {
-        let a = Var(14);
-        let b = Var(15);
-        let a_bits = Bv32Term::Var(a);
-        let b_bits = Bv32Term::Var(b);
+        let a = Variable(14);
+        let b = Variable(15);
+        let a_bits = Bitvector32Term::Variable(a);
+        let b_bits = Bitvector32Term::Variable(b);
         let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
         let state = CState::new();
         let function = c_max_function();
-        let args = vec![
-            CExpr::Value(int32(a_bits.clone())),
-            CExpr::Value(int32(b_bits.clone())),
+        let arguments = vec![
+            CExpression::Value(int32(a_bits.clone())),
+            CExpression::Value(int32(b_bits.clone())),
         ];
         let execution = prove_symbolic_c_function_execution_paths(
             state.clone(),
             function.clone(),
-            args.clone(),
+            arguments.clone(),
             Assumptions::new(),
         );
 
@@ -4525,13 +4871,13 @@ mod tests {
             &[] as &[ProofObligation]
         );
         assert_eq!(
-            execution.paths()[0].theorem().prop(),
-            &Prop::Implies(
-                Box::new(Prop::ConditionIs(condition.clone(), true)),
-                Box::new(Prop::CFunctionExecutes {
+            execution.paths()[0].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(condition.clone(), true)),
+                Box::new(Proposition::CFunctionExecutes {
                     state: state.clone(),
                     function: function.clone(),
-                    args: args.clone(),
+                    arguments: arguments.clone(),
                     outcome: CFunctionOutcome::Return {
                         value: int32(b_bits),
                         state: state.clone(),
@@ -4549,13 +4895,13 @@ mod tests {
             &[] as &[ProofObligation]
         );
         assert_eq!(
-            execution.paths()[1].theorem().prop(),
-            &Prop::Implies(
-                Box::new(Prop::ConditionIs(condition, false)),
-                Box::new(Prop::CFunctionExecutes {
+            execution.paths()[1].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(condition, false)),
+                Box::new(Proposition::CFunctionExecutes {
                     state: state.clone(),
                     function,
-                    args,
+                    arguments,
                     outcome: CFunctionOutcome::Return {
                         value: int32(a_bits),
                         state,
@@ -4567,44 +4913,44 @@ mod tests {
 
     #[test]
     fn function_call_threads_memory_but_discards_callee_locals() {
-        let ptr = Ptr {
+        let pointer = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
         let state = CState::new().with_local("caller", int32(42));
         let function = c_function(
             CType::Int32,
             "store_and_load",
-            vec![c_param("p", CType::Int32Ptr)],
+            vec![c_parameter("p", CType::Int32Pointer)],
             c_seq(
-                c_store(c_var("p"), c_int32_literal(9)),
-                c_return(c_load(c_var("p"))),
+                c_store(c_variable("p"), c_int32_literal(9)),
+                c_return(c_load(c_variable("p"))),
             ),
         );
-        let args = vec![c_ptr_value(ptr.clone())];
+        let arguments = vec![c_pointer_value(pointer.clone())];
         let final_state = CState::new()
             .with_local("caller", int32(42))
-            .with_memory(CMemory::new().store(ptr.clone(), int32(9)));
-        let store_obligation = Prop::CMemoryCanStore {
+            .with_memory(CMemory::new().store(pointer.clone(), int32(9)));
+        let store_obligation = Proposition::CMemoryCanStore {
             memory: CMemory::new(),
-            ptr,
+            pointer,
         };
         let theorem = prove_symbolic_c_function_execution(
             state.clone(),
             function.clone(),
-            args.clone(),
+            arguments.clone(),
             Assumptions::new(),
         )
         .expect("store/load function call should execute");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::Implies(
+            theorem.proposition(),
+            &Proposition::Implies(
                 Box::new(store_obligation),
-                Box::new(Prop::CFunctionExecutes {
+                Box::new(Proposition::CFunctionExecutes {
                     state,
                     function,
-                    args,
+                    arguments,
                     outcome: CFunctionOutcome::Return {
                         value: int32(9),
                         state: final_state,
@@ -4615,9 +4961,9 @@ mod tests {
     }
 
     #[test]
-    fn concrete_function_spec_is_native_theorem() {
+    fn concrete_function_specification_is_native_theorem() {
         let function = c_max_function();
-        let spec = c_function_spec(
+        let specification = c_function_specification(
             CState::new(),
             vec![c_int32_literal(0), c_int32_literal(1)],
             Vec::new(),
@@ -4626,141 +4972,167 @@ mod tests {
                 state: CState::new(),
             },
         );
-        let theorem =
-            prove_c_function_satisfies_spec(function.clone(), spec.clone(), Assumptions::new())
-                .expect("concrete max spec should prove");
+        let theorem = prove_c_function_satisfies_specification(
+            function.clone(),
+            specification.clone(),
+            Assumptions::new(),
+        )
+        .expect("concrete max specification should prove");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CFunctionSatisfiesSpec { function, spec }
+            theorem.proposition(),
+            &Proposition::CFunctionSatisfiesSpecification {
+                function,
+                specification
+            }
         );
     }
 
     #[test]
-    fn symbolic_function_spec_uses_requirements_as_path_facts() {
-        let a = Var(16);
-        let b = Var(17);
-        let a_bits = Bv32Term::Var(a);
-        let b_bits = Bv32Term::Var(b);
+    fn symbolic_function_specification_uses_requirements_as_path_facts() {
+        let a = Variable(16);
+        let b = Variable(17);
+        let a_bits = Bitvector32Term::Variable(a);
+        let b_bits = Bitvector32Term::Variable(b);
         let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
         let function = c_max_function();
-        let spec = c_function_spec(
+        let specification = c_function_specification(
             CState::new(),
-            vec![CExpr::Value(int32(a_bits)), CExpr::Value(int32(b_bits))],
-            vec![Prop::ConditionIs(condition.clone(), true)],
+            vec![
+                CExpression::Value(int32(a_bits)),
+                CExpression::Value(int32(b_bits)),
+            ],
+            vec![Proposition::ConditionIs(condition.clone(), true)],
             CFunctionOutcome::Return {
-                value: int32(Bv32Term::Var(b)),
+                value: int32(Bitvector32Term::Variable(b)),
                 state: CState::new(),
             },
         );
-        let theorem =
-            prove_c_function_satisfies_spec(function.clone(), spec.clone(), Assumptions::new())
-                .expect("symbolic branch spec should prove under condition");
+        let theorem = prove_c_function_satisfies_specification(
+            function.clone(),
+            specification.clone(),
+            Assumptions::new(),
+        )
+        .expect("symbolic branch specification should prove under condition");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::Implies(
-                Box::new(Prop::ConditionIs(condition, true)),
-                Box::new(Prop::CFunctionSatisfiesSpec { function, spec }),
+            theorem.proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(condition, true)),
+                Box::new(Proposition::CFunctionSatisfiesSpecification {
+                    function,
+                    specification
+                }),
             )
         );
     }
 
     #[test]
-    fn symbolic_max_branch_specs_include_bounds() {
-        let a = Var(60);
-        let b = Var(61);
-        let a_bits = Bv32Term::Var(a);
-        let b_bits = Bv32Term::Var(b);
+    fn symbolic_max_branch_specifications_include_bounds() {
+        let a = Variable(60);
+        let b = Variable(61);
+        let a_bits = Bitvector32Term::Variable(a);
+        let b_bits = Bitvector32Term::Variable(b);
         let function = c_max_function();
-        let args = vec![
-            CExpr::Value(int32(a_bits.clone())),
-            CExpr::Value(int32(b_bits.clone())),
+        let arguments = vec![
+            CExpression::Value(int32(a_bits.clone())),
+            CExpression::Value(int32(b_bits.clone())),
         ];
         let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
 
-        let right_spec = c_function_spec(
+        let right_specification = c_function_specification(
             CState::new(),
-            args.clone(),
-            vec![Prop::ConditionIs(condition.clone(), true)],
+            arguments.clone(),
+            vec![Proposition::ConditionIs(condition.clone(), true)],
             CFunctionOutcome::Return {
                 value: int32(b_bits.clone()),
                 state: CState::new(),
             },
         );
-        prove_c_function_satisfies_spec_and_props(
+        prove_c_function_satisfies_specification_and_propositions(
             function.clone(),
-            right_spec,
+            right_specification,
             Assumptions::new(),
             vec![
-                Prop::ConditionIs(ConditionTerm::sge(b_bits.clone(), a_bits.clone()), true),
-                Prop::ConditionIs(ConditionTerm::sge(b_bits.clone(), b_bits.clone()), true),
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(b_bits.clone(), a_bits.clone()),
+                    true,
+                ),
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(b_bits.clone(), b_bits.clone()),
+                    true,
+                ),
             ],
         )
         .expect("under a < b, max returns b and b is >= both inputs");
 
-        let left_spec = c_function_spec(
+        let left_specification = c_function_specification(
             CState::new(),
-            args,
-            vec![Prop::ConditionIs(condition, false)],
+            arguments,
+            vec![Proposition::ConditionIs(condition, false)],
             CFunctionOutcome::Return {
                 value: int32(a_bits.clone()),
                 state: CState::new(),
             },
         );
-        prove_c_function_satisfies_spec_and_props(
+        prove_c_function_satisfies_specification_and_propositions(
             function,
-            left_spec,
+            left_specification,
             Assumptions::new(),
             vec![
-                Prop::ConditionIs(ConditionTerm::sge(a_bits.clone(), a_bits.clone()), true),
-                Prop::ConditionIs(ConditionTerm::sge(a_bits, b_bits), true),
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(a_bits.clone(), a_bits.clone()),
+                    true,
+                ),
+                Proposition::ConditionIs(ConditionTerm::signed_greater_equal(a_bits, b_bits), true),
             ],
         )
         .expect("under not (a < b), max returns a and a is >= both inputs");
     }
 
     #[test]
-    fn symbolic_clamp_branch_specs_include_bounds_under_ordered_limits() {
-        let x = Var(62);
-        let lo = Var(63);
-        let hi = Var(64);
-        let x_bits = Bv32Term::Var(x);
-        let lo_bits = Bv32Term::Var(lo);
-        let hi_bits = Bv32Term::Var(hi);
-        let ordered_limits =
-            Prop::ConditionIs(ConditionTerm::sle(lo_bits.clone(), hi_bits.clone()), true);
-        let below_lo = ConditionTerm::slt(x_bits.clone(), lo_bits.clone());
-        let above_hi = ConditionTerm::sgt(x_bits.clone(), hi_bits.clone());
+    fn symbolic_clamp_branch_specifications_include_bounds_under_ordered_limits() {
+        let x = Variable(62);
+        let lo = Variable(63);
+        let hi = Variable(64);
+        let x_bits = Bitvector32Term::Variable(x);
+        let lo_bits = Bitvector32Term::Variable(lo);
+        let hi_bits = Bitvector32Term::Variable(hi);
+        let ordered_limits = Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(lo_bits.clone(), hi_bits.clone()),
+            true,
+        );
+        let below_lo = ConditionTerm::signed_less_than(x_bits.clone(), lo_bits.clone());
+        let above_hi = ConditionTerm::signed_greater_than(x_bits.clone(), hi_bits.clone());
         let function = c_function(
             CType::Int32,
             "clamp",
             vec![
-                c_param("x", CType::Int32),
-                c_param("lo", CType::Int32),
-                c_param("hi", CType::Int32),
+                c_parameter("x", CType::Int32),
+                c_parameter("lo", CType::Int32),
+                c_parameter("hi", CType::Int32),
             ],
             c_if(
-                c_lt(c_var("x"), c_var("lo")),
-                c_return(c_var("lo")),
+                c_less_than(c_variable("x"), c_variable("lo")),
+                c_return(c_variable("lo")),
                 c_if(
-                    c_gt(c_var("x"), c_var("hi")),
-                    c_return(c_var("hi")),
-                    c_return(c_var("x")),
+                    c_greater_than(c_variable("x"), c_variable("hi")),
+                    c_return(c_variable("hi")),
+                    c_return(c_variable("x")),
                 ),
             ),
         );
-        let args = vec![
-            CExpr::Value(int32(x_bits.clone())),
-            CExpr::Value(int32(lo_bits.clone())),
-            CExpr::Value(int32(hi_bits.clone())),
+        let arguments = vec![
+            CExpression::Value(int32(x_bits.clone())),
+            CExpression::Value(int32(lo_bits.clone())),
+            CExpression::Value(int32(hi_bits.clone())),
         ];
 
         for (requires, result, message) in [
             (
                 vec![
                     ordered_limits.clone(),
-                    Prop::ConditionIs(below_lo.clone(), true),
+                    Proposition::ConditionIs(below_lo.clone(), true),
                 ],
                 lo_bits.clone(),
                 "x below lo returns lo within bounds",
@@ -4768,8 +5140,8 @@ mod tests {
             (
                 vec![
                     ordered_limits.clone(),
-                    Prop::ConditionIs(below_lo.clone(), false),
-                    Prop::ConditionIs(above_hi.clone(), true),
+                    Proposition::ConditionIs(below_lo.clone(), false),
+                    Proposition::ConditionIs(above_hi.clone(), true),
                 ],
                 hi_bits.clone(),
                 "x above hi returns hi within bounds",
@@ -4777,29 +5149,35 @@ mod tests {
             (
                 vec![
                     ordered_limits.clone(),
-                    Prop::ConditionIs(below_lo.clone(), false),
-                    Prop::ConditionIs(above_hi.clone(), false),
+                    Proposition::ConditionIs(below_lo.clone(), false),
+                    Proposition::ConditionIs(above_hi.clone(), false),
                 ],
                 x_bits.clone(),
                 "x already in range returns x within bounds",
             ),
         ] {
-            let spec = c_function_spec(
+            let specification = c_function_specification(
                 CState::new(),
-                args.clone(),
+                arguments.clone(),
                 requires,
                 CFunctionOutcome::Return {
                     value: int32(result.clone()),
                     state: CState::new(),
                 },
             );
-            prove_c_function_satisfies_spec_and_props(
+            prove_c_function_satisfies_specification_and_propositions(
                 function.clone(),
-                spec,
+                specification,
                 Assumptions::new(),
                 vec![
-                    Prop::ConditionIs(ConditionTerm::sge(result.clone(), lo_bits.clone()), true),
-                    Prop::ConditionIs(ConditionTerm::sle(result, hi_bits.clone()), true),
+                    Proposition::ConditionIs(
+                        ConditionTerm::signed_greater_equal(result.clone(), lo_bits.clone()),
+                        true,
+                    ),
+                    Proposition::ConditionIs(
+                        ConditionTerm::signed_less_equal(result, hi_bits.clone()),
+                        true,
+                    ),
                 ],
             )
             .expect(message);
@@ -4807,24 +5185,27 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_symbolic_function_spec_does_not_prove() {
-        let a = Var(18);
-        let b = Var(19);
+    fn incomplete_symbolic_function_specification_does_not_prove() {
+        let a = Variable(18);
+        let b = Variable(19);
         let function = c_max_function();
-        let spec = c_function_spec(
+        let specification = c_function_specification(
             CState::new(),
             vec![
-                CExpr::Value(int32(Bv32Term::Var(a))),
-                CExpr::Value(int32(Bv32Term::Var(b))),
+                CExpression::Value(int32(Bitvector32Term::Variable(a))),
+                CExpression::Value(int32(Bitvector32Term::Variable(b))),
             ],
             Vec::new(),
             CFunctionOutcome::Return {
-                value: int32(Bv32Term::Var(b)),
+                value: int32(Bitvector32Term::Variable(b)),
                 state: CState::new(),
             },
         );
 
-        assert!(prove_c_function_satisfies_spec(function, spec, Assumptions::new()).is_none());
+        assert!(
+            prove_c_function_satisfies_specification(function, specification, Assumptions::new())
+                .is_none()
+        );
     }
 
     #[test]
@@ -4832,30 +5213,30 @@ mod tests {
         let increment = c_function(
             CType::Int32,
             "increment",
-            vec![c_param("x", CType::Int32)],
-            c_return(c_add(c_var("x"), c_int32_literal(1))),
+            vec![c_parameter("x", CType::Int32)],
+            c_return(c_add(c_variable("x"), c_int32_literal(1))),
         );
-        let env = CFunctionEnv::new().with_function(increment);
+        let environment = CFunctionEnvironment::new().with_function(increment);
         let state = CState::new();
-        let stmt = c_seq(
+        let statement = c_seq(
             c_call_assign("result", "increment", vec![c_int32_literal(41)]),
-            c_return(c_var("result")),
+            c_return(c_variable("result")),
         );
         let final_state = CState::new().with_local("result", int32(42));
-        let theorem = prove_symbolic_c_execution_with_env(
+        let theorem = prove_symbolic_c_execution_with_environment(
             state.clone(),
-            stmt.clone(),
+            statement.clone(),
             Assumptions::new(),
-            env,
+            environment,
         )
         .expect("known function call should execute");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
                 state,
-                stmt,
-                outcome: CStmtOutcome::Return {
+                statement,
+                outcome: CStatementOutcome::Return {
                     value: int32(42),
                     state: final_state,
                 },
@@ -4866,21 +5247,21 @@ mod tests {
     #[test]
     fn unknown_call_assign_is_runtime_error() {
         let state = CState::new();
-        let stmt = c_call_assign("result", "missing", Vec::new());
-        let theorem = prove_symbolic_c_execution_with_env(
+        let statement = c_call_assign("result", "missing", Vec::new());
+        let theorem = prove_symbolic_c_execution_with_environment(
             state.clone(),
-            stmt.clone(),
+            statement.clone(),
             Assumptions::new(),
-            CFunctionEnv::new(),
+            CFunctionEnvironment::new(),
         )
         .expect("unknown function should produce a single runtime-error path");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
                 state,
-                stmt,
-                outcome: CStmtOutcome::RuntimeError(CRuntimeError::UnknownFunction(
+                statement,
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::UnknownFunction(
                     "missing".to_string(),
                 )),
             }
@@ -4890,22 +5271,23 @@ mod tests {
     #[test]
     fn while_loop_executes_concrete_countdown() {
         let state = CState::new().with_local("x", int32(3));
-        let loop_stmt = c_while(
-            c_gt(c_var("x"), c_int32_literal(0)),
+        let loop_statement = c_while(
+            c_greater_than(c_variable("x"), c_int32_literal(0)),
             Vec::new(),
-            c_assign("x", c_sub(c_var("x"), c_int32_literal(1))),
+            c_assign("x", c_subtract(c_variable("x"), c_int32_literal(1))),
         );
-        let stmt = c_seq(loop_stmt, c_return(c_var("x")));
+        let statement = c_seq(loop_statement, c_return(c_variable("x")));
         let final_state = CState::new().with_local("x", int32(0));
-        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
-            .expect("concrete countdown loop should execute");
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("concrete countdown loop should execute");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
                 state,
-                stmt,
-                outcome: CStmtOutcome::Return {
+                statement,
+                outcome: CStatementOutcome::Return {
                     value: int32(0),
                     state: final_state,
                 },
@@ -4916,11 +5298,15 @@ mod tests {
     #[test]
     fn loop_budget_exhaustion_is_executor_failure_not_c_runtime_error() {
         let state = CState::new().with_local("x", int32(0));
-        let stmt = c_while(c_int32_literal(1), Vec::new(), c_assign("x", c_var("x")));
+        let statement = c_while(
+            c_int32_literal(1),
+            Vec::new(),
+            c_assign("x", c_variable("x")),
+        );
         let budget = ExecutionBudget::new().with_loop_unrolls(2);
         let execution = prove_symbolic_c_execution_paths_with_budget(
             state.clone(),
-            stmt.clone(),
+            statement.clone(),
             Assumptions::new(),
             budget.clone(),
         );
@@ -4928,7 +5314,7 @@ mod tests {
         assert_eq!(execution.limit(), Some(ExecutionLimit::LoopUnrolls));
         assert_eq!(execution.paths(), &[] as &[SymbolicCExecutionPath]);
         assert!(
-            prove_symbolic_c_execution_with_budget(state, stmt, Assumptions::new(), budget,)
+            prove_symbolic_c_execution_with_budget(state, statement, Assumptions::new(), budget,)
                 .is_none()
         );
     }
@@ -4936,12 +5322,12 @@ mod tests {
     #[test]
     fn executor_budgets_cap_steps_calls_and_paths() {
         let state = CState::new();
-        let stmt = c_return(c_int32_literal(1));
+        let statement = c_return(c_int32_literal(1));
 
         assert_eq!(
             prove_symbolic_c_execution_paths_with_budget(
                 state.clone(),
-                stmt.clone(),
+                statement.clone(),
                 Assumptions::new(),
                 ExecutionBudget::new().with_statement_steps(0),
             )
@@ -4951,7 +5337,7 @@ mod tests {
         assert_eq!(
             prove_symbolic_c_execution_paths_with_budget(
                 state.clone(),
-                stmt,
+                statement,
                 Assumptions::new(),
                 ExecutionBudget::new().with_expression_steps(0),
             )
@@ -4962,8 +5348,8 @@ mod tests {
         let function = c_function(
             CType::Int32,
             "id",
-            vec![c_param("x", CType::Int32)],
-            c_return(c_var("x")),
+            vec![c_parameter("x", CType::Int32)],
+            c_return(c_variable("x")),
         );
         assert_eq!(
             prove_symbolic_c_function_execution_paths_with_budget(
@@ -4977,16 +5363,16 @@ mod tests {
             Some(ExecutionLimit::FunctionCalls)
         );
 
-        let a = Var(75);
-        let b = Var(76);
-        let branchy_stmt = c_return(c_lt(
-            CExpr::Value(int32(Bv32Term::Var(a))),
-            CExpr::Value(int32(Bv32Term::Var(b))),
+        let a = Variable(75);
+        let b = Variable(76);
+        let branchy_statement = c_return(c_less_than(
+            CExpression::Value(int32(Bitvector32Term::Variable(a))),
+            CExpression::Value(int32(Bitvector32Term::Variable(b))),
         ));
         assert_eq!(
             prove_symbolic_c_execution_paths_with_budget(
                 state,
-                branchy_stmt,
+                branchy_statement,
                 Assumptions::new(),
                 ExecutionBudget::new().with_paths(3),
             )
@@ -4997,31 +5383,32 @@ mod tests {
 
     #[test]
     fn while_invariant_is_proof_obligation() {
-        let ptr = Ptr {
+        let pointer = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let invariant = Prop::CMemoryCanLoad {
+        let invariant = Proposition::CMemoryCanLoad {
             memory: CMemory::new(),
-            ptr,
+            pointer,
         };
         let state = CState::new().with_local("x", int32(0));
-        let stmt = c_while(
-            c_gt(c_var("x"), c_int32_literal(0)),
+        let statement = c_while(
+            c_greater_than(c_variable("x"), c_int32_literal(0)),
             vec![invariant.clone()],
-            c_assign("x", c_sub(c_var("x"), c_int32_literal(1))),
+            c_assign("x", c_subtract(c_variable("x"), c_int32_literal(1))),
         );
-        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
-            .expect("false loop should execute under invariant obligation");
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("false loop should execute under invariant obligation");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::Implies(
+            theorem.proposition(),
+            &Proposition::Implies(
                 Box::new(invariant),
-                Box::new(Prop::CStmtExecutes {
+                Box::new(Proposition::CStatementExecutes {
                     state: state.clone(),
-                    stmt,
-                    outcome: CStmtOutcome::Normal(state),
+                    statement,
+                    outcome: CStatementOutcome::Normal(state),
                 }),
             )
         );
@@ -5031,90 +5418,99 @@ mod tests {
     fn builtin_obligation_solver_proves_trivial_props() {
         let assumptions = Assumptions::new();
         let memory = CMemory::new().with_block("block", 8);
-        let ptr = Ptr {
+        let pointer = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(4),
+            offset: PointerOffsetTerm::Constant(4),
         };
 
-        assert!(assumptions.proves(&Prop::Equal(
-            Term::Bv32(Bv32Term::Const(7)),
-            Term::Bv32(Bv32Term::Const(7)),
+        assert!(assumptions.proves(&Proposition::Equal(
+            Term::Bitvector32(Bitvector32Term::Constant(7)),
+            Term::Bitvector32(Bitvector32Term::Constant(7)),
         )));
-        assert!(assumptions.proves(&Prop::ConditionIs(ConditionTerm::Const(true), true)));
-        assert!(assumptions.proves(&Prop::CMemoryCanLoad {
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::Constant(true),
+            true
+        )));
+        assert!(assumptions.proves(&Proposition::CMemoryCanLoad {
             memory: memory.clone(),
-            ptr: ptr.clone(),
+            pointer: pointer.clone(),
         }));
-        assert!(assumptions.proves(&Prop::CMemoryCanStore { memory, ptr }));
+        assert!(assumptions.proves(&Proposition::CMemoryCanStore { memory, pointer }));
     }
 
     #[test]
     fn builtin_obligation_solver_discharges_concrete_invariant() {
-        let ptr = Ptr {
+        let pointer = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
         let memory = CMemory::new().with_block("block", 4);
-        let invariant = Prop::CMemoryCanLoad {
+        let invariant = Proposition::CMemoryCanLoad {
             memory: memory.clone(),
-            ptr,
+            pointer,
         };
         let state = CState::new().with_local("x", int32(0)).with_memory(memory);
-        let stmt = c_while(
-            c_gt(c_var("x"), c_int32_literal(0)),
+        let statement = c_while(
+            c_greater_than(c_variable("x"), c_int32_literal(0)),
             vec![invariant],
-            c_assign("x", c_sub(c_var("x"), c_int32_literal(1))),
+            c_assign("x", c_subtract(c_variable("x"), c_int32_literal(1))),
         );
-        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
-            .expect("concrete invariant should be solved");
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("concrete invariant should be solved");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
                 state: state.clone(),
-                stmt,
-                outcome: CStmtOutcome::Normal(state),
+                statement,
+                outcome: CStatementOutcome::Normal(state),
             }
         );
     }
 
     #[test]
     fn countdown_loop_body_preserves_nonnegative_invariant_symbolically() {
-        let x = Var(66);
-        let x_bits = Bv32Term::Var(x);
+        let x = Variable(66);
+        let x_bits = Bitvector32Term::Variable(x);
         let state = CState::new().with_local("x", int32(x_bits.clone()));
-        let stmt = c_assign("x", c_sub(c_var("x"), c_int32_literal(1)));
-        let invariant = ConditionTerm::sge(x_bits.clone(), Bv32Term::Const(0));
-        let condition = ConditionTerm::sgt(x_bits.clone(), Bv32Term::Const(0));
-        let post_invariant = Prop::ConditionIs(
-            ConditionTerm::sge(
-                Bv32Term::Sub(Box::new(x_bits.clone()), Box::new(Bv32Term::Const(1))),
-                Bv32Term::Const(0),
+        let statement = c_assign("x", c_subtract(c_variable("x"), c_int32_literal(1)));
+        let invariant =
+            ConditionTerm::signed_greater_equal(x_bits.clone(), Bitvector32Term::Constant(0));
+        let condition =
+            ConditionTerm::signed_greater_than(x_bits.clone(), Bitvector32Term::Constant(0));
+        let post_invariant = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(
+                Bitvector32Term::Subtract(
+                    Box::new(x_bits.clone()),
+                    Box::new(Bitvector32Term::Constant(1)),
+                ),
+                Bitvector32Term::Constant(0),
             ),
             true,
         );
         let assumptions = Assumptions::new()
             .assume_condition(invariant.clone(), true)
             .assume_condition(condition.clone(), true);
-        let theorem = prove_c_stmt_executes_and_props(
+        let theorem = prove_c_statement_executes_and_propositions(
             state.clone(),
-            stmt.clone(),
+            statement.clone(),
             assumptions,
             vec![post_invariant.clone()],
         )
         .expect("x > 0 should prove x - 1 executes and remains nonnegative");
 
         assert_eq!(
-            theorem.prop().peel_implications(),
-            &prop_and(
-                Prop::CStmtExecutes {
+            theorem.proposition().peel_implications(),
+            &proposition_and(
+                Proposition::CStatementExecutes {
                     state: state.clone(),
-                    stmt,
-                    outcome: CStmtOutcome::Normal(CState::new().with_local(
+                    statement,
+                    outcome: CStatementOutcome::Normal(CState::new().with_local(
                         "x",
-                        int32(Bv32Term::Sub(
+                        int32(Bitvector32Term::Subtract(
                             Box::new(x_bits),
-                            Box::new(Bv32Term::Const(1)),
+                            Box::new(Bitvector32Term::Constant(1)),
                         )),
                     ),),
                 },
@@ -5125,26 +5521,31 @@ mod tests {
 
     #[test]
     fn symbolic_max_lt_branch_is_native_theorem() {
-        let a = Var(10);
-        let b = Var(11);
+        let a = Variable(10);
+        let b = Variable(11);
         let theorem = prove_c_max_lt_returns_right(a, b).expect("lt branch should prove");
-        let condition =
-            ConditionTerm::Bv32Slt(Box::new(Bv32Term::Var(a)), Box::new(Bv32Term::Var(b)));
-        let state = c_max_state(int32(Bv32Term::Var(a)), int32(Bv32Term::Var(b)));
+        let condition = ConditionTerm::Bitvector32SignedLessThan(
+            Box::new(Bitvector32Term::Variable(a)),
+            Box::new(Bitvector32Term::Variable(b)),
+        );
+        let state = c_max_state(
+            int32(Bitvector32Term::Variable(a)),
+            int32(Bitvector32Term::Variable(b)),
+        );
 
         assert_eq!(
-            theorem.prop(),
+            theorem.proposition(),
             &forall_int32(
                 a,
                 forall_int32(
                     b,
-                    Prop::Implies(
-                        Box::new(Prop::ConditionIs(condition, true)),
-                        Box::new(Prop::CStmtExecutes {
+                    Proposition::Implies(
+                        Box::new(Proposition::ConditionIs(condition, true)),
+                        Box::new(Proposition::CStatementExecutes {
                             state: state.clone(),
-                            stmt: c_max_body(),
-                            outcome: CStmtOutcome::Return {
-                                value: int32(Bv32Term::Var(b)),
+                            statement: c_max_body(),
+                            outcome: CStatementOutcome::Return {
+                                value: int32(Bitvector32Term::Variable(b)),
                                 state,
                             },
                         }),
@@ -5156,26 +5557,31 @@ mod tests {
 
     #[test]
     fn symbolic_max_not_lt_branch_is_native_theorem() {
-        let a = Var(12);
-        let b = Var(13);
+        let a = Variable(12);
+        let b = Variable(13);
         let theorem = prove_c_max_not_lt_returns_left(a, b).expect("false branch should prove");
-        let condition =
-            ConditionTerm::Bv32Slt(Box::new(Bv32Term::Var(a)), Box::new(Bv32Term::Var(b)));
-        let state = c_max_state(int32(Bv32Term::Var(a)), int32(Bv32Term::Var(b)));
+        let condition = ConditionTerm::Bitvector32SignedLessThan(
+            Box::new(Bitvector32Term::Variable(a)),
+            Box::new(Bitvector32Term::Variable(b)),
+        );
+        let state = c_max_state(
+            int32(Bitvector32Term::Variable(a)),
+            int32(Bitvector32Term::Variable(b)),
+        );
 
         assert_eq!(
-            theorem.prop(),
+            theorem.proposition(),
             &forall_int32(
                 a,
                 forall_int32(
                     b,
-                    Prop::Implies(
-                        Box::new(Prop::ConditionIs(condition, false)),
-                        Box::new(Prop::CStmtExecutes {
+                    Proposition::Implies(
+                        Box::new(Proposition::ConditionIs(condition, false)),
+                        Box::new(Proposition::CStatementExecutes {
                             state: state.clone(),
-                            stmt: c_max_body(),
-                            outcome: CStmtOutcome::Return {
-                                value: int32(Bv32Term::Var(a)),
+                            statement: c_max_body(),
+                            outcome: CStatementOutcome::Return {
+                                value: int32(Bitvector32Term::Variable(a)),
                                 state,
                             },
                         }),
@@ -5186,20 +5592,20 @@ mod tests {
     }
 
     #[test]
-    fn signed_add_overflow_is_native_ub() {
+    fn signed_add_overflow_is_native_undefined_behavior() {
         let state = CState::new();
-        let theorem = prove_c_expr_eval(
+        let theorem = prove_c_expression_evaluation(
             state.clone(),
             c_add(c_int32_literal(2_147_483_647), c_int32_literal(1)),
         )
         .expect("concrete add should evaluate");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CExprEvaluates {
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
                 state,
-                expr: c_add(c_int32_literal(2_147_483_647), c_int32_literal(1)),
-                outcome: CExprOutcome::Ub(CUndefinedBehavior::SignedOverflow),
+                expression: c_add(c_int32_literal(2_147_483_647), c_int32_literal(1)),
+                outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
             }
         );
     }
@@ -5207,16 +5613,17 @@ mod tests {
     #[test]
     fn int32_subtraction_is_native() {
         let state = CState::new();
-        let stmt = c_return(c_sub(c_int32_literal(7), c_int32_literal(2)));
-        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
-            .expect("concrete subtraction should execute");
+        let statement = c_return(c_subtract(c_int32_literal(7), c_int32_literal(2)));
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("concrete subtraction should execute");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
                 state: state.clone(),
-                stmt,
-                outcome: CStmtOutcome::Return {
+                statement,
+                outcome: CStatementOutcome::Return {
                     value: int32(5),
                     state,
                 },
@@ -5225,20 +5632,20 @@ mod tests {
     }
 
     #[test]
-    fn signed_sub_overflow_is_native_ub() {
+    fn signed_subtract_overflow_is_native_undefined_behavior() {
         let state = CState::new();
-        let theorem = prove_c_expr_eval(
+        let theorem = prove_c_expression_evaluation(
             state.clone(),
-            c_sub(c_int32_literal(2_147_483_648), c_int32_literal(1)),
+            c_subtract(c_int32_literal(2_147_483_648), c_int32_literal(1)),
         )
-        .expect("concrete sub should evaluate");
+        .expect("concrete subtraction should evaluate");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CExprEvaluates {
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
                 state,
-                expr: c_sub(c_int32_literal(2_147_483_648), c_int32_literal(1)),
-                outcome: CExprOutcome::Ub(CUndefinedBehavior::SignedOverflow),
+                expression: c_subtract(c_int32_literal(2_147_483_648), c_int32_literal(1)),
+                outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
             }
         );
     }
@@ -5247,21 +5654,30 @@ mod tests {
     fn int32_comparisons_return_c_int32_zero_or_one() {
         let state = CState::new();
         let examples = [
-            (c_le(c_int32_literal(2), c_int32_literal(2)), int32(1)),
-            (c_gt(c_int32_literal(3), c_int32_literal(2)), int32(1)),
-            (c_ge(c_int32_literal(2), c_int32_literal(3)), int32(0)),
-            (c_eq(c_int32_literal(4), c_int32_literal(4)), int32(1)),
+            (
+                c_less_equal(c_int32_literal(2), c_int32_literal(2)),
+                int32(1),
+            ),
+            (
+                c_greater_than(c_int32_literal(3), c_int32_literal(2)),
+                int32(1),
+            ),
+            (
+                c_greater_equal(c_int32_literal(2), c_int32_literal(3)),
+                int32(0),
+            ),
+            (c_equal(c_int32_literal(4), c_int32_literal(4)), int32(1)),
         ];
 
-        for (expr, expected) in examples {
-            let theorem =
-                prove_c_expr_eval(state.clone(), expr.clone()).expect("comparison should evaluate");
+        for (expression, expected) in examples {
+            let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+                .expect("comparison should evaluate");
             assert_eq!(
-                theorem.prop(),
-                &Prop::CExprEvaluates {
+                theorem.proposition(),
+                &Proposition::CExpressionEvaluates {
                     state: state.clone(),
-                    expr,
-                    outcome: CExprOutcome::Value(expected),
+                    expression,
+                    outcome: CExpressionOutcome::Value(expected),
                 }
             );
         }
@@ -5269,42 +5685,42 @@ mod tests {
 
     #[test]
     fn pointer_equality_returns_c_int32_zero_or_one() {
-        let p = Ptr {
+        let p = Pointer {
             block: "array".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let same = Ptr {
+        let same = Pointer {
             block: "array".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let next = Ptr {
+        let next = Pointer {
             block: "array".to_string(),
-            offset: PtrOffsetTerm::Const(4),
+            offset: PointerOffsetTerm::Constant(4),
         };
-        let other = Ptr {
+        let other = Pointer {
             block: "other".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
         let state = CState::new()
-            .with_local("p", CValue::Ptr(p))
-            .with_local("same", CValue::Ptr(same))
-            .with_local("next", CValue::Ptr(next))
-            .with_local("other", CValue::Ptr(other));
+            .with_local("p", CValue::Pointer(p))
+            .with_local("same", CValue::Pointer(same))
+            .with_local("next", CValue::Pointer(next))
+            .with_local("other", CValue::Pointer(other));
         let examples = [
-            (c_eq(c_var("p"), c_var("same")), int32(1)),
-            (c_eq(c_var("p"), c_var("next")), int32(0)),
-            (c_eq(c_var("p"), c_var("other")), int32(0)),
+            (c_equal(c_variable("p"), c_variable("same")), int32(1)),
+            (c_equal(c_variable("p"), c_variable("next")), int32(0)),
+            (c_equal(c_variable("p"), c_variable("other")), int32(0)),
         ];
 
-        for (expr, expected) in examples {
-            let theorem = prove_c_expr_eval(state.clone(), expr.clone())
+        for (expression, expected) in examples {
+            let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
                 .expect("pointer equality should evaluate");
             assert_eq!(
-                theorem.prop(),
-                &Prop::CExprEvaluates {
+                theorem.proposition(),
+                &Proposition::CExpressionEvaluates {
                     state: state.clone(),
-                    expr,
-                    outcome: CExprOutcome::Value(expected),
+                    expression,
+                    outcome: CExpressionOutcome::Value(expected),
                 }
             );
         }
@@ -5312,92 +5728,98 @@ mod tests {
 
     #[test]
     fn pointer_equality_accepts_int32_zero_as_null_pointer_constant() {
-        let null = Ptr {
+        let null = Pointer {
             block: "null".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let nonnull = Ptr {
+        let nonnull = Pointer {
             block: "array".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
         let state = CState::new()
-            .with_local("nullp", CValue::Ptr(null))
-            .with_local("p", CValue::Ptr(nonnull));
+            .with_local("nullp", CValue::Pointer(null))
+            .with_local("p", CValue::Pointer(nonnull));
         let examples = [
-            (c_eq(c_var("nullp"), c_int32_literal(0)), int32(1)),
-            (c_eq(c_int32_literal(0), c_var("nullp")), int32(1)),
-            (c_eq(c_var("p"), c_int32_literal(0)), int32(0)),
+            (c_equal(c_variable("nullp"), c_int32_literal(0)), int32(1)),
+            (c_equal(c_int32_literal(0), c_variable("nullp")), int32(1)),
+            (c_equal(c_variable("p"), c_int32_literal(0)), int32(0)),
         ];
 
-        for (expr, expected) in examples {
-            let theorem = prove_c_expr_eval(state.clone(), expr.clone())
+        for (expression, expected) in examples {
+            let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
                 .expect("null equality should evaluate");
             assert_eq!(
-                theorem.prop(),
-                &Prop::CExprEvaluates {
+                theorem.proposition(),
+                &Proposition::CExpressionEvaluates {
                     state: state.clone(),
-                    expr,
-                    outcome: CExprOutcome::Value(expected),
+                    expression,
+                    outcome: CExpressionOutcome::Value(expected),
                 }
             );
         }
 
-        let invalid = c_eq(c_var("p"), c_int32_literal(1));
-        let theorem = prove_c_expr_eval(state.clone(), invalid.clone())
+        let invalid = c_equal(c_variable("p"), c_int32_literal(1));
+        let theorem = prove_c_expression_evaluation(state.clone(), invalid.clone())
             .expect("invalid pointer equality should evaluate");
         assert_eq!(
-            theorem.prop(),
-            &Prop::CExprEvaluates {
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
                 state,
-                expr: invalid,
-                outcome: CExprOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                expression: invalid,
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             }
         );
     }
 
     #[test]
     fn not_equal_and_not_return_c_int32_zero_or_one() {
-        let null = Ptr {
+        let null = Pointer {
             block: "null".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let p = Ptr {
+        let p = Pointer {
             block: "array".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let same = Ptr {
+        let same = Pointer {
             block: "array".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let next = Ptr {
+        let next = Pointer {
             block: "array".to_string(),
-            offset: PtrOffsetTerm::Const(4),
+            offset: PointerOffsetTerm::Constant(4),
         };
         let state = CState::new()
-            .with_local("nullp", CValue::Ptr(null))
-            .with_local("p", CValue::Ptr(p))
-            .with_local("same", CValue::Ptr(same))
-            .with_local("next", CValue::Ptr(next));
+            .with_local("nullp", CValue::Pointer(null))
+            .with_local("p", CValue::Pointer(p))
+            .with_local("same", CValue::Pointer(same))
+            .with_local("next", CValue::Pointer(next));
         let examples = [
-            (c_ne(c_int32_literal(4), c_int32_literal(5)), int32(1)),
-            (c_ne(c_var("p"), c_var("same")), int32(0)),
-            (c_ne(c_var("p"), c_var("next")), int32(1)),
-            (c_ne(c_var("nullp"), c_int32_literal(0)), int32(0)),
+            (
+                c_not_equal(c_int32_literal(4), c_int32_literal(5)),
+                int32(1),
+            ),
+            (c_not_equal(c_variable("p"), c_variable("same")), int32(0)),
+            (c_not_equal(c_variable("p"), c_variable("next")), int32(1)),
+            (
+                c_not_equal(c_variable("nullp"), c_int32_literal(0)),
+                int32(0),
+            ),
             (c_not(c_int32_literal(0)), int32(1)),
             (c_not(c_int32_literal(7)), int32(0)),
-            (c_not(c_var("nullp")), int32(1)),
-            (c_not(c_var("p")), int32(0)),
+            (c_not(c_variable("nullp")), int32(1)),
+            (c_not(c_variable("p")), int32(0)),
         ];
 
-        for (expr, expected) in examples {
-            let theorem = prove_c_expr_eval(state.clone(), expr.clone())
+        for (expression, expected) in examples {
+            let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
                 .expect("logical expression should evaluate");
             assert_eq!(
-                theorem.prop(),
-                &Prop::CExprEvaluates {
+                theorem.proposition(),
+                &Proposition::CExpressionEvaluates {
                     state: state.clone(),
-                    expr,
-                    outcome: CExprOutcome::Value(expected),
+                    expression,
+                    outcome: CExpressionOutcome::Value(expected),
                 }
             );
         }
@@ -5405,62 +5827,65 @@ mod tests {
 
     #[test]
     fn logical_and_or_short_circuit_right_operand() {
-        let invalid_ptr = Ptr {
+        let invalid_pointer = Pointer {
             block: "missing".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let invalid_load = c_load(c_ptr_value(invalid_ptr));
+        let invalid_load = c_load(c_pointer_value(invalid_pointer));
         let state = CState::new();
         let examples = [
             (c_and(c_int32_literal(0), invalid_load.clone()), int32(0)),
             (c_or(c_int32_literal(1), invalid_load.clone()), int32(1)),
         ];
 
-        for (expr, expected) in examples {
-            let theorem = prove_c_expr_eval(state.clone(), expr.clone())
+        for (expression, expected) in examples {
+            let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
                 .expect("short-circuit expression should evaluate");
             assert_eq!(
-                theorem.prop(),
-                &Prop::CExprEvaluates {
+                theorem.proposition(),
+                &Proposition::CExpressionEvaluates {
                     state: state.clone(),
-                    expr,
-                    outcome: CExprOutcome::Value(expected),
+                    expression,
+                    outcome: CExpressionOutcome::Value(expected),
                 }
             );
         }
 
         assert!(
-            prove_c_expr_eval(
+            prove_c_expression_evaluation(
                 state.clone(),
                 c_and(c_int32_literal(1), invalid_load.clone()),
             )
             .is_none()
         );
-        assert!(prove_c_expr_eval(state, c_or(c_int32_literal(0), invalid_load)).is_none());
+        assert!(
+            prove_c_expression_evaluation(state, c_or(c_int32_literal(0), invalid_load)).is_none()
+        );
     }
 
     #[test]
     fn symbolic_pointer_equality_reports_branch_facts() {
-        let offset = Var(80);
-        let left = Ptr {
+        let offset = Variable(80);
+        let left = Pointer {
             block: "array".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let right = Ptr {
+        let right = Pointer {
             block: "array".to_string(),
-            offset: PtrOffsetTerm::Var(offset),
+            offset: PointerOffsetTerm::Variable(offset),
         };
-        let condition = ConditionTerm::ptr_offset_eq(left.offset.clone(), right.offset.clone());
+        let condition =
+            ConditionTerm::pointer_offset_equal(left.offset.clone(), right.offset.clone());
         let state = CState::new()
-            .with_local("p", CValue::Ptr(left))
-            .with_local("q", CValue::Ptr(right));
-        let stmt = c_if(
-            c_eq(c_var("p"), c_var("q")),
+            .with_local("p", CValue::Pointer(left))
+            .with_local("q", CValue::Pointer(right));
+        let statement = c_if(
+            c_equal(c_variable("p"), c_variable("q")),
             c_return(c_int32_literal(1)),
             c_return(c_int32_literal(0)),
         );
         let execution =
-            prove_symbolic_c_execution_paths(state.clone(), stmt.clone(), Assumptions::new());
+            prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
 
         assert_eq!(execution.paths().len(), 2);
         assert_eq!(
@@ -5468,11 +5893,14 @@ mod tests {
             &[PathFact::condition(condition.clone(), true)]
         );
         assert_eq!(
-            execution.paths()[0].theorem().prop().peel_implications(),
-            &Prop::CStmtExecutes {
+            execution.paths()[0]
+                .theorem()
+                .proposition()
+                .peel_implications(),
+            &Proposition::CStatementExecutes {
                 state: state.clone(),
-                stmt: stmt.clone(),
-                outcome: CStmtOutcome::Return {
+                statement: statement.clone(),
+                outcome: CStatementOutcome::Return {
                     value: int32(1),
                     state: state.clone(),
                 },
@@ -5483,11 +5911,14 @@ mod tests {
             &[PathFact::condition(condition, false)]
         );
         assert_eq!(
-            execution.paths()[1].theorem().prop().peel_implications(),
-            &Prop::CStmtExecutes {
+            execution.paths()[1]
+                .theorem()
+                .proposition()
+                .peel_implications(),
+            &Proposition::CStatementExecutes {
                 state: state.clone(),
-                stmt,
-                outcome: CStmtOutcome::Return {
+                statement,
+                outcome: CStatementOutcome::Return {
                     value: int32(0),
                     state,
                 },
@@ -5498,20 +5929,21 @@ mod tests {
     #[test]
     fn if_uses_c_int32_truthiness() {
         let state = CState::new();
-        let stmt = c_if(
+        let statement = c_if(
             c_int32_literal(7),
             c_return(c_int32_literal(1)),
             c_return(c_int32_literal(0)),
         );
-        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
-            .expect("nonzero int32 condition should take then branch");
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("nonzero int32 condition should take then branch");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
                 state: state.clone(),
-                stmt,
-                outcome: CStmtOutcome::Return {
+                statement,
+                outcome: CStatementOutcome::Return {
                     value: int32(1),
                     state,
                 },
@@ -5519,20 +5951,21 @@ mod tests {
         );
 
         let state = CState::new();
-        let stmt = c_if(
+        let statement = c_if(
             c_int32_literal(0),
             c_return(c_int32_literal(1)),
             c_return(c_int32_literal(0)),
         );
-        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
-            .expect("zero int32 condition should take else branch");
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("zero int32 condition should take else branch");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
                 state: state.clone(),
-                stmt,
-                outcome: CStmtOutcome::Return {
+                statement,
+                outcome: CStatementOutcome::Return {
                     value: int32(0),
                     state,
                 },
@@ -5543,17 +5976,18 @@ mod tests {
     #[test]
     fn assignment_and_sequence_update_native_state() {
         let state = CState::new().with_local("x", int32(0));
-        let stmt = c_seq(c_assign("x", c_int32_literal(2)), c_return(c_var("x")));
+        let statement = c_seq(c_assign("x", c_int32_literal(2)), c_return(c_variable("x")));
         let final_state = CState::new().with_local("x", int32(2));
-        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
-            .expect("assignment sequence should execute");
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("assignment sequence should execute");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
                 state,
-                stmt,
-                outcome: CStmtOutcome::Return {
+                statement,
+                outcome: CStatementOutcome::Return {
                     value: int32(2),
                     state: final_state,
                 },
@@ -5563,31 +5997,33 @@ mod tests {
 
     #[test]
     fn store_then_load_threads_native_memory() {
-        let ptr = Ptr {
+        let pointer = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
         let state = CState::new();
-        let stmt = c_seq(
-            c_store(c_ptr_value(ptr.clone()), c_int32_literal(9)),
-            c_return(c_load(c_ptr_value(ptr.clone()))),
+        let statement = c_seq(
+            c_store(c_pointer_value(pointer.clone()), c_int32_literal(9)),
+            c_return(c_load(c_pointer_value(pointer.clone()))),
         );
-        let final_state = CState::new().with_memory(CMemory::new().store(ptr.clone(), int32(9)));
-        let store_obligation = Prop::CMemoryCanStore {
+        let final_state =
+            CState::new().with_memory(CMemory::new().store(pointer.clone(), int32(9)));
+        let store_obligation = Proposition::CMemoryCanStore {
             memory: CMemory::new(),
-            ptr,
+            pointer,
         };
-        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
-            .expect("store then load should execute");
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("store then load should execute");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::Implies(
+            theorem.proposition(),
+            &Proposition::Implies(
                 Box::new(store_obligation),
-                Box::new(Prop::CStmtExecutes {
+                Box::new(Proposition::CStatementExecutes {
                     state,
-                    stmt,
-                    outcome: CStmtOutcome::Return {
+                    statement,
+                    outcome: CStatementOutcome::Return {
                         value: int32(9),
                         state: final_state,
                     },
@@ -5598,37 +6034,37 @@ mod tests {
 
     #[test]
     fn symbolic_load_from_incomplete_memory_reports_validity_obligation() {
-        let ptr = Ptr {
+        let pointer = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(4),
+            offset: PointerOffsetTerm::Constant(4),
         };
-        let state = CState::new().with_local("p", CValue::Ptr(ptr.clone()));
-        let stmt = c_return(c_load(c_var("p")));
+        let state = CState::new().with_local("p", CValue::Pointer(pointer.clone()));
+        let statement = c_return(c_load(c_variable("p")));
         let execution =
-            prove_symbolic_c_execution_paths(state.clone(), stmt.clone(), Assumptions::new());
+            prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
 
         assert_eq!(execution.paths().len(), 1);
         assert_eq!(
             execution.paths()[0].obligations(),
             &[ProofObligation::memory_can_load(
                 CMemory::new(),
-                ptr.clone()
+                pointer.clone()
             )]
         );
         assert_eq!(
-            execution.paths()[0].theorem().prop(),
-            &Prop::Implies(
-                Box::new(Prop::CMemoryCanLoad {
+            execution.paths()[0].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::CMemoryCanLoad {
                     memory: CMemory::new(),
-                    ptr: ptr.clone(),
+                    pointer: pointer.clone(),
                 }),
-                Box::new(Prop::CStmtExecutes {
+                Box::new(Proposition::CStatementExecutes {
                     state: state.clone(),
-                    stmt,
-                    outcome: CStmtOutcome::Return {
-                        value: int32(Bv32Term::MemoryLoad(
+                    statement,
+                    outcome: CStatementOutcome::Return {
+                        value: int32(Bitvector32Term::MemoryLoad(
                             Box::new(CMemory::new()),
-                            Box::new(ptr),
+                            Box::new(pointer),
                         )),
                         state,
                     },
@@ -5639,26 +6075,27 @@ mod tests {
 
     #[test]
     fn block_backed_store_then_load_needs_no_memory_obligation() {
-        let ptr = Ptr {
+        let pointer = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
         let memory = CMemory::new().with_block("block", 16);
         let state = CState::new().with_memory(memory.clone());
-        let stmt = c_seq(
-            c_store(c_ptr_value(ptr.clone()), c_int32_literal(9)),
-            c_return(c_load(c_ptr_value(ptr.clone()))),
+        let statement = c_seq(
+            c_store(c_pointer_value(pointer.clone()), c_int32_literal(9)),
+            c_return(c_load(c_pointer_value(pointer.clone()))),
         );
-        let final_state = CState::new().with_memory(memory.store(ptr, int32(9)));
-        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
-            .expect("in-range block store/load should execute");
+        let final_state = CState::new().with_memory(memory.store(pointer, int32(9)));
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("in-range block store/load should execute");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
                 state,
-                stmt,
-                outcome: CStmtOutcome::Return {
+                statement,
+                outcome: CStatementOutcome::Return {
                     value: int32(9),
                     state: final_state,
                 },
@@ -5668,25 +6105,29 @@ mod tests {
 
     #[test]
     fn block_backed_missing_load_returns_symbolic_value_without_obligation() {
-        let ptr = Ptr {
+        let pointer = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(4),
+            offset: PointerOffsetTerm::Constant(4),
         };
         let memory = CMemory::new().with_block("block", 16);
         let state = CState::new()
-            .with_local("p", CValue::Ptr(ptr.clone()))
+            .with_local("p", CValue::Pointer(pointer.clone()))
             .with_memory(memory.clone());
-        let stmt = c_return(c_load(c_var("p")));
-        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
-            .expect("in-range missing load should produce symbolic value");
+        let statement = c_return(c_load(c_variable("p")));
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("in-range missing load should produce symbolic value");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
                 state: state.clone(),
-                stmt,
-                outcome: CStmtOutcome::Return {
-                    value: int32(Bv32Term::MemoryLoad(Box::new(memory), Box::new(ptr))),
+                statement,
+                outcome: CStatementOutcome::Return {
+                    value: int32(Bitvector32Term::MemoryLoad(
+                        Box::new(memory),
+                        Box::new(pointer)
+                    )),
                     state,
                 },
             }
@@ -5695,43 +6136,44 @@ mod tests {
 
     #[test]
     fn pointer_addition_scales_int32_offsets_for_loads() {
-        let base = Ptr {
+        let base = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let second = Ptr {
+        let second = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(4),
+            offset: PointerOffsetTerm::Constant(4),
         };
         let memory = CMemory::new()
             .with_block("block", 16)
             .store(second, int32(23));
         let state = CState::new()
-            .with_local("p", CValue::Ptr(base))
+            .with_local("p", CValue::Pointer(base))
             .with_memory(memory);
-        let stmt = c_return(c_load(c_add(c_var("p"), c_int32_literal(1))));
-        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
-            .expect("pointer arithmetic load should execute");
+        let statement = c_return(c_load(c_add(c_variable("p"), c_int32_literal(1))));
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("pointer arithmetic load should execute");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
                 state,
-                stmt,
-                outcome: CStmtOutcome::Return {
+                statement,
+                outcome: CStatementOutcome::Return {
                     value: int32(23),
                     state: CState::new()
                         .with_local(
                             "p",
-                            CValue::Ptr(Ptr {
+                            CValue::Pointer(Pointer {
                                 block: "block".to_string(),
-                                offset: PtrOffsetTerm::Const(0),
+                                offset: PointerOffsetTerm::Constant(0),
                             }),
                         )
                         .with_memory(CMemory::new().with_block("block", 16).store(
-                            Ptr {
+                            Pointer {
                                 block: "block".to_string(),
-                                offset: PtrOffsetTerm::Const(4),
+                                offset: PointerOffsetTerm::Constant(4),
                             },
                             int32(23),
                         ),),
@@ -5742,21 +6184,21 @@ mod tests {
 
     #[test]
     fn pointer_addition_out_of_range_load_reports_validity_obligation() {
-        let base = Ptr {
+        let base = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let derived = Ptr {
+        let derived = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(4),
+            offset: PointerOffsetTerm::Constant(4),
         };
         let memory = CMemory::new().with_block("block", 4);
         let state = CState::new()
-            .with_local("p", CValue::Ptr(base))
+            .with_local("p", CValue::Pointer(base))
             .with_memory(memory.clone());
-        let stmt = c_return(c_load(c_add(c_var("p"), c_int32_literal(1))));
+        let statement = c_return(c_load(c_add(c_variable("p"), c_int32_literal(1))));
         let execution =
-            prove_symbolic_c_execution_paths(state.clone(), stmt.clone(), Assumptions::new());
+            prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
 
         assert_eq!(execution.paths().len(), 1);
         assert_eq!(
@@ -5767,17 +6209,20 @@ mod tests {
             )]
         );
         assert_eq!(
-            execution.paths()[0].theorem().prop(),
-            &Prop::Implies(
-                Box::new(Prop::CMemoryCanLoad {
+            execution.paths()[0].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::CMemoryCanLoad {
                     memory: memory.clone(),
-                    ptr: derived.clone(),
+                    pointer: derived.clone(),
                 }),
-                Box::new(Prop::CStmtExecutes {
+                Box::new(Proposition::CStatementExecutes {
                     state: state.clone(),
-                    stmt,
-                    outcome: CStmtOutcome::Return {
-                        value: int32(Bv32Term::MemoryLoad(Box::new(memory), Box::new(derived),)),
+                    statement,
+                    outcome: CStatementOutcome::Return {
+                        value: int32(Bitvector32Term::MemoryLoad(
+                            Box::new(memory),
+                            Box::new(derived),
+                        )),
                         state,
                     },
                 }),
@@ -5787,58 +6232,58 @@ mod tests {
 
     #[test]
     fn fixed_bound_store_loop_touches_only_valid_pointer_range() {
-        let base = Ptr {
+        let base = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
         let memory = CMemory::new().with_block("block", 12);
         let state = CState::new()
-            .with_local("p", CValue::Ptr(base))
+            .with_local("p", CValue::Pointer(base))
             .with_local("i", int32(0))
             .with_memory(memory.clone());
-        let loop_stmt = c_while(
-            c_lt(c_var("i"), c_int32_literal(3)),
+        let loop_statement = c_while(
+            c_less_than(c_variable("i"), c_int32_literal(3)),
             Vec::new(),
             c_seq(
-                c_store(c_add(c_var("p"), c_var("i")), c_var("i")),
-                c_assign("i", c_add(c_var("i"), c_int32_literal(1))),
+                c_store(c_add(c_variable("p"), c_variable("i")), c_variable("i")),
+                c_assign("i", c_add(c_variable("i"), c_int32_literal(1))),
             ),
         );
-        let stmt = c_seq(loop_stmt, c_return(c_var("i")));
+        let statement = c_seq(loop_statement, c_return(c_variable("i")));
         let final_memory = memory
             .store(
-                Ptr {
+                Pointer {
                     block: "block".to_string(),
-                    offset: PtrOffsetTerm::Const(0),
+                    offset: PointerOffsetTerm::Constant(0),
                 },
                 int32(0),
             )
             .store(
-                Ptr {
+                Pointer {
                     block: "block".to_string(),
-                    offset: PtrOffsetTerm::Const(4),
+                    offset: PointerOffsetTerm::Constant(4),
                 },
                 int32(1),
             )
             .store(
-                Ptr {
+                Pointer {
                     block: "block".to_string(),
-                    offset: PtrOffsetTerm::Const(8),
+                    offset: PointerOffsetTerm::Constant(8),
                 },
                 int32(2),
             );
         let final_state = CState::new()
             .with_local(
                 "p",
-                CValue::Ptr(Ptr {
+                CValue::Pointer(Pointer {
                     block: "block".to_string(),
-                    offset: PtrOffsetTerm::Const(0),
+                    offset: PointerOffsetTerm::Constant(0),
                 }),
             )
             .with_local("i", int32(3))
             .with_memory(final_memory);
         let execution =
-            prove_symbolic_c_execution_paths(state.clone(), stmt.clone(), Assumptions::new());
+            prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
 
         assert_eq!(execution.paths().len(), 1);
         assert_eq!(
@@ -5846,11 +6291,11 @@ mod tests {
             &[] as &[ProofObligation]
         );
         assert_eq!(
-            execution.paths()[0].theorem().prop(),
-            &Prop::CStmtExecutes {
+            execution.paths()[0].theorem().proposition(),
+            &Proposition::CStatementExecutes {
                 state,
-                stmt,
-                outcome: CStmtOutcome::Return {
+                statement,
+                outcome: CStatementOutcome::Return {
                     value: int32(3),
                     state: final_state,
                 },
@@ -5860,29 +6305,38 @@ mod tests {
 
     #[test]
     fn symbolic_valid_range_discharges_pointer_access_obligation() {
-        let i = Var(67);
-        let n = Var(68);
-        let i_bits = Bv32Term::Var(i);
-        let n_bits = Bv32Term::Var(n);
+        let i = Variable(67);
+        let n = Variable(68);
+        let i_bits = Bitvector32Term::Variable(i);
+        let n_bits = Bitvector32Term::Variable(n);
         let memory = CMemory::new();
-        let base = Ptr {
+        let base = Pointer {
             block: "array".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
         let state = CState::new()
-            .with_local("p", CValue::Ptr(base.clone()))
+            .with_local("p", CValue::Pointer(base.clone()))
             .with_local("i", int32(i_bits.clone()))
             .with_memory(memory.clone());
-        let stmt = c_store(c_add(c_var("p"), c_var("i")), c_int32_literal(7));
+        let statement = c_store(c_add(c_variable("p"), c_variable("i")), c_int32_literal(7));
         let assumptions = Assumptions::new()
-            .assume_prop(Prop::CMemoryValidRange {
+            .assume_proposition(Proposition::CMemoryValidRange {
                 memory: memory.clone(),
                 base: base.clone(),
-                bytes: Bv32Term::Mul(Box::new(n_bits.clone()), Box::new(Bv32Term::Const(4))),
+                bytes: Bitvector32Term::Multiply(
+                    Box::new(n_bits.clone()),
+                    Box::new(Bitvector32Term::Constant(4)),
+                ),
             })
-            .assume_condition(ConditionTerm::sge(i_bits.clone(), Bv32Term::Const(0)), true)
-            .assume_condition(ConditionTerm::slt(i_bits.clone(), n_bits), true);
-        let execution = prove_symbolic_c_execution_paths(state, stmt, assumptions);
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(i_bits.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(i_bits.clone(), n_bits),
+                true,
+            );
+        let execution = prove_symbolic_c_execution_paths(state, statement, assumptions);
 
         assert_eq!(execution.paths().len(), 1);
         assert_eq!(
@@ -5893,59 +6347,89 @@ mod tests {
 
     #[test]
     fn interval_arithmetic_proves_increment_bounds_and_no_overflow() {
-        let i = Var(69);
-        let n = Var(70);
-        let i_bits = Bv32Term::Var(i);
-        let n_bits = Bv32Term::Var(n);
-        let incremented = Bv32Term::Add(Box::new(i_bits.clone()), Box::new(Bv32Term::Const(1)));
+        let i = Variable(69);
+        let n = Variable(70);
+        let i_bits = Bitvector32Term::Variable(i);
+        let n_bits = Bitvector32Term::Variable(n);
+        let incremented = Bitvector32Term::Add(
+            Box::new(i_bits.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        );
         let state = CState::new().with_local("i", int32(i_bits.clone()));
-        let stmt = c_assign("i", c_add(c_var("i"), c_int32_literal(1)));
+        let statement = c_assign("i", c_add(c_variable("i"), c_int32_literal(1)));
         let assumptions = Assumptions::new()
-            .assume_condition(ConditionTerm::sge(i_bits.clone(), Bv32Term::Const(0)), true)
-            .assume_condition(ConditionTerm::slt(i_bits.clone(), n_bits.clone()), true)
             .assume_condition(
-                ConditionTerm::sle(n_bits.clone(), Bv32Term::Const(i32::MAX as u32)),
+                ConditionTerm::signed_greater_equal(i_bits.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(i_bits.clone(), n_bits.clone()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(
+                    n_bits.clone(),
+                    Bitvector32Term::Constant(i32::MAX as u32),
+                ),
                 true,
             );
-        let theorem = prove_c_stmt_executes_and_props(
+        let theorem = prove_c_statement_executes_and_propositions(
             state,
-            stmt,
+            statement,
             assumptions,
             vec![
-                Prop::ConditionIs(
-                    ConditionTerm::sge(incremented.clone(), Bv32Term::Const(0)),
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(
+                        incremented.clone(),
+                        Bitvector32Term::Constant(0),
+                    ),
                     true,
                 ),
-                Prop::ConditionIs(ConditionTerm::sle(incremented, n_bits), true),
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(incremented, n_bits),
+                    true,
+                ),
             ],
         )
         .expect("interval facts should prove i + 1 bounds and no signed overflow");
 
-        assert!(matches!(theorem.prop(), Prop::Implies(_, _)));
+        assert!(matches!(theorem.proposition(), Proposition::Implies(_, _)));
     }
 
     #[test]
     fn while_invariant_rule_proves_symbolic_loop_exit_fact() {
-        let i = Var(71);
-        let n = Var(72);
-        let i_bits = Bv32Term::Var(i);
-        let n_bits = Bv32Term::Var(n);
-        let incremented = Bv32Term::Add(Box::new(i_bits.clone()), Box::new(Bv32Term::Const(1)));
+        let i = Variable(71);
+        let n = Variable(72);
+        let i_bits = Bitvector32Term::Variable(i);
+        let n_bits = Bitvector32Term::Variable(n);
+        let incremented = Bitvector32Term::Add(
+            Box::new(i_bits.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        );
         let state = CState::new()
             .with_local("i", int32(i_bits.clone()))
             .with_local("n", int32(n_bits.clone()));
-        let condition = c_lt(c_var("i"), c_var("n"));
-        let body = c_assign("i", c_add(c_var("i"), c_int32_literal(1)));
+        let condition = c_less_than(c_variable("i"), c_variable("n"));
+        let body = c_assign("i", c_add(c_variable("i"), c_int32_literal(1)));
         let invariant = vec![
-            Prop::ConditionIs(ConditionTerm::sge(i_bits.clone(), Bv32Term::Const(0)), true),
-            Prop::ConditionIs(ConditionTerm::sle(i_bits.clone(), n_bits.clone()), true),
+            Proposition::ConditionIs(
+                ConditionTerm::signed_greater_equal(i_bits.clone(), Bitvector32Term::Constant(0)),
+                true,
+            ),
+            Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(i_bits.clone(), n_bits.clone()),
+                true,
+            ),
         ];
         let assumptions = invariant
             .iter()
             .cloned()
-            .fold(Assumptions::new(), Assumptions::assume_prop)
+            .fold(Assumptions::new(), Assumptions::assume_proposition)
             .assume_condition(
-                ConditionTerm::sle(n_bits.clone(), Bv32Term::Const(i32::MAX as u32)),
+                ConditionTerm::signed_less_equal(
+                    n_bits.clone(),
+                    Bitvector32Term::Constant(i32::MAX as u32),
+                ),
                 true,
             );
         let theorem = prove_c_while_invariant_rule(
@@ -5955,63 +6439,72 @@ mod tests {
             body,
             assumptions,
             vec![
-                Prop::ConditionIs(
-                    ConditionTerm::sge(incremented.clone(), Bv32Term::Const(0)),
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(
+                        incremented.clone(),
+                        Bitvector32Term::Constant(0),
+                    ),
                     true,
                 ),
-                Prop::ConditionIs(ConditionTerm::sle(incremented, n_bits.clone()), true),
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(incremented, n_bits.clone()),
+                    true,
+                ),
             ],
-            Prop::ConditionIs(ConditionTerm::eq(i_bits, n_bits), true),
+            Proposition::ConditionIs(ConditionTerm::equal(i_bits, n_bits), true),
         )
         .expect("invariant rule should prove preservation and i == n on loop exit");
 
-        assert!(matches!(theorem.prop(), Prop::Implies(_, _)));
+        assert!(matches!(theorem.proposition(), Proposition::Implies(_, _)));
     }
 
     #[test]
     fn same_block_frame_uses_symbolic_offset_inequality() {
-        let i = Var(73);
-        let j = Var(74);
-        let i_bits = Bv32Term::Var(i);
-        let j_bits = Bv32Term::Var(j);
-        let base = Ptr {
+        let i = Variable(73);
+        let j = Variable(74);
+        let i_bits = Bitvector32Term::Variable(i);
+        let j_bits = Bitvector32Term::Variable(j);
+        let base = Pointer {
             block: "array".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let stored_ptr = base.offset_by_int32_elements(i_bits);
-        let loaded_ptr = base.offset_by_int32_elements(j_bits);
-        let memory = CMemory::new().store(loaded_ptr.clone(), int32(42));
+        let stored_pointer = base.offset_by_int32_elements(i_bits);
+        let loaded_pointer = base.offset_by_int32_elements(j_bits);
+        let memory = CMemory::new().store(loaded_pointer.clone(), int32(42));
         let assumptions = Assumptions::new().assume_condition(
-            ConditionTerm::ptr_offset_eq(stored_ptr.offset.clone(), loaded_ptr.offset.clone()),
+            ConditionTerm::pointer_offset_equal(
+                stored_pointer.offset.clone(),
+                loaded_pointer.offset.clone(),
+            ),
             false,
         );
         let theorem = prove_memory_load_after_store_distinct_under_assumptions(
             memory.clone(),
-            stored_ptr.clone(),
+            stored_pointer.clone(),
             int32(9),
-            loaded_ptr.clone(),
+            loaded_pointer.clone(),
             assumptions,
         )
         .expect("i != j should prove store p[i] preserves load p[j]");
 
         assert_eq!(
-            theorem.prop().peel_implications(),
-            &Prop::CMemoryLoads {
-                memory: memory.store(stored_ptr, int32(9)),
-                ptr: loaded_ptr,
-                outcome: CExprOutcome::Value(int32(42)),
+            theorem.proposition().peel_implications(),
+            &Proposition::CMemoryLoads {
+                memory: memory.store(stored_pointer, int32(9)),
+                pointer: loaded_pointer,
+                outcome: CExpressionOutcome::Value(int32(42)),
             }
         );
     }
 
     #[test]
     fn local_declaration_allocates_stack_object_for_address_of() {
-        let local_ptr = Ptr {
+        let local_pointer = Pointer {
             block: "local:x".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
         let state = CState::new();
-        let stmt = c_seq(
+        let statement = c_seq(
             c_declare("x", CType::Int32),
             c_seq(
                 c_assign("x", c_int32_literal(5)),
@@ -6021,17 +6514,18 @@ mod tests {
         let final_state = CState::new().with_local("x", int32(5)).with_memory(
             CMemory::new()
                 .with_block("local:x", 4)
-                .store(local_ptr, int32(5)),
+                .store(local_pointer, int32(5)),
         );
-        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), Assumptions::new())
-            .expect("local declaration/address-of should execute");
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("local declaration/address-of should execute");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
                 state,
-                stmt,
-                outcome: CStmtOutcome::Return {
+                statement,
+                outcome: CStatementOutcome::Return {
                     value: int32(5),
                     state: final_state,
                 },
@@ -6041,22 +6535,22 @@ mod tests {
 
     #[test]
     fn symbolic_execution_stops_without_needed_overflow_fact() {
-        let left = Var(20);
-        let right = Var(21);
+        let left = Variable(20);
+        let right = Variable(21);
         let state = CState::new()
-            .with_local("left", int32(Bv32Term::Var(left)))
-            .with_local("right", int32(Bv32Term::Var(right)));
-        let stmt = c_return(c_add(c_var("left"), c_var("right")));
+            .with_local("left", int32(Bitvector32Term::Variable(left)))
+            .with_local("right", int32(Bitvector32Term::Variable(right)));
+        let statement = c_return(c_add(c_variable("left"), c_variable("right")));
 
-        assert!(prove_symbolic_c_execution(state, stmt, Assumptions::new()).is_none());
+        assert!(prove_symbolic_c_execution(state, statement, Assumptions::new()).is_none());
     }
 
     #[test]
     fn symbolic_execution_reports_branch_facts() {
-        let a = Var(24);
-        let b = Var(25);
-        let a_bits = Bv32Term::Var(a);
-        let b_bits = Bv32Term::Var(b);
+        let a = Variable(24);
+        let b = Variable(25);
+        let a_bits = Bitvector32Term::Variable(a);
+        let b_bits = Bitvector32Term::Variable(b);
         let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
         let state = c_max_state(int32(a_bits), int32(b_bits));
         let execution =
@@ -6072,14 +6566,14 @@ mod tests {
             &[] as &[ProofObligation]
         );
         assert_eq!(
-            execution.paths()[0].theorem().prop(),
-            &Prop::Implies(
-                Box::new(Prop::ConditionIs(condition.clone(), true)),
-                Box::new(Prop::CStmtExecutes {
+            execution.paths()[0].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(condition.clone(), true)),
+                Box::new(Proposition::CStatementExecutes {
                     state: state.clone(),
-                    stmt: c_max_body(),
-                    outcome: CStmtOutcome::Return {
-                        value: int32(Bv32Term::Var(b)),
+                    statement: c_max_body(),
+                    outcome: CStatementOutcome::Return {
+                        value: int32(Bitvector32Term::Variable(b)),
                         state: state.clone(),
                     },
                 }),
@@ -6095,14 +6589,14 @@ mod tests {
             &[] as &[ProofObligation]
         );
         assert_eq!(
-            execution.paths()[1].theorem().prop(),
-            &Prop::Implies(
-                Box::new(Prop::ConditionIs(condition, false)),
-                Box::new(Prop::CStmtExecutes {
+            execution.paths()[1].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(condition, false)),
+                Box::new(Proposition::CStatementExecutes {
                     state: state.clone(),
-                    stmt: c_max_body(),
-                    outcome: CStmtOutcome::Return {
-                        value: int32(Bv32Term::Var(a)),
+                    statement: c_max_body(),
+                    outcome: CStatementOutcome::Return {
+                        value: int32(Bitvector32Term::Variable(a)),
                         state,
                     },
                 }),
@@ -6112,17 +6606,17 @@ mod tests {
 
     #[test]
     fn symbolic_execution_reports_overflow_facts() {
-        let left = Var(26);
-        let right = Var(27);
-        let left_bits = Bv32Term::Var(left);
-        let right_bits = Bv32Term::Var(right);
+        let left = Variable(26);
+        let right = Variable(27);
+        let left_bits = Bitvector32Term::Variable(left);
+        let right_bits = Bitvector32Term::Variable(right);
         let state = CState::new()
             .with_local("left", int32(left_bits.clone()))
             .with_local("right", int32(right_bits.clone()));
-        let stmt = c_return(c_add(c_var("left"), c_var("right")));
+        let statement = c_return(c_add(c_variable("left"), c_variable("right")));
         let overflow = ConditionTerm::signed_add_overflows(left_bits.clone(), right_bits.clone());
         let execution =
-            prove_symbolic_c_execution_paths(state.clone(), stmt.clone(), Assumptions::new());
+            prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
 
         assert_eq!(execution.paths().len(), 2);
         assert_eq!(
@@ -6134,14 +6628,17 @@ mod tests {
             &[] as &[ProofObligation]
         );
         assert_eq!(
-            execution.paths()[0].theorem().prop(),
-            &Prop::Implies(
-                Box::new(Prop::ConditionIs(overflow.clone(), false)),
-                Box::new(Prop::CStmtExecutes {
+            execution.paths()[0].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(overflow.clone(), false)),
+                Box::new(Proposition::CStatementExecutes {
                     state: state.clone(),
-                    stmt: stmt.clone(),
-                    outcome: CStmtOutcome::Return {
-                        value: int32(Bv32Term::Add(Box::new(left_bits), Box::new(right_bits))),
+                    statement: statement.clone(),
+                    outcome: CStatementOutcome::Return {
+                        value: int32(Bitvector32Term::Add(
+                            Box::new(left_bits),
+                            Box::new(right_bits)
+                        )),
                         state: state.clone(),
                     },
                 }),
@@ -6157,13 +6654,15 @@ mod tests {
             &[] as &[ProofObligation]
         );
         assert_eq!(
-            execution.paths()[1].theorem().prop(),
-            &Prop::Implies(
-                Box::new(Prop::ConditionIs(overflow, true)),
-                Box::new(Prop::CStmtExecutes {
+            execution.paths()[1].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(overflow, true)),
+                Box::new(Proposition::CStatementExecutes {
                     state: state.clone(),
-                    stmt,
-                    outcome: CStmtOutcome::Ub(CUndefinedBehavior::SignedOverflow),
+                    statement,
+                    outcome: CStatementOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::SignedOverflow
+                    ),
                 }),
             )
         );
@@ -6171,29 +6670,32 @@ mod tests {
 
     #[test]
     fn symbolic_execution_uses_no_overflow_fact() {
-        let left = Var(22);
-        let right = Var(23);
-        let left_bits = Bv32Term::Var(left);
-        let right_bits = Bv32Term::Var(right);
+        let left = Variable(22);
+        let right = Variable(23);
+        let left_bits = Bitvector32Term::Variable(left);
+        let right_bits = Bitvector32Term::Variable(right);
         let state = CState::new()
             .with_local("left", int32(left_bits.clone()))
             .with_local("right", int32(right_bits.clone()));
-        let stmt = c_return(c_add(c_var("left"), c_var("right")));
+        let statement = c_return(c_add(c_variable("left"), c_variable("right")));
         let no_overflow =
             ConditionTerm::signed_add_overflows(left_bits.clone(), right_bits.clone());
         let assumptions = Assumptions::new().assume_condition(no_overflow.clone(), false);
-        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), assumptions)
+        let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), assumptions)
             .expect("no-overflow fact should let symbolic add execute");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::Implies(
-                Box::new(Prop::ConditionIs(no_overflow, false)),
-                Box::new(Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(no_overflow, false)),
+                Box::new(Proposition::CStatementExecutes {
                     state: state.clone(),
-                    stmt,
-                    outcome: CStmtOutcome::Return {
-                        value: int32(Bv32Term::Add(Box::new(left_bits), Box::new(right_bits))),
+                    statement,
+                    outcome: CStatementOutcome::Return {
+                        value: int32(Bitvector32Term::Add(
+                            Box::new(left_bits),
+                            Box::new(right_bits)
+                        )),
                         state,
                     },
                 }),
@@ -6203,26 +6705,29 @@ mod tests {
 
     #[test]
     fn symbolic_increment_uses_int_max_bound_to_rule_out_overflow() {
-        let x = Var(65);
-        let x_bits = Bv32Term::Var(x);
+        let x = Variable(65);
+        let x_bits = Bitvector32Term::Variable(x);
         let state = CState::new().with_local("x", int32(x_bits.clone()));
-        let stmt = c_return(c_add(c_var("x"), c_int32_literal(1)));
-        let x_lt_int_max = ConditionTerm::slt(x_bits.clone(), Bv32Term::Const(i32::MAX as u32));
+        let statement = c_return(c_add(c_variable("x"), c_int32_literal(1)));
+        let x_lt_int_max = ConditionTerm::signed_less_than(
+            x_bits.clone(),
+            Bitvector32Term::Constant(i32::MAX as u32),
+        );
         let assumptions = Assumptions::new().assume_condition(x_lt_int_max.clone(), true);
-        let theorem = prove_symbolic_c_execution(state.clone(), stmt.clone(), assumptions)
+        let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), assumptions)
             .expect("x < INT_MAX should prove x + 1 does not overflow");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::Implies(
-                Box::new(Prop::ConditionIs(x_lt_int_max, true)),
-                Box::new(Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(x_lt_int_max, true)),
+                Box::new(Proposition::CStatementExecutes {
                     state: state.clone(),
-                    stmt,
-                    outcome: CStmtOutcome::Return {
-                        value: int32(Bv32Term::Add(
+                    statement,
+                    outcome: CStatementOutcome::Return {
+                        value: int32(Bitvector32Term::Add(
                             Box::new(x_bits),
-                            Box::new(Bv32Term::Const(1)),
+                            Box::new(Bitvector32Term::Constant(1)),
                         )),
                         state,
                     },
@@ -6233,31 +6738,32 @@ mod tests {
 
     #[test]
     fn pointer_store_through_local_address_updates_named_lvalue() {
-        let local_ptr = Ptr {
+        let local_pointer = Pointer {
             block: "local:x".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let stmt = c_seq(
+        let statement = c_seq(
             c_declare("x", CType::Int32),
             c_seq(
                 c_store(c_addr_of("x"), c_int32_literal(5)),
-                c_return(c_var("x")),
+                c_return(c_variable("x")),
             ),
         );
         let final_state = CState::new().with_local("x", int32(5)).with_memory(
             CMemory::new()
                 .with_block("local:x", 4)
-                .store(local_ptr, int32(5)),
+                .store(local_pointer, int32(5)),
         );
-        let theorem = prove_symbolic_c_execution(CState::new(), stmt.clone(), Assumptions::new())
-            .expect("pointer store through local address should execute");
+        let theorem =
+            prove_symbolic_c_execution(CState::new(), statement.clone(), Assumptions::new())
+                .expect("pointer store through local address should execute");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CStmtExecutes {
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
                 state: CState::new(),
-                stmt,
-                outcome: CStmtOutcome::Return {
+                statement,
+                outcome: CStatementOutcome::Return {
                     value: int32(5),
                     state: final_state,
                 },
@@ -6267,67 +6773,67 @@ mod tests {
 
     #[test]
     fn memory_load_store_are_native_theorems() {
-        let ptr = Ptr {
+        let pointer = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
         let value = int32(7);
         let theorem =
-            prove_memory_load_after_store_same(CMemory::new(), ptr.clone(), value.clone());
+            prove_memory_load_after_store_same(CMemory::new(), pointer.clone(), value.clone());
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CMemoryLoads {
-                memory: CMemory::new().store(ptr.clone(), value.clone()),
-                ptr,
-                outcome: CExprOutcome::Value(value),
+            theorem.proposition(),
+            &Proposition::CMemoryLoads {
+                memory: CMemory::new().store(pointer.clone(), value.clone()),
+                pointer,
+                outcome: CExpressionOutcome::Value(value),
             }
         );
     }
 
     #[test]
     fn store_preserves_distinct_memory_cell_frame() {
-        let stored_ptr = Ptr {
+        let stored_pointer = Pointer {
             block: "left".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let loaded_ptr = Ptr {
+        let loaded_pointer = Pointer {
             block: "right".to_string(),
-            offset: PtrOffsetTerm::Const(0),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let memory = CMemory::new().store(loaded_ptr.clone(), int32(42));
+        let memory = CMemory::new().store(loaded_pointer.clone(), int32(42));
         let theorem = prove_memory_load_after_store_other(
             memory.clone(),
-            stored_ptr.clone(),
+            stored_pointer.clone(),
             int32(9),
-            loaded_ptr.clone(),
+            loaded_pointer.clone(),
         )
         .expect("store to distinct pointer should preserve loaded cell");
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CMemoryLoads {
-                memory: memory.store(stored_ptr, int32(9)),
-                ptr: loaded_ptr,
-                outcome: CExprOutcome::Value(int32(42)),
+            theorem.proposition(),
+            &Proposition::CMemoryLoads {
+                memory: memory.store(stored_pointer, int32(9)),
+                pointer: loaded_pointer,
+                outcome: CExpressionOutcome::Value(int32(42)),
             }
         );
     }
 
     #[test]
-    fn missing_memory_load_is_native_ub() {
-        let ptr = Ptr {
+    fn missing_memory_load_is_native_undefined_behavior() {
+        let pointer = Pointer {
             block: "block".to_string(),
-            offset: PtrOffsetTerm::Const(4),
+            offset: PointerOffsetTerm::Constant(4),
         };
-        let theorem = prove_memory_load(CMemory::new(), ptr.clone());
+        let theorem = prove_memory_load(CMemory::new(), pointer.clone());
 
         assert_eq!(
-            theorem.prop(),
-            &Prop::CMemoryLoads {
+            theorem.proposition(),
+            &Proposition::CMemoryLoads {
                 memory: CMemory::new(),
-                ptr,
-                outcome: CExprOutcome::Ub(CUndefinedBehavior::InvalidMemory),
+                pointer,
+                outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
             }
         );
     }
