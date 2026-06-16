@@ -2,7 +2,7 @@
 //!
 //! This is intentionally a first slice, not the final Click language. It gives
 //! us a source-file-shaped workflow for C examples while leaving the larger
-//! proof language design open.
+//! tactic language design open.
 
 use std::collections::BTreeMap;
 
@@ -43,7 +43,7 @@ pub struct TheoremBlock {
     name: String,
     requires: Vec<Requirement>,
     ensure: Ensure,
-    proof: ProofScript,
+    proof: Proof,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -56,13 +56,15 @@ pub enum Ensure {
     ResultEqInt32(u32),
 }
 
+/// A `.click` proof block: a sequence of tactic calls.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProofScript {
-    steps: Vec<ProofStep>,
+pub struct Proof {
+    tactics: Vec<Tactic>,
 }
 
+/// A `.click` proof-language command.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ProofStep {
+pub enum Tactic {
     Auto,
 }
 
@@ -137,14 +139,14 @@ impl TheoremBlock {
         &self.ensure
     }
 
-    pub fn proof(&self) -> &ProofScript {
+    pub fn proof(&self) -> &Proof {
         &self.proof
     }
 }
 
-impl ProofScript {
-    pub fn steps(&self) -> &[ProofStep] {
-        &self.steps
+impl Proof {
+    pub fn tactics(&self) -> &[Tactic] {
+        &self.tactics
     }
 }
 
@@ -185,7 +187,7 @@ pub fn verify_c0_sources(
         check_signature(&function_block.signature, parsed_function, source_path)?;
 
         for theorem_block in &function_block.theorem_blocks {
-            if theorem_block.proof.steps() != [ProofStep::Auto] {
+            if theorem_block.proof.tactics() != [Tactic::Auto] {
                 return Err(ClickError::new(format!(
                     "`{}.{}` must use exactly `proof {{ auto; }}` in this first slice",
                     function_block.signature.name(),
@@ -609,28 +611,28 @@ impl Parser {
         Ok(Ensure::ResultEqInt32(expected))
     }
 
-    fn parse_proof(&mut self) -> Result<ProofScript, ClickError> {
+    fn parse_proof(&mut self) -> Result<Proof, ClickError> {
         self.expect_ident_spelling("proof")?;
         self.expect(Token::LBrace)?;
-        let mut steps = Vec::new();
+        let mut tactics = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
                 Some("auto") => {
                     self.position += 1;
                     self.expect(Token::Semicolon)?;
-                    steps.push(ProofStep::Auto);
+                    tactics.push(Tactic::Auto);
                 }
                 Some(keyword) => {
-                    return Err(self.error(format!("expected proof step, got `{keyword}`")));
+                    return Err(self.error(format!("expected tactic, got `{keyword}`")));
                 }
                 None => {
-                    return Err(self.error("expected proof step or `}`"));
+                    return Err(self.error("expected tactic or `}`"));
                 }
             }
         }
         self.expect(Token::RBrace)?;
 
-        Ok(ProofScript { steps })
+        Ok(Proof { tactics })
     }
 
     fn expect_ident(&mut self, expected: &str) -> Result<String, ClickError> {
@@ -883,7 +885,7 @@ mod tests {
             }]
         );
         assert_eq!(theorem.ensure(), &Ensure::ResultEqInt32(2));
-        assert_eq!(theorem.proof().steps(), &[ProofStep::Auto]);
+        assert_eq!(theorem.proof().tactics(), &[Tactic::Auto]);
     }
 
     #[test]

@@ -55,9 +55,9 @@ about int32, char*, and float64 into the kernel.
 The public crate currently exposes two top-level modules, with the C and Click
 language support under `src/lang/`:
 
-- `src/megakernel.rs`: native theorem-producing operations for systems-code
-  reasoning. `Theorem` remains an abstract object; callers can inspect its
-  proposition but cannot construct arbitrary theorems directly.
+- `src/megakernel.rs`: megakernel axioms for systems-code reasoning. `Theorem`
+  remains an abstract object; callers can inspect its proposition but cannot
+  construct arbitrary theorems directly.
 - `src/lang/c/`: a tiny C0 syntax importer. It parses a deliberately small C
   subset and lowers it to megakernel C functions/statements/expressions.
 - `src/lang/click.rs`: a first `.click` sidecar verifier slice for C0.
@@ -87,6 +87,24 @@ and rvalue evaluation reads from that object. This is the C-native basis for
 the path toward real local array objects rather than treating arrays as secret
 pointers.
 
+## Proof Vocabulary
+
+Click uses four core proof-system words:
+
+- An **axiom** is a built-in trusted theorem-producing operation. In the Rust
+  codebase, these are the megakernel functions that can construct a `Theorem`.
+  Many of them are named `prove_*` because the name describes the theorem they
+  produce, but in Click terminology they are axioms.
+- A **theorem** is an abstract object representing a proven proposition. Users
+  cannot construct arbitrary theorems directly.
+- A **tactic** is a proof-language command that tries to prove a theorem or
+  reduce a proof goal by invoking axioms and using existing theorems.
+- A **proof** is a block or sequence of tactic calls that proves a theorem.
+
+The current `.click` proof language has only one tactic, `auto`. It invokes the
+megakernel's C symbolic-execution axioms and spec-checking axioms to prove the
+named theorem block.
+
 ## C0 Status
 
 C0 is not a standard language name here; it is this repo's tiny C subset used
@@ -115,9 +133,10 @@ or UB depending on the execution path.
 
 ## Proof Surface
 
-The primary proof engine today is native symbolic execution in the megakernel.
-It produces theorem objects for expression evaluation, statement execution,
-function execution, and function-spec satisfaction.
+The primary proof engine today is the `auto` tactic backed by native symbolic
+execution in the megakernel. The underlying axioms produce theorem objects for
+expression evaluation, statement execution, function execution, and
+function-spec satisfaction.
 
 Symbolic execution is bounded by an explicit `ExecutionBudget`: expression
 steps, statement steps, function calls, loop unrolls, and path count. Exhausting
@@ -155,10 +174,10 @@ int32 fill3(int32* p) {
 
 The C0 signature in the `.click` file is checked against the C source and a
 mismatch is reported directly. Each named theorem block has its own
-requirements, one result-equality `ensures` clause for now, and one proof
-script. That sidecar path parses C0 source, builds the requested initial memory,
-runs native symbolic execution, checks the result clause, and packages the
-result as a megakernel `CFunctionSpec` theorem.
+requirements, one result-equality `ensures` clause for now, and one proof block.
+That sidecar path parses C0 source, builds the requested initial memory, runs
+native symbolic execution, checks the result clause, and packages the result as
+a megakernel `CFunctionSpec` theorem.
 
 ## Markdown Tests
 

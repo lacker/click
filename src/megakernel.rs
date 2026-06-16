@@ -1,8 +1,9 @@
 //! Experimental rich kernel for systems-code proofs.
 //!
 //! This module keeps the LCF shape: `Theorem` is an abstract object whose
-//! constructor is not public. The trusted kernel language has native systems
-//! concepts instead of encoding them as a tiny general-purpose calculus.
+//! constructor is not public. Public theorem constructors in this module are
+//! Click axioms: trusted built-in operations that produce theorem objects
+//! directly.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -327,6 +328,7 @@ pub enum Prop {
     },
 }
 
+/// An abstract proven proposition produced by megakernel axioms.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Theorem {
     prop: Prop,
