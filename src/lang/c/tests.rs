@@ -318,6 +318,104 @@ fn c0_syntax_targets_megakernel_pointer_addition_load() {
 }
 
 #[test]
+fn c0_syntax_targets_megakernel_array_index_load() {
+    let function = syntax::parse_function(
+        r#"
+        int32 load_second(int32* p) {
+            return p[1];
+        }
+        "#,
+    )
+    .expect("array-index load function should parse")
+    .to_megakernel_function();
+
+    let base = crate::megakernel::Ptr {
+        block: "block".to_string(),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
+    };
+    let second = crate::megakernel::Ptr {
+        block: "block".to_string(),
+        offset: crate::megakernel::PtrOffsetTerm::Const(4),
+    };
+    let memory = crate::megakernel::CMemory::new()
+        .with_block("block", 16)
+        .store(second, crate::megakernel::int32(23));
+    let state = crate::megakernel::CState::new().with_memory(memory.clone());
+    let args = vec![crate::megakernel::c_ptr_value(base)];
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        args.clone(),
+        Default::default(),
+    )
+    .expect("parsed array-index load should execute");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state: state.clone(),
+            function,
+            args,
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(23),
+                state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_targets_megakernel_array_index_store() {
+    let function = syntax::parse_function(
+        r#"
+        int32 store_second(int32* p) {
+            p[1] = 7;
+            return p[1];
+        }
+        "#,
+    )
+    .expect("array-index store function should parse")
+    .to_megakernel_function();
+
+    let base = crate::megakernel::Ptr {
+        block: "block".to_string(),
+        offset: crate::megakernel::PtrOffsetTerm::Const(0),
+    };
+    let second = crate::megakernel::Ptr {
+        block: "block".to_string(),
+        offset: crate::megakernel::PtrOffsetTerm::Const(4),
+    };
+    let memory = crate::megakernel::CMemory::new().with_block("block", 16);
+    let state = crate::megakernel::CState::new().with_memory(memory);
+    let final_state = crate::megakernel::CState::new().with_memory(
+        crate::megakernel::CMemory::new()
+            .with_block("block", 16)
+            .store(second, crate::megakernel::int32(7)),
+    );
+    let args = vec![crate::megakernel::c_ptr_value(base)];
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        args.clone(),
+        Default::default(),
+    )
+    .expect("parsed array-index store should execute");
+
+    assert_eq!(
+        theorem.prop(),
+        &crate::megakernel::Prop::CFunctionExecutes {
+            state,
+            function,
+            args,
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(7),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_syntax_targets_megakernel_pointer_null_equality() {
     let function = syntax::parse_function(
         r#"

@@ -69,6 +69,7 @@ pub enum C0Expr {
     Add(Box<C0Expr>, Box<C0Expr>),
     Sub(Box<C0Expr>, Box<C0Expr>),
     Load(Box<C0Expr>),
+    Index(Box<C0Expr>, Box<C0Expr>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -214,6 +215,10 @@ impl C0Expr {
                 crate::megakernel::c_sub(left.to_megakernel_expr(), right.to_megakernel_expr())
             }
             Self::Load(ptr) => crate::megakernel::c_load(ptr.to_megakernel_expr()),
+            Self::Index(base, index) => crate::megakernel::c_load(crate::megakernel::c_add(
+                base.to_megakernel_expr(),
+                index.to_megakernel_expr(),
+            )),
         }
     }
 }
@@ -240,6 +245,8 @@ enum Token {
     Number(String),
     LParen,
     RParen,
+    LBracket,
+    RBracket,
     LBrace,
     RBrace,
     Comma,
@@ -358,6 +365,13 @@ impl Parser {
             Some(Token::Star) => {
                 self.position += 1;
                 let ptr = self.parse_unary()?;
+                self.expect(Token::Equal)?;
+                let value = self.parse_expr()?;
+                self.expect(Token::Semicolon)?;
+                Ok(C0Stmt::Store { ptr, value })
+            }
+            Some(Token::Ident(_)) if self.peek_next() == Some(&Token::LBracket) => {
+                let ptr = self.parse_indexed_lvalue_ptr()?;
                 self.expect(Token::Equal)?;
                 let value = self.parse_expr()?;
                 self.expect(Token::Semicolon)?;
@@ -566,7 +580,31 @@ impl Parser {
             return Ok(C0Expr::Not(Box::new(self.parse_unary()?)));
         }
 
-        self.parse_primary()
+        self.parse_postfix()
+    }
+
+    fn parse_postfix(&mut self) -> Result<C0Expr, C0SyntaxError> {
+        let mut expr = self.parse_primary()?;
+        while self.peek() == Some(&Token::LBracket) {
+            self.position += 1;
+            let index = self.parse_expr()?;
+            self.expect(Token::RBracket)?;
+            expr = C0Expr::Index(Box::new(expr), Box::new(index));
+        }
+        Ok(expr)
+    }
+
+    fn parse_indexed_lvalue_ptr(&mut self) -> Result<C0Expr, C0SyntaxError> {
+        let mut base = self.parse_primary()?;
+        loop {
+            self.expect(Token::LBracket)?;
+            let index = self.parse_expr()?;
+            self.expect(Token::RBracket)?;
+            if self.peek() != Some(&Token::LBracket) {
+                return Ok(C0Expr::Add(Box::new(base), Box::new(index)));
+            }
+            base = C0Expr::Index(Box::new(base), Box::new(index));
+        }
     }
 
     fn parse_primary(&mut self) -> Result<C0Expr, C0SyntaxError> {
@@ -721,6 +759,8 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
         let token = match ch {
             '(' => Token::LParen,
             ')' => Token::RParen,
+            '[' => Token::LBracket,
+            ']' => Token::RBracket,
             '{' => Token::LBrace,
             '}' => Token::RBrace,
             ',' => Token::Comma,

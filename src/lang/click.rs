@@ -834,10 +834,10 @@ mod tests {
             int32 i;
             i = 0;
             while (i < 3) {
-                *(p + i) = i;
+                p[i] = i;
                 i = i + 1;
             }
-            return *(p + 2);
+            return p[2];
         }
     "#;
 

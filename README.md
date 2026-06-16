@@ -73,7 +73,7 @@ to drive the design. It currently supports:
 - `return`
 - address-of locals
 - pointer arithmetic for `int32*`
-- loads and stores
+- loads and stores, including `p[i]` syntax for `int32*` indexing
 - known function calls through a small `CFunctionEnv`
 
 The memory model has named blocks with byte sizes. Concrete in-range loads and
