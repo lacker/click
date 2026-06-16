@@ -1,36 +1,59 @@
 # click
 
-`click` is an experimental systems-code theorem prover.
+`click` is a new programming language.
 
-The current goal is concrete: make it easy to prove useful facts about C code.
-The implementation direction is megakernel-first. Instead of preserving a tiny
-trusted calculus and encoding systems concepts outward from it, Click puts
-systems concepts directly into the trusted kernel when that makes verification
-faster, simpler, or more practical.
+Click's goal is to make it easy to prove things about programs in other
+programming languages. Starting with C.
 
 ## Megakernel Theory
 
-Traditional theorem provers usually optimize for a very small trusted kernel.
-That is a good fit for foundational mathematics. Click is aimed at systems
-engineering verification, where the priority is different: prove important
-facts about real programs quickly enough and ergonomically enough that the tool
-can be used on large codebases.
+There's a traditional principle of theorem prover design that says you should
+build a small, trusted kernel.
 
-The tradeoff is explicit. A larger trusted kernel has more implementation
-surface and therefore more bug risk. In return, it can have native concepts for
-the domain: bitvectors, C values, memory, undefined behavior, symbolic
-execution, and eventually C-specific proof automation. For this project, that
-tradeoff is intentional.
+The rationale is that you want it to be really small to avoid bugs, and then
+you prove things outward from there.
 
-The old list-based kernel and prelude were useful prototypes. They explored
-LCF-style theorem objects, values versus computations, effects, proof scripts,
-tactics, simplification, list/nat libraries, and source loading. That path is no
-longer the implementation roadmap. The current crate has been cut down to the
-megakernel, the C0 importer, and the first `.click` sidecar verifier.
+My theory is that for the task of "systems engineering theorem proving", this
+is actually the wrong design.
+
+It's actually a good idea to put a whole lot of stuff into the kernel.
+The rationale is that it lets you develop faster.
+It lets you put more powerful stuff in the kernel, and it makes performance
+better.
+These are all really important for the systems engineering questions that we
+care about.
+Like, can we formally verify the Linux kernel.
+
+There's a serious tradeoff!
+The downside is that you are more likely to have bugs in the kernel.
+But, for our domain, this is not the most important problem.
+We aren't concerned about like, the soundness of mathematics itself.
+We are verifying code that is already supposed to work.
+So if we do discover bugs in the kernel, we don't have a huge tower of false
+statements.
+It isn't going to lead to some sort of philosophical disaster.
+
+Plus, we can always use other systems to prove the soundness of the megakernel
+itself.
+In fact, we should do that, eventually, with a number of differently
+implemented, alternative theorem-proving systems.
+That will increase trust in the megakernel.
+But it just isn't the priority during development, for the Click kernel to be
+simple.
+It should be fast on big codebases.
+It should be easy to use, in terms of, it should be really good at proving
+things.
+Those are the priorities.
+
+In other words, we are happy to hardcode axioms and tactics
+about int32, char*, and float64 into the kernel.
+
+## Only humans may edit the content above this point. AIs may edit below this point.
 
 ## Architecture
 
-The public crate currently has three modules:
+The public crate currently exposes two top-level modules, with the C and Click
+language support under `src/lang/`:
 
 - `src/megakernel.rs`: native theorem-producing operations for systems-code
   reasoning. `Theorem` remains an abstract object; callers can inspect its
@@ -42,7 +65,8 @@ The public crate currently has three modules:
 The megakernel currently has native data structures for:
 
 - `Bv32Term`, `PtrOffsetTerm`, and `ConditionTerm`
-- C values, expressions, statements, functions, and function environments
+- C values, lvalues, expressions, statements, functions, and function
+  environments
 - local state and memory with explicit byte-sized blocks
 - expression, statement, and function outcomes
 - C undefined behavior and runtime errors
@@ -72,7 +96,7 @@ to drive the design. It currently supports:
 - integer literals and variables
 - signed comparisons and equality, returning `int32` `0` or `1` like C
 - signed addition and subtraction, with signed-overflow UB
-- local `int32` declarations
+- local `int32` and `int32*` declarations
 - assignment and sequencing
 - `if` / `else` with C scalar truthiness
 - `while`, currently concrete/budget-capped for execution, plus a native
@@ -170,7 +194,7 @@ test `tests/mdtests.rs` runs all `mdtests/*.md` files.
 ## Current Demo
 
 The first memory-safety demo is `fill3(int32* p)`: it writes three consecutive
-`int32` cells through `p + i` in a loop and reads back the final cell. With a
+`int32` cells through `p[i]` in a loop and reads back the final cell. With a
 12-byte backing block, the megakernel proves the execution without leftover
 memory-safety premises.
 
@@ -184,7 +208,8 @@ memory-safety premises.
    promotion rules.
 4. Improve loop verification beyond concrete fuel-capped execution by making
    invariants useful from `.click`.
-5. Grow memory reasoning toward arrays, pointer ranges, and frame conditions.
+5. Grow memory reasoning toward real local arrays, pointer ranges, and frame
+   conditions.
 6. Replace the toy C0 parser with a path toward real C parsing when the proof
    model is ready for it.
 
