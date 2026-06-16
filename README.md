@@ -108,19 +108,57 @@ The `.click` sidecar language is intentionally tiny. It currently supports this
 shape:
 
 ```text
-verify fill3 in "fill3.c" {
-    requires valid_range(p, 12);
-    ensures result == 2;
+verifying "fill3.c";
 
-    proof {
-        auto;
+int32 fill3(int32* p) {
+    returns_second {
+        requires valid_range(p, 12);
+        ensures result == 2;
+
+        proof {
+            auto;
+        }
     }
 }
 ```
 
-That sidecar path parses C0 source, builds the requested initial memory, runs
-native symbolic execution, checks the result clause, and packages the result as
-a megakernel `CFunctionSpec` theorem.
+The C0 signature in the `.click` file is checked against the C source and a
+mismatch is reported directly. Each named theorem block has its own
+requirements, one result-equality `ensures` clause for now, and one proof
+script. That sidecar path parses C0 source, builds the requested initial memory,
+runs native symbolic execution, checks the result clause, and packages the
+result as a megakernel `CFunctionSpec` theorem.
+
+## Markdown Tests
+
+End-to-end examples live in `mdtests/`. Each markdown test can include prose,
+one or more C source blocks, one Click sidecar block, and an expected result:
+
+````text
+```c filename=example.c
+int32 example(int32* p) {
+    return 0;
+}
+```
+
+```click
+verifying "example.c";
+
+int32 example(int32* p) {
+    returns_zero {
+        ensures result == 0;
+        proof { auto; }
+    }
+}
+```
+
+```expect
+pass
+```
+````
+
+Negative tests use `fail: expected diagnostic substring`. The Rust integration
+test `tests/mdtests.rs` runs all `mdtests/*.md` files.
 
 ## Current Demo
 

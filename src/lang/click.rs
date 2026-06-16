@@ -9,21 +9,40 @@ use std::collections::BTreeMap;
 use crate::lang::c::syntax::{self, C0Type};
 use crate::megakernel::{
     Assumptions, Bv32Term, CExpr, CFunctionOutcome, CFunctionSpec, CMemory, CState, CValue, Prop,
-    Ptr, PtrOffsetTerm, Theorem, c_function_spec, c_ptr_value, prove_c_function_satisfies_spec,
-    prove_symbolic_c_function_execution,
+    Ptr, PtrOffsetTerm, Theorem, Var, c_function_spec, c_ptr_value,
+    prove_c_function_satisfies_spec, prove_symbolic_c_function_execution,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClickFile {
-    verify_blocks: Vec<VerifyBlock>,
+    verifying_sources: Vec<String>,
+    function_blocks: Vec<FunctionBlock>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct VerifyBlock {
-    function_name: String,
-    source_path: String,
+pub struct FunctionBlock {
+    signature: FunctionSignature,
+    theorem_blocks: Vec<TheoremBlock>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FunctionSignature {
+    return_type: C0Type,
+    name: String,
+    params: Vec<FunctionParam>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FunctionParam {
+    ty: C0Type,
+    name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TheoremBlock {
+    name: String,
     requires: Vec<Requirement>,
-    ensures: Vec<Ensure>,
+    ensure: Ensure,
     proof: ProofScript,
 }
 
@@ -48,8 +67,10 @@ pub enum ProofStep {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct VerifiedCFunction {
-    pub block: VerifyBlock,
+pub struct VerifiedCTheorem {
+    pub source_path: String,
+    pub function_block: FunctionBlock,
+    pub theorem_block: TheoremBlock,
     pub spec: CFunctionSpec,
     pub theorem: Theorem,
 }
@@ -60,26 +81,60 @@ pub struct ClickError {
 }
 
 impl ClickFile {
-    pub fn verify_blocks(&self) -> &[VerifyBlock] {
-        &self.verify_blocks
+    pub fn verifying_sources(&self) -> &[String] {
+        &self.verifying_sources
+    }
+
+    pub fn function_blocks(&self) -> &[FunctionBlock] {
+        &self.function_blocks
     }
 }
 
-impl VerifyBlock {
-    pub fn function_name(&self) -> &str {
-        &self.function_name
+impl FunctionBlock {
+    pub fn signature(&self) -> &FunctionSignature {
+        &self.signature
     }
 
-    pub fn source_path(&self) -> &str {
-        &self.source_path
+    pub fn theorem_blocks(&self) -> &[TheoremBlock] {
+        &self.theorem_blocks
+    }
+}
+
+impl FunctionSignature {
+    pub fn return_type(&self) -> C0Type {
+        self.return_type
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn params(&self) -> &[FunctionParam] {
+        &self.params
+    }
+}
+
+impl FunctionParam {
+    pub fn ty(&self) -> C0Type {
+        self.ty
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl TheoremBlock {
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn requires(&self) -> &[Requirement] {
         &self.requires
     }
 
-    pub fn ensures(&self) -> &[Ensure] {
-        &self.ensures
+    pub fn ensure(&self) -> &Ensure {
+        &self.ensure
     }
 
     pub fn proof(&self) -> &ProofScript {
@@ -112,92 +167,173 @@ pub fn parse(source: &str) -> Result<ClickFile, ClickError> {
 pub fn verify_c0_sources(
     click_source: &str,
     c_sources: &[(&str, &str)],
-) -> Result<Vec<VerifiedCFunction>, ClickError> {
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let file = parse(click_source)?;
     let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
+    let parsed_sources = parse_verified_sources(&file, &c_sources)?;
     let mut verified = Vec::new();
 
-    for block in file.verify_blocks {
-        let c_source = *c_sources.get(block.source_path()).ok_or_else(|| {
-            ClickError::new(format!(
-                "verify `{}` refers to missing C source `{}`",
-                block.function_name(),
-                block.source_path()
-            ))
-        })?;
-        let parsed_function = syntax::parse_function(c_source).map_err(|error| {
-            ClickError::new(format!(
-                "failed to parse C source `{}`: {}",
-                block.source_path(),
-                error.message()
-            ))
-        })?;
+    for function_block in file.function_blocks {
+        let (source_path, parsed_function) = parsed_sources
+            .get(function_block.signature.name())
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{}` is not defined by any `verifying` source",
+                    function_block.signature.name()
+                ))
+            })?;
+        check_signature(&function_block.signature, parsed_function, source_path)?;
 
-        if parsed_function.name() != block.function_name() {
-            return Err(ClickError::new(format!(
-                "verify block names `{}`, but `{}` defines `{}`",
-                block.function_name(),
-                block.source_path(),
-                parsed_function.name()
-            )));
-        }
-
-        if block.proof.steps() != [ProofStep::Auto] {
-            return Err(ClickError::new(format!(
-                "verify `{}` must use exactly `proof {{ auto; }}` in this first slice",
-                block.function_name()
-            )));
-        }
-
-        let (state, args) = initial_call(&block, parsed_function.params())?;
-        let function = parsed_function.to_megakernel_function();
-        let execution = prove_symbolic_c_function_execution(
-            state.clone(),
-            function.clone(),
-            args.clone(),
-            Assumptions::new(),
-        )
-        .ok_or_else(|| {
-            ClickError::new(format!(
-                "`auto` could not prove a single complete execution path for `{}`",
-                block.function_name()
-            ))
-        })?;
-        let outcome = match execution.prop() {
-            Prop::CFunctionExecutes { outcome, .. } => outcome.clone(),
-            prop => {
+        for theorem_block in &function_block.theorem_blocks {
+            if theorem_block.proof.steps() != [ProofStep::Auto] {
                 return Err(ClickError::new(format!(
-                    "`auto` produced an unexpected theorem for `{}`: {prop:?}",
-                    block.function_name()
+                    "`{}.{}` must use exactly `proof {{ auto; }}` in this first slice",
+                    function_block.signature.name(),
+                    theorem_block.name()
                 )));
             }
-        };
 
-        check_ensures(&block, &outcome)?;
-        let spec = c_function_spec(state, args, Vec::new(), outcome);
-        let theorem = prove_c_function_satisfies_spec(function, spec.clone(), Assumptions::new())
+            let (state, args) = initial_call(
+                function_block.signature.name(),
+                theorem_block,
+                parsed_function.params(),
+            )?;
+            let function = parsed_function.to_megakernel_function();
+            let execution = prove_symbolic_c_function_execution(
+                state.clone(),
+                function.clone(),
+                args.clone(),
+                Assumptions::new(),
+            )
             .ok_or_else(|| {
-            ClickError::new(format!(
-                "`auto` execution for `{}` did not satisfy the packaged spec",
-                block.function_name()
-            ))
-        })?;
+                ClickError::new(format!(
+                    "`auto` could not prove a single complete execution path for `{}.{}`",
+                    function_block.signature.name(),
+                    theorem_block.name()
+                ))
+            })?;
+            let outcome = match execution.prop() {
+                Prop::CFunctionExecutes { outcome, .. } => outcome.clone(),
+                prop => {
+                    return Err(ClickError::new(format!(
+                        "`auto` produced an unexpected theorem for `{}.{}`: {prop:?}",
+                        function_block.signature.name(),
+                        theorem_block.name()
+                    )));
+                }
+            };
 
-        verified.push(VerifiedCFunction {
-            block,
-            spec,
-            theorem,
-        });
+            check_ensure(function_block.signature.name(), theorem_block, &outcome)?;
+            let spec = c_function_spec(state, args, Vec::new(), outcome);
+            let theorem =
+                prove_c_function_satisfies_spec(function, spec.clone(), Assumptions::new())
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "`auto` execution for `{}.{}` did not satisfy the packaged spec",
+                            function_block.signature.name(),
+                            theorem_block.name()
+                        ))
+                    })?;
+
+            verified.push(VerifiedCTheorem {
+                source_path: source_path.clone(),
+                function_block: function_block.clone(),
+                theorem_block: theorem_block.clone(),
+                spec,
+                theorem,
+            });
+        }
     }
 
     Ok(verified)
 }
 
+fn parse_verified_sources<'a>(
+    file: &ClickFile,
+    c_sources: &'a BTreeMap<&str, &str>,
+) -> Result<BTreeMap<String, (String, syntax::C0Function)>, ClickError> {
+    if file.verifying_sources.is_empty() {
+        return Err(ClickError::new(
+            "`.click` file must declare at least one `verifying \"source.c\";`",
+        ));
+    }
+
+    let mut parsed = BTreeMap::new();
+    for source_path in &file.verifying_sources {
+        let c_source = *c_sources.get(source_path.as_str()).ok_or_else(|| {
+            ClickError::new(format!(
+                "`verifying` refers to missing C source `{source_path}`"
+            ))
+        })?;
+        let function = syntax::parse_function(c_source).map_err(|error| {
+            ClickError::new(format!(
+                "failed to parse C source `{source_path}`: {}",
+                error.message()
+            ))
+        })?;
+        let function_name = function.name().to_string();
+        let previous = parsed.insert(function_name.clone(), (source_path.clone(), function));
+        if previous.is_some() {
+            return Err(ClickError::new(format!(
+                "more than one `verifying` source defines function `{function_name}`"
+            )));
+        }
+    }
+
+    Ok(parsed)
+}
+
+fn check_signature(
+    signature: &FunctionSignature,
+    parsed_function: &syntax::C0Function,
+    source_path: &str,
+) -> Result<(), ClickError> {
+    if signature.return_type() != parsed_function.return_type() {
+        return Err(ClickError::new(format!(
+            "signature mismatch for `{}` in `{source_path}`: .click return type is {:?}, C return type is {:?}",
+            signature.name(),
+            signature.return_type(),
+            parsed_function.return_type()
+        )));
+    }
+
+    if signature.params().len() != parsed_function.params().len() {
+        return Err(ClickError::new(format!(
+            "signature mismatch for `{}` in `{source_path}`: .click has {} parameters, C has {}",
+            signature.name(),
+            signature.params().len(),
+            parsed_function.params().len()
+        )));
+    }
+
+    for (index, (expected, actual)) in signature
+        .params()
+        .iter()
+        .zip(parsed_function.params())
+        .enumerate()
+    {
+        if expected.ty() != actual.ty() || expected.name() != actual.name() {
+            return Err(ClickError::new(format!(
+                "signature mismatch for `{}` parameter {} in `{source_path}`: .click has {:?} {}, C has {:?} {}",
+                signature.name(),
+                index + 1,
+                expected.ty(),
+                expected.name(),
+                actual.ty(),
+                actual.name()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 fn initial_call(
-    block: &VerifyBlock,
+    function_name: &str,
+    theorem: &TheoremBlock,
     params: &[syntax::C0Param],
 ) -> Result<(CState, Vec<CExpr>), ClickError> {
-    let valid_ranges: BTreeMap<&str, u32> = block
+    let valid_ranges: BTreeMap<&str, u32> = theorem
         .requires()
         .iter()
         .map(|requirement| match requirement {
@@ -210,24 +346,18 @@ fn initial_call(
     for param in params {
         match param.ty() {
             C0Type::Int32Ptr => {
-                let bytes = *valid_ranges.get(param.name()).ok_or_else(|| {
-                    ClickError::new(format!(
-                        "pointer parameter `{}` needs `requires valid_range({}, bytes);`",
-                        param.name(),
-                        param.name()
-                    ))
-                })?;
-                memory = memory.with_block(param.name(), bytes);
+                if let Some(bytes) = valid_ranges.get(param.name()) {
+                    memory = memory.with_block(param.name(), *bytes);
+                }
                 args.push(c_ptr_value(Ptr {
                     block: param.name().to_string(),
                     offset: PtrOffsetTerm::Const(0),
                 }));
             }
             C0Type::Int32 => {
-                return Err(ClickError::new(format!(
-                    "parameter `{}` is `int32`; this first `.click` verifier slice only supports pointer parameters with `valid_range` requirements",
-                    param.name()
-                )));
+                args.push(CExpr::Value(CValue::Int32(Bv32Term::Var(Var(
+                    args.len() as u64
+                )))));
             }
         }
     }
@@ -236,7 +366,7 @@ fn initial_call(
         if !params.iter().any(|param| param.name() == *name) {
             return Err(ClickError::new(format!(
                 "`valid_range` names `{name}`, but `{}` has no such parameter",
-                block.function_name()
+                function_name
             )));
         }
     }
@@ -244,28 +374,30 @@ fn initial_call(
     Ok((CState::new().with_memory(memory), args))
 }
 
-fn check_ensures(block: &VerifyBlock, outcome: &CFunctionOutcome) -> Result<(), ClickError> {
-    for ensure in block.ensures() {
-        match ensure {
-            Ensure::ResultEqInt32(expected) => match outcome {
-                CFunctionOutcome::Return {
-                    value: CValue::Int32(Bv32Term::Const(actual)),
-                    ..
-                } if actual == expected => {}
-                CFunctionOutcome::Return { value, .. } => {
-                    return Err(ClickError::new(format!(
-                        "`ensures result == {expected};` failed for `{}`: returned {value:?}",
-                        block.function_name()
-                    )));
-                }
-                other => {
-                    return Err(ClickError::new(format!(
-                        "`ensures result == {expected};` failed for `{}`: outcome was {other:?}",
-                        block.function_name()
-                    )));
-                }
-            },
-        }
+fn check_ensure(
+    function_name: &str,
+    theorem: &TheoremBlock,
+    outcome: &CFunctionOutcome,
+) -> Result<(), ClickError> {
+    match theorem.ensure() {
+        Ensure::ResultEqInt32(expected) => match outcome {
+            CFunctionOutcome::Return {
+                value: CValue::Int32(Bv32Term::Const(actual)),
+                ..
+            } if actual == expected => {}
+            CFunctionOutcome::Return { value, .. } => {
+                return Err(ClickError::new(format!(
+                    "`ensures result == {expected};` failed for `{function_name}.{}`: returned {value:?}",
+                    theorem.name()
+                )));
+            }
+            other => {
+                return Err(ClickError::new(format!(
+                    "`ensures result == {expected};` failed for `{function_name}.{}`: outcome was {other:?}",
+                    theorem.name()
+                )));
+            }
+        },
     }
 
     Ok(())
@@ -283,6 +415,7 @@ enum Token {
     Comma,
     Semicolon,
     EqEq,
+    Star,
 }
 
 struct Parser {
@@ -299,32 +432,130 @@ impl Parser {
     }
 
     fn parse_file(mut self) -> Result<ClickFile, ClickError> {
-        let mut verify_blocks = Vec::new();
+        let mut verifying_sources = Vec::new();
+        let mut function_blocks = Vec::new();
 
         while self.peek().is_some() {
-            verify_blocks.push(self.parse_verify_block()?);
+            if self.peek_ident() == Some("verifying") {
+                verifying_sources.push(self.parse_verifying_source()?);
+            } else {
+                function_blocks.push(self.parse_function_block()?);
+            }
         }
 
-        Ok(ClickFile { verify_blocks })
+        Ok(ClickFile {
+            verifying_sources,
+            function_blocks,
+        })
     }
 
-    fn parse_verify_block(&mut self) -> Result<VerifyBlock, ClickError> {
-        self.expect_ident_spelling("verify")?;
-        let function_name = self.expect_ident("function name")?;
-        self.expect_ident_spelling("in")?;
+    fn parse_verifying_source(&mut self) -> Result<String, ClickError> {
+        self.expect_ident_spelling("verifying")?;
         let source_path = self.expect_string("C source path")?;
+        self.expect(Token::Semicolon)?;
+        Ok(source_path)
+    }
+
+    fn parse_function_block(&mut self) -> Result<FunctionBlock, ClickError> {
+        let signature = self.parse_function_signature()?;
+        self.expect(Token::LBrace)?;
+
+        let mut theorem_blocks = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            if self.peek().is_none() {
+                return Err(self.error(format!(
+                    "expected theorem block or `}}` in `{}`",
+                    signature.name()
+                )));
+            }
+            theorem_blocks.push(self.parse_theorem_block()?);
+        }
+        self.expect(Token::RBrace)?;
+
+        if theorem_blocks.is_empty() {
+            return Err(self.error(format!(
+                "`{}` must contain at least one theorem block",
+                signature.name()
+            )));
+        }
+
+        Ok(FunctionBlock {
+            signature,
+            theorem_blocks,
+        })
+    }
+
+    fn parse_function_signature(&mut self) -> Result<FunctionSignature, ClickError> {
+        let return_type = self.parse_type()?;
+        let name = self.expect_ident("function name")?;
+        self.expect(Token::LParen)?;
+        let params = self.parse_params()?;
+        self.expect(Token::RParen)?;
+
+        Ok(FunctionSignature {
+            return_type,
+            name,
+            params,
+        })
+    }
+
+    fn parse_params(&mut self) -> Result<Vec<FunctionParam>, ClickError> {
+        let mut params = Vec::new();
+        if self.peek() == Some(&Token::RParen) {
+            return Ok(params);
+        }
+
+        loop {
+            let ty = self.parse_type()?;
+            let name = self.expect_ident("parameter name")?;
+            params.push(FunctionParam { ty, name });
+
+            match self.peek() {
+                Some(Token::Comma) => {
+                    self.position += 1;
+                }
+                Some(Token::RParen) => return Ok(params),
+                Some(token) => {
+                    return Err(self.error(format!("expected `,` or `)`, got {token:?}")));
+                }
+                None => return Err(self.error("expected `,` or `)`, got end of input")),
+            }
+        }
+    }
+
+    fn parse_type(&mut self) -> Result<C0Type, ClickError> {
+        self.expect_ident_spelling("int32")?;
+        if self.peek() == Some(&Token::Star) {
+            self.position += 1;
+            Ok(C0Type::Int32Ptr)
+        } else {
+            Ok(C0Type::Int32)
+        }
+    }
+
+    fn parse_theorem_block(&mut self) -> Result<TheoremBlock, ClickError> {
+        let name = self.expect_ident("theorem name")?;
         self.expect(Token::LBrace)?;
 
         let mut requires = Vec::new();
-        let mut ensures = Vec::new();
+        let mut ensure = None;
         let mut proof = None;
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
                 Some("requires") => requires.push(self.parse_requirement()?),
-                Some("ensures") => ensures.push(self.parse_ensure()?),
+                Some("ensures") => {
+                    if ensure.is_some() {
+                        return Err(
+                            self.error(format!("theorem `{name}` has more than one `ensures`"))
+                        );
+                    }
+                    ensure = Some(self.parse_ensure()?);
+                }
                 Some("proof") => {
                     if proof.is_some() {
-                        return Err(self.error("verify block has more than one proof block"));
+                        return Err(
+                            self.error(format!("theorem `{name}` has more than one proof block"))
+                        );
                     }
                     proof = Some(self.parse_proof()?);
                 }
@@ -340,17 +571,17 @@ impl Parser {
         }
         self.expect(Token::RBrace)?;
 
+        let Some(ensure) = ensure else {
+            return Err(self.error(format!("theorem `{name}` is missing an `ensures` clause")));
+        };
         let Some(proof) = proof else {
-            return Err(self.error(format!(
-                "verify `{function_name}` is missing a `proof` block"
-            )));
+            return Err(self.error(format!("theorem `{name}` is missing a `proof` block")));
         };
 
-        Ok(VerifyBlock {
-            function_name,
-            source_path,
+        Ok(TheoremBlock {
+            name,
             requires,
-            ensures,
+            ensure,
             proof,
         })
     }
@@ -501,6 +732,10 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
                 tokens.push(Token::Semicolon);
                 index += 1;
             }
+            '*' => {
+                tokens.push(Token::Star);
+                index += 1;
+            }
             '=' => {
                 if chars.get(index + 1) == Some(&'=') {
                     tokens.push(Token::EqEq);
@@ -607,33 +842,48 @@ mod tests {
     "#;
 
     const FILL3_CLICK: &str = r#"
-        verify fill3 in "fill3.c" {
-            requires valid_range(p, 12);
-            ensures result == 2;
+        verifying "fill3.c";
 
-            proof {
-                auto;
+        int32 fill3(int32* p) {
+            returns_second {
+                requires valid_range(p, 12);
+                ensures result == 2;
+
+                proof {
+                    auto;
+                }
             }
         }
     "#;
 
     #[test]
-    fn parses_verify_block() {
+    fn parses_checked_signature_and_theorem_block() {
         let file = parse(FILL3_CLICK).expect("sidecar should parse");
 
-        assert_eq!(file.verify_blocks().len(), 1);
-        let block = &file.verify_blocks()[0];
-        assert_eq!(block.function_name(), "fill3");
-        assert_eq!(block.source_path(), "fill3.c");
+        assert_eq!(file.verifying_sources(), &["fill3.c".to_string()]);
+        assert_eq!(file.function_blocks().len(), 1);
+        let function = &file.function_blocks()[0];
+        assert_eq!(function.signature().return_type(), C0Type::Int32);
+        assert_eq!(function.signature().name(), "fill3");
         assert_eq!(
-            block.requires(),
+            function.signature().params(),
+            &[FunctionParam {
+                ty: C0Type::Int32Ptr,
+                name: "p".to_string()
+            }]
+        );
+        assert_eq!(function.theorem_blocks().len(), 1);
+        let theorem = &function.theorem_blocks()[0];
+        assert_eq!(theorem.name(), "returns_second");
+        assert_eq!(
+            theorem.requires(),
             &[Requirement::ValidRange {
                 name: "p".to_string(),
                 bytes: 12
             }]
         );
-        assert_eq!(block.ensures(), &[Ensure::ResultEqInt32(2)]);
-        assert_eq!(block.proof().steps(), &[ProofStep::Auto]);
+        assert_eq!(theorem.ensure(), &Ensure::ResultEqInt32(2));
+        assert_eq!(theorem.proof().steps(), &[ProofStep::Auto]);
     }
 
     #[test]
@@ -691,6 +941,19 @@ mod tests {
                     .to_megakernel_function(),
                 spec: verified.spec.clone(),
             }
+        );
+    }
+
+    #[test]
+    fn signature_mismatch_reports_direct_error() {
+        let source = FILL3_CLICK.replace("int32* p", "int32 q");
+        let error = verify_c0_sources(&source, &[("fill3.c", FILL3_C)])
+            .expect_err("wrong signature should fail");
+
+        assert!(
+            error.message().contains("signature mismatch"),
+            "{}",
+            error.message()
         );
     }
 
