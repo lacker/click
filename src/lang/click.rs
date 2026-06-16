@@ -8,9 +8,9 @@ use std::collections::BTreeMap;
 
 use crate::lang::c::syntax::{self, C0Type};
 use crate::megakernel::{
-    Assumptions, Bv32Term, CExpr, CFunctionOutcome, CFunctionSpec, CMemory, CState, CValue, Prop,
-    Ptr, PtrOffsetTerm, Theorem, Var, c_function_spec, c_ptr_value,
-    prove_c_function_satisfies_spec, prove_symbolic_c_function_execution,
+    Assumptions, Bv32Term, CExpr, CFunctionEnv, CFunctionOutcome, CFunctionSpec, CMemory, CState,
+    CValue, Prop, Ptr, PtrOffsetTerm, Theorem, Var, c_function_spec, c_ptr_value,
+    prove_c_function_satisfies_spec_with_env, prove_symbolic_c_function_execution_with_env,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,7 +22,8 @@ pub struct ClickFile {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FunctionBlock {
     signature: FunctionSignature,
-    theorem_blocks: Vec<TheoremBlock>,
+    requires: Vec<Requirement>,
+    ensures: Vec<EnsureClause>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,16 +40,15 @@ pub struct FunctionParam {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TheoremBlock {
-    name: String,
-    requires: Vec<Requirement>,
-    ensure: Ensure,
-    proof: Proof,
+pub enum Requirement {
+    ValidRange { name: String, bytes: u32 },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Requirement {
-    ValidRange { name: String, bytes: u32 },
+pub struct EnsureClause {
+    name: Option<String>,
+    ensure: Ensure,
+    proof: Proof,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -56,7 +56,7 @@ pub enum Ensure {
     ResultEqInt32(u32),
 }
 
-/// A `.click` proof block: a sequence of tactic calls.
+/// A `.click` `by` clause: a sequence of tactic calls proving a theorem.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Proof {
     tactics: Vec<Tactic>,
@@ -72,7 +72,8 @@ pub enum Tactic {
 pub struct VerifiedCTheorem {
     pub source_path: String,
     pub function_block: FunctionBlock,
-    pub theorem_block: TheoremBlock,
+    pub ensure_index: usize,
+    pub ensure_clause: EnsureClause,
     pub spec: CFunctionSpec,
     pub theorem: Theorem,
 }
@@ -97,8 +98,12 @@ impl FunctionBlock {
         &self.signature
     }
 
-    pub fn theorem_blocks(&self) -> &[TheoremBlock] {
-        &self.theorem_blocks
+    pub fn requires(&self) -> &[Requirement] {
+        &self.requires
+    }
+
+    pub fn ensures(&self) -> &[EnsureClause] {
+        &self.ensures
     }
 }
 
@@ -126,13 +131,9 @@ impl FunctionParam {
     }
 }
 
-impl TheoremBlock {
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn requires(&self) -> &[Requirement] {
-        &self.requires
+impl EnsureClause {
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 
     pub fn ensure(&self) -> &Ensure {
@@ -173,6 +174,7 @@ pub fn verify_c0_sources(
     let file = parse(click_source)?;
     let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
     let parsed_sources = parse_verified_sources(&file, &c_sources)?;
+    let function_env = function_env(&parsed_sources);
     let mut verified = Vec::new();
 
     for function_block in file.function_blocks {
@@ -186,61 +188,61 @@ pub fn verify_c0_sources(
             })?;
         check_signature(&function_block.signature, parsed_function, source_path)?;
 
-        for theorem_block in &function_block.theorem_blocks {
-            if theorem_block.proof.tactics() != [Tactic::Auto] {
+        for (ensure_index, ensure_clause) in function_block.ensures.iter().enumerate() {
+            let ensure_label =
+                ensure_label(function_block.signature.name(), ensure_clause, ensure_index);
+            if ensure_clause.proof.tactics() != [Tactic::Auto] {
                 return Err(ClickError::new(format!(
-                    "`{}.{}` must use exactly `proof {{ auto; }}` in this first slice",
-                    function_block.signature.name(),
-                    theorem_block.name()
+                    "`{ensure_label}` must use exactly `by auto;` in this first slice"
                 )));
             }
 
             let (state, args) = initial_call(
                 function_block.signature.name(),
-                theorem_block,
+                function_block.requires(),
                 parsed_function.params(),
             )?;
             let function = parsed_function.to_megakernel_function();
-            let execution = prove_symbolic_c_function_execution(
+            let execution = prove_symbolic_c_function_execution_with_env(
                 state.clone(),
                 function.clone(),
                 args.clone(),
                 Assumptions::new(),
+                function_env.clone(),
             )
             .ok_or_else(|| {
                 ClickError::new(format!(
-                    "`auto` could not prove a single complete execution path for `{}.{}`",
-                    function_block.signature.name(),
-                    theorem_block.name()
+                    "`auto` could not prove a single complete execution path for `{ensure_label}`"
                 ))
             })?;
             let outcome = match execution.prop() {
                 Prop::CFunctionExecutes { outcome, .. } => outcome.clone(),
                 prop => {
                     return Err(ClickError::new(format!(
-                        "`auto` produced an unexpected theorem for `{}.{}`: {prop:?}",
-                        function_block.signature.name(),
-                        theorem_block.name()
+                        "`auto` produced an unexpected theorem for `{ensure_label}`: {prop:?}"
                     )));
                 }
             };
 
-            check_ensure(function_block.signature.name(), theorem_block, &outcome)?;
+            check_ensure(&ensure_label, ensure_clause, &outcome)?;
             let spec = c_function_spec(state, args, Vec::new(), outcome);
-            let theorem =
-                prove_c_function_satisfies_spec(function, spec.clone(), Assumptions::new())
-                    .ok_or_else(|| {
-                        ClickError::new(format!(
-                            "`auto` execution for `{}.{}` did not satisfy the packaged spec",
-                            function_block.signature.name(),
-                            theorem_block.name()
-                        ))
-                    })?;
+            let theorem = prove_c_function_satisfies_spec_with_env(
+                function,
+                spec.clone(),
+                Assumptions::new(),
+                function_env.clone(),
+            )
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`auto` execution for `{ensure_label}` did not satisfy the packaged spec"
+                ))
+            })?;
 
             verified.push(VerifiedCTheorem {
                 source_path: source_path.clone(),
                 function_block: function_block.clone(),
-                theorem_block: theorem_block.clone(),
+                ensure_index,
+                ensure_clause: ensure_clause.clone(),
                 spec,
                 theorem,
             });
@@ -283,6 +285,21 @@ fn parse_verified_sources<'a>(
     }
 
     Ok(parsed)
+}
+
+fn function_env(parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>) -> CFunctionEnv {
+    parsed_sources
+        .values()
+        .fold(CFunctionEnv::new(), |env, (_, function)| {
+            env.with_function(function.to_megakernel_function())
+        })
+}
+
+fn ensure_label(function_name: &str, ensure: &EnsureClause, index: usize) -> String {
+    match ensure.name() {
+        Some(name) => format!("{function_name}.{name}"),
+        None => format!("{function_name}.ensures_{index}"),
+    }
 }
 
 fn check_signature(
@@ -332,11 +349,10 @@ fn check_signature(
 
 fn initial_call(
     function_name: &str,
-    theorem: &TheoremBlock,
+    requires: &[Requirement],
     params: &[syntax::C0Param],
 ) -> Result<(CState, Vec<CExpr>), ClickError> {
-    let valid_ranges: BTreeMap<&str, u32> = theorem
-        .requires()
+    let valid_ranges: BTreeMap<&str, u32> = requires
         .iter()
         .map(|requirement| match requirement {
             Requirement::ValidRange { name, bytes } => (name.as_str(), *bytes),
@@ -377,11 +393,11 @@ fn initial_call(
 }
 
 fn check_ensure(
-    function_name: &str,
-    theorem: &TheoremBlock,
+    ensure_label: &str,
+    ensure_clause: &EnsureClause,
     outcome: &CFunctionOutcome,
 ) -> Result<(), ClickError> {
-    match theorem.ensure() {
+    match ensure_clause.ensure() {
         Ensure::ResultEqInt32(expected) => match outcome {
             CFunctionOutcome::Return {
                 value: CValue::Int32(Bv32Term::Const(actual)),
@@ -389,14 +405,12 @@ fn check_ensure(
             } if actual == expected => {}
             CFunctionOutcome::Return { value, .. } => {
                 return Err(ClickError::new(format!(
-                    "`ensures result == {expected};` failed for `{function_name}.{}`: returned {value:?}",
-                    theorem.name()
+                    "`ensures result == {expected};` failed for `{ensure_label}`: returned {value:?}"
                 )));
             }
             other => {
                 return Err(ClickError::new(format!(
-                    "`ensures result == {expected};` failed for `{function_name}.{}`: outcome was {other:?}",
-                    theorem.name()
+                    "`ensures result == {expected};` failed for `{ensure_label}`: outcome was {other:?}"
                 )));
             }
         },
@@ -414,6 +428,7 @@ enum Token {
     RBrace,
     LParen,
     RParen,
+    Colon,
     Comma,
     Semicolon,
     EqEq,
@@ -462,28 +477,39 @@ impl Parser {
         let signature = self.parse_function_signature()?;
         self.expect(Token::LBrace)?;
 
-        let mut theorem_blocks = Vec::new();
+        let mut requires = Vec::new();
+        let mut ensures = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
-            if self.peek().is_none() {
-                return Err(self.error(format!(
-                    "expected theorem block or `}}` in `{}`",
-                    signature.name()
-                )));
+            match self.peek_ident() {
+                Some("requires") => requires.push(self.parse_requirement()?),
+                Some("ensures") => ensures.push(self.parse_ensure_clause()?),
+                Some(keyword) => {
+                    return Err(self.error(format!(
+                        "expected `requires`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        signature.name()
+                    )));
+                }
+                None => {
+                    return Err(self.error(format!(
+                        "expected `requires`, `ensures`, or `}}` in `{}`",
+                        signature.name()
+                    )));
+                }
             }
-            theorem_blocks.push(self.parse_theorem_block()?);
         }
         self.expect(Token::RBrace)?;
 
-        if theorem_blocks.is_empty() {
+        if ensures.is_empty() {
             return Err(self.error(format!(
-                "`{}` must contain at least one theorem block",
+                "`{}` must contain at least one `ensures` clause",
                 signature.name()
             )));
         }
 
         Ok(FunctionBlock {
             signature,
-            theorem_blocks,
+            requires,
+            ensures,
         })
     }
 
@@ -535,59 +561,6 @@ impl Parser {
         }
     }
 
-    fn parse_theorem_block(&mut self) -> Result<TheoremBlock, ClickError> {
-        let name = self.expect_ident("theorem name")?;
-        self.expect(Token::LBrace)?;
-
-        let mut requires = Vec::new();
-        let mut ensure = None;
-        let mut proof = None;
-        while self.peek() != Some(&Token::RBrace) {
-            match self.peek_ident() {
-                Some("requires") => requires.push(self.parse_requirement()?),
-                Some("ensures") => {
-                    if ensure.is_some() {
-                        return Err(
-                            self.error(format!("theorem `{name}` has more than one `ensures`"))
-                        );
-                    }
-                    ensure = Some(self.parse_ensure()?);
-                }
-                Some("proof") => {
-                    if proof.is_some() {
-                        return Err(
-                            self.error(format!("theorem `{name}` has more than one proof block"))
-                        );
-                    }
-                    proof = Some(self.parse_proof()?);
-                }
-                Some(keyword) => {
-                    return Err(self.error(format!(
-                        "expected `requires`, `ensures`, or `proof`, got `{keyword}`"
-                    )));
-                }
-                None => {
-                    return Err(self.error("expected `requires`, `ensures`, `proof`, or `}`"));
-                }
-            }
-        }
-        self.expect(Token::RBrace)?;
-
-        let Some(ensure) = ensure else {
-            return Err(self.error(format!("theorem `{name}` is missing an `ensures` clause")));
-        };
-        let Some(proof) = proof else {
-            return Err(self.error(format!("theorem `{name}` is missing a `proof` block")));
-        };
-
-        Ok(TheoremBlock {
-            name,
-            requires,
-            ensure,
-            proof,
-        })
-    }
-
     fn parse_requirement(&mut self) -> Result<Requirement, ClickError> {
         self.expect_ident_spelling("requires")?;
         self.expect_ident_spelling("valid_range")?;
@@ -601,38 +574,66 @@ impl Parser {
         Ok(Requirement::ValidRange { name, bytes })
     }
 
-    fn parse_ensure(&mut self) -> Result<Ensure, ClickError> {
+    fn parse_ensure_clause(&mut self) -> Result<EnsureClause, ClickError> {
         self.expect_ident_spelling("ensures")?;
+        let name = if matches!(self.peek(), Some(Token::Ident(_)))
+            && self.peek_next() == Some(&Token::Colon)
+        {
+            let name = self.expect_ident("ensure name")?;
+            self.expect(Token::Colon)?;
+            Some(name)
+        } else {
+            None
+        };
+        let ensure = self.parse_ensure_condition()?;
+        let proof = self.parse_by_clause()?;
+
+        Ok(EnsureClause {
+            name,
+            ensure,
+            proof,
+        })
+    }
+
+    fn parse_ensure_condition(&mut self) -> Result<Ensure, ClickError> {
         self.expect_ident_spelling("result")?;
         self.expect(Token::EqEq)?;
         let expected = self.expect_number("expected int32 result")?;
-        self.expect(Token::Semicolon)?;
 
         Ok(Ensure::ResultEqInt32(expected))
     }
 
-    fn parse_proof(&mut self) -> Result<Proof, ClickError> {
-        self.expect_ident_spelling("proof")?;
-        self.expect(Token::LBrace)?;
-        let mut tactics = Vec::new();
-        while self.peek() != Some(&Token::RBrace) {
-            match self.peek_ident() {
-                Some("auto") => {
-                    self.position += 1;
-                    self.expect(Token::Semicolon)?;
-                    tactics.push(Tactic::Auto);
-                }
-                Some(keyword) => {
-                    return Err(self.error(format!("expected tactic, got `{keyword}`")));
-                }
-                None => {
-                    return Err(self.error("expected tactic or `}`"));
-                }
+    fn parse_by_clause(&mut self) -> Result<Proof, ClickError> {
+        self.expect_ident_spelling("by")?;
+        let tactics = if self.peek() == Some(&Token::LBrace) {
+            self.position += 1;
+            let mut tactics = Vec::new();
+            while self.peek() != Some(&Token::RBrace) {
+                tactics.push(self.parse_tactic()?);
             }
+            self.expect(Token::RBrace)?;
+            tactics
+        } else {
+            vec![self.parse_tactic()?]
+        };
+
+        if tactics.is_empty() {
+            return Err(self.error("`by` block must contain at least one tactic"));
         }
-        self.expect(Token::RBrace)?;
 
         Ok(Proof { tactics })
+    }
+
+    fn parse_tactic(&mut self) -> Result<Tactic, ClickError> {
+        match self.peek_ident() {
+            Some("auto") => {
+                self.position += 1;
+                self.expect(Token::Semicolon)?;
+                Ok(Tactic::Auto)
+            }
+            Some(keyword) => Err(self.error(format!("expected tactic, got `{keyword}`"))),
+            None => Err(self.error("expected tactic")),
+        }
     }
 
     fn expect_ident(&mut self, expected: &str) -> Result<String, ClickError> {
@@ -688,6 +689,10 @@ impl Parser {
         self.tokens.get(self.position)
     }
 
+    fn peek_next(&self) -> Option<&Token> {
+        self.tokens.get(self.position + 1)
+    }
+
     fn peek_ident(&self) -> Option<&str> {
         match self.peek() {
             Some(Token::Ident(name)) => Some(name),
@@ -724,6 +729,10 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
             }
             ')' => {
                 tokens.push(Token::RParen);
+                index += 1;
+            }
+            ':' => {
+                tokens.push(Token::Colon);
                 index += 1;
             }
             ',' => {
@@ -847,19 +856,13 @@ mod tests {
         verifying "fill3.c";
 
         int32 fill3(int32* p) {
-            returns_second {
-                requires valid_range(p, 12);
-                ensures result == 2;
-
-                proof {
-                    auto;
-                }
-            }
+            requires valid_range(p, 12);
+            ensures returns_second: result == 2 by auto;
         }
     "#;
 
     #[test]
-    fn parses_checked_signature_and_theorem_block() {
+    fn parses_checked_signature_and_contract_clauses() {
         let file = parse(FILL3_CLICK).expect("sidecar should parse");
 
         assert_eq!(file.verifying_sources(), &["fill3.c".to_string()]);
@@ -874,18 +877,38 @@ mod tests {
                 name: "p".to_string()
             }]
         );
-        assert_eq!(function.theorem_blocks().len(), 1);
-        let theorem = &function.theorem_blocks()[0];
-        assert_eq!(theorem.name(), "returns_second");
         assert_eq!(
-            theorem.requires(),
+            function.requires(),
             &[Requirement::ValidRange {
                 name: "p".to_string(),
                 bytes: 12
             }]
         );
-        assert_eq!(theorem.ensure(), &Ensure::ResultEqInt32(2));
-        assert_eq!(theorem.proof().tactics(), &[Tactic::Auto]);
+        assert_eq!(function.ensures().len(), 1);
+        let ensure = &function.ensures()[0];
+        assert_eq!(ensure.name(), Some("returns_second"));
+        assert_eq!(ensure.ensure(), &Ensure::ResultEqInt32(2));
+        assert_eq!(ensure.proof().tactics(), &[Tactic::Auto]);
+    }
+
+    #[test]
+    fn parses_block_by_clause() {
+        let source = FILL3_CLICK.replace("by auto;", "by { auto; }");
+        let file = parse(&source).expect("sidecar should parse");
+        let ensure = &file.function_blocks()[0].ensures()[0];
+
+        assert_eq!(ensure.proof().tactics(), &[Tactic::Auto]);
+    }
+
+    #[test]
+    fn parses_unnamed_ensure_clause() {
+        let source =
+            FILL3_CLICK.replace("ensures returns_second: result == 2", "ensures result == 2");
+        let file = parse(&source).expect("sidecar should parse");
+        let ensure = &file.function_blocks()[0].ensures()[0];
+
+        assert_eq!(ensure.name(), None);
+        assert_eq!(ensure.ensure(), &Ensure::ResultEqInt32(2));
     }
 
     #[test]
@@ -961,7 +984,7 @@ mod tests {
 
     #[test]
     fn failed_ensure_reports_actual_return() {
-        let source = FILL3_CLICK.replace("ensures result == 2;", "ensures result == 3;");
+        let source = FILL3_CLICK.replace("result == 2", "result == 3");
         let error = verify_c0_sources(&source, &[("fill3.c", FILL3_C)])
             .expect_err("wrong result should fail");
 

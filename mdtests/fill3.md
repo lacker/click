@@ -19,14 +19,8 @@ int32 fill3(int32* p) {
 verifying "fill3.c";
 
 int32 fill3(int32* p) {
-    returns_second {
-        requires valid_range(p, 12);
-        ensures result == 2;
-
-        proof {
-            auto;
-        }
-    }
+    requires valid_range(p, 12);
+    ensures returns_second: result == 2 by auto;
 }
 ```
 

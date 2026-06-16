@@ -97,11 +97,14 @@ Click uses four core proof-system words:
   cannot construct arbitrary theorems directly.
 - A **tactic** is a proof-language command that tries to prove a theorem or
   reduce a proof goal by invoking axioms and using existing theorems.
-- A **proof** is a block or sequence of tactic calls that proves a theorem.
+- A **proof** is a `by` clause: either one tactic call, or a block containing a
+  sequence of tactic calls.
 
-The current `.click` proof language has only one tactic, `auto`. It invokes the
-megakernel's C symbolic-execution axioms and spec-checking axioms to prove the
-named theorem block.
+The current `.click` proof language has only one tactic, `auto`. Function
+contracts attach `requires` clauses to the function and attach a `by` proof
+clause to each `ensures` guarantee. An `ensures` clause can say `by auto;`, or
+use block form `by { auto; }`. The tactic invokes the megakernel's C
+symbolic-execution axioms and spec-checking axioms to prove the named guarantee.
 
 ## C0 Status
 
@@ -159,23 +162,18 @@ shape:
 verifying "fill3.c";
 
 int32 fill3(int32* p) {
-    returns_second {
-        requires valid_range(p, 12);
-        ensures result == 2;
-
-        proof {
-            auto;
-        }
-    }
+    requires valid_range(p, 12);
+    ensures returns_second: result == 2 by auto;
 }
 ```
 
 The C0 signature in the `.click` file is checked against the C source and a
-mismatch is reported directly. Each named theorem block has its own
-requirements, one result-equality `ensures` clause for now, and one proof block.
-That sidecar path parses C0 source, builds the requested initial memory, runs
-native symbolic execution, checks the result clause, and packages the result as
-a megakernel `CFunctionSpec` theorem.
+mismatch is reported directly. Function-level `requires` clauses are shared by
+all guarantees. Each `ensures` clause is a separately proven guarantee with its
+own `by` proof clause. For now, `ensures` supports only result equality against
+an `int32` literal. That sidecar path parses C0 source, builds the requested
+initial memory, runs native symbolic execution, checks the result clause, and
+packages the result as a megakernel `CFunctionSpec` theorem.
 
 ## Markdown Tests
 
@@ -193,10 +191,7 @@ int32 example(int32* p) {
 verifying "example.c";
 
 int32 example(int32* p) {
-    returns_zero {
-        ensures result == 0;
-        proof { auto; }
-    }
+    ensures result == 0 by auto;
 }
 ```
 
