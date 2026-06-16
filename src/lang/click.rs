@@ -6,11 +6,12 @@
 
 use std::collections::BTreeMap;
 
-use crate::lang::c::syntax::{self, C0Type};
+use crate::lang::c::syntax::{self, C0Expr, C0Type};
 use crate::megakernel::{
-    Assumptions, Bv32Term, CExpr, CFunctionEnv, CFunctionOutcome, CFunctionSpec, CMemory, CState,
-    CValue, Prop, Ptr, PtrOffsetTerm, Theorem, Var, c_function_spec, c_ptr_value,
-    prove_c_function_satisfies_spec_with_env, prove_symbolic_c_function_execution_with_env,
+    Assumptions, Bv32Term, CExpr, CExprOutcome, CFunctionEnv, CFunctionOutcome, CFunctionSpec,
+    CMemory, CState, CValue, Prop, Ptr, PtrOffsetTerm, Theorem, Var, c_function_spec, c_ptr_value,
+    prove_c_expr_eval, prove_c_function_satisfies_spec_with_env,
+    prove_symbolic_c_function_execution_with_env,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,7 +54,7 @@ pub struct EnsureClause {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Ensure {
-    ResultEqInt32(u32),
+    ResultEq(CExpr),
 }
 
 /// A `.click` `by` clause: a sequence of tactic calls proving a theorem.
@@ -224,7 +225,13 @@ pub fn verify_c0_sources(
                 }
             };
 
-            check_ensure(&ensure_label, ensure_clause, &outcome)?;
+            check_ensure(
+                &ensure_label,
+                ensure_clause,
+                parsed_function.params(),
+                &args,
+                &outcome,
+            )?;
             let spec = c_function_spec(state, args, Vec::new(), outcome);
             let theorem = prove_c_function_satisfies_spec_with_env(
                 function,
@@ -395,28 +402,58 @@ fn initial_call(
 fn check_ensure(
     ensure_label: &str,
     ensure_clause: &EnsureClause,
+    params: &[syntax::C0Param],
+    args: &[CExpr],
     outcome: &CFunctionOutcome,
 ) -> Result<(), ClickError> {
     match ensure_clause.ensure() {
-        Ensure::ResultEqInt32(expected) => match outcome {
-            CFunctionOutcome::Return {
-                value: CValue::Int32(Bv32Term::Const(actual)),
-                ..
-            } if actual == expected => {}
-            CFunctionOutcome::Return { value, .. } => {
-                return Err(ClickError::new(format!(
-                    "`ensures result == {expected};` failed for `{ensure_label}`: returned {value:?}"
-                )));
+        Ensure::ResultEq(expected) => match outcome {
+            CFunctionOutcome::Return { value, state } => {
+                let expected = evaluate_expected_result_expr(params, args, state, expected)
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "`ensures result == {expected:?}` failed for `{ensure_label}`: could not evaluate expected expression"
+                        ))
+                    })?;
+                if &expected != value {
+                    return Err(ClickError::new(format!(
+                        "`ensures result == {expected:?}` failed for `{ensure_label}`: returned {value:?}"
+                    )));
+                }
             }
             other => {
                 return Err(ClickError::new(format!(
-                    "`ensures result == {expected};` failed for `{ensure_label}`: outcome was {other:?}"
+                    "`ensures result == {expected:?}` failed for `{ensure_label}`: outcome was {other:?}"
                 )));
             }
         },
     }
 
     Ok(())
+}
+
+fn evaluate_expected_result_expr(
+    params: &[syntax::C0Param],
+    args: &[CExpr],
+    state: &CState,
+    expected: &CExpr,
+) -> Option<CValue> {
+    let mut eval_state = state.clone();
+    for (param, arg) in params.iter().zip(args) {
+        let CExpr::Value(value) = arg else {
+            return None;
+        };
+        eval_state = eval_state.with_local(param.name(), value.clone());
+    }
+
+    let theorem = prove_c_expr_eval(eval_state, expected.clone())?;
+    match theorem.prop() {
+        Prop::CExprEvaluates {
+            outcome: CExprOutcome::Value(value),
+            ..
+        } => Some(value.clone()),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -432,6 +469,8 @@ enum Token {
     Comma,
     Semicolon,
     EqEq,
+    Plus,
+    Minus,
     Star,
 }
 
@@ -598,9 +637,9 @@ impl Parser {
     fn parse_ensure_condition(&mut self) -> Result<Ensure, ClickError> {
         self.expect_ident_spelling("result")?;
         self.expect(Token::EqEq)?;
-        let expected = self.expect_number("expected int32 result")?;
+        let expected = self.parse_ensure_expr()?;
 
-        Ok(Ensure::ResultEqInt32(expected))
+        Ok(Ensure::ResultEq(expected.to_megakernel_expr()))
     }
 
     fn parse_by_clause(&mut self) -> Result<Proof, ClickError> {
@@ -622,6 +661,46 @@ impl Parser {
         }
 
         Ok(Proof { tactics })
+    }
+
+    fn parse_ensure_expr(&mut self) -> Result<C0Expr, ClickError> {
+        self.parse_ensure_add()
+    }
+
+    fn parse_ensure_add(&mut self) -> Result<C0Expr, ClickError> {
+        let mut expr = self.parse_ensure_primary()?;
+        loop {
+            expr = match self.peek() {
+                Some(Token::Plus) => {
+                    self.position += 1;
+                    let right = self.parse_ensure_primary()?;
+                    C0Expr::Add(Box::new(expr), Box::new(right))
+                }
+                Some(Token::Minus) => {
+                    self.position += 1;
+                    let right = self.parse_ensure_primary()?;
+                    C0Expr::Sub(Box::new(expr), Box::new(right))
+                }
+                _ => return Ok(expr),
+            };
+        }
+    }
+
+    fn parse_ensure_primary(&mut self) -> Result<C0Expr, ClickError> {
+        match self.next() {
+            Some(Token::Ident(name)) if name == "by" => {
+                Err(self.error("expected result expression, got `by`"))
+            }
+            Some(Token::Ident(name)) => Ok(C0Expr::Var(name)),
+            Some(Token::Number(value)) => Ok(C0Expr::Int32Literal(value)),
+            Some(Token::LParen) => {
+                let expr = self.parse_ensure_expr()?;
+                self.expect(Token::RParen)?;
+                Ok(expr)
+            }
+            Some(token) => Err(self.error(format!("expected result expression, got {token:?}"))),
+            None => Err(self.error("expected result expression, got end of input")),
+        }
     }
 
     fn parse_tactic(&mut self) -> Result<Tactic, ClickError> {
@@ -741,6 +820,14 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
             }
             ';' => {
                 tokens.push(Token::Semicolon);
+                index += 1;
+            }
+            '+' => {
+                tokens.push(Token::Plus);
+                index += 1;
+            }
+            '-' => {
+                tokens.push(Token::Minus);
                 index += 1;
             }
             '*' => {
@@ -887,7 +974,7 @@ mod tests {
         assert_eq!(function.ensures().len(), 1);
         let ensure = &function.ensures()[0];
         assert_eq!(ensure.name(), Some("returns_second"));
-        assert_eq!(ensure.ensure(), &Ensure::ResultEqInt32(2));
+        assert_eq!(ensure.ensure(), &Ensure::ResultEq(CExpr::Value(int32(2))));
         assert_eq!(ensure.proof().tactics(), &[Tactic::Auto]);
     }
 
@@ -908,7 +995,32 @@ mod tests {
         let ensure = &file.function_blocks()[0].ensures()[0];
 
         assert_eq!(ensure.name(), None);
-        assert_eq!(ensure.ensure(), &Ensure::ResultEqInt32(2));
+        assert_eq!(ensure.ensure(), &Ensure::ResultEq(CExpr::Value(int32(2))));
+    }
+
+    #[test]
+    fn verifies_symbolic_result_expression() {
+        let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+        let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures returns_argument: result == x by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("identity.c", c_source)])
+            .expect("identity sidecar should verify");
+
+        assert_eq!(verified.len(), 1);
+        assert_eq!(
+            verified[0].ensure_clause.ensure(),
+            &Ensure::ResultEq(CExpr::Var("x".to_string()))
+        );
     }
 
     #[test]
