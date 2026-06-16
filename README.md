@@ -10,43 +10,41 @@ programming languages. Starting with C.
 There's a traditional principle of theorem prover design that says you should
 build a small, trusted kernel.
 
-The rationale is that you want it to be really small to avoid bugs, and then
-you prove things outward from there.
+The traditional rationale is that to build a huge bug-free structure, you need the
+heart of it to be bug-free. You can only do that by close inspection.
+Close inspection is hard, so you want it to be really small.
+Then you prove things outward from there.
 
-My theory is that for the task of "systems engineering theorem proving", this
+I claim that for the task of "systems engineering theorem proving", this
 is actually the wrong design.
 
-It's actually a good idea to put a whole lot of stuff into the kernel.
-The rationale is that it lets you develop faster.
-It lets you put more powerful stuff in the kernel, and it makes performance
+Instead, you should put a lot of stuff into the kernel.
+Call it a *megakernel*.
+It is a good idea to have many data structures and axioms that are specific
+to systems engineering.
+The rationale is that it lets people develop faster.
+It lets you put more powerful tactics in the kernel, and it makes performance
 better.
-These are all really important for the systems engineering questions that we
-care about.
-Like, can we formally verify the Linux kernel.
+These are important for the systems engineering questions that we care about.
+Like, can we formally verify Linux.
 
 There's a serious tradeoff!
 The downside is that you are more likely to have bugs in the kernel.
 But, for our domain, this is not the most important problem.
-We aren't concerned about like, the soundness of mathematics itself.
+We aren't concerned about the soundness of mathematics itself.
 We are verifying code that is already supposed to work.
-So if we do discover bugs in the kernel, we don't have a huge tower of false
-statements.
+When we discover bugs in the kernel, we don't have a huge tower of false
+statements that we became dependent on.
 It isn't going to lead to some sort of philosophical disaster.
 
-Plus, we can always use other systems to prove the soundness of the megakernel
-itself.
-In fact, we should do that, eventually, with a number of differently
-implemented, alternative theorem-proving systems.
-That will increase trust in the megakernel.
-But it just isn't the priority during development, for the Click kernel to be
-simple.
+We should certainly fix bugs in the kernel when we find them.
+But it isn't the priority during development, for the Click kernel to be simple.
 It should be fast on big codebases.
-It should be easy to use, in terms of, it should be really good at proving
-things.
+It should be powerful, ie, really good at proving things.
 Those are the priorities.
 
 In other words, we are happy to hardcode axioms and tactics
-about int32, char*, and float64 into the kernel.
+about char*, float64, or malloc into the kernel.
 
 ## Only humans may edit the content above this point. AIs may edit below this point.
 
