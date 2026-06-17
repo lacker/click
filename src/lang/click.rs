@@ -10,10 +10,11 @@ use std::fmt;
 use crate::lang::c::syntax::{self, C0Expression, C0Type};
 use crate::megakernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CExpression, CFunction,
-    CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopInvariantCheck, CMemory,
-    CProposition, CState, CStatement, CValue, ConditionTerm, PathFact, Pointer, PointerOffsetTerm,
-    ProofObligation, Proposition, Sort, Theorem, Variable, c_function, c_function_specification,
-    c_labeled_assert, c_pointer_value, c_seq, c_while_with_invariant_checks,
+    CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
+    CLoopInvariantCheck, CMemory, CMemorySegment, CProposition, CState, CStatement, CValue,
+    ConditionTerm, PathFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition, Sort,
+    Theorem, Variable, c_function, c_function_specification, c_labeled_assert, c_pointer_value,
+    c_seq, c_while_with_invariant_and_effect_checks,
     prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
@@ -99,14 +100,21 @@ pub enum StructuralTarget {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StructuralItem {
     kind: StructuralItemKind,
-    proposition: ClickProposition,
+    claim: StructuralItemClaim,
     proof: Proof,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StructuralItemClaim {
+    Proposition(ClickProposition),
+    Effect(Effect),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StructuralItemKind {
     Invariant,
     Assert,
+    Effect,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -332,8 +340,18 @@ impl StructuralItem {
         self.kind
     }
 
-    pub fn proposition(&self) -> &ClickProposition {
-        &self.proposition
+    pub fn proposition(&self) -> Option<&ClickProposition> {
+        match &self.claim {
+            StructuralItemClaim::Proposition(proposition) => Some(proposition),
+            StructuralItemClaim::Effect(_) => None,
+        }
+    }
+
+    pub fn effect(&self) -> Option<&Effect> {
+        match &self.claim {
+            StructuralItemClaim::Effect(effect) => Some(effect),
+            StructuralItemClaim::Proposition(_) => None,
+        }
     }
 
     pub fn proof(&self) -> &Proof {
@@ -862,6 +880,11 @@ fn validate_structural_clauses(
                             "`invariant` is only supported at `loop` targets",
                         ));
                     }
+                    if item.kind() == StructuralItemKind::Effect {
+                        return Err(ClickError::new(
+                            "`immutable` and `mutable` are only supported at `loop` targets inside structural proof blocks",
+                        ));
+                    }
                 }
             }
             StructuralTarget::Loop(_) => {}
@@ -874,7 +897,11 @@ fn validate_structural_clauses(
                 ));
             }
             if item.kind() == StructuralItemKind::Assert
-                && click_proposition_to_c_expression(item.proposition()).is_none()
+                && click_proposition_to_c_expression(
+                    item.proposition()
+                        .expect("assert structural item should contain a proposition"),
+                )
+                .is_none()
             {
                 return Err(ClickError::new(
                     "`assert` clauses currently support executable propositions only",
@@ -944,10 +971,12 @@ impl AnnotationLowerer<'_> {
                 let lowered_body = self.lower_statement(body)?;
                 let loop_asserts = self.loop_assert_checks(loop_index);
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
-                let lowered_loop = c_while_with_invariant_checks(
+                let effect_checks = self.loop_effect_checks(loop_index)?;
+                let lowered_loop = c_while_with_invariant_and_effect_checks(
                     condition.to_megakernel_expression(),
                     Vec::new(),
                     invariant_checks,
+                    effect_checks,
                     lowered_body,
                 );
                 let lowered_loop = prepend_labeled_asserts(lowered_loop, &loop_asserts);
@@ -983,10 +1012,14 @@ impl AnnotationLowerer<'_> {
             .iter()
             .filter(|clause| clause.target() == &StructuralTarget::Statement(statement_index))
             .flat_map(StructuralClause::items)
+            .filter(|item| item.kind() == StructuralItemKind::Assert)
             .enumerate()
             .map(|(item_index, item)| LabeledCheck {
-                condition: click_proposition_to_c_expression(item.proposition())
-                    .expect("structural propositions should be validated before lowering"),
+                condition: click_proposition_to_c_expression(
+                    item.proposition()
+                        .expect("assert structural item should contain a proposition"),
+                )
+                .expect("structural propositions should be validated before lowering"),
                 label: format!(
                     "statement {statement_index} {} {item_index}",
                     structural_item_kind_label(item.kind())
@@ -1008,12 +1041,15 @@ impl AnnotationLowerer<'_> {
             .enumerate()
             .map(|(item_index, item)| {
                 Ok(CLoopInvariantCheck::new(
-                    self.click_proposition_to_c_proposition(item.proposition())
-                        .map_err(|message| {
-                            ClickError::new(format!(
-                                "loop {loop_index} invariant {item_index}: {message}"
-                            ))
-                        })?,
+                    self.click_proposition_to_c_proposition(
+                        item.proposition()
+                            .expect("invariant structural item should contain a proposition"),
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "loop {loop_index} invariant {item_index}: {message}"
+                        ))
+                    })?,
                     Some(format!("loop {loop_index} invariant {item_index} entry")),
                     Some(format!(
                         "loop {loop_index} invariant {item_index} preservation"
@@ -1187,11 +1223,60 @@ impl AnnotationLowerer<'_> {
             .filter(|item| item.kind() == StructuralItemKind::Assert)
             .enumerate()
             .map(|(item_index, item)| LabeledCheck {
-                condition: click_proposition_to_c_expression(item.proposition())
-                    .expect("structural propositions should be validated before lowering"),
+                condition: click_proposition_to_c_expression(
+                    item.proposition()
+                        .expect("assert structural item should contain a proposition"),
+                )
+                .expect("structural propositions should be validated before lowering"),
                 label: format!("loop {loop_index} assert {item_index}"),
             })
             .collect()
+    }
+
+    fn loop_effect_checks(&self, loop_index: usize) -> Result<Vec<CLoopEffectCheck>, ClickError> {
+        self.structural_clauses
+            .iter()
+            .filter(|clause| clause.target() == &StructuralTarget::Loop(loop_index))
+            .flat_map(StructuralClause::items)
+            .filter(|item| item.kind() == StructuralItemKind::Effect)
+            .enumerate()
+            .map(|(item_index, item)| {
+                let effect = item
+                    .effect()
+                    .expect("effect structural item should contain an effect");
+                let lowered = self.lower_loop_effect(effect).map_err(|message| {
+                    ClickError::new(format!("loop {loop_index} effect {item_index}: {message}"))
+                })?;
+                let context = match effect {
+                    Effect::Immutable => format!("loop {loop_index} immutable {item_index}"),
+                    Effect::Mutable(_) => format!("loop {loop_index} mutable {item_index}"),
+                };
+                Ok(CLoopEffectCheck::new(lowered, Some(context)))
+            })
+            .collect()
+    }
+
+    fn lower_loop_effect(&self, effect: &Effect) -> Result<CLoopEffect, String> {
+        match effect {
+            Effect::Immutable => Ok(CLoopEffect::Immutable),
+            Effect::Mutable(segments) => segments
+                .iter()
+                .map(|segment| {
+                    if segment.state != ContractSegmentState::Current {
+                        return Err(
+                            "`mutable` inside `loop` expects current-state segments; `old(...)` is not supported here"
+                                .to_string(),
+                        );
+                    }
+                    Ok(CMemorySegment::new(
+                        self.lower_current_invariant_c_expression(&segment.base)?,
+                        self.lower_current_invariant_c_expression(&segment.start)?,
+                        self.lower_current_invariant_c_expression(&segment.end)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(CLoopEffect::Mutable),
+        }
     }
 }
 
@@ -1199,6 +1284,7 @@ fn structural_item_kind_label(kind: StructuralItemKind) -> &'static str {
     match kind {
         StructuralItemKind::Assert => "assert",
         StructuralItemKind::Invariant => "invariant",
+        StructuralItemKind::Effect => "effect",
     }
 }
 
@@ -2981,38 +3067,46 @@ impl Parser {
     }
 
     fn parse_structural_item(&mut self) -> Result<StructuralItem, ClickError> {
-        let kind = match self.next() {
-            Some(Token::Ident(kind)) if kind == "invariant" => StructuralItemKind::Invariant,
-            Some(Token::Ident(kind)) if kind == "assert" => StructuralItemKind::Assert,
-            Some(Token::Ident(kind)) => {
-                return Err(self.error(format!("expected `invariant` or `assert`, got `{kind}`")));
+        match self.next() {
+            Some(Token::Ident(kind)) if kind == "invariant" || kind == "assert" => {
+                let item_kind = if kind == "invariant" {
+                    StructuralItemKind::Invariant
+                } else {
+                    StructuralItemKind::Assert
+                };
+                let proposition = self.parse_proposition()?;
+                let proof = self.parse_by_clause()?;
+                Ok(StructuralItem {
+                    kind: item_kind,
+                    claim: StructuralItemClaim::Proposition(proposition),
+                    proof,
+                })
             }
-            Some(token) => {
-                return Err(self.error(format!("expected `invariant` or `assert`, got {token:?}")));
+            Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" => {
+                let effect = self.parse_effect_after_keyword(kind)?;
+                let proof = self.parse_by_clause()?;
+                Ok(StructuralItem {
+                    kind: StructuralItemKind::Effect,
+                    claim: StructuralItemClaim::Effect(effect),
+                    proof,
+                })
             }
-            None => {
-                return Err(self.error("expected `invariant` or `assert`, got end of input"));
-            }
-        };
-        let proposition = self.parse_proposition()?;
-        let proof = self.parse_by_clause()?;
-        Ok(StructuralItem {
-            kind,
-            proposition,
-            proof,
-        })
+            Some(Token::Ident(kind)) => Err(self.error(format!(
+                "expected `invariant`, `assert`, `immutable`, or `mutable`, got `{kind}`"
+            ))),
+            Some(token) => Err(self.error(format!(
+                "expected `invariant`, `assert`, `immutable`, or `mutable`, got {token:?}"
+            ))),
+            None => Err(self.error(
+                "expected `invariant`, `assert`, `immutable`, or `mutable`, got end of input",
+            )),
+        }
     }
 
     fn parse_effect_clause(&mut self) -> Result<EffectClause, ClickError> {
         let effect = match self.next() {
-            Some(Token::Ident(kind)) if kind == "immutable" => Effect::Immutable,
-            Some(Token::Ident(kind)) if kind == "mutable" => {
-                let mut segments = vec![self.parse_contract_segment()?];
-                while self.peek() == Some(&Token::Comma) {
-                    self.position += 1;
-                    segments.push(self.parse_contract_segment()?);
-                }
-                Effect::Mutable(segments)
+            Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" => {
+                self.parse_effect_after_keyword(kind)?
             }
             Some(Token::Ident(kind)) => {
                 return Err(self.error(format!("expected `immutable` or `mutable`, got `{kind}`")));
@@ -3026,6 +3120,19 @@ impl Parser {
         };
         let proof = self.parse_by_clause()?;
         Ok(EffectClause { effect, proof })
+    }
+
+    fn parse_effect_after_keyword(&mut self, kind: String) -> Result<Effect, ClickError> {
+        if kind == "immutable" {
+            return Ok(Effect::Immutable);
+        }
+
+        let mut segments = vec![self.parse_contract_segment()?];
+        while self.peek() == Some(&Token::Comma) {
+            self.position += 1;
+            segments.push(self.parse_contract_segment()?);
+        }
+        Ok(Effect::Mutable(segments))
     }
 
     fn parse_ensure_clause(&mut self) -> Result<EnsureClause, ClickError> {
@@ -3863,6 +3970,8 @@ mod tests {
                 loop 0 {
                     invariant i >= 0 by auto;
                     invariant i <= 3 by auto;
+                    mutable p[0..n] by auto;
+                    immutable by auto;
                 }
 
                 ensures result == 3 by auto;
@@ -3884,11 +3993,23 @@ mod tests {
             function.structural_clauses()[1].target(),
             &StructuralTarget::Loop(0)
         );
-        assert_eq!(function.structural_clauses()[1].items().len(), 2);
+        assert_eq!(function.structural_clauses()[1].items().len(), 4);
         assert_eq!(
             function.structural_clauses()[1].items()[0].kind(),
             StructuralItemKind::Invariant
         );
+        assert_eq!(
+            function.structural_clauses()[1].items()[2].kind(),
+            StructuralItemKind::Effect
+        );
+        assert!(matches!(
+            function.structural_clauses()[1].items()[2].effect(),
+            Some(Effect::Mutable(_))
+        ));
+        assert!(matches!(
+            function.structural_clauses()[1].items()[3].effect(),
+            Some(Effect::Immutable)
+        ));
     }
 
     #[test]
@@ -4405,6 +4526,162 @@ mod tests {
             .expect("symbolic pointer loop writes should stay inside segment");
 
         assert_eq!(verified.len(), 2);
+        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
+    }
+
+    #[test]
+    fn verifies_loop_level_mutable_segment() {
+        let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                    mutable p[0..n] by auto;
+                }
+                ensures returns_n: result == n by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+            .expect("loop-level mutable segment should verify each iteration");
+
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
+    }
+
+    #[test]
+    fn loop_level_mutable_segment_rejects_write_outside_segment() {
+        let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                    mutable p[0..0] by auto;
+                }
+                ensures returns_n: result == n by auto;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+            .expect_err("write outside loop mutable segment should fail");
+
+        assert!(
+            error.message().contains("loop 0 mutable 0"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            error.message().contains("outside the mutable footprint"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn loop_level_immutable_rejects_external_memory_write() {
+        let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                    immutable by auto;
+                }
+                ensures returns_n: result == n by auto;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+            .expect_err("loop-level immutable should reject external writes");
+
+        assert!(
+            error.message().contains("loop 0 immutable 0"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            error.message().contains("outside the mutable footprint"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn loop_level_immutable_allows_stack_local_update() {
+        let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= 3 by auto;
+                    immutable by auto;
+                }
+                ensures returns_three: result == 3 by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
+            .expect("loop-level immutable should allow stack-local updates");
+
+        assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
     }
 

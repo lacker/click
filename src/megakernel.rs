@@ -174,6 +174,7 @@ pub enum CStatement {
         condition: CExpression,
         invariant: Vec<Proposition>,
         invariant_checks: Vec<CLoopInvariantCheck>,
+        effect_checks: Vec<CLoopEffectCheck>,
         body: Box<CStatement>,
     },
 }
@@ -183,6 +184,25 @@ pub struct CLoopInvariantCheck {
     proposition: CProposition,
     entry_context: Option<String>,
     preservation_context: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CLoopEffectCheck {
+    effect: CLoopEffect,
+    context: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CLoopEffect {
+    Immutable,
+    Mutable(Vec<CMemorySegment>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CMemorySegment {
+    base: CExpression,
+    start: CExpression,
+    end: CExpression,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -805,6 +825,26 @@ impl CLoopInvariantCheck {
 
     pub fn preservation_context(&self) -> Option<&str> {
         self.preservation_context.as_deref()
+    }
+}
+
+impl CLoopEffectCheck {
+    pub fn new(effect: CLoopEffect, context: Option<String>) -> Self {
+        Self { effect, context }
+    }
+
+    pub fn effect(&self) -> &CLoopEffect {
+        &self.effect
+    }
+
+    pub fn context(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+}
+
+impl CMemorySegment {
+    pub fn new(base: CExpression, start: CExpression, end: CExpression) -> Self {
+        Self { base, start, end }
     }
 }
 
@@ -2323,7 +2363,7 @@ pub fn c_while(
     invariant: Vec<Proposition>,
     body: CStatement,
 ) -> CStatement {
-    c_while_with_invariant_checks(condition, invariant, Vec::new(), body)
+    c_while_with_invariant_and_effect_checks(condition, invariant, Vec::new(), Vec::new(), body)
 }
 
 pub fn c_while_with_invariant_checks(
@@ -2332,10 +2372,27 @@ pub fn c_while_with_invariant_checks(
     invariant_checks: Vec<CLoopInvariantCheck>,
     body: CStatement,
 ) -> CStatement {
+    c_while_with_invariant_and_effect_checks(
+        condition,
+        invariant,
+        invariant_checks,
+        Vec::new(),
+        body,
+    )
+}
+
+pub fn c_while_with_invariant_and_effect_checks(
+    condition: CExpression,
+    invariant: Vec<Proposition>,
+    invariant_checks: Vec<CLoopInvariantCheck>,
+    effect_checks: Vec<CLoopEffectCheck>,
+    body: CStatement,
+) -> CStatement {
     CStatement::While {
         condition,
         invariant,
         invariant_checks,
+        effect_checks,
         body: Box::new(body),
     }
 }
@@ -6066,6 +6123,7 @@ fn execute_c_statement_paths(
             condition,
             invariant,
             invariant_checks: _,
+            effect_checks: _,
             body,
         } => execute_c_while_paths(
             state,
@@ -6497,18 +6555,22 @@ fn execute_c_statement_verification_paths(
             condition,
             invariant,
             invariant_checks,
+            effect_checks,
             body,
-        } if !invariant_checks.is_empty() => execute_c_while_verification_paths(
-            state,
-            condition,
-            invariant,
-            invariant_checks,
-            body,
-            assumptions,
-            environment,
-            budget,
-            variables,
-        )?,
+        } if !invariant_checks.is_empty() || !effect_checks.is_empty() => {
+            execute_c_while_verification_paths(
+                state,
+                condition,
+                invariant,
+                invariant_checks,
+                effect_checks,
+                body,
+                assumptions,
+                environment,
+                budget,
+                variables,
+            )?
+        }
         _ => execute_c_statement_paths(state, statement, assumptions, environment, budget)?,
     };
     budget.consume_paths(paths.len())?;
@@ -6560,6 +6622,7 @@ fn execute_c_while_verification_paths(
     condition: &CExpression,
     invariant: &[Proposition],
     invariant_checks: &[CLoopInvariantCheck],
+    effect_checks: &[CLoopEffectCheck],
     body: &CStatement,
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
@@ -6585,6 +6648,7 @@ fn execute_c_while_verification_paths(
         &top_state,
         condition,
         invariant_checks,
+        effect_checks,
         body,
         assumptions,
         environment,
@@ -6716,6 +6780,7 @@ fn collect_loop_preservation_summary(
     top_state: &CState,
     condition: &CExpression,
     invariant_checks: &[CLoopInvariantCheck],
+    effect_checks: &[CLoopEffectCheck],
     body: &CStatement,
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
@@ -6747,6 +6812,15 @@ fn collect_loop_preservation_summary(
             )? {
                 match body_path.outcome {
                     CStatementOutcome::Normal(next_state) => {
+                        let effect_obligations = collect_loop_effect_check_obligations(
+                            top_state,
+                            &next_state,
+                            effect_checks,
+                            &body_path.facts,
+                            &body_path.obligations,
+                            assumptions,
+                            budget,
+                        )?;
                         let path_obligations = collect_invariant_check_obligations(
                             &next_state,
                             invariant_checks,
@@ -6761,6 +6835,13 @@ fn collect_loop_preservation_summary(
                         append_required_proof_obligations(
                             &mut obligations,
                             assumptions,
+                            &body_path.obligations,
+                        );
+                        append_required_proof_obligations_under_path_context(
+                            &mut obligations,
+                            assumptions,
+                            &effect_obligations,
+                            &body_path.facts,
                             &body_path.obligations,
                         );
                         append_required_proof_obligations_under_path_context(
@@ -6790,6 +6871,224 @@ fn collect_loop_preservation_summary(
         }
     }
     Ok(LoopPreservationSummary { obligations })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EvaluatedMemorySegment {
+    base: Pointer,
+    start: Bitvector32Term,
+    end: Bitvector32Term,
+}
+
+fn collect_loop_effect_check_obligations(
+    before_state: &CState,
+    after_state: &CState,
+    effect_checks: &[CLoopEffectCheck],
+    facts: &[PathFact],
+    path_obligations: &[ProofObligation],
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<ProofObligation>> {
+    if effect_checks.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let effective_assumptions = assumptions_with_path_context(assumptions, facts, path_obligations);
+    let mut writes = after_state
+        .memory()
+        .differing_cell_pointers(before_state.memory())
+        .into_iter()
+        .filter(is_loop_effect_relevant_pointer)
+        .collect::<BTreeSet<_>>();
+    writes.extend(
+        facts
+            .iter()
+            .filter_map(|fact| match fact.proposition() {
+                Proposition::CMemoryMutatesOnly { pointers, .. } => Some(pointers.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .cloned(),
+    );
+    writes.retain(is_loop_effect_relevant_pointer);
+
+    let mut obligations = Vec::new();
+    for check in effect_checks {
+        let mut segment_evaluation_failed = false;
+        let segments = match check.effect() {
+            CLoopEffect::Immutable => Vec::new(),
+            CLoopEffect::Mutable(segments) => {
+                let mut evaluated = Vec::new();
+                for (segment_index, segment) in segments.iter().enumerate() {
+                    match evaluate_loop_effect_segment(
+                        before_state,
+                        segment,
+                        &effective_assumptions,
+                        budget,
+                    )? {
+                        Ok(segment) => evaluated.push(segment),
+                        Err(message) => {
+                            segment_evaluation_failed = true;
+                            push_false_loop_effect_obligation(
+                                &mut obligations,
+                                loop_effect_failure_context(
+                                    check,
+                                    format!(
+                                        "could not evaluate mutable segment {segment_index}: {message}"
+                                    ),
+                                ),
+                            );
+                        }
+                    }
+                }
+                evaluated
+            }
+        };
+
+        if segment_evaluation_failed {
+            continue;
+        }
+
+        for pointer in &writes {
+            if !segments.iter().any(|segment| {
+                loop_effect_segment_contains_pointer(segment, pointer, &effective_assumptions)
+            }) {
+                push_false_loop_effect_obligation(
+                    &mut obligations,
+                    loop_effect_failure_context(
+                        check,
+                        format!("write to {pointer:?} is outside the mutable footprint"),
+                    ),
+                );
+            }
+        }
+    }
+
+    Ok(obligations)
+}
+
+fn evaluate_loop_effect_segment(
+    state: &CState,
+    segment: &CMemorySegment,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<EvaluatedMemorySegment, String>> {
+    let base = match evaluate_loop_effect_segment_value(
+        state,
+        &segment.base,
+        assumptions,
+        "segment base",
+        budget,
+    )? {
+        Ok(CValue::Pointer(pointer)) => pointer,
+        Ok(value) => {
+            return Ok(Err(format!(
+                "segment base evaluated to {value:?}, not pointer"
+            )));
+        }
+        Err(message) => return Ok(Err(message)),
+    };
+    let start = match evaluate_loop_effect_segment_value(
+        state,
+        &segment.start,
+        assumptions,
+        "segment start",
+        budget,
+    )? {
+        Ok(CValue::Int32(value)) => value,
+        Ok(value) => {
+            return Ok(Err(format!(
+                "segment start evaluated to {value:?}, not int32"
+            )));
+        }
+        Err(message) => return Ok(Err(message)),
+    };
+    let end = match evaluate_loop_effect_segment_value(
+        state,
+        &segment.end,
+        assumptions,
+        "segment end",
+        budget,
+    )? {
+        Ok(CValue::Int32(value)) => value,
+        Ok(value) => {
+            return Ok(Err(format!(
+                "segment end evaluated to {value:?}, not int32"
+            )));
+        }
+        Err(message) => return Ok(Err(message)),
+    };
+
+    Ok(Ok(EvaluatedMemorySegment { base, start, end }))
+}
+
+fn evaluate_loop_effect_segment_value(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &Assumptions,
+    label: &str,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<CValue, String>> {
+    let paths = evaluate_c_expression_paths(state, expression, assumptions, budget)?;
+    if paths.len() != 1 {
+        return Ok(Err(format!(
+            "{label} evaluated through {} paths, expected exactly one",
+            paths.len()
+        )));
+    }
+    let Some(path) = paths.into_iter().next() else {
+        return Ok(Err(format!("{label} had no evaluation path")));
+    };
+    if !path.obligations.is_empty() {
+        return Ok(Err(format!(
+            "{label} left proof obligations: {:?}",
+            path.obligations
+        )));
+    }
+    match path.outcome {
+        CExpressionOutcome::Value(value) => Ok(Ok(value)),
+        CExpressionOutcome::UndefinedBehavior(undefined_behavior) => Ok(Err(format!(
+            "{label} produced undefined behavior: {undefined_behavior:?}"
+        ))),
+        CExpressionOutcome::RuntimeError(error) => {
+            Ok(Err(format!("{label} produced runtime error: {error:?}")))
+        }
+    }
+}
+
+fn loop_effect_segment_contains_pointer(
+    segment: &EvaluatedMemorySegment,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    let Some(index) = pointer.element_index_from_base(&segment.base) else {
+        return false;
+    };
+    assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(segment.start.clone(), index.clone()),
+        true,
+    )) && assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(index, segment.end.clone()),
+        true,
+    ))
+}
+
+fn is_loop_effect_relevant_pointer(pointer: &Pointer) -> bool {
+    !pointer.block.starts_with("local:") && !pointer.block.starts_with("havoc:")
+}
+
+fn loop_effect_failure_context(check: &CLoopEffectCheck, message: String) -> String {
+    match check.context() {
+        Some(context) => format!("{context}: {message}"),
+        None => message,
+    }
+}
+
+fn push_false_loop_effect_obligation(obligations: &mut Vec<ProofObligation>, context: String) {
+    obligations.push(
+        ProofObligation::verification_condition(false_equals_true_proposition())
+            .with_context(context),
+    );
 }
 
 fn false_equals_true_proposition() -> Proposition {

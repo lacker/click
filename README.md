@@ -243,6 +243,7 @@ statement 2 {
 loop 0 {
     invariant i >= 0 by auto;
     invariant i <= 3 by auto;
+    mutable p[0..n] by auto;
 }
 ```
 
@@ -250,9 +251,15 @@ loop 0 {
 names the Nth `while` loop. `assert` is a one-shot ghost check at the
 structural target. `invariant` generates non-unrolling loop verification
 conditions: entry checks, one-body preservation checks, and exit facts from the
-invariant plus the false loop condition. Failed `auto` proofs report the
-guarantee label, execution path, available requirements, path facts, and
-remaining proof obligations.
+invariant plus the false loop condition. `mutable` and `immutable` inside a
+`loop N` block are loop-level effect clauses: they check one body step under
+the current invariant facts and true loop condition. Loop-level `mutable`
+segments are evaluated at the loop head, so `mutable p[i..n] by auto;` uses the
+current iteration's `i`, while function-level `mutable p[0..n] by auto;` uses
+function-entry parameter values. `immutable` means the loop body performs no
+externally visible memory mutation during that step. Failed `auto` proofs
+report the guarantee label, execution path, available requirements, path facts,
+and remaining proof obligations.
 
 The current loop VC path handles scalar loop locals by assigning fresh symbolic
 values at the loop head. That is enough for proofs such as symbolic
@@ -314,6 +321,10 @@ The first memory-safety demos are fixed-size pointer loops:
   postcondition from an explicit quantified loop invariant.
 - `fill_n_mutable_segment(int32 p[], int32 n)` proves that a symbolic
   pointer-writing loop mutates only `p[0..n]`.
+- `fill_n_loop_mutable_segment(int32 p[], int32 n)` proves the analogous
+  loop-level effect clause for each loop body step.
+- `count_to_three_loop_immutable()` proves a loop-level `immutable` clause for
+  a scalar loop that only updates stack-local state.
 
 The fixed-size pointer demos use 12-byte backing blocks and prove without
 leftover memory-safety premises. The symbolic pointer-loop demos instead use
@@ -324,9 +335,8 @@ can also prove post-state memory guarantees such as
 
 ## Near-Term Roadmap
 
-1. Add loop-level effect clauses, so `loop N { mutable p[i..j] by auto; }` can
-   mean one loop body step mutates only inside the segment, without pretending
-   that effect claim is a state invariant.
+1. Broaden loop-level effect clauses with better diagnostics and more segment
+   shapes, especially iteration-relative segments such as `p[i..i + 1]`.
 2. Broaden segment reasoning beyond one-cell frame demos, especially proving
    copy-style invariants such as `dst[0..i]` matching `old(src[0..i])`.
 3. Improve fact management inside `auto`, especially using requirements,
