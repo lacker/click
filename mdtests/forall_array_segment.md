@@ -1,8 +1,7 @@
-# forall array segment syntax is parsed but not proved yet
+# forall array segment is proved for unchanged memory
 
-This documents the intended quantified proposition shape for array segments.
-The function does not write through `p`, so the specification is plausible, but
-`auto` does not yet prove quantified array-segment facts.
+This checks that `auto` proves a quantified array-segment postcondition when the
+function does not write through `p`.
 
 ```c filename=forall_array_segment.c
 int32 forall_array_segment(int32 p[], int32 n) {
@@ -23,5 +22,5 @@ int32 forall_array_segment(int32 p[], int32 n) {
 ```
 
 ```expect
-fail: proposition was not provable
+pass
 ```

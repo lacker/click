@@ -194,12 +194,14 @@ small C0 integer expressions over `result`, parameters, literals, parentheses,
 `+`, `-`, and post-state `p[i]` memory reads. Postconditions can use
 `old(expression)` to evaluate an expression in the pre-call state, which
 supports first-frame claims like `p[0] == old(p[0])`. The parser and kernel
-representation accept `forall (int32 name) { ... }`, but `auto` does not yet
-prove useful quantified array-segment facts. `auto` checks each guarantee on
-every symbolic execution path. That sidecar path parses C0 source, builds the
-requested initial memory, first tries loop verification conditions for
-annotated loops, checks the postcondition clause, and packages the result as a
-megakernel `CFunctionSpecification` theorem. If the loop VC path cannot prove a
+representation accept `forall (int32 name) { ... }`. `auto` can prove simple
+quantified array-segment postconditions, including unchanged-memory cases and
+first frame facts outside a loop write footprint. It does not yet support full
+quantified loop invariants. `auto` checks each guarantee on every symbolic
+execution path. That sidecar path parses C0 source, builds the requested initial
+memory, first tries loop verification conditions for annotated loops, checks the
+postcondition clause, and packages the result as a megakernel
+`CFunctionSpecification` theorem. If the loop VC path cannot prove a
 postcondition but leaves no invariant obligations, `auto` can still use bounded
 execution for finite concrete-loop demos.
 
@@ -294,8 +296,8 @@ can also prove post-state memory guarantees such as
 
 ## Near-Term Roadmap
 
-1. Add quantified array-segment reasoning, starting from parsed/lowered
-   `forall` guarantees that `auto` cannot prove yet.
+1. Broaden quantified array-segment reasoning from postconditions into loop
+   invariants and memory-changing proofs.
 2. Extend memory-changing loop verification with explicit memory invariants and
    more general frame reasoning.
 3. Improve fact management inside `auto`, especially using requirements,

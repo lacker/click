@@ -359,7 +359,7 @@ pub fn verify_c0_sources(
             {
                 return Err(error);
             }
-            match prove_ensure_from_execution(
+            let loop_verification_error = match prove_ensure_from_execution(
                 &vc_execution,
                 AutoExecutionKind::LoopVerification,
                 source_path,
@@ -377,8 +377,8 @@ pub fn verify_c0_sources(
                     verified.extend(theorems);
                     continue;
                 }
-                Err(_) => {}
-            }
+                Err(error) => Some(error),
+            };
 
             let execution = prove_symbolic_c_function_execution_paths_with_environment(
                 state.clone(),
@@ -390,6 +390,11 @@ pub fn verify_c0_sources(
             if let Some(error) =
                 execution_obligation_error(&execution, &ensure_label, &requirement_propositions)
             {
+                if execution.limit().is_some() {
+                    if let Some(loop_verification_error) = loop_verification_error {
+                        return Err(loop_verification_error);
+                    }
+                }
                 return Err(error);
             }
             let theorems = prove_ensure_from_execution(

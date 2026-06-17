@@ -52,7 +52,7 @@ new proof workflow concepts too early.
 | Function calls | modular verification, inlining, call summaries | function environment and specification satisfaction | `auto`, later `use specification` | `mdtests/function_call.md` |
 | Loop invariants | Dafny/F*/Why3/Frama-C | loop verification-condition generation for scalar locals, pointer safety, and first write-footprint frames | `at loop N { invariant ... by auto; }` | `mdtests/count_to_three_at_loop_invariants.md`, `mdtests/count_to_n_loop_invariant.md`, `mdtests/fill_n_symbolic_pointer_loop.md`, `mdtests/fill_tail_preserves_first.md`, `mdtests/count_to_three_bad_invariant.md`, `mdtests/count_to_three_bad_invariant_initialization.md` |
 | Assertions and facts | Lean/Dafny/F* proof scripts | ghost assertion checking | `at statement N { assert ... by auto; }`, later `have`, `exact` | `mdtests/count_to_three_at_loop_invariants.md`, `mdtests/count_to_three_bad_assert.md` |
-| Proposition syntax | Lean/Isabelle/Dafny/F* specifications | kernel `And`, `Or`, `Not`, `Implies`, `ForAll` propositions | `and`, `or`, `not`, `implies`, `forall` | `mdtests/click_proposition_logic.md`, `mdtests/forall_array_segment_expected_fail.md` |
+| Proposition syntax | Lean/Isabelle/Dafny/F* specifications | kernel `And`, `Or`, `Not`, `Implies`, `ForAll` propositions | `and`, `or`, `not`, `implies`, `forall` | `mdtests/click_proposition_logic.md`, `mdtests/forall_array_segment.md`, `mdtests/forall_array_segment_rejects_overwritten_cell.md` |
 | Rewriting and simplification | Lean `simp`, Isabelle simplifier | rewrite theorem application | later `simp`, `rewrite`, `calc` | not yet on the C path |
 | Bitvector arithmetic | SMT, CBMC, hardware-oriented provers | bitvector32 solver/normalizer | later `bitvector` | partially through `auto` |
 | Frame reasoning | separation logic, C verifiers | pre/post memory evaluation with symbolic initial cells and loop write footprints | `auto`, later `frame` | `mdtests/write_second_old_preserves_first.md`, `mdtests/write_second_old_rejects_overwritten_cell.md`, `mdtests/fill_tail_preserves_first.md` |
@@ -64,20 +64,21 @@ The current C0 subset is enough to make the first several categories
 executable: scalar code, signed-overflow undefined behavior, pointer range
 checks, bounded loops, known function calls, memory postconditions,
 first-frame postconditions with `old(...)`, C-style array-parameter syntax, and
-Click proposition syntax with `and`, `or`, `not`, `implies`, and parsed/lowered
-`forall`. Structural-label ghost checks for `assert` and `invariant` currently
-use the executable fragment of proposition syntax. Invariant failures are
-reported as loop-entry or preservation obligations. Annotated scalar and
-pointer-safety loops can now be summarized without unrolling: Click checks
-invariant initialization, one-step preservation, exit facts from the invariant
-plus the false loop condition, and a first write-footprint frame fact for loads
-provably outside the symbolic loop writes.
+Click proposition syntax with `and`, `or`, `not`, `implies`, and `forall`.
+`auto` can prove simple quantified array-segment postconditions, including
+unchanged-memory cases and frame facts outside a loop write footprint.
+Structural-label ghost checks for `assert` and `invariant` currently use the
+executable fragment of proposition syntax. Invariant failures are reported as
+loop-entry or preservation obligations. Annotated scalar and pointer-safety
+loops can now be summarized without unrolling: Click checks invariant
+initialization, one-step preservation, exit facts from the invariant plus the
+false loop condition, and a first write-footprint frame fact for loads provably
+outside the symbolic loop writes.
 
 It is not yet enough for the full launch-shaped proof story. The main missing
-pieces are quantified memory-segment reasoning, full memory-changing loop
-invariants, richer intermediate fact management, richer C integer operations
-and casts, local arrays, richer memory predicates, and general frame
-conditions.
+pieces are quantified memory-segment invariants, full memory-changing loop
+invariants, richer intermediate fact management, richer C integer operations and
+casts, local arrays, richer memory predicates, and general frame conditions.
 
 That is intentional. The mdtests should make the next missing piece obvious:
 when a proof pattern needs a new C0 feature, add the feature because the proof

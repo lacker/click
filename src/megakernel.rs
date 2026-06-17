@@ -1503,6 +1503,11 @@ impl Assumptions {
                 .clone()
                 .assume_proposition(left.as_ref().clone())
                 .proves(right),
+            Proposition::ForAll {
+                sort: Sort::CInt32,
+                body,
+                ..
+            } => self.proves(body),
             Proposition::CMemoryCanLoad { memory, pointer } => {
                 self.proves_memory_access(memory, pointer, 4)
             }
@@ -2817,7 +2822,6 @@ fn solve_builtin_prop(proposition: &Proposition) -> bool {
             }
             _ => false,
         },
-        Proposition::Implies(left, right) => !solve_builtin_prop(left) || solve_builtin_prop(right),
         Proposition::CMemoryValidRange {
             memory,
             base,
@@ -6535,6 +6539,61 @@ mod tests {
             pointer: pointer.clone(),
         }));
         assert!(assumptions.proves(&Proposition::CMemoryCanStore { memory, pointer }));
+    }
+
+    #[test]
+    fn assumptions_prove_forall_int32_array_range_body() {
+        let index = Variable(90);
+        let index_bits = Bitvector32Term::Variable(index);
+        let memory = CMemory::new().with_block("block", 12);
+        let base = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let indexed_pointer = base.offset_by_int32_elements(index_bits.clone());
+        let in_segment = Proposition::And(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_greater_equal(
+                    index_bits.clone(),
+                    Bitvector32Term::Constant(0),
+                ),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_less_than(index_bits, Bitvector32Term::Constant(3)),
+                true,
+            )),
+        );
+        let can_load_index = Proposition::CMemoryCanLoad {
+            memory: memory.clone(),
+            pointer: indexed_pointer,
+        };
+        let assumptions = Assumptions::new().assume_proposition(Proposition::CMemoryValidRange {
+            memory,
+            base,
+            bytes: Bitvector32Term::Constant(12),
+        });
+
+        assert!(assumptions.proves(&forall_int32(
+            index,
+            Proposition::Implies(Box::new(in_segment), Box::new(can_load_index)),
+        )));
+    }
+
+    #[test]
+    fn assumptions_do_not_prove_implication_by_treating_unknown_antecedent_as_false() {
+        let x = Bitvector32Term::Variable(Variable(91));
+        let antecedent = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(x.clone(), Bitvector32Term::Constant(0)),
+            true,
+        );
+        let consequent =
+            Proposition::ConditionIs(ConditionTerm::equal(x, Bitvector32Term::Constant(0)), true);
+
+        assert!(!Assumptions::new().proves(&Proposition::Implies(
+            Box::new(antecedent),
+            Box::new(consequent),
+        )));
     }
 
     #[test]
