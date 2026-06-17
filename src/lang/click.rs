@@ -31,6 +31,7 @@ pub struct FunctionBlock {
     signature: FunctionSignature,
     requires: Vec<Requirement>,
     structural_clauses: Vec<StructuralClause>,
+    effects: Vec<EffectClause>,
     ensures: Vec<EnsureClause>,
 }
 
@@ -78,6 +79,12 @@ pub struct EnsureClause {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EffectClause {
+    effect: Effect,
+    proof: Proof,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StructuralClause {
     target: StructuralTarget,
     items: Vec<StructuralItem>,
@@ -108,14 +115,18 @@ pub enum Ensure {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Effect {
+    Immutable,
+    Mutable(Vec<ContractSegment>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClickProposition {
     Comparison {
         left: ContractExpression,
         operator: ComparisonOperator,
         right: ContractExpression,
     },
-    Preserves(ContractSegment),
-    WritesOnly(ContractSegment),
     And(Box<ClickProposition>, Box<ClickProposition>),
     Or(Box<ClickProposition>, Box<ClickProposition>),
     Not(Box<ClickProposition>),
@@ -203,11 +214,16 @@ pub enum Tactic {
 pub struct VerifiedCTheorem {
     pub source_path: String,
     pub function_block: FunctionBlock,
-    pub ensure_index: usize,
-    pub ensure_clause: EnsureClause,
+    pub claim: VerifiedClaim,
     pub proof_kind: AutoProofKind,
     pub specification: CFunctionSpecification,
     pub theorem: Theorem,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum VerifiedClaim {
+    Ensure { index: usize, clause: EnsureClause },
+    Effect { index: usize, clause: EffectClause },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -242,6 +258,10 @@ impl FunctionBlock {
 
     pub fn structural_clauses(&self) -> &[StructuralClause] {
         &self.structural_clauses
+    }
+
+    pub fn effects(&self) -> &[EffectClause] {
+        &self.effects
     }
 
     pub fn ensures(&self) -> &[EnsureClause] {
@@ -280,6 +300,16 @@ impl EnsureClause {
 
     pub fn ensure(&self) -> &Ensure {
         &self.ensure
+    }
+
+    pub fn proof(&self) -> &Proof {
+        &self.proof
+    }
+}
+
+impl EffectClause {
+    pub fn effect(&self) -> &Effect {
+        &self.effect
     }
 
     pub fn proof(&self) -> &Proof {
@@ -328,6 +358,20 @@ impl VerifiedCTheorem {
     pub fn proof_kind(&self) -> AutoProofKind {
         self.proof_kind
     }
+
+    pub fn ensure_clause(&self) -> Option<&EnsureClause> {
+        match &self.claim {
+            VerifiedClaim::Ensure { clause, .. } => Some(clause),
+            VerifiedClaim::Effect { .. } => None,
+        }
+    }
+
+    pub fn effect_clause(&self) -> Option<&EffectClause> {
+        match &self.claim {
+            VerifiedClaim::Effect { clause, .. } => Some(clause),
+            VerifiedClaim::Ensure { .. } => None,
+        }
+    }
 }
 
 impl ClickError {
@@ -367,12 +411,11 @@ pub fn verify_c0_sources(
             })?;
         check_signature(&function_block.signature, parsed_function, source_path)?;
         validate_structural_clauses(&function_block, parsed_function)?;
-        for (ensure_index, ensure_clause) in function_block.ensures.iter().enumerate() {
-            let ensure_label =
-                ensure_label(function_block.signature.name(), ensure_clause, ensure_index);
-            if !ensure_clause.proof.is_auto_tactic() {
+        for claim in function_claims(&function_block) {
+            let claim_label = function_claim_label(function_block.signature.name(), &claim);
+            if !claim.proof().is_auto_tactic() {
                 return Err(ClickError::new(format!(
-                    "`{ensure_label}` must use exactly `by auto;` in this first slice"
+                    "`{claim_label}` must use exactly `by auto;` in this first slice"
                 )));
             }
 
@@ -392,18 +435,17 @@ pub fn verify_c0_sources(
                 function_environment.clone(),
             );
             if let Some(error) =
-                execution_obligation_error(&vc_execution, &ensure_label, &requirement_propositions)
+                execution_obligation_error(&vc_execution, &claim_label, &requirement_propositions)
             {
                 return Err(error);
             }
-            let loop_verification_error = match prove_ensure_from_execution(
+            let loop_verification_error = match prove_claim_from_execution(
                 &vc_execution,
                 AutoExecutionKind::LoopVerification,
                 source_path,
                 &function_block,
-                ensure_index,
-                ensure_clause,
-                &ensure_label,
+                &claim,
+                &claim_label,
                 parsed_function.parameters(),
                 &function,
                 &state,
@@ -424,23 +466,22 @@ pub fn verify_c0_sources(
                 function_environment.clone(),
             );
             if let Some(error) =
-                execution_obligation_error(&execution, &ensure_label, &requirement_propositions)
+                execution_obligation_error(&execution, &claim_label, &requirement_propositions)
             {
                 if let Some(loop_verification_error) = loop_verification_error {
                     return Err(loop_verification_error);
                 }
                 return Err(error);
             }
-            let theorems = prove_ensure_from_execution(
+            let theorems = prove_claim_from_execution(
                 &execution,
                 AutoExecutionKind::BoundedExecution {
                     environment: &function_environment,
                 },
                 source_path,
                 &function_block,
-                ensure_index,
-                ensure_clause,
-                &ensure_label,
+                &claim,
+                &claim_label,
                 parsed_function.parameters(),
                 &function,
                 &state,
@@ -452,6 +493,50 @@ pub fn verify_c0_sources(
     }
 
     Ok(verified)
+}
+
+#[derive(Clone, Copy)]
+enum FunctionClaimRef<'a> {
+    Effect(usize, &'a EffectClause),
+    Ensure(usize, &'a EnsureClause),
+}
+
+impl<'a> FunctionClaimRef<'a> {
+    fn proof(self) -> &'a Proof {
+        match self {
+            Self::Effect(_, clause) => clause.proof(),
+            Self::Ensure(_, clause) => clause.proof(),
+        }
+    }
+
+    fn verified_claim(self) -> VerifiedClaim {
+        match self {
+            Self::Effect(index, clause) => VerifiedClaim::Effect {
+                index,
+                clause: clause.clone(),
+            },
+            Self::Ensure(index, clause) => VerifiedClaim::Ensure {
+                index,
+                clause: clause.clone(),
+            },
+        }
+    }
+}
+
+fn function_claims(function_block: &FunctionBlock) -> Vec<FunctionClaimRef<'_>> {
+    function_block
+        .effects()
+        .iter()
+        .enumerate()
+        .map(|(index, clause)| FunctionClaimRef::Effect(index, clause))
+        .chain(
+            function_block
+                .ensures()
+                .iter()
+                .enumerate()
+                .map(|(index, clause)| FunctionClaimRef::Ensure(index, clause)),
+        )
+        .collect()
 }
 
 enum AutoExecutionKind<'a> {
@@ -500,14 +585,13 @@ fn execution_obligation_error(
     None
 }
 
-fn prove_ensure_from_execution(
+fn prove_claim_from_execution(
     execution: &crate::megakernel::SymbolicCExecution,
     execution_kind: AutoExecutionKind<'_>,
     source_path: &str,
     function_block: &FunctionBlock,
-    ensure_index: usize,
-    ensure_clause: &EnsureClause,
-    ensure_label: &str,
+    claim: &FunctionClaimRef<'_>,
+    claim_label: &str,
     parameters: &[syntax::C0Parameter],
     function: &CFunction,
     state: &CState,
@@ -517,12 +601,12 @@ fn prove_ensure_from_execution(
     let proof_kind = execution_kind.proof_kind();
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
-            "`auto` hit execution limit {limit:?} for `{ensure_label}`"
+            "`auto` hit execution limit {limit:?} for `{claim_label}`"
         )));
     }
     if execution.paths().is_empty() {
         return Err(ClickError::new(format!(
-            "`auto` could not prove any complete execution path for `{ensure_label}`"
+            "`auto` could not prove any complete execution path for `{claim_label}`"
         )));
     }
 
@@ -532,7 +616,7 @@ fn prove_ensure_from_execution(
             Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
             proposition => {
                 return Err(ClickError::new(format!(
-                    "`auto` failed for `{ensure_label}` path {path_index}: unexpected theorem body {proposition:?}\n  available requirements: {}\n  path facts: {}",
+                    "`auto` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  available requirements: {}\n  path facts: {}",
                     describe_propositions(&requirement_propositions),
                     describe_facts(path.facts())
                 )));
@@ -541,12 +625,12 @@ fn prove_ensure_from_execution(
 
         let mut path_requirements = requirement_propositions.to_vec();
         path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-        check_ensure(
-            ensure_label,
+        check_function_claim(
+            claim_label,
             path_index,
             path.facts(),
             &path_requirements,
-            ensure_clause,
+            claim,
             parameters,
             arguments,
             state,
@@ -578,7 +662,7 @@ fn prove_ensure_from_execution(
                 )
                 .ok_or_else(|| {
                     ClickError::new(format!(
-                        "`auto` failed for `{ensure_label}` path {path_index}: execution did not satisfy the packaged specification\n  available requirements: {}\n  path facts: {}",
+                        "`auto` failed for `{claim_label}` path {path_index}: execution did not satisfy the packaged specification\n  available requirements: {}\n  path facts: {}",
                         path_requirements_description,
                         describe_facts(path.facts())
                     ))
@@ -589,8 +673,7 @@ fn prove_ensure_from_execution(
         verified.push(VerifiedCTheorem {
             source_path: source_path.to_string(),
             function_block: function_block.clone(),
-            ensure_index,
-            ensure_clause: ensure_clause.clone(),
+            claim: claim.verified_claim(),
             proof_kind,
             specification,
             theorem,
@@ -645,10 +728,16 @@ fn build_function_environment(
         })
 }
 
-fn ensure_label(function_name: &str, ensure: &EnsureClause, index: usize) -> String {
-    match ensure.name() {
-        Some(name) => format!("{function_name}.{name}"),
-        None => format!("{function_name}.ensures_{index}"),
+fn function_claim_label(function_name: &str, claim: &FunctionClaimRef<'_>) -> String {
+    match claim {
+        FunctionClaimRef::Ensure(index, ensure) => match ensure.name() {
+            Some(name) => format!("{function_name}.{name}"),
+            None => format!("{function_name}.ensures_{index}"),
+        },
+        FunctionClaimRef::Effect(index, effect) => match effect.effect() {
+            Effect::Immutable => format!("{function_name}.immutable_{index}"),
+            Effect::Mutable(_) => format!("{function_name}.mutable_{index}"),
+        },
     }
 }
 
@@ -948,12 +1037,6 @@ impl AnnotationLowerer<'_> {
                 operator: c_comparison_operator(*operator),
                 right: self.lower_invariant_contract_expression(right)?,
             }),
-            ClickProposition::Preserves(segment) => {
-                self.lower_preserves_segment_to_c_proposition(segment)
-            }
-            ClickProposition::WritesOnly(_) => {
-                Err("`writes_only(...)` is not available in loop invariants yet".to_string())
-            }
             ClickProposition::And(left, right) => Ok(CProposition::And(
                 Box::new(self.click_proposition_to_c_proposition(left)?),
                 Box::new(self.click_proposition_to_c_proposition(right)?),
@@ -995,33 +1078,6 @@ impl AnnotationLowerer<'_> {
                 })
             }
         }
-    }
-
-    fn lower_preserves_segment_to_c_proposition(
-        &mut self,
-        segment: &ContractSegment,
-    ) -> Result<CProposition, String> {
-        if segment.state != ContractSegmentState::Current {
-            return Err("`preserves(...)` expects a current-state segment".to_string());
-        }
-
-        let variable = Variable(self.next_quantifier_variable);
-        self.next_quantifier_variable += 1;
-        let index_name = format!("__click_segment_index_{}", variable.0);
-        let index = CExpression::Value(CValue::Int32(Bitvector32Term::Variable(variable)));
-        let base = self.lower_current_invariant_c_expression(&segment.base)?;
-        let start = self.lower_current_invariant_c_expression(&segment.start)?;
-        let end = self.lower_current_invariant_c_expression(&segment.end)?;
-        let current = CExpression::Index(Box::new(base.clone()), Box::new(index.clone()));
-        let old = CExpression::Value(self.evaluate_old_invariant_c_expression(
-            &CExpression::Index(Box::new(segment.base.clone()), Box::new(index.clone())),
-        )?);
-
-        Ok(CProposition::ForAllInt32 {
-            name: index_name,
-            variable,
-            body: Box::new(segment_preservation_body(start, end, index, current, old)),
-        })
     }
 
     fn lower_invariant_contract_expression(
@@ -1200,8 +1256,6 @@ fn click_proposition_to_c_expression(proposition: &ClickProposition) -> Option<C
             ))),
             Box::new(click_proposition_to_c_expression(right)?),
         )),
-        ClickProposition::Preserves(_) => None,
-        ClickProposition::WritesOnly(_) => None,
         ClickProposition::ForAll { .. } => None,
     }
 }
@@ -1215,34 +1269,6 @@ fn c_comparison_operator(operator: ComparisonOperator) -> CComparisonOperator {
         ComparisonOperator::GreaterThan => CComparisonOperator::GreaterThan,
         ComparisonOperator::GreaterEqual => CComparisonOperator::GreaterEqual,
     }
-}
-
-fn segment_preservation_body(
-    start: CExpression,
-    end: CExpression,
-    index: CExpression,
-    current: CExpression,
-    old: CExpression,
-) -> CProposition {
-    CProposition::Implies(
-        Box::new(CProposition::And(
-            Box::new(CProposition::Comparison {
-                left: start,
-                operator: CComparisonOperator::LessEqual,
-                right: index.clone(),
-            }),
-            Box::new(CProposition::Comparison {
-                left: index,
-                operator: CComparisonOperator::LessThan,
-                right: end,
-            }),
-        )),
-        Box::new(CProposition::Comparison {
-            left: current,
-            operator: CComparisonOperator::Equal,
-            right: old,
-        }),
-    )
 }
 
 fn contract_expression_to_current_c_expression(
@@ -1587,12 +1613,6 @@ impl KernelPropositionLowerer {
                 let right = self.lower_requirement_value(right)?;
                 comparison_proposition(left, *operator, right)
             }
-            ClickProposition::Preserves(_) => Err(ClickError::new(
-                "`preserves(...)` is not available in `requires` clauses",
-            )),
-            ClickProposition::WritesOnly(_) => Err(ClickError::new(
-                "`writes_only(...)` is not available in `requires` clauses",
-            )),
             ClickProposition::And(left, right) => Ok(Proposition::And(
                 Box::new(self.lower_requirement_proposition(left)?),
                 Box::new(self.lower_requirement_proposition(right)?),
@@ -1819,24 +1839,37 @@ fn bitvector32_equal(left: Bitvector32Term, right: Bitvector32Term) -> Condition
     }
 }
 
-fn check_ensure(
-    ensure_label: &str,
+fn check_function_claim(
+    claim_label: &str,
     path_index: usize,
     path_facts: &[crate::megakernel::PathFact],
     available_propositions: &[Proposition],
-    ensure_clause: &EnsureClause,
+    claim: &FunctionClaimRef<'_>,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
     outcome: &CFunctionOutcome,
 ) -> Result<(), ClickError> {
-    match ensure_clause.ensure() {
-        Ensure::Proposition(proposition) => prove_ensure_proposition(
-            ensure_label,
+    match claim {
+        FunctionClaimRef::Ensure(_, ensure_clause) => match ensure_clause.ensure() {
+            Ensure::Proposition(proposition) => prove_ensure_proposition(
+                claim_label,
+                path_index,
+                path_facts,
+                available_propositions,
+                proposition,
+                parameters,
+                arguments,
+                pre_state,
+                outcome,
+            )?,
+        },
+        FunctionClaimRef::Effect(_, effect_clause) => prove_effect_clause(
+            claim_label,
             path_index,
             path_facts,
             available_propositions,
-            proposition,
+            effect_clause.effect(),
             parameters,
             arguments,
             pre_state,
@@ -1845,6 +1878,36 @@ fn check_ensure(
     }
 
     Ok(())
+}
+
+fn prove_effect_clause(
+    claim_label: &str,
+    path_index: usize,
+    path_facts: &[crate::megakernel::PathFact],
+    available_propositions: &[Proposition],
+    effect: &Effect,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    outcome: &CFunctionOutcome,
+) -> Result<(), ClickError> {
+    let CFunctionOutcome::Return { value: _, state } = outcome else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` failed on path {path_index}: outcome was {outcome:?}\n  path facts: {}",
+            describe_facts(path_facts)
+        )));
+    };
+    prove_mutation_footprint(
+        claim_label,
+        path_index,
+        path_facts,
+        available_propositions,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        effect,
+    )
 }
 
 fn prove_ensure_proposition(
@@ -1913,26 +1976,6 @@ fn prove_ensure_proposition(
                 )));
             }
         },
-        ClickProposition::WritesOnly(segment) => match outcome {
-            CFunctionOutcome::Return { value, state } => prove_writes_only_segment(
-                ensure_label,
-                path_index,
-                path_facts,
-                available_propositions,
-                parameters,
-                arguments,
-                pre_state,
-                state,
-                value,
-                segment,
-            )?,
-            other => {
-                return Err(ClickError::new(format!(
-                    "`ensures writes_only({segment:?})` failed for `{ensure_label}` path {path_index}: outcome was {other:?}\n  path facts: {}",
-                    describe_facts(path_facts)
-                )));
-            }
-        },
         ClickProposition::And(left, right) => {
             prove_ensure_proposition(
                 ensure_label,
@@ -1990,8 +2033,8 @@ fn prove_ensure_proposition(
     Ok(())
 }
 
-fn prove_writes_only_segment(
-    ensure_label: &str,
+fn prove_mutation_footprint(
+    claim_label: &str,
     path_index: usize,
     path_facts: &[crate::megakernel::PathFact],
     available_propositions: &[Proposition],
@@ -1999,28 +2042,33 @@ fn prove_writes_only_segment(
     arguments: &[CExpression],
     pre_state: &CState,
     post_state: &CState,
-    result: &CValue,
-    segment: &ContractSegment,
+    effect: &Effect,
 ) -> Result<(), ClickError> {
-    if segment.state != ContractSegmentState::Current {
-        return Err(ClickError::new(format!(
-            "`ensures writes_only({segment:?})` failed for `{ensure_label}` path {path_index}: expected a current-state segment"
-        )));
-    }
-    let segment = evaluate_contract_segment(
-        parameters,
-        arguments,
-        pre_state,
-        post_state,
-        result,
-        available_propositions,
-        segment,
-    )
-    .map_err(|message| {
-        ClickError::new(format!(
-            "`ensures writes_only({segment:?})` failed for `{ensure_label}` path {path_index}: could not evaluate segment: {message}"
-        ))
-    })?;
+    let segments = match effect {
+        Effect::Immutable => Vec::new(),
+        Effect::Mutable(segments) => segments
+            .iter()
+            .map(|segment| {
+                if segment.state != ContractSegmentState::Current {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` failed on path {path_index}: `mutable` expects current-state segments"
+                    )));
+                }
+                evaluate_effect_segment(
+                    parameters,
+                    arguments,
+                    pre_state,
+                    available_propositions,
+                    segment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` failed on path {path_index}: could not evaluate mutable segment {segment:?}: {message}"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    };
     let assumptions = assumptions_from_propositions(available_propositions);
     let mut writes = post_state
         .memory()
@@ -2032,7 +2080,7 @@ fn prove_writes_only_segment(
         path_facts
             .iter()
             .filter_map(|fact| match fact.proposition() {
-                Proposition::CMemoryWritesOnly { pointers, .. } => Some(pointers.as_slice()),
+                Proposition::CMemoryMutatesOnly { pointers, .. } => Some(pointers.as_slice()),
                 _ => None,
             })
             .flatten()
@@ -2041,10 +2089,16 @@ fn prove_writes_only_segment(
     writes.retain(is_frame_relevant_pointer);
 
     for pointer in &writes {
-        if !segment_contains_pointer(&segment, pointer, &assumptions) {
+        if !segments
+            .iter()
+            .any(|segment| segment_contains_pointer(segment, pointer, &assumptions))
+        {
             return Err(ClickError::new(format!(
-                "`ensures writes_only({:?})` failed for `{ensure_label}` path {path_index}: write to {pointer:?} is outside the segment\n  path facts: {}",
-                segment.source,
+                "`{claim_label}` failed on path {path_index}: write to {pointer:?} is outside the mutable footprint\n  mutable segments: {:?}\n  path facts: {}",
+                segments
+                    .iter()
+                    .map(|segment| &segment.source)
+                    .collect::<Vec<_>>(),
                 describe_facts(path_facts)
             )));
         }
@@ -2065,26 +2119,26 @@ struct EvaluatedContractSegment {
     end: Bitvector32Term,
 }
 
-fn evaluate_contract_segment(
+fn evaluate_effect_segment(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    pre_state: &CState,
-    post_state: &CState,
-    result: &CValue,
+    entry_state: &CState,
     available_propositions: &[Proposition],
     segment: &ContractSegment,
 ) -> Result<EvaluatedContractSegment, String> {
+    if segment.state != ContractSegmentState::Current {
+        return Err(
+            "effect segments are already entry-state references; `old(...)` is not supported here"
+                .to_string(),
+        );
+    }
     let parameter_values =
         parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let assumptions = assumptions_from_propositions(available_propositions);
-    let (state, result) = match segment.state {
-        ContractSegmentState::Current => (post_state, Some(result)),
-        ContractSegmentState::Old => (pre_state, None),
-    };
     let base = evaluate_c_contract_expression(
         &parameter_values,
-        state,
-        result,
+        entry_state,
+        None,
         &assumptions,
         &segment.base,
     )?;
@@ -2093,8 +2147,8 @@ fn evaluate_contract_segment(
     };
     let start = evaluate_c_contract_expression(
         &parameter_values,
-        state,
-        result,
+        entry_state,
+        None,
         &assumptions,
         &segment.start,
     )?;
@@ -2103,8 +2157,8 @@ fn evaluate_contract_segment(
     };
     let end = evaluate_c_contract_expression(
         &parameter_values,
-        state,
-        result,
+        entry_state,
+        None,
         &assumptions,
         &segment.end,
     )?;
@@ -2299,18 +2353,6 @@ fn lower_outcome_proposition_with_environment(
             )?;
             comparison_proposition(left, *operator, right).map_err(|error| error.message)
         }
-        ClickProposition::Preserves(segment) => lower_outcome_preserves_segment(
-            values,
-            pre_state,
-            post_state,
-            result,
-            assumptions,
-            segment,
-            next_variable,
-        ),
-        ClickProposition::WritesOnly(_) => {
-            Err("`writes_only(...)` can only be checked directly by `auto`".to_string())
-        }
         ClickProposition::And(left, right) => Ok(Proposition::And(
             Box::new(lower_outcome_proposition_with_environment(
                 values,
@@ -2418,79 +2460,6 @@ fn lower_outcome_proposition_with_environment(
             })
         }
     }
-}
-
-fn lower_outcome_preserves_segment(
-    values: &mut BTreeMap<String, CValue>,
-    pre_state: &CState,
-    post_state: &CState,
-    result: &CValue,
-    assumptions: &Assumptions,
-    segment: &ContractSegment,
-    next_variable: &mut u64,
-) -> Result<Proposition, String> {
-    if segment.state != ContractSegmentState::Current {
-        return Err("`preserves(...)` expects a current-state segment".to_string());
-    }
-
-    let variable = Variable(*next_variable);
-    *next_variable += 1;
-    let index = Bitvector32Term::Variable(variable);
-    let index_value = CValue::Int32(index.clone());
-    let base = evaluate_c_contract_expression(
-        values,
-        post_state,
-        Some(result),
-        assumptions,
-        &segment.base,
-    )?;
-    let start = evaluate_c_contract_expression(
-        values,
-        post_state,
-        Some(result),
-        assumptions,
-        &segment.start,
-    )?;
-    let end = evaluate_c_contract_expression(
-        values,
-        post_state,
-        Some(result),
-        assumptions,
-        &segment.end,
-    )?;
-    let CValue::Int32(start) = start else {
-        return Err("segment start did not evaluate to int32".to_string());
-    };
-    let CValue::Int32(end) = end else {
-        return Err("segment end did not evaluate to int32".to_string());
-    };
-
-    let lower_bound = comparison_proposition(
-        CValue::Int32(start),
-        ComparisonOperator::LessEqual,
-        index_value.clone(),
-    )
-    .map_err(|error| error.message)?;
-    let upper_bound = comparison_proposition(
-        index_value.clone(),
-        ComparisonOperator::LessThan,
-        CValue::Int32(end),
-    )
-    .map_err(|error| error.message)?;
-    let range = Proposition::And(Box::new(lower_bound), Box::new(upper_bound));
-    let range_assumptions = assumptions.clone().assume_proposition(range.clone());
-
-    let pointer = evaluate_postcondition_pointer_add(base, index_value)?;
-    let current = evaluate_contract_memory_load(post_state, pointer.clone(), &range_assumptions)?;
-    let old = evaluate_contract_memory_load(pre_state, pointer, &range_assumptions)?;
-    let equality = comparison_proposition(current, ComparisonOperator::Equal, old)
-        .map_err(|error| error.message)?;
-
-    Ok(Proposition::ForAll {
-        var: variable,
-        sort: Sort::CInt32,
-        body: Box::new(Proposition::Implies(Box::new(range), Box::new(equality))),
-    })
 }
 
 fn evaluate_contract_expression_with_environment(
@@ -2794,6 +2763,7 @@ impl Parser {
 
         let mut requires = Vec::new();
         let mut structural_clauses = Vec::new();
+        let mut effects = Vec::new();
         let mut ensures = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
@@ -2801,16 +2771,17 @@ impl Parser {
                 Some("loop" | "statement") => {
                     structural_clauses.push(self.parse_structural_clause()?)
                 }
+                Some("immutable" | "mutable") => effects.push(self.parse_effect_clause()?),
                 Some("ensures") => ensures.push(self.parse_ensure_clause()?),
                 Some(keyword) => {
                     return Err(self.error(format!(
-                        "expected `requires`, `loop`, `statement`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        "expected `requires`, `immutable`, `mutable`, `loop`, `statement`, `ensures`, or `}}` in `{}`, got `{keyword}`",
                         signature.name()
                     )));
                 }
                 None => {
                     return Err(self.error(format!(
-                        "expected `requires`, `loop`, `statement`, `ensures`, or `}}` in `{}`",
+                        "expected `requires`, `immutable`, `mutable`, `loop`, `statement`, `ensures`, or `}}` in `{}`",
                         signature.name()
                     )));
                 }
@@ -2818,9 +2789,9 @@ impl Parser {
         }
         self.expect(Token::RBrace)?;
 
-        if ensures.is_empty() {
+        if ensures.is_empty() && effects.is_empty() {
             return Err(self.error(format!(
-                "`{}` must contain at least one `ensures` clause",
+                "`{}` must contain at least one `ensures`, `immutable`, or `mutable` clause",
                 signature.name()
             )));
         }
@@ -2829,6 +2800,7 @@ impl Parser {
             signature,
             requires,
             structural_clauses,
+            effects,
             ensures,
         })
     }
@@ -3031,6 +3003,31 @@ impl Parser {
         })
     }
 
+    fn parse_effect_clause(&mut self) -> Result<EffectClause, ClickError> {
+        let effect = match self.next() {
+            Some(Token::Ident(kind)) if kind == "immutable" => Effect::Immutable,
+            Some(Token::Ident(kind)) if kind == "mutable" => {
+                let mut segments = vec![self.parse_contract_segment()?];
+                while self.peek() == Some(&Token::Comma) {
+                    self.position += 1;
+                    segments.push(self.parse_contract_segment()?);
+                }
+                Effect::Mutable(segments)
+            }
+            Some(Token::Ident(kind)) => {
+                return Err(self.error(format!("expected `immutable` or `mutable`, got `{kind}`")));
+            }
+            Some(token) => {
+                return Err(self.error(format!("expected `immutable` or `mutable`, got {token:?}")));
+            }
+            None => {
+                return Err(self.error("expected `immutable` or `mutable`, got end of input"));
+            }
+        };
+        let proof = self.parse_by_clause()?;
+        Ok(EffectClause { effect, proof })
+    }
+
     fn parse_ensure_clause(&mut self) -> Result<EnsureClause, ClickError> {
         self.expect_ident_spelling("ensures")?;
         let name = if matches!(self.peek(), Some(Token::Ident(_)))
@@ -3103,20 +3100,6 @@ impl Parser {
     }
 
     fn parse_proposition_atom(&mut self) -> Result<ClickProposition, ClickError> {
-        if self.peek_ident() == Some("preserves") && self.peek_next() == Some(&Token::LParen) {
-            self.position += 2;
-            let segment = self.parse_contract_segment()?;
-            self.expect(Token::RParen)?;
-            return Ok(ClickProposition::Preserves(segment));
-        }
-
-        if self.peek_ident() == Some("writes_only") && self.peek_next() == Some(&Token::LParen) {
-            self.position += 2;
-            let segment = self.parse_contract_segment()?;
-            self.expect(Token::RParen)?;
-            return Ok(ClickProposition::WritesOnly(segment));
-        }
-
         if self.peek_ident() == Some("forall") {
             self.position += 1;
             self.expect(Token::LParen)?;
@@ -3920,8 +3903,8 @@ mod tests {
                 ensures quantified: forall (int32 k) {
                     0 <= k implies k >= 0
                 } by auto;
-                ensures segment: preserves(p[0..n]) by auto;
-                ensures writes: writes_only(p[0..n]) by auto;
+                immutable by auto;
+                mutable p[0..n], q[1..m] by auto;
             }
         "#;
         let file = parse(source).expect("proposition syntax should parse");
@@ -3943,14 +3926,12 @@ mod tests {
             function.ensures()[2].ensure(),
             Ensure::Proposition(ClickProposition::ForAll { .. })
         ));
-        assert!(matches!(
-            function.ensures()[3].ensure(),
-            Ensure::Proposition(ClickProposition::Preserves(_))
-        ));
-        assert!(matches!(
-            function.ensures()[4].ensure(),
-            Ensure::Proposition(ClickProposition::WritesOnly(_))
-        ));
+        assert_eq!(function.effects().len(), 2);
+        assert!(matches!(function.effects()[0].effect(), Effect::Immutable));
+        match function.effects()[1].effect() {
+            Effect::Mutable(segments) => assert_eq!(segments.len(), 2),
+            effect => panic!("expected mutable effect, got {effect:?}"),
+        }
     }
 
     #[test]
@@ -3995,7 +3976,7 @@ mod tests {
 
         assert_eq!(verified.len(), 1);
         assert_eq!(
-            verified[0].ensure_clause.ensure(),
+            verified[0].ensure_clause().unwrap().ensure(),
             &ensure_comparison(
                 current_var("result"),
                 ComparisonOperator::Equal,
@@ -4015,7 +3996,7 @@ mod tests {
 
         assert_eq!(verified.len(), 1);
         assert_eq!(
-            verified[0].ensure_clause.ensure(),
+            verified[0].ensure_clause().unwrap().ensure(),
             &ensure_comparison(
                 current_index("p", 2),
                 ComparisonOperator::Equal,
@@ -4038,7 +4019,7 @@ mod tests {
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
                 ensures writes_second: p[1] == 9 by auto;
-                ensures preserves_first: p[0] == old(p[0]) by auto;
+                ensures keeps_first: p[0] == old(p[0]) by auto;
             }
         "#;
 
@@ -4047,7 +4028,7 @@ mod tests {
 
         assert_eq!(verified.len(), 2);
         assert_eq!(
-            verified[1].ensure_clause.ensure(),
+            verified[1].ensure_clause().unwrap().ensure(),
             &ensure_comparison(
                 current_index("p", 0),
                 ComparisonOperator::Equal,
@@ -4057,7 +4038,7 @@ mod tests {
     }
 
     #[test]
-    fn verifies_preserves_segment_postcondition() {
+    fn verifies_quantified_old_memory_postcondition() {
         let c_source = r#"
             int32 write_second(int32* p) {
                 p[1] = 9;
@@ -4069,18 +4050,20 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
-                ensures preserves_first_cell: preserves(p[0..1]) by auto;
+                ensures keeps_first_cell: forall (int32 k) {
+                    0 <= k and k < 1 implies p[k] == old(p[k])
+                } by auto;
             }
         "#;
 
         let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
-            .expect("unwritten segment should be preserved");
+            .expect("unwritten segment should match old memory");
 
         assert_eq!(verified.len(), 1);
     }
 
     #[test]
-    fn preserves_segment_rejects_overwritten_cell() {
+    fn quantified_old_memory_rejects_overwritten_cell() {
         let c_source = r#"
             int32 write_second(int32* p) {
                 p[1] = 9;
@@ -4092,12 +4075,14 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
-                ensures preserves_second_cell: preserves(p[1..2]) by auto;
+                ensures keeps_second_cell: forall (int32 k) {
+                    1 <= k and k < 2 implies p[k] == old(p[k])
+                } by auto;
             }
         "#;
 
         let error = verify_c0_sources(click_source, &[("write_second.c", c_source)])
-            .expect_err("overwritten segment should not be preserved");
+            .expect_err("overwritten segment should not match old memory");
 
         assert!(
             error.message().contains("proposition was not provable"),
@@ -4107,7 +4092,7 @@ mod tests {
     }
 
     #[test]
-    fn verifies_writes_only_segment_postcondition() {
+    fn verifies_mutable_segment_effect() {
         let c_source = r#"
             int32 write_second(int32* p) {
                 p[1] = 9;
@@ -4119,19 +4104,24 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
-                ensures writes_second_cell: writes_only(p[1..2]) by auto;
-                ensures writes_within_two_cells: writes_only(p[0..2]) by auto;
+                mutable p[1..2] by auto;
+                mutable p[0..2] by auto;
+                ensures returns_written: result == 9 by auto;
             }
         "#;
 
         let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
             .expect("write should stay inside declared segments");
 
-        assert_eq!(verified.len(), 2);
+        assert_eq!(verified.len(), 3);
+        assert!(matches!(
+            verified[0].effect_clause().unwrap().effect(),
+            Effect::Mutable(_)
+        ));
     }
 
     #[test]
-    fn writes_only_segment_rejects_write_outside_segment() {
+    fn mutable_segment_rejects_write_outside_segment() {
         let c_source = r#"
             int32 write_second(int32* p) {
                 p[1] = 9;
@@ -4143,7 +4133,8 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
-                ensures writes_first_cell_only: writes_only(p[0..1]) by auto;
+                mutable p[0..1] by auto;
+                ensures returns_written: result == 9 by auto;
             }
         "#;
 
@@ -4151,10 +4142,63 @@ mod tests {
             .expect_err("write outside segment should fail");
 
         assert!(
-            error.message().contains("is outside the segment"),
+            error.message().contains("outside the mutable footprint"),
             "{}",
             error.message()
         );
+    }
+
+    #[test]
+    fn immutable_rejects_external_memory_write() {
+        let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+        let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires valid_range(p, 8);
+                immutable by auto;
+                ensures returns_written: result == 9 by auto;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+            .expect_err("immutable should reject external memory writes");
+
+        assert!(
+            error.message().contains("outside the mutable footprint"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn immutable_allows_stack_local_writes() {
+        let c_source = r#"
+            int32 count_to_one() {
+                int32 i;
+                i = 0;
+                i = i + 1;
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "count_to_one.c";
+
+            int32 count_to_one() {
+                immutable by auto;
+                ensures returns_one: result == 1 by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("count_to_one.c", c_source)])
+            .expect("stack-local writes should not count as external mutation");
+
+        assert_eq!(verified.len(), 2);
     }
 
     #[test]
@@ -4170,7 +4214,7 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
-                ensures preserves_second: p[1] == old(p[1]) by auto;
+                ensures keeps_second: p[1] == old(p[1]) by auto;
             }
         "#;
 
@@ -4256,7 +4300,7 @@ mod tests {
     }
 
     #[test]
-    fn verifies_preserves_segment_loop_invariant() {
+    fn verifies_old_memory_loop_invariant_with_segment_bounds() {
         let c_source = r#"
             int32 fill_tail(int32 p[], int32 n) {
                 int32 i;
@@ -4276,14 +4320,18 @@ mod tests {
                 requires valid_range(p[0..n]);
                 loop 0 {
                     invariant i >= 1 and i <= n by auto;
-                    invariant preserves(p[0..1]) by auto;
+                    invariant forall (int32 k) {
+                        0 <= k and k < 1 implies p[k] == old(p[k])
+                    } by auto;
                 }
-                ensures frame_and_result: preserves(p[0..1]) and result == n by auto;
+                ensures frame_and_result: forall (int32 k) {
+                    0 <= k and k < 1 implies p[k] == old(p[k])
+                } and result == n by auto;
             }
         "#;
 
         let verified = verify_c0_sources(click_source, &[("fill_tail.c", c_source)])
-            .expect("preserves segment loop invariant should verify");
+            .expect("old memory segment loop invariant should verify");
 
         assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
@@ -4325,7 +4373,7 @@ mod tests {
     }
 
     #[test]
-    fn verifies_symbolic_loop_writes_only_segment() {
+    fn verifies_symbolic_loop_mutable_segment() {
         let c_source = r#"
             int32 fill_n(int32 p[], int32 n) {
                 int32 i;
@@ -4348,14 +4396,15 @@ mod tests {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                 }
-                ensures writes_segment: writes_only(p[0..n]) by auto;
+                mutable p[0..n] by auto;
+                ensures returns_n: result == n by auto;
             }
         "#;
 
         let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
             .expect("symbolic pointer loop writes should stay inside segment");
 
-        assert_eq!(verified.len(), 1);
+        assert_eq!(verified.len(), 2);
         assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
     }
 

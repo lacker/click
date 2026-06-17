@@ -15,7 +15,7 @@ verifying "forall_array_segment.c";
 int32 forall_array_segment(int32 p[], int32 n) {
     requires n >= 0 and n <= 3;
     requires valid_range(p, 12);
-    ensures segment_preserved: forall (int32 k) {
+    ensures segment_unchanged: forall (int32 k) {
         0 <= k and k < n implies p[k] == old(p[k])
     } by auto;
 }

@@ -1,4 +1,4 @@
-# write_second does not preserve an overwritten cell
+# write_second does not keep an overwritten cell
 
 This checks that `old(...)` distinguishes the pre-call value from the
 post-call value when a function writes that cell.
@@ -15,7 +15,7 @@ verifying "write_second_bad_old.c";
 
 int32 write_second_bad_old(int32* p) {
     requires valid_range(p, 8);
-    ensures preserves_second: p[1] == old(p[1]) by auto;
+    ensures keeps_second: p[1] == old(p[1]) by auto;
 }
 ```
 

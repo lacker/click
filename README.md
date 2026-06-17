@@ -188,8 +188,8 @@ clauses use Click proposition syntax:
 result == x and not (result != x)
 result == x implies result >= 0
 forall (int32 k) { 0 <= k implies k >= 0 }
-preserves(p[0..n])
-writes_only(p[0..n])
+p[0] == old(p[0])
+forall (int32 k) { 0 <= k and k < n implies p[k] == old(p[k]) }
 ```
 
 Logical structure uses Click words: `and`, `or`, `not`, `implies`, and
@@ -203,25 +203,34 @@ representation accept `forall (int32 name) { ... }`. `auto` can prove simple
 quantified array-segment postconditions, including unchanged-memory cases and
 first frame facts outside a loop write footprint. `auto` also supports
 proposition-level loop invariants, including bounded universal quantifiers over
-current-state array reads. `preserves(pointer[start..end])` is proposition
-syntax for the common old-memory frame claim over a half-open `int32` element
-segment, and can be used in postconditions and loop invariants.
-`writes_only(pointer[start..end])` is the dual postcondition form: every
-externally visible memory cell changed by the function must fall inside the
-segment. Local stack bookkeeping and internal havoc markers are not part of this
-external frame check. `auto` checks each guarantee on every symbolic execution
-path. That sidecar path parses C0 source, builds the requested initial memory,
-first tries loop verification conditions for annotated loops, checks the
-postcondition clause, and packages the result as a megakernel
-`CFunctionSpecification` theorem. If the loop VC path cannot prove a
-postcondition but leaves no invariant obligations, `auto` can still use bounded
-execution for finite concrete-loop demos.
+current-state array reads.
+
+Function-level effect clauses are explicit and separate from postconditions:
+
+```text
+immutable by auto;
+mutable p[0..n] by auto;
+mutable dst[0..n], counter[0..1] by auto;
+```
+
+`immutable` proves that the function mutates no externally visible memory.
+`mutable pointer[start..end]` proves that every externally visible memory cell
+changed by the function falls inside the listed half-open `int32` element
+segment, evaluated against the function-entry parameter values. Multiple
+mutable segments form a union. Local stack bookkeeping and internal havoc
+markers are not part of this external frame check. `auto` checks each guarantee
+on every symbolic execution path. That sidecar path parses C0 source, builds
+the requested initial memory, first tries loop verification conditions for
+annotated loops, checks each postcondition or effect clause, and packages the
+result as a megakernel `CFunctionSpecification` theorem. If the loop VC path
+cannot prove a guarantee but leaves no invariant obligations, `auto` can still
+use bounded execution for finite concrete-loop demos.
 
 `assert` and `invariant` clauses parse the same proposition syntax. `assert`
 currently accepts only the executable fragment: comparisons, `and`, `or`, `not`,
 and `implies` over current-state C0 expressions. `invariant` accepts
-propositions including `forall (int32 name) { ... }` and `preserves(p[i..j])`.
-`old(...)` inside an invariant refers to the enclosing function's entry state.
+propositions including `forall (int32 name) { ... }`. `old(...)` inside an
+invariant refers to the enclosing function's entry state.
 
 The sidecar also has first structural proof blocks for intra-function proof
 obligations:
@@ -253,9 +262,8 @@ unknown heap state instead of implicitly preserving old memory. Written-segment
 postconditions can be proved with explicit quantified invariants such as
 `forall (int32 k) { 0 <= k and k < i implies p[k] == k }`. Old-memory frame
 proofs across pointer-writing loops can be proved with compact segment
-invariants such as `invariant preserves(p[0..1]) by auto;`, which lowers to the
-corresponding quantified `old(...)` frame claim. The current fixed-size pointer
-demos continue to use bounded execution for some final memory facts.
+invariants stated directly with `old(...)`. The current fixed-size pointer demos
+continue to use bounded execution for some final memory facts.
 
 ## Markdown Tests
 
@@ -300,26 +308,25 @@ The first memory-safety demos are fixed-size pointer loops:
   loop safety and `result == n` using a symbolic valid range.
 - `fill_n_segment_invariant(int32 p[], int32 n)` proves a quantified
   written-segment postcondition from a quantified loop invariant.
-- `fill_tail_preserves_first(int32 p[], int32 n)` proves an old-memory frame
+- `fill_tail_keeps_first(int32 p[], int32 n)` proves an old-memory frame
   postcondition from an explicit loop invariant using `old(...)`.
-- `fill_tail_preserves_prefix_segment(int32 p[], int32 n)` proves an old-memory
-  frame postcondition from a compact `preserves(p[0..1])` loop invariant.
-- `fill_n_writes_only_segment(int32 p[], int32 n)` proves that a symbolic
-  pointer-writing loop writes only `p[0..n]`.
+- `fill_tail_old_prefix_segment(int32 p[], int32 n)` proves an old-memory frame
+  postcondition from an explicit quantified loop invariant.
+- `fill_n_mutable_segment(int32 p[], int32 n)` proves that a symbolic
+  pointer-writing loop mutates only `p[0..n]`.
 
 The fixed-size pointer demos use 12-byte backing blocks and prove without
 leftover memory-safety premises. The symbolic pointer-loop demos instead use
 requirements such as `valid_range(p[0..n])` plus loop invariants. The sidecar
 can also prove post-state memory guarantees such as
-`ensures p[2] == 2 by auto;` and simple preservation guarantees such as
-`ensures p[0] == old(p[0]) by auto;` or
-`ensures preserves(p[0..1]) by auto;`.
+`ensures p[2] == 2 by auto;` and simple old-value guarantees such as
+`ensures p[0] == old(p[0]) by auto;`.
 
 ## Near-Term Roadmap
 
-1. Add dedicated loop-effect clauses, so `loop N { writes_only(p[i..j]) by
-   auto; }` can mean one loop body step writes only inside the segment, without
-   pretending that effect claim is a state invariant.
+1. Add loop-level effect clauses, so `loop N { mutable p[i..j] by auto; }` can
+   mean one loop body step mutates only inside the segment, without pretending
+   that effect claim is a state invariant.
 2. Broaden segment reasoning beyond one-cell frame demos, especially proving
    copy-style invariants such as `dst[0..i]` matching `old(src[0..i])`.
 3. Improve fact management inside `auto`, especially using requirements,

@@ -16,7 +16,7 @@ verifying "forall_array_segment_rejects_overwritten_cell.c";
 
 int32 forall_array_segment_rejects_overwritten_cell(int32 p[]) {
     requires valid_range(p, 4);
-    ensures segment_preserved: forall (int32 k) {
+    ensures segment_unchanged: forall (int32 k) {
         0 <= k and k < 1 implies p[k] == old(p[k])
     } by auto;
 }

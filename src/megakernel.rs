@@ -351,7 +351,7 @@ pub enum Proposition {
         base: Pointer,
         bytes: Bitvector32Term,
     },
-    CMemoryWritesOnly {
+    CMemoryMutatesOnly {
         before: CMemory,
         after: CMemory,
         pointers: Vec<Pointer>,
@@ -1707,7 +1707,7 @@ impl Assumptions {
         }
 
         self.prop_facts.iter().any(|proposition| {
-            let Proposition::CMemoryWritesOnly {
+            let Proposition::CMemoryMutatesOnly {
                 before,
                 after,
                 pointers,
@@ -5885,7 +5885,7 @@ fn write_c_lvalue_paths(
             if add_internal_path_fact(
                 &mut facts,
                 assumptions,
-                Proposition::CMemoryWritesOnly {
+                Proposition::CMemoryMutatesOnly {
                     before: before_memory,
                     after: state.memory.clone(),
                     pointers: vec![pointer.clone()],
@@ -9011,7 +9011,7 @@ mod tests {
     }
 
     #[test]
-    fn writes_only_frame_proves_unwritten_load_equal_across_stack_locals() {
+    fn mutable_frame_proves_unwritten_load_equal_across_stack_locals() {
         let i = Variable(74);
         let i_bits = Bitvector32Term::Variable(i);
         let old_memory = CMemory::new();
@@ -9037,7 +9037,7 @@ mod tests {
                 ConditionTerm::signed_greater_equal(i_bits, Bitvector32Term::Constant(1)),
                 true,
             )
-            .assume_proposition(Proposition::CMemoryWritesOnly {
+            .assume_proposition(Proposition::CMemoryMutatesOnly {
                 before: loop_entry_memory,
                 after: loop_exit_memory.clone(),
                 pointers: vec![written_cell],
