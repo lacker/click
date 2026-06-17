@@ -150,13 +150,26 @@ impl fmt::Display for ComparisonOperator {
     }
 }
 
-/// A `.click` `by` clause: a sequence of tactic calls proving a theorem.
+/// A `.click` `by` clause proving one theorem.
+///
+/// `auto` is a heuristic tactic. Deterministic proof replay should grow through
+/// `Proof::Steps`, where each `ProofStep` is an explicit axiom invocation or a
+/// fixed deterministic sequence of axiom invocations.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Proof {
-    tactics: Vec<Tactic>,
+pub enum Proof {
+    Tactic(Tactic),
+    Steps(Vec<ProofStep>),
 }
 
-/// A `.click` proof-language command.
+/// A deterministic `.click` proof step.
+///
+/// This is intentionally separate from `Tactic`: tactics may search, but proof
+/// steps should be stable and replayable. The first explicit proof steps will be
+/// added when `auto` starts emitting proof certificates.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProofStep {}
+
+/// A heuristic `.click` tactic.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Tactic {
     Auto,
@@ -268,8 +281,15 @@ impl AtItem {
 }
 
 impl Proof {
-    pub fn tactics(&self) -> &[Tactic] {
-        &self.tactics
+    pub fn is_auto_tactic(&self) -> bool {
+        matches!(self, Self::Tactic(Tactic::Auto))
+    }
+
+    pub fn steps(&self) -> Option<&[ProofStep]> {
+        match self {
+            Self::Tactic(_) => None,
+            Self::Steps(steps) => Some(steps),
+        }
     }
 }
 
@@ -315,7 +335,7 @@ pub fn verify_c0_sources(
         for (ensure_index, ensure_clause) in function_block.ensures.iter().enumerate() {
             let ensure_label =
                 ensure_label(function_block.signature.name(), ensure_clause, ensure_index);
-            if ensure_clause.proof.tactics() != [Tactic::Auto] {
+            if !ensure_clause.proof.is_auto_tactic() {
                 return Err(ClickError::new(format!(
                     "`{ensure_label}` must use exactly `by auto;` in this first slice"
                 )));
@@ -709,7 +729,7 @@ fn validate_at_clauses(
         }
 
         for item in at_clause.items() {
-            if item.proof().tactics() != [Tactic::Auto] {
+            if !item.proof().is_auto_tactic() {
                 return Err(ClickError::new(
                     "`at` clauses must use exactly `by auto;` in this first slice",
                 ));
@@ -2470,23 +2490,25 @@ impl Parser {
 
     fn parse_by_clause(&mut self) -> Result<Proof, ClickError> {
         self.expect_ident_spelling("by")?;
-        let tactics = if self.peek() == Some(&Token::LBrace) {
+        let tactic = if self.peek() == Some(&Token::LBrace) {
             self.position += 1;
             let mut tactics = Vec::new();
             while self.peek() != Some(&Token::RBrace) {
                 tactics.push(self.parse_tactic()?);
             }
             self.expect(Token::RBrace)?;
-            tactics
+            if tactics.is_empty() {
+                return Err(self.error("`by` block must contain at least one proof step or tactic"));
+            }
+            if tactics.len() != 1 {
+                return Err(self.error("`by` blocks currently support exactly one tactic"));
+            }
+            tactics.remove(0)
         } else {
-            vec![self.parse_tactic()?]
+            self.parse_tactic()?
         };
 
-        if tactics.is_empty() {
-            return Err(self.error("`by` block must contain at least one tactic"));
-        }
-
-        Ok(Proof { tactics })
+        Ok(Proof::Tactic(tactic))
     }
 
     fn parse_ensure_expression(&mut self) -> Result<C0Expression, ClickError> {
@@ -2959,7 +2981,7 @@ mod tests {
                 current_int(2),
             )
         );
-        assert_eq!(ensure.proof().tactics(), &[Tactic::Auto]);
+        assert!(ensure.proof().is_auto_tactic());
     }
 
     #[test]
@@ -3008,7 +3030,7 @@ mod tests {
         let file = parse(&source).expect("sidecar should parse");
         let ensure = &file.function_blocks()[0].ensures()[0];
 
-        assert_eq!(ensure.proof().tactics(), &[Tactic::Auto]);
+        assert!(ensure.proof().is_auto_tactic());
     }
 
     #[test]

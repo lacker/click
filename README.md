@@ -87,7 +87,7 @@ pointers.
 
 ## Proof Vocabulary
 
-Click uses four core proof-system words:
+Click uses five core proof-system words:
 
 - An **axiom** is a built-in trusted theorem-producing operation. In the Rust
   codebase, these are the megakernel functions that can construct a `Theorem`.
@@ -95,16 +95,19 @@ Click uses four core proof-system words:
   produce, but in Click terminology they are axioms.
 - A **theorem** is an abstract object representing a proven proposition. Users
   cannot construct arbitrary theorems directly.
-- A **tactic** is a proof-language command that tries to prove a theorem or
-  reduce a proof goal by invoking axioms and using existing theorems.
-- A **proof** is a `by` clause: either one tactic call, or a block containing a
-  sequence of tactic calls.
+- A **proof step** is a deterministic proof-language call that invokes an axiom
+  or a fixed deterministic sequence of axioms.
+- A **proof** is a `by` clause: either a replayable sequence of proof steps, or
+  a tactic call that can later be expanded into proof steps.
+- A **tactic** is a heuristic program that tries to generate a proof. Tactics may
+  search; proof steps should be stable and replayable.
 
-The current `.click` proof language has only one tactic, `auto`. Function
-contracts attach `requires` clauses to the function and attach a `by` proof
-clause to each `ensures` guarantee. An `ensures` clause can say `by auto;`, or
-use block form `by { auto; }`. The tactic invokes the megakernel's C
-symbolic-execution axioms and specification-checking axioms to prove the named guarantee.
+The current `.click` proof language has only one tactic, `auto`, and does not
+yet expose explicit proof steps. Function contracts attach `requires` clauses to
+the function and attach a `by` proof clause to each `ensures` guarantee. An
+`ensures` clause can say `by auto;`, or use block form `by { auto; }`. The tactic
+invokes the megakernel's C symbolic-execution axioms and
+specification-checking axioms to prove the named guarantee.
 
 ## C0 Status
 

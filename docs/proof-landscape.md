@@ -11,10 +11,12 @@ will have exactly the names used here.
   some of these would be called axiom schemas or trusted proof procedures, but
   Click uses the simpler word axiom.
 - A **theorem** is a proposition produced by axioms.
-- A **tactic** is a proof-language command that tries to prove a theorem or
-  reduce the proof to simpler goals.
-- A **proof** is a `by` clause: either one tactic call, or a block containing a
-  sequence of tactic calls.
+- A **proof step** is a deterministic proof-language call that invokes an axiom
+  or a fixed deterministic sequence of axioms.
+- A **proof** is a `by` clause: either a replayable sequence of proof steps, or
+  a tactic call that can later be expanded into proof steps.
+- A **tactic** is a heuristic program that tries to generate a proof. Tactics may
+  search; proof steps should be stable and replayable.
 
 The current `.click` language exposes function-level `requires` clauses and
 per-guarantee `ensures ... by auto;` clauses, backed by native C symbolic
