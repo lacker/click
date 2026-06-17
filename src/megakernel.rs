@@ -1241,6 +1241,42 @@ impl Assumptions {
         )
     }
 
+    fn range_facts_force_equal(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+        let Some((variable, constant)) = bitvector_variable_and_constant(left, right) else {
+            return false;
+        };
+
+        let mut range = IntegerRangeFacts::default();
+        for (condition, value) in &self.condition_facts {
+            let Some((fact_left, fact_right, strict)) = condition_as_order_fact(condition, *value)
+            else {
+                continue;
+            };
+            match (
+                bitvector_variable(&fact_left),
+                signed_bitvector_constant(&fact_right),
+            ) {
+                (Some(fact_variable), Some(bound)) if fact_variable == variable => {
+                    let upper = if strict { bound - 1 } else { bound };
+                    range.upper = Some(range.upper.map_or(upper, |current| current.min(upper)));
+                }
+                _ => {}
+            }
+            match (
+                signed_bitvector_constant(&fact_left),
+                bitvector_variable(&fact_right),
+            ) {
+                (Some(bound), Some(fact_variable)) if fact_variable == variable => {
+                    let lower = if strict { bound + 1 } else { bound };
+                    range.lower = Some(range.lower.map_or(lower, |current| current.max(lower)));
+                }
+                _ => {}
+            }
+        }
+
+        matches!((range.lower, range.upper), (Some(lower), Some(upper)) if lower == upper && lower == constant)
+    }
+
     fn decide_from_order_facts(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
             ConditionTerm::PointerOffsetEqual(left, right) if left == right => Some(true),
@@ -1291,6 +1327,7 @@ impl Assumptions {
                         true,
                     )
                     || self.order_facts_force_equal(&left, &right)
+                    || self.range_facts_force_equal(&left, &right)
                 {
                     Some(true)
                 } else if self
@@ -8943,6 +8980,25 @@ mod tests {
             .assume_condition(ConditionTerm::equal(k, Bitvector32Term::Constant(2)), false);
 
         assert!(assumptions.proves(&false_equals_true_proposition()));
+    }
+
+    #[test]
+    fn singleton_integer_range_forces_equality() {
+        let k = Bitvector32Term::Variable(Variable(86));
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), k.clone()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(k.clone(), Bitvector32Term::Constant(1)),
+                true,
+            );
+
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::equal(k, Bitvector32Term::Constant(0))),
+            Some(true)
+        );
     }
 
     #[test]

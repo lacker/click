@@ -114,6 +114,7 @@ pub enum ClickProposition {
         operator: ComparisonOperator,
         right: ContractExpression,
     },
+    Preserves(ContractSegment),
     And(Box<ClickProposition>, Box<ClickProposition>),
     Or(Box<ClickProposition>, Box<ClickProposition>),
     Not(Box<ClickProposition>),
@@ -132,6 +133,20 @@ pub enum ContractExpression {
     Add(Box<ContractExpression>, Box<ContractExpression>),
     Subtract(Box<ContractExpression>, Box<ContractExpression>),
     Index(Box<ContractExpression>, Box<ContractExpression>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractSegment {
+    state: ContractSegmentState,
+    base: CExpression,
+    start: CExpression,
+    end: CExpression,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContractSegmentState {
+    Current,
+    Old,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -932,6 +947,9 @@ impl AnnotationLowerer<'_> {
                 operator: c_comparison_operator(*operator),
                 right: self.lower_invariant_contract_expression(right)?,
             }),
+            ClickProposition::Preserves(segment) => {
+                self.lower_preserves_segment_to_c_proposition(segment)
+            }
             ClickProposition::And(left, right) => Ok(CProposition::And(
                 Box::new(self.click_proposition_to_c_proposition(left)?),
                 Box::new(self.click_proposition_to_c_proposition(right)?),
@@ -973,6 +991,33 @@ impl AnnotationLowerer<'_> {
                 })
             }
         }
+    }
+
+    fn lower_preserves_segment_to_c_proposition(
+        &mut self,
+        segment: &ContractSegment,
+    ) -> Result<CProposition, String> {
+        if segment.state != ContractSegmentState::Current {
+            return Err("`preserves(...)` expects a current-state segment".to_string());
+        }
+
+        let variable = Variable(self.next_quantifier_variable);
+        self.next_quantifier_variable += 1;
+        let index_name = format!("__click_segment_index_{}", variable.0);
+        let index = CExpression::Value(CValue::Int32(Bitvector32Term::Variable(variable)));
+        let base = self.lower_current_invariant_c_expression(&segment.base)?;
+        let start = self.lower_current_invariant_c_expression(&segment.start)?;
+        let end = self.lower_current_invariant_c_expression(&segment.end)?;
+        let current = CExpression::Index(Box::new(base.clone()), Box::new(index.clone()));
+        let old = CExpression::Value(self.evaluate_old_invariant_c_expression(
+            &CExpression::Index(Box::new(segment.base.clone()), Box::new(index.clone())),
+        )?);
+
+        Ok(CProposition::ForAllInt32 {
+            name: index_name,
+            variable,
+            body: Box::new(segment_preservation_body(start, end, index, current, old)),
+        })
     }
 
     fn lower_invariant_contract_expression(
@@ -1151,6 +1196,7 @@ fn click_proposition_to_c_expression(proposition: &ClickProposition) -> Option<C
             ))),
             Box::new(click_proposition_to_c_expression(right)?),
         )),
+        ClickProposition::Preserves(_) => None,
         ClickProposition::ForAll { .. } => None,
     }
 }
@@ -1164,6 +1210,34 @@ fn c_comparison_operator(operator: ComparisonOperator) -> CComparisonOperator {
         ComparisonOperator::GreaterThan => CComparisonOperator::GreaterThan,
         ComparisonOperator::GreaterEqual => CComparisonOperator::GreaterEqual,
     }
+}
+
+fn segment_preservation_body(
+    start: CExpression,
+    end: CExpression,
+    index: CExpression,
+    current: CExpression,
+    old: CExpression,
+) -> CProposition {
+    CProposition::Implies(
+        Box::new(CProposition::And(
+            Box::new(CProposition::Comparison {
+                left: start,
+                operator: CComparisonOperator::LessEqual,
+                right: index.clone(),
+            }),
+            Box::new(CProposition::Comparison {
+                left: index,
+                operator: CComparisonOperator::LessThan,
+                right: end,
+            }),
+        )),
+        Box::new(CProposition::Comparison {
+            left: current,
+            operator: CComparisonOperator::Equal,
+            right: old,
+        }),
+    )
 }
 
 fn contract_expression_to_current_c_expression(
@@ -1508,6 +1582,9 @@ impl KernelPropositionLowerer {
                 let right = self.lower_requirement_value(right)?;
                 comparison_proposition(left, *operator, right)
             }
+            ClickProposition::Preserves(_) => Err(ClickError::new(
+                "`preserves(...)` is not available in `requires` clauses",
+            )),
             ClickProposition::And(left, right) => Ok(Proposition::And(
                 Box::new(self.lower_requirement_proposition(left)?),
                 Box::new(self.lower_requirement_proposition(right)?),
@@ -2000,6 +2077,15 @@ fn lower_outcome_proposition_with_environment(
             )?;
             comparison_proposition(left, *operator, right).map_err(|error| error.message)
         }
+        ClickProposition::Preserves(segment) => lower_outcome_preserves_segment(
+            values,
+            pre_state,
+            post_state,
+            result,
+            assumptions,
+            segment,
+            next_variable,
+        ),
         ClickProposition::And(left, right) => Ok(Proposition::And(
             Box::new(lower_outcome_proposition_with_environment(
                 values,
@@ -2107,6 +2193,79 @@ fn lower_outcome_proposition_with_environment(
             })
         }
     }
+}
+
+fn lower_outcome_preserves_segment(
+    values: &mut BTreeMap<String, CValue>,
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    assumptions: &Assumptions,
+    segment: &ContractSegment,
+    next_variable: &mut u64,
+) -> Result<Proposition, String> {
+    if segment.state != ContractSegmentState::Current {
+        return Err("`preserves(...)` expects a current-state segment".to_string());
+    }
+
+    let variable = Variable(*next_variable);
+    *next_variable += 1;
+    let index = Bitvector32Term::Variable(variable);
+    let index_value = CValue::Int32(index.clone());
+    let base = evaluate_c_contract_expression(
+        values,
+        post_state,
+        Some(result),
+        assumptions,
+        &segment.base,
+    )?;
+    let start = evaluate_c_contract_expression(
+        values,
+        post_state,
+        Some(result),
+        assumptions,
+        &segment.start,
+    )?;
+    let end = evaluate_c_contract_expression(
+        values,
+        post_state,
+        Some(result),
+        assumptions,
+        &segment.end,
+    )?;
+    let CValue::Int32(start) = start else {
+        return Err("segment start did not evaluate to int32".to_string());
+    };
+    let CValue::Int32(end) = end else {
+        return Err("segment end did not evaluate to int32".to_string());
+    };
+
+    let lower_bound = comparison_proposition(
+        CValue::Int32(start),
+        ComparisonOperator::LessEqual,
+        index_value.clone(),
+    )
+    .map_err(|error| error.message)?;
+    let upper_bound = comparison_proposition(
+        index_value.clone(),
+        ComparisonOperator::LessThan,
+        CValue::Int32(end),
+    )
+    .map_err(|error| error.message)?;
+    let range = Proposition::And(Box::new(lower_bound), Box::new(upper_bound));
+    let range_assumptions = assumptions.clone().assume_proposition(range.clone());
+
+    let pointer = evaluate_postcondition_pointer_add(base, index_value)?;
+    let current = evaluate_contract_memory_load(post_state, pointer.clone(), &range_assumptions)?;
+    let old = evaluate_contract_memory_load(pre_state, pointer, &range_assumptions)?;
+    let equality = comparison_proposition(current, ComparisonOperator::Equal, old)
+        .map_err(|error| error.message)?;
+
+    Ok(Proposition::ForAll {
+        var: variable,
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::Implies(Box::new(range), Box::new(equality))),
+    })
 }
 
 fn evaluate_contract_expression_with_environment(
@@ -2718,6 +2877,13 @@ impl Parser {
     }
 
     fn parse_proposition_atom(&mut self) -> Result<ClickProposition, ClickError> {
+        if self.peek_ident() == Some("preserves") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 2;
+            let segment = self.parse_contract_segment()?;
+            self.expect(Token::RParen)?;
+            return Ok(ClickProposition::Preserves(segment));
+        }
+
         if self.peek_ident() == Some("forall") {
             self.position += 1;
             self.expect(Token::LParen)?;
@@ -2814,6 +2980,33 @@ impl Parser {
 
     fn parse_contract_expression(&mut self) -> Result<ContractExpression, ClickError> {
         self.parse_contract_add()
+    }
+
+    fn parse_contract_segment(&mut self) -> Result<ContractSegment, ClickError> {
+        if self.peek_ident() == Some("old") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 2;
+            let mut segment = self.parse_current_contract_segment()?;
+            segment.state = ContractSegmentState::Old;
+            self.expect(Token::RParen)?;
+            return Ok(segment);
+        }
+
+        self.parse_current_contract_segment()
+    }
+
+    fn parse_current_contract_segment(&mut self) -> Result<ContractSegment, ClickError> {
+        let base = self.parse_ensure_primary()?.to_megakernel_expression();
+        self.expect(Token::LBracket)?;
+        let start = self.parse_ensure_expression()?.to_megakernel_expression();
+        self.expect(Token::DotDot)?;
+        let end = self.parse_ensure_expression()?.to_megakernel_expression();
+        self.expect(Token::RBracket)?;
+        Ok(ContractSegment {
+            state: ContractSegmentState::Current,
+            base,
+            start,
+            end,
+        })
     }
 
     fn parse_contract_add(&mut self) -> Result<ContractExpression, ClickError> {
@@ -3488,6 +3681,7 @@ mod tests {
                 ensures quantified: forall (int32 k) {
                     0 <= k implies k >= 0
                 } by auto;
+                ensures segment: preserves(p[0..n]) by auto;
             }
         "#;
         let file = parse(source).expect("proposition syntax should parse");
@@ -3508,6 +3702,10 @@ mod tests {
         assert!(matches!(
             function.ensures()[2].ensure(),
             Ensure::Proposition(ClickProposition::ForAll { .. })
+        ));
+        assert!(matches!(
+            function.ensures()[3].ensure(),
+            Ensure::Proposition(ClickProposition::Preserves(_))
         ));
     }
 
@@ -3615,6 +3813,56 @@ mod tests {
     }
 
     #[test]
+    fn verifies_preserves_segment_postcondition() {
+        let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+        let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires valid_range(p, 8);
+                ensures preserves_first_cell: preserves(p[0..1]) by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+            .expect("unwritten segment should be preserved");
+
+        assert_eq!(verified.len(), 1);
+    }
+
+    #[test]
+    fn preserves_segment_rejects_overwritten_cell() {
+        let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+        let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires valid_range(p, 8);
+                ensures preserves_second_cell: preserves(p[1..2]) by auto;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+            .expect_err("overwritten segment should not be preserved");
+
+        assert!(
+            error.message().contains("proposition was not provable"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
     fn old_memory_postcondition_fails_for_overwritten_cell() {
         let c_source = r#"
             int32 write_second(int32* p) {
@@ -3710,6 +3958,40 @@ mod tests {
             .expect("old memory loop invariant should verify");
 
         assert_eq!(verified.len(), 1);
+    }
+
+    #[test]
+    fn verifies_preserves_segment_loop_invariant() {
+        let c_source = r#"
+            int32 fill_tail(int32 p[], int32 n) {
+                int32 i;
+                i = 1;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_tail.c";
+
+            int32 fill_tail(int32 p[], int32 n) {
+                requires n >= 1 and n <= 2147483647;
+                requires valid_range(p[0..n]);
+                at loop 0 {
+                    invariant i >= 1 and i <= n by auto;
+                    invariant preserves(p[0..1]) by auto;
+                }
+                ensures frame_and_result: preserves(p[0..1]) and result == n by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("fill_tail.c", c_source)])
+            .expect("preserves segment loop invariant should verify");
+
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
     }
 
     #[test]

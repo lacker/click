@@ -188,6 +188,7 @@ clauses use Click proposition syntax:
 result == x and not (result != x)
 result == x implies result >= 0
 forall (int32 k) { 0 <= k implies k >= 0 }
+preserves(p[0..n])
 ```
 
 Logical structure uses Click words: `and`, `or`, `not`, `implies`, and
@@ -201,10 +202,13 @@ representation accept `forall (int32 name) { ... }`. `auto` can prove simple
 quantified array-segment postconditions, including unchanged-memory cases and
 first frame facts outside a loop write footprint. `auto` also supports
 proposition-level loop invariants, including bounded universal quantifiers over
-current-state array reads. `auto` checks each guarantee on every symbolic
-execution path. That sidecar path parses C0 source, builds the requested initial
-memory, first tries loop verification conditions for annotated loops, checks the
-postcondition clause, and packages the result as a megakernel
+current-state array reads. `preserves(pointer[start..end])` is proposition
+syntax for the common old-memory frame claim over a half-open `int32` element
+segment, and can be used in postconditions and loop invariants. `auto` checks
+each guarantee on every symbolic execution path. That sidecar path parses C0
+source, builds the requested initial memory, first tries loop verification
+conditions for annotated loops, checks the postcondition clause, and packages
+the result as a megakernel
 `CFunctionSpecification` theorem. If the loop VC path cannot prove a
 postcondition but leaves no invariant obligations, `auto` can still use bounded
 execution for finite concrete-loop demos.
@@ -212,8 +216,8 @@ execution for finite concrete-loop demos.
 `assert` and `invariant` clauses parse the same proposition syntax. `assert`
 currently accepts only the executable fragment: comparisons, `and`, `or`, `not`,
 and `implies` over current-state C0 expressions. `invariant` accepts
-propositions including `forall (int32 name) { ... }`, and `old(...)` inside an
-invariant refers to the enclosing function's entry state.
+propositions including `forall (int32 name) { ... }` and `preserves(p[i..j])`.
+`old(...)` inside an invariant refers to the enclosing function's entry state.
 
 The sidecar also has first structural labels for intra-function proof
 obligations:
