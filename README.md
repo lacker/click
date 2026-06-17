@@ -244,14 +244,14 @@ remaining proof obligations.
 The current loop VC path handles scalar loop locals by assigning fresh symbolic
 values at the loop head. That is enough for proofs such as symbolic
 `count_to_n(n)` with invariants `i >= 0` and `i <= n`, and symbolic pointer-loop
-safety with `valid_range(p, n * 4)`. Pointer-writing loops now produce a fresh
+safety with `valid_range(p[0..n])`. Pointer-writing loops now produce a fresh
 unknown heap state instead of implicitly preserving old memory. Written-segment
 postconditions can be proved with explicit quantified invariants such as
 `forall (int32 k) { 0 <= k and k < i implies p[k] == k }`. Old-memory frame
-proofs across pointer-writing loops can be proved by making the old-memory fact
-an explicit invariant, such as `invariant p[0] == old(p[0]) by auto;`. The
-current fixed-size pointer demos continue to use bounded execution for some
-final memory facts.
+proofs across pointer-writing loops can be proved with compact segment
+invariants such as `invariant preserves(p[0..1]) by auto;`, which lowers to the
+corresponding quantified `old(...)` frame claim. The current fixed-size pointer
+demos continue to use bounded execution for some final memory facts.
 
 ## Markdown Tests
 
@@ -293,27 +293,28 @@ The first memory-safety demos are fixed-size pointer loops:
 - `count_to_n_loop_invariant(int32 n)` proves `result == n` for a symbolic loop
   bound using loop invariants instead of unrolling.
 - `fill_n_symbolic_pointer_loop(int32 p[], int32 n)` proves symbolic pointer
-  loop safety and `result == n` using `valid_range(p, n * 4)`.
+  loop safety and `result == n` using a symbolic valid range.
 - `fill_n_segment_invariant(int32 p[], int32 n)` proves a quantified
   written-segment postcondition from a quantified loop invariant.
 - `fill_tail_preserves_first(int32 p[], int32 n)` proves an old-memory frame
   postcondition from an explicit loop invariant using `old(...)`.
+- `fill_tail_preserves_prefix_segment(int32 p[], int32 n)` proves an old-memory
+  frame postcondition from a compact `preserves(p[0..1])` loop invariant.
 
 The fixed-size pointer demos use 12-byte backing blocks and prove without
 leftover memory-safety premises. The symbolic pointer-loop demos instead use
-requirements such as `valid_range(p, n * 4)` plus loop invariants. The sidecar
+requirements such as `valid_range(p[0..n])` plus loop invariants. The sidecar
 can also prove post-state memory guarantees such as
 `ensures p[2] == 2 by auto;` and simple preservation guarantees such as
-`ensures p[0] == old(p[0]) by auto;` for straight-line code.
+`ensures p[0] == old(p[0]) by auto;` or
+`ensures preserves(p[0..1]) by auto;`.
 
 ## Near-Term Roadmap
 
-1. Broaden quantified array-segment reasoning from postconditions into loop
-   invariants and memory-changing proofs. The first written-segment invariant
-   path works for `fill_n_segment_invariant`.
-2. Extend memory-changing loop verification with explicit memory invariants and
-   more general frame reasoning, including whether Click should have a compact
-   frame clause syntax in addition to explicit `old(...)` invariants.
+1. Add the dual frame primitive to `preserves`: likely `writes_only(p[i..j])`,
+   meaning only the half-open segment may differ between old and current memory.
+2. Broaden segment reasoning beyond one-cell frame demos, especially proving
+   copy-style invariants such as `dst[0..i]` matching `old(src[0..i])`.
 3. Improve fact management inside `auto`, especially using requirements,
    invariants, and path facts to prove postconditions without bounded fallback.
 4. Grow C-native memory objects: local arrays, richer pointer ranges, and
