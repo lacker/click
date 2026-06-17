@@ -178,7 +178,10 @@ mismatch is reported directly. Function-level `requires` clauses are shared by
 all guarantees. Each `ensures` clause is a separately proven guarantee with its
 own `by` proof clause. For now, `requires` supports `valid_range(pointer,
 bytes)` with concrete byte counts or small byte-count expressions such as
-`n * 4`, plus Click propositions over parameters and literals. `ensures`
+`n * 4`, and `valid_range(pointer[start..end])` for half-open `int32` element
+segments such as `valid_range(p[0..n])`. The `..` form is Click C-reference
+syntax, not C expression syntax. `requires` also supports Click propositions
+over parameters and literals. `ensures`
 clauses use Click proposition syntax:
 
 ```text

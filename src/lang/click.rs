@@ -49,7 +49,15 @@ pub struct FunctionParameter {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Requirement {
-    ValidRange { name: String, bytes: RangeBytes },
+    ValidRange {
+        name: String,
+        bytes: RangeBytes,
+    },
+    ValidRangeSegment {
+        name: String,
+        start: RangeBytes,
+        end: RangeBytes,
+    },
     Proposition(ClickProposition),
 }
 
@@ -1212,15 +1220,12 @@ fn initial_call(
     requires: &[Requirement],
     parameters: &[syntax::C0Parameter],
 ) -> Result<(CState, Vec<CExpression>, Vec<Proposition>), ClickError> {
-    let valid_ranges: BTreeMap<&str, u32> = requires
-        .iter()
-        .filter_map(|requirement| match requirement {
-            Requirement::ValidRange { name, bytes } => {
-                range_bytes_constant(bytes).map(|bytes| (name.as_str(), bytes))
-            }
-            Requirement::Proposition(_) => None,
-        })
-        .collect();
+    let mut valid_ranges = BTreeMap::new();
+    for requirement in requires {
+        if let Some((name, bytes)) = concrete_valid_range_block(requirement)? {
+            valid_ranges.insert(name, bytes);
+        }
+    }
     let mut memory = CMemory::new();
     let mut arguments = Vec::new();
 
@@ -1243,18 +1248,7 @@ fn initial_call(
         }
     }
 
-    for name in valid_ranges.keys() {
-        if !parameters.iter().any(|parameter| parameter.name() == *name) {
-            return Err(ClickError::new(format!(
-                "`valid_range` names `{name}`, but `{}` has no such parameter",
-                function_name
-            )));
-        }
-    }
-    for requirement in requires {
-        let Requirement::ValidRange { name, .. } = requirement else {
-            continue;
-        };
+    for name in requires.iter().filter_map(requirement_valid_range_name) {
         if !parameters.iter().any(|parameter| parameter.name() == name) {
             return Err(ClickError::new(format!(
                 "`valid_range` names `{name}`, but `{}` has no such parameter",
@@ -1305,8 +1299,8 @@ fn requirement_propositions(
     requires
         .iter()
         .map(|requirement| match requirement {
-            Requirement::ValidRange { name, bytes } => {
-                valid_range_requirement_prop(name, bytes, parameters, arguments, memory)
+            Requirement::ValidRange { .. } | Requirement::ValidRangeSegment { .. } => {
+                valid_range_requirement_prop(requirement, parameters, arguments, memory)
             }
             Requirement::Proposition(proposition) => {
                 requirement_proposition_prop(parameters, arguments, proposition)
@@ -1316,12 +1310,62 @@ fn requirement_propositions(
 }
 
 fn valid_range_requirement_prop(
-    name: &str,
-    bytes: &RangeBytes,
+    requirement: &Requirement,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     memory: &CMemory,
 ) -> Result<Proposition, ClickError> {
+    let (base, bytes) = valid_range_base_and_bytes(requirement, parameters, arguments)?;
+    Ok(Proposition::CMemoryValidRange {
+        memory: memory.clone(),
+        base,
+        bytes,
+    })
+}
+
+fn requirement_valid_range_name(requirement: &Requirement) -> Option<&str> {
+    match requirement {
+        Requirement::ValidRange { name, .. } | Requirement::ValidRangeSegment { name, .. } => {
+            Some(name)
+        }
+        Requirement::Proposition(_) => None,
+    }
+}
+
+fn concrete_valid_range_block(
+    requirement: &Requirement,
+) -> Result<Option<(&str, u32)>, ClickError> {
+    match requirement {
+        Requirement::ValidRange { name, bytes } => {
+            Ok(range_bytes_constant(bytes).map(|bytes| (name.as_str(), bytes)))
+        }
+        Requirement::ValidRangeSegment { name, start, end } => {
+            let (Some(start), Some(end)) = (range_bytes_constant(start), range_bytes_constant(end))
+            else {
+                return Ok(None);
+            };
+            if start != 0 {
+                return Ok(None);
+            }
+            let bytes = end.checked_mul(4).ok_or_else(|| {
+                ClickError::new(format!(
+                    "`valid_range({name}[0..{end}])` overflows byte count"
+                ))
+            })?;
+            Ok(Some((name.as_str(), bytes)))
+        }
+        Requirement::Proposition(_) => Ok(None),
+    }
+}
+
+fn valid_range_base_and_bytes(
+    requirement: &Requirement,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Result<(Pointer, Bitvector32Term), ClickError> {
+    let Some(name) = requirement_valid_range_name(requirement) else {
+        return Err(ClickError::new("expected valid_range requirement"));
+    };
     let Some((_, argument)) = parameters
         .iter()
         .zip(arguments)
@@ -1336,12 +1380,30 @@ fn valid_range_requirement_prop(
             "`valid_range` names `{name}`, but it is not a pointer parameter"
         )));
     };
+    let parameter_values = parameter_values(parameters, arguments)?;
 
-    Ok(Proposition::CMemoryValidRange {
-        memory: memory.clone(),
-        base: base.clone(),
-        bytes: lower_range_bytes(bytes, &parameter_values(parameters, arguments)?)?,
-    })
+    match requirement {
+        Requirement::ValidRange { bytes, .. } => {
+            Ok((base.clone(), lower_range_bytes(bytes, &parameter_values)?))
+        }
+        Requirement::ValidRangeSegment { start, end, .. } => {
+            if let (Some(start), Some(end)) =
+                (range_bytes_constant(start), range_bytes_constant(end))
+            {
+                if end < start {
+                    return Err(ClickError::new(format!(
+                        "`valid_range({name}[{start}..{end}])` has an end before its start"
+                    )));
+                }
+            }
+            let start = lower_range_bytes(start, &parameter_values)?;
+            let end = lower_range_bytes(end, &parameter_values)?;
+            let element_count = bitvector32_subtract(end, start.clone());
+            let bytes = bitvector32_multiply(element_count, Bitvector32Term::Constant(4));
+            Ok((offset_pointer_by_int32_elements(base.clone(), start), bytes))
+        }
+        Requirement::Proposition(_) => Err(ClickError::new("expected valid_range requirement")),
+    }
 }
 
 fn range_bytes_constant(bytes: &RangeBytes) -> Option<u32> {
@@ -1596,6 +1658,8 @@ fn bitvector32_add(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32
         (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
             Bitvector32Term::Constant(left.wrapping_add(*right))
         }
+        (_, Bitvector32Term::Constant(0)) => left,
+        (Bitvector32Term::Constant(0), _) => right,
         _ => Bitvector32Term::Add(Box::new(left), Box::new(right)),
     }
 }
@@ -1605,6 +1669,8 @@ fn bitvector32_subtract(left: Bitvector32Term, right: Bitvector32Term) -> Bitvec
         (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
             Bitvector32Term::Constant(left.wrapping_sub(*right))
         }
+        (_, Bitvector32Term::Constant(0)) => left,
+        _ if left == right => Bitvector32Term::Constant(0),
         _ => Bitvector32Term::Subtract(Box::new(left), Box::new(right)),
     }
 }
@@ -1613,6 +1679,11 @@ fn bitvector32_multiply(left: Bitvector32Term, right: Bitvector32Term) -> Bitvec
     match (&left, &right) {
         (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
             Bitvector32Term::Constant(left.wrapping_mul(*right))
+        }
+        (_, Bitvector32Term::Constant(1)) => left,
+        (Bitvector32Term::Constant(1), _) => right,
+        (_, Bitvector32Term::Constant(0)) | (Bitvector32Term::Constant(0), _) => {
+            Bitvector32Term::Constant(0)
         }
         _ => Bitvector32Term::Multiply(Box::new(left), Box::new(right)),
     }
@@ -2283,6 +2354,7 @@ enum Token {
     Colon,
     Comma,
     Semicolon,
+    DotDot,
     EqualEqual,
     BangEqual,
     LessThan,
@@ -2451,12 +2523,22 @@ impl Parser {
         self.expect_ident_spelling("valid_range")?;
         self.expect(Token::LParen)?;
         let name = self.expect_ident("range base name")?;
-        self.expect(Token::Comma)?;
-        let bytes = self.parse_range_bytes()?;
+        let requirement = if self.peek() == Some(&Token::LBracket) {
+            self.position += 1;
+            let start = self.parse_range_bytes()?;
+            self.expect(Token::DotDot)?;
+            let end = self.parse_range_bytes()?;
+            self.expect(Token::RBracket)?;
+            Requirement::ValidRangeSegment { name, start, end }
+        } else {
+            self.expect(Token::Comma)?;
+            let bytes = self.parse_range_bytes()?;
+            Requirement::ValidRange { name, bytes }
+        };
         self.expect(Token::RParen)?;
         self.expect(Token::Semicolon)?;
 
-        Ok(Requirement::ValidRange { name, bytes })
+        Ok(requirement)
     }
 
     fn parse_range_bytes(&mut self) -> Result<RangeBytes, ClickError> {
@@ -2973,6 +3055,16 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
                 tokens.push(Token::Semicolon);
                 index += 1;
             }
+            '.' => {
+                if chars.get(index + 1) == Some(&'.') {
+                    tokens.push(Token::DotDot);
+                    index += 2;
+                } else {
+                    return Err(ClickError::new(format!(
+                        "expected `..`, got `.` at byte offset {index}"
+                    )));
+                }
+            }
             '+' => {
                 tokens.push(Token::Plus);
                 index += 1;
@@ -3221,6 +3313,57 @@ mod tests {
                     Box::new(RangeBytes::Constant(4)),
                 )
             }]
+        );
+    }
+
+    #[test]
+    fn parses_valid_range_segment_syntax() {
+        let source = r#"
+            verifying "fill.c";
+
+            int32 fill(int32* p, int32 n) {
+                requires valid_range(p[0..n]);
+                ensures result == n by auto;
+            }
+        "#;
+        let file = parse(source).expect("segment valid_range should parse");
+        let function = &file.function_blocks()[0];
+
+        assert_eq!(
+            function.requires(),
+            &[Requirement::ValidRangeSegment {
+                name: "p".to_string(),
+                start: RangeBytes::Constant(0),
+                end: RangeBytes::Parameter("n".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn rejects_reversed_constant_valid_range_segment() {
+        let c_source = r#"
+            int32 read_second(int32* p) {
+                return p[1];
+            }
+        "#;
+        let click_source = r#"
+            verifying "read_second.c";
+
+            int32 read_second(int32* p) {
+                requires valid_range(p[3..1]);
+                ensures reads: result == p[1] by auto;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("read_second.c", c_source)])
+            .expect_err("reversed concrete segment should fail");
+
+        assert!(
+            error
+                .message()
+                .contains("`valid_range(p[3..1])` has an end before its start"),
+            "{}",
+            error.message()
         );
     }
 
@@ -3567,6 +3710,41 @@ mod tests {
             .expect("old memory loop invariant should verify");
 
         assert_eq!(verified.len(), 1);
+    }
+
+    #[test]
+    fn verifies_symbolic_segment_valid_range() {
+        let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                at loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                }
+                ensures returns_n: result == n by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+            .expect("segment valid_range should verify symbolic pointer loop");
+
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
     }
 
     #[test]
