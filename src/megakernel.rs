@@ -1452,6 +1452,7 @@ impl Assumptions {
                     || self.has_successor_upper_bound_below(&left, &right)
                     || self.has_lower_bound_above(&right, &left)
                     || self.has_add_const_lower_bound_above(&right, &left)
+                    || self.positive_offset_is_proven_above(&left, &right)
                 {
                     Some(true)
                 } else if self.has_condition_fact(
@@ -1489,6 +1490,7 @@ impl Assumptions {
                     false,
                 ) || self.has_lower_bound_at_or_above(&right, &left)
                     || self.has_add_const_lower_bound_at_or_above(&right, &left)
+                    || self.nonnegative_offset_is_proven_at_or_above(&left, &right)
                     || self.order_facts_force_equal(&left, &right)
                 {
                     Some(true)
@@ -1722,6 +1724,40 @@ impl Assumptions {
                 }
                 _ => false,
             })
+    }
+
+    fn positive_offset_is_proven_above(
+        &self,
+        base: &Bitvector32Term,
+        term: &Bitvector32Term,
+    ) -> bool {
+        let Some((term_base, addend)) = term.add_const_parts() else {
+            return false;
+        };
+        if &term_base != base || signed_u32_constant(addend).is_none_or(|value| value <= 0) {
+            return false;
+        }
+        self.decide(&ConditionTerm::signed_add_overflows(
+            base.clone(),
+            Bitvector32Term::Constant(addend),
+        )) == Some(false)
+    }
+
+    fn nonnegative_offset_is_proven_at_or_above(
+        &self,
+        base: &Bitvector32Term,
+        term: &Bitvector32Term,
+    ) -> bool {
+        let Some((term_base, addend)) = term.add_const_parts() else {
+            return false;
+        };
+        if &term_base != base || signed_u32_constant(addend).is_none_or(|value| value < 0) {
+            return false;
+        }
+        self.decide(&ConditionTerm::signed_add_overflows(
+            base.clone(),
+            Bitvector32Term::Constant(addend),
+        )) == Some(false)
     }
 
     fn memory_loads_proven_equal(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
@@ -3440,6 +3476,10 @@ fn bitvector_variable(term: &Bitvector32Term) -> Option<Variable> {
 
 fn signed_bitvector_constant(term: &Bitvector32Term) -> Option<i64> {
     term.as_const().map(|value| i64::from(value as i32))
+}
+
+fn signed_u32_constant(value: u32) -> Option<i64> {
+    i32::try_from(value).ok().map(i64::from)
 }
 
 fn bitvector_variable_and_constant(
@@ -6957,7 +6997,9 @@ fn collect_loop_effect_check_obligations(
                     &mut obligations,
                     loop_effect_failure_context(
                         check,
-                        format!("write to {pointer:?} is outside the mutable footprint"),
+                        format!(
+                            "write to {pointer:?} is outside the mutable footprint; evaluated segments: {segments:?}"
+                        ),
                     ),
                 );
             }
@@ -9191,6 +9233,14 @@ mod tests {
                 ),
                 true,
             );
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(i_bits.clone(), incremented.clone()),
+            true,
+        )));
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(i_bits.clone(), incremented.clone()),
+            true,
+        )));
         let theorem = prove_c_statement_executes_and_propositions(
             state,
             statement,

@@ -243,7 +243,7 @@ statement 2 {
 loop 0 {
     invariant i >= 0 by auto;
     invariant i <= 3 by auto;
-    mutable p[0..n] by auto;
+    mutable p[i..i + 1] by auto;
 }
 ```
 
@@ -254,12 +254,12 @@ conditions: entry checks, one-body preservation checks, and exit facts from the
 invariant plus the false loop condition. `mutable` and `immutable` inside a
 `loop N` block are loop-level effect clauses: they check one body step under
 the current invariant facts and true loop condition. Loop-level `mutable`
-segments are evaluated at the loop head, so `mutable p[i..n] by auto;` uses the
-current iteration's `i`, while function-level `mutable p[0..n] by auto;` uses
-function-entry parameter values. `immutable` means the loop body performs no
-externally visible memory mutation during that step. Failed `auto` proofs
-report the guarantee label, execution path, available requirements, path facts,
-and remaining proof obligations.
+segments are evaluated at the loop head, so `mutable p[i..i + 1] by auto;`
+uses the current iteration's `i`, while function-level `mutable p[0..n] by
+auto;` uses function-entry parameter values. `immutable` means the loop body
+performs no externally visible memory mutation during that step. Failed `auto`
+proofs report the guarantee label, execution path, available requirements, path
+facts, and remaining proof obligations.
 
 The current loop VC path handles scalar loop locals by assigning fresh symbolic
 values at the loop head. That is enough for proofs such as symbolic
@@ -269,8 +269,11 @@ unknown heap state instead of implicitly preserving old memory. Written-segment
 postconditions can be proved with explicit quantified invariants such as
 `forall (int32 k) { 0 <= k and k < i implies p[k] == k }`. Old-memory frame
 proofs across pointer-writing loops can be proved with compact segment
-invariants stated directly with `old(...)`. The current fixed-size pointer demos
-continue to use bounded execution for some final memory facts.
+invariants stated directly with `old(...)`. Copy loops can prove quantified
+destination-prefix facts such as `dst[k] == old(src[k])`; today they also need
+an explicit source-frame invariant when the proof depends on source memory
+remaining equal to `old(src[k])`. The current fixed-size pointer demos continue
+to use bounded execution for some final memory facts.
 
 ## Markdown Tests
 
@@ -322,9 +325,13 @@ The first memory-safety demos are fixed-size pointer loops:
 - `fill_n_mutable_segment(int32 p[], int32 n)` proves that a symbolic
   pointer-writing loop mutates only `p[0..n]`.
 - `fill_n_loop_mutable_segment(int32 p[], int32 n)` proves the analogous
-  loop-level effect clause for each loop body step.
+  loop-level effect clause for each loop body step, using the per-iteration
+  segment `p[i..i + 1]`.
 - `count_to_three_loop_immutable()` proves a loop-level `immutable` clause for
   a scalar loop that only updates stack-local state.
+- `copy_n_segment_invariant(int32 dst[], int32 src[], int32 n)` proves a
+  symbolic copied segment with quantified destination-prefix and source-frame
+  invariants.
 
 The fixed-size pointer demos use 12-byte backing blocks and prove without
 leftover memory-safety premises. The symbolic pointer-loop demos instead use
@@ -335,10 +342,10 @@ can also prove post-state memory guarantees such as
 
 ## Near-Term Roadmap
 
-1. Broaden loop-level effect clauses with better diagnostics and more segment
-   shapes, especially iteration-relative segments such as `p[i..i + 1]`.
-2. Broaden segment reasoning beyond one-cell frame demos, especially proving
-   copy-style invariants such as `dst[0..i]` matching `old(src[0..i])`.
+1. Broaden loop-level effect diagnostics and segment-shape coverage beyond the
+   current one-cell iteration-relative cases.
+2. Reduce boilerplate around copied-segment proofs, especially deriving or
+   packaging source-frame invariants that are currently written explicitly.
 3. Improve fact management inside `auto`, especially using requirements,
    invariants, and path facts to prove postconditions without bounded fallback.
 4. Grow C-native memory objects: local arrays, richer pointer ranges, and

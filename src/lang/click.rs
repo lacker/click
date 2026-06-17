@@ -2180,7 +2180,7 @@ fn prove_mutation_footprint(
             .any(|segment| segment_contains_pointer(segment, pointer, &assumptions))
         {
             return Err(ClickError::new(format!(
-                "`{claim_label}` failed on path {path_index}: write to {pointer:?} is outside the mutable footprint\n  mutable segments: {:?}\n  path facts: {}",
+                "`{claim_label}` failed on path {path_index}: write to {pointer:?} is outside the mutable footprint\n  mutable segments: {:?}\n  evaluated segments: {segments:?}\n  path facts: {}",
                 segments
                     .iter()
                     .map(|segment| &segment.source)
@@ -4267,6 +4267,11 @@ mod tests {
             "{}",
             error.message()
         );
+        assert!(
+            error.message().contains("evaluated segments"),
+            "{}",
+            error.message()
+        );
     }
 
     #[test]
@@ -4292,6 +4297,11 @@ mod tests {
 
         assert!(
             error.message().contains("outside the mutable footprint"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            error.message().contains("evaluated segments"),
             "{}",
             error.message()
         );
@@ -4566,6 +4576,42 @@ mod tests {
     }
 
     #[test]
+    fn verifies_loop_level_iteration_relative_mutable_segment() {
+        let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                    mutable p[i..i + 1] by auto;
+                }
+                ensures returns_n: result == n by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+            .expect("loop-level mutable segment should support one-cell iteration ranges");
+
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
+    }
+
+    #[test]
     fn loop_level_mutable_segment_rejects_write_outside_segment() {
         let c_source = r#"
             int32 fill_n(int32 p[], int32 n) {
@@ -4604,6 +4650,11 @@ mod tests {
         );
         assert!(
             error.message().contains("outside the mutable footprint"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            error.message().contains("evaluated segments"),
             "{}",
             error.message()
         );
@@ -4682,6 +4733,52 @@ mod tests {
             .expect("loop-level immutable should allow stack-local updates");
 
         assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
+    }
+
+    #[test]
+    fn verifies_symbolic_copy_segment_invariant() {
+        let c_source = r#"
+            int32 copy_n(int32 dst[], int32 src[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    dst[i] = src[i];
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "copy_n.c";
+
+            int32 copy_n(int32 dst[], int32 src[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(dst[0..n]);
+                requires valid_range(src[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                    invariant forall (int32 k) {
+                        0 <= k and k < i implies dst[k] == old(src[k])
+                    } by auto;
+                    invariant forall (int32 k) {
+                        0 <= k and k < n implies src[k] == old(src[k])
+                    } by auto;
+                    mutable dst[i..i + 1] by auto;
+                }
+                ensures returns_n: result == n by auto;
+                ensures copied_segment: forall (int32 k) {
+                    0 <= k and k < n implies dst[k] == old(src[k])
+                } by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("copy_n.c", c_source)])
+            .expect("symbolic copy loop should prove copied segment invariant");
+
+        assert_eq!(verified.len(), 2);
         assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
     }
 
