@@ -12,7 +12,7 @@ use crate::megakernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CExpression, CFunction,
     CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
     CLoopInvariantCheck, CMemory, CMemorySegment, CProposition, CState, CStatement, CValue,
-    ConditionTerm, PathFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition, Sort,
+    ConditionTerm, PathFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition, Sort, Term,
     Theorem, Variable, c_function, c_function_specification, c_labeled_assert, c_pointer_value,
     c_seq, c_while_with_invariant_and_effect_checks,
     prove_c_function_satisfies_specification_from_symbolic_path,
@@ -216,6 +216,7 @@ pub enum ProofStep {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Tactic {
     Auto,
+    Simp,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -223,7 +224,7 @@ pub struct VerifiedCTheorem {
     pub source_path: String,
     pub function_block: FunctionBlock,
     pub claim: VerifiedClaim,
-    pub proof_kind: AutoProofKind,
+    pub proof_kind: ProofKind,
     pub specification: CFunctionSpecification,
     pub theorem: Theorem,
 }
@@ -235,7 +236,8 @@ pub enum VerifiedClaim {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AutoProofKind {
+pub enum ProofKind {
+    Simp,
     LoopVerification,
     BoundedExecution,
 }
@@ -364,6 +366,13 @@ impl Proof {
         matches!(self, Self::Tactic(Tactic::Auto))
     }
 
+    pub fn tactic(&self) -> Option<&Tactic> {
+        match self {
+            Self::Tactic(tactic) => Some(tactic),
+            Self::Steps(_) => None,
+        }
+    }
+
     pub fn steps(&self) -> Option<&[ProofStep]> {
         match self {
             Self::Tactic(_) => None,
@@ -373,7 +382,7 @@ impl Proof {
 }
 
 impl VerifiedCTheorem {
-    pub fn proof_kind(&self) -> AutoProofKind {
+    pub fn proof_kind(&self) -> ProofKind {
         self.proof_kind
     }
 
@@ -431,82 +440,35 @@ pub fn verify_c0_sources(
         validate_structural_clauses(&function_block, parsed_function)?;
         for claim in function_claims(&function_block) {
             let claim_label = function_claim_label(function_block.signature.name(), &claim);
-            if !claim.proof().is_auto_tactic() {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` must use exactly `by auto;` in this first slice"
-                )));
-            }
-
-            let (state, arguments, requirement_propositions) = initial_call(
-                function_block.signature.name(),
-                function_block.requires(),
-                parsed_function.parameters(),
-            )?;
-            let function =
-                annotated_function(&function_block, parsed_function, &state, &arguments)?;
-            let assumptions = assumptions_from_propositions(&requirement_propositions);
-            let vc_execution = prove_symbolic_c_function_verification_paths_with_environment(
-                state.clone(),
-                function.clone(),
-                arguments.clone(),
-                assumptions.clone(),
-                function_environment.clone(),
-            );
-            if let Some(error) =
-                execution_obligation_error(&vc_execution, &claim_label, &requirement_propositions)
-            {
-                return Err(error);
-            }
-            let loop_verification_error = match prove_claim_from_execution(
-                &vc_execution,
-                AutoExecutionKind::LoopVerification,
-                source_path,
-                &function_block,
-                &claim,
-                &claim_label,
-                parsed_function.parameters(),
-                &function,
-                &state,
-                &arguments,
-                &requirement_propositions,
-            ) {
-                Ok(theorems) => {
+            match claim.proof().tactic() {
+                Some(Tactic::Auto) => {
+                    let theorems = prove_claim_by_auto(
+                        source_path,
+                        &function_block,
+                        parsed_function,
+                        &claim,
+                        &claim_label,
+                        &function_environment,
+                    )?;
                     verified.extend(theorems);
-                    continue;
                 }
-                Err(error) => Some(error),
-            };
-            let execution = prove_symbolic_c_function_execution_paths_with_environment(
-                state.clone(),
-                function.clone(),
-                arguments.clone(),
-                assumptions,
-                function_environment.clone(),
-            );
-            if let Some(error) =
-                execution_obligation_error(&execution, &claim_label, &requirement_propositions)
-            {
-                if let Some(loop_verification_error) = loop_verification_error {
-                    return Err(loop_verification_error);
+                Some(Tactic::Simp) => {
+                    let theorems = prove_claim_by_simp(
+                        source_path,
+                        &function_block,
+                        parsed_function,
+                        &claim,
+                        &claim_label,
+                        &function_environment,
+                    )?;
+                    verified.extend(theorems);
                 }
-                return Err(error);
+                None => {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` must use a supported tactic in this first slice"
+                    )));
+                }
             }
-            let theorems = prove_claim_from_execution(
-                &execution,
-                AutoExecutionKind::BoundedExecution {
-                    environment: &function_environment,
-                },
-                source_path,
-                &function_block,
-                &claim,
-                &claim_label,
-                parsed_function.parameters(),
-                &function,
-                &state,
-                &arguments,
-                &requirement_propositions,
-            )?;
-            verified.extend(theorems);
         }
     }
 
@@ -557,6 +519,187 @@ fn function_claims(function_block: &FunctionBlock) -> Vec<FunctionClaimRef<'_>> 
         .collect()
 }
 
+fn prove_claim_by_auto(
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claim: &FunctionClaimRef<'_>,
+    claim_label: &str,
+    function_environment: &CFunctionEnvironment,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let (state, arguments, requirement_propositions) = initial_call(
+        function_block.signature.name(),
+        function_block.requires(),
+        parsed_function.parameters(),
+    )?;
+    let function = annotated_function(function_block, parsed_function, &state, &arguments)?;
+    let assumptions = assumptions_from_propositions(&requirement_propositions);
+    let vc_execution = prove_symbolic_c_function_verification_paths_with_environment(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        assumptions.clone(),
+        function_environment.clone(),
+    );
+    if let Some(error) =
+        execution_obligation_error(&vc_execution, claim_label, &requirement_propositions)
+    {
+        return Err(error);
+    }
+    let loop_verification_error = match prove_claim_from_execution(
+        &vc_execution,
+        AutoExecutionKind::LoopVerification,
+        source_path,
+        function_block,
+        claim,
+        claim_label,
+        parsed_function.parameters(),
+        &function,
+        &state,
+        &arguments,
+        &requirement_propositions,
+    ) {
+        Ok(theorems) => return Ok(theorems),
+        Err(error) => Some(error),
+    };
+    let execution = prove_symbolic_c_function_execution_paths_with_environment(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        assumptions,
+        function_environment.clone(),
+    );
+    if let Some(error) =
+        execution_obligation_error(&execution, claim_label, &requirement_propositions)
+    {
+        if let Some(loop_verification_error) = loop_verification_error {
+            return Err(loop_verification_error);
+        }
+        return Err(error);
+    }
+    prove_claim_from_execution(
+        &execution,
+        AutoExecutionKind::BoundedExecution {
+            environment: function_environment,
+        },
+        source_path,
+        function_block,
+        claim,
+        claim_label,
+        parsed_function.parameters(),
+        &function,
+        &state,
+        &arguments,
+        &requirement_propositions,
+    )
+}
+
+fn prove_claim_by_simp(
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claim: &FunctionClaimRef<'_>,
+    claim_label: &str,
+    function_environment: &CFunctionEnvironment,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    if count_loops(parsed_function.body()) != 0 {
+        return Err(ClickError::new(format!(
+            "`simp` does not prove loop-backed claims for `{claim_label}`; use `by auto;`"
+        )));
+    }
+
+    let (state, arguments, requirement_propositions) = initial_call(
+        function_block.signature.name(),
+        function_block.requires(),
+        parsed_function.parameters(),
+    )?;
+    let function = annotated_function(function_block, parsed_function, &state, &arguments)?;
+    let assumptions = assumptions_from_propositions(&requirement_propositions);
+    let execution = prove_symbolic_c_function_execution_paths_with_environment(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        assumptions,
+        function_environment.clone(),
+    );
+    if let Some(limit) = execution.limit() {
+        return Err(ClickError::new(format!(
+            "`simp` hit execution limit {limit:?} for `{claim_label}`"
+        )));
+    }
+    if execution.paths().is_empty() {
+        return Err(ClickError::new(format!(
+            "`simp` could not establish a direct execution path for `{claim_label}`"
+        )));
+    }
+
+    let mut verified = Vec::new();
+    for (path_index, path) in execution.paths().iter().enumerate() {
+        if !path.obligations().is_empty() {
+            return Err(ClickError::new(format!(
+                "`simp` failed for `{claim_label}` path {path_index}: execution left obligations: {}\n  available requirements: {}\n  path facts: {}",
+                describe_obligations(path.obligations()),
+                describe_propositions(&requirement_propositions),
+                describe_facts(path.facts())
+            )));
+        }
+
+        let outcome = match implication_body(path.theorem().proposition()) {
+            Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
+            proposition => {
+                return Err(ClickError::new(format!(
+                    "`simp` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  available requirements: {}\n  path facts: {}",
+                    describe_propositions(&requirement_propositions),
+                    describe_facts(path.facts())
+                )));
+            }
+        };
+
+        let mut path_requirements = requirement_propositions.to_vec();
+        path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+        check_function_claim_by_simp(
+            claim_label,
+            path_index,
+            path.facts(),
+            &path_requirements,
+            claim,
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &outcome,
+        )?;
+        let specification = c_function_specification(
+            state.clone(),
+            arguments.clone(),
+            path_requirements,
+            outcome.clone(),
+        );
+        let theorem = prove_c_function_satisfies_specification_with_environment(
+            function.clone(),
+            specification.clone(),
+            Assumptions::new(),
+            function_environment.clone(),
+        )
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`simp` failed for `{claim_label}` path {path_index}: execution did not satisfy the packaged specification\n  path facts: {}",
+                describe_facts(path.facts())
+            ))
+        })?;
+
+        verified.push(VerifiedCTheorem {
+            source_path: source_path.to_string(),
+            function_block: function_block.clone(),
+            claim: claim.verified_claim(),
+            proof_kind: ProofKind::Simp,
+            specification,
+            theorem,
+        });
+    }
+
+    Ok(verified)
+}
+
 enum AutoExecutionKind<'a> {
     LoopVerification,
     BoundedExecution {
@@ -565,10 +708,10 @@ enum AutoExecutionKind<'a> {
 }
 
 impl AutoExecutionKind<'_> {
-    fn proof_kind(&self) -> AutoProofKind {
+    fn proof_kind(&self) -> ProofKind {
         match self {
-            Self::LoopVerification => AutoProofKind::LoopVerification,
-            Self::BoundedExecution { .. } => AutoProofKind::BoundedExecution,
+            Self::LoopVerification => ProofKind::LoopVerification,
+            Self::BoundedExecution { .. } => ProofKind::BoundedExecution,
         }
     }
 }
@@ -1964,6 +2107,315 @@ fn check_function_claim(
     }
 
     Ok(())
+}
+
+fn check_function_claim_by_simp(
+    claim_label: &str,
+    path_index: usize,
+    path_facts: &[crate::megakernel::PathFact],
+    available_propositions: &[Proposition],
+    claim: &FunctionClaimRef<'_>,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    outcome: &CFunctionOutcome,
+) -> Result<(), ClickError> {
+    match claim {
+        FunctionClaimRef::Ensure(_, ensure_clause) => match ensure_clause.ensure() {
+            Ensure::Proposition(proposition) => prove_ensure_proposition_by_simp(
+                claim_label,
+                path_index,
+                path_facts,
+                available_propositions,
+                proposition,
+                parameters,
+                arguments,
+                pre_state,
+                outcome,
+            ),
+        },
+        FunctionClaimRef::Effect(_, _) => Err(ClickError::new(format!(
+            "`simp` does not prove effect clauses for `{claim_label}`; use `by auto;`"
+        ))),
+    }
+}
+
+fn prove_ensure_proposition_by_simp(
+    ensure_label: &str,
+    path_index: usize,
+    path_facts: &[crate::megakernel::PathFact],
+    available_propositions: &[Proposition],
+    proposition: &ClickProposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    outcome: &CFunctionOutcome,
+) -> Result<(), ClickError> {
+    let CFunctionOutcome::Return { value, state } = outcome else {
+        return Err(ClickError::new(format!(
+            "`simp` failed for `{ensure_label}` path {path_index}: outcome was {outcome:?}\n  path facts: {}",
+            describe_facts(path_facts)
+        )));
+    };
+    let proposition = lower_outcome_proposition(
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        value,
+        available_propositions,
+        proposition,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`simp` failed for `{ensure_label}` path {path_index}: could not lower proposition: {message}"
+        ))
+    })?;
+    let assumptions = assumptions_from_propositions(available_propositions);
+    match simp_proposition(&proposition, &assumptions) {
+        SimpProposition::True => Ok(()),
+        simplified => Err(ClickError::new(format!(
+            "`simp` failed for `{ensure_label}` path {path_index}: simplified proposition was not true: {simplified:?}\n  original proposition: {proposition:?}\n  path facts: {}",
+            describe_facts(path_facts)
+        ))),
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SimpProposition {
+    True,
+    False,
+    Proposition(Proposition),
+}
+
+fn simp_proposition(proposition: &Proposition, assumptions: &Assumptions) -> SimpProposition {
+    match proposition {
+        Proposition::Equal(left, right) => match simp_terms_equal(left, right) {
+            Some(true) => SimpProposition::True,
+            Some(false) => SimpProposition::False,
+            None => {
+                SimpProposition::Proposition(Proposition::Equal(simp_term(left), simp_term(right)))
+            }
+        },
+        Proposition::ConditionIs(condition, expected) => {
+            match simp_condition(condition, assumptions) {
+                Some(actual) if actual == *expected => SimpProposition::True,
+                Some(_) => SimpProposition::False,
+                None => SimpProposition::Proposition(proposition.clone()),
+            }
+        }
+        Proposition::And(left, right) => {
+            let left = simp_proposition(left, assumptions);
+            let right = simp_proposition(right, assumptions);
+            match (left, right) {
+                (SimpProposition::False, _) | (_, SimpProposition::False) => SimpProposition::False,
+                (SimpProposition::True, SimpProposition::True) => SimpProposition::True,
+                (SimpProposition::True, right) => right,
+                (left, SimpProposition::True) => left,
+                (left, right) => SimpProposition::Proposition(Proposition::And(
+                    Box::new(left.into_proposition()),
+                    Box::new(right.into_proposition()),
+                )),
+            }
+        }
+        Proposition::Or(left, right) => {
+            let left = simp_proposition(left, assumptions);
+            let right = simp_proposition(right, assumptions);
+            match (left, right) {
+                (SimpProposition::True, _) | (_, SimpProposition::True) => SimpProposition::True,
+                (SimpProposition::False, SimpProposition::False) => SimpProposition::False,
+                (SimpProposition::False, right) => right,
+                (left, SimpProposition::False) => left,
+                (left, right) => SimpProposition::Proposition(Proposition::Or(
+                    Box::new(left.into_proposition()),
+                    Box::new(right.into_proposition()),
+                )),
+            }
+        }
+        Proposition::Not(body) => match simp_proposition(body, assumptions) {
+            SimpProposition::True => SimpProposition::False,
+            SimpProposition::False => SimpProposition::True,
+            body => {
+                SimpProposition::Proposition(Proposition::Not(Box::new(body.into_proposition())))
+            }
+        },
+        Proposition::Implies(left, right) => {
+            let left = simp_proposition(left, assumptions);
+            let right = simp_proposition(right, assumptions);
+            match (left, right) {
+                (SimpProposition::False, _) | (_, SimpProposition::True) => SimpProposition::True,
+                (SimpProposition::True, right) => right,
+                (_, SimpProposition::False) => SimpProposition::False,
+                (left, right) => SimpProposition::Proposition(Proposition::Implies(
+                    Box::new(left.into_proposition()),
+                    Box::new(right.into_proposition()),
+                )),
+            }
+        }
+        Proposition::ForAll { .. }
+        | Proposition::CExpressionEvaluates { .. }
+        | Proposition::CStatementExecutes { .. }
+        | Proposition::CFunctionExecutes { .. }
+        | Proposition::CFunctionSatisfiesSpecification { .. }
+        | Proposition::CMemoryLoads { .. }
+        | Proposition::CMemoryCanLoad { .. }
+        | Proposition::CMemoryCanStore { .. }
+        | Proposition::CMemoryValidRange { .. }
+        | Proposition::CMemoryMutatesOnly { .. }
+        | Proposition::CWhileInvariantRule { .. } => {
+            if assumptions.proves(proposition) {
+                SimpProposition::True
+            } else {
+                SimpProposition::Proposition(proposition.clone())
+            }
+        }
+    }
+}
+
+impl SimpProposition {
+    fn into_proposition(self) -> Proposition {
+        match self {
+            Self::True => Proposition::ConditionIs(ConditionTerm::Constant(true), true),
+            Self::False => Proposition::ConditionIs(ConditionTerm::Constant(false), true),
+            Self::Proposition(proposition) => proposition,
+        }
+    }
+}
+
+fn simp_terms_equal(left: &Term, right: &Term) -> Option<bool> {
+    let left = simp_term(left);
+    let right = simp_term(right);
+    if left == right {
+        return Some(true);
+    }
+    match (&left, &right) {
+        (Term::Bitvector32(left), Term::Bitvector32(right)) => Some(
+            simp_bitvector_const(&simp_bitvector(left))?
+                == simp_bitvector_const(&simp_bitvector(right))?,
+        ),
+        (Term::Condition(left), Term::Condition(right)) => Some(
+            simp_condition_without_assumptions(left)? == simp_condition_without_assumptions(right)?,
+        ),
+        _ => None,
+    }
+}
+
+fn simp_term(term: &Term) -> Term {
+    match term {
+        Term::Condition(condition) => match simp_condition_without_assumptions(condition) {
+            Some(value) => Term::Condition(ConditionTerm::Constant(value)),
+            None => term.clone(),
+        },
+        Term::Bitvector32(term) => Term::Bitvector32(simp_bitvector(term)),
+        Term::CValue(CValue::Int32(term)) => Term::CValue(CValue::Int32(simp_bitvector(term))),
+        _ => term.clone(),
+    }
+}
+
+fn simp_condition(condition: &ConditionTerm, assumptions: &Assumptions) -> Option<bool> {
+    simp_condition_without_assumptions(condition).or_else(|| {
+        assumptions
+            .proves(&Proposition::ConditionIs(condition.clone(), true))
+            .then_some(true)
+            .or_else(|| {
+                assumptions
+                    .proves(&Proposition::ConditionIs(condition.clone(), false))
+                    .then_some(false)
+            })
+    })
+}
+
+fn simp_condition_without_assumptions(condition: &ConditionTerm) -> Option<bool> {
+    match condition {
+        ConditionTerm::Constant(value) => Some(*value),
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            let left = simp_bitvector(left);
+            let right = simp_bitvector(right);
+            if left == right {
+                Some(true)
+            } else {
+                Some(simp_bitvector_const(&left)? == simp_bitvector_const(&right)?)
+            }
+        }
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            let left = simp_bitvector(left);
+            let right = simp_bitvector(right);
+            if left == right {
+                Some(false)
+            } else {
+                Some((simp_bitvector_const(&left)? as i32) < (simp_bitvector_const(&right)? as i32))
+            }
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            let left = simp_bitvector(left);
+            let right = simp_bitvector(right);
+            if left == right {
+                Some(true)
+            } else {
+                Some(
+                    (simp_bitvector_const(&left)? as i32) <= (simp_bitvector_const(&right)? as i32),
+                )
+            }
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            let left = simp_bitvector(left);
+            let right = simp_bitvector(right);
+            if left == right {
+                Some(false)
+            } else {
+                Some((simp_bitvector_const(&left)? as i32) > (simp_bitvector_const(&right)? as i32))
+            }
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            let left = simp_bitvector(left);
+            let right = simp_bitvector(right);
+            if left == right {
+                Some(true)
+            } else {
+                Some(
+                    (simp_bitvector_const(&left)? as i32) >= (simp_bitvector_const(&right)? as i32),
+                )
+            }
+        }
+        ConditionTerm::Variable(_)
+        | ConditionTerm::Bitvector32SignedAddOverflows(_, _)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(_, _)
+        | ConditionTerm::PointerOffsetEqual(_, _) => None,
+    }
+}
+
+fn simp_bitvector_const(term: &Bitvector32Term) -> Option<u32> {
+    match term {
+        Bitvector32Term::Constant(value) => Some(*value),
+        Bitvector32Term::Variable(_) | Bitvector32Term::MemoryLoad(_, _) => None,
+        Bitvector32Term::Add(left, right) => {
+            Some(simp_bitvector_const(left)?.wrapping_add(simp_bitvector_const(right)?))
+        }
+        Bitvector32Term::Subtract(left, right) => {
+            Some(simp_bitvector_const(left)?.wrapping_sub(simp_bitvector_const(right)?))
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            Some(simp_bitvector_const(left)?.wrapping_mul(simp_bitvector_const(right)?))
+        }
+    }
+}
+
+fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32Term {
+    match term {
+        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
+        Bitvector32Term::Add(left, right) => {
+            bitvector32_add(simp_bitvector(left), simp_bitvector(right))
+        }
+        Bitvector32Term::Subtract(left, right) => {
+            bitvector32_subtract(simp_bitvector(left), simp_bitvector(right))
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            bitvector32_multiply(simp_bitvector(left), simp_bitvector(right))
+        }
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            Bitvector32Term::MemoryLoad(memory.clone(), pointer.clone())
+        }
+    }
 }
 
 fn prove_effect_clause(
@@ -3446,6 +3898,11 @@ impl Parser {
                 self.expect(Token::Semicolon)?;
                 Ok(Tactic::Auto)
             }
+            Some("simp") => {
+                self.position += 1;
+                self.expect(Token::Semicolon)?;
+                Ok(Tactic::Simp)
+            }
             Some(keyword) => Err(self.error(format!("expected tactic, got `{keyword}`"))),
             None => Err(self.error("expected tactic")),
         }
@@ -3926,6 +4383,15 @@ mod tests {
     }
 
     #[test]
+    fn parses_simp_tactic() {
+        let source = FILL3_CLICK.replace("by auto", "by simp");
+        let file = parse(&source).expect("sidecar should parse");
+        let ensure = &file.function_blocks()[0].ensures()[0];
+
+        assert!(matches!(ensure.proof().tactic(), Some(Tactic::Simp)));
+    }
+
+    #[test]
     fn parses_memory_postcondition() {
         let source = FILL3_CLICK.replace("result == 2", "p[2] == 2");
         let file = parse(&source).expect("sidecar should parse");
@@ -4075,6 +4541,90 @@ mod tests {
             .expect("proposition logic should verify");
 
         assert_eq!(verified.len(), 2);
+    }
+
+    #[test]
+    fn verifies_simp_normalizes_simple_postconditions() {
+        let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+        let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures add_zero: result == x + 0 by simp;
+                ensures prop_simp: result == x and not (result != x) by simp;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("identity.c", c_source)])
+            .expect("simp should prove local normalized postconditions");
+
+        assert_eq!(verified.len(), 2);
+        assert_eq!(verified[0].proof_kind(), ProofKind::Simp);
+        assert_eq!(verified[1].proof_kind(), ProofKind::Simp);
+    }
+
+    #[test]
+    fn simp_rejects_effect_clauses() {
+        let c_source = r#"
+            int32 zero() {
+                return 0;
+            }
+        "#;
+        let click_source = r#"
+            verifying "zero.c";
+
+            int32 zero() {
+                immutable by simp;
+                ensures returns_zero: result == 0 by auto;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("zero.c", c_source)])
+            .expect_err("simp should not prove effect clauses");
+
+        assert!(
+            error
+                .message()
+                .contains("`simp` does not prove effect clauses"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn simp_rejects_loop_backed_claims() {
+        let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                ensures returns_three: result == 3 by simp;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
+            .expect_err("simp should not run loop verification");
+
+        assert!(
+            error
+                .message()
+                .contains("`simp` does not prove loop-backed claims"),
+            "{}",
+            error.message()
+        );
     }
 
     #[test]
@@ -4394,7 +4944,7 @@ mod tests {
             .expect("loop invariants and statement assert should verify");
 
         assert_eq!(verified.len(), 1);
-        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
+        assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
     }
 
     #[test]
@@ -4465,7 +5015,7 @@ mod tests {
             .expect("old memory segment loop invariant should verify");
 
         assert_eq!(verified.len(), 1);
-        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
+        assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
     }
 
     #[test]
@@ -4500,7 +5050,7 @@ mod tests {
             .expect("segment valid_range should verify symbolic pointer loop");
 
         assert_eq!(verified.len(), 1);
-        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
+        assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
     }
 
     #[test]
@@ -4536,7 +5086,7 @@ mod tests {
             .expect("symbolic pointer loop writes should stay inside segment");
 
         assert_eq!(verified.len(), 2);
-        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
+        assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
     }
 
     #[test]
@@ -4572,7 +5122,7 @@ mod tests {
             .expect("loop-level mutable segment should verify each iteration");
 
         assert_eq!(verified.len(), 1);
-        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
+        assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
     }
 
     #[test]
@@ -4608,7 +5158,7 @@ mod tests {
             .expect("loop-level mutable segment should support one-cell iteration ranges");
 
         assert_eq!(verified.len(), 1);
-        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
+        assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
     }
 
     #[test]
@@ -4733,7 +5283,7 @@ mod tests {
             .expect("loop-level immutable should allow stack-local updates");
 
         assert_eq!(verified.len(), 1);
-        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
+        assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
     }
 
     #[test]
@@ -4779,7 +5329,7 @@ mod tests {
             .expect("symbolic copy loop should prove copied segment invariant");
 
         assert_eq!(verified.len(), 2);
-        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
+        assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
     }
 
     #[test]

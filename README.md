@@ -205,6 +205,24 @@ first frame facts outside a loop write footprint. `auto` also supports
 proposition-level loop invariants, including bounded universal quantifiers over
 current-state array reads.
 
+Proof clauses currently support two tactics:
+
+```text
+by simp;
+by auto;
+```
+
+`simp` is deterministic local normalization. It simplifies proposition
+connectives, constant and reflexive integer comparisons, and small arithmetic
+forms such as `x + 0`. In this first version, `simp` is only accepted for
+straight-line function postconditions; it does not prove effects, generate loop
+verification conditions, infer frame facts, or instantiate quantified loop
+invariants. `auto` is the broader orchestration tactic: it runs the current
+symbolic-execution and loop-VC workflow, then uses the deterministic kernel
+reasoners to discharge the resulting obligations. The intent is that future
+proof work should add named deterministic steps first, and let `auto` become a
+convenience wrapper around those steps.
+
 Function-level effect clauses are explicit and separate from postconditions:
 
 ```text
@@ -332,6 +350,8 @@ The first memory-safety demos are fixed-size pointer loops:
 - `copy_n_segment_invariant(int32 dst[], int32 src[], int32 n)` proves a
   symbolic copied segment with quantified destination-prefix and source-frame
   invariants.
+- `simp_postconditions(int32 x)` proves straight-line postconditions with
+  deterministic local simplification.
 
 The fixed-size pointer demos use 12-byte backing blocks and prove without
 leftover memory-safety premises. The symbolic pointer-loop demos instead use
