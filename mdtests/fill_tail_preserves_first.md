@@ -20,15 +20,12 @@ int32 fill_tail_preserves_first(int32 p[], int32 n) {
 verifying "fill_tail_preserves_first.c";
 
 int32 fill_tail_preserves_first(int32 p[], int32 n) {
-    requires n >= 1;
-    requires n <= 2147483647;
+    requires n >= 1 and n <= 2147483647;
     requires valid_range(p, n * 4);
     at loop 0 {
-        invariant i >= 1 by auto;
-        invariant i <= n by auto;
+        invariant i >= 1 and i <= n by auto;
     }
-    ensures preserves_first: p[0] == old(p[0]) by auto;
-    ensures returns_n: result == n by auto;
+    ensures frame_and_result: p[0] == old(p[0]) and result == n by auto;
 }
 ```
 

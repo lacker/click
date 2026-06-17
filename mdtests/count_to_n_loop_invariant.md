@@ -18,13 +18,11 @@ int32 count_to_n_loop_invariant(int32 n) {
 verifying "count_to_n_loop_invariant.c";
 
 int32 count_to_n_loop_invariant(int32 n) {
-    requires n >= 0;
-    requires n <= 2147483647;
+    requires n >= 0 and n <= 2147483647;
     at loop 0 {
-        invariant i >= 0 by auto;
-        invariant i <= n by auto;
+        invariant i >= 0 and i <= n by auto;
     }
-    ensures returns_n: result == n by auto;
+    ensures returns_n: result == n and result >= 0 by auto;
 }
 ```
 

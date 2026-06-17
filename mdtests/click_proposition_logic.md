@@ -14,8 +14,9 @@ int32 identity_prop(int32 x) {
 verifying "identity_prop.c";
 
 int32 identity_prop(int32 x) {
+    requires x >= 0;
     ensures prop_logic: result == x and not (result != x) by auto;
-    ensures prop_implies: result == x implies result == x by auto;
+    ensures prop_implies: result == x implies result >= 0 by auto;
 }
 ```
 
