@@ -330,8 +330,6 @@ pub fn verify_c0_sources(
             })?;
         check_signature(&function_block.signature, parsed_function, source_path)?;
         validate_at_clauses(&function_block, parsed_function)?;
-        let function = annotated_function(&function_block, parsed_function)?;
-
         for (ensure_index, ensure_clause) in function_block.ensures.iter().enumerate() {
             let ensure_label =
                 ensure_label(function_block.signature.name(), ensure_clause, ensure_index);
@@ -346,6 +344,8 @@ pub fn verify_c0_sources(
                 function_block.requires(),
                 parsed_function.parameters(),
             )?;
+            let function =
+                annotated_function(&function_block, parsed_function, &state, &arguments)?;
             let assumptions = assumptions_from_propositions(&requirement_propositions);
             let vc_execution = prove_symbolic_c_function_verification_paths_with_environment(
                 state.clone(),
@@ -751,9 +751,14 @@ fn validate_at_clauses(
 fn annotated_function(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
+    entry_state: &CState,
+    arguments: &[CExpression],
 ) -> Result<CFunction, ClickError> {
     let mut lowerer = AnnotationLowerer {
         at_clauses: function_block.at_clauses(),
+        entry_state,
+        entry_values: parameter_values(parsed_function.parameters(), arguments)?,
+        quantified_values: BTreeMap::new(),
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_000_000,
@@ -773,6 +778,9 @@ fn annotated_function(
 
 struct AnnotationLowerer<'a> {
     at_clauses: &'a [AtClause],
+    entry_state: &'a CState,
+    entry_values: BTreeMap<String, CValue>,
+    quantified_values: BTreeMap<String, CValue>,
     loop_index: usize,
     statement_index: usize,
     next_quantifier_variable: u64,
@@ -888,13 +896,9 @@ impl AnnotationLowerer<'_> {
                 operator,
                 right,
             } => Ok(CProposition::Comparison {
-                left: contract_expression_to_current_c_expression(left).ok_or_else(|| {
-                    "`old(...)` is not supported inside loop invariants".to_string()
-                })?,
+                left: self.lower_invariant_contract_expression(left)?,
                 operator: c_comparison_operator(*operator),
-                right: contract_expression_to_current_c_expression(right).ok_or_else(|| {
-                    "`old(...)` is not supported inside loop invariants".to_string()
-                })?,
+                right: self.lower_invariant_contract_expression(right)?,
             }),
             ClickProposition::And(left, right) => Ok(CProposition::And(
                 Box::new(self.click_proposition_to_c_proposition(left)?),
@@ -917,12 +921,124 @@ impl AnnotationLowerer<'_> {
                 }
                 let variable = Variable(self.next_quantifier_variable);
                 self.next_quantifier_variable += 1;
+                let previous = self.quantified_values.insert(
+                    name.clone(),
+                    CValue::Int32(Bitvector32Term::Variable(variable)),
+                );
+                let body = self.click_proposition_to_c_proposition(body)?;
+                match previous {
+                    Some(value) => {
+                        self.quantified_values.insert(name.clone(), value);
+                    }
+                    None => {
+                        self.quantified_values.remove(name);
+                    }
+                }
                 Ok(CProposition::ForAllInt32 {
                     name: name.clone(),
                     variable,
-                    body: Box::new(self.click_proposition_to_c_proposition(body)?),
+                    body: Box::new(body),
                 })
             }
+        }
+    }
+
+    fn lower_invariant_contract_expression(
+        &self,
+        expression: &ContractExpression,
+    ) -> Result<CExpression, String> {
+        match expression {
+            ContractExpression::Current(expression) => {
+                self.lower_current_invariant_c_expression(expression)
+            }
+            ContractExpression::Old(expression) => Ok(CExpression::Value(
+                self.evaluate_old_invariant_c_expression(expression)?,
+            )),
+            ContractExpression::Add(left, right) => Ok(CExpression::Add(
+                Box::new(self.lower_invariant_contract_expression(left)?),
+                Box::new(self.lower_invariant_contract_expression(right)?),
+            )),
+            ContractExpression::Subtract(left, right) => Ok(CExpression::Subtract(
+                Box::new(self.lower_invariant_contract_expression(left)?),
+                Box::new(self.lower_invariant_contract_expression(right)?),
+            )),
+            ContractExpression::Index(base, index) => Ok(CExpression::Index(
+                Box::new(self.lower_invariant_contract_expression(base)?),
+                Box::new(self.lower_invariant_contract_expression(index)?),
+            )),
+        }
+    }
+
+    fn lower_current_invariant_c_expression(
+        &self,
+        expression: &CExpression,
+    ) -> Result<CExpression, String> {
+        match expression {
+            CExpression::Value(value) => Ok(CExpression::Value(value.clone())),
+            CExpression::Variable(name) => Ok(self
+                .quantified_values
+                .get(name)
+                .cloned()
+                .map(CExpression::Value)
+                .unwrap_or_else(|| CExpression::Variable(name.clone()))),
+            CExpression::Add(left, right) => Ok(CExpression::Add(
+                Box::new(self.lower_current_invariant_c_expression(left)?),
+                Box::new(self.lower_current_invariant_c_expression(right)?),
+            )),
+            CExpression::Subtract(left, right) => Ok(CExpression::Subtract(
+                Box::new(self.lower_current_invariant_c_expression(left)?),
+                Box::new(self.lower_current_invariant_c_expression(right)?),
+            )),
+            CExpression::Index(base, index) => Ok(CExpression::Index(
+                Box::new(self.lower_current_invariant_c_expression(base)?),
+                Box::new(self.lower_current_invariant_c_expression(index)?),
+            )),
+            expression => Err(format!(
+                "unsupported expression in loop invariant: `{expression:?}`"
+            )),
+        }
+    }
+
+    fn evaluate_old_invariant_c_expression(
+        &self,
+        expression: &CExpression,
+    ) -> Result<CValue, String> {
+        match expression {
+            CExpression::Value(value) => Ok(value.clone()),
+            CExpression::Variable(name) if name == "result" => {
+                Err("`result` is not available inside `old(...)`".to_string())
+            }
+            CExpression::Variable(name) => self
+                .quantified_values
+                .get(name)
+                .or_else(|| self.entry_values.get(name))
+                .cloned()
+                .ok_or_else(|| format!("unknown old-state variable `{name}`")),
+            CExpression::Add(left, right) => {
+                let left = self.evaluate_old_invariant_c_expression(left)?;
+                let right = self.evaluate_old_invariant_c_expression(right)?;
+                evaluate_postcondition_add(left, right)
+            }
+            CExpression::Subtract(left, right) => {
+                let left = self.evaluate_old_invariant_c_expression(left)?;
+                let right = self.evaluate_old_invariant_c_expression(right)?;
+                evaluate_postcondition_sub(left, right)
+            }
+            CExpression::Index(base, index) => {
+                let base = self.evaluate_old_invariant_c_expression(base)?;
+                let index = self.evaluate_old_invariant_c_expression(index)?;
+                let pointer = evaluate_postcondition_pointer_add(base, index)?;
+                Ok(match self.entry_state.memory().load(&pointer) {
+                    crate::megakernel::CExpressionOutcome::Value(value) => value,
+                    _ => CValue::Int32(Bitvector32Term::MemoryLoad(
+                        Box::new(self.entry_state.memory().clone()),
+                        Box::new(pointer),
+                    )),
+                })
+            }
+            expression => Err(format!(
+                "unsupported expression inside loop invariant `old(...)`: `{expression:?}`"
+            )),
         }
     }
 
@@ -3391,6 +3507,39 @@ mod tests {
 
         let verified = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
             .expect("loop invariants and statement assert should verify");
+
+        assert_eq!(verified.len(), 1);
+    }
+
+    #[test]
+    fn verifies_old_memory_loop_invariant() {
+        let c_source = r#"
+            int32 fill_tail(int32 p[], int32 n) {
+                int32 i;
+                i = 1;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_tail.c";
+
+            int32 fill_tail(int32 p[], int32 n) {
+                requires n >= 1 and n <= 2147483647;
+                requires valid_range(p, n * 4);
+                at loop 0 {
+                    invariant i >= 1 and i <= n by auto;
+                    invariant p[0] == old(p[0]) by auto;
+                }
+                ensures frame_and_result: p[0] == old(p[0]) and result == n by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("fill_tail.c", c_source)])
+            .expect("old memory loop invariant should verify");
 
         assert_eq!(verified.len(), 1);
     }

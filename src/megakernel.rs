@@ -397,6 +397,7 @@ pub struct ProofObligation {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct PathFact {
     proposition: Proposition,
+    public: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1700,9 +1701,15 @@ impl Assumptions {
     }
 
     fn proves_condition_from_facts(&self, condition: &ConditionTerm, value: bool) -> bool {
-        self.prop_facts
+        self.condition_facts
             .iter()
-            .any(|proposition| self.proposition_proves_condition(proposition, condition, value))
+            .any(|(fact_condition, fact_value)| {
+                fact_value == &value && self.condition_matches(fact_condition, condition)
+            })
+            || self
+                .prop_facts
+                .iter()
+                .any(|proposition| self.proposition_proves_condition(proposition, condition, value))
     }
 
     fn proposition_proves_condition(
@@ -1961,7 +1968,17 @@ impl ProofObligation {
 
 impl PathFact {
     pub fn new(proposition: Proposition) -> Self {
-        Self { proposition }
+        Self {
+            proposition,
+            public: true,
+        }
+    }
+
+    fn internal(proposition: Proposition) -> Self {
+        Self {
+            proposition,
+            public: false,
+        }
     }
 
     pub fn condition(condition: ConditionTerm, value: bool) -> Self {
@@ -1970,6 +1987,10 @@ impl PathFact {
 
     pub fn proposition(&self) -> &Proposition {
         &self.proposition
+    }
+
+    fn is_public(&self) -> bool {
+        self.public
     }
 }
 
@@ -2386,6 +2407,7 @@ pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
     let paths = paths
         .into_iter()
         .map(|path| {
+            let facts = public_path_facts(&path.facts);
             let proposition = Proposition::CStatementExecutes {
                 state: state.clone(),
                 statement: statement.clone(),
@@ -2394,11 +2416,11 @@ pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
             let theorem = Theorem::new(wrap_proof_facts(
                 proposition,
                 &assumptions,
-                &path.facts,
+                &facts,
                 &path.obligations,
             ));
             SymbolicCExecutionPath {
-                facts: path.facts,
+                facts,
                 obligations: path.obligations,
                 theorem,
             }
@@ -2560,6 +2582,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
     let paths = paths
         .into_iter()
         .map(|path| {
+            let facts = public_path_facts(&path.facts);
             let proposition = Proposition::CFunctionExecutes {
                 state: state.clone(),
                 function: function.clone(),
@@ -2569,11 +2592,11 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
             let theorem = Theorem::new(wrap_proof_facts(
                 proposition,
                 &assumptions,
-                &path.facts,
+                &facts,
                 &path.obligations,
             ));
             SymbolicCExecutionPath {
-                facts: path.facts,
+                facts,
                 obligations: path.obligations,
                 theorem,
             }
@@ -2629,6 +2652,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
     let paths = paths
         .into_iter()
         .map(|path| {
+            let facts = public_path_facts(&path.facts);
             let proposition = Proposition::CFunctionExecutes {
                 state: state.clone(),
                 function: function.clone(),
@@ -2638,11 +2662,11 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
             let theorem = Theorem::new(wrap_proof_facts(
                 proposition,
                 &assumptions,
-                &path.facts,
+                &facts,
                 &path.obligations,
             ));
             SymbolicCExecutionPath {
-                facts: path.facts,
+                facts,
                 obligations: path.obligations,
                 theorem,
             }
@@ -2708,7 +2732,7 @@ pub fn prove_c_function_satisfies_specification_with_environment(
     let mut paths = paths.into_iter();
     let path = paths.next()?;
     if paths.next().is_some()
-        || !path.facts.is_empty()
+        || path.facts.iter().any(PathFact::is_public)
         || !path.obligations.is_empty()
         || &path.outcome != specification.outcome()
     {
@@ -3418,9 +3442,13 @@ fn wrap_proof_facts(
             Proposition::Implies(Box::new(obligation.proposition().clone()), Box::new(body))
         });
 
-    let proposition = facts.iter().rev().fold(proposition, |body, fact| {
-        Proposition::Implies(Box::new(fact.proposition().clone()), Box::new(body))
-    });
+    let proposition = facts
+        .iter()
+        .filter(|fact| fact.is_public())
+        .rev()
+        .fold(proposition, |body, fact| {
+            Proposition::Implies(Box::new(fact.proposition().clone()), Box::new(body))
+        });
 
     let proposition = assumptions
         .prop_facts
@@ -3440,6 +3468,14 @@ fn wrap_proof_facts(
                 Box::new(body),
             )
         })
+}
+
+fn public_path_facts(facts: &[PathFact]) -> Vec<PathFact> {
+    facts
+        .iter()
+        .filter(|fact| fact.is_public())
+        .cloned()
+        .collect()
 }
 
 fn solve_builtin_prop(proposition: &Proposition) -> bool {
@@ -3520,6 +3556,23 @@ fn add_path_fact(
     assumptions: &Assumptions,
     proposition: Proposition,
 ) -> Option<()> {
+    add_path_fact_with_visibility(facts, assumptions, proposition, true)
+}
+
+fn add_internal_path_fact(
+    facts: &mut Vec<PathFact>,
+    assumptions: &Assumptions,
+    proposition: Proposition,
+) -> Option<()> {
+    add_path_fact_with_visibility(facts, assumptions, proposition, false)
+}
+
+fn add_path_fact_with_visibility(
+    facts: &mut Vec<PathFact>,
+    assumptions: &Assumptions,
+    proposition: Proposition,
+    public: bool,
+) -> Option<()> {
     if let Proposition::ConditionIs(condition, value) = proposition {
         return add_condition_path_fact(facts, assumptions, condition, value);
     }
@@ -3529,7 +3582,11 @@ fn add_path_fact(
         return Some(());
     }
 
-    facts.push(PathFact::new(proposition));
+    facts.push(if public {
+        PathFact::new(proposition)
+    } else {
+        PathFact::internal(proposition)
+    });
     Some(())
 }
 
@@ -3728,7 +3785,12 @@ fn merge_facts(
 ) -> Option<Vec<PathFact>> {
     let mut facts = left.to_vec();
     for fact in right {
-        add_path_fact(&mut facts, assumptions, fact.proposition().clone())?;
+        add_path_fact_with_visibility(
+            &mut facts,
+            assumptions,
+            fact.proposition().clone(),
+            fact.is_public(),
+        )?;
     }
     Some(facts)
 }
@@ -5536,8 +5598,23 @@ fn write_c_lvalue_paths(
             ) else {
                 return Vec::new();
             };
+            let before_memory = state.memory.clone();
             let mut state = state.clone();
             state.memory = state.memory.store(pointer.clone(), value.clone());
+            let mut facts = facts;
+            if add_internal_path_fact(
+                &mut facts,
+                assumptions,
+                Proposition::CMemoryWritesOnly {
+                    before: before_memory,
+                    after: state.memory.clone(),
+                    pointers: vec![pointer.clone()],
+                },
+            )
+            .is_none()
+            {
+                return Vec::new();
+            }
             if let Some(name) = local_name_from_pointer(&pointer) {
                 if state.locals.get(name).is_some() {
                     state.locals.set(name.to_string(), value);

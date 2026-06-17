@@ -209,7 +209,8 @@ execution for finite concrete-loop demos.
 `assert` and `invariant` clauses parse the same proposition syntax. `assert`
 currently accepts only the executable fragment: comparisons, `and`, `or`, `not`,
 and `implies` over current-state C0 expressions. `invariant` accepts
-current-state propositions, including `forall (int32 name) { ... }`.
+propositions including `forall (int32 name) { ... }`, and `old(...)` inside an
+invariant refers to the enclosing function's entry state.
 
 The sidecar also has first structural labels for intra-function proof
 obligations:
@@ -240,9 +241,10 @@ safety with `valid_range(p, n * 4)`. Pointer-writing loops now produce a fresh
 unknown heap state instead of implicitly preserving old memory. Written-segment
 postconditions can be proved with explicit quantified invariants such as
 `forall (int32 k) { 0 <= k and k < i implies p[k] == k }`. Old-memory frame
-proofs across pointer-writing loops need a future two-state invariant or frame
-clause design; the current fixed-size pointer demos continue to use bounded
-execution for some final memory facts.
+proofs across pointer-writing loops can be proved by making the old-memory fact
+an explicit invariant, such as `invariant p[0] == old(p[0]) by auto;`. The
+current fixed-size pointer demos continue to use bounded execution for some
+final memory facts.
 
 ## Markdown Tests
 
@@ -287,6 +289,8 @@ The first memory-safety demos are fixed-size pointer loops:
   loop safety and `result == n` using `valid_range(p, n * 4)`.
 - `fill_n_segment_invariant(int32 p[], int32 n)` proves a quantified
   written-segment postcondition from a quantified loop invariant.
+- `fill_tail_preserves_first(int32 p[], int32 n)` proves an old-memory frame
+  postcondition from an explicit loop invariant using `old(...)`.
 
 The fixed-size pointer demos use 12-byte backing blocks and prove without
 leftover memory-safety premises. The symbolic pointer-loop demos instead use
@@ -301,8 +305,8 @@ can also prove post-state memory guarantees such as
    invariants and memory-changing proofs. The first written-segment invariant
    path works for `fill_n_segment_invariant`.
 2. Extend memory-changing loop verification with explicit memory invariants and
-   more general frame reasoning, including the Click-language shape of
-   two-state invariants or frame clauses that can mention `old(...)`.
+   more general frame reasoning, including whether Click should have a compact
+   frame clause syntax in addition to explicit `old(...)` invariants.
 3. Improve fact management inside `auto`, especially using requirements,
    invariants, and path facts to prove postconditions without bounded fallback.
 4. Grow C-native memory objects: local arrays, richer pointer ranges, and
