@@ -175,8 +175,8 @@ mismatch is reported directly. Function-level `requires` clauses are shared by
 all guarantees. Each `ensures` clause is a separately proven guarantee with its
 own `by` proof clause. For now, `requires` supports `valid_range(pointer,
 bytes)` with concrete byte counts or small byte-count expressions such as
-`n * 4`, plus Click propositions over parameters and literals. `ensures`,
-`assert`, and `invariant` clauses also use Click proposition syntax:
+`n * 4`, plus Click propositions over parameters and literals. `ensures`
+clauses use Click proposition syntax:
 
 ```text
 result == x and not (result != x)
@@ -199,6 +199,12 @@ annotated loops, checks the postcondition clause, and packages the result as a
 megakernel `CFunctionSpecification` theorem. If the loop VC path cannot prove a
 postcondition but leaves no invariant obligations, `auto` can still use bounded
 execution for finite concrete-loop demos.
+
+`assert` and `invariant` clauses parse the same proposition syntax, but
+currently accept only the executable fragment: comparisons, `and`, `or`, `not`,
+and `implies` over current-state C0 expressions. Quantified `forall`
+propositions are accepted in function requirements and guarantees, but not yet
+inside `at` clauses.
 
 The sidecar also has first structural labels for intra-function proof
 obligations:
@@ -276,25 +282,31 @@ The first memory-safety demos are fixed-size pointer loops:
 - `fill_tail_preserves_first(int32 p[], int32 n)` proves a symbolic
   memory-mutating loop preserves `p[0]` while writing `p[i]` for `i >= 1`.
 
-With 12-byte backing blocks, the megakernel proves these executions without
-leftover memory-safety premises. The sidecar can also prove post-state memory
-guarantees such as `ensures p[2] == 2 by auto;` and simple preservation
-guarantees such as `ensures p[0] == old(p[0]) by auto;`.
+The fixed-size pointer demos use 12-byte backing blocks and prove without
+leftover memory-safety premises. The symbolic pointer-loop demos instead use
+requirements such as `valid_range(p, n * 4)` plus loop invariants. The sidecar
+can also prove post-state memory guarantees such as
+`ensures p[2] == 2 by auto;` and simple preservation guarantees such as
+`ensures p[0] == old(p[0]) by auto;`.
 
 ## Near-Term Roadmap
 
-1. Split `src/megakernel.rs` into smaller modules without changing semantics.
-2. Expand the `.click` sidecar language just enough to express more realistic
-   C specifications: named preconditions, multiple ensures clauses, structural `at`
-   labels, and simple symbolic arguments.
-3. Add richer C integer coverage: unsigned operations, more widths, casts, and
+1. Add quantified array-segment reasoning, starting from parsed/lowered
+   `forall` guarantees that `auto` cannot prove yet.
+2. Extend memory-changing loop verification with explicit memory invariants and
+   more general frame reasoning.
+3. Improve fact management inside `auto`, especially using requirements,
+   invariants, and path facts to prove postconditions without bounded fallback.
+4. Grow C-native memory objects: local arrays, richer pointer ranges, and
+   clearer frame conditions.
+5. Add richer C integer coverage: unsigned operations, more widths, casts, and
    promotion rules.
-4. Extend loop verification from scalar locals to memory-changing loops with
-   explicit memory invariants and frame reasoning.
-5. Grow memory reasoning toward real local arrays, pointer ranges, and frame
-   conditions.
-6. Replace the toy C0 parser with a path toward real C parsing when the proof
+6. Expand modular function-contract reasoning so call sites can use proven
+   requirements and guarantees without inlining every function body.
+7. Replace the toy C0 parser with a path toward real C parsing when the proof
    model is ready for it.
+8. Split `src/megakernel.rs` into smaller modules when that helps development,
+   without changing semantics.
 
 ## Verification
 
