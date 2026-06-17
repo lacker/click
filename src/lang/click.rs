@@ -212,10 +212,11 @@ pub enum Proof {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofStep {}
 
-/// A heuristic `.click` tactic.
+/// A `.click` tactic.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Tactic {
     Auto,
+    Frame,
     Simp,
 }
 
@@ -237,6 +238,7 @@ pub enum VerifiedClaim {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProofKind {
+    Frame,
     Simp,
     LoopVerification,
     BoundedExecution,
@@ -366,6 +368,14 @@ impl Proof {
         matches!(self, Self::Tactic(Tactic::Auto))
     }
 
+    pub fn is_frame_tactic(&self) -> bool {
+        matches!(self, Self::Tactic(Tactic::Frame))
+    }
+
+    pub fn is_auto_or_frame_tactic(&self) -> bool {
+        self.is_auto_tactic() || self.is_frame_tactic()
+    }
+
     pub fn tactic(&self) -> Option<&Tactic> {
         match self {
             Self::Tactic(tactic) => Some(tactic),
@@ -443,6 +453,17 @@ pub fn verify_c0_sources(
             match claim.proof().tactic() {
                 Some(Tactic::Auto) => {
                     let theorems = prove_claim_by_auto(
+                        source_path,
+                        &function_block,
+                        parsed_function,
+                        &claim,
+                        &claim_label,
+                        &function_environment,
+                    )?;
+                    verified.extend(theorems);
+                }
+                Some(Tactic::Frame) => {
+                    let theorems = prove_claim_by_frame(
                         source_path,
                         &function_block,
                         parsed_function,
@@ -594,6 +615,58 @@ fn prove_claim_by_auto(
     )
 }
 
+fn prove_claim_by_frame(
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claim: &FunctionClaimRef<'_>,
+    claim_label: &str,
+    function_environment: &CFunctionEnvironment,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    if matches!(claim, FunctionClaimRef::Ensure(_, _)) {
+        return Err(ClickError::new(format!(
+            "`frame` only proves effect clauses for `{claim_label}`; use `by auto;` or `by simp;` for postconditions"
+        )));
+    }
+
+    let (state, arguments, requirement_propositions) = initial_call(
+        function_block.signature.name(),
+        function_block.requires(),
+        parsed_function.parameters(),
+    )?;
+    let function = annotated_function(function_block, parsed_function, &state, &arguments)?;
+    let assumptions = assumptions_from_propositions(&requirement_propositions);
+    let execution = prove_symbolic_c_function_verification_paths_with_environment(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        assumptions,
+        function_environment.clone(),
+    );
+    if let Some(error) = execution_obligation_error_for_tactic(
+        "frame",
+        &execution,
+        claim_label,
+        &requirement_propositions,
+    ) {
+        return Err(error);
+    }
+
+    prove_claim_from_execution(
+        &execution,
+        AutoExecutionKind::Frame,
+        source_path,
+        function_block,
+        claim,
+        claim_label,
+        parsed_function.parameters(),
+        &function,
+        &state,
+        &arguments,
+        &requirement_propositions,
+    )
+}
+
 fn prove_claim_by_simp(
     source_path: &str,
     function_block: &FunctionBlock,
@@ -701,6 +774,7 @@ fn prove_claim_by_simp(
 }
 
 enum AutoExecutionKind<'a> {
+    Frame,
     LoopVerification,
     BoundedExecution {
         environment: &'a CFunctionEnvironment,
@@ -710,8 +784,16 @@ enum AutoExecutionKind<'a> {
 impl AutoExecutionKind<'_> {
     fn proof_kind(&self) -> ProofKind {
         match self {
+            Self::Frame => ProofKind::Frame,
             Self::LoopVerification => ProofKind::LoopVerification,
             Self::BoundedExecution { .. } => ProofKind::BoundedExecution,
+        }
+    }
+
+    fn tactic_name(&self) -> &'static str {
+        match self {
+            Self::Frame => "frame",
+            Self::LoopVerification | Self::BoundedExecution { .. } => "auto",
         }
     }
 }
@@ -721,21 +803,30 @@ fn execution_obligation_error(
     ensure_label: &str,
     requirement_propositions: &[Proposition],
 ) -> Option<ClickError> {
+    execution_obligation_error_for_tactic("auto", execution, ensure_label, requirement_propositions)
+}
+
+fn execution_obligation_error_for_tactic(
+    tactic_name: &str,
+    execution: &crate::megakernel::SymbolicCExecution,
+    ensure_label: &str,
+    requirement_propositions: &[Proposition],
+) -> Option<ClickError> {
     if let Some(limit) = execution.limit() {
         return Some(ClickError::new(format!(
-            "`auto` hit execution limit {limit:?} for `{ensure_label}`"
+            "`{tactic_name}` hit execution limit {limit:?} for `{ensure_label}`"
         )));
     }
     if execution.paths().is_empty() {
         return Some(ClickError::new(format!(
-            "`auto` could not prove any complete execution path for `{ensure_label}`"
+            "`{tactic_name}` could not prove any complete execution path for `{ensure_label}`"
         )));
     }
 
     for (path_index, path) in execution.paths().iter().enumerate() {
         if !path.obligations().is_empty() {
             return Some(ClickError::new(format!(
-                "`auto` failed for `{ensure_label}` path {path_index}: remaining proof obligations: {}\n  available requirements: {}\n  path facts: {}",
+                "`{tactic_name}` failed for `{ensure_label}` path {path_index}: remaining proof obligations: {}\n  available requirements: {}\n  path facts: {}",
                 describe_obligations(path.obligations()),
                 describe_propositions(&requirement_propositions),
                 describe_facts(path.facts())
@@ -760,14 +851,15 @@ fn prove_claim_from_execution(
     requirement_propositions: &[Proposition],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let proof_kind = execution_kind.proof_kind();
+    let tactic_name = execution_kind.tactic_name();
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
-            "`auto` hit execution limit {limit:?} for `{claim_label}`"
+            "`{tactic_name}` hit execution limit {limit:?} for `{claim_label}`"
         )));
     }
     if execution.paths().is_empty() {
         return Err(ClickError::new(format!(
-            "`auto` could not prove any complete execution path for `{claim_label}`"
+            "`{tactic_name}` could not prove any complete execution path for `{claim_label}`"
         )));
     }
 
@@ -777,7 +869,7 @@ fn prove_claim_from_execution(
             Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
             proposition => {
                 return Err(ClickError::new(format!(
-                    "`auto` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  available requirements: {}\n  path facts: {}",
+                    "`{tactic_name}` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  available requirements: {}\n  path facts: {}",
                     describe_propositions(&requirement_propositions),
                     describe_facts(path.facts())
                 )));
@@ -805,7 +897,7 @@ fn prove_claim_from_execution(
             outcome.clone(),
         );
         let theorem = match execution_kind {
-            AutoExecutionKind::LoopVerification => {
+            AutoExecutionKind::Frame | AutoExecutionKind::LoopVerification => {
                 prove_c_function_satisfies_specification_from_symbolic_path(
                     function.clone(),
                     specification.clone(),
@@ -1034,9 +1126,15 @@ fn validate_structural_clauses(
         }
 
         for item in structural_clause.items() {
-            if !item.proof().is_auto_tactic() {
+            if item.kind() == StructuralItemKind::Effect {
+                if !item.proof().is_auto_or_frame_tactic() {
+                    return Err(ClickError::new(
+                        "`immutable` and `mutable` structural clauses must use `by auto;` or `by frame;`",
+                    ));
+                }
+            } else if !item.proof().is_auto_tactic() {
                 return Err(ClickError::new(
-                    "structural proof blocks must use exactly `by auto;` in this first slice",
+                    "`assert` and `invariant` structural clauses must use exactly `by auto;` in this first slice",
                 ));
             }
             if item.kind() == StructuralItemKind::Assert
@@ -2135,7 +2233,7 @@ fn check_function_claim_by_simp(
             ),
         },
         FunctionClaimRef::Effect(_, _) => Err(ClickError::new(format!(
-            "`simp` does not prove effect clauses for `{claim_label}`; use `by auto;`"
+            "`simp` does not prove effect clauses for `{claim_label}`; use `by frame;` or `by auto;`"
         ))),
     }
 }
@@ -3898,6 +3996,11 @@ impl Parser {
                 self.expect(Token::Semicolon)?;
                 Ok(Tactic::Auto)
             }
+            Some("frame") => {
+                self.position += 1;
+                self.expect(Token::Semicolon)?;
+                Ok(Tactic::Frame)
+            }
             Some("simp") => {
                 self.position += 1;
                 self.expect(Token::Semicolon)?;
@@ -4392,6 +4495,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_frame_tactic() {
+        let source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires valid_range(p, 8);
+                mutable p[1..2] by frame;
+                ensures returns_written: result == 9 by auto;
+            }
+        "#;
+        let file = parse(source).expect("frame tactic should parse");
+        let effect = &file.function_blocks()[0].effects()[0];
+
+        assert!(matches!(effect.proof().tactic(), Some(Tactic::Frame)));
+    }
+
+    #[test]
     fn parses_memory_postcondition() {
         let source = FILL3_CLICK.replace("result == 2", "p[2] == 2");
         let file = parse(&source).expect("sidecar should parse");
@@ -4775,8 +4895,8 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
-                mutable p[1..2] by auto;
-                mutable p[0..2] by auto;
+                mutable p[1..2] by frame;
+                mutable p[0..2] by frame;
                 ensures returns_written: result == 9 by auto;
             }
         "#;
@@ -4789,6 +4909,35 @@ mod tests {
             verified[0].effect_clause().unwrap().effect(),
             Effect::Mutable(_)
         ));
+        assert_eq!(verified[0].proof_kind(), ProofKind::Frame);
+        assert_eq!(verified[1].proof_kind(), ProofKind::Frame);
+    }
+
+    #[test]
+    fn frame_rejects_ensure_clause() {
+        let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+        let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures returns_argument: result == x by frame;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("identity.c", c_source)])
+            .expect_err("frame should not prove postconditions");
+
+        assert!(
+            error
+                .message()
+                .contains("`frame` only proves effect clauses"),
+            "{}",
+            error.message()
+        );
     }
 
     #[test]
@@ -4871,7 +5020,7 @@ mod tests {
             verifying "count_to_one.c";
 
             int32 count_to_one() {
-                immutable by auto;
+                immutable by frame;
                 ensures returns_one: result == 1 by auto;
             }
         "#;
@@ -4880,6 +5029,7 @@ mod tests {
             .expect("stack-local writes should not count as external mutation");
 
         assert_eq!(verified.len(), 2);
+        assert_eq!(verified[0].proof_kind(), ProofKind::Frame);
     }
 
     #[test]
@@ -5148,7 +5298,7 @@ mod tests {
                 loop 0 {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
-                    mutable p[i..i + 1] by auto;
+                    mutable p[i..i + 1] by frame;
                 }
                 ensures returns_n: result == n by auto;
             }
@@ -5273,7 +5423,7 @@ mod tests {
                 loop 0 {
                     invariant i >= 0 by auto;
                     invariant i <= 3 by auto;
-                    immutable by auto;
+                    immutable by frame;
                 }
                 ensures returns_three: result == 3 by auto;
             }
@@ -5284,6 +5434,41 @@ mod tests {
 
         assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
+    }
+
+    #[test]
+    fn structural_invariant_rejects_frame_tactic() {
+        let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                loop 0 {
+                    invariant i >= 0 by frame;
+                }
+                ensures returns_three: result == 3 by auto;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
+            .expect_err("frame should not prove invariants");
+
+        assert!(
+            error
+                .message()
+                .contains("`assert` and `invariant` structural clauses"),
+            "{}",
+            error.message()
+        );
     }
 
     #[test]

@@ -21,7 +21,7 @@ int32 count_to_three_loop_immutable() {
     loop 0 {
         invariant i >= 0 by auto;
         invariant i <= 3 by auto;
-        immutable by auto;
+        immutable by frame;
     }
     ensures returns_three: result == 3 by auto;
 }

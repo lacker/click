@@ -26,7 +26,7 @@ int32 fill_n_mutable_segment(int32 p[], int32 n) {
         invariant i >= 0 by auto;
         invariant i <= n by auto;
     }
-    mutable p[0..n] by auto;
+    mutable p[0..n] by frame;
     ensures returns_n: result == n by auto;
 }
 ```

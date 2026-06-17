@@ -99,15 +99,17 @@ Click uses five core proof-system words:
   or a fixed deterministic sequence of axioms.
 - A **proof** is a `by` clause: either a replayable sequence of proof steps, or
   a tactic call that can later be expanded into proof steps.
-- A **tactic** is a heuristic program that tries to generate a proof. Tactics may
-  search; proof steps should be stable and replayable.
+- A **tactic** is a proof-language procedure that tries to generate a proof.
+  Some tactics are deterministic; others, such as `auto`, may search. Proof
+  steps should be stable and replayable.
 
-The current `.click` proof language has only one tactic, `auto`, and does not
-yet expose explicit proof steps. Function contracts attach `requires` clauses to
-the function and attach a `by` proof clause to each `ensures` guarantee. An
-`ensures` clause can say `by auto;`, or use block form `by { auto; }`. The tactic
-invokes the megakernel's C symbolic-execution axioms and
-specification-checking axioms to prove the named guarantee.
+The current `.click` proof language exposes tactic calls but does not yet expose
+explicit proof steps. Function contracts attach `requires` clauses to the
+function and attach a `by` proof clause to each guarantee. A proof clause can
+say `by auto;`, `by simp;`, or `by frame;`, and can also use block form such as
+`by { auto; }`. These tactics invoke the megakernel's C symbolic-execution,
+frame-checking, simplification, and specification-checking axioms to prove the
+named guarantee.
 
 ## C0 Status
 
@@ -205,10 +207,11 @@ first frame facts outside a loop write footprint. `auto` also supports
 proposition-level loop invariants, including bounded universal quantifiers over
 current-state array reads.
 
-Proof clauses currently support two tactics:
+Proof clauses currently support three tactics:
 
 ```text
 by simp;
+by frame;
 by auto;
 ```
 
@@ -217,18 +220,21 @@ connectives, constant and reflexive integer comparisons, and small arithmetic
 forms such as `x + 0`. In this first version, `simp` is only accepted for
 straight-line function postconditions; it does not prove effects, generate loop
 verification conditions, infer frame facts, or instantiate quantified loop
-invariants. `auto` is the broader orchestration tactic: it runs the current
-symbolic-execution and loop-VC workflow, then uses the deterministic kernel
-reasoners to discharge the resulting obligations. The intent is that future
-proof work should add named deterministic steps first, and let `auto` become a
-convenience wrapper around those steps.
+invariants. `frame` is deterministic effect checking for `immutable` and
+`mutable` clauses. It proves that the actual external writes stay inside the
+declared frame, and rejects ordinary `ensures` postconditions. `auto` is the
+broader orchestration tactic: it runs the current symbolic-execution and loop-VC
+workflow, then uses the deterministic kernel reasoners to discharge the
+resulting obligations. The intent is that future proof work should add named
+deterministic steps first, and let `auto` become a convenience wrapper around
+those steps.
 
 Function-level effect clauses are explicit and separate from postconditions:
 
 ```text
-immutable by auto;
-mutable p[0..n] by auto;
-mutable dst[0..n], counter[0..1] by auto;
+immutable by frame;
+mutable p[0..n] by frame;
+mutable dst[0..n], counter[0..1] by frame;
 ```
 
 `immutable` proves that the function mutates no externally visible memory.
@@ -236,13 +242,15 @@ mutable dst[0..n], counter[0..1] by auto;
 changed by the function falls inside the listed half-open `int32` element
 segment, evaluated against the function-entry parameter values. Multiple
 mutable segments form a union. Local stack bookkeeping and internal havoc
-markers are not part of this external frame check. `auto` checks each guarantee
-on every symbolic execution path. That sidecar path parses C0 source, builds
-the requested initial memory, first tries loop verification conditions for
-annotated loops, checks each postcondition or effect clause, and packages the
-result as a megakernel `CFunctionSpecification` theorem. If the loop VC path
-cannot prove a guarantee but leaves no invariant obligations, `auto` can still
-use bounded execution for finite concrete-loop demos.
+markers are not part of this external frame check. `frame` checks each effect
+guarantee on every symbolic verification path. `auto` can also prove effect
+clauses, and additionally proves ordinary postconditions. That sidecar path
+parses C0 source, builds the requested initial memory, first tries loop
+verification conditions for annotated loops, checks each postcondition or effect
+clause, and packages the result as a megakernel `CFunctionSpecification`
+theorem. If the loop VC path cannot prove a guarantee but leaves no invariant
+obligations, `auto` can still use bounded execution for finite concrete-loop
+demos.
 
 `assert` and `invariant` clauses parse the same proposition syntax. `assert`
 currently accepts only the executable fragment: comparisons, `and`, `or`, `not`,
@@ -261,7 +269,7 @@ statement 2 {
 loop 0 {
     invariant i >= 0 by auto;
     invariant i <= 3 by auto;
-    mutable p[i..i + 1] by auto;
+    mutable p[i..i + 1] by frame;
 }
 ```
 
@@ -272,12 +280,14 @@ conditions: entry checks, one-body preservation checks, and exit facts from the
 invariant plus the false loop condition. `mutable` and `immutable` inside a
 `loop N` block are loop-level effect clauses: they check one body step under
 the current invariant facts and true loop condition. Loop-level `mutable`
-segments are evaluated at the loop head, so `mutable p[i..i + 1] by auto;`
-uses the current iteration's `i`, while function-level `mutable p[0..n] by
-auto;` uses function-entry parameter values. `immutable` means the loop body
-performs no externally visible memory mutation during that step. Failed `auto`
-proofs report the guarantee label, execution path, available requirements, path
-facts, and remaining proof obligations.
+segments are evaluated at the loop head, so `mutable p[i..i + 1] by frame;`
+uses the current iteration's `i`. Function-level mutable clauses use
+function-entry parameter values. Loop-level effect clauses should usually use
+`by frame;`, though `by auto;` is still accepted for compatibility with the
+broader orchestration path. `immutable` means the loop body performs no
+externally visible memory mutation during that step. Failed proof attempts
+report the guarantee label, execution path, available requirements, path facts,
+and remaining proof obligations.
 
 The current loop VC path handles scalar loop locals by assigning fresh symbolic
 values at the loop head. That is enough for proofs such as symbolic
