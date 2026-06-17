@@ -931,6 +931,19 @@ impl CMemory {
         memory
     }
 
+    fn without_possible_aliasing_cells(
+        &self,
+        pointer: &Pointer,
+        assumptions: &Assumptions,
+    ) -> Self {
+        let mut memory = self.clone();
+        memory.cells.retain(|cell_pointer, _| {
+            cell_pointer.block != pointer.block
+                || pointers_proven_distinct(cell_pointer, pointer, assumptions)
+        });
+        memory
+    }
+
     fn first_unresolved_same_block_cell(
         &self,
         pointer: &Pointer,
@@ -1164,6 +1177,42 @@ impl Assumptions {
         self.condition_facts.get(&condition) == Some(&value)
     }
 
+    fn bitvector_terms_equal_from_facts(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![left.clone()];
+        while let Some(term) = stack.pop() {
+            if !seen.insert(term.clone()) {
+                continue;
+            }
+            if &term == right {
+                return true;
+            }
+            for (condition, value) in &self.condition_facts {
+                let (ConditionTerm::Bitvector32Equal(fact_left, fact_right), true) =
+                    (condition, value)
+                else {
+                    continue;
+                };
+                if fact_left.as_ref() == &term {
+                    stack.push(fact_right.as_ref().clone());
+                }
+                if fact_right.as_ref() == &term {
+                    stack.push(fact_left.as_ref().clone());
+                }
+            }
+        }
+
+        false
+    }
+
     fn order_facts_force_equal(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
         self.has_condition_fact(
             ConditionTerm::signed_less_equal(left.clone(), right.clone()),
@@ -1214,7 +1263,9 @@ impl Assumptions {
             ConditionTerm::Bitvector32Equal(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
-                if self.has_condition_fact(ConditionTerm::equal(left.clone(), right.clone()), true)
+                if self.bitvector_terms_equal_from_facts(&left, &right)
+                    || self
+                        .has_condition_fact(ConditionTerm::equal(left.clone(), right.clone()), true)
                     || self
                         .has_condition_fact(ConditionTerm::equal(right.clone(), left.clone()), true)
                     || self.memory_loads_proven_equal(&left, &right)
@@ -1248,14 +1299,15 @@ impl Assumptions {
                         ConditionTerm::equal(right.clone(), left.clone()),
                         false,
                     )
-                    || self.has_condition_fact(
-                        ConditionTerm::signed_less_equal(left.clone(), right.clone()),
-                        true,
-                    ) && self.has_condition_fact(
-                        ConditionTerm::signed_less_than(left.clone(), right.clone()),
-                        false,
-                    )
                 {
+                    Some(false)
+                } else if self.has_condition_fact(
+                    ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+                    true,
+                ) && self.has_condition_fact(
+                    ConditionTerm::signed_less_than(left.clone(), right.clone()),
+                    false,
+                ) {
                     Some(true)
                 } else if self.has_condition_fact(
                     ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
@@ -1587,6 +1639,13 @@ impl Assumptions {
     }
 
     fn memory_loads_proven_equal(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+        if let Some(left) = self.resolve_memory_load_term(left) {
+            return self.bitvector_terms_proven_equal(&left, right);
+        }
+        if let Some(right) = self.resolve_memory_load_term(right) {
+            return self.bitvector_terms_proven_equal(left, &right);
+        }
+
         let (
             Bitvector32Term::MemoryLoad(left_memory, left_pointer),
             Bitvector32Term::MemoryLoad(right_memory, right_pointer),
@@ -1594,7 +1653,7 @@ impl Assumptions {
         else {
             return false;
         };
-        if left_pointer != right_pointer {
+        if !pointers_proven_equal(left_pointer, right_pointer, self) {
             return false;
         }
         if memories_match_for_pointer_load(left_memory, right_memory, left_pointer) {
@@ -1621,6 +1680,45 @@ impl Assumptions {
                     .iter()
                     .all(|pointer| pointers_proven_distinct(pointer, left_pointer, self))
         })
+    }
+
+    fn resolve_memory_load_term(&self, term: &Bitvector32Term) -> Option<Bitvector32Term> {
+        let Bitvector32Term::MemoryLoad(memory, pointer) = term else {
+            return None;
+        };
+        let CValue::Int32(value) = self.resolve_memory_load_value(memory, pointer)? else {
+            return None;
+        };
+        (&value != term).then_some(value)
+    }
+
+    fn resolve_memory_load_value(&self, memory: &CMemory, pointer: &Pointer) -> Option<CValue> {
+        if let Some(value) = memory.known_value(pointer) {
+            return Some(value);
+        }
+
+        let mut unresolved_same_block_cell = false;
+        for (cell_pointer, value) in &memory.cells {
+            if cell_pointer.block != pointer.block {
+                continue;
+            }
+            match self.decide(&ConditionTerm::pointer_offset_equal(
+                cell_pointer.offset.clone(),
+                pointer.offset.clone(),
+            )) {
+                Some(true) => return Some(value.clone()),
+                Some(false) => {}
+                None => unresolved_same_block_cell = true,
+            }
+        }
+
+        if unresolved_same_block_cell {
+            return None;
+        }
+
+        memory
+            .can_load_concretely(pointer, 4)
+            .then(|| memory.symbolic_int32_load(pointer))
     }
 
     fn decide_from_overflow_facts(&self, condition: &ConditionTerm) -> Option<bool> {
@@ -1825,17 +1923,33 @@ impl Assumptions {
     fn is_inconsistent(&self) -> bool {
         let mut order_facts = Vec::new();
         let mut equal_facts = Vec::new();
+        let mut disequal_facts = Vec::new();
         for (condition, value) in &self.condition_facts {
             match (condition, value) {
                 (ConditionTerm::Constant(actual), expected) if actual != expected => return true,
                 (ConditionTerm::Bitvector32Equal(left, right), true) => {
                     equal_facts.push((left.as_ref().clone(), right.as_ref().clone()));
                 }
+                (ConditionTerm::Bitvector32Equal(left, right), false) => {
+                    disequal_facts.push((left.as_ref().clone(), right.as_ref().clone()));
+                }
                 _ => {
                     if let Some(order_fact) = condition_as_order_fact(condition, *value) {
                         order_facts.push(order_fact);
                     }
                 }
+            }
+        }
+
+        for (equal_left, equal_right) in &equal_facts {
+            if disequal_facts
+                .iter()
+                .any(|(disequal_left, disequal_right)| {
+                    (equal_left == disequal_left && equal_right == disequal_right)
+                        || (equal_left == disequal_right && equal_right == disequal_left)
+                })
+            {
+                return true;
             }
         }
 
@@ -1858,6 +1972,10 @@ impl Assumptions {
             {
                 return true;
             }
+        }
+
+        if finite_integer_range_exhausted(&order_facts, &disequal_facts) {
+            return true;
         }
 
         false
@@ -3106,6 +3224,15 @@ fn pointers_proven_distinct(left: &Pointer, right: &Pointer, assumptions: &Assum
         )) == Some(false)
 }
 
+fn pointers_proven_equal(left: &Pointer, right: &Pointer, assumptions: &Assumptions) -> bool {
+    left == right
+        || left.block == right.block
+            && assumptions.decide(&ConditionTerm::pointer_offset_equal(
+                left.offset.clone(),
+                right.offset.clone(),
+            )) == Some(true)
+}
+
 fn memories_match_for_pointer_load(left: &CMemory, right: &CMemory, pointer: &Pointer) -> bool {
     if left == right {
         return true;
@@ -3124,11 +3251,11 @@ fn memories_match_for_pointer_load(left: &CMemory, right: &CMemory, pointer: &Po
         && left
             .cells
             .iter()
-            .filter(|(cell_pointer, _)| !cell_pointer.block.starts_with("local:"))
+            .filter(|(cell_pointer, _)| cell_pointer.block == pointer.block)
             .eq(right
                 .cells
                 .iter()
-                .filter(|(cell_pointer, _)| !cell_pointer.block.starts_with("local:")))
+                .filter(|(cell_pointer, _)| cell_pointer.block == pointer.block))
 }
 
 fn condition_as_order_fact(
@@ -3150,6 +3277,75 @@ fn condition_as_order_fact(
         }
         _ => None,
     }
+}
+
+#[derive(Clone, Debug, Default)]
+struct IntegerRangeFacts {
+    lower: Option<i64>,
+    upper: Option<i64>,
+    excluded: BTreeSet<i64>,
+}
+
+fn finite_integer_range_exhausted(
+    order_facts: &[(Bitvector32Term, Bitvector32Term, bool)],
+    disequal_facts: &[(Bitvector32Term, Bitvector32Term)],
+) -> bool {
+    let mut ranges: BTreeMap<Variable, IntegerRangeFacts> = BTreeMap::new();
+
+    for (left, right, strict) in order_facts {
+        match (bitvector_variable(left), signed_bitvector_constant(right)) {
+            (Some(variable), Some(bound)) => {
+                let upper = if *strict { bound - 1 } else { bound };
+                let range = ranges.entry(variable).or_default();
+                range.upper = Some(range.upper.map_or(upper, |current| current.min(upper)));
+            }
+            _ => {}
+        }
+        match (signed_bitvector_constant(left), bitvector_variable(right)) {
+            (Some(bound), Some(variable)) => {
+                let lower = if *strict { bound + 1 } else { bound };
+                let range = ranges.entry(variable).or_default();
+                range.lower = Some(range.lower.map_or(lower, |current| current.max(lower)));
+            }
+            _ => {}
+        }
+    }
+
+    for (left, right) in disequal_facts {
+        if let Some((variable, value)) = bitvector_variable_and_constant(left, right) {
+            ranges.entry(variable).or_default().excluded.insert(value);
+        }
+    }
+
+    ranges.into_values().any(|range| {
+        let (Some(lower), Some(upper)) = (range.lower, range.upper) else {
+            return false;
+        };
+        if lower > upper {
+            return true;
+        }
+        upper - lower <= 256 && (lower..=upper).all(|value| range.excluded.contains(&value))
+    })
+}
+
+fn bitvector_variable(term: &Bitvector32Term) -> Option<Variable> {
+    match term {
+        Bitvector32Term::Variable(variable) => Some(*variable),
+        _ => None,
+    }
+}
+
+fn signed_bitvector_constant(term: &Bitvector32Term) -> Option<i64> {
+    term.as_const().map(|value| i64::from(value as i32))
+}
+
+fn bitvector_variable_and_constant(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> Option<(Variable, i64)> {
+    bitvector_variable(left)
+        .zip(signed_bitvector_constant(right))
+        .or_else(|| bitvector_variable(right).zip(signed_bitvector_constant(left)))
 }
 
 fn collect_condition_bitvector_variables(
@@ -3470,6 +3666,24 @@ fn wrap_proof_facts(
         })
 }
 
+fn wrap_path_context(
+    proposition: Proposition,
+    facts: &[PathFact],
+    obligations: &[ProofObligation],
+) -> Proposition {
+    let proposition = obligations
+        .iter()
+        .filter(|obligation| obligation.is_assumable())
+        .rev()
+        .fold(proposition, |body, obligation| {
+            Proposition::Implies(Box::new(obligation.proposition().clone()), Box::new(body))
+        });
+
+    facts.iter().rev().fold(proposition, |body, fact| {
+        Proposition::Implies(Box::new(fact.proposition().clone()), Box::new(body))
+    })
+}
+
 fn public_path_facts(facts: &[PathFact]) -> Vec<PathFact> {
     facts
         .iter()
@@ -3713,6 +3927,23 @@ fn append_required_proof_obligations(
             obligations,
             assumptions,
             obligation.proposition().clone(),
+            obligation.context(),
+        );
+    }
+}
+
+fn append_required_proof_obligations_under_path_context(
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &Assumptions,
+    new_obligations: &[ProofObligation],
+    facts: &[PathFact],
+    context_obligations: &[ProofObligation],
+) {
+    for obligation in new_obligations {
+        add_required_proof_obligation_with_context(
+            obligations,
+            assumptions,
+            wrap_path_context(obligation.proposition().clone(), facts, context_obligations),
             obligation.context(),
         );
     }
@@ -5600,7 +5831,10 @@ fn write_c_lvalue_paths(
             };
             let before_memory = state.memory.clone();
             let mut state = state.clone();
-            state.memory = state.memory.store(pointer.clone(), value.clone());
+            state.memory = state
+                .memory
+                .without_possible_aliasing_cells(&pointer, assumptions)
+                .store(pointer.clone(), value.clone());
             let mut facts = facts;
             if add_internal_path_fact(
                 &mut facts,
@@ -6411,10 +6645,11 @@ fn collect_invariant_check_obligations(
                 let mut obligations = obligations;
                 let obligation_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
+                let proposition = wrap_path_context(path.proposition, &facts, &obligations);
                 add_required_proof_obligation_with_context(
                     &mut obligations,
                     &obligation_assumptions,
-                    path.proposition,
+                    proposition,
                     invariant_context(check, phase),
                 );
                 append_required_proof_obligations(&mut all_obligations, assumptions, &obligations);
@@ -6482,10 +6717,12 @@ fn collect_loop_preservation_summary(
                             assumptions,
                             &body_path.obligations,
                         );
-                        append_required_proof_obligations(
+                        append_required_proof_obligations_under_path_context(
                             &mut obligations,
                             assumptions,
                             &path_obligations,
+                            &body_path.facts,
+                            &body_path.obligations,
                         );
                     }
                     CStatementOutcome::Return { .. }
@@ -8656,6 +8893,59 @@ mod tests {
     }
 
     #[test]
+    fn negative_equality_fact_decides_equality_false() {
+        let x = Bitvector32Term::Variable(Variable(79));
+        let assumptions = Assumptions::new().assume_condition(
+            ConditionTerm::equal(x.clone(), Bitvector32Term::Constant(0)),
+            false,
+        );
+
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::equal(Bitvector32Term::Constant(0), x,)),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn equality_facts_are_transitive() {
+        let i = Bitvector32Term::Variable(Variable(84));
+        let k = Bitvector32Term::Variable(Variable(85));
+        let assumptions = Assumptions::new()
+            .assume_condition(ConditionTerm::equal(k.clone(), i.clone()), true)
+            .assume_condition(ConditionTerm::equal(i, Bitvector32Term::Constant(1)), true);
+
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::equal(k, Bitvector32Term::Constant(1))),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn excluded_small_integer_range_is_inconsistent() {
+        let k = Bitvector32Term::Variable(Variable(80));
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), k.clone()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(k.clone(), Bitvector32Term::Constant(3)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::equal(k.clone(), Bitvector32Term::Constant(0)),
+                false,
+            )
+            .assume_condition(
+                ConditionTerm::equal(k.clone(), Bitvector32Term::Constant(1)),
+                false,
+            )
+            .assume_condition(ConditionTerm::equal(k, Bitvector32Term::Constant(2)), false);
+
+        assert!(assumptions.proves(&false_equals_true_proposition()));
+    }
+
+    #[test]
     fn writes_only_frame_proves_unwritten_load_equal_across_stack_locals() {
         let i = Variable(74);
         let i_bits = Bitvector32Term::Variable(i);
@@ -8799,6 +9089,288 @@ mod tests {
                 outcome: CExpressionOutcome::Value(int32(42)),
             }
         );
+    }
+
+    #[test]
+    fn symbolic_store_invalidates_only_possible_aliasing_cells() {
+        let i = Variable(81);
+        let i_bits = Bitvector32Term::Variable(i);
+        let concrete_cell = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let symbolic_cell = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(i_bits.clone()),
+                byte_width: 4,
+            },
+        };
+        let memory = CMemory::new()
+            .with_block("array", 12)
+            .store(concrete_cell.clone(), int32(42));
+
+        let aliased = memory
+            .without_possible_aliasing_cells(&symbolic_cell, &Assumptions::new())
+            .store(symbolic_cell.clone(), int32(7));
+        assert_eq!(aliased.known_value(&concrete_cell), None);
+
+        let distinct_assumptions = Assumptions::new().assume_condition(
+            ConditionTerm::equal(i_bits, Bitvector32Term::Constant(1)),
+            false,
+        );
+        let distinct = memory
+            .without_possible_aliasing_cells(&symbolic_cell, &distinct_assumptions)
+            .store(symbolic_cell, int32(7));
+        assert_eq!(distinct.known_value(&concrete_cell), Some(int32(42)));
+    }
+
+    #[test]
+    fn assumptions_resolve_materialized_symbolic_memory_load_aliases() {
+        let k = Variable(75);
+        let k_bits = Bitvector32Term::Variable(k);
+        let base_memory = CMemory::new().with_block("dst", 12).with_block("src", 12);
+        let src_pointers = [0, 4, 8].map(|offset| Pointer {
+            block: "src".to_string(),
+            offset: PointerOffsetTerm::Constant(offset),
+        });
+        let symbolic_src = Pointer {
+            block: "src".to_string(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(k_bits),
+                byte_width: 4,
+            },
+        };
+        let materialized_memory =
+            src_pointers
+                .iter()
+                .cloned()
+                .fold(base_memory.clone(), |memory, pointer| {
+                    memory.store(
+                        pointer.clone(),
+                        int32(Bitvector32Term::MemoryLoad(
+                            Box::new(base_memory.clone()),
+                            Box::new(pointer),
+                        )),
+                    )
+                });
+
+        for (index, pointer) in src_pointers.into_iter().enumerate() {
+            let assumptions = Assumptions::new()
+                .assume_condition(
+                    ConditionTerm::pointer_offset_equal(
+                        symbolic_src.offset.clone(),
+                        pointer.offset.clone(),
+                    ),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::equal(
+                        Bitvector32Term::Variable(k),
+                        Bitvector32Term::Constant(index as u32),
+                    ),
+                    true,
+                );
+
+            assert!(assumptions.proves(&Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(Box::new(base_memory.clone()), Box::new(pointer)),
+                    Bitvector32Term::MemoryLoad(
+                        Box::new(materialized_memory.clone()),
+                        Box::new(symbolic_src.clone()),
+                    ),
+                ),
+                true,
+            )));
+        }
+    }
+
+    #[test]
+    fn assumptions_prove_wrapped_materialized_load_branch_obligation() {
+        let k = Variable(76);
+        let k_bits = Bitvector32Term::Variable(k);
+        let base_memory = CMemory::new().with_block("dst", 12).with_block("src", 12);
+        let src_pointers = [0, 4, 8].map(|offset| Pointer {
+            block: "src".to_string(),
+            offset: PointerOffsetTerm::Constant(offset),
+        });
+        let symbolic_src = Pointer {
+            block: "src".to_string(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(k_bits.clone()),
+                byte_width: 4,
+            },
+        };
+        let materialized_memory =
+            src_pointers
+                .iter()
+                .cloned()
+                .fold(base_memory.clone(), |memory, pointer| {
+                    memory.store(
+                        pointer.clone(),
+                        int32(Bitvector32Term::MemoryLoad(
+                            Box::new(base_memory.clone()),
+                            Box::new(pointer),
+                        )),
+                    )
+                });
+        let body = Proposition::Implies(
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), k_bits.clone()),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(k_bits.clone(), Bitvector32Term::Constant(3)),
+                    true,
+                )),
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(
+                        Box::new(base_memory),
+                        Box::new(src_pointers[1].clone()),
+                    ),
+                    Bitvector32Term::MemoryLoad(
+                        Box::new(materialized_memory),
+                        Box::new(symbolic_src.clone()),
+                    ),
+                ),
+                true,
+            )),
+        );
+        let proposition = Proposition::Implies(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::pointer_offset_equal(
+                    symbolic_src.offset.clone(),
+                    src_pointers[0].offset.clone(),
+                ),
+                false,
+            )),
+            Box::new(Proposition::Implies(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::equal(k_bits.clone(), Bitvector32Term::Constant(0)),
+                    false,
+                )),
+                Box::new(Proposition::Implies(
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::pointer_offset_equal(
+                            symbolic_src.offset,
+                            src_pointers[1].offset.clone(),
+                        ),
+                        true,
+                    )),
+                    Box::new(Proposition::Implies(
+                        Box::new(Proposition::ConditionIs(
+                            ConditionTerm::equal(k_bits, Bitvector32Term::Constant(1)),
+                            true,
+                        )),
+                        Box::new(Proposition::ForAll {
+                            var: k,
+                            sort: Sort::CInt32,
+                            body: Box::new(body),
+                        }),
+                    )),
+                )),
+            )),
+        );
+
+        assert!(Assumptions::new().proves(&proposition));
+    }
+
+    #[test]
+    fn assumptions_prove_copied_prefix_new_cell_obligation() {
+        let i = Variable(82);
+        let k = Variable(83);
+        let i_bits = Bitvector32Term::Variable(i);
+        let k_bits = Bitvector32Term::Variable(k);
+        let base_memory = CMemory::new().with_block("dst", 12).with_block("src", 12);
+        let src_pointers = [0, 4, 8].map(|offset| Pointer {
+            block: "src".to_string(),
+            offset: PointerOffsetTerm::Constant(offset),
+        });
+        let symbolic_src = Pointer {
+            block: "src".to_string(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(k_bits.clone()),
+                byte_width: 4,
+            },
+        };
+        let materialized_memory =
+            src_pointers
+                .iter()
+                .cloned()
+                .fold(base_memory.clone(), |memory, pointer| {
+                    memory.store(
+                        pointer.clone(),
+                        int32(Bitvector32Term::MemoryLoad(
+                            Box::new(base_memory.clone()),
+                            Box::new(pointer),
+                        )),
+                    )
+                });
+        let body = Proposition::Implies(
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), k_bits.clone()),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(
+                        k_bits.clone(),
+                        Bitvector32Term::Add(
+                            Box::new(i_bits.clone()),
+                            Box::new(Bitvector32Term::Constant(1)),
+                        ),
+                    ),
+                    true,
+                )),
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(
+                        Box::new(base_memory),
+                        Box::new(src_pointers[1].clone()),
+                    ),
+                    Bitvector32Term::MemoryLoad(
+                        Box::new(materialized_memory),
+                        Box::new(symbolic_src.clone()),
+                    ),
+                ),
+                true,
+            )),
+        );
+        let proposition = Proposition::Implies(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(i_bits.clone(), Bitvector32Term::Constant(1)),
+                true,
+            )),
+            Box::new(Proposition::Implies(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::pointer_offset_equal(
+                        symbolic_src.offset,
+                        PointerOffsetTerm::Int32Scaled {
+                            value: Box::new(i_bits.clone()),
+                            byte_width: 4,
+                        },
+                    ),
+                    true,
+                )),
+                Box::new(Proposition::Implies(
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::equal(k_bits, i_bits),
+                        true,
+                    )),
+                    Box::new(Proposition::ForAll {
+                        var: k,
+                        sort: Sort::CInt32,
+                        body: Box::new(body),
+                    }),
+                )),
+            )),
+        );
+
+        assert!(Assumptions::new().proves(&proposition));
     }
 
     #[test]

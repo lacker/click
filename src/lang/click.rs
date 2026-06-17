@@ -181,8 +181,15 @@ pub struct VerifiedCTheorem {
     pub function_block: FunctionBlock,
     pub ensure_index: usize,
     pub ensure_clause: EnsureClause,
+    pub proof_kind: AutoProofKind,
     pub specification: CFunctionSpecification,
     pub theorem: Theorem,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AutoProofKind {
+    LoopVerification,
+    BoundedExecution,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -290,6 +297,12 @@ impl Proof {
             Self::Tactic(_) => None,
             Self::Steps(steps) => Some(steps),
         }
+    }
+}
+
+impl VerifiedCTheorem {
+    pub fn proof_kind(&self) -> AutoProofKind {
+        self.proof_kind
     }
 }
 
@@ -424,6 +437,15 @@ enum AutoExecutionKind<'a> {
     },
 }
 
+impl AutoExecutionKind<'_> {
+    fn proof_kind(&self) -> AutoProofKind {
+        match self {
+            Self::LoopVerification => AutoProofKind::LoopVerification,
+            Self::BoundedExecution { .. } => AutoProofKind::BoundedExecution,
+        }
+    }
+}
+
 fn execution_obligation_error(
     execution: &crate::megakernel::SymbolicCExecution,
     ensure_label: &str,
@@ -468,6 +490,7 @@ fn prove_ensure_from_execution(
     arguments: &[CExpression],
     requirement_propositions: &[Proposition],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let proof_kind = execution_kind.proof_kind();
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
             "`auto` hit execution limit {limit:?} for `{ensure_label}`"
@@ -544,6 +567,7 @@ fn prove_ensure_from_execution(
             function_block: function_block.clone(),
             ensure_index,
             ensure_clause: ensure_clause.clone(),
+            proof_kind,
             specification,
             theorem,
         });
@@ -3509,6 +3533,7 @@ mod tests {
             .expect("loop invariants and statement assert should verify");
 
         assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
     }
 
     #[test]
