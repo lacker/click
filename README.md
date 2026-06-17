@@ -175,16 +175,28 @@ mismatch is reported directly. Function-level `requires` clauses are shared by
 all guarantees. Each `ensures` clause is a separately proven guarantee with its
 own `by` proof clause. For now, `requires` supports `valid_range(pointer,
 bytes)` with concrete byte counts or small byte-count expressions such as
-`n * 4`, plus signed integer comparisons over parameters and literals.
-`ensures` supports comparisons between small C0 integer expressions over
-`result`, parameters, literals, parentheses, `+`, `-`, and post-state
-`p[i]` memory reads. Postconditions can use `old(expression)` to evaluate an
-expression in the pre-call state, which supports first-frame claims like
-`p[0] == old(p[0])`. `auto` checks each guarantee on every symbolic execution
-path. That sidecar path parses C0 source, builds the requested initial memory,
-first tries loop verification conditions for annotated loops, checks the
-postcondition clause, and packages the result as a megakernel
-`CFunctionSpecification` theorem. If the loop VC path cannot prove a
+`n * 4`, plus Click propositions over parameters and literals. `ensures`,
+`assert`, and `invariant` clauses also use Click proposition syntax:
+
+```text
+result == x and not (result != x)
+result == x implies result >= 0
+forall (int32 k) { 0 <= k implies k >= 0 }
+```
+
+Logical structure uses Click words: `and`, `or`, `not`, `implies`, and
+`forall`. C operators such as `&&`, `||`, and `!` remain C expression syntax
+and are not reused as proposition connectives. Proposition comparisons embed
+small C0 integer expressions over `result`, parameters, literals, parentheses,
+`+`, `-`, and post-state `p[i]` memory reads. Postconditions can use
+`old(expression)` to evaluate an expression in the pre-call state, which
+supports first-frame claims like `p[0] == old(p[0])`. The parser and kernel
+representation accept `forall (int32 name) { ... }`, but `auto` does not yet
+prove useful quantified array-segment facts. `auto` checks each guarantee on
+every symbolic execution path. That sidecar path parses C0 source, builds the
+requested initial memory, first tries loop verification conditions for
+annotated loops, checks the postcondition clause, and packages the result as a
+megakernel `CFunctionSpecification` theorem. If the loop VC path cannot prove a
 postcondition but leaves no invariant obligations, `auto` can still use bounded
 execution for finite concrete-loop demos.
 

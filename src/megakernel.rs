@@ -337,6 +337,8 @@ pub enum Proposition {
         postcondition: Box<Proposition>,
     },
     And(Box<Proposition>, Box<Proposition>),
+    Or(Box<Proposition>, Box<Proposition>),
+    Not(Box<Proposition>),
     Implies(Box<Proposition>, Box<Proposition>),
     ForAll {
         var: Variable,
@@ -1060,6 +1062,14 @@ impl Assumptions {
                 self = self.assume_proposition(*left);
                 self = self.assume_proposition(*right);
             }
+            Proposition::Not(body) => match *body {
+                Proposition::ConditionIs(condition, value) => {
+                    self.condition_facts.insert(condition, !value);
+                }
+                body => {
+                    self.prop_facts.insert(Proposition::Not(Box::new(body)));
+                }
+            },
             proposition => {
                 self.prop_facts.insert(proposition);
             }
@@ -1487,6 +1497,12 @@ impl Assumptions {
         match proposition {
             Proposition::ConditionIs(condition, value) => self.decide(condition) == Some(*value),
             Proposition::And(left, right) => self.proves(left) && self.proves(right),
+            Proposition::Or(left, right) => self.proves(left) || self.proves(right),
+            Proposition::Not(body) => self.proves_not(body),
+            Proposition::Implies(left, right) => self
+                .clone()
+                .assume_proposition(left.as_ref().clone())
+                .proves(right),
             Proposition::CMemoryCanLoad { memory, pointer } => {
                 self.proves_memory_access(memory, pointer, 4)
             }
@@ -1494,6 +1510,16 @@ impl Assumptions {
                 self.proves_memory_access(memory, pointer, 4)
             }
             _ => self.prop_facts.contains(proposition),
+        }
+    }
+
+    fn proves_not(&self, proposition: &Proposition) -> bool {
+        match proposition {
+            Proposition::ConditionIs(condition, value) => self.decide(condition) == Some(!*value),
+            Proposition::Not(body) => self.proves(body),
+            _ => self
+                .prop_facts
+                .contains(&Proposition::Not(Box::new(proposition.clone()))),
         }
     }
 
@@ -2784,6 +2810,14 @@ fn solve_builtin_prop(proposition: &Proposition) -> bool {
         Proposition::Equal(left, right) => left == right,
         Proposition::ConditionIs(ConditionTerm::Constant(actual), expected) => actual == expected,
         Proposition::And(left, right) => solve_builtin_prop(left) && solve_builtin_prop(right),
+        Proposition::Or(left, right) => solve_builtin_prop(left) || solve_builtin_prop(right),
+        Proposition::Not(body) => match body.as_ref() {
+            Proposition::ConditionIs(ConditionTerm::Constant(actual), expected) => {
+                actual != expected
+            }
+            _ => false,
+        },
+        Proposition::Implies(left, right) => !solve_builtin_prop(left) || solve_builtin_prop(right),
         Proposition::CMemoryValidRange {
             memory,
             base,

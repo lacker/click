@@ -11,9 +11,10 @@ use crate::lang::c::syntax::{self, C0Expression, C0Type};
 use crate::megakernel::{
     Assumptions, Bitvector32Term, CExpression, CFunction, CFunctionEnvironment, CFunctionOutcome,
     CFunctionSpecification, CLoopInvariantCheck, CMemory, CState, CStatement, CValue,
-    ConditionTerm, PathFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition, Theorem,
-    Variable, c_function, c_function_specification, c_labeled_assert, c_pointer_value, c_seq,
-    c_while_with_invariant_checks, prove_c_function_satisfies_specification_from_symbolic_path,
+    ConditionTerm, PathFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition, Sort,
+    Theorem, Variable, c_function, c_function_specification, c_labeled_assert, c_pointer_value,
+    c_seq, c_while_with_invariant_checks,
+    prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
     prove_symbolic_c_function_verification_paths_with_environment,
@@ -49,7 +50,7 @@ pub struct FunctionParameter {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Requirement {
     ValidRange { name: String, bytes: RangeBytes },
-    Condition(CExpression),
+    Proposition(ClickProposition),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -83,7 +84,7 @@ pub enum AtTarget {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AtItem {
     kind: AtItemKind,
-    condition: CExpression,
+    proposition: ClickProposition,
     proof: Proof,
 }
 
@@ -95,10 +96,24 @@ pub enum AtItemKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Ensure {
+    Proposition(ClickProposition),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClickProposition {
     Comparison {
         left: ContractExpression,
         operator: ComparisonOperator,
         right: ContractExpression,
+    },
+    And(Box<ClickProposition>, Box<ClickProposition>),
+    Or(Box<ClickProposition>, Box<ClickProposition>),
+    Not(Box<ClickProposition>),
+    Implies(Box<ClickProposition>, Box<ClickProposition>),
+    ForAll {
+        c_type: C0Type,
+        name: String,
+        body: Box<ClickProposition>,
     },
 }
 
@@ -243,8 +258,8 @@ impl AtItem {
         self.kind
     }
 
-    pub fn condition(&self) -> &CExpression {
-        &self.condition
+    pub fn proposition(&self) -> &ClickProposition {
+        &self.proposition
     }
 
     pub fn proof(&self) -> &Proof {
@@ -699,6 +714,11 @@ fn validate_at_clauses(
                     "`at` clauses must use exactly `by auto;` in this first slice",
                 ));
             }
+            if click_proposition_to_c_expression(item.proposition()).is_none() {
+                return Err(ClickError::new(
+                    "`at` clauses currently support executable propositions only",
+                ));
+            }
         }
     }
     Ok(())
@@ -791,7 +811,8 @@ impl AnnotationLowerer<'_> {
             .flat_map(AtClause::items)
             .enumerate()
             .map(|(item_index, item)| LabeledCheck {
-                condition: item.condition().clone(),
+                condition: click_proposition_to_c_expression(item.proposition())
+                    .expect("at propositions should be validated before lowering"),
                 label: format!(
                     "at statement {statement_index} {} {item_index}",
                     at_item_kind_label(item.kind())
@@ -810,7 +831,8 @@ impl AnnotationLowerer<'_> {
             .enumerate()
             .map(|(item_index, item)| {
                 CLoopInvariantCheck::new(
-                    item.condition().clone(),
+                    click_proposition_to_c_expression(item.proposition())
+                        .expect("at propositions should be validated before lowering"),
                     Some(format!("at loop {loop_index} invariant {item_index} entry")),
                     Some(format!(
                         "at loop {loop_index} invariant {item_index} preservation"
@@ -828,7 +850,8 @@ impl AnnotationLowerer<'_> {
             .filter(|item| item.kind() == AtItemKind::Assert)
             .enumerate()
             .map(|(item_index, item)| LabeledCheck {
-                condition: item.condition().clone(),
+                condition: click_proposition_to_c_expression(item.proposition())
+                    .expect("at propositions should be validated before lowering"),
                 label: format!("at loop {loop_index} assert {item_index}"),
             })
             .collect()
@@ -849,6 +872,76 @@ fn prepend_labeled_asserts(statement: CStatement, checks: &[LabeledCheck]) -> CS
             statement,
         )
     })
+}
+
+fn click_proposition_to_c_expression(proposition: &ClickProposition) -> Option<CExpression> {
+    match proposition {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => {
+            let left = contract_expression_to_current_c_expression(left)?;
+            let right = contract_expression_to_current_c_expression(right)?;
+            Some(match operator {
+                ComparisonOperator::Equal => CExpression::Equal(Box::new(left), Box::new(right)),
+                ComparisonOperator::NotEqual => {
+                    CExpression::NotEqual(Box::new(left), Box::new(right))
+                }
+                ComparisonOperator::LessThan => {
+                    CExpression::LessThan(Box::new(left), Box::new(right))
+                }
+                ComparisonOperator::LessEqual => {
+                    CExpression::LessEqual(Box::new(left), Box::new(right))
+                }
+                ComparisonOperator::GreaterThan => {
+                    CExpression::GreaterThan(Box::new(left), Box::new(right))
+                }
+                ComparisonOperator::GreaterEqual => {
+                    CExpression::GreaterEqual(Box::new(left), Box::new(right))
+                }
+            })
+        }
+        ClickProposition::And(left, right) => Some(CExpression::And(
+            Box::new(click_proposition_to_c_expression(left)?),
+            Box::new(click_proposition_to_c_expression(right)?),
+        )),
+        ClickProposition::Or(left, right) => Some(CExpression::Or(
+            Box::new(click_proposition_to_c_expression(left)?),
+            Box::new(click_proposition_to_c_expression(right)?),
+        )),
+        ClickProposition::Not(body) => Some(CExpression::Not(Box::new(
+            click_proposition_to_c_expression(body)?,
+        ))),
+        ClickProposition::Implies(left, right) => Some(CExpression::Or(
+            Box::new(CExpression::Not(Box::new(
+                click_proposition_to_c_expression(left)?,
+            ))),
+            Box::new(click_proposition_to_c_expression(right)?),
+        )),
+        ClickProposition::ForAll { .. } => None,
+    }
+}
+
+fn contract_expression_to_current_c_expression(
+    expression: &ContractExpression,
+) -> Option<CExpression> {
+    match expression {
+        ContractExpression::Current(expression) => Some(expression.clone()),
+        ContractExpression::Old(_) => None,
+        ContractExpression::Add(left, right) => Some(CExpression::Add(
+            Box::new(contract_expression_to_current_c_expression(left)?),
+            Box::new(contract_expression_to_current_c_expression(right)?),
+        )),
+        ContractExpression::Subtract(left, right) => Some(CExpression::Subtract(
+            Box::new(contract_expression_to_current_c_expression(left)?),
+            Box::new(contract_expression_to_current_c_expression(right)?),
+        )),
+        ContractExpression::Index(base, index) => Some(CExpression::Index(
+            Box::new(contract_expression_to_current_c_expression(base)?),
+            Box::new(contract_expression_to_current_c_expression(index)?),
+        )),
+    }
 }
 
 fn count_loops(statement: &syntax::C0Statement) -> usize {
@@ -890,7 +983,7 @@ fn initial_call(
             Requirement::ValidRange { name, bytes } => {
                 range_bytes_constant(bytes).map(|bytes| (name.as_str(), bytes))
             }
-            Requirement::Condition(_) => None,
+            Requirement::Proposition(_) => None,
         })
         .collect();
     let mut memory = CMemory::new();
@@ -980,8 +1073,8 @@ fn requirement_propositions(
             Requirement::ValidRange { name, bytes } => {
                 valid_range_requirement_prop(name, bytes, parameters, arguments, memory)
             }
-            Requirement::Condition(condition) => {
-                condition_requirement_prop(parameters, arguments, condition)
+            Requirement::Proposition(proposition) => {
+                requirement_proposition_prop(parameters, arguments, proposition)
             }
         })
         .collect()
@@ -1062,14 +1155,14 @@ fn lower_range_bytes(
     }
 }
 
-fn condition_requirement_prop(
+fn requirement_proposition_prop(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    condition: &CExpression,
+    proposition: &ClickProposition,
 ) -> Result<Proposition, ClickError> {
     let parameter_values = parameter_values(parameters, arguments)?;
-    let (condition, value) = lower_condition_requirement(condition, &parameter_values)?;
-    Ok(Proposition::ConditionIs(condition, value))
+    let mut lowerer = KernelPropositionLowerer::new(parameter_values);
+    lowerer.lower_requirement_proposition(proposition)
 }
 
 fn parameter_values(
@@ -1091,87 +1184,174 @@ fn parameter_values(
         .collect()
 }
 
-fn lower_condition_requirement(
-    condition: &CExpression,
-    parameter_values: &BTreeMap<String, CValue>,
-) -> Result<(ConditionTerm, bool), ClickError> {
-    match condition {
-        CExpression::LessThan(left, right) => Ok((
-            signed_less_than(
-                lower_bitvector32_expression(left, parameter_values)?,
-                lower_bitvector32_expression(right, parameter_values)?,
+struct KernelPropositionLowerer {
+    values: BTreeMap<String, CValue>,
+    next_variable: u64,
+}
+
+impl KernelPropositionLowerer {
+    fn new(values: BTreeMap<String, CValue>) -> Self {
+        Self {
+            values,
+            next_variable: 2_000_000,
+        }
+    }
+
+    fn lower_requirement_proposition(
+        &mut self,
+        proposition: &ClickProposition,
+    ) -> Result<Proposition, ClickError> {
+        match proposition {
+            ClickProposition::Comparison {
+                left,
+                operator,
+                right,
+            } => {
+                let left = self.lower_requirement_value(left)?;
+                let right = self.lower_requirement_value(right)?;
+                comparison_proposition(left, *operator, right)
+            }
+            ClickProposition::And(left, right) => Ok(Proposition::And(
+                Box::new(self.lower_requirement_proposition(left)?),
+                Box::new(self.lower_requirement_proposition(right)?),
+            )),
+            ClickProposition::Or(left, right) => Ok(Proposition::Or(
+                Box::new(self.lower_requirement_proposition(left)?),
+                Box::new(self.lower_requirement_proposition(right)?),
+            )),
+            ClickProposition::Not(body) => Ok(Proposition::Not(Box::new(
+                self.lower_requirement_proposition(body)?,
+            ))),
+            ClickProposition::Implies(left, right) => Ok(Proposition::Implies(
+                Box::new(self.lower_requirement_proposition(left)?),
+                Box::new(self.lower_requirement_proposition(right)?),
+            )),
+            ClickProposition::ForAll { c_type, name, body } => {
+                if *c_type != C0Type::Int32 {
+                    return Err(ClickError::new("only `forall (int32 ...)` is supported"));
+                }
+                let variable = Variable(self.next_variable);
+                self.next_variable += 1;
+                let previous = self.values.insert(
+                    name.clone(),
+                    CValue::Int32(Bitvector32Term::Variable(variable)),
+                );
+                let body = self.lower_requirement_proposition(body)?;
+                match previous {
+                    Some(value) => {
+                        self.values.insert(name.clone(), value);
+                    }
+                    None => {
+                        self.values.remove(name);
+                    }
+                }
+                Ok(Proposition::ForAll {
+                    var: variable,
+                    sort: Sort::CInt32,
+                    body: Box::new(body),
+                })
+            }
+        }
+    }
+
+    fn lower_requirement_value(
+        &self,
+        expression: &ContractExpression,
+    ) -> Result<CValue, ClickError> {
+        match expression {
+            ContractExpression::Current(expression) => {
+                self.lower_requirement_c_expression(expression)
+            }
+            ContractExpression::Old(_) => Err(ClickError::new(
+                "`old(...)` is not available in `requires` clauses",
+            )),
+            ContractExpression::Add(left, right) => {
+                let left = self.lower_requirement_value(left)?;
+                let right = self.lower_requirement_value(right)?;
+                lower_contract_add(left, right)
+            }
+            ContractExpression::Subtract(left, right) => {
+                let left = self.lower_requirement_value(left)?;
+                let right = self.lower_requirement_value(right)?;
+                lower_contract_subtract(left, right)
+            }
+            ContractExpression::Index(_, _) => Err(ClickError::new(
+                "memory reads are not supported in `requires` propositions yet",
+            )),
+        }
+    }
+
+    fn lower_requirement_c_expression(
+        &self,
+        expression: &CExpression,
+    ) -> Result<CValue, ClickError> {
+        match expression {
+            CExpression::Value(value) => Ok(value.clone()),
+            CExpression::Variable(name) => {
+                self.values.get(name).cloned().ok_or_else(|| {
+                    ClickError::new(format!("unknown requirement variable `{name}`"))
+                })
+            }
+            CExpression::Add(left, right) => lower_contract_add(
+                self.lower_requirement_c_expression(left)?,
+                self.lower_requirement_c_expression(right)?,
             ),
-            true,
-        )),
-        CExpression::LessEqual(left, right) => Ok((
-            signed_less_equal(
-                lower_bitvector32_expression(left, parameter_values)?,
-                lower_bitvector32_expression(right, parameter_values)?,
+            CExpression::Subtract(left, right) => lower_contract_subtract(
+                self.lower_requirement_c_expression(left)?,
+                self.lower_requirement_c_expression(right)?,
             ),
-            true,
+            _ => Err(ClickError::new(format!(
+                "unsupported expression in `requires` proposition: `{expression:?}`"
+            ))),
+        }
+    }
+}
+
+fn comparison_proposition(
+    left: CValue,
+    operator: ComparisonOperator,
+    right: CValue,
+) -> Result<Proposition, ClickError> {
+    let CValue::Int32(left) = left else {
+        return Err(ClickError::new("left side of proposition is not int32"));
+    };
+    let CValue::Int32(right) = right else {
+        return Err(ClickError::new("right side of proposition is not int32"));
+    };
+    let Some((condition, value)) = comparison_condition(left, operator, right) else {
+        return Err(ClickError::new("unsupported proposition comparison"));
+    };
+    Ok(Proposition::ConditionIs(condition, value))
+}
+
+fn lower_contract_add(left: CValue, right: CValue) -> Result<CValue, ClickError> {
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right)) => {
+            Ok(CValue::Int32(bitvector32_add(left, right)))
+        }
+        (CValue::Pointer(pointer), CValue::Int32(index))
+        | (CValue::Int32(index), CValue::Pointer(pointer)) => Ok(CValue::Pointer(
+            offset_pointer_by_int32_elements(pointer, index),
         )),
-        CExpression::GreaterThan(left, right) => Ok((
-            signed_greater_than(
-                lower_bitvector32_expression(left, parameter_values)?,
-                lower_bitvector32_expression(right, parameter_values)?,
-            ),
-            true,
-        )),
-        CExpression::GreaterEqual(left, right) => Ok((
-            signed_greater_equal(
-                lower_bitvector32_expression(left, parameter_values)?,
-                lower_bitvector32_expression(right, parameter_values)?,
-            ),
-            true,
-        )),
-        CExpression::Equal(left, right) => Ok((
-            bitvector32_equal(
-                lower_bitvector32_expression(left, parameter_values)?,
-                lower_bitvector32_expression(right, parameter_values)?,
-            ),
-            true,
-        )),
-        CExpression::NotEqual(left, right) => Ok((
-            bitvector32_equal(
-                lower_bitvector32_expression(left, parameter_values)?,
-                lower_bitvector32_expression(right, parameter_values)?,
-            ),
-            false,
-        )),
-        _ => Err(ClickError::new(format!(
-            "unsupported `requires` condition `{condition:?}`"
+        (left, right) => Err(ClickError::new(format!(
+            "cannot add `{left:?}` and `{right:?}` in proposition"
         ))),
     }
 }
 
-fn lower_bitvector32_expression(
-    expression: &CExpression,
-    parameter_values: &BTreeMap<String, CValue>,
-) -> Result<Bitvector32Term, ClickError> {
-    match expression {
-        CExpression::Value(CValue::Int32(bits)) => Ok(bits.clone()),
-        CExpression::Value(_) => Err(ClickError::new(format!(
-            "expected int32 expression in contract, got `{expression:?}`"
-        ))),
-        CExpression::Variable(name) => match parameter_values.get(name) {
-            Some(CValue::Int32(bits)) => Ok(bits.clone()),
-            Some(_) => Err(ClickError::new(format!(
-                "parameter `{name}` is not an int32 parameter"
-            ))),
-            None => Err(ClickError::new(format!(
-                "contract expression references unknown parameter `{name}`"
-            ))),
-        },
-        CExpression::Add(left, right) => Ok(bitvector32_add(
-            lower_bitvector32_expression(left, parameter_values)?,
-            lower_bitvector32_expression(right, parameter_values)?,
-        )),
-        CExpression::Subtract(left, right) => Ok(bitvector32_subtract(
-            lower_bitvector32_expression(left, parameter_values)?,
-            lower_bitvector32_expression(right, parameter_values)?,
-        )),
-        _ => Err(ClickError::new(format!(
-            "unsupported int32 expression in contract: `{expression:?}`"
+fn lower_contract_subtract(left: CValue, right: CValue) -> Result<CValue, ClickError> {
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right)) => {
+            Ok(CValue::Int32(bitvector32_subtract(left, right)))
+        }
+        (CValue::Pointer(pointer), CValue::Int32(index)) => {
+            Ok(CValue::Pointer(offset_pointer_by_int32_elements(
+                pointer,
+                bitvector32_subtract(Bitvector32Term::Constant(0), index),
+            )))
+        }
+        (left, right) => Err(ClickError::new(format!(
+            "cannot subtract `{right:?}` from `{left:?}` in proposition"
         ))),
     }
 }
@@ -1260,7 +1440,35 @@ fn check_ensure(
     outcome: &CFunctionOutcome,
 ) -> Result<(), ClickError> {
     match ensure_clause.ensure() {
-        Ensure::Comparison {
+        Ensure::Proposition(proposition) => prove_ensure_proposition(
+            ensure_label,
+            path_index,
+            path_facts,
+            available_propositions,
+            proposition,
+            parameters,
+            arguments,
+            pre_state,
+            outcome,
+        )?,
+    }
+
+    Ok(())
+}
+
+fn prove_ensure_proposition(
+    ensure_label: &str,
+    path_index: usize,
+    path_facts: &[crate::megakernel::PathFact],
+    available_propositions: &[Proposition],
+    proposition: &ClickProposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    outcome: &CFunctionOutcome,
+) -> Result<(), ClickError> {
+    match proposition {
+        ClickProposition::Comparison {
             left,
             operator,
             right,
@@ -1300,12 +1508,12 @@ fn check_ensure(
                     &right_value,
                     available_propositions,
                 )
-                    .ok_or_else(|| {
-                        ClickError::new(format!(
-                            "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: left side evaluated to {left_value:?}, right side evaluated to {right_value:?}\n  path facts: {}",
-                            describe_facts(path_facts)
-                        ))
-                    })?;
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: left side evaluated to {left_value:?}, right side evaluated to {right_value:?}\n  path facts: {}",
+                        describe_facts(path_facts)
+                    ))
+                })?;
             }
             other => {
                 return Err(ClickError::new(format!(
@@ -1314,8 +1522,60 @@ fn check_ensure(
                 )));
             }
         },
+        ClickProposition::And(left, right) => {
+            prove_ensure_proposition(
+                ensure_label,
+                path_index,
+                path_facts,
+                available_propositions,
+                left,
+                parameters,
+                arguments,
+                pre_state,
+                outcome,
+            )?;
+            prove_ensure_proposition(
+                ensure_label,
+                path_index,
+                path_facts,
+                available_propositions,
+                right,
+                parameters,
+                arguments,
+                pre_state,
+                outcome,
+            )?;
+        }
+        _ => {
+            let CFunctionOutcome::Return { value, state } = outcome else {
+                return Err(ClickError::new(format!(
+                    "`ensures {proposition:?}` failed for `{ensure_label}` path {path_index}: outcome was {outcome:?}\n  path facts: {}",
+                    describe_facts(path_facts)
+                )));
+            };
+            let proposition = lower_outcome_proposition(
+                parameters,
+                arguments,
+                pre_state,
+                state,
+                value,
+                available_propositions,
+                proposition,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`ensures {proposition:?}` failed for `{ensure_label}` path {path_index}: could not lower proposition: {message}"
+                ))
+            })?;
+            let assumptions = assumptions_from_propositions(available_propositions);
+            if !assumptions.proves(&proposition) {
+                return Err(ClickError::new(format!(
+                    "`ensures {proposition:?}` failed for `{ensure_label}` path {path_index}: proposition was not provable\n  path facts: {}",
+                    describe_facts(path_facts)
+                )));
+            }
+        }
     }
-
     Ok(())
 }
 
@@ -1376,6 +1636,171 @@ fn evaluate_contract_expression(
         &assumptions,
         expression,
     )
+}
+
+fn lower_outcome_proposition(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    available_propositions: &[Proposition],
+    proposition: &ClickProposition,
+) -> Result<Proposition, String> {
+    let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let assumptions = assumptions_from_propositions(available_propositions);
+    let mut next_variable = 2_000_000;
+    lower_outcome_proposition_with_environment(
+        &mut values,
+        pre_state,
+        post_state,
+        result,
+        &assumptions,
+        proposition,
+        &mut next_variable,
+    )
+}
+
+fn lower_outcome_proposition_with_environment(
+    values: &mut BTreeMap<String, CValue>,
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    assumptions: &Assumptions,
+    proposition: &ClickProposition,
+    next_variable: &mut u64,
+) -> Result<Proposition, String> {
+    match proposition {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => {
+            let left = evaluate_contract_expression_with_environment(
+                values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                left,
+            )?;
+            let right = evaluate_contract_expression_with_environment(
+                values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                right,
+            )?;
+            comparison_proposition(left, *operator, right).map_err(|error| error.message)
+        }
+        ClickProposition::And(left, right) => Ok(Proposition::And(
+            Box::new(lower_outcome_proposition_with_environment(
+                values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                left,
+                next_variable,
+            )?),
+            Box::new(lower_outcome_proposition_with_environment(
+                values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                right,
+                next_variable,
+            )?),
+        )),
+        ClickProposition::Or(left, right) => Ok(Proposition::Or(
+            Box::new(lower_outcome_proposition_with_environment(
+                values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                left,
+                next_variable,
+            )?),
+            Box::new(lower_outcome_proposition_with_environment(
+                values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                right,
+                next_variable,
+            )?),
+        )),
+        ClickProposition::Not(body) => Ok(Proposition::Not(Box::new(
+            lower_outcome_proposition_with_environment(
+                values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                body,
+                next_variable,
+            )?,
+        ))),
+        ClickProposition::Implies(left, right) => {
+            let left = lower_outcome_proposition_with_environment(
+                values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                left,
+                next_variable,
+            )?;
+            let right_assumptions = assumptions.clone().assume_proposition(left.clone());
+            let right = lower_outcome_proposition_with_environment(
+                values,
+                pre_state,
+                post_state,
+                result,
+                &right_assumptions,
+                right,
+                next_variable,
+            )?;
+            Ok(Proposition::Implies(Box::new(left), Box::new(right)))
+        }
+        ClickProposition::ForAll { c_type, name, body } => {
+            if *c_type != C0Type::Int32 {
+                return Err("only `forall (int32 ...)` is supported".to_string());
+            }
+            let variable = Variable(*next_variable);
+            *next_variable += 1;
+            let previous = values.insert(
+                name.clone(),
+                CValue::Int32(Bitvector32Term::Variable(variable)),
+            );
+            let body = lower_outcome_proposition_with_environment(
+                values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                body,
+                next_variable,
+            )?;
+            match previous {
+                Some(value) => {
+                    values.insert(name.clone(), value);
+                }
+                None => {
+                    values.remove(name);
+                }
+            }
+            Ok(Proposition::ForAll {
+                var: variable,
+                sort: Sort::CInt32,
+                body: Box::new(body),
+            })
+        }
+    }
 }
 
 fn evaluate_contract_expression_with_environment(
@@ -1783,9 +2208,9 @@ impl Parser {
     fn parse_requirement(&mut self) -> Result<Requirement, ClickError> {
         self.expect_ident_spelling("requires")?;
         if self.peek_ident() != Some("valid_range") || self.peek_next() != Some(&Token::LParen) {
-            let condition = self.parse_requirement_condition()?;
+            let proposition = self.parse_proposition()?;
             self.expect(Token::Semicolon)?;
-            return Ok(Requirement::Condition(condition.to_megakernel_expression()));
+            return Ok(Requirement::Proposition(proposition));
         }
 
         self.expect_ident_spelling("valid_range")?;
@@ -1848,31 +2273,6 @@ impl Parser {
         }
     }
 
-    fn parse_requirement_condition(&mut self) -> Result<C0Expression, ClickError> {
-        let left = self.parse_ensure_expression()?;
-        let operator = self.parse_comparison_operator("requires")?;
-        let right = self.parse_ensure_expression()?;
-
-        match operator {
-            ComparisonOperator::LessThan => {
-                Ok(C0Expression::LessThan(Box::new(left), Box::new(right)))
-            }
-            ComparisonOperator::LessEqual => {
-                Ok(C0Expression::LessEqual(Box::new(left), Box::new(right)))
-            }
-            ComparisonOperator::GreaterThan => {
-                Ok(C0Expression::GreaterThan(Box::new(left), Box::new(right)))
-            }
-            ComparisonOperator::GreaterEqual => {
-                Ok(C0Expression::GreaterEqual(Box::new(left), Box::new(right)))
-            }
-            ComparisonOperator::Equal => Ok(C0Expression::Equal(Box::new(left), Box::new(right))),
-            ComparisonOperator::NotEqual => {
-                Ok(C0Expression::NotEqual(Box::new(left), Box::new(right)))
-            }
-        }
-    }
-
     fn parse_at_clause(&mut self) -> Result<AtClause, ClickError> {
         self.expect_ident_spelling("at")?;
         let target = self.parse_at_target()?;
@@ -1920,13 +2320,11 @@ impl Parser {
                 return Err(self.error("expected `invariant` or `assert`, got end of input"));
             }
         };
-        let condition = self
-            .parse_requirement_condition()?
-            .to_megakernel_expression();
+        let proposition = self.parse_proposition()?;
         let proof = self.parse_by_clause()?;
         Ok(AtItem {
             kind,
-            condition,
+            proposition,
             proof,
         })
     }
@@ -1953,11 +2351,94 @@ impl Parser {
     }
 
     fn parse_ensure_condition(&mut self) -> Result<Ensure, ClickError> {
+        Ok(Ensure::Proposition(self.parse_proposition()?))
+    }
+
+    fn parse_proposition(&mut self) -> Result<ClickProposition, ClickError> {
+        self.parse_proposition_implies()
+    }
+
+    fn parse_proposition_implies(&mut self) -> Result<ClickProposition, ClickError> {
+        let left = self.parse_proposition_or()?;
+        if self.peek_ident() == Some("implies") {
+            self.position += 1;
+            let right = self.parse_proposition_implies()?;
+            Ok(ClickProposition::Implies(Box::new(left), Box::new(right)))
+        } else {
+            Ok(left)
+        }
+    }
+
+    fn parse_proposition_or(&mut self) -> Result<ClickProposition, ClickError> {
+        let mut proposition = self.parse_proposition_and()?;
+        while self.peek_ident() == Some("or") {
+            self.position += 1;
+            let right = self.parse_proposition_and()?;
+            proposition = ClickProposition::Or(Box::new(proposition), Box::new(right));
+        }
+        Ok(proposition)
+    }
+
+    fn parse_proposition_and(&mut self) -> Result<ClickProposition, ClickError> {
+        let mut proposition = self.parse_proposition_not()?;
+        while self.peek_ident() == Some("and") {
+            self.position += 1;
+            let right = self.parse_proposition_not()?;
+            proposition = ClickProposition::And(Box::new(proposition), Box::new(right));
+        }
+        Ok(proposition)
+    }
+
+    fn parse_proposition_not(&mut self) -> Result<ClickProposition, ClickError> {
+        if self.peek_ident() == Some("not") {
+            self.position += 1;
+            Ok(ClickProposition::Not(Box::new(
+                self.parse_proposition_not()?,
+            )))
+        } else {
+            self.parse_proposition_atom()
+        }
+    }
+
+    fn parse_proposition_atom(&mut self) -> Result<ClickProposition, ClickError> {
+        if self.peek_ident() == Some("forall") {
+            self.position += 1;
+            self.expect(Token::LParen)?;
+            let c_type = self.parse_type()?;
+            let name = self.expect_ident("forall variable name")?;
+            self.expect(Token::RParen)?;
+            self.expect(Token::LBrace)?;
+            let body = self.parse_proposition()?;
+            self.expect(Token::RBrace)?;
+            return Ok(ClickProposition::ForAll {
+                c_type,
+                name,
+                body: Box::new(body),
+            });
+        }
+
+        if self.peek() == Some(&Token::LParen) {
+            let start = self.position;
+            self.position += 1;
+            let grouped = self.parse_proposition().and_then(|proposition| {
+                self.expect(Token::RParen)?;
+                Ok(proposition)
+            });
+            if grouped.is_ok() {
+                return grouped;
+            }
+            self.position = start;
+        }
+
+        self.parse_proposition_comparison()
+    }
+
+    fn parse_proposition_comparison(&mut self) -> Result<ClickProposition, ClickError> {
         let left = self.parse_contract_expression()?;
-        let operator = self.parse_comparison_operator("ensures")?;
+        let operator = self.parse_comparison_operator("proposition")?;
         let right = self.parse_contract_expression()?;
 
-        Ok(Ensure::Comparison {
+        Ok(ClickProposition::Comparison {
             left,
             operator,
             right,
@@ -2432,6 +2913,18 @@ mod tests {
         ))
     }
 
+    fn ensure_comparison(
+        left: ContractExpression,
+        operator: ComparisonOperator,
+        right: ContractExpression,
+    ) -> Ensure {
+        Ensure::Proposition(ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        })
+    }
+
     #[test]
     fn parses_checked_signature_and_contract_clauses() {
         let file = parse(FILL3_CLICK).expect("sidecar should parse");
@@ -2460,11 +2953,11 @@ mod tests {
         assert_eq!(ensure.name(), Some("returns_second"));
         assert_eq!(
             ensure.ensure(),
-            &Ensure::Comparison {
-                left: current_var("result"),
-                operator: ComparisonOperator::Equal,
-                right: current_int(2)
-            }
+            &ensure_comparison(
+                current_var("result"),
+                ComparisonOperator::Equal,
+                current_int(2),
+            )
         );
         assert_eq!(ensure.proof().tactics(), &[Tactic::Auto]);
     }
@@ -2528,11 +3021,11 @@ mod tests {
         assert_eq!(ensure.name(), None);
         assert_eq!(
             ensure.ensure(),
-            &Ensure::Comparison {
-                left: current_var("result"),
-                operator: ComparisonOperator::Equal,
-                right: current_int(2)
-            }
+            &ensure_comparison(
+                current_var("result"),
+                ComparisonOperator::Equal,
+                current_int(2),
+            )
         );
     }
 
@@ -2544,11 +3037,11 @@ mod tests {
 
         assert_eq!(
             ensure.ensure(),
-            &Ensure::Comparison {
-                left: current_index("p", 2),
-                operator: ComparisonOperator::Equal,
-                right: current_int(2)
-            }
+            &ensure_comparison(
+                current_index("p", 2),
+                ComparisonOperator::Equal,
+                current_int(2),
+            )
         );
     }
 
@@ -2560,11 +3053,11 @@ mod tests {
 
         assert_eq!(
             ensure.ensure(),
-            &Ensure::Comparison {
-                left: current_index("p", 0),
-                operator: ComparisonOperator::Equal,
-                right: old_index("p", 0)
-            }
+            &ensure_comparison(
+                current_index("p", 0),
+                ComparisonOperator::Equal,
+                old_index("p", 0),
+            )
         );
     }
 
@@ -2604,6 +3097,63 @@ mod tests {
     }
 
     #[test]
+    fn parses_click_proposition_syntax() {
+        let source = r#"
+            verifying "logic.c";
+
+            int32 logic(int32 x) {
+                requires x >= 0 and x < 10;
+                ensures bounded: result >= 0 and result < 10 by auto;
+                ensures implication: result == x implies result >= 0 by auto;
+                ensures quantified: forall (int32 k) {
+                    0 <= k implies k >= 0
+                } by auto;
+            }
+        "#;
+        let file = parse(source).expect("proposition syntax should parse");
+        let function = &file.function_blocks()[0];
+
+        assert!(matches!(
+            function.requires()[0],
+            Requirement::Proposition(ClickProposition::And(_, _))
+        ));
+        assert!(matches!(
+            function.ensures()[0].ensure(),
+            Ensure::Proposition(ClickProposition::And(_, _))
+        ));
+        assert!(matches!(
+            function.ensures()[1].ensure(),
+            Ensure::Proposition(ClickProposition::Implies(_, _))
+        ));
+        assert!(matches!(
+            function.ensures()[2].ensure(),
+            Ensure::Proposition(ClickProposition::ForAll { .. })
+        ));
+    }
+
+    #[test]
+    fn verifies_click_proposition_logic() {
+        let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+        let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures prop_logic: result == x and not (result != x) by auto;
+                ensures prop_implies: result == x implies result == x by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("identity.c", c_source)])
+            .expect("proposition logic should verify");
+
+        assert_eq!(verified.len(), 2);
+    }
+
+    #[test]
     fn verifies_symbolic_result_expression() {
         let c_source = r#"
             int32 identity(int32 x) {
@@ -2624,11 +3174,11 @@ mod tests {
         assert_eq!(verified.len(), 1);
         assert_eq!(
             verified[0].ensure_clause.ensure(),
-            &Ensure::Comparison {
-                left: current_var("result"),
-                operator: ComparisonOperator::Equal,
-                right: current_var("x")
-            }
+            &ensure_comparison(
+                current_var("result"),
+                ComparisonOperator::Equal,
+                current_var("x"),
+            )
         );
     }
 
@@ -2644,11 +3194,11 @@ mod tests {
         assert_eq!(verified.len(), 1);
         assert_eq!(
             verified[0].ensure_clause.ensure(),
-            &Ensure::Comparison {
-                left: current_index("p", 2),
-                operator: ComparisonOperator::Equal,
-                right: current_int(2)
-            }
+            &ensure_comparison(
+                current_index("p", 2),
+                ComparisonOperator::Equal,
+                current_int(2),
+            )
         );
     }
 
@@ -2676,11 +3226,11 @@ mod tests {
         assert_eq!(verified.len(), 2);
         assert_eq!(
             verified[1].ensure_clause.ensure(),
-            &Ensure::Comparison {
-                left: current_index("p", 0),
-                operator: ComparisonOperator::Equal,
-                right: old_index("p", 0)
-            }
+            &ensure_comparison(
+                current_index("p", 0),
+                ComparisonOperator::Equal,
+                old_index("p", 0),
+            )
         );
     }
 
