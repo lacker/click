@@ -196,8 +196,9 @@ small C0 integer expressions over `result`, parameters, literals, parentheses,
 supports first-frame claims like `p[0] == old(p[0])`. The parser and kernel
 representation accept `forall (int32 name) { ... }`. `auto` can prove simple
 quantified array-segment postconditions, including unchanged-memory cases and
-first frame facts outside a loop write footprint. It does not yet support full
-quantified loop invariants. `auto` checks each guarantee on every symbolic
+first frame facts outside a loop write footprint. `auto` also supports
+proposition-level loop invariants, including bounded universal quantifiers over
+current-state array reads. `auto` checks each guarantee on every symbolic
 execution path. That sidecar path parses C0 source, builds the requested initial
 memory, first tries loop verification conditions for annotated loops, checks the
 postcondition clause, and packages the result as a megakernel
@@ -205,11 +206,10 @@ postcondition clause, and packages the result as a megakernel
 postcondition but leaves no invariant obligations, `auto` can still use bounded
 execution for finite concrete-loop demos.
 
-`assert` and `invariant` clauses parse the same proposition syntax, but
-currently accept only the executable fragment: comparisons, `and`, `or`, `not`,
-and `implies` over current-state C0 expressions. Quantified `forall`
-propositions are accepted in function requirements and guarantees, but not yet
-inside `at` clauses.
+`assert` and `invariant` clauses parse the same proposition syntax. `assert`
+currently accepts only the executable fragment: comparisons, `and`, `or`, `not`,
+and `implies` over current-state C0 expressions. `invariant` accepts
+current-state propositions, including `forall (int32 name) { ... }`.
 
 The sidecar also has first structural labels for intra-function proof
 obligations:

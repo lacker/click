@@ -9,11 +9,11 @@ use std::fmt;
 
 use crate::lang::c::syntax::{self, C0Expression, C0Type};
 use crate::megakernel::{
-    Assumptions, Bitvector32Term, CExpression, CFunction, CFunctionEnvironment, CFunctionOutcome,
-    CFunctionSpecification, CLoopInvariantCheck, CMemory, CState, CStatement, CValue,
-    ConditionTerm, PathFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition, Sort,
-    Theorem, Variable, c_function, c_function_specification, c_labeled_assert, c_pointer_value,
-    c_seq, c_while_with_invariant_checks,
+    Assumptions, Bitvector32Term, CComparisonOperator, CExpression, CFunction,
+    CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopInvariantCheck, CMemory,
+    CProposition, CState, CStatement, CValue, ConditionTerm, PathFact, Pointer, PointerOffsetTerm,
+    ProofObligation, Proposition, Sort, Theorem, Variable, c_function, c_function_specification,
+    c_labeled_assert, c_pointer_value, c_seq, c_while_with_invariant_checks,
     prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
@@ -379,7 +379,6 @@ pub fn verify_c0_sources(
                 }
                 Err(error) => Some(error),
             };
-
             let execution = prove_symbolic_c_function_execution_paths_with_environment(
                 state.clone(),
                 function.clone(),
@@ -390,10 +389,8 @@ pub fn verify_c0_sources(
             if let Some(error) =
                 execution_obligation_error(&execution, &ensure_label, &requirement_propositions)
             {
-                if execution.limit().is_some() {
-                    if let Some(loop_verification_error) = loop_verification_error {
-                        return Err(loop_verification_error);
-                    }
+                if let Some(loop_verification_error) = loop_verification_error {
+                    return Err(loop_verification_error);
                 }
                 return Err(error);
             }
@@ -739,9 +736,11 @@ fn validate_at_clauses(
                     "`at` clauses must use exactly `by auto;` in this first slice",
                 ));
             }
-            if click_proposition_to_c_expression(item.proposition()).is_none() {
+            if item.kind() == AtItemKind::Assert
+                && click_proposition_to_c_expression(item.proposition()).is_none()
+            {
                 return Err(ClickError::new(
-                    "`at` clauses currently support executable propositions only",
+                    "`assert` clauses currently support executable propositions only",
                 ));
             }
         }
@@ -757,8 +756,9 @@ fn annotated_function(
         at_clauses: function_block.at_clauses(),
         loop_index: 0,
         statement_index: 0,
+        next_quantifier_variable: 3_000_000,
     };
-    let body = lowerer.lower_statement(parsed_function.body());
+    let body = lowerer.lower_statement(parsed_function.body())?;
     Ok(c_function(
         parsed_function.return_type().to_megakernel_type(),
         parsed_function.name().to_string(),
@@ -775,6 +775,7 @@ struct AnnotationLowerer<'a> {
     at_clauses: &'a [AtClause],
     loop_index: usize,
     statement_index: usize,
+    next_quantifier_variable: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -784,17 +785,20 @@ struct LabeledCheck {
 }
 
 impl AnnotationLowerer<'_> {
-    fn lower_statement(&mut self, statement: &syntax::C0Statement) -> CStatement {
-        match statement {
+    fn lower_statement(
+        &mut self,
+        statement: &syntax::C0Statement,
+    ) -> Result<CStatement, ClickError> {
+        Ok(match statement {
             syntax::C0Statement::Seq(first, second) => {
-                c_seq(self.lower_statement(first), self.lower_statement(second))
+                c_seq(self.lower_statement(first)?, self.lower_statement(second)?)
             }
             syntax::C0Statement::While { condition, body } => {
                 let statement_index = self.next_statement_index();
                 let loop_index = self.next_loop_index();
-                let lowered_body = self.lower_statement(body);
+                let lowered_body = self.lower_statement(body)?;
                 let loop_asserts = self.loop_assert_checks(loop_index);
-                let invariant_checks = self.loop_invariant_checks(loop_index);
+                let invariant_checks = self.loop_invariant_checks(loop_index)?;
                 let lowered_loop = c_while_with_invariant_checks(
                     condition.to_megakernel_expression(),
                     Vec::new(),
@@ -809,7 +813,7 @@ impl AnnotationLowerer<'_> {
                 let lowered = statement.to_megakernel_statement();
                 self.prepend_statement_asserts(statement_index, lowered)
             }
-        }
+        })
     }
 
     fn next_statement_index(&mut self) -> usize {
@@ -847,7 +851,10 @@ impl AnnotationLowerer<'_> {
         prepend_labeled_asserts(statement, &checks)
     }
 
-    fn loop_invariant_checks(&self, loop_index: usize) -> Vec<CLoopInvariantCheck> {
+    fn loop_invariant_checks(
+        &mut self,
+        loop_index: usize,
+    ) -> Result<Vec<CLoopInvariantCheck>, ClickError> {
         self.at_clauses
             .iter()
             .filter(|clause| clause.target() == &AtTarget::Loop(loop_index))
@@ -855,16 +862,68 @@ impl AnnotationLowerer<'_> {
             .filter(|item| item.kind() == AtItemKind::Invariant)
             .enumerate()
             .map(|(item_index, item)| {
-                CLoopInvariantCheck::new(
-                    click_proposition_to_c_expression(item.proposition())
-                        .expect("at propositions should be validated before lowering"),
+                Ok(CLoopInvariantCheck::new(
+                    self.click_proposition_to_c_proposition(item.proposition())
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "at loop {loop_index} invariant {item_index}: {message}"
+                            ))
+                        })?,
                     Some(format!("at loop {loop_index} invariant {item_index} entry")),
                     Some(format!(
                         "at loop {loop_index} invariant {item_index} preservation"
                     )),
-                )
+                ))
             })
             .collect()
+    }
+
+    fn click_proposition_to_c_proposition(
+        &mut self,
+        proposition: &ClickProposition,
+    ) -> Result<CProposition, String> {
+        match proposition {
+            ClickProposition::Comparison {
+                left,
+                operator,
+                right,
+            } => Ok(CProposition::Comparison {
+                left: contract_expression_to_current_c_expression(left).ok_or_else(|| {
+                    "`old(...)` is not supported inside loop invariants".to_string()
+                })?,
+                operator: c_comparison_operator(*operator),
+                right: contract_expression_to_current_c_expression(right).ok_or_else(|| {
+                    "`old(...)` is not supported inside loop invariants".to_string()
+                })?,
+            }),
+            ClickProposition::And(left, right) => Ok(CProposition::And(
+                Box::new(self.click_proposition_to_c_proposition(left)?),
+                Box::new(self.click_proposition_to_c_proposition(right)?),
+            )),
+            ClickProposition::Or(left, right) => Ok(CProposition::Or(
+                Box::new(self.click_proposition_to_c_proposition(left)?),
+                Box::new(self.click_proposition_to_c_proposition(right)?),
+            )),
+            ClickProposition::Not(body) => Ok(CProposition::Not(Box::new(
+                self.click_proposition_to_c_proposition(body)?,
+            ))),
+            ClickProposition::Implies(left, right) => Ok(CProposition::Implies(
+                Box::new(self.click_proposition_to_c_proposition(left)?),
+                Box::new(self.click_proposition_to_c_proposition(right)?),
+            )),
+            ClickProposition::ForAll { c_type, name, body } => {
+                if *c_type != C0Type::Int32 {
+                    return Err("only `forall (int32 ...)` is supported".to_string());
+                }
+                let variable = Variable(self.next_quantifier_variable);
+                self.next_quantifier_variable += 1;
+                Ok(CProposition::ForAllInt32 {
+                    name: name.clone(),
+                    variable,
+                    body: Box::new(self.click_proposition_to_c_proposition(body)?),
+                })
+            }
+        }
     }
 
     fn loop_assert_checks(&self, loop_index: usize) -> Vec<LabeledCheck> {
@@ -945,6 +1004,17 @@ fn click_proposition_to_c_expression(proposition: &ClickProposition) -> Option<C
             Box::new(click_proposition_to_c_expression(right)?),
         )),
         ClickProposition::ForAll { .. } => None,
+    }
+}
+
+fn c_comparison_operator(operator: ComparisonOperator) -> CComparisonOperator {
+    match operator {
+        ComparisonOperator::Equal => CComparisonOperator::Equal,
+        ComparisonOperator::NotEqual => CComparisonOperator::NotEqual,
+        ComparisonOperator::LessThan => CComparisonOperator::LessThan,
+        ComparisonOperator::LessEqual => CComparisonOperator::LessEqual,
+        ComparisonOperator::GreaterThan => CComparisonOperator::GreaterThan,
+        ComparisonOperator::GreaterEqual => CComparisonOperator::GreaterEqual,
     }
 }
 
@@ -3356,6 +3426,40 @@ mod tests {
             error
                 .message()
                 .contains("at loop 0 invariant 0 preservation"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn false_loop_invariant_initialization_fails() {
+        let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                at loop 0 {
+                    invariant i == 1 by auto;
+                }
+
+                ensures result == 3 by auto;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
+            .expect_err("false loop invariant initialization should fail");
+
+        assert!(
+            error.message().contains("at loop 0 invariant 0 entry"),
             "{}",
             error.message()
         );

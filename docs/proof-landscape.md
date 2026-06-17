@@ -67,18 +67,18 @@ first-frame postconditions with `old(...)`, C-style array-parameter syntax, and
 Click proposition syntax with `and`, `or`, `not`, `implies`, and `forall`.
 `auto` can prove simple quantified array-segment postconditions, including
 unchanged-memory cases and frame facts outside a loop write footprint.
-Structural-label ghost checks for `assert` and `invariant` currently use the
-executable fragment of proposition syntax. Invariant failures are reported as
-loop-entry or preservation obligations. Annotated scalar and pointer-safety
-loops can now be summarized without unrolling: Click checks invariant
-initialization, one-step preservation, exit facts from the invariant plus the
-false loop condition, and a first write-footprint frame fact for loads provably
-outside the symbolic loop writes.
+Structural-label ghost checks support executable `assert` propositions and
+proposition-level `invariant` clauses, including simple quantified current-state
+array facts. Invariant failures are reported as loop-entry or preservation
+obligations. Annotated scalar and pointer-safety loops can now be summarized
+without unrolling: Click checks invariant initialization, one-step preservation,
+exit facts from the invariant plus the false loop condition, and a first
+write-footprint frame fact for loads provably outside the symbolic loop writes.
 
 It is not yet enough for the full launch-shaped proof story. The main missing
-pieces are quantified memory-segment invariants, full memory-changing loop
-invariants, richer intermediate fact management, richer C integer operations and
-casts, local arrays, richer memory predicates, and general frame conditions.
+pieces are full memory-changing loop invariants, richer intermediate fact
+management, richer C integer operations and casts, local arrays, richer memory
+predicates, and general frame conditions.
 
 That is intentional. The mdtests should make the next missing piece obvious:
 when a proof pattern needs a new C0 feature, add the feature because the proof

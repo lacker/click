@@ -112,6 +112,34 @@ pub enum CExpression {
     Index(Box<CExpression>, Box<CExpression>),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CComparisonOperator {
+    Equal,
+    NotEqual,
+    LessThan,
+    LessEqual,
+    GreaterThan,
+    GreaterEqual,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CProposition {
+    Comparison {
+        left: CExpression,
+        operator: CComparisonOperator,
+        right: CExpression,
+    },
+    And(Box<CProposition>, Box<CProposition>),
+    Or(Box<CProposition>, Box<CProposition>),
+    Not(Box<CProposition>),
+    Implies(Box<CProposition>, Box<CProposition>),
+    ForAllInt32 {
+        name: String,
+        variable: Variable,
+        body: Box<CProposition>,
+    },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CStatement {
     Declare {
@@ -152,7 +180,7 @@ pub enum CStatement {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CLoopInvariantCheck {
-    condition: CExpression,
+    proposition: CProposition,
     entry_context: Option<String>,
     preservation_context: Option<String>,
 }
@@ -363,6 +391,7 @@ pub struct Assumptions {
 pub struct ProofObligation {
     proposition: Proposition,
     context: Option<String>,
+    assumable: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -754,19 +783,19 @@ impl CFunction {
 
 impl CLoopInvariantCheck {
     pub fn new(
-        condition: CExpression,
+        proposition: CProposition,
         entry_context: Option<String>,
         preservation_context: Option<String>,
     ) -> Self {
         Self {
-            condition,
+            proposition,
             entry_context,
             preservation_context,
         }
     }
 
-    pub fn condition(&self) -> &CExpression {
-        &self.condition
+    pub fn proposition(&self) -> &CProposition {
+        &self.proposition
     }
 
     pub fn entry_context(&self) -> Option<&str> {
@@ -1579,12 +1608,25 @@ impl ProofObligation {
         Self {
             proposition,
             context: None,
+            assumable: true,
+        }
+    }
+
+    pub fn verification_condition(proposition: Proposition) -> Self {
+        Self {
+            proposition,
+            context: None,
+            assumable: false,
         }
     }
 
     pub fn with_context(mut self, context: impl Into<String>) -> Self {
         self.context = Some(context.into());
         self
+    }
+
+    pub fn is_assumable(&self) -> bool {
+        self.assumable
     }
 
     pub fn condition(condition: ConditionTerm, value: bool) -> Self {
@@ -2781,6 +2823,7 @@ fn wrap_proof_facts(
 ) -> Proposition {
     let proposition = obligations
         .iter()
+        .filter(|obligation| obligation.is_assumable())
         .rev()
         .fold(proposition, |body, obligation| {
             Proposition::Implies(Box::new(obligation.proposition().clone()), Box::new(body))
@@ -2964,6 +3007,42 @@ fn add_proof_obligation_with_context(
     Some(())
 }
 
+fn add_required_proof_obligation_with_context(
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &Assumptions,
+    proposition: Proposition,
+    context: Option<&str>,
+) {
+    if assumptions.proves(&proposition)
+        || obligations
+            .iter()
+            .any(|obligation| obligation.proposition == proposition)
+    {
+        return;
+    }
+
+    let obligation = ProofObligation::verification_condition(proposition);
+    obligations.push(match context {
+        Some(context) => obligation.with_context(context),
+        None => obligation,
+    });
+}
+
+fn append_required_proof_obligations(
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &Assumptions,
+    new_obligations: &[ProofObligation],
+) {
+    for obligation in new_obligations {
+        add_required_proof_obligation_with_context(
+            obligations,
+            assumptions,
+            obligation.proposition().clone(),
+            obligation.context(),
+        );
+    }
+}
+
 fn add_condition_obligation(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &Assumptions,
@@ -3005,12 +3084,21 @@ fn merge_obligations(
 ) -> Option<Vec<ProofObligation>> {
     let mut obligations = left.to_vec();
     for obligation in right {
-        add_proof_obligation_with_context(
-            &mut obligations,
-            assumptions,
-            obligation.proposition().clone(),
-            obligation.context(),
-        )?;
+        if obligation.is_assumable() {
+            add_proof_obligation_with_context(
+                &mut obligations,
+                assumptions,
+                obligation.proposition().clone(),
+                obligation.context(),
+            )?;
+        } else {
+            add_required_proof_obligation_with_context(
+                &mut obligations,
+                assumptions,
+                obligation.proposition().clone(),
+                obligation.context(),
+            );
+        }
     }
     Some(obligations)
 }
@@ -3066,7 +3154,9 @@ fn assumptions_with_path_context(
         assumptions = assumptions.assume_proposition(fact.proposition().clone());
     }
     for obligation in obligations {
-        assumptions = assumptions.assume_proposition(obligation.proposition().clone());
+        if obligation.is_assumable() {
+            assumptions = assumptions.assume_proposition(obligation.proposition().clone());
+        }
     }
     assumptions
 }
@@ -3080,6 +3170,250 @@ fn assumptions_with_propositions(
         assumptions = assumptions.assume_proposition(proposition.clone());
     }
     assumptions
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CPropositionPath {
+    proposition: Proposition,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+}
+
+fn lower_c_proposition_at_state(
+    state: &CState,
+    proposition: &CProposition,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CPropositionPath>> {
+    match proposition {
+        CProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => lower_c_comparison_proposition_at_state(
+            state,
+            left,
+            *operator,
+            right,
+            assumptions,
+            budget,
+        ),
+        CProposition::And(left, right) => {
+            let mut paths = Vec::new();
+            for left_path in lower_c_proposition_at_state(state, left, assumptions, budget)? {
+                let right_assumptions = assumptions_with_path_context(
+                    assumptions,
+                    &left_path.facts,
+                    &left_path.obligations,
+                );
+                for right_path in
+                    lower_c_proposition_at_state(state, right, &right_assumptions, budget)?
+                {
+                    if let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                        &left_path.facts,
+                        &left_path.obligations,
+                        &right_path.facts,
+                        &right_path.obligations,
+                        assumptions,
+                    ) {
+                        paths.push(CPropositionPath {
+                            proposition: Proposition::And(
+                                Box::new(left_path.proposition.clone()),
+                                Box::new(right_path.proposition),
+                            ),
+                            facts,
+                            obligations,
+                        });
+                    }
+                }
+            }
+            Ok(paths)
+        }
+        CProposition::Or(left, right) => lower_c_binary_proposition_at_state(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right| Proposition::Or(Box::new(left), Box::new(right)),
+        ),
+        CProposition::Not(body) => {
+            Ok(
+                lower_c_proposition_at_state(state, body, assumptions, budget)?
+                    .into_iter()
+                    .map(|path| CPropositionPath {
+                        proposition: Proposition::Not(Box::new(path.proposition)),
+                        facts: path.facts,
+                        obligations: path.obligations,
+                    })
+                    .collect(),
+            )
+        }
+        CProposition::Implies(left, right) => {
+            let mut paths = Vec::new();
+            for left_path in lower_c_proposition_at_state(state, left, assumptions, budget)? {
+                let right_assumptions = assumptions_with_path_context(
+                    assumptions,
+                    &left_path.facts,
+                    &left_path.obligations,
+                )
+                .assume_proposition(left_path.proposition.clone());
+                for right_path in
+                    lower_c_proposition_at_state(state, right, &right_assumptions, budget)?
+                {
+                    if let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                        &left_path.facts,
+                        &left_path.obligations,
+                        &right_path.facts,
+                        &right_path.obligations,
+                        assumptions,
+                    ) {
+                        paths.push(CPropositionPath {
+                            proposition: Proposition::Implies(
+                                Box::new(left_path.proposition.clone()),
+                                Box::new(right_path.proposition),
+                            ),
+                            facts,
+                            obligations,
+                        });
+                    }
+                }
+            }
+            Ok(paths)
+        }
+        CProposition::ForAllInt32 {
+            name,
+            variable,
+            body,
+        } => {
+            let mut state = state.clone();
+            state
+                .locals
+                .set(name.clone(), int32(Bitvector32Term::Variable(*variable)));
+            Ok(
+                lower_c_proposition_at_state(&state, body, assumptions, budget)?
+                    .into_iter()
+                    .map(|path| CPropositionPath {
+                        proposition: Proposition::ForAll {
+                            var: *variable,
+                            sort: Sort::CInt32,
+                            body: Box::new(path.proposition),
+                        },
+                        facts: path.facts,
+                        obligations: path.obligations,
+                    })
+                    .collect(),
+            )
+        }
+    }
+}
+
+fn lower_c_binary_proposition_at_state(
+    state: &CState,
+    left: &CProposition,
+    right: &CProposition,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+    combine: impl Fn(Proposition, Proposition) -> Proposition,
+) -> ExecutionResult<Vec<CPropositionPath>> {
+    let mut paths = Vec::new();
+    for left_path in lower_c_proposition_at_state(state, left, assumptions, budget)? {
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
+        for right_path in lower_c_proposition_at_state(state, right, &right_assumptions, budget)? {
+            if let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &left_path.facts,
+                &left_path.obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) {
+                paths.push(CPropositionPath {
+                    proposition: combine(left_path.proposition.clone(), right_path.proposition),
+                    facts,
+                    obligations,
+                });
+            }
+        }
+    }
+    Ok(paths)
+}
+
+fn lower_c_comparison_proposition_at_state(
+    state: &CState,
+    left: &CExpression,
+    operator: CComparisonOperator,
+    right: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CPropositionPath>> {
+    let mut paths = Vec::new();
+    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
+        let CExpressionOutcome::Value(left) = left_path.outcome else {
+            continue;
+        };
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
+        for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
+            let CExpressionOutcome::Value(right) = right_path.outcome else {
+                continue;
+            };
+            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &left_path.facts,
+                &left_path.obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+            if let Some(proposition) = c_value_comparison_proposition(&left, operator, &right) {
+                paths.push(CPropositionPath {
+                    proposition,
+                    facts,
+                    obligations,
+                });
+            }
+        }
+    }
+    Ok(paths)
+}
+
+fn c_value_comparison_proposition(
+    left: &CValue,
+    operator: CComparisonOperator,
+    right: &CValue,
+) -> Option<Proposition> {
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right)) => {
+            let (condition, value) = match operator {
+                CComparisonOperator::Equal => {
+                    (ConditionTerm::equal(left.clone(), right.clone()), true)
+                }
+                CComparisonOperator::NotEqual => {
+                    (ConditionTerm::equal(left.clone(), right.clone()), false)
+                }
+                CComparisonOperator::LessThan => (
+                    ConditionTerm::signed_less_than(left.clone(), right.clone()),
+                    true,
+                ),
+                CComparisonOperator::LessEqual => (
+                    ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+                    true,
+                ),
+                CComparisonOperator::GreaterThan => (
+                    ConditionTerm::signed_greater_than(left.clone(), right.clone()),
+                    true,
+                ),
+                CComparisonOperator::GreaterEqual => (
+                    ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
+                    true,
+                ),
+            };
+            Some(Proposition::ConditionIs(condition, value))
+        }
+        _ => None,
+    }
 }
 
 fn evaluate_c_expression(
@@ -4770,7 +5104,7 @@ fn execute_c_assert_paths(
 }
 
 fn assertion_truthiness_obligation(value: &CValue, label: Option<&str>) -> ProofObligation {
-    let obligation = ProofObligation::new(Proposition::Equal(
+    let obligation = ProofObligation::verification_condition(Proposition::Equal(
         Term::CValue(value.clone()),
         Term::CValue(int32(1)),
     ));
@@ -5231,13 +5565,13 @@ fn execute_c_while_verification_paths(
         budget,
         variables,
     )?;
-    let base_obligations = merge_obligations(&base_obligations, &entry_obligations, assumptions)
-        .and_then(|obligations| {
-            merge_obligations(&obligations, &preservation_summary.obligations, assumptions)
-        });
-    let Some(base_obligations) = base_obligations else {
-        return Ok(Vec::new());
-    };
+    let mut loop_check_obligations = Vec::new();
+    append_required_proof_obligations(&mut loop_check_obligations, assumptions, &entry_obligations);
+    append_required_proof_obligations(
+        &mut loop_check_obligations,
+        assumptions,
+        &preservation_summary.obligations,
+    );
 
     let mut paths = Vec::new();
     for (invariant_facts, invariant_obligations) in assume_invariant_checks(
@@ -5248,7 +5582,7 @@ fn execute_c_while_verification_paths(
         &base_obligations,
         budget,
     )? {
-        for (mut facts, obligations) in assume_condition_truthiness(
+        for (mut facts, mut obligations) in assume_condition_truthiness(
             &top_state,
             condition,
             assumptions,
@@ -5267,6 +5601,11 @@ fn execute_c_while_verification_paths(
                 },
             )
             .expect("loop frame fact should be consistent");
+            append_required_proof_obligations(
+                &mut obligations,
+                assumptions,
+                &loop_check_obligations,
+            );
             paths.push(CStatementExecutionPath {
                 outcome: CStatementOutcome::Normal(top_state.clone()),
                 facts,
@@ -5276,8 +5615,9 @@ fn execute_c_while_verification_paths(
     }
     if paths.is_empty() {
         let mut obligations = base_obligations;
+        append_required_proof_obligations(&mut obligations, assumptions, &loop_check_obligations);
         obligations.push(
-            ProofObligation::new(false_equals_true_proposition())
+            ProofObligation::verification_condition(false_equals_true_proposition())
                 .with_context("loop exit reachability"),
         );
         paths.push(CStatementExecutionPath {
@@ -5286,7 +5626,6 @@ fn execute_c_while_verification_paths(
             obligations,
         });
     }
-
     budget.consume_paths(paths.len())?;
     Ok(paths)
 }
@@ -5318,10 +5657,9 @@ fn collect_invariant_check_obligations(
         for (facts, obligations) in contexts {
             let effective_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
-            for path in execute_c_assert_paths(
+            for path in lower_c_proposition_at_state(
                 state,
-                check.condition(),
-                invariant_context(check, phase),
+                check.proposition(),
                 &effective_assumptions,
                 budget,
             )? {
@@ -5334,20 +5672,15 @@ fn collect_invariant_check_obligations(
                 ) else {
                     continue;
                 };
-                if matches!(path.outcome, CStatementOutcome::Normal(_)) {
-                    all_obligations =
-                        merge_obligations(&all_obligations, &obligations, assumptions)
-                            .expect("invariant obligations should remain consistent");
-                    next_contexts.push((facts, obligations));
-                } else {
-                    let mut obligations = obligations;
-                    obligations.push(invariant_failure_obligation(invariant_context(
-                        check, phase,
-                    )));
-                    all_obligations =
-                        merge_obligations(&all_obligations, &obligations, assumptions)
-                            .expect("invariant failure obligation should remain consistent");
-                }
+                let mut obligations = obligations;
+                add_required_proof_obligation_with_context(
+                    &mut obligations,
+                    assumptions,
+                    path.proposition,
+                    invariant_context(check, phase),
+                );
+                append_required_proof_obligations(&mut all_obligations, assumptions, &obligations);
+                next_contexts.push((facts, obligations));
             }
         }
         contexts = next_contexts;
@@ -5413,24 +5746,30 @@ fn collect_loop_preservation_summary(
                             ),
                             budget,
                         )?;
-                        obligations =
-                            merge_obligations(&obligations, &body_path.obligations, assumptions)
-                                .and_then(|obligations| {
-                                    merge_obligations(&obligations, &path_obligations, assumptions)
-                                })
-                                .expect("loop preservation obligations should remain consistent");
+                        append_required_proof_obligations(
+                            &mut obligations,
+                            assumptions,
+                            &body_path.obligations,
+                        );
+                        append_required_proof_obligations(
+                            &mut obligations,
+                            assumptions,
+                            &path_obligations,
+                        );
                     }
                     CStatementOutcome::Return { .. }
                     | CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_) => {
                         let mut path_obligations = body_path.obligations;
                         path_obligations.push(
-                            ProofObligation::new(false_equals_true_proposition())
+                            ProofObligation::verification_condition(false_equals_true_proposition())
                                 .with_context("loop preservation body safety"),
                         );
-                        obligations =
-                            merge_obligations(&obligations, &path_obligations, assumptions)
-                                .expect("loop body safety obligations should remain consistent");
+                        append_required_proof_obligations(
+                            &mut obligations,
+                            assumptions,
+                            &path_obligations,
+                        );
                     }
                 }
             }
@@ -5457,14 +5796,6 @@ fn collect_written_pointers_from_memory_delta(
     }
 }
 
-fn invariant_failure_obligation(context: Option<&str>) -> ProofObligation {
-    let obligation = ProofObligation::new(false_equals_true_proposition());
-    match context {
-        Some(context) => obligation.with_context(context),
-        None => obligation,
-    }
-}
-
 fn false_equals_true_proposition() -> Proposition {
     Proposition::Equal(
         Term::Condition(ConditionTerm::Constant(false)),
@@ -5484,15 +5815,27 @@ fn assume_invariant_checks(
     for check in invariant_checks {
         let mut next_contexts = Vec::new();
         for (facts, obligations) in contexts {
-            next_contexts.extend(assume_condition_truthiness(
+            let effective_assumptions =
+                assumptions_with_path_context(assumptions, &facts, &obligations);
+            for path in lower_c_proposition_at_state(
                 state,
-                check.condition(),
-                assumptions,
-                &facts,
-                &obligations,
-                true,
+                check.proposition(),
+                &effective_assumptions,
                 budget,
-            )?);
+            )? {
+                let Some((mut facts, obligations)) = merge_path_facts_and_obligations(
+                    &facts,
+                    &obligations,
+                    &path.facts,
+                    &path.obligations,
+                    assumptions,
+                ) else {
+                    continue;
+                };
+                if add_path_fact(&mut facts, assumptions, path.proposition).is_some() {
+                    next_contexts.push((facts, obligations));
+                }
+            }
         }
         contexts = next_contexts;
     }
