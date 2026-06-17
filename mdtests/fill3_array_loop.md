@@ -21,7 +21,7 @@ verifying "fill3_array_loop.c";
 int32 fill3_array_loop(int32 p[3]) {
     requires valid_range(p, 12);
 
-    at loop 0 {
+    loop 0 {
         invariant i >= 0 by auto;
         invariant i <= 3 by auto;
     }

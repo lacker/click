@@ -189,6 +189,7 @@ result == x and not (result != x)
 result == x implies result >= 0
 forall (int32 k) { 0 <= k implies k >= 0 }
 preserves(p[0..n])
+writes_only(p[0..n])
 ```
 
 Logical structure uses Click words: `and`, `or`, `not`, `implies`, and
@@ -204,11 +205,14 @@ first frame facts outside a loop write footprint. `auto` also supports
 proposition-level loop invariants, including bounded universal quantifiers over
 current-state array reads. `preserves(pointer[start..end])` is proposition
 syntax for the common old-memory frame claim over a half-open `int32` element
-segment, and can be used in postconditions and loop invariants. `auto` checks
-each guarantee on every symbolic execution path. That sidecar path parses C0
-source, builds the requested initial memory, first tries loop verification
-conditions for annotated loops, checks the postcondition clause, and packages
-the result as a megakernel
+segment, and can be used in postconditions and loop invariants.
+`writes_only(pointer[start..end])` is the dual postcondition form: every
+externally visible memory cell changed by the function must fall inside the
+segment. Local stack bookkeeping and internal havoc markers are not part of this
+external frame check. `auto` checks each guarantee on every symbolic execution
+path. That sidecar path parses C0 source, builds the requested initial memory,
+first tries loop verification conditions for annotated loops, checks the
+postcondition clause, and packages the result as a megakernel
 `CFunctionSpecification` theorem. If the loop VC path cannot prove a
 postcondition but leaves no invariant obligations, `auto` can still use bounded
 execution for finite concrete-loop demos.
@@ -219,15 +223,15 @@ and `implies` over current-state C0 expressions. `invariant` accepts
 propositions including `forall (int32 name) { ... }` and `preserves(p[i..j])`.
 `old(...)` inside an invariant refers to the enclosing function's entry state.
 
-The sidecar also has first structural labels for intra-function proof
+The sidecar also has first structural proof blocks for intra-function proof
 obligations:
 
 ```text
-at statement 2 {
+statement 2 {
     assert i == 0 by auto;
 }
 
-at loop 0 {
+loop 0 {
     invariant i >= 0 by auto;
     invariant i <= 3 by auto;
 }
@@ -300,6 +304,8 @@ The first memory-safety demos are fixed-size pointer loops:
   postcondition from an explicit loop invariant using `old(...)`.
 - `fill_tail_preserves_prefix_segment(int32 p[], int32 n)` proves an old-memory
   frame postcondition from a compact `preserves(p[0..1])` loop invariant.
+- `fill_n_writes_only_segment(int32 p[], int32 n)` proves that a symbolic
+  pointer-writing loop writes only `p[0..n]`.
 
 The fixed-size pointer demos use 12-byte backing blocks and prove without
 leftover memory-safety premises. The symbolic pointer-loop demos instead use
@@ -311,8 +317,9 @@ can also prove post-state memory guarantees such as
 
 ## Near-Term Roadmap
 
-1. Add the dual frame primitive to `preserves`: likely `writes_only(p[i..j])`,
-   meaning only the half-open segment may differ between old and current memory.
+1. Add dedicated loop-effect clauses, so `loop N { writes_only(p[i..j]) by
+   auto; }` can mean one loop body step writes only inside the segment, without
+   pretending that effect claim is a state invariant.
 2. Broaden segment reasoning beyond one-cell frame demos, especially proving
    copy-style invariants such as `dst[0..i]` matching `old(src[0..i])`.
 3. Improve fact management inside `auto`, especially using requirements,

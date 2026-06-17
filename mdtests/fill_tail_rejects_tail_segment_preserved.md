@@ -21,7 +21,7 @@ verifying "fill_tail_rejects_tail_segment_preserved.c";
 int32 fill_tail_rejects_tail_segment_preserved(int32 p[], int32 n) {
     requires n >= 2 and n <= 2147483647;
     requires valid_range(p, n * 4);
-    at loop 0 {
+    loop 0 {
         invariant i >= 1 and i <= n by auto;
     }
     ensures tail_preserved: forall (int32 k) {

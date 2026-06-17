@@ -1,6 +1,6 @@
 # count_to_three rejects a false invariant
 
-This checks that an `at loop` invariant is checked again after the loop body.
+This checks that an `loop` invariant is checked again after the loop body.
 
 ```c filename=count_to_three_bad_invariant.c
 int32 count_to_three_bad_invariant() {
@@ -17,7 +17,7 @@ int32 count_to_three_bad_invariant() {
 verifying "count_to_three_bad_invariant.c";
 
 int32 count_to_three_bad_invariant() {
-    at loop 0 {
+    loop 0 {
         invariant i < 3 by auto;
     }
 
@@ -26,5 +26,5 @@ int32 count_to_three_bad_invariant() {
 ```
 
 ```expect
-fail: at loop 0 invariant 0 preservation
+fail: loop 0 invariant 0 preservation
 ```

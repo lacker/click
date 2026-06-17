@@ -4,7 +4,7 @@
 //! us a source-file-shaped workflow for C examples while leaving the larger
 //! tactic language design open.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::lang::c::syntax::{self, C0Expression, C0Type};
@@ -30,7 +30,7 @@ pub struct ClickFile {
 pub struct FunctionBlock {
     signature: FunctionSignature,
     requires: Vec<Requirement>,
-    at_clauses: Vec<AtClause>,
+    structural_clauses: Vec<StructuralClause>,
     ensures: Vec<EnsureClause>,
 }
 
@@ -78,26 +78,26 @@ pub struct EnsureClause {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AtClause {
-    target: AtTarget,
-    items: Vec<AtItem>,
+pub struct StructuralClause {
+    target: StructuralTarget,
+    items: Vec<StructuralItem>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub enum AtTarget {
+pub enum StructuralTarget {
     Loop(usize),
     Statement(usize),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AtItem {
-    kind: AtItemKind,
+pub struct StructuralItem {
+    kind: StructuralItemKind,
     proposition: ClickProposition,
     proof: Proof,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AtItemKind {
+pub enum StructuralItemKind {
     Invariant,
     Assert,
 }
@@ -115,6 +115,7 @@ pub enum ClickProposition {
         right: ContractExpression,
     },
     Preserves(ContractSegment),
+    WritesOnly(ContractSegment),
     And(Box<ClickProposition>, Box<ClickProposition>),
     Or(Box<ClickProposition>, Box<ClickProposition>),
     Not(Box<ClickProposition>),
@@ -239,8 +240,8 @@ impl FunctionBlock {
         &self.requires
     }
 
-    pub fn at_clauses(&self) -> &[AtClause] {
-        &self.at_clauses
+    pub fn structural_clauses(&self) -> &[StructuralClause] {
+        &self.structural_clauses
     }
 
     pub fn ensures(&self) -> &[EnsureClause] {
@@ -286,18 +287,18 @@ impl EnsureClause {
     }
 }
 
-impl AtClause {
-    pub fn target(&self) -> &AtTarget {
+impl StructuralClause {
+    pub fn target(&self) -> &StructuralTarget {
         &self.target
     }
 
-    pub fn items(&self) -> &[AtItem] {
+    pub fn items(&self) -> &[StructuralItem] {
         &self.items
     }
 }
 
-impl AtItem {
-    pub fn kind(&self) -> AtItemKind {
+impl StructuralItem {
+    pub fn kind(&self) -> StructuralItemKind {
         self.kind
     }
 
@@ -365,7 +366,7 @@ pub fn verify_c0_sources(
                 ))
             })?;
         check_signature(&function_block.signature, parsed_function, source_path)?;
-        validate_at_clauses(&function_block, parsed_function)?;
+        validate_structural_clauses(&function_block, parsed_function)?;
         for (ensure_index, ensure_clause) in function_block.ensures.iter().enumerate() {
             let ensure_label =
                 ensure_label(function_block.signature.name(), ensure_clause, ensure_index);
@@ -745,45 +746,45 @@ fn check_signature(
     Ok(())
 }
 
-fn validate_at_clauses(
+fn validate_structural_clauses(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
 ) -> Result<(), ClickError> {
     let loop_count = count_loops(parsed_function.body());
     let statement_count = count_statements(parsed_function.body());
-    for at_clause in function_block.at_clauses() {
-        match at_clause.target() {
-            AtTarget::Loop(index) if *index >= loop_count => {
+    for structural_clause in function_block.structural_clauses() {
+        match structural_clause.target() {
+            StructuralTarget::Loop(index) if *index >= loop_count => {
                 return Err(ClickError::new(format!(
                     "`{}` has no `loop {index}` target; it contains {loop_count} loop(s)",
                     function_block.signature().name()
                 )));
             }
-            AtTarget::Statement(index) if *index >= statement_count => {
+            StructuralTarget::Statement(index) if *index >= statement_count => {
                 return Err(ClickError::new(format!(
                     "`{}` has no `statement {index}` target; it contains {statement_count} statement(s)",
                     function_block.signature().name()
                 )));
             }
-            AtTarget::Statement(_) => {
-                for item in at_clause.items() {
-                    if item.kind() == AtItemKind::Invariant {
+            StructuralTarget::Statement(_) => {
+                for item in structural_clause.items() {
+                    if item.kind() == StructuralItemKind::Invariant {
                         return Err(ClickError::new(
                             "`invariant` is only supported at `loop` targets",
                         ));
                     }
                 }
             }
-            AtTarget::Loop(_) => {}
+            StructuralTarget::Loop(_) => {}
         }
 
-        for item in at_clause.items() {
+        for item in structural_clause.items() {
             if !item.proof().is_auto_tactic() {
                 return Err(ClickError::new(
-                    "`at` clauses must use exactly `by auto;` in this first slice",
+                    "structural proof blocks must use exactly `by auto;` in this first slice",
                 ));
             }
-            if item.kind() == AtItemKind::Assert
+            if item.kind() == StructuralItemKind::Assert
                 && click_proposition_to_c_expression(item.proposition()).is_none()
             {
                 return Err(ClickError::new(
@@ -802,7 +803,7 @@ fn annotated_function(
     arguments: &[CExpression],
 ) -> Result<CFunction, ClickError> {
     let mut lowerer = AnnotationLowerer {
-        at_clauses: function_block.at_clauses(),
+        structural_clauses: function_block.structural_clauses(),
         entry_state,
         entry_values: parameter_values(parsed_function.parameters(), arguments)?,
         quantified_values: BTreeMap::new(),
@@ -824,7 +825,7 @@ fn annotated_function(
 }
 
 struct AnnotationLowerer<'a> {
-    at_clauses: &'a [AtClause],
+    structural_clauses: &'a [StructuralClause],
     entry_state: &'a CState,
     entry_values: BTreeMap<String, CValue>,
     quantified_values: BTreeMap<String, CValue>,
@@ -889,17 +890,17 @@ impl AnnotationLowerer<'_> {
         statement: CStatement,
     ) -> CStatement {
         let checks = self
-            .at_clauses
+            .structural_clauses
             .iter()
-            .filter(|clause| clause.target() == &AtTarget::Statement(statement_index))
-            .flat_map(AtClause::items)
+            .filter(|clause| clause.target() == &StructuralTarget::Statement(statement_index))
+            .flat_map(StructuralClause::items)
             .enumerate()
             .map(|(item_index, item)| LabeledCheck {
                 condition: click_proposition_to_c_expression(item.proposition())
-                    .expect("at propositions should be validated before lowering"),
+                    .expect("structural propositions should be validated before lowering"),
                 label: format!(
-                    "at statement {statement_index} {} {item_index}",
-                    at_item_kind_label(item.kind())
+                    "statement {statement_index} {} {item_index}",
+                    structural_item_kind_label(item.kind())
                 ),
             })
             .collect::<Vec<_>>();
@@ -910,23 +911,23 @@ impl AnnotationLowerer<'_> {
         &mut self,
         loop_index: usize,
     ) -> Result<Vec<CLoopInvariantCheck>, ClickError> {
-        self.at_clauses
+        self.structural_clauses
             .iter()
-            .filter(|clause| clause.target() == &AtTarget::Loop(loop_index))
-            .flat_map(AtClause::items)
-            .filter(|item| item.kind() == AtItemKind::Invariant)
+            .filter(|clause| clause.target() == &StructuralTarget::Loop(loop_index))
+            .flat_map(StructuralClause::items)
+            .filter(|item| item.kind() == StructuralItemKind::Invariant)
             .enumerate()
             .map(|(item_index, item)| {
                 Ok(CLoopInvariantCheck::new(
                     self.click_proposition_to_c_proposition(item.proposition())
                         .map_err(|message| {
                             ClickError::new(format!(
-                                "at loop {loop_index} invariant {item_index}: {message}"
+                                "loop {loop_index} invariant {item_index}: {message}"
                             ))
                         })?,
-                    Some(format!("at loop {loop_index} invariant {item_index} entry")),
+                    Some(format!("loop {loop_index} invariant {item_index} entry")),
                     Some(format!(
-                        "at loop {loop_index} invariant {item_index} preservation"
+                        "loop {loop_index} invariant {item_index} preservation"
                     )),
                 ))
             })
@@ -949,6 +950,9 @@ impl AnnotationLowerer<'_> {
             }),
             ClickProposition::Preserves(segment) => {
                 self.lower_preserves_segment_to_c_proposition(segment)
+            }
+            ClickProposition::WritesOnly(_) => {
+                Err("`writes_only(...)` is not available in loop invariants yet".to_string())
             }
             ClickProposition::And(left, right) => Ok(CProposition::And(
                 Box::new(self.click_proposition_to_c_proposition(left)?),
@@ -1120,25 +1124,25 @@ impl AnnotationLowerer<'_> {
     }
 
     fn loop_assert_checks(&self, loop_index: usize) -> Vec<LabeledCheck> {
-        self.at_clauses
+        self.structural_clauses
             .iter()
-            .filter(|clause| clause.target() == &AtTarget::Loop(loop_index))
-            .flat_map(AtClause::items)
-            .filter(|item| item.kind() == AtItemKind::Assert)
+            .filter(|clause| clause.target() == &StructuralTarget::Loop(loop_index))
+            .flat_map(StructuralClause::items)
+            .filter(|item| item.kind() == StructuralItemKind::Assert)
             .enumerate()
             .map(|(item_index, item)| LabeledCheck {
                 condition: click_proposition_to_c_expression(item.proposition())
-                    .expect("at propositions should be validated before lowering"),
-                label: format!("at loop {loop_index} assert {item_index}"),
+                    .expect("structural propositions should be validated before lowering"),
+                label: format!("loop {loop_index} assert {item_index}"),
             })
             .collect()
     }
 }
 
-fn at_item_kind_label(kind: AtItemKind) -> &'static str {
+fn structural_item_kind_label(kind: StructuralItemKind) -> &'static str {
     match kind {
-        AtItemKind::Assert => "assert",
-        AtItemKind::Invariant => "invariant",
+        StructuralItemKind::Assert => "assert",
+        StructuralItemKind::Invariant => "invariant",
     }
 }
 
@@ -1197,6 +1201,7 @@ fn click_proposition_to_c_expression(proposition: &ClickProposition) -> Option<C
             Box::new(click_proposition_to_c_expression(right)?),
         )),
         ClickProposition::Preserves(_) => None,
+        ClickProposition::WritesOnly(_) => None,
         ClickProposition::ForAll { .. } => None,
     }
 }
@@ -1585,6 +1590,9 @@ impl KernelPropositionLowerer {
             ClickProposition::Preserves(_) => Err(ClickError::new(
                 "`preserves(...)` is not available in `requires` clauses",
             )),
+            ClickProposition::WritesOnly(_) => Err(ClickError::new(
+                "`writes_only(...)` is not available in `requires` clauses",
+            )),
             ClickProposition::And(left, right) => Ok(Proposition::And(
                 Box::new(self.lower_requirement_proposition(left)?),
                 Box::new(self.lower_requirement_proposition(right)?),
@@ -1905,6 +1913,26 @@ fn prove_ensure_proposition(
                 )));
             }
         },
+        ClickProposition::WritesOnly(segment) => match outcome {
+            CFunctionOutcome::Return { value, state } => prove_writes_only_segment(
+                ensure_label,
+                path_index,
+                path_facts,
+                available_propositions,
+                parameters,
+                arguments,
+                pre_state,
+                state,
+                value,
+                segment,
+            )?,
+            other => {
+                return Err(ClickError::new(format!(
+                    "`ensures writes_only({segment:?})` failed for `{ensure_label}` path {path_index}: outcome was {other:?}\n  path facts: {}",
+                    describe_facts(path_facts)
+                )));
+            }
+        },
         ClickProposition::And(left, right) => {
             prove_ensure_proposition(
                 ensure_label,
@@ -1960,6 +1988,200 @@ fn prove_ensure_proposition(
         }
     }
     Ok(())
+}
+
+fn prove_writes_only_segment(
+    ensure_label: &str,
+    path_index: usize,
+    path_facts: &[crate::megakernel::PathFact],
+    available_propositions: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    segment: &ContractSegment,
+) -> Result<(), ClickError> {
+    if segment.state != ContractSegmentState::Current {
+        return Err(ClickError::new(format!(
+            "`ensures writes_only({segment:?})` failed for `{ensure_label}` path {path_index}: expected a current-state segment"
+        )));
+    }
+    let segment = evaluate_contract_segment(
+        parameters,
+        arguments,
+        pre_state,
+        post_state,
+        result,
+        available_propositions,
+        segment,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`ensures writes_only({segment:?})` failed for `{ensure_label}` path {path_index}: could not evaluate segment: {message}"
+        ))
+    })?;
+    let assumptions = assumptions_from_propositions(available_propositions);
+    let mut writes = post_state
+        .memory()
+        .differing_cell_pointers(pre_state.memory())
+        .into_iter()
+        .filter(is_frame_relevant_pointer)
+        .collect::<BTreeSet<_>>();
+    writes.extend(
+        path_facts
+            .iter()
+            .filter_map(|fact| match fact.proposition() {
+                Proposition::CMemoryWritesOnly { pointers, .. } => Some(pointers.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .cloned(),
+    );
+    writes.retain(is_frame_relevant_pointer);
+
+    for pointer in &writes {
+        if !segment_contains_pointer(&segment, pointer, &assumptions) {
+            return Err(ClickError::new(format!(
+                "`ensures writes_only({:?})` failed for `{ensure_label}` path {path_index}: write to {pointer:?} is outside the segment\n  path facts: {}",
+                segment.source,
+                describe_facts(path_facts)
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn is_frame_relevant_pointer(pointer: &Pointer) -> bool {
+    !pointer.block.starts_with("local:") && !pointer.block.starts_with("havoc:")
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EvaluatedContractSegment {
+    source: ContractSegment,
+    base: Pointer,
+    start: Bitvector32Term,
+    end: Bitvector32Term,
+}
+
+fn evaluate_contract_segment(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    available_propositions: &[Proposition],
+    segment: &ContractSegment,
+) -> Result<EvaluatedContractSegment, String> {
+    let parameter_values =
+        parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let assumptions = assumptions_from_propositions(available_propositions);
+    let (state, result) = match segment.state {
+        ContractSegmentState::Current => (post_state, Some(result)),
+        ContractSegmentState::Old => (pre_state, None),
+    };
+    let base = evaluate_c_contract_expression(
+        &parameter_values,
+        state,
+        result,
+        &assumptions,
+        &segment.base,
+    )?;
+    let CValue::Pointer(base) = base else {
+        return Err("segment base did not evaluate to a pointer".to_string());
+    };
+    let start = evaluate_c_contract_expression(
+        &parameter_values,
+        state,
+        result,
+        &assumptions,
+        &segment.start,
+    )?;
+    let CValue::Int32(start) = start else {
+        return Err("segment start did not evaluate to int32".to_string());
+    };
+    let end = evaluate_c_contract_expression(
+        &parameter_values,
+        state,
+        result,
+        &assumptions,
+        &segment.end,
+    )?;
+    let CValue::Int32(end) = end else {
+        return Err("segment end did not evaluate to int32".to_string());
+    };
+
+    Ok(EvaluatedContractSegment {
+        source: segment.clone(),
+        base,
+        start,
+        end,
+    })
+}
+
+fn segment_contains_pointer(
+    segment: &EvaluatedContractSegment,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    let Some(index) = pointer_element_index_from_base(pointer, &segment.base) else {
+        return false;
+    };
+    assumptions.proves(&Proposition::ConditionIs(
+        signed_less_equal(segment.start.clone(), index.clone()),
+        true,
+    )) && assumptions.proves(&Proposition::ConditionIs(
+        signed_less_than(index, segment.end.clone()),
+        true,
+    ))
+}
+
+fn pointer_element_index_from_base(pointer: &Pointer, base: &Pointer) -> Option<Bitvector32Term> {
+    if pointer.block != base.block {
+        return None;
+    }
+
+    if pointer.offset == base.offset {
+        return Some(Bitvector32Term::Constant(0));
+    }
+
+    if base.offset == PointerOffsetTerm::Constant(0) {
+        return int32_element_index_from_pointer_offset(&pointer.offset);
+    }
+
+    match &pointer.offset {
+        PointerOffsetTerm::Add(left, right) if left.as_ref() == &base.offset => {
+            int32_element_index_from_pointer_offset(right)
+        }
+        PointerOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
+            int32_element_index_from_pointer_offset(left)
+        }
+        _ => None,
+    }
+}
+
+fn int32_element_index_from_pointer_offset(offset: &PointerOffsetTerm) -> Option<Bitvector32Term> {
+    match offset {
+        PointerOffsetTerm::Constant(offset) if offset % 4 == 0 => {
+            let index = offset / 4;
+            (i32::MIN as i64..=i32::MAX as i64)
+                .contains(&index)
+                .then_some(Bitvector32Term::Constant((index as i32) as u32))
+        }
+        PointerOffsetTerm::Int32Scaled { value, byte_width } if *byte_width == 4 => {
+            Some(value.as_ref().clone())
+        }
+        PointerOffsetTerm::Add(left, right) if left.as_ref() == &PointerOffsetTerm::Constant(0) => {
+            int32_element_index_from_pointer_offset(right)
+        }
+        PointerOffsetTerm::Add(left, right)
+            if right.as_ref() == &PointerOffsetTerm::Constant(0) =>
+        {
+            int32_element_index_from_pointer_offset(left)
+        }
+        _ => None,
+    }
 }
 
 fn prove_value_comparison(
@@ -2086,6 +2308,9 @@ fn lower_outcome_proposition_with_environment(
             segment,
             next_variable,
         ),
+        ClickProposition::WritesOnly(_) => {
+            Err("`writes_only(...)` can only be checked directly by `auto`".to_string())
+        }
         ClickProposition::And(left, right) => Ok(Proposition::And(
             Box::new(lower_outcome_proposition_with_environment(
                 values,
@@ -2568,22 +2793,24 @@ impl Parser {
         self.expect(Token::LBrace)?;
 
         let mut requires = Vec::new();
-        let mut at_clauses = Vec::new();
+        let mut structural_clauses = Vec::new();
         let mut ensures = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
                 Some("requires") => requires.push(self.parse_requirement()?),
-                Some("at") => at_clauses.push(self.parse_at_clause()?),
+                Some("loop" | "statement") => {
+                    structural_clauses.push(self.parse_structural_clause()?)
+                }
                 Some("ensures") => ensures.push(self.parse_ensure_clause()?),
                 Some(keyword) => {
                     return Err(self.error(format!(
-                        "expected `requires`, `at`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        "expected `requires`, `loop`, `statement`, `ensures`, or `}}` in `{}`, got `{keyword}`",
                         signature.name()
                     )));
                 }
                 None => {
                     return Err(self.error(format!(
-                        "expected `requires`, `at`, `ensures`, or `}}` in `{}`",
+                        "expected `requires`, `loop`, `statement`, `ensures`, or `}}` in `{}`",
                         signature.name()
                     )));
                 }
@@ -2601,7 +2828,7 @@ impl Parser {
         Ok(FunctionBlock {
             signature,
             requires,
-            at_clauses,
+            structural_clauses,
             ensures,
         })
     }
@@ -2749,29 +2976,28 @@ impl Parser {
         }
     }
 
-    fn parse_at_clause(&mut self) -> Result<AtClause, ClickError> {
-        self.expect_ident_spelling("at")?;
-        let target = self.parse_at_target()?;
+    fn parse_structural_clause(&mut self) -> Result<StructuralClause, ClickError> {
+        let target = self.parse_structural_target()?;
         self.expect(Token::LBrace)?;
         let mut items = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
-            items.push(self.parse_at_item()?);
+            items.push(self.parse_structural_item()?);
         }
         self.expect(Token::RBrace)?;
         if items.is_empty() {
-            return Err(self.error("`at` block must contain at least one item"));
+            return Err(self.error("structural proof block must contain at least one item"));
         }
-        Ok(AtClause { target, items })
+        Ok(StructuralClause { target, items })
     }
 
-    fn parse_at_target(&mut self) -> Result<AtTarget, ClickError> {
+    fn parse_structural_target(&mut self) -> Result<StructuralTarget, ClickError> {
         match self.next() {
             Some(Token::Ident(kind)) if kind == "loop" => {
-                Ok(AtTarget::Loop(self.expect_index("loop index")?))
+                Ok(StructuralTarget::Loop(self.expect_index("loop index")?))
             }
-            Some(Token::Ident(kind)) if kind == "statement" => {
-                Ok(AtTarget::Statement(self.expect_index("statement index")?))
-            }
+            Some(Token::Ident(kind)) if kind == "statement" => Ok(StructuralTarget::Statement(
+                self.expect_index("statement index")?,
+            )),
             Some(Token::Ident(kind)) => {
                 Err(self.error(format!("expected `loop` or `statement`, got `{kind}`")))
             }
@@ -2782,10 +3008,10 @@ impl Parser {
         }
     }
 
-    fn parse_at_item(&mut self) -> Result<AtItem, ClickError> {
+    fn parse_structural_item(&mut self) -> Result<StructuralItem, ClickError> {
         let kind = match self.next() {
-            Some(Token::Ident(kind)) if kind == "invariant" => AtItemKind::Invariant,
-            Some(Token::Ident(kind)) if kind == "assert" => AtItemKind::Assert,
+            Some(Token::Ident(kind)) if kind == "invariant" => StructuralItemKind::Invariant,
+            Some(Token::Ident(kind)) if kind == "assert" => StructuralItemKind::Assert,
             Some(Token::Ident(kind)) => {
                 return Err(self.error(format!("expected `invariant` or `assert`, got `{kind}`")));
             }
@@ -2798,7 +3024,7 @@ impl Parser {
         };
         let proposition = self.parse_proposition()?;
         let proof = self.parse_by_clause()?;
-        Ok(AtItem {
+        Ok(StructuralItem {
             kind,
             proposition,
             proof,
@@ -2882,6 +3108,13 @@ impl Parser {
             let segment = self.parse_contract_segment()?;
             self.expect(Token::RParen)?;
             return Ok(ClickProposition::Preserves(segment));
+        }
+
+        if self.peek_ident() == Some("writes_only") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 2;
+            let segment = self.parse_contract_segment()?;
+            self.expect(Token::RParen)?;
+            return Ok(ClickProposition::WritesOnly(segment));
         }
 
         if self.peek_ident() == Some("forall") {
@@ -3635,16 +3868,16 @@ mod tests {
     }
 
     #[test]
-    fn parses_at_loop_invariants_and_statement_asserts() {
+    fn parses_loop_invariants_and_statement_asserts() {
         let source = r#"
             verifying "count.c";
 
             int32 count() {
-                at statement 2 {
+                statement 2 {
                     assert i == 0 by auto;
                 }
 
-                at loop 0 {
+                loop 0 {
                     invariant i >= 0 by auto;
                     invariant i <= 3 by auto;
                 }
@@ -3655,17 +3888,23 @@ mod tests {
         let file = parse(source).expect("sidecar should parse");
         let function = &file.function_blocks()[0];
 
-        assert_eq!(function.at_clauses().len(), 2);
-        assert_eq!(function.at_clauses()[0].target(), &AtTarget::Statement(2));
+        assert_eq!(function.structural_clauses().len(), 2);
         assert_eq!(
-            function.at_clauses()[0].items()[0].kind(),
-            AtItemKind::Assert
+            function.structural_clauses()[0].target(),
+            &StructuralTarget::Statement(2)
         );
-        assert_eq!(function.at_clauses()[1].target(), &AtTarget::Loop(0));
-        assert_eq!(function.at_clauses()[1].items().len(), 2);
         assert_eq!(
-            function.at_clauses()[1].items()[0].kind(),
-            AtItemKind::Invariant
+            function.structural_clauses()[0].items()[0].kind(),
+            StructuralItemKind::Assert
+        );
+        assert_eq!(
+            function.structural_clauses()[1].target(),
+            &StructuralTarget::Loop(0)
+        );
+        assert_eq!(function.structural_clauses()[1].items().len(), 2);
+        assert_eq!(
+            function.structural_clauses()[1].items()[0].kind(),
+            StructuralItemKind::Invariant
         );
     }
 
@@ -3682,6 +3921,7 @@ mod tests {
                     0 <= k implies k >= 0
                 } by auto;
                 ensures segment: preserves(p[0..n]) by auto;
+                ensures writes: writes_only(p[0..n]) by auto;
             }
         "#;
         let file = parse(source).expect("proposition syntax should parse");
@@ -3706,6 +3946,10 @@ mod tests {
         assert!(matches!(
             function.ensures()[3].ensure(),
             Ensure::Proposition(ClickProposition::Preserves(_))
+        ));
+        assert!(matches!(
+            function.ensures()[4].ensure(),
+            Ensure::Proposition(ClickProposition::WritesOnly(_))
         ));
     }
 
@@ -3863,6 +4107,57 @@ mod tests {
     }
 
     #[test]
+    fn verifies_writes_only_segment_postcondition() {
+        let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+        let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires valid_range(p, 8);
+                ensures writes_second_cell: writes_only(p[1..2]) by auto;
+                ensures writes_within_two_cells: writes_only(p[0..2]) by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+            .expect("write should stay inside declared segments");
+
+        assert_eq!(verified.len(), 2);
+    }
+
+    #[test]
+    fn writes_only_segment_rejects_write_outside_segment() {
+        let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+        let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires valid_range(p, 8);
+                ensures writes_first_cell_only: writes_only(p[0..1]) by auto;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+            .expect_err("write outside segment should fail");
+
+        assert!(
+            error.message().contains("is outside the segment"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
     fn old_memory_postcondition_fails_for_overwritten_cell() {
         let c_source = r#"
             int32 write_second(int32* p) {
@@ -3907,11 +4202,11 @@ mod tests {
             verifying "count_to_three.c";
 
             int32 count_to_three() {
-                at statement 2 {
+                statement 2 {
                     assert i == 0 by auto;
                 }
 
-                at loop 0 {
+                loop 0 {
                     invariant i >= 0 by auto;
                     invariant i <= 3 by auto;
                 }
@@ -3946,7 +4241,7 @@ mod tests {
             int32 fill_tail(int32 p[], int32 n) {
                 requires n >= 1 and n <= 2147483647;
                 requires valid_range(p, n * 4);
-                at loop 0 {
+                loop 0 {
                     invariant i >= 1 and i <= n by auto;
                     invariant p[0] == old(p[0]) by auto;
                 }
@@ -3979,7 +4274,7 @@ mod tests {
             int32 fill_tail(int32 p[], int32 n) {
                 requires n >= 1 and n <= 2147483647;
                 requires valid_range(p[0..n]);
-                at loop 0 {
+                loop 0 {
                     invariant i >= 1 and i <= n by auto;
                     invariant preserves(p[0..1]) by auto;
                 }
@@ -4014,7 +4309,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                at loop 0 {
+                loop 0 {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                 }
@@ -4024,6 +4319,41 @@ mod tests {
 
         let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
             .expect("segment valid_range should verify symbolic pointer loop");
+
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
+    }
+
+    #[test]
+    fn verifies_symbolic_loop_writes_only_segment() {
+        let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                }
+                ensures writes_segment: writes_only(p[0..n]) by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+            .expect("symbolic pointer loop writes should stay inside segment");
 
         assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].proof_kind(), AutoProofKind::LoopVerification);
@@ -4045,7 +4375,7 @@ mod tests {
             verifying "count_to_three.c";
 
             int32 count_to_three() {
-                at loop 0 {
+                loop 0 {
                     invariant i < 3 by auto;
                 }
 
@@ -4057,9 +4387,7 @@ mod tests {
             .expect_err("false loop invariant should fail");
 
         assert!(
-            error
-                .message()
-                .contains("at loop 0 invariant 0 preservation"),
+            error.message().contains("loop 0 invariant 0 preservation"),
             "{}",
             error.message()
         );
@@ -4081,7 +4409,7 @@ mod tests {
             verifying "count_to_three.c";
 
             int32 count_to_three() {
-                at loop 0 {
+                loop 0 {
                     invariant i == 1 by auto;
                 }
 
@@ -4093,7 +4421,7 @@ mod tests {
             .expect_err("false loop invariant initialization should fail");
 
         assert!(
-            error.message().contains("at loop 0 invariant 0 entry"),
+            error.message().contains("loop 0 invariant 0 entry"),
             "{}",
             error.message()
         );

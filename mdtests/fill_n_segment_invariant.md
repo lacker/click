@@ -21,7 +21,7 @@ verifying "fill_n_segment_invariant.c";
 int32 fill_n_segment_invariant(int32 p[], int32 n) {
     requires n >= 0 and n <= 2147483647;
     requires valid_range(p, n * 4);
-    at loop 0 {
+    loop 0 {
         invariant i >= 0 and i <= n by auto;
         invariant forall (int32 k) {
             0 <= k and k < i implies p[k] == k

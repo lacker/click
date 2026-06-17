@@ -1,6 +1,6 @@
-# count_to_three rejects a false invariant at loop entry
+# count_to_three rejects a false invariant loop entry
 
-This checks that `at loop` invariants report initialization failures separately
+This checks that `loop` invariants report initialization failures separately
 from preservation failures.
 
 ```c filename=count_to_three_bad_invariant_initialization.c
@@ -18,7 +18,7 @@ int32 count_to_three_bad_invariant_initialization() {
 verifying "count_to_three_bad_invariant_initialization.c";
 
 int32 count_to_three_bad_invariant_initialization() {
-    at loop 0 {
+    loop 0 {
         invariant i == 1 by auto;
     }
 
@@ -27,5 +27,5 @@ int32 count_to_three_bad_invariant_initialization() {
 ```
 
 ```expect
-fail: at loop 0 invariant 0 entry
+fail: loop 0 invariant 0 entry
 ```

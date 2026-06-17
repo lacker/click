@@ -912,6 +912,15 @@ impl CMemory {
         }
     }
 
+    pub fn differing_cell_pointers(&self, other: &Self) -> Vec<Pointer> {
+        let mut pointers = self.cells.keys().cloned().collect::<BTreeSet<_>>();
+        pointers.extend(other.cells.keys().cloned());
+        pointers
+            .into_iter()
+            .filter(|pointer| self.cells.get(pointer) != other.cells.get(pointer))
+            .collect()
+    }
+
     fn known_value(&self, pointer: &Pointer) -> Option<CValue> {
         self.cells.get(pointer).cloned()
     }

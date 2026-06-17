@@ -1,6 +1,6 @@
 # count_to_three rejects a false statement assertion
 
-This checks `at statement N` for a one-shot proof obligation.
+This checks `statement N` for a one-shot proof obligation.
 
 ```c filename=count_to_three_bad_assert.c
 int32 count_to_three_bad_assert() {
@@ -14,7 +14,7 @@ int32 count_to_three_bad_assert() {
 verifying "count_to_three_bad_assert.c";
 
 int32 count_to_three_bad_assert() {
-    at statement 2 {
+    statement 2 {
         assert i == 1 by auto;
     }
 
@@ -23,5 +23,5 @@ int32 count_to_three_bad_assert() {
 ```
 
 ```expect
-fail: at statement 2 assert 0
+fail: statement 2 assert 0
 ```

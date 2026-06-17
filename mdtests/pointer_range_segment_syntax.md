@@ -22,7 +22,7 @@ int32 fill_n_with_segment_range(int32 p[], int32 n) {
     requires n >= 0;
     requires n <= 2147483647;
     requires valid_range(p[0..n]);
-    at loop 0 {
+    loop 0 {
         invariant i >= 0 by auto;
         invariant i <= n by auto;
     }
