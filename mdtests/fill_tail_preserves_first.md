@@ -1,8 +1,8 @@
-# fill_tail preserves the first cell through a symbolic pointer loop
+# fill_tail does not implicitly frame the first cell
 
-This checks first-frame reasoning for a symbolic loop. The loop writes
-`p[i]` for `1 <= i < n`, so `auto` should prove that `p[0]` is unchanged
-without unrolling the loop.
+This checks that a pointer-writing loop does not get an implicit old-memory
+frame theorem. The loop writes `p[i]` for `1 <= i < n`, and proving that
+`p[0]` is unchanged needs an explicit two-state invariant or frame clause.
 
 ```c filename=fill_tail_preserves_first.c
 int32 fill_tail_preserves_first(int32 p[], int32 n) {
@@ -30,5 +30,5 @@ int32 fill_tail_preserves_first(int32 p[], int32 n) {
 ```
 
 ```expect
-pass
+fail: left side evaluated
 ```

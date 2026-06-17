@@ -893,6 +893,12 @@ impl CMemory {
         self
     }
 
+    fn with_havoc_marker(mut self, variable: Variable) -> Self {
+        self.blocks
+            .insert(format!("havoc:{}", variable.0), CBlock::new(0));
+        self
+    }
+
     pub fn store(mut self, pointer: Pointer, value: CValue) -> Self {
         self.cells.insert(pointer, value);
         self
@@ -907,6 +913,41 @@ impl CMemory {
 
     fn known_value(&self, pointer: &Pointer) -> Option<CValue> {
         self.cells.get(pointer).cloned()
+    }
+
+    fn without_cell(&self, pointer: &Pointer) -> Self {
+        let mut memory = self.clone();
+        memory.cells.remove(pointer);
+        memory
+    }
+
+    fn without_proven_distinct_cells(&self, pointer: &Pointer, assumptions: &Assumptions) -> Self {
+        let mut memory = self.clone();
+        memory.cells.retain(|cell_pointer, _| {
+            cell_pointer.block != pointer.block
+                || !pointers_proven_distinct(cell_pointer, pointer, assumptions)
+        });
+        memory
+    }
+
+    fn first_unresolved_same_block_cell(
+        &self,
+        pointer: &Pointer,
+        assumptions: &Assumptions,
+    ) -> Option<(Pointer, CValue)> {
+        self.cells
+            .iter()
+            .find(|(cell_pointer, _)| {
+                cell_pointer.block == pointer.block
+                    && *cell_pointer != pointer
+                    && assumptions
+                        .decide(&ConditionTerm::pointer_offset_equal(
+                            cell_pointer.offset.clone(),
+                            pointer.offset.clone(),
+                        ))
+                        .is_none()
+            })
+            .map(|(pointer, value)| (pointer.clone(), value.clone()))
     }
 
     fn local_pointer(name: &str) -> Pointer {
@@ -1122,6 +1163,34 @@ impl Assumptions {
         self.condition_facts.get(&condition) == Some(&value)
     }
 
+    fn order_facts_force_equal(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+        self.has_condition_fact(
+            ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+            true,
+        ) && self.has_condition_fact(
+            ConditionTerm::signed_less_than(left.clone(), right.clone()),
+            false,
+        ) || self.has_condition_fact(
+            ConditionTerm::signed_less_equal(right.clone(), left.clone()),
+            true,
+        ) && self.has_condition_fact(
+            ConditionTerm::signed_less_than(right.clone(), left.clone()),
+            false,
+        ) || self.has_condition_fact(
+            ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
+            true,
+        ) && self.has_condition_fact(
+            ConditionTerm::signed_greater_than(left.clone(), right.clone()),
+            false,
+        ) || self.has_condition_fact(
+            ConditionTerm::signed_greater_equal(right.clone(), left.clone()),
+            true,
+        ) && self.has_condition_fact(
+            ConditionTerm::signed_greater_than(right.clone(), left.clone()),
+            false,
+        )
+    }
+
     fn decide_from_order_facts(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
             ConditionTerm::PointerOffsetEqual(left, right) if left == right => Some(true),
@@ -1144,7 +1213,10 @@ impl Assumptions {
             ConditionTerm::Bitvector32Equal(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
-                if self.memory_loads_proven_equal(&left, &right)
+                if self.has_condition_fact(ConditionTerm::equal(left.clone(), right.clone()), true)
+                    || self
+                        .has_condition_fact(ConditionTerm::equal(right.clone(), left.clone()), true)
+                    || self.memory_loads_proven_equal(&left, &right)
                     || self.has_condition_fact(
                         ConditionTerm::signed_less_equal(left.clone(), right.clone()),
                         true,
@@ -1152,15 +1224,37 @@ impl Assumptions {
                         ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
                         true,
                     )
+                    || self.has_condition_fact(
+                        ConditionTerm::pointer_offset_equal(
+                            PointerOffsetTerm::scale_int32(left.clone(), 4),
+                            PointerOffsetTerm::scale_int32(right.clone(), 4),
+                        ),
+                        true,
+                    )
+                    || self.has_condition_fact(
+                        ConditionTerm::pointer_offset_equal(
+                            PointerOffsetTerm::scale_int32(right.clone(), 4),
+                            PointerOffsetTerm::scale_int32(left.clone(), 4),
+                        ),
+                        true,
+                    )
+                    || self.order_facts_force_equal(&left, &right)
                 {
                     Some(true)
-                } else if self.has_condition_fact(
-                    ConditionTerm::signed_less_equal(left.clone(), right.clone()),
-                    true,
-                ) && self.has_condition_fact(
-                    ConditionTerm::signed_less_than(left.clone(), right.clone()),
-                    false,
-                ) {
+                } else if self
+                    .has_condition_fact(ConditionTerm::equal(left.clone(), right.clone()), false)
+                    || self.has_condition_fact(
+                        ConditionTerm::equal(right.clone(), left.clone()),
+                        false,
+                    )
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+                        true,
+                    ) && self.has_condition_fact(
+                        ConditionTerm::signed_less_than(left.clone(), right.clone()),
+                        false,
+                    )
+                {
                     Some(true)
                 } else if self.has_condition_fact(
                     ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
@@ -1174,7 +1268,24 @@ impl Assumptions {
                     left.clone(),
                     right.clone(),
                 )) == Some(true)
-                    || self.decide(&ConditionTerm::signed_greater_than(left, right)) == Some(true)
+                    || self.decide(&ConditionTerm::signed_greater_than(
+                        left.clone(),
+                        right.clone(),
+                    )) == Some(true)
+                    || self.has_condition_fact(
+                        ConditionTerm::pointer_offset_equal(
+                            PointerOffsetTerm::scale_int32(left.clone(), 4),
+                            PointerOffsetTerm::scale_int32(right.clone(), 4),
+                        ),
+                        false,
+                    )
+                    || self.has_condition_fact(
+                        ConditionTerm::pointer_offset_equal(
+                            PointerOffsetTerm::scale_int32(right.clone(), 4),
+                            PointerOffsetTerm::scale_int32(left.clone(), 4),
+                        ),
+                        false,
+                    )
                 {
                     Some(false)
                 } else {
@@ -1199,6 +1310,7 @@ impl Assumptions {
                     ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
                     false,
                 ) || self.has_upper_bound_below(&left, &right)
+                    || self.has_successor_upper_bound_below(&left, &right)
                     || self.has_lower_bound_above(&right, &left)
                     || self.has_add_const_lower_bound_above(&right, &left)
                 {
@@ -1206,8 +1318,10 @@ impl Assumptions {
                 } else if self.has_condition_fact(
                     ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
                     true,
-                ) || self
-                    .has_condition_fact(ConditionTerm::signed_less_equal(right, left), true)
+                ) || self.has_condition_fact(
+                    ConditionTerm::signed_less_equal(right.clone(), left.clone()),
+                    true,
+                ) || self.order_facts_force_equal(&left, &right)
                 {
                     Some(false)
                 } else {
@@ -1236,6 +1350,7 @@ impl Assumptions {
                     false,
                 ) || self.has_lower_bound_at_or_above(&right, &left)
                     || self.has_add_const_lower_bound_at_or_above(&right, &left)
+                    || self.order_facts_force_equal(&left, &right)
                 {
                     Some(true)
                 } else if self
@@ -1268,8 +1383,10 @@ impl Assumptions {
                 } else if self.has_condition_fact(
                     ConditionTerm::signed_less_equal(left.clone(), right.clone()),
                     true,
-                ) || self
-                    .has_condition_fact(ConditionTerm::signed_greater_equal(right, left), true)
+                ) || self.has_condition_fact(
+                    ConditionTerm::signed_greater_equal(right.clone(), left.clone()),
+                    true,
+                ) || self.order_facts_force_equal(&left, &right)
                 {
                     Some(false)
                 } else {
@@ -1299,6 +1416,7 @@ impl Assumptions {
                     false,
                 ) || self.has_lower_bound_at_or_above(&left, &right)
                     || self.has_add_const_lower_bound_at_or_above(&left, &right)
+                    || self.order_facts_force_equal(&left, &right)
                 {
                     Some(true)
                 } else if self
@@ -1324,6 +1442,30 @@ impl Assumptions {
                         upper.as_ref().clone(),
                         right.clone(),
                     )) == Some(true)
+                }
+                _ => false,
+            })
+    }
+
+    fn has_successor_upper_bound_below(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        self.condition_facts
+            .iter()
+            .any(|(fact, value)| match (fact, value) {
+                (ConditionTerm::Bitvector32SignedLessThan(fact_left, upper), true)
+                    if fact_left.as_ref() == left
+                        && upper
+                            .as_ref()
+                            .add_const_base(1)
+                            .is_some_and(|base| base == *right) =>
+                {
+                    self.has_condition_fact(
+                        ConditionTerm::equal(left.clone(), right.clone()),
+                        false,
+                    )
                 }
                 _ => false,
             })
@@ -1454,6 +1596,9 @@ impl Assumptions {
         if left_pointer != right_pointer {
             return false;
         }
+        if memories_match_for_pointer_load(left_memory, right_memory, left_pointer) {
+            return true;
+        }
 
         self.prop_facts.iter().any(|proposition| {
             let Proposition::CMemoryWritesOnly {
@@ -1523,8 +1668,15 @@ impl Assumptions {
             return true;
         }
 
+        if self.is_inconsistent() {
+            return true;
+        }
+
         match proposition {
-            Proposition::ConditionIs(condition, value) => self.decide(condition) == Some(*value),
+            Proposition::ConditionIs(condition, value) => {
+                self.decide(condition) == Some(*value)
+                    || self.proves_condition_from_facts(condition, *value)
+            }
             Proposition::And(left, right) => self.proves(left) && self.proves(right),
             Proposition::Or(left, right) => self.proves(left) || self.proves(right),
             Proposition::Not(body) => self.proves_not(body),
@@ -1545,6 +1697,163 @@ impl Assumptions {
             }
             _ => self.prop_facts.contains(proposition),
         }
+    }
+
+    fn proves_condition_from_facts(&self, condition: &ConditionTerm, value: bool) -> bool {
+        self.prop_facts
+            .iter()
+            .any(|proposition| self.proposition_proves_condition(proposition, condition, value))
+    }
+
+    fn proposition_proves_condition(
+        &self,
+        proposition: &Proposition,
+        condition: &ConditionTerm,
+        value: bool,
+    ) -> bool {
+        match proposition {
+            Proposition::ConditionIs(fact_condition, fact_value) => {
+                fact_value == &value && self.condition_matches(fact_condition, condition)
+            }
+            Proposition::And(left, right) => {
+                self.proposition_proves_condition(left, condition, value)
+                    || self.proposition_proves_condition(right, condition, value)
+            }
+            Proposition::Implies(left, right) => {
+                self.proves_without_prop_facts(left)
+                    && self.proposition_proves_condition(right, condition, value)
+            }
+            Proposition::ForAll { body, .. } => {
+                self.proposition_proves_condition(body, condition, value)
+                    || self
+                        .forall_instantiations_for_condition(proposition, condition)
+                        .iter()
+                        .any(|body| self.proposition_proves_condition(body, condition, value))
+            }
+            _ => false,
+        }
+    }
+
+    fn forall_instantiations_for_condition(
+        &self,
+        proposition: &Proposition,
+        condition: &ConditionTerm,
+    ) -> Vec<Proposition> {
+        let Proposition::ForAll { var, body, .. } = proposition else {
+            return Vec::new();
+        };
+        let mut variables = BTreeSet::new();
+        collect_condition_bitvector_variables(condition, &mut variables);
+        variables
+            .into_iter()
+            .filter(|candidate| candidate != var)
+            .map(|candidate| {
+                substitute_bitvector_variable_in_proposition(
+                    body,
+                    *var,
+                    &Bitvector32Term::Variable(candidate),
+                )
+            })
+            .collect()
+    }
+
+    fn condition_matches(&self, fact: &ConditionTerm, target: &ConditionTerm) -> bool {
+        if fact == target {
+            return true;
+        }
+
+        match (fact, target) {
+            (
+                ConditionTerm::Bitvector32Equal(fact_left, fact_right),
+                ConditionTerm::Bitvector32Equal(target_left, target_right),
+            ) => {
+                let fact_left = fact_left.as_ref();
+                let fact_right = fact_right.as_ref();
+                let target_left = target_left.as_ref();
+                let target_right = target_right.as_ref();
+                fact_right == target_right
+                    && self.bitvector_terms_proven_equal(fact_left, target_left)
+                    || fact_right == target_left
+                        && self.bitvector_terms_proven_equal(fact_left, target_right)
+                    || fact_left == target_right
+                        && self.bitvector_terms_proven_equal(fact_right, target_left)
+                    || fact_left == target_left
+                        && self.bitvector_terms_proven_equal(fact_right, target_right)
+            }
+            _ => false,
+        }
+    }
+
+    fn bitvector_terms_proven_equal(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        left == right || self.memory_loads_proven_equal(left, right)
+    }
+
+    fn proves_without_prop_facts(&self, proposition: &Proposition) -> bool {
+        if solve_builtin_prop(proposition) || self.is_inconsistent() {
+            return true;
+        }
+
+        match proposition {
+            Proposition::ConditionIs(condition, value) => self.decide(condition) == Some(*value),
+            Proposition::And(left, right) => {
+                self.proves_without_prop_facts(left) && self.proves_without_prop_facts(right)
+            }
+            Proposition::Or(left, right) => {
+                self.proves_without_prop_facts(left) || self.proves_without_prop_facts(right)
+            }
+            Proposition::Not(body) => match body.as_ref() {
+                Proposition::ConditionIs(condition, value) => {
+                    self.decide(condition) == Some(!*value)
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn is_inconsistent(&self) -> bool {
+        let mut order_facts = Vec::new();
+        let mut equal_facts = Vec::new();
+        for (condition, value) in &self.condition_facts {
+            match (condition, value) {
+                (ConditionTerm::Constant(actual), expected) if actual != expected => return true,
+                (ConditionTerm::Bitvector32Equal(left, right), true) => {
+                    equal_facts.push((left.as_ref().clone(), right.as_ref().clone()));
+                }
+                _ => {
+                    if let Some(order_fact) = condition_as_order_fact(condition, *value) {
+                        order_facts.push(order_fact);
+                    }
+                }
+            }
+        }
+
+        for (left, right, strict) in &order_facts {
+            if *strict && left == right {
+                return true;
+            }
+            if equal_facts.iter().any(|(equal_left, equal_right)| {
+                (left == equal_left && right == equal_right)
+                    || (left == equal_right && right == equal_left)
+            }) && *strict
+            {
+                return true;
+            }
+            if order_facts
+                .iter()
+                .any(|(other_left, other_right, other_strict)| {
+                    left == other_right && right == other_left && (*strict || *other_strict)
+                })
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn proves_not(&self, proposition: &Proposition) -> bool {
@@ -2798,6 +3107,286 @@ fn memories_match_for_pointer_load(left: &CMemory, right: &CMemory, pointer: &Po
                 .filter(|(cell_pointer, _)| !cell_pointer.block.starts_with("local:")))
 }
 
+fn condition_as_order_fact(
+    condition: &ConditionTerm,
+    value: bool,
+) -> Option<(Bitvector32Term, Bitvector32Term, bool)> {
+    match (condition, value) {
+        (ConditionTerm::Bitvector32SignedLessThan(left, right), true) => {
+            Some((left.as_ref().clone(), right.as_ref().clone(), true))
+        }
+        (ConditionTerm::Bitvector32SignedLessEqual(left, right), true) => {
+            Some((left.as_ref().clone(), right.as_ref().clone(), false))
+        }
+        (ConditionTerm::Bitvector32SignedGreaterThan(left, right), true) => {
+            Some((right.as_ref().clone(), left.as_ref().clone(), true))
+        }
+        (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), true) => {
+            Some((right.as_ref().clone(), left.as_ref().clone(), false))
+        }
+        _ => None,
+    }
+}
+
+fn collect_condition_bitvector_variables(
+    condition: &ConditionTerm,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match condition {
+        ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => {}
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+            collect_bitvector_variables(left, variables);
+            collect_bitvector_variables(right, variables);
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            collect_pointer_offset_bitvector_variables(left, variables);
+            collect_pointer_offset_bitvector_variables(right, variables);
+        }
+    }
+}
+
+fn collect_bitvector_variables(term: &Bitvector32Term, variables: &mut BTreeSet<Variable>) {
+    match term {
+        Bitvector32Term::Constant(_) => {}
+        Bitvector32Term::Variable(variable) => {
+            variables.insert(*variable);
+        }
+        Bitvector32Term::Add(left, right)
+        | Bitvector32Term::Subtract(left, right)
+        | Bitvector32Term::Multiply(left, right) => {
+            collect_bitvector_variables(left, variables);
+            collect_bitvector_variables(right, variables);
+        }
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            collect_memory_bitvector_variables(memory, variables);
+            collect_pointer_bitvector_variables(pointer, variables);
+        }
+    }
+}
+
+fn collect_pointer_offset_bitvector_variables(
+    offset: &PointerOffsetTerm,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match offset {
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
+        PointerOffsetTerm::Add(left, right) => {
+            collect_pointer_offset_bitvector_variables(left, variables);
+            collect_pointer_offset_bitvector_variables(right, variables);
+        }
+        PointerOffsetTerm::Int32Scaled { value, .. } => {
+            collect_bitvector_variables(value, variables);
+        }
+    }
+}
+
+fn collect_pointer_bitvector_variables(pointer: &Pointer, variables: &mut BTreeSet<Variable>) {
+    collect_pointer_offset_bitvector_variables(&pointer.offset, variables);
+}
+
+fn collect_memory_bitvector_variables(memory: &CMemory, variables: &mut BTreeSet<Variable>) {
+    for (pointer, value) in &memory.cells {
+        collect_pointer_bitvector_variables(pointer, variables);
+        collect_c_value_bitvector_variables(value, variables);
+    }
+}
+
+fn collect_c_value_bitvector_variables(value: &CValue, variables: &mut BTreeSet<Variable>) {
+    match value {
+        CValue::Int32(bits) => collect_bitvector_variables(bits, variables),
+        CValue::Pointer(pointer) => collect_pointer_bitvector_variables(pointer, variables),
+    }
+}
+
+fn substitute_bitvector_variable_in_proposition(
+    proposition: &Proposition,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> Proposition {
+    match proposition {
+        Proposition::ConditionIs(condition, value) => Proposition::ConditionIs(
+            substitute_bitvector_variable_in_condition(condition, from, to),
+            *value,
+        ),
+        Proposition::And(left, right) => Proposition::And(
+            Box::new(substitute_bitvector_variable_in_proposition(left, from, to)),
+            Box::new(substitute_bitvector_variable_in_proposition(
+                right, from, to,
+            )),
+        ),
+        Proposition::Or(left, right) => Proposition::Or(
+            Box::new(substitute_bitvector_variable_in_proposition(left, from, to)),
+            Box::new(substitute_bitvector_variable_in_proposition(
+                right, from, to,
+            )),
+        ),
+        Proposition::Not(body) => Proposition::Not(Box::new(
+            substitute_bitvector_variable_in_proposition(body, from, to),
+        )),
+        Proposition::Implies(left, right) => Proposition::Implies(
+            Box::new(substitute_bitvector_variable_in_proposition(left, from, to)),
+            Box::new(substitute_bitvector_variable_in_proposition(
+                right, from, to,
+            )),
+        ),
+        Proposition::ForAll { var, sort, body } if *var != from => Proposition::ForAll {
+            var: *var,
+            sort: sort.clone(),
+            body: Box::new(substitute_bitvector_variable_in_proposition(body, from, to)),
+        },
+        proposition => proposition.clone(),
+    }
+}
+
+fn substitute_bitvector_variable_in_condition(
+    condition: &ConditionTerm,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> ConditionTerm {
+    match condition {
+        ConditionTerm::Constant(value) => ConditionTerm::Constant(*value),
+        ConditionTerm::Variable(variable) => ConditionTerm::Variable(*variable),
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => ConditionTerm::signed_less_than(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => ConditionTerm::signed_less_equal(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            ConditionTerm::signed_greater_than(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            ConditionTerm::signed_greater_equal(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => ConditionTerm::equal(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+            ConditionTerm::signed_add_overflows(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+            ConditionTerm::signed_subtract_overflows(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::pointer_offset_equal(
+            substitute_bitvector_variable_in_pointer_offset(left, from, to),
+            substitute_bitvector_variable_in_pointer_offset(right, from, to),
+        ),
+    }
+}
+
+fn substitute_bitvector_variable(
+    term: &Bitvector32Term,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> Bitvector32Term {
+    match term {
+        Bitvector32Term::Constant(value) => Bitvector32Term::Constant(*value),
+        Bitvector32Term::Variable(variable) if *variable == from => to.clone(),
+        Bitvector32Term::Variable(variable) => Bitvector32Term::Variable(*variable),
+        Bitvector32Term::Add(left, right) => Bitvector32Term::add(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::Subtract(left, right) => Bitvector32Term::subtract(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::Multiply(left, right) => Bitvector32Term::Multiply(
+            Box::new(substitute_bitvector_variable(left, from, to)),
+            Box::new(substitute_bitvector_variable(right, from, to)),
+        ),
+        Bitvector32Term::MemoryLoad(memory, pointer) => Bitvector32Term::MemoryLoad(
+            Box::new(substitute_bitvector_variable_in_memory(memory, from, to)),
+            Box::new(substitute_bitvector_variable_in_pointer(pointer, from, to)),
+        ),
+    }
+}
+
+fn substitute_bitvector_variable_in_pointer_offset(
+    offset: &PointerOffsetTerm,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> PointerOffsetTerm {
+    match offset {
+        PointerOffsetTerm::Constant(value) => PointerOffsetTerm::Constant(*value),
+        PointerOffsetTerm::Variable(variable) => PointerOffsetTerm::Variable(*variable),
+        PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
+            substitute_bitvector_variable_in_pointer_offset(left, from, to),
+            substitute_bitvector_variable_in_pointer_offset(right, from, to),
+        ),
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => PointerOffsetTerm::scale_int32(
+            substitute_bitvector_variable(value, from, to),
+            *byte_width,
+        ),
+    }
+}
+
+fn substitute_bitvector_variable_in_pointer(
+    pointer: &Pointer,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> Pointer {
+    Pointer {
+        block: pointer.block.clone(),
+        offset: substitute_bitvector_variable_in_pointer_offset(&pointer.offset, from, to),
+    }
+}
+
+fn substitute_bitvector_variable_in_memory(
+    memory: &CMemory,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CMemory {
+    let cells = memory
+        .cells
+        .iter()
+        .map(|(pointer, value)| {
+            (
+                substitute_bitvector_variable_in_pointer(pointer, from, to),
+                substitute_bitvector_variable_in_c_value(value, from, to),
+            )
+        })
+        .collect();
+    CMemory {
+        blocks: memory.blocks.clone(),
+        cells,
+    }
+}
+
+fn substitute_bitvector_variable_in_c_value(
+    value: &CValue,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CValue {
+    match value {
+        CValue::Int32(bits) => int32(substitute_bitvector_variable(bits, from, to)),
+        CValue::Pointer(pointer) => {
+            CValue::Pointer(substitute_bitvector_variable_in_pointer(pointer, from, to))
+        }
+    }
+}
+
 fn memory_range_still_available(
     range_memory: &CMemory,
     current_memory: &CMemory,
@@ -2970,6 +3559,35 @@ fn add_condition_path_fact(
     }
 
     facts.push(PathFact::condition(condition, value));
+    Some(())
+}
+
+fn add_pointer_offset_equality_path_facts(
+    facts: &mut Vec<PathFact>,
+    assumptions: &Assumptions,
+    left: PointerOffsetTerm,
+    right: PointerOffsetTerm,
+    value: bool,
+) -> Option<()> {
+    add_condition_path_fact(
+        facts,
+        assumptions,
+        ConditionTerm::pointer_offset_equal(left.clone(), right.clone()),
+        value,
+    )?;
+
+    if let (Some(left_index), Some(right_index)) = (
+        int32_element_index_from_offset(&left),
+        int32_element_index_from_offset(&right),
+    ) {
+        add_condition_path_fact(
+            facts,
+            assumptions,
+            ConditionTerm::equal(left_index, right_index),
+            value,
+        )?;
+    }
+
     Some(())
 }
 
@@ -3907,6 +4525,8 @@ fn evaluate_c_memory_load_paths(
     mut obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
+    let memory = memory.without_proven_distinct_cells(&pointer, assumptions);
+
     if let Some(value) = memory.known_value(&pointer) {
         if !value_type.accepts(&value) {
             return vec![CExpressionPath {
@@ -3920,6 +4540,55 @@ fn evaluate_c_memory_load_paths(
             facts,
             obligations,
         }];
+    }
+
+    if let Some((stored_pointer, stored_value)) =
+        memory.first_unresolved_same_block_cell(&pointer, assumptions)
+    {
+        let mut paths = Vec::new();
+
+        let mut equal_facts = facts.clone();
+        if add_pointer_offset_equality_path_facts(
+            &mut equal_facts,
+            assumptions,
+            pointer.offset.clone(),
+            stored_pointer.offset.clone(),
+            true,
+        )
+        .is_some()
+        {
+            paths.push(CExpressionPath {
+                outcome: if value_type.accepts(&stored_value) {
+                    CExpressionOutcome::Value(stored_value)
+                } else {
+                    CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                },
+                facts: equal_facts,
+                obligations: obligations.clone(),
+            });
+        }
+
+        let mut distinct_facts = facts;
+        if add_pointer_offset_equality_path_facts(
+            &mut distinct_facts,
+            assumptions,
+            pointer.offset.clone(),
+            stored_pointer.offset.clone(),
+            false,
+        )
+        .is_some()
+        {
+            paths.extend(evaluate_c_memory_load_paths(
+                &memory.without_cell(&stored_pointer),
+                pointer,
+                value_type,
+                distinct_facts,
+                obligations,
+                assumptions,
+            ));
+        }
+
+        return paths;
     }
 
     if memory.can_load_concretely(&pointer, value_type.byte_width()) {
@@ -5582,7 +6251,7 @@ fn execute_c_while_verification_paths(
         &base_obligations,
         budget,
     )? {
-        for (mut facts, mut obligations) in assume_condition_truthiness(
+        for (facts, mut obligations) in assume_condition_truthiness(
             &top_state,
             condition,
             assumptions,
@@ -5591,16 +6260,6 @@ fn execute_c_while_verification_paths(
             false,
             budget,
         )? {
-            add_path_fact(
-                &mut facts,
-                assumptions,
-                Proposition::CMemoryWritesOnly {
-                    before: state.memory.clone(),
-                    after: top_state.memory.clone(),
-                    pointers: preservation_summary.written_pointers.clone(),
-                },
-            )
-            .expect("loop frame fact should be consistent");
             append_required_proof_obligations(
                 &mut obligations,
                 assumptions,
@@ -5673,9 +6332,11 @@ fn collect_invariant_check_obligations(
                     continue;
                 };
                 let mut obligations = obligations;
+                let obligation_assumptions =
+                    assumptions_with_path_context(assumptions, &facts, &obligations);
                 add_required_proof_obligation_with_context(
                     &mut obligations,
-                    assumptions,
+                    &obligation_assumptions,
                     path.proposition,
                     invariant_context(check, phase),
                 );
@@ -5691,7 +6352,6 @@ fn collect_invariant_check_obligations(
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LoopPreservationSummary {
     obligations: Vec<ProofObligation>,
-    written_pointers: Vec<Pointer>,
 }
 
 fn collect_loop_preservation_summary(
@@ -5705,7 +6365,6 @@ fn collect_loop_preservation_summary(
     variables: &mut VerificationVariableGenerator,
 ) -> ExecutionResult<LoopPreservationSummary> {
     let mut obligations = Vec::new();
-    let mut written_pointers = Vec::new();
     for (invariant_facts, invariant_obligations) in
         assume_invariant_checks(top_state, invariant_checks, assumptions, &[], &[], budget)?
     {
@@ -5730,11 +6389,6 @@ fn collect_loop_preservation_summary(
             )? {
                 match body_path.outcome {
                     CStatementOutcome::Normal(next_state) => {
-                        collect_written_pointers_from_memory_delta(
-                            top_state.memory(),
-                            next_state.memory(),
-                            &mut written_pointers,
-                        );
                         let path_obligations = collect_invariant_check_obligations(
                             &next_state,
                             invariant_checks,
@@ -5775,25 +6429,7 @@ fn collect_loop_preservation_summary(
             }
         }
     }
-    Ok(LoopPreservationSummary {
-        obligations,
-        written_pointers,
-    })
-}
-
-fn collect_written_pointers_from_memory_delta(
-    before: &CMemory,
-    after: &CMemory,
-    written_pointers: &mut Vec<Pointer>,
-) {
-    for (pointer, value) in &after.cells {
-        if pointer.block.starts_with("local:") || before.cells.get(pointer) == Some(value) {
-            continue;
-        }
-        if !written_pointers.contains(pointer) {
-            written_pointers.push(pointer.clone());
-        }
-    }
+    Ok(LoopPreservationSummary { obligations })
 }
 
 fn false_equals_true_proposition() -> Proposition {
@@ -5897,7 +6533,29 @@ fn havoc_loop_modified_locals(
         sync_stack_local(&mut state, &name, &value);
         state.locals.set(name, value);
     }
+    if statement_may_write_memory(body) {
+        state.memory = state.memory.with_havoc_marker(variables.next());
+    }
     state
+}
+
+fn statement_may_write_memory(statement: &CStatement) -> bool {
+    match statement {
+        CStatement::Declare { .. }
+        | CStatement::Assign { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Return(_) => false,
+        CStatement::CallAssign { .. } | CStatement::Store { .. } => true,
+        CStatement::Seq(first, second) => {
+            statement_may_write_memory(first) || statement_may_write_memory(second)
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => statement_may_write_memory(then_branch) || statement_may_write_memory(else_branch),
+        CStatement::While { body, .. } => statement_may_write_memory(body),
+    }
 }
 
 fn collect_loop_modified_locals(statement: &CStatement, names: &mut BTreeSet<String>) {

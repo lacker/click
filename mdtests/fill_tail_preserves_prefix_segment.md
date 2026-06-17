@@ -1,7 +1,8 @@
-# fill_tail proves a quantified prefix frame
+# fill_tail does not implicitly prove a quantified prefix frame
 
-This checks that a memory-changing loop can prove a quantified frame
-postcondition for a segment that is outside the loop write footprint.
+This checks that a memory-changing loop does not get an implicit quantified
+old-memory frame theorem. The prefix is outside the write footprint, but
+proving that needs an explicit two-state invariant or frame clause.
 
 ```c filename=fill_tail_preserves_prefix_segment.c
 int32 fill_tail_preserves_prefix_segment(int32 p[], int32 n) {
@@ -31,5 +32,5 @@ int32 fill_tail_preserves_prefix_segment(int32 p[], int32 n) {
 ```
 
 ```expect
-pass
+fail: proposition was not provable
 ```
