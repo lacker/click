@@ -214,8 +214,21 @@ pub enum Proof {
 /// This is intentionally separate from `Tactic`: tactics may search, but proof
 /// steps should be stable and replayable. The first explicit proof steps will be
 /// added when `auto` starts emitting proof certificates.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ProofStep {}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProofStep {
+    SymbolicExecute,
+    LoopVc(usize),
+    Frame(Option<ProofStepTarget>),
+    Simp,
+    Close,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum ProofStepTarget {
+    Function,
+    Loop(usize),
+    Statement(usize),
+}
 
 /// A `.click` tactic.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -231,6 +244,7 @@ pub struct VerifiedCTheorem {
     pub function_block: FunctionBlock,
     pub claim: VerifiedClaim,
     pub proof_kind: ProofKind,
+    pub proof_steps: Option<Vec<ProofStep>>,
     pub specification: CFunctionSpecification,
     pub theorem: Theorem,
 }
@@ -245,6 +259,7 @@ pub enum VerifiedClaim {
 pub enum ProofKind {
     Frame,
     Simp,
+    ProofSteps,
     LoopVerification,
     BoundedExecution,
 }
@@ -408,6 +423,10 @@ impl VerifiedCTheorem {
         self.proof_kind
     }
 
+    pub fn proof_steps(&self) -> Option<&[ProofStep]> {
+        self.proof_steps.as_deref()
+    }
+
     pub fn ensure_clause(&self) -> Option<&EnsureClause> {
         match &self.claim {
             VerifiedClaim::Ensure { clause, .. } => Some(clause),
@@ -462,8 +481,8 @@ pub fn verify_c0_sources(
         validate_structural_clauses(&function_block, parsed_function)?;
         for claim in function_claims(&function_block) {
             let claim_label = function_claim_label(function_block.signature.name(), &claim);
-            match claim.proof().tactic() {
-                Some(Tactic::Auto) => {
+            match claim.proof() {
+                Proof::Tactic(Tactic::Auto) => {
                     let theorems = prove_claim_by_auto(
                         source_path,
                         &function_block,
@@ -474,7 +493,7 @@ pub fn verify_c0_sources(
                     )?;
                     verified.extend(theorems);
                 }
-                Some(Tactic::Frame) => {
+                Proof::Tactic(Tactic::Frame) => {
                     let theorems = prove_claim_by_frame(
                         source_path,
                         &function_block,
@@ -485,7 +504,7 @@ pub fn verify_c0_sources(
                     )?;
                     verified.extend(theorems);
                 }
-                Some(Tactic::Simp) => {
+                Proof::Tactic(Tactic::Simp) => {
                     let theorems = prove_claim_by_simp(
                         source_path,
                         &function_block,
@@ -496,10 +515,17 @@ pub fn verify_c0_sources(
                     )?;
                     verified.extend(theorems);
                 }
-                None => {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` must use a supported tactic in this first slice"
-                    )));
+                Proof::Steps(steps) => {
+                    let theorems = prove_claim_by_steps(
+                        source_path,
+                        &function_block,
+                        parsed_function,
+                        &claim,
+                        &claim_label,
+                        &function_environment,
+                        steps,
+                    )?;
+                    verified.extend(theorems);
                 }
             }
         }
@@ -592,7 +618,18 @@ fn prove_claim_by_auto(
         &arguments,
         &requirement_propositions,
     ) {
-        Ok(theorems) => return Ok(theorems),
+        Ok(theorems) => {
+            let proof_steps = certified_proof_steps(
+                source_path,
+                function_block,
+                parsed_function,
+                claim,
+                claim_label,
+                function_environment,
+                auto_loop_verification_proof_step_candidates(function_block, claim),
+            );
+            return Ok(with_proof_steps(theorems, proof_steps));
+        }
         Err(error) => Some(error),
     };
     let execution = prove_symbolic_c_function_execution_paths_with_environment(
@@ -610,7 +647,7 @@ fn prove_claim_by_auto(
         }
         return Err(error);
     }
-    prove_claim_from_execution(
+    let theorems = prove_claim_from_execution(
         &execution,
         AutoExecutionKind::BoundedExecution {
             environment: function_environment,
@@ -624,7 +661,17 @@ fn prove_claim_by_auto(
         &state,
         &arguments,
         &requirement_propositions,
-    )
+    )?;
+    let proof_steps = certified_proof_steps(
+        source_path,
+        function_block,
+        parsed_function,
+        claim,
+        claim_label,
+        function_environment,
+        auto_loop_verification_proof_step_candidates(function_block, claim),
+    );
+    Ok(with_proof_steps(theorems, proof_steps))
 }
 
 fn prove_claim_by_frame(
@@ -664,7 +711,7 @@ fn prove_claim_by_frame(
         return Err(error);
     }
 
-    prove_claim_from_execution(
+    let theorems = prove_claim_from_execution(
         &execution,
         AutoExecutionKind::Frame,
         source_path,
@@ -676,7 +723,17 @@ fn prove_claim_by_frame(
         &state,
         &arguments,
         &requirement_propositions,
-    )
+    )?;
+    let proof_steps = certified_proof_steps(
+        source_path,
+        function_block,
+        parsed_function,
+        claim,
+        claim_label,
+        function_environment,
+        frame_proof_step_candidates(),
+    );
+    Ok(with_proof_steps(theorems, proof_steps))
 }
 
 fn prove_claim_by_simp(
@@ -699,6 +756,19 @@ fn prove_claim_by_simp(
         parsed_function.parameters(),
     )?;
     let function = annotated_function(function_block, parsed_function, &state, &arguments)?;
+    let proof_steps = certified_proof_steps(
+        source_path,
+        function_block,
+        parsed_function,
+        claim,
+        claim_label,
+        function_environment,
+        vec![vec![
+            ProofStep::SymbolicExecute,
+            ProofStep::Simp,
+            ProofStep::Close,
+        ]],
+    );
     let assumptions = assumptions_from_propositions(&requirement_propositions);
     let execution = prove_symbolic_c_function_execution_paths_with_environment(
         state.clone(),
@@ -777,6 +847,315 @@ fn prove_claim_by_simp(
             function_block: function_block.clone(),
             claim: claim.verified_claim(),
             proof_kind: ProofKind::Simp,
+            proof_steps: proof_steps.clone(),
+            specification,
+            theorem,
+        });
+    }
+
+    Ok(verified)
+}
+
+#[derive(Default)]
+struct ProofStepReplayState {
+    execution: Option<crate::megakernel::SymbolicCExecution>,
+    loop_vcs: BTreeSet<usize>,
+    frames: BTreeSet<Option<ProofStepTarget>>,
+    simp: bool,
+    closed: bool,
+}
+
+fn prove_claim_by_steps(
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claim: &FunctionClaimRef<'_>,
+    claim_label: &str,
+    function_environment: &CFunctionEnvironment,
+    steps: &[ProofStep],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    if steps.is_empty() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` has an empty proof-step script"
+        )));
+    }
+
+    let (state, arguments, requirement_propositions) = initial_call(
+        function_block.signature.name(),
+        function_block.requires(),
+        parsed_function.parameters(),
+    )?;
+    let function = annotated_function(function_block, parsed_function, &state, &arguments)?;
+    let assumptions = assumptions_from_propositions(&requirement_propositions);
+    let mut replay = ProofStepReplayState::default();
+
+    for (step_index, step) in steps.iter().enumerate() {
+        match step {
+            ProofStep::SymbolicExecute => {
+                if replay.execution.is_some() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `symbolic_execute` was already run"
+                    )));
+                }
+                replay.execution = Some(
+                    prove_symbolic_c_function_verification_paths_with_environment(
+                        state.clone(),
+                        function.clone(),
+                        arguments.clone(),
+                        assumptions.clone(),
+                        function_environment.clone(),
+                    ),
+                );
+            }
+            ProofStep::LoopVc(loop_index) => {
+                require_step_execution(&replay, claim_label, step_index, "loop_vc")?;
+                validate_loop_step_target(parsed_function, *loop_index, claim_label, step_index)?;
+                validate_loop_vc_step(
+                    replay.execution.as_ref().expect("execution should exist"),
+                    *loop_index,
+                    claim_label,
+                    step_index,
+                )?;
+                replay.loop_vcs.insert(*loop_index);
+            }
+            ProofStep::Frame(target) => {
+                require_step_execution(&replay, claim_label, step_index, "frame")?;
+                validate_frame_step_target(
+                    function_block,
+                    parsed_function,
+                    *target,
+                    claim_label,
+                    step_index,
+                )?;
+                replay.frames.insert(*target);
+            }
+            ProofStep::Simp => {
+                require_step_execution(&replay, claim_label, step_index, "simp")?;
+                replay.simp = true;
+            }
+            ProofStep::Close => {
+                if step_index + 1 != steps.len() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `close` must be the final proof step"
+                    )));
+                }
+                replay.closed = true;
+                let execution = replay.execution.as_ref().ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `close` requires `symbolic_execute()` first"
+                    ))
+                })?;
+                return prove_claim_from_steps_execution(
+                    execution,
+                    source_path,
+                    function_block,
+                    claim,
+                    claim_label,
+                    parsed_function.parameters(),
+                    &function,
+                    &state,
+                    &arguments,
+                    &requirement_propositions,
+                    replay.simp,
+                    steps,
+                );
+            }
+        }
+    }
+
+    if !replay.closed {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof-step script did not end with `close()`"
+        )));
+    }
+
+    unreachable!("closed proof-step scripts return from the close step")
+}
+
+fn require_step_execution(
+    replay: &ProofStepReplayState,
+    claim_label: &str,
+    step_index: usize,
+    step_name: &str,
+) -> Result<(), ClickError> {
+    if replay.execution.is_none() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` requires `symbolic_execute()` first"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_loop_step_target(
+    parsed_function: &syntax::C0Function,
+    loop_index: usize,
+    claim_label: &str,
+    step_index: usize,
+) -> Result<(), ClickError> {
+    let loop_count = count_loops(parsed_function.body());
+    if loop_index >= loop_count {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: function has no `loop {loop_index}` target; it contains {loop_count} loop(s)"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_loop_vc_step(
+    execution: &crate::megakernel::SymbolicCExecution,
+    loop_index: usize,
+    claim_label: &str,
+    step_index: usize,
+) -> Result<(), ClickError> {
+    let context_prefix = format!("loop {loop_index} ");
+    let obligations = execution
+        .paths()
+        .iter()
+        .flat_map(|path| path.obligations())
+        .filter(|obligation| {
+            obligation
+                .context()
+                .is_some_and(|context| context.starts_with(&context_prefix))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if !obligations.is_empty() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `loop_vc(loop {loop_index})` left obligations: {}",
+            describe_obligations(&obligations)
+        )));
+    }
+    Ok(())
+}
+
+fn validate_frame_step_target(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    target: Option<ProofStepTarget>,
+    claim_label: &str,
+    step_index: usize,
+) -> Result<(), ClickError> {
+    match target {
+        None | Some(ProofStepTarget::Function) => Ok(()),
+        Some(ProofStepTarget::Loop(loop_index)) => {
+            validate_loop_step_target(parsed_function, loop_index, claim_label, step_index)?;
+            if !function_block.structural_clauses().iter().any(|clause| {
+                clause.target() == &StructuralTarget::Loop(loop_index)
+                    && clause.items().iter().any(StructuralItem::is_effect_kind)
+            }) {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: `frame(loop {loop_index})` needs a loop effect clause such as `mutable` or `immutable`"
+                )));
+            }
+            Ok(())
+        }
+        Some(ProofStepTarget::Statement(statement_index)) => {
+            let statement_count = count_statements(parsed_function.body());
+            if statement_index >= statement_count {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: function has no `statement {statement_index}` target; it contains {statement_count} statement(s)"
+                )));
+            }
+            Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `frame(statement {statement_index})` is not supported yet"
+            )))
+        }
+    }
+}
+
+fn prove_claim_from_steps_execution(
+    execution: &crate::megakernel::SymbolicCExecution,
+    source_path: &str,
+    function_block: &FunctionBlock,
+    claim: &FunctionClaimRef<'_>,
+    claim_label: &str,
+    parameters: &[syntax::C0Parameter],
+    function: &CFunction,
+    state: &CState,
+    arguments: &[CExpression],
+    requirement_propositions: &[Proposition],
+    use_simp: bool,
+    proof_steps: &[ProofStep],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    if let Some(limit) = execution.limit() {
+        return Err(ClickError::new(format!(
+            "`proof steps` hit execution limit {limit:?} for `{claim_label}`"
+        )));
+    }
+    if execution.paths().is_empty() {
+        return Err(ClickError::new(format!(
+            "`proof steps` could not prove any complete execution path for `{claim_label}`"
+        )));
+    }
+
+    let mut verified = Vec::new();
+    for (path_index, path) in execution.paths().iter().enumerate() {
+        if !path.obligations().is_empty() {
+            return Err(ClickError::new(format!(
+                "`proof steps` failed for `{claim_label}` path {path_index}: remaining proof obligations: {}\n  available requirements: {}\n  path facts: {}",
+                describe_obligations(path.obligations()),
+                describe_propositions(requirement_propositions),
+                describe_facts(path.facts())
+            )));
+        }
+        let outcome = match implication_body(path.theorem().proposition()) {
+            Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
+            proposition => {
+                return Err(ClickError::new(format!(
+                    "`proof steps` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  available requirements: {}\n  path facts: {}",
+                    describe_propositions(requirement_propositions),
+                    describe_facts(path.facts())
+                )));
+            }
+        };
+
+        let mut path_requirements = requirement_propositions.to_vec();
+        path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+        if use_simp {
+            check_function_claim_by_simp(
+                claim_label,
+                path_index,
+                path.facts(),
+                &path_requirements,
+                claim,
+                parameters,
+                arguments,
+                state,
+                &outcome,
+            )?;
+        } else {
+            check_function_claim(
+                claim_label,
+                path_index,
+                path.facts(),
+                &path_requirements,
+                claim,
+                parameters,
+                arguments,
+                state,
+                &outcome,
+            )?;
+        }
+        let specification = c_function_specification(
+            state.clone(),
+            arguments.to_vec(),
+            path_requirements,
+            outcome.clone(),
+        );
+        let theorem = prove_c_function_satisfies_specification_from_symbolic_path(
+            function.clone(),
+            specification.clone(),
+            Assumptions::new(),
+            path.facts(),
+            path.obligations(),
+        );
+
+        verified.push(VerifiedCTheorem {
+            source_path: source_path.to_string(),
+            function_block: function_block.clone(),
+            claim: claim.verified_claim(),
+            proof_kind: ProofKind::ProofSteps,
+            proof_steps: Some(proof_steps.to_vec()),
             specification,
             theorem,
         });
@@ -808,6 +1187,113 @@ impl AutoExecutionKind<'_> {
             Self::LoopVerification | Self::BoundedExecution { .. } => "auto",
         }
     }
+}
+
+fn with_proof_steps(
+    mut theorems: Vec<VerifiedCTheorem>,
+    proof_steps: Option<Vec<ProofStep>>,
+) -> Vec<VerifiedCTheorem> {
+    if let Some(proof_steps) = proof_steps {
+        for theorem in &mut theorems {
+            theorem.proof_steps = Some(proof_steps.clone());
+        }
+    }
+    theorems
+}
+
+fn certified_proof_steps(
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claim: &FunctionClaimRef<'_>,
+    claim_label: &str,
+    function_environment: &CFunctionEnvironment,
+    candidates: Vec<Vec<ProofStep>>,
+) -> Option<Vec<ProofStep>> {
+    candidates.into_iter().find(|steps| {
+        prove_claim_by_steps(
+            source_path,
+            function_block,
+            parsed_function,
+            claim,
+            claim_label,
+            function_environment,
+            steps,
+        )
+        .is_ok()
+    })
+}
+
+fn frame_proof_step_candidates() -> Vec<Vec<ProofStep>> {
+    vec![vec![
+        ProofStep::SymbolicExecute,
+        ProofStep::Frame(None),
+        ProofStep::Close,
+    ]]
+}
+
+fn auto_loop_verification_proof_step_candidates(
+    function_block: &FunctionBlock,
+    claim: &FunctionClaimRef<'_>,
+) -> Vec<Vec<ProofStep>> {
+    let mut base = vec![ProofStep::SymbolicExecute];
+    base.extend(
+        loop_step_targets(function_block)
+            .into_iter()
+            .map(ProofStep::LoopVc),
+    );
+    base.extend(
+        loop_frame_targets(function_block)
+            .into_iter()
+            .map(|loop_index| ProofStep::Frame(Some(ProofStepTarget::Loop(loop_index)))),
+    );
+
+    match claim {
+        FunctionClaimRef::Ensure(_, _) => {
+            let mut simp = base.clone();
+            simp.push(ProofStep::Simp);
+            simp.push(ProofStep::Close);
+
+            let mut direct = base;
+            direct.push(ProofStep::Close);
+            vec![simp, direct]
+        }
+        FunctionClaimRef::Effect(_, _) => {
+            let mut frame = base.clone();
+            frame.push(ProofStep::Frame(None));
+            frame.push(ProofStep::Close);
+
+            let mut direct = base;
+            direct.push(ProofStep::Close);
+            vec![frame, direct]
+        }
+    }
+}
+
+fn loop_step_targets(function_block: &FunctionBlock) -> BTreeSet<usize> {
+    function_block
+        .structural_clauses()
+        .iter()
+        .filter_map(|clause| match clause.target() {
+            StructuralTarget::Loop(index) => Some(*index),
+            StructuralTarget::Statement(_) => None,
+        })
+        .collect()
+}
+
+fn loop_frame_targets(function_block: &FunctionBlock) -> BTreeSet<usize> {
+    function_block
+        .structural_clauses()
+        .iter()
+        .filter_map(|clause| match clause.target() {
+            StructuralTarget::Loop(index)
+                if clause.items().iter().any(StructuralItem::is_effect_kind) =>
+            {
+                Some(*index)
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn execution_obligation_error(
@@ -940,6 +1426,7 @@ fn prove_claim_from_execution(
             function_block: function_block.clone(),
             claim: claim.verified_claim(),
             proof_kind,
+            proof_steps: None,
             specification,
             theorem,
         });
@@ -3543,6 +4030,10 @@ fn scale_int32_offset(value: Bitvector32Term, byte_width: i64) -> PointerOffsetT
     }
 }
 
+fn is_tactic_name(name: &str) -> bool {
+    matches!(name, "auto" | "frame" | "simp")
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Token {
     Ident(String),
@@ -4080,25 +4571,128 @@ impl Parser {
 
     fn parse_by_clause(&mut self) -> Result<Proof, ClickError> {
         self.expect_ident_spelling("by")?;
-        let tactic = if self.peek() == Some(&Token::LBrace) {
+        if self.peek() == Some(&Token::LBrace) {
             self.position += 1;
-            let mut tactics = Vec::new();
-            while self.peek() != Some(&Token::RBrace) {
-                tactics.push(self.parse_tactic()?);
-            }
-            self.expect(Token::RBrace)?;
-            if tactics.is_empty() {
-                return Err(self.error("`by` block must contain at least one proof step or tactic"));
-            }
-            if tactics.len() != 1 {
-                return Err(self.error("`by` blocks currently support exactly one tactic"));
-            }
-            tactics.remove(0)
-        } else {
-            self.parse_tactic()?
-        };
+            let proof = match self.peek() {
+                Some(Token::Ident(name))
+                    if is_tactic_name(name) && self.peek_next() == Some(&Token::Semicolon) =>
+                {
+                    let tactic = self.parse_tactic()?;
+                    self.expect(Token::RBrace)?;
+                    Proof::Tactic(tactic)
+                }
+                Some(Token::RBrace) => {
+                    return Err(
+                        self.error("`by` block must contain at least one proof step or tactic")
+                    );
+                }
+                Some(_) => {
+                    let mut steps = Vec::new();
+                    while self.peek() != Some(&Token::RBrace) {
+                        steps.push(self.parse_proof_step()?);
+                    }
+                    self.expect(Token::RBrace)?;
+                    Proof::Steps(steps)
+                }
+                None => return Err(self.error("expected proof step or tactic, got end of input")),
+            };
+            return Ok(proof);
+        }
 
-        Ok(Proof::Tactic(tactic))
+        Ok(Proof::Tactic(self.parse_tactic()?))
+    }
+
+    fn parse_proof_step(&mut self) -> Result<ProofStep, ClickError> {
+        let name = self.expect_ident("proof step")?;
+        let step = match name.as_str() {
+            "symbolic_execute" => {
+                self.expect_empty_step_args(&name)?;
+                ProofStep::SymbolicExecute
+            }
+            "loop_vc" => {
+                self.expect(Token::LParen)?;
+                let target = self.parse_proof_step_target()?;
+                self.expect(Token::RParen)?;
+                match target {
+                    ProofStepTarget::Loop(index) => ProofStep::LoopVc(index),
+                    _ => {
+                        return Err(self.error("`loop_vc` expects a `loop N` target"));
+                    }
+                }
+            }
+            "frame" => {
+                self.expect(Token::LParen)?;
+                let target = if self.peek() == Some(&Token::RParen) {
+                    None
+                } else {
+                    Some(self.parse_proof_step_target()?)
+                };
+                self.expect(Token::RParen)?;
+                ProofStep::Frame(target)
+            }
+            "simp" => {
+                self.expect_empty_step_args(&name)?;
+                ProofStep::Simp
+            }
+            "close" => {
+                self.expect_empty_step_args(&name)?;
+                ProofStep::Close
+            }
+            _ if is_tactic_name(&name) => {
+                return Err(self.error(format!(
+                    "`{name}` is a tactic, not a deterministic proof step; use `by {name};` or an explicit proof-step script"
+                )));
+            }
+            _ => return Err(self.error(format!("unknown proof step `{name}`"))),
+        };
+        self.expect(Token::Semicolon)?;
+        Ok(step)
+    }
+
+    fn expect_empty_step_args(&mut self, name: &str) -> Result<(), ClickError> {
+        self.expect(Token::LParen)?;
+        if self.peek() != Some(&Token::RParen) {
+            return Err(self.error(format!("`{name}` expects no arguments")));
+        }
+        self.expect(Token::RParen)
+    }
+
+    fn parse_proof_step_target(&mut self) -> Result<ProofStepTarget, ClickError> {
+        match self.next() {
+            Some(Token::Ident(kind)) if kind == "function" => Ok(ProofStepTarget::Function),
+            Some(Token::Ident(kind)) if kind == "loop" => {
+                Ok(ProofStepTarget::Loop(self.expect_index("loop index")?))
+            }
+            Some(Token::Ident(kind)) if kind == "statement" => Ok(ProofStepTarget::Statement(
+                self.expect_index("statement index")?,
+            )),
+            Some(Token::Ident(kind)) => Err(self.error(format!(
+                "expected proof target `function`, `loop N`, or `statement N`, got `{kind}`"
+            ))),
+            Some(token) => Err(self.error(format!(
+                "expected proof target `function`, `loop N`, or `statement N`, got {token:?}"
+            ))),
+            None => Err(self.error(
+                "expected proof target `function`, `loop N`, or `statement N`, got end of input",
+            )),
+        }
+    }
+
+    fn parse_tactic(&mut self) -> Result<Tactic, ClickError> {
+        let tactic = match self.next() {
+            Some(Token::Ident(name)) if name == "auto" => Tactic::Auto,
+            Some(Token::Ident(name)) if name == "frame" => Tactic::Frame,
+            Some(Token::Ident(name)) if name == "simp" => Tactic::Simp,
+            Some(Token::Ident(name)) => {
+                return Err(self.error(format!("expected tactic, got `{name}`")));
+            }
+            Some(token) => {
+                return Err(self.error(format!("expected tactic, got {token:?}")));
+            }
+            None => return Err(self.error("expected tactic, got end of input")),
+        };
+        self.expect(Token::Semicolon)?;
+        Ok(tactic)
     }
 
     fn parse_ensure_expression(&mut self) -> Result<C0Expression, ClickError> {
@@ -4240,28 +4834,6 @@ impl Parser {
             }
             Some(token) => Err(self.error(format!("expected result expression, got {token:?}"))),
             None => Err(self.error("expected result expression, got end of input")),
-        }
-    }
-
-    fn parse_tactic(&mut self) -> Result<Tactic, ClickError> {
-        match self.peek_ident() {
-            Some("auto") => {
-                self.position += 1;
-                self.expect(Token::Semicolon)?;
-                Ok(Tactic::Auto)
-            }
-            Some("frame") => {
-                self.position += 1;
-                self.expect(Token::Semicolon)?;
-                Ok(Tactic::Frame)
-            }
-            Some("simp") => {
-                self.position += 1;
-                self.expect(Token::Semicolon)?;
-                Ok(Tactic::Simp)
-            }
-            Some(keyword) => Err(self.error(format!("expected tactic, got `{keyword}`"))),
-            None => Err(self.error("expected tactic")),
         }
     }
 
@@ -4741,6 +5313,30 @@ mod tests {
     }
 
     #[test]
+    fn parses_proof_step_script() {
+        let source = FILL3_CLICK.replace(
+            "by auto;",
+            "by { symbolic_execute(); loop_vc(loop 0); frame(loop 0); simp(); close(); }",
+        );
+        let file = parse(&source).expect("proof-step script should parse");
+        let ensure = &file.function_blocks()[0].ensures()[0];
+
+        assert_eq!(
+            ensure.proof().steps(),
+            Some(
+                [
+                    ProofStep::SymbolicExecute,
+                    ProofStep::LoopVc(0),
+                    ProofStep::Frame(Some(ProofStepTarget::Loop(0))),
+                    ProofStep::Simp,
+                    ProofStep::Close,
+                ]
+                .as_slice()
+            )
+        );
+    }
+
+    #[test]
     fn parses_unnamed_ensure_clause() {
         let source =
             FILL3_CLICK.replace("ensures returns_second: result == 2", "ensures result == 2");
@@ -4964,6 +5560,32 @@ mod tests {
         assert_eq!(verified.len(), 2);
         assert_eq!(verified[0].proof_kind(), ProofKind::Simp);
         assert_eq!(verified[1].proof_kind(), ProofKind::Simp);
+    }
+
+    #[test]
+    fn verifies_simple_postcondition_with_proof_steps() {
+        let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+        let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures returns_x: result == x by {
+                    symbolic_execute();
+                    simp();
+                    close();
+                }
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("identity.c", c_source)])
+            .expect("proof-step script should prove simple postcondition");
+
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].proof_kind(), ProofKind::ProofSteps);
     }
 
     #[test]
@@ -5981,7 +6603,13 @@ mod tests {
                 ensures returns_n: result == n by auto;
                 ensures source_unchanged: forall (int32 k) {
                     0 <= k and k < n implies src[k] == old(src[k])
-                } by auto;
+                } by {
+                    symbolic_execute();
+                    loop_vc(loop 0);
+                    frame(loop 0);
+                    simp();
+                    close();
+                }
                 ensures copied_segment: forall (int32 k) {
                     0 <= k and k < n implies dst[k] == old(src[k])
                 } by auto;
@@ -5993,6 +6621,107 @@ mod tests {
 
         assert_eq!(verified.len(), 3);
         assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
+    }
+
+    #[test]
+    fn auto_certificate_replays_for_loop_frame_claim() {
+        let c_source = r#"
+            int32 copy_n(int32 dst[], int32 src[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    dst[i] = src[i];
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let auto_click_source = r#"
+            verifying "copy_n.c";
+
+            int32 copy_n(int32 dst[], int32 src[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(dst[0..n]);
+                requires valid_range(src[0..n]);
+                requires disjoint(dst[0..n], src[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                    invariant forall (int32 k) {
+                        0 <= k and k < i implies dst[k] == old(src[k])
+                    } by auto;
+                    mutable dst[0..n] by auto;
+                }
+                ensures source_unchanged: forall (int32 k) {
+                    0 <= k and k < n implies src[k] == old(src[k])
+                } by auto;
+            }
+        "#;
+
+        let auto_verified = verify_c0_sources(auto_click_source, &[("copy_n.c", c_source)])
+            .expect("auto should prove the source-frame postcondition");
+        let source_unchanged = auto_verified
+            .iter()
+            .find(|theorem| {
+                theorem
+                    .ensure_clause()
+                    .and_then(EnsureClause::name)
+                    .is_some_and(|name| name == "source_unchanged")
+            })
+            .expect("source_unchanged theorem should be present");
+        let expected_steps = [
+            ProofStep::SymbolicExecute,
+            ProofStep::LoopVc(0),
+            ProofStep::Frame(Some(ProofStepTarget::Loop(0))),
+            ProofStep::Simp,
+            ProofStep::Close,
+        ];
+
+        assert_eq!(source_unchanged.proof_kind(), ProofKind::LoopVerification);
+        assert_eq!(
+            source_unchanged.proof_steps(),
+            Some(expected_steps.as_slice())
+        );
+
+        let explicit_click_source = r#"
+            verifying "copy_n.c";
+
+            int32 copy_n(int32 dst[], int32 src[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(dst[0..n]);
+                requires valid_range(src[0..n]);
+                requires disjoint(dst[0..n], src[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                    invariant forall (int32 k) {
+                        0 <= k and k < i implies dst[k] == old(src[k])
+                    } by auto;
+                    mutable dst[0..n] by auto;
+                }
+                ensures source_unchanged: forall (int32 k) {
+                    0 <= k and k < n implies src[k] == old(src[k])
+                } by {
+                    symbolic_execute();
+                    loop_vc(loop 0);
+                    frame(loop 0);
+                    simp();
+                    close();
+                }
+            }
+        "#;
+
+        let explicit_verified = verify_c0_sources(explicit_click_source, &[("copy_n.c", c_source)])
+            .expect("auto certificate should replay as explicit proof steps");
+
+        assert_eq!(explicit_verified.len(), 1);
+        assert_eq!(explicit_verified[0].proof_kind(), ProofKind::ProofSteps);
+        assert_eq!(
+            explicit_verified[0].proof_steps(),
+            Some(expected_steps.as_slice())
+        );
     }
 
     #[test]

@@ -38,7 +38,13 @@ int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
     ensures returns_n: result == n by auto;
     ensures source_unchanged: forall (int32 k) {
         0 <= k and k < n implies src[k] == old(src[k])
-    } by auto;
+    } by {
+        symbolic_execute();
+        loop_vc(loop 0);
+        frame(loop 0);
+        simp();
+        close();
+    }
     ensures copied_segment: forall (int32 k) {
         0 <= k and k < n implies dst[k] == old(src[k])
     } by auto;

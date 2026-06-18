@@ -103,13 +103,33 @@ Click uses five core proof-system words:
   Some tactics are deterministic; others, such as `auto`, may search. Proof
   steps should be stable and replayable.
 
-The current `.click` proof language exposes tactic calls but does not yet expose
-explicit proof steps. Function contracts attach `requires` clauses to the
+The current `.click` proof language exposes tactic calls plus a first linear
+proof-step script form. Function contracts attach `requires` clauses to the
 function and attach a `by` proof clause to each guarantee. A proof clause can
 say `by auto;`, `by simp;`, or `by frame;`, and can also use block form such as
-`by { auto; }`. These tactics invoke the megakernel's C symbolic-execution,
-frame-checking, simplification, and specification-checking axioms to prove the
-named guarantee.
+`by { auto; }`. Deterministic replay scripts use function-call-shaped proof
+steps:
+
+```text
+by {
+    symbolic_execute();
+    loop_vc(loop 0);
+    frame(loop 0);
+    simp();
+    close();
+}
+```
+
+This first proof-step slice uses an implicit proof state. `symbolic_execute`
+builds the C0 symbolic verification paths. `loop_vc(loop N)` validates the
+named loop's generated verification conditions. `frame(loop N)` validates and
+exposes the named loop's frame facts. `simp()` asks the final close step to use
+deterministic simplification for the claim. `close()` must be the final step;
+it packages the verified path as the guarantee theorem. Tactics invoke the
+megakernel's C symbolic-execution, frame-checking, simplification, and
+specification-checking axioms to prove the named guarantee. When a tactic can
+replay one of these deterministic scripts, the verified theorem records that
+script as its proof-step certificate.
 
 ## C0 Status
 
@@ -228,7 +248,9 @@ broader orchestration tactic: it runs the current symbolic-execution and loop-VC
 workflow, then uses the deterministic kernel reasoners to discharge the
 resulting obligations. The intent is that future proof work should add named
 deterministic steps first, and let `auto` become a convenience wrapper around
-those steps.
+those steps. The first certificate path is in place: successful `auto` proofs
+try to attach a replayed proof-step script when today's deterministic steps can
+express the proof.
 
 Function-level effect clauses are explicit and separate from postconditions:
 
@@ -373,7 +395,8 @@ The first memory-safety demos are fixed-size pointer loops:
   a scalar loop that only updates stack-local state.
 - `copy_n_segment_invariant(int32 dst[], int32 src[], int32 n)` proves a
   symbolic copied segment with a quantified destination-prefix invariant plus a
-  whole-loop mutable frame and a disjoint source/destination requirement.
+  whole-loop mutable frame and a disjoint source/destination requirement; the
+  source-frame guarantee uses an explicit proof-step script.
 - `simp_postconditions(int32 x)` proves straight-line postconditions with
   deterministic local simplification.
 
@@ -391,10 +414,10 @@ can also prove post-state memory guarantees such as
 2. Improve fact management inside `auto`, especially using requirements,
    invariants, generated frame facts, and path facts to prove postconditions
    without bounded fallback.
-3. Decide the proof-step certificate format for deterministic replay of
-   successful heuristic proofs.
-4. Make heuristic tactics expandable into deterministic proof steps, so `auto`
-   can become a convenience layer while successful proofs remain replayable.
+3. Expand proof-step coverage beyond symbolic execution, loop VCs, frame
+   checks, simplification, and close.
+4. Broaden tactic expansion into deterministic proof steps, so more successful
+   `auto` proofs leave replayable certificates.
 5. Grow C-native memory objects: local arrays, richer pointer ranges, and
    clearer frame conditions.
 6. Add richer C integer coverage: unsigned operations, more widths, casts, and
