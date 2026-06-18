@@ -391,6 +391,10 @@ The first memory-safety demos are fixed-size pointer loops:
   `int32` cells through `p[i]` and read back the final cell.
 - `local_array_roundtrip()` writes and reads a fixed-size local `int32` array
   whose name decays to a pointer for indexing.
+- `local_array_decays_to_helper()` passes a local array to a helper function as
+  an `int32*`.
+- `local_array_loop()` and `local_array_loop_frame()` cover bounded local-array
+  loop execution plus an explicit per-step local-array frame clause.
 - `copy3(int32 dst[3], int32 src[3])` copies three cells from `src` to `dst`
   under an explicit `disjoint(dst[0..3], src[0..3])` requirement and proves
   `old(src[i])` postconditions.

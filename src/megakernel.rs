@@ -317,7 +317,7 @@ pub struct CLocalEnvironment {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 enum CLocalBinding {
     Object(CValue),
-    Int32Array { length: u32 },
+    ArrayObject { element_type: CType, length: u32 },
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1058,14 +1058,23 @@ impl CLocalEnvironment {
     }
 
     pub fn set_int32_array(&mut self, name: impl Into<String>, length: u32) {
-        self.bindings
-            .insert(name.into(), CLocalBinding::Int32Array { length });
+        self.set_array_object(name, CType::Int32, length);
+    }
+
+    fn set_array_object(&mut self, name: impl Into<String>, element_type: CType, length: u32) {
+        self.bindings.insert(
+            name.into(),
+            CLocalBinding::ArrayObject {
+                element_type,
+                length,
+            },
+        );
     }
 
     pub fn get(&self, name: &str) -> Option<&CValue> {
         match self.bindings.get(name) {
             Some(CLocalBinding::Object(value)) => Some(value),
-            Some(CLocalBinding::Int32Array { .. }) | None => None,
+            Some(CLocalBinding::ArrayObject { .. }) | None => None,
         }
     }
 
@@ -1073,8 +1082,8 @@ impl CLocalEnvironment {
         self.bindings.get(name)
     }
 
-    fn is_int32_array(&self, name: &str) -> bool {
-        matches!(self.binding(name), Some(CLocalBinding::Int32Array { .. }))
+    fn is_array_object(&self, name: &str) -> bool {
+        matches!(self.binding(name), Some(CLocalBinding::ArrayObject { .. }))
     }
 }
 
@@ -2378,6 +2387,9 @@ impl Assumptions {
         if memory.access_in_bounds(pointer, byte_width) {
             return true;
         }
+        if self.proves_access_from_memory_block(memory, pointer, byte_width) {
+            return true;
+        }
 
         self.prop_facts.iter().any(|proposition| {
             let Proposition::CMemoryValidRange {
@@ -2392,6 +2404,27 @@ impl Assumptions {
             memory_range_still_available(range_memory, memory, base)
                 && self.proves_access_from_valid_range(base, bytes, pointer, byte_width)
         })
+    }
+
+    fn proves_access_from_memory_block(
+        &self,
+        memory: &CMemory,
+        pointer: &Pointer,
+        byte_width: u32,
+    ) -> bool {
+        let Some(block) = memory.blocks.get(&pointer.block) else {
+            return false;
+        };
+        let base = Pointer {
+            block: pointer.block.clone(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        self.proves_access_from_valid_range(
+            &base,
+            &Bitvector32Term::Constant(block.size()),
+            pointer,
+            byte_width,
+        )
     }
 
     fn proves_access_from_valid_range(
@@ -5012,7 +5045,7 @@ fn evaluate_c_expression_paths(
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
-        CExpression::Variable(name) if state.locals.is_int32_array(name) => {
+        CExpression::Variable(name) if state.locals.is_array_object(name) => {
             let pointer = CMemory::local_pointer(name);
             vec![CExpressionPath {
                 outcome: if state.memory.has_block(&pointer.block) {
@@ -5139,7 +5172,7 @@ fn evaluate_c_lvalue_paths(
                 Some(CLocalBinding::Object(value)) => {
                     CLValueOutcome::LValue(CLValue::local(name.clone(), value.c_type()))
                 }
-                Some(CLocalBinding::Int32Array { .. }) => {
+                Some(CLocalBinding::ArrayObject { .. }) => {
                     CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch)
                 }
                 None => CLValueOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone())),
@@ -6928,7 +6961,9 @@ fn declare_local(state: &CState, name: &str, c_type: CType) -> CState {
             state.memory = state
                 .memory
                 .with_block(pointer.block, length.checked_mul(4).unwrap_or(u32::MAX));
-            state.locals.set_int32_array(name.to_string(), length);
+            state
+                .locals
+                .set_array_object(name.to_string(), CType::Int32, length);
             return state;
         }
     };
@@ -6973,7 +7008,7 @@ fn execute_c_call_assign_paths(
             .map(|path| {
                 let outcome = match path.outcome {
                     CFunctionOutcome::Return { value, mut state } => {
-                        if state.locals.is_int32_array(target) {
+                        if state.locals.is_array_object(target) {
                             return CStatementExecutionPath {
                                 outcome: CStatementOutcome::RuntimeError(
                                     CRuntimeError::TypeMismatch,
@@ -8857,6 +8892,32 @@ mod tests {
             ConditionTerm::Constant(true),
             true
         )));
+        assert!(assumptions.proves(&Proposition::CMemoryCanLoad {
+            memory: memory.clone(),
+            pointer: pointer.clone(),
+        }));
+        assert!(assumptions.proves(&Proposition::CMemoryCanStore { memory, pointer }));
+    }
+
+    #[test]
+    fn known_memory_block_bounds_prove_symbolic_element_access() {
+        let index = Variable(91);
+        let index_bits = Bitvector32Term::Variable(index);
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(
+                    index_bits.clone(),
+                    Bitvector32Term::Constant(0),
+                ),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(index_bits.clone(), Bitvector32Term::Constant(3)),
+                true,
+            );
+        let memory = CMemory::new().with_block("local:a", 12);
+        let pointer = CMemory::local_pointer("a").offset_by_int32_elements(index_bits);
+
         assert!(assumptions.proves(&Proposition::CMemoryCanLoad {
             memory: memory.clone(),
             pointer: pointer.clone(),
