@@ -60,6 +60,10 @@ pub enum Requirement {
         start: RangeBytes,
         end: RangeBytes,
     },
+    Disjoint {
+        left: ContractSegment,
+        right: ContractSegment,
+    },
     Proposition(ClickProposition),
 }
 
@@ -1734,6 +1738,9 @@ fn requirement_propositions(
             Requirement::ValidRange { .. } | Requirement::ValidRangeSegment { .. } => {
                 valid_range_requirement_prop(requirement, parameters, arguments, memory)
             }
+            Requirement::Disjoint { left, right } => {
+                disjoint_requirement_prop(parameters, arguments, memory, left, right)
+            }
             Requirement::Proposition(proposition) => {
                 requirement_proposition_prop(parameters, arguments, proposition)
             }
@@ -1760,7 +1767,7 @@ fn requirement_valid_range_name(requirement: &Requirement) -> Option<&str> {
         Requirement::ValidRange { name, .. } | Requirement::ValidRangeSegment { name, .. } => {
             Some(name)
         }
-        Requirement::Proposition(_) => None,
+        Requirement::Disjoint { .. } | Requirement::Proposition(_) => None,
     }
 }
 
@@ -1786,7 +1793,7 @@ fn concrete_valid_range_block(
             })?;
             Ok(Some((name.as_str(), bytes)))
         }
-        Requirement::Proposition(_) => Ok(None),
+        Requirement::Disjoint { .. } | Requirement::Proposition(_) => Ok(None),
     }
 }
 
@@ -1835,7 +1842,34 @@ fn valid_range_base_and_bytes(
             Ok((offset_pointer_by_int32_elements(base.clone(), start), bytes))
         }
         Requirement::Proposition(_) => Err(ClickError::new("expected valid_range requirement")),
+        Requirement::Disjoint { .. } => Err(ClickError::new("expected valid_range requirement")),
     }
+}
+
+fn disjoint_requirement_prop(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    memory: &CMemory,
+    left: &ContractSegment,
+    right: &ContractSegment,
+) -> Result<Proposition, ClickError> {
+    let state = CState::new().with_memory(memory.clone());
+    let left =
+        evaluate_requirement_segment(parameters, arguments, &state, left).map_err(|message| {
+            ClickError::new(format!("could not lower `disjoint` left range: {message}"))
+        })?;
+    let right =
+        evaluate_requirement_segment(parameters, arguments, &state, right).map_err(|message| {
+            ClickError::new(format!("could not lower `disjoint` right range: {message}"))
+        })?;
+    Ok(Proposition::CMemoryDisjoint {
+        left_base: left.base,
+        left_start: left.start,
+        left_end: left.end,
+        right_base: right.base,
+        right_start: right.start,
+        right_end: right.end,
+    })
 }
 
 fn range_bytes_constant(bytes: &RangeBytes) -> Option<u32> {
@@ -2359,6 +2393,7 @@ fn simp_proposition(proposition: &Proposition, assumptions: &Assumptions) -> Sim
         | Proposition::CMemoryCanLoad { .. }
         | Proposition::CMemoryCanStore { .. }
         | Proposition::CMemoryValidRange { .. }
+        | Proposition::CMemoryDisjoint { .. }
         | Proposition::CMemoryMutatesOnly { .. }
         | Proposition::CWhileInvariantRule { .. } => {
             if assumptions.proves(proposition) {
@@ -2771,6 +2806,60 @@ fn evaluate_effect_segment(
     let parameter_values =
         parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let assumptions = assumptions_from_propositions(available_propositions);
+    let base = evaluate_c_contract_expression(
+        &parameter_values,
+        entry_state,
+        None,
+        &assumptions,
+        &segment.base,
+    )?;
+    let CValue::Pointer(base) = base else {
+        return Err("segment base did not evaluate to a pointer".to_string());
+    };
+    let start = evaluate_c_contract_expression(
+        &parameter_values,
+        entry_state,
+        None,
+        &assumptions,
+        &segment.start,
+    )?;
+    let CValue::Int32(start) = start else {
+        return Err("segment start did not evaluate to int32".to_string());
+    };
+    let end = evaluate_c_contract_expression(
+        &parameter_values,
+        entry_state,
+        None,
+        &assumptions,
+        &segment.end,
+    )?;
+    let CValue::Int32(end) = end else {
+        return Err("segment end did not evaluate to int32".to_string());
+    };
+
+    Ok(EvaluatedContractSegment {
+        source: segment.clone(),
+        base,
+        start,
+        end,
+    })
+}
+
+fn evaluate_requirement_segment(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    entry_state: &CState,
+    segment: &ContractSegment,
+) -> Result<EvaluatedContractSegment, String> {
+    if segment.state != ContractSegmentState::Current {
+        return Err(
+            "requirement segments are entry-state references; `old(...)` is not supported here"
+                .to_string(),
+        );
+    }
+    let parameter_values =
+        parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let assumptions = Assumptions::new();
     let base = evaluate_c_contract_expression(
         &parameter_values,
         entry_state,
@@ -3508,12 +3597,20 @@ impl Parser {
 
     fn parse_requirement(&mut self) -> Result<Requirement, ClickError> {
         self.expect_ident_spelling("requires")?;
-        if self.peek_ident() != Some("valid_range") || self.peek_next() != Some(&Token::LParen) {
-            let proposition = self.parse_proposition()?;
-            self.expect(Token::Semicolon)?;
-            return Ok(Requirement::Proposition(proposition));
-        }
+        let requirement = match (self.peek_ident(), self.peek_next()) {
+            (Some("valid_range"), Some(Token::LParen)) => self.parse_valid_range_requirement()?,
+            (Some("disjoint"), Some(Token::LParen)) => self.parse_disjoint_requirement()?,
+            _ => {
+                let proposition = self.parse_proposition()?;
+                self.expect(Token::Semicolon)?;
+                return Ok(Requirement::Proposition(proposition));
+            }
+        };
+        self.expect(Token::Semicolon)?;
+        Ok(requirement)
+    }
 
+    fn parse_valid_range_requirement(&mut self) -> Result<Requirement, ClickError> {
         self.expect_ident_spelling("valid_range")?;
         self.expect(Token::LParen)?;
         let name = self.expect_ident("range base name")?;
@@ -3530,9 +3627,17 @@ impl Parser {
             Requirement::ValidRange { name, bytes }
         };
         self.expect(Token::RParen)?;
-        self.expect(Token::Semicolon)?;
-
         Ok(requirement)
+    }
+
+    fn parse_disjoint_requirement(&mut self) -> Result<Requirement, ClickError> {
+        self.expect_ident_spelling("disjoint")?;
+        self.expect(Token::LParen)?;
+        let left = self.parse_current_contract_segment()?;
+        self.expect(Token::Comma)?;
+        let right = self.parse_current_contract_segment()?;
+        self.expect(Token::RParen)?;
+        Ok(Requirement::Disjoint { left, right })
     }
 
     fn parse_range_bytes(&mut self) -> Result<RangeBytes, ClickError> {
@@ -4416,6 +4521,25 @@ mod tests {
     }
 
     #[test]
+    fn parses_disjoint_requirement() {
+        let source = r#"
+            verifying "copy.c";
+
+            int32 copy(int32* dst, int32* src, int32 n) {
+                requires disjoint(dst[0..n], src[0..n]);
+                ensures result == n by auto;
+            }
+        "#;
+        let file = parse(source).expect("disjoint requirement should parse");
+        let function = &file.function_blocks()[0];
+
+        assert!(matches!(
+            function.requires()[0],
+            Requirement::Disjoint { .. }
+        ));
+    }
+
+    #[test]
     fn rejects_reversed_constant_valid_range_segment() {
         let c_source = r#"
             int32 read_second(int32* p) {
@@ -4851,6 +4975,37 @@ mod tests {
             .expect("unwritten segment should match old memory");
 
         assert_eq!(verified.len(), 1);
+    }
+
+    #[test]
+    fn disjoint_requirement_proves_symbolic_unwritten_read() {
+        let c_source = r#"
+            int32 write_i_read_j(int32 p[], int32 i, int32 j, int32 n) {
+                p[i] = 9;
+                return p[j];
+            }
+        "#;
+        let click_source = r#"
+            verifying "write_i_read_j.c";
+
+            int32 write_i_read_j(int32 p[], int32 i, int32 j, int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires i >= 0;
+                requires i < n;
+                requires j >= 0;
+                requires j < n;
+                requires valid_range(p[0..n]);
+                requires disjoint(p[i..i + 1], p[j..j + 1]);
+                mutable p[i..i + 1] by frame;
+                ensures keeps_j: result == old(p[j]) by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("write_i_read_j.c", c_source)])
+            .expect("disjoint singleton ranges should prove symbolic unwritten read");
+
+        assert_eq!(verified.len(), 2);
     }
 
     #[test]
@@ -5312,6 +5467,116 @@ mod tests {
     }
 
     #[test]
+    fn verifies_loop_level_growing_prefix_mutable_segment() {
+        let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                    mutable p[0..i + 1] by frame;
+                }
+                ensures returns_n: result == n by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+            .expect("loop-level frame should support growing prefix segments");
+
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
+    }
+
+    #[test]
+    fn verifies_loop_level_shifted_suffix_mutable_segment() {
+        let c_source = r#"
+            int32 fill_tail(int32 p[], int32 n) {
+                int32 i;
+                i = 1;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_tail.c";
+
+            int32 fill_tail(int32 p[], int32 n) {
+                requires n >= 1;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                loop 0 {
+                    invariant i >= 1 by auto;
+                    invariant i <= n by auto;
+                    mutable p[1..n] by frame;
+                }
+                ensures returns_n: result == n by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("fill_tail.c", c_source)])
+            .expect("loop-level frame should support shifted suffix segments");
+
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
+    }
+
+    #[test]
+    fn verifies_loop_level_multi_segment_mutable_footprint() {
+        let c_source = r#"
+            int32 fill_two(int32 p[], int32 q[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    q[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_two.c";
+
+            int32 fill_two(int32 p[], int32 q[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                requires valid_range(q[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                    mutable p[i..i + 1], q[i..i + 1] by frame;
+                }
+                ensures returns_n: result == n by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("fill_two.c", c_source)])
+            .expect("loop-level frame should support multiple mutable segments");
+
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
+    }
+
+    #[test]
     fn loop_level_mutable_segment_rejects_write_outside_segment() {
         let c_source = r#"
             int32 fill_n(int32 p[], int32 n) {
@@ -5355,6 +5620,16 @@ mod tests {
         );
         assert!(
             error.message().contains("evaluated segments"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            error.message().contains("external writes"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            error.message().contains("declared effect"),
             "{}",
             error.message()
         );

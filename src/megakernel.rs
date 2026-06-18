@@ -371,6 +371,14 @@ pub enum Proposition {
         base: Pointer,
         bytes: Bitvector32Term,
     },
+    CMemoryDisjoint {
+        left_base: Pointer,
+        left_start: Bitvector32Term,
+        left_end: Bitvector32Term,
+        right_base: Pointer,
+        right_start: Bitvector32Term,
+        right_end: Bitvector32Term,
+    },
     CMemoryMutatesOnly {
         before: CMemory,
         after: CMemory,
@@ -2157,6 +2165,44 @@ impl Assumptions {
         )) == Some(true)
             && self.decide(&ConditionTerm::signed_less_than(index, element_count)) == Some(true)
     }
+
+    fn pointers_proven_disjoint_by_range(&self, left: &Pointer, right: &Pointer) -> bool {
+        self.prop_facts.iter().any(|proposition| {
+            let Proposition::CMemoryDisjoint {
+                left_base,
+                left_start,
+                left_end,
+                right_base,
+                right_start,
+                right_end,
+            } = proposition
+            else {
+                return false;
+            };
+
+            self.pointer_in_range(left, left_base, left_start, left_end)
+                && self.pointer_in_range(right, right_base, right_start, right_end)
+                || self.pointer_in_range(right, left_base, left_start, left_end)
+                    && self.pointer_in_range(left, right_base, right_start, right_end)
+        })
+    }
+
+    fn pointer_in_range(
+        &self,
+        pointer: &Pointer,
+        base: &Pointer,
+        start: &Bitvector32Term,
+        end: &Bitvector32Term,
+    ) -> bool {
+        let Some(index) = pointer.element_index_from_base(base) else {
+            return false;
+        };
+        self.decide(&ConditionTerm::signed_less_equal(
+            start.clone(),
+            index.clone(),
+        )) == Some(true)
+            && self.decide(&ConditionTerm::signed_less_than(index, end.clone())) == Some(true)
+    }
 }
 
 impl ProofObligation {
@@ -3361,6 +3407,7 @@ fn pointers_proven_distinct(left: &Pointer, right: &Pointer, assumptions: &Assum
             left.offset.clone(),
             right.offset.clone(),
         )) == Some(false)
+        || assumptions.pointers_proven_disjoint_by_range(left, right)
 }
 
 fn pointers_proven_equal(left: &Pointer, right: &Pointer, assumptions: &Assumptions) -> bool {
@@ -3854,10 +3901,71 @@ fn solve_builtin_prop(proposition: &Proposition) -> bool {
         } => bytes
             .as_const()
             .is_some_and(|bytes| memory.access_in_bounds(base, bytes)),
+        Proposition::CMemoryDisjoint {
+            left_base,
+            left_start,
+            left_end,
+            right_base,
+            right_start,
+            right_end,
+        } => memory_ranges_disjoint_builtin(
+            left_base,
+            left_start,
+            left_end,
+            right_base,
+            right_start,
+            right_end,
+        ),
         Proposition::CMemoryCanLoad { memory, pointer } => memory.can_load_concretely(pointer, 4),
         Proposition::CMemoryCanStore { memory, pointer } => memory.access_in_bounds(pointer, 4),
         _ => false,
     }
+}
+
+fn memory_ranges_disjoint_builtin(
+    left_base: &Pointer,
+    left_start: &Bitvector32Term,
+    left_end: &Bitvector32Term,
+    right_base: &Pointer,
+    right_start: &Bitvector32Term,
+    right_end: &Bitvector32Term,
+) -> bool {
+    if left_base.block != right_base.block {
+        return true;
+    }
+
+    let Some(left_base_index) = left_base.element_index_from_base(&Pointer {
+        block: left_base.block.clone(),
+        offset: PointerOffsetTerm::Constant(0),
+    }) else {
+        return false;
+    };
+    let Some(right_base_index) = right_base.element_index_from_base(&Pointer {
+        block: right_base.block.clone(),
+        offset: PointerOffsetTerm::Constant(0),
+    }) else {
+        return false;
+    };
+    let (Some(left_base_index), Some(left_start), Some(left_end)) = (
+        signed_bitvector_constant(&left_base_index),
+        signed_bitvector_constant(left_start),
+        signed_bitvector_constant(left_end),
+    ) else {
+        return false;
+    };
+    let (Some(right_base_index), Some(right_start), Some(right_end)) = (
+        signed_bitvector_constant(&right_base_index),
+        signed_bitvector_constant(right_start),
+        signed_bitvector_constant(right_end),
+    ) else {
+        return false;
+    };
+
+    let left_start = left_base_index + left_start;
+    let left_end = left_base_index + left_end;
+    let right_start = right_base_index + right_start;
+    let right_end = right_base_index + right_end;
+    left_end <= right_start || right_end <= left_start
 }
 
 fn int32_element_index_from_offset(offset: &PointerOffsetTerm) -> Option<Bitvector32Term> {
@@ -6974,7 +7082,8 @@ fn collect_loop_effect_check_obligations(
                                 loop_effect_failure_context(
                                     check,
                                     format!(
-                                        "could not evaluate mutable segment {segment_index}: {message}"
+                                        "could not evaluate mutable segment {segment_index} in {:?}: {message}",
+                                        check.effect()
                                     ),
                                 ),
                             );
@@ -6998,7 +7107,8 @@ fn collect_loop_effect_check_obligations(
                     loop_effect_failure_context(
                         check,
                         format!(
-                            "write to {pointer:?} is outside the mutable footprint; evaluated segments: {segments:?}"
+                            "write to {pointer:?} is outside the mutable footprint; external writes: {writes:?}; declared effect: {:?}; evaluated segments: {segments:?}",
+                            check.effect()
                         ),
                     ),
                 );
@@ -9399,6 +9509,72 @@ mod tests {
                     Box::new(first_cell.clone()),
                 ),
                 Bitvector32Term::MemoryLoad(Box::new(old_memory), Box::new(first_cell)),
+            ),
+            true,
+        )));
+    }
+
+    #[test]
+    fn disjoint_range_proves_mutable_frame_cell_distinct() {
+        let i = Variable(81);
+        let j = Variable(82);
+        let i_bits = Bitvector32Term::Variable(i);
+        let j_bits = Bitvector32Term::Variable(j);
+        let before_memory = CMemory::new();
+        let after_memory = CMemory::new();
+        let base = Pointer {
+            block: "p".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let written_cell = Pointer {
+            block: "p".to_string(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(i_bits.clone()),
+                byte_width: 4,
+            },
+        };
+        let read_cell = Pointer {
+            block: "p".to_string(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(j_bits.clone()),
+                byte_width: 4,
+            },
+        };
+        let i_plus_one = Bitvector32Term::Add(
+            Box::new(i_bits.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        );
+        let j_plus_one = Bitvector32Term::Add(
+            Box::new(j_bits.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        );
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_less_than(i_bits.clone(), i_plus_one.clone()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(j_bits.clone(), j_plus_one.clone()),
+                true,
+            )
+            .assume_proposition(Proposition::CMemoryDisjoint {
+                left_base: base.clone(),
+                left_start: i_bits.clone(),
+                left_end: i_plus_one,
+                right_base: base,
+                right_start: j_bits.clone(),
+                right_end: j_plus_one,
+            })
+            .assume_proposition(Proposition::CMemoryMutatesOnly {
+                before: before_memory.clone(),
+                after: after_memory.clone(),
+                pointers: vec![written_cell],
+            });
+
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::MemoryLoad(Box::new(after_memory), Box::new(read_cell.clone())),
+                Bitvector32Term::MemoryLoad(Box::new(before_memory), Box::new(read_cell)),
             ),
             true,
         )));

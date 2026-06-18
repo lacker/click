@@ -181,10 +181,11 @@ all guarantees. Each `ensures` clause is a separately proven guarantee with its
 own `by` proof clause. For now, `requires` supports `valid_range(pointer,
 bytes)` with concrete byte counts or small byte-count expressions such as
 `n * 4`, and `valid_range(pointer[start..end])` for half-open `int32` element
-segments such as `valid_range(p[0..n])`. The `..` form is Click C-reference
-syntax, not C expression syntax. `requires` also supports Click propositions
-over parameters and literals. `ensures`
-clauses use Click proposition syntax:
+segments such as `valid_range(p[0..n])`. It also supports
+`disjoint(left[start..end], right[start..end])` for half-open `int32` element
+segments. The `..` form is Click C-reference syntax, not C expression syntax.
+`requires` also supports Click propositions over parameters and literals.
+`ensures` clauses use Click proposition syntax:
 
 ```text
 result == x and not (result != x)
@@ -355,6 +356,10 @@ The first memory-safety demos are fixed-size pointer loops:
 - `fill_n_loop_mutable_segment(int32 p[], int32 n)` proves the analogous
   loop-level effect clause for each loop body step, using the per-iteration
   segment `p[i..i + 1]`.
+- `loop_frame_segment_shapes` covers additional loop-level `frame` shapes:
+  growing prefixes, shifted suffixes, and multi-segment mutable footprints.
+- `disjoint_symbolic_unwritten_read` proves a symbolic old-memory read from
+  `requires disjoint(p[i..i + 1], p[j..j + 1])`.
 - `count_to_three_loop_immutable()` proves a loop-level `immutable` clause for
   a scalar loop that only updates stack-local state.
 - `copy_n_segment_invariant(int32 dst[], int32 src[], int32 n)` proves a
@@ -372,21 +377,23 @@ can also prove post-state memory guarantees such as
 
 ## Near-Term Roadmap
 
-1. Broaden loop-level effect diagnostics and segment-shape coverage beyond the
-   current one-cell iteration-relative cases.
+1. Continue broadening loop-level frame coverage for aliasing, pointer-base
+   expressions, and richer segment arithmetic.
 2. Reduce boilerplate around copied-segment proofs, especially deriving or
    packaging source-frame invariants that are currently written explicitly.
 3. Improve fact management inside `auto`, especially using requirements,
    invariants, and path facts to prove postconditions without bounded fallback.
-4. Grow C-native memory objects: local arrays, richer pointer ranges, and
+4. Make heuristic tactics expandable into deterministic proof steps, so `auto`
+   can become a convenience layer while successful proofs remain replayable.
+5. Grow C-native memory objects: local arrays, richer pointer ranges, and
    clearer frame conditions.
-5. Add richer C integer coverage: unsigned operations, more widths, casts, and
+6. Add richer C integer coverage: unsigned operations, more widths, casts, and
    promotion rules.
-6. Expand modular function-contract reasoning so call sites can use proven
+7. Expand modular function-contract reasoning so call sites can use proven
    requirements and guarantees without inlining every function body.
-7. Replace the toy C0 parser with a path toward real C parsing when the proof
+8. Replace the toy C0 parser with a path toward real C parsing when the proof
    model is ready for it.
-8. Split `src/megakernel.rs` into smaller modules when that helps development,
+9. Split `src/megakernel.rs` into smaller modules when that helps development,
    without changing semantics.
 
 ## Verification
