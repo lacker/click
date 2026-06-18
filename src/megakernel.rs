@@ -189,6 +189,7 @@ pub struct CLoopInvariantCheck {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CLoopEffectCheck {
     effect: CLoopEffect,
+    span: CLoopEffectSpan,
     context: Option<String>,
 }
 
@@ -198,11 +199,24 @@ pub enum CLoopEffect {
     Mutable(Vec<CMemorySegment>),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CLoopEffectSpan {
+    Whole,
+    Step,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CMemorySegment {
     base: CExpression,
     start: CExpression,
     end: CExpression,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CMemoryRange {
+    base: Pointer,
+    start: Bitvector32Term,
+    end: Bitvector32Term,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -383,6 +397,11 @@ pub enum Proposition {
         before: CMemory,
         after: CMemory,
         pointers: Vec<Pointer>,
+    },
+    CMemoryMutatesOnlyRanges {
+        before: CMemory,
+        after: CMemory,
+        ranges: Vec<CMemoryRange>,
     },
     CWhileInvariantRule {
         state: CState,
@@ -838,11 +857,31 @@ impl CLoopInvariantCheck {
 
 impl CLoopEffectCheck {
     pub fn new(effect: CLoopEffect, context: Option<String>) -> Self {
-        Self { effect, context }
+        Self {
+            effect,
+            span: CLoopEffectSpan::Step,
+            context,
+        }
+    }
+
+    pub fn new_with_span(
+        effect: CLoopEffect,
+        span: CLoopEffectSpan,
+        context: Option<String>,
+    ) -> Self {
+        Self {
+            effect,
+            span,
+            context,
+        }
     }
 
     pub fn effect(&self) -> &CLoopEffect {
         &self.effect
+    }
+
+    pub fn span(&self) -> CLoopEffectSpan {
+        self.span
     }
 
     pub fn context(&self) -> Option<&str> {
@@ -853,6 +892,24 @@ impl CLoopEffectCheck {
 impl CMemorySegment {
     pub fn new(base: CExpression, start: CExpression, end: CExpression) -> Self {
         Self { base, start, end }
+    }
+}
+
+impl CMemoryRange {
+    pub fn new(base: Pointer, start: Bitvector32Term, end: Bitvector32Term) -> Self {
+        Self { base, start, end }
+    }
+
+    pub fn base(&self) -> &Pointer {
+        &self.base
+    }
+
+    pub fn start(&self) -> &Bitvector32Term {
+        &self.start
+    }
+
+    pub fn end(&self) -> &Bitvector32Term {
+        &self.end
     }
 }
 
@@ -1790,25 +1847,50 @@ impl Assumptions {
             return true;
         }
 
-        self.prop_facts.iter().any(|proposition| {
-            let Proposition::CMemoryMutatesOnly {
+        self.prop_facts.iter().any(|proposition| match proposition {
+            Proposition::CMemoryMutatesOnly {
                 before,
                 after,
                 pointers,
-            } = proposition
-            else {
-                return false;
-            };
-            let matches_order =
-                memories_match_for_pointer_load(before, right_memory.as_ref(), left_pointer)
-                    && memories_match_for_pointer_load(after, left_memory.as_ref(), left_pointer);
-            let matches_reverse =
-                memories_match_for_pointer_load(before, left_memory.as_ref(), left_pointer)
-                    && memories_match_for_pointer_load(after, right_memory.as_ref(), left_pointer);
-            (matches_order || matches_reverse)
-                && pointers
-                    .iter()
-                    .all(|pointer| pointers_proven_distinct(pointer, left_pointer, self))
+            } => {
+                let matches_order =
+                    memories_match_for_pointer_load(before, right_memory.as_ref(), left_pointer)
+                        && memories_match_for_pointer_load(
+                            after,
+                            left_memory.as_ref(),
+                            left_pointer,
+                        );
+                let matches_reverse =
+                    memories_match_for_pointer_load(before, left_memory.as_ref(), left_pointer)
+                        && memories_match_for_pointer_load(
+                            after,
+                            right_memory.as_ref(),
+                            left_pointer,
+                        );
+                (matches_order || matches_reverse)
+                    && pointers
+                        .iter()
+                        .all(|pointer| pointers_proven_distinct(pointer, left_pointer, self))
+            }
+            Proposition::CMemoryMutatesOnlyRanges {
+                before,
+                after,
+                ranges,
+            } => {
+                let matches_order =
+                    memory_matches_frame_endpoint(before, right_memory.as_ref(), left_pointer)
+                        && memory_matches_frame_endpoint(after, left_memory.as_ref(), left_pointer);
+                let matches_reverse =
+                    memory_matches_frame_endpoint(before, left_memory.as_ref(), left_pointer)
+                        && memory_matches_frame_endpoint(
+                            after,
+                            right_memory.as_ref(),
+                            left_pointer,
+                        );
+                (matches_order || matches_reverse)
+                    && self.ranges_proven_disjoint_from_pointer(ranges, left_pointer)
+            }
+            _ => false,
         })
     }
 
@@ -2202,6 +2284,71 @@ impl Assumptions {
             index.clone(),
         )) == Some(true)
             && self.decide(&ConditionTerm::signed_less_than(index, end.clone())) == Some(true)
+    }
+
+    fn ranges_proven_disjoint_from_pointer(
+        &self,
+        ranges: &[CMemoryRange],
+        pointer: &Pointer,
+    ) -> bool {
+        ranges
+            .iter()
+            .all(|range| self.range_proven_disjoint_from_pointer(range, pointer))
+    }
+
+    fn range_proven_disjoint_from_pointer(&self, range: &CMemoryRange, pointer: &Pointer) -> bool {
+        if range.base.block != pointer.block {
+            return true;
+        }
+
+        if let Some(index) = pointer.element_index_from_base(&range.base) {
+            if self.decide(&ConditionTerm::signed_less_than(
+                index.clone(),
+                range.start.clone(),
+            )) == Some(true)
+                || self.decide(&ConditionTerm::signed_less_equal(range.end.clone(), index))
+                    == Some(true)
+            {
+                return true;
+            }
+        }
+
+        self.prop_facts.iter().any(|proposition| {
+            let Proposition::CMemoryDisjoint {
+                left_base,
+                left_start,
+                left_end,
+                right_base,
+                right_start,
+                right_end,
+            } = proposition
+            else {
+                return false;
+            };
+
+            self.range_covered_by_fact_range(range, left_base, left_start, left_end)
+                && self.pointer_in_range(pointer, right_base, right_start, right_end)
+                || self.range_covered_by_fact_range(range, right_base, right_start, right_end)
+                    && self.pointer_in_range(pointer, left_base, left_start, left_end)
+        })
+    }
+
+    fn range_covered_by_fact_range(
+        &self,
+        range: &CMemoryRange,
+        base: &Pointer,
+        start: &Bitvector32Term,
+        end: &Bitvector32Term,
+    ) -> bool {
+        range.base == *base
+            && self.decide(&ConditionTerm::signed_less_equal(
+                start.clone(),
+                range.start.clone(),
+            )) == Some(true)
+            && self.decide(&ConditionTerm::signed_less_equal(
+                range.end.clone(),
+                end.clone(),
+            )) == Some(true)
     }
 }
 
@@ -3442,6 +3589,10 @@ fn memories_match_for_pointer_load(left: &CMemory, right: &CMemory, pointer: &Po
                 .cells
                 .iter()
                 .filter(|(cell_pointer, _)| cell_pointer.block == pointer.block))
+}
+
+fn memory_matches_frame_endpoint(expected: &CMemory, actual: &CMemory, pointer: &Pointer) -> bool {
+    expected == actual || memories_match_for_pointer_load(expected, actual, pointer)
 }
 
 fn condition_as_order_fact(
@@ -6792,11 +6943,14 @@ fn execute_c_while_verification_paths(
         budget,
     )?;
     let top_state = havoc_loop_modified_locals(state, body, variables);
+    let whole_loop_effect_facts =
+        collect_whole_loop_effect_facts(state, &top_state, effect_checks, assumptions, budget)?;
     let preservation_summary = collect_loop_preservation_summary(
         &top_state,
         condition,
         invariant_checks,
         effect_checks,
+        &whole_loop_effect_facts,
         body,
         assumptions,
         environment,
@@ -6820,7 +6974,7 @@ fn execute_c_while_verification_paths(
         &base_obligations,
         budget,
     )? {
-        for (facts, mut obligations) in assume_condition_truthiness(
+        for (mut facts, mut obligations) in assume_condition_truthiness(
             &top_state,
             condition,
             assumptions,
@@ -6829,6 +6983,9 @@ fn execute_c_while_verification_paths(
             false,
             budget,
         )? {
+            for fact in &whole_loop_effect_facts {
+                let _ = add_path_fact(&mut facts, assumptions, fact.clone());
+            }
             append_required_proof_obligations(
                 &mut obligations,
                 assumptions,
@@ -6929,6 +7086,7 @@ fn collect_loop_preservation_summary(
     condition: &CExpression,
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
+    whole_loop_effect_facts: &[Proposition],
     body: &CStatement,
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
@@ -6936,9 +7094,12 @@ fn collect_loop_preservation_summary(
     variables: &mut VerificationVariableGenerator,
 ) -> ExecutionResult<LoopPreservationSummary> {
     let mut obligations = Vec::new();
-    for (invariant_facts, invariant_obligations) in
+    for (mut invariant_facts, invariant_obligations) in
         assume_invariant_checks(top_state, invariant_checks, assumptions, &[], &[], budget)?
     {
+        for fact in whole_loop_effect_facts {
+            let _ = add_path_fact(&mut invariant_facts, assumptions, fact.clone());
+        }
         for (condition_facts, condition_obligations) in assume_condition_truthiness(
             top_state,
             condition,
@@ -7026,6 +7187,52 @@ struct EvaluatedMemorySegment {
     base: Pointer,
     start: Bitvector32Term,
     end: Bitvector32Term,
+}
+
+fn collect_whole_loop_effect_facts(
+    before_state: &CState,
+    after_state: &CState,
+    effect_checks: &[CLoopEffectCheck],
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<Proposition>> {
+    let mut facts = Vec::new();
+    for check in effect_checks {
+        if check.span() != CLoopEffectSpan::Whole {
+            continue;
+        }
+
+        let ranges = match check.effect() {
+            CLoopEffect::Immutable => Vec::new(),
+            CLoopEffect::Mutable(segments) => {
+                let mut ranges = Vec::new();
+                let mut failed = false;
+                for segment in segments {
+                    match evaluate_loop_effect_segment(before_state, segment, assumptions, budget)?
+                    {
+                        Ok(segment) => {
+                            ranges.push(CMemoryRange::new(segment.base, segment.start, segment.end))
+                        }
+                        Err(_) => {
+                            failed = true;
+                            break;
+                        }
+                    }
+                }
+                if failed {
+                    continue;
+                }
+                ranges
+            }
+        };
+
+        facts.push(Proposition::CMemoryMutatesOnlyRanges {
+            before: before_state.memory().clone(),
+            after: after_state.memory().clone(),
+            ranges,
+        });
+    }
+    Ok(facts)
 }
 
 fn collect_loop_effect_check_obligations(

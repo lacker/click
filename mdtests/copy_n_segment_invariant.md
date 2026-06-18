@@ -2,7 +2,8 @@
 
 This checks that a symbolic pointer-copy loop can prove a quantified copied
 segment. The destination prefix invariant says what has been copied so far; the
-source frame invariant says the source segment still equals its function-entry
+whole-loop mutable clause plus the disjoint source/destination requirement lets
+the prover derive that the source segment still equals its function-entry
 contents.
 
 ```c filename=copy_n_segment_invariant.c
@@ -25,20 +26,19 @@ int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
     requires n <= 2147483647;
     requires valid_range(dst[0..n]);
     requires valid_range(src[0..n]);
+    requires disjoint(dst[0..n], src[0..n]);
     loop 0 {
         invariant i >= 0 by auto;
         invariant i <= n by auto;
         invariant forall (int32 k) {
             0 <= k and k < i implies dst[k] == old(src[k])
         } by auto;
-        invariant forall (int32 k) {
-            0 <= k and k < n implies src[k] == old(src[k])
-        } by auto;
-        step {
-            mutable dst[i..i + 1] by frame;
-        }
+        mutable dst[0..n] by frame;
     }
     ensures returns_n: result == n by auto;
+    ensures source_unchanged: forall (int32 k) {
+        0 <= k and k < n implies src[k] == old(src[k])
+    } by auto;
     ensures copied_segment: forall (int32 k) {
         0 <= k and k < n implies dst[k] == old(src[k])
     } by auto;

@@ -11,10 +11,10 @@ use crate::lang::c::syntax::{self, C0Expression, C0Type};
 use crate::megakernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CExpression, CFunction,
     CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
-    CLoopInvariantCheck, CMemory, CMemorySegment, CProposition, CState, CStatement, CValue,
-    ConditionTerm, PathFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition, Sort, Term,
-    Theorem, Variable, c_function, c_function_specification, c_labeled_assert, c_pointer_value,
-    c_seq, c_while_with_invariant_and_effect_checks,
+    CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemorySegment, CProposition, CState,
+    CStatement, CValue, ConditionTerm, PathFact, Pointer, PointerOffsetTerm, ProofObligation,
+    Proposition, Sort, Term, Theorem, Variable, c_function, c_function_specification,
+    c_labeled_assert, c_pointer_value, c_seq, c_while_with_invariant_and_effect_checks,
     prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
@@ -1209,12 +1209,6 @@ struct LabeledCheck {
     label: String,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LoopEffectSpan {
-    Whole,
-    Step,
-}
-
 impl AnnotationLowerer<'_> {
     fn lower_statement(
         &mut self,
@@ -1509,8 +1503,8 @@ impl AnnotationLowerer<'_> {
                     .effect()
                     .expect("effect structural item should contain an effect");
                 let span = match item.kind() {
-                    StructuralItemKind::Effect => LoopEffectSpan::Whole,
-                    StructuralItemKind::StepEffect => LoopEffectSpan::Step,
+                    StructuralItemKind::Effect => CLoopEffectSpan::Whole,
+                    StructuralItemKind::StepEffect => CLoopEffectSpan::Step,
                     _ => unreachable!("loop effect filter should only include effect items"),
                 };
                 let lowered = self
@@ -1520,23 +1514,27 @@ impl AnnotationLowerer<'_> {
                     })?;
                 let context = match effect {
                     Effect::Immutable => match span {
-                        LoopEffectSpan::Whole => {
+                        CLoopEffectSpan::Whole => {
                             format!("loop {loop_index} immutable {item_index}")
                         }
-                        LoopEffectSpan::Step => {
+                        CLoopEffectSpan::Step => {
                             format!("loop {loop_index} step immutable {item_index}")
                         }
                     },
                     Effect::Mutable(_) => match span {
-                        LoopEffectSpan::Whole => {
+                        CLoopEffectSpan::Whole => {
                             format!("loop {loop_index} mutable {item_index}")
                         }
-                        LoopEffectSpan::Step => {
+                        CLoopEffectSpan::Step => {
                             format!("loop {loop_index} step mutable {item_index}")
                         }
                     },
                 };
-                Ok(CLoopEffectCheck::new(lowered, Some(context)))
+                Ok(CLoopEffectCheck::new_with_span(
+                    lowered,
+                    span,
+                    Some(context),
+                ))
             })
             .collect()
     }
@@ -1544,7 +1542,7 @@ impl AnnotationLowerer<'_> {
     fn lower_loop_effect(
         &self,
         effect: &Effect,
-        span: LoopEffectSpan,
+        span: CLoopEffectSpan,
         modified_locals: &BTreeSet<String>,
     ) -> Result<CLoopEffect, String> {
         match effect {
@@ -1558,7 +1556,7 @@ impl AnnotationLowerer<'_> {
                                 .to_string(),
                         );
                     }
-                    if span == LoopEffectSpan::Whole {
+                    if span == CLoopEffectSpan::Whole {
                         let names = contract_segment_referenced_names(segment);
                         if let Some(name) = names.iter().find(|name| modified_locals.contains(*name))
                         {
@@ -2521,6 +2519,7 @@ fn simp_proposition(proposition: &Proposition, assumptions: &Assumptions) -> Sim
         | Proposition::CMemoryValidRange { .. }
         | Proposition::CMemoryDisjoint { .. }
         | Proposition::CMemoryMutatesOnly { .. }
+        | Proposition::CMemoryMutatesOnlyRanges { .. }
         | Proposition::CWhileInvariantRule { .. } => {
             if assumptions.proves(proposition) {
                 SimpProposition::True
@@ -5970,20 +5969,19 @@ mod tests {
                 requires n <= 2147483647;
                 requires valid_range(dst[0..n]);
                 requires valid_range(src[0..n]);
+                requires disjoint(dst[0..n], src[0..n]);
                 loop 0 {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     invariant forall (int32 k) {
                         0 <= k and k < i implies dst[k] == old(src[k])
                     } by auto;
-                    invariant forall (int32 k) {
-                        0 <= k and k < n implies src[k] == old(src[k])
-                    } by auto;
-                    step {
-                        mutable dst[i..i + 1] by auto;
-                    }
+                    mutable dst[0..n] by auto;
                 }
                 ensures returns_n: result == n by auto;
+                ensures source_unchanged: forall (int32 k) {
+                    0 <= k and k < n implies src[k] == old(src[k])
+                } by auto;
                 ensures copied_segment: forall (int32 k) {
                     0 <= k and k < n implies dst[k] == old(src[k])
                 } by auto;
@@ -5993,7 +5991,7 @@ mod tests {
         let verified = verify_c0_sources(click_source, &[("copy_n.c", c_source)])
             .expect("symbolic copy loop should prove copied segment invariant");
 
-        assert_eq!(verified.len(), 2);
+        assert_eq!(verified.len(), 3);
         assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
     }
 

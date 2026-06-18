@@ -303,11 +303,14 @@ unknown heap state instead of implicitly preserving old memory. Written-segment
 postconditions can be proved with explicit quantified invariants such as
 `forall (int32 k) { 0 <= k and k < i implies p[k] == k }`. Old-memory frame
 proofs across pointer-writing loops can be proved with compact segment
-invariants stated directly with `old(...)`. Copy loops can prove quantified
-destination-prefix facts such as `dst[k] == old(src[k])`; today they also need
-an explicit source-frame invariant when the proof depends on source memory
-remaining equal to `old(src[k])`. The current fixed-size pointer demos continue
-to use bounded execution for some final memory facts.
+invariants stated directly with `old(...)`. Whole-loop `mutable` clauses now
+also become reusable frame facts: if a loop declares `mutable dst[0..n]` and a
+requirement proves `disjoint(dst[0..n], src[0..n])`, `auto` can use that frame
+fact to prove source-memory claims such as `src[k] == old(src[k])` without a
+handwritten source-frame invariant. Copy loops can prove quantified
+destination-prefix facts such as `dst[k] == old(src[k])` using that idiom. The
+current fixed-size pointer demos continue to use bounded execution for some
+final memory facts.
 
 ## Markdown Tests
 
@@ -369,8 +372,8 @@ The first memory-safety demos are fixed-size pointer loops:
 - `count_to_three_loop_immutable()` proves a loop-level `immutable` clause for
   a scalar loop that only updates stack-local state.
 - `copy_n_segment_invariant(int32 dst[], int32 src[], int32 n)` proves a
-  symbolic copied segment with quantified destination-prefix and source-frame
-  invariants.
+  symbolic copied segment with a quantified destination-prefix invariant plus a
+  whole-loop mutable frame and a disjoint source/destination requirement.
 - `simp_postconditions(int32 x)` proves straight-line postconditions with
   deterministic local simplification.
 
@@ -383,12 +386,13 @@ can also prove post-state memory guarantees such as
 
 ## Near-Term Roadmap
 
-1. Continue broadening loop-level frame coverage for aliasing, pointer-base
-   expressions, and richer segment arithmetic.
-2. Reduce boilerplate around copied-segment proofs, especially deriving or
-   packaging source-frame invariants that are currently written explicitly.
-3. Improve fact management inside `auto`, especially using requirements,
-   invariants, and path facts to prove postconditions without bounded fallback.
+1. Continue broadening loop/function frame coverage for aliasing, pointer-base
+   expressions, richer segment arithmetic, and reusable frame facts.
+2. Improve fact management inside `auto`, especially using requirements,
+   invariants, generated frame facts, and path facts to prove postconditions
+   without bounded fallback.
+3. Decide the proof-step certificate format for deterministic replay of
+   successful heuristic proofs.
 4. Make heuristic tactics expandable into deterministic proof steps, so `auto`
    can become a convenience layer while successful proofs remain replayable.
 5. Grow C-native memory objects: local arrays, richer pointer ranges, and
