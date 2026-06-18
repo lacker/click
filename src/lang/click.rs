@@ -22,6 +22,9 @@ use crate::megakernel::{
     prove_symbolic_c_function_verification_paths_with_environment,
 };
 
+const EXTERNAL_ARGUMENT_MEMORY_BLOCK: &str = "arg-memory";
+const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClickFile {
     verifying_sources: Vec<String>,
@@ -2446,12 +2449,17 @@ fn initial_call(
 ) -> Result<(CState, Vec<CExpression>, Vec<Proposition>), ClickError> {
     let mut arguments = Vec::new();
 
-    for parameter in parameters {
+    for (index, parameter) in parameters.iter().enumerate() {
         match parameter.c_type() {
             C0Type::Int32Pointer => {
                 arguments.push(c_pointer_value(Pointer {
-                    block: parameter.name().to_string(),
-                    offset: PointerOffsetTerm::Constant(0),
+                    block: EXTERNAL_ARGUMENT_MEMORY_BLOCK.to_string(),
+                    offset: scale_int32_offset(
+                        Bitvector32Term::Variable(Variable(
+                            POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                        )),
+                        4,
+                    ),
                 }));
             }
             C0Type::Int32 => {
@@ -2470,14 +2478,6 @@ fn initial_call(
             valid_ranges.insert(name, bytes);
         }
     }
-    let mut memory = CMemory::new();
-    for parameter in parameters {
-        if parameter.c_type() == C0Type::Int32Pointer {
-            if let Some(bytes) = valid_ranges.get(parameter.name()) {
-                memory = memory.with_block(parameter.name(), *bytes);
-            }
-        }
-    }
 
     for name in requires.iter().filter_map(requirement_valid_range_name) {
         if !parameters.iter().any(|parameter| parameter.name() == name) {
@@ -2488,6 +2488,7 @@ fn initial_call(
         }
     }
 
+    let mut memory = CMemory::new();
     memory = memory_with_symbolic_valid_range_cells(memory, &valid_ranges);
     let requirement_propositions =
         requirement_propositions(requires, parameters, &arguments, &memory)?;
@@ -2500,16 +2501,16 @@ fn initial_call(
 
 fn memory_with_symbolic_valid_range_cells(
     mut memory: CMemory,
-    valid_ranges: &BTreeMap<String, u32>,
+    valid_ranges: &BTreeMap<String, (Pointer, u32)>,
 ) -> CMemory {
     let base_memory = memory.clone();
-    for (name, bytes) in valid_ranges {
+    for (base, bytes) in valid_ranges.values() {
         let mut offset: u32 = 0;
         while offset.checked_add(4).is_some_and(|end| end <= *bytes) {
-            let pointer = Pointer {
-                block: name.clone(),
-                offset: PointerOffsetTerm::Constant(i64::from(offset)),
-            };
+            let pointer = offset_pointer_by_int32_elements(
+                base.clone(),
+                Bitvector32Term::Constant(offset / 4),
+            );
             let value = CValue::Int32(Bitvector32Term::MemoryLoad(
                 Box::new(base_memory.clone()),
                 Box::new(pointer.clone()),
@@ -2570,10 +2571,23 @@ fn concrete_valid_range_block(
     requirement: &Requirement,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-) -> Result<Option<(String, u32)>, ClickError> {
+) -> Result<Option<(String, (Pointer, u32))>, ClickError> {
     match requirement {
         Requirement::ValidRange { name, bytes } => {
-            Ok(range_bytes_constant(bytes).map(|bytes| (name.clone(), bytes)))
+            let Some(bytes) = range_bytes_constant(bytes) else {
+                return Ok(None);
+            };
+            let Some((_, argument)) = parameters
+                .iter()
+                .zip(arguments)
+                .find(|(parameter, _)| parameter.name() == name)
+            else {
+                return Ok(None);
+            };
+            let CExpression::Value(CValue::Pointer(base)) = argument else {
+                return Ok(None);
+            };
+            Ok(Some((name.clone(), (base.clone(), bytes))))
         }
         Requirement::ValidRangeSegment { segment } => {
             let state = CState::new();
@@ -2592,7 +2606,10 @@ fn concrete_valid_range_block(
             let bytes = end
                 .checked_mul(4)
                 .ok_or_else(|| ClickError::new("`valid_range` segment overflows byte count"))?;
-            Ok(Some((segment.base.block, bytes)))
+            Ok(Some((
+                format!("{:?}", segment.source),
+                (segment.base, bytes),
+            )))
         }
         Requirement::Disjoint { .. } | Requirement::Proposition(_) => Ok(None),
     }
@@ -2928,6 +2945,16 @@ fn bitvector32_add(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32
         (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
             Bitvector32Term::Constant(left.wrapping_add(*right))
         }
+        (Bitvector32Term::Constant(constant), Bitvector32Term::Subtract(base, subtrahend))
+            if subtrahend.as_ref() == &Bitvector32Term::Constant(*constant) =>
+        {
+            base.as_ref().clone()
+        }
+        (Bitvector32Term::Subtract(base, subtrahend), Bitvector32Term::Constant(constant))
+            if subtrahend.as_ref() == &Bitvector32Term::Constant(*constant) =>
+        {
+            base.as_ref().clone()
+        }
         (_, Bitvector32Term::Constant(0)) => left,
         (Bitvector32Term::Constant(0), _) => right,
         _ => Bitvector32Term::Add(Box::new(left), Box::new(right)),
@@ -2941,6 +2968,42 @@ fn bitvector32_subtract(left: Bitvector32Term, right: Bitvector32Term) -> Bitvec
         }
         (_, Bitvector32Term::Constant(0)) => left,
         _ if left == right => Bitvector32Term::Constant(0),
+        (
+            Bitvector32Term::Add(left_base, left_addend),
+            Bitvector32Term::Add(right_base, right_addend),
+        ) if left_base == right_base => {
+            bitvector32_subtract(left_addend.as_ref().clone(), right_addend.as_ref().clone())
+        }
+        (
+            Bitvector32Term::Add(left_base, left_addend),
+            Bitvector32Term::Add(right_base, right_addend),
+        ) if left_base == right_addend => {
+            bitvector32_subtract(left_addend.as_ref().clone(), right_base.as_ref().clone())
+        }
+        (
+            Bitvector32Term::Add(left_base, left_addend),
+            Bitvector32Term::Add(right_base, right_addend),
+        ) if left_addend == right_base => {
+            bitvector32_subtract(left_base.as_ref().clone(), right_addend.as_ref().clone())
+        }
+        (
+            Bitvector32Term::Add(left_base, left_addend),
+            Bitvector32Term::Add(right_base, right_addend),
+        ) if left_addend == right_addend => {
+            bitvector32_subtract(left_base.as_ref().clone(), right_base.as_ref().clone())
+        }
+        (Bitvector32Term::Add(left_base, left_addend), _) if left_base.as_ref() == &right => {
+            left_addend.as_ref().clone()
+        }
+        (Bitvector32Term::Add(left_base, left_addend), _) if left_addend.as_ref() == &right => {
+            left_base.as_ref().clone()
+        }
+        (_, Bitvector32Term::Add(right_base, right_addend)) if &left == right_base.as_ref() => {
+            bitvector32_subtract(Bitvector32Term::Constant(0), right_addend.as_ref().clone())
+        }
+        (_, Bitvector32Term::Add(right_base, right_addend)) if &left == right_addend.as_ref() => {
+            bitvector32_subtract(Bitvector32Term::Constant(0), right_base.as_ref().clone())
+        }
         _ => Bitvector32Term::Subtract(Box::new(left), Box::new(right)),
     }
 }
@@ -3788,7 +3851,16 @@ fn pointer_element_index_from_base(pointer: &Pointer, base: &Pointer) -> Option<
         PointerOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
             int32_element_index_from_pointer_offset(left)
         }
-        _ => None,
+        _ => {
+            if let (Some(pointer_index), Some(base_index)) = (
+                int32_element_index_from_pointer_offset(&pointer.offset),
+                int32_element_index_from_pointer_offset(&base.offset),
+            ) {
+                Some(bitvector32_subtract(pointer_index, base_index))
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -3811,6 +3883,10 @@ fn int32_element_index_from_pointer_offset(offset: &PointerOffsetTerm) -> Option
         {
             int32_element_index_from_pointer_offset(left)
         }
+        PointerOffsetTerm::Add(left, right) => Some(bitvector32_add(
+            int32_element_index_from_pointer_offset(left)?,
+            int32_element_index_from_pointer_offset(right)?,
+        )),
         _ => None,
     }
 }
@@ -7186,6 +7262,44 @@ mod tests {
     }
 
     #[test]
+    fn function_mutable_accepts_shifted_loop_effect_subset() {
+        let c_source = r#"
+            int32 fill_tail(int32 p[], int32 n) {
+                int32 i;
+                i = 1;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_tail.c";
+
+            int32 fill_tail(int32 p[], int32 n) {
+                requires n >= 1;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                loop 0 {
+                    invariant i >= 1 by auto;
+                    invariant i <= n by auto;
+                    mutable (p + 1)[0..n - 1] by frame;
+                }
+                mutable p[0..n] by frame;
+                ensures returns_n: result == n by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("fill_tail.c", c_source)])
+            .expect("function-level mutable should accept a shifted loop effect subset");
+
+        assert_eq!(verified.len(), 2);
+        assert_eq!(verified[0].proof_kind(), ProofKind::Frame);
+        assert_eq!(verified[1].proof_kind(), ProofKind::LoopVerification);
+    }
+
+    #[test]
     fn function_immutable_rejects_writing_loop_effect_summary() {
         let c_source = r#"
             int32 fill_n(int32 p[], int32 n) {
@@ -7540,28 +7654,22 @@ mod tests {
         assert_eq!(verified.len(), 1);
         let verified = &verified[0];
         let base = Pointer {
-            block: "p".to_string(),
-            offset: PointerOffsetTerm::Constant(0),
+            block: EXTERNAL_ARGUMENT_MEMORY_BLOCK.to_string(),
+            offset: scale_int32_offset(
+                Bitvector32Term::Variable(Variable(POINTER_ARGUMENT_VARIABLE_BASE)),
+                4,
+            ),
         };
-        let first = Pointer {
-            block: "p".to_string(),
-            offset: PointerOffsetTerm::Constant(0),
-        };
-        let second = Pointer {
-            block: "p".to_string(),
-            offset: PointerOffsetTerm::Constant(4),
-        };
-        let third = Pointer {
-            block: "p".to_string(),
-            offset: PointerOffsetTerm::Constant(8),
-        };
+        let first = base.clone();
+        let second = offset_pointer_by_int32_elements(base.clone(), Bitvector32Term::Constant(1));
+        let third = offset_pointer_by_int32_elements(base.clone(), Bitvector32Term::Constant(2));
         let local_i = Pointer {
             block: "local:i".to_string(),
             offset: PointerOffsetTerm::Constant(0),
         };
         let initial_memory = memory_with_symbolic_valid_range_cells(
-            CMemory::new().with_block("p", 12),
-            &std::collections::BTreeMap::from([("p".to_string(), 12)]),
+            CMemory::new(),
+            &std::collections::BTreeMap::from([("p".to_string(), (base.clone(), 12))]),
         );
         let final_memory = initial_memory
             .clone()

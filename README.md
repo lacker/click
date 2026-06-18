@@ -166,6 +166,12 @@ also be discharged from valid-range facts plus simple index bounds such as
 `0 <= i < n`. Out-of-range or unknown memory accesses become proof obligations
 or undefined behavior depending on the execution path.
 
+Function pointer parameters are modeled as symbolic offsets into one shared
+external argument-memory block. That means different pointer parameters may
+alias by default, as in C. Contracts must state non-overlap explicitly with
+requirements such as `requires disjoint(dst[0..n], src[0..n]);` when a proof
+depends on source and destination memory being separate.
+
 ## Proof Surface
 
 The primary proof engine today is the `auto` tactic backed by native symbolic
@@ -212,8 +218,10 @@ bytes)` with concrete byte counts or small byte-count expressions such as
 segments such as `valid_range(p[0..n])` or
 `valid_range((p + 1)[0..1])`. It also supports
 `disjoint(left[start..end], right[start..end])` for half-open `int32` element
-segments. The `..` form is Click C-reference syntax, not C expression syntax.
-`requires` also supports Click propositions over parameters and literals.
+segments. Use `disjoint` for every proof that depends on two pointer parameters
+not overlapping; C0 does not infer that from distinct parameter names. The `..`
+form is Click C-reference syntax, not C expression syntax. `requires` also
+supports Click propositions over parameters and literals.
 `ensures` clauses use Click proposition syntax:
 
 ```text
@@ -381,7 +389,8 @@ The first memory-safety demos are fixed-size pointer loops:
 - `fill3(int32* p)` / `fill3_array_loop(int32 p[3])` write three consecutive
   `int32` cells through `p[i]` and read back the final cell.
 - `copy3(int32 dst[3], int32 src[3])` copies three cells from `src` to `dst`
-  and proves `old(src[i])` postconditions.
+  under an explicit `disjoint(dst[0..3], src[0..3])` requirement and proves
+  `old(src[i])` postconditions.
 - `count_to_n_loop_invariant(int32 n)` proves `result == n` for a symbolic loop
   bound using loop invariants instead of unrolling.
 - `fill_n_symbolic_pointer_loop(int32 p[], int32 n)` proves symbolic pointer
@@ -400,8 +409,17 @@ The first memory-safety demos are fixed-size pointer loops:
 - `loop_frame_segment_shapes` covers additional loop-level effect shapes:
   whole-loop shifted suffixes plus step-relative growing prefixes and
   multi-segment mutable footprints.
+- `shifted_loop_effect_subset(int32 p[], int32 n)` proves that a shifted
+  loop-level mutable footprint such as `(p + 1)[0..n - 1]` composes into an
+  enclosing `mutable p[0..n]` function effect.
+- `shifted_loop_effect_preserves_prefix(int32 p[], int32 n)` uses that shifted
+  loop effect summary to prove `p[0] == old(p[0])` without a handwritten
+  unchanged-memory invariant.
 - `disjoint_symbolic_unwritten_read` proves a symbolic old-memory read from
   `requires disjoint(p[i..i + 1], p[j..j + 1])`.
+- `pointer_params_may_alias_without_disjoint` rejects a source-preservation
+  claim when two pointer parameters may alias and no `disjoint` requirement is
+  present.
 - `count_to_three_loop_immutable()` proves a loop-level `immutable` clause for
   a scalar loop that only updates stack-local state.
 - `copy_n_segment_invariant(int32 dst[], int32 src[], int32 n)` proves a
@@ -411,18 +429,19 @@ The first memory-safety demos are fixed-size pointer loops:
 - `simp_postconditions(int32 x)` proves straight-line postconditions with
   deterministic local simplification.
 
-The fixed-size pointer demos use 12-byte backing blocks and prove without
-leftover memory-safety premises. The symbolic pointer-loop demos instead use
-requirements such as `valid_range(p[0..n])` plus loop invariants. The sidecar
-can also prove post-state memory guarantees such as
+The fixed-size pointer demos use 12-byte valid-range requirements and prove
+without leftover memory-safety premises. Multi-pointer demos state explicit
+`disjoint` requirements when postconditions rely on non-overlap. The symbolic
+pointer-loop demos instead use requirements such as `valid_range(p[0..n])` plus
+loop invariants. The sidecar can also prove post-state memory guarantees such as
 `ensures p[2] == 2 by auto;` and simple old-value guarantees such as
 `ensures p[0] == old(p[0]) by auto;`.
 
 ## Near-Term Roadmap
 
 1. Continue broadening loop/function effect-summary coverage for aliasing,
-   pointer-base expressions, richer segment arithmetic, and reusable
-   writes-only summaries.
+   pointer-base expressions, richer segment arithmetic, and reusable mutable
+   effect summaries.
 2. Improve fact management inside `auto`, especially using requirements,
    invariants, generated effect summaries, and path facts to prove postconditions
    without bounded fallback.

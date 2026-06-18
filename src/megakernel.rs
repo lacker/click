@@ -568,16 +568,76 @@ impl Bitvector32Term {
         }
     }
 
+    fn subtract_const_parts(&self) -> Option<(Self, u32)> {
+        match self {
+            Self::Subtract(left, right) => match right.as_ref() {
+                Self::Constant(value) => Some((left.as_ref().clone(), *value)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn add(left: Self, right: Self) -> Self {
-        match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Constant(left.wrapping_add(right)),
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => {
+                Self::Constant(left.wrapping_add(*right))
+            }
+            (Self::Constant(constant), Self::Subtract(base, subtrahend))
+                if subtrahend.as_ref() == &Self::Constant(*constant) =>
+            {
+                base.as_ref().clone()
+            }
+            (Self::Subtract(base, subtrahend), Self::Constant(constant))
+                if subtrahend.as_ref() == &Self::Constant(*constant) =>
+            {
+                base.as_ref().clone()
+            }
+            (_, Self::Constant(0)) => left,
+            (Self::Constant(0), _) => right,
             _ => Self::Add(Box::new(left), Box::new(right)),
         }
     }
 
     fn subtract(left: Self, right: Self) -> Self {
-        match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => Self::Constant(left.wrapping_sub(right)),
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => {
+                Self::Constant(left.wrapping_sub(*right))
+            }
+            (_, Self::Constant(0)) => left,
+            _ if left == right => Self::Constant(0),
+            (Self::Add(left_base, left_addend), Self::Add(right_base, right_addend))
+                if left_base == right_base =>
+            {
+                Self::subtract(left_addend.as_ref().clone(), right_addend.as_ref().clone())
+            }
+            (Self::Add(left_base, left_addend), Self::Add(right_base, right_addend))
+                if left_base == right_addend =>
+            {
+                Self::subtract(left_addend.as_ref().clone(), right_base.as_ref().clone())
+            }
+            (Self::Add(left_base, left_addend), Self::Add(right_base, right_addend))
+                if left_addend == right_base =>
+            {
+                Self::subtract(left_base.as_ref().clone(), right_addend.as_ref().clone())
+            }
+            (Self::Add(left_base, left_addend), Self::Add(right_base, right_addend))
+                if left_addend == right_addend =>
+            {
+                Self::subtract(left_base.as_ref().clone(), right_base.as_ref().clone())
+            }
+            (Self::Add(left_base, left_addend), _) if left_base.as_ref() == &right => {
+                left_addend.as_ref().clone()
+            }
+            (Self::Add(left_base, left_addend), _) if left_addend.as_ref() == &right => {
+                left_base.as_ref().clone()
+            }
+            (_, Self::Add(right_base, right_addend)) if &left == right_base.as_ref() => {
+                Self::subtract(Self::Constant(0), right_addend.as_ref().clone())
+            }
+            (_, Self::Add(right_base, right_addend)) if &left == right_addend.as_ref() => {
+                Self::subtract(Self::Constant(0), right_base.as_ref().clone())
+            }
             _ => Self::Subtract(Box::new(left), Box::new(right)),
         }
     }
@@ -775,7 +835,16 @@ impl Pointer {
             PointerOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
                 int32_element_index_from_offset(left)
             }
-            _ => None,
+            _ => {
+                if let (Some(pointer_index), Some(base_index)) = (
+                    int32_element_index_from_offset(&self.offset),
+                    int32_element_index_from_offset(&base.offset),
+                ) {
+                    Some(Bitvector32Term::subtract(pointer_index, base_index))
+                } else {
+                    None
+                }
+            }
         }
     }
 }
@@ -1247,6 +1316,12 @@ impl Assumptions {
     }
 
     pub fn assume_condition(mut self, condition: ConditionTerm, value: bool) -> Self {
+        if let ConditionTerm::Bitvector32Equal(left, right) = &condition {
+            if let Some((left, right)) = bitvector_equality_after_additive_cancellation(left, right)
+            {
+                self = self.assume_condition(ConditionTerm::equal(left, right), value);
+            }
+        }
         self.condition_facts.insert(condition, value);
         self
     }
@@ -1254,7 +1329,7 @@ impl Assumptions {
     pub fn assume_proposition(mut self, proposition: Proposition) -> Self {
         match proposition {
             Proposition::ConditionIs(condition, value) => {
-                self.condition_facts.insert(condition, value);
+                self = self.assume_condition(condition, value);
             }
             Proposition::And(left, right) => {
                 self = self.assume_proposition(*left);
@@ -1262,7 +1337,7 @@ impl Assumptions {
             }
             Proposition::Not(body) => match *body {
                 Proposition::ConditionIs(condition, value) => {
-                    self.condition_facts.insert(condition, !value);
+                    self = self.assume_condition(condition, !value);
                 }
                 body => {
                     self.prop_facts.insert(Proposition::Not(Box::new(body)));
@@ -1413,6 +1488,12 @@ impl Assumptions {
             ConditionTerm::Bitvector32Equal(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
+                if let Some((left, right)) =
+                    bitvector_equality_after_additive_cancellation(&left, &right)
+                {
+                    return self.decide(&ConditionTerm::equal(left, right));
+                }
+
                 if self.bitvector_terms_equal_from_facts(&left, &right)
                     || self
                         .has_condition_fact(ConditionTerm::equal(left.clone(), right.clone()), true)
@@ -1450,6 +1531,7 @@ impl Assumptions {
                         ConditionTerm::equal(right.clone(), left.clone()),
                         false,
                     )
+                    || bitvector_same_base_nonzero_const_offset(&left, &right)
                 {
                     Some(false)
                 } else if self.has_condition_fact(
@@ -1507,13 +1589,16 @@ impl Assumptions {
             ConditionTerm::Bitvector32SignedLessThan(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
-                if self.has_condition_fact(
-                    ConditionTerm::signed_greater_than(right.clone(), left.clone()),
-                    true,
-                ) || self.has_condition_fact(
-                    ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
-                    false,
-                ) || self.has_upper_bound_below(&left, &right)
+                if self.subtract_same_const_order_fact(&left, &right, true)
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_greater_than(right.clone(), left.clone()),
+                        true,
+                    )
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
+                        false,
+                    )
+                    || self.has_upper_bound_below(&left, &right)
                     || self.has_successor_upper_bound_below(&left, &right)
                     || self.has_lower_bound_above(&right, &left)
                     || self.has_add_const_lower_bound_above(&right, &left)
@@ -1541,6 +1626,13 @@ impl Assumptions {
                         ConditionTerm::signed_less_than(base, right.clone()),
                         true,
                     )
+                }) || right.subtract_one_base().is_some_and(|base| {
+                    let zero = Bitvector32Term::Constant(0);
+                    left == zero
+                        && (self.has_condition_fact(
+                            ConditionTerm::signed_greater_than(base.clone(), zero.clone()),
+                            true,
+                        ) || self.has_lower_bound_above(&base, &zero))
                 }) || self.has_condition_fact(
                     ConditionTerm::signed_less_than(left.clone(), right.clone()),
                     true,
@@ -1675,6 +1767,41 @@ impl Assumptions {
                 }
                 _ => false,
             })
+    }
+
+    fn subtract_same_const_order_fact(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        strict: bool,
+    ) -> bool {
+        let Some((left_base, left_const)) = left.subtract_const_parts() else {
+            return false;
+        };
+        let Some((right_base, right_const)) = right.subtract_const_parts() else {
+            return false;
+        };
+        if left_const != right_const {
+            return false;
+        }
+
+        if strict {
+            self.has_condition_fact(
+                ConditionTerm::signed_less_than(left_base.clone(), right_base.clone()),
+                true,
+            ) || self.has_condition_fact(
+                ConditionTerm::signed_greater_than(right_base, left_base),
+                true,
+            )
+        } else {
+            self.has_condition_fact(
+                ConditionTerm::signed_less_equal(left_base.clone(), right_base.clone()),
+                true,
+            ) || self.has_condition_fact(
+                ConditionTerm::signed_greater_equal(right_base, left_base),
+                true,
+            )
+        }
     }
 
     fn has_lower_bound_above(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
@@ -1959,8 +2086,11 @@ impl Assumptions {
             {
                 let zero = Bitvector32Term::Constant(0);
                 let left = left.as_ref().clone();
-                self.has_condition_fact(ConditionTerm::signed_greater_than(left, zero), true)
-                    .then_some(false)
+                (self.has_condition_fact(
+                    ConditionTerm::signed_greater_than(left.clone(), zero.clone()),
+                    true,
+                ) || self.has_lower_bound_above(&left, &zero))
+                .then_some(false)
             }
             ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
                 if left.as_ref().is_subtract_one()
@@ -1969,13 +2099,11 @@ impl Assumptions {
                 let Some(left_before_sub) = left.as_ref().subtract_one_base() else {
                     return None;
                 };
-                self.has_condition_fact(
-                    ConditionTerm::signed_greater_than(
-                        left_before_sub,
-                        Bitvector32Term::Constant(0),
-                    ),
+                let zero = Bitvector32Term::Constant(0);
+                (self.has_condition_fact(
+                    ConditionTerm::signed_greater_than(left_before_sub.clone(), zero.clone()),
                     true,
-                )
+                ) || self.has_lower_bound_above(&left_before_sub, &zero))
                 .then_some(true)
             }
             _ => None,
@@ -2194,7 +2322,7 @@ impl Assumptions {
             }
         }
 
-        if finite_integer_range_exhausted(&order_facts, &disequal_facts) {
+        if finite_integer_range_exhausted(&order_facts, &equal_facts, &disequal_facts) {
             return true;
         }
 
@@ -3637,6 +3765,7 @@ struct IntegerRangeFacts {
 
 fn finite_integer_range_exhausted(
     order_facts: &[(Bitvector32Term, Bitvector32Term, bool)],
+    equal_facts: &[(Bitvector32Term, Bitvector32Term)],
     disequal_facts: &[(Bitvector32Term, Bitvector32Term)],
 ) -> bool {
     let mut ranges: BTreeMap<Variable, IntegerRangeFacts> = BTreeMap::new();
@@ -3657,6 +3786,14 @@ fn finite_integer_range_exhausted(
                 range.lower = Some(range.lower.map_or(lower, |current| current.max(lower)));
             }
             _ => {}
+        }
+    }
+
+    for (left, right) in equal_facts {
+        if let Some((variable, value)) = bitvector_variable_and_constant(left, right) {
+            let range = ranges.entry(variable).or_default();
+            range.lower = Some(range.lower.map_or(value, |current| current.max(value)));
+            range.upper = Some(range.upper.map_or(value, |current| current.min(value)));
         }
     }
 
@@ -3699,6 +3836,71 @@ fn bitvector_variable_and_constant(
     bitvector_variable(left)
         .zip(signed_bitvector_constant(right))
         .or_else(|| bitvector_variable(right).zip(signed_bitvector_constant(left)))
+}
+
+fn bitvector_equality_after_additive_cancellation(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> Option<(Bitvector32Term, Bitvector32Term)> {
+    match (left, right) {
+        (
+            Bitvector32Term::Add(left_base, left_addend),
+            Bitvector32Term::Add(right_base, right_addend),
+        ) if left_base == right_base => {
+            Some((left_addend.as_ref().clone(), right_addend.as_ref().clone()))
+        }
+        (
+            Bitvector32Term::Add(left_base, left_addend),
+            Bitvector32Term::Add(right_base, right_addend),
+        ) if left_base == right_addend => {
+            Some((left_addend.as_ref().clone(), right_base.as_ref().clone()))
+        }
+        (
+            Bitvector32Term::Add(left_base, left_addend),
+            Bitvector32Term::Add(right_base, right_addend),
+        ) if left_addend == right_base => {
+            Some((left_base.as_ref().clone(), right_addend.as_ref().clone()))
+        }
+        (
+            Bitvector32Term::Add(left_base, left_addend),
+            Bitvector32Term::Add(right_base, right_addend),
+        ) if left_addend == right_addend => {
+            Some((left_base.as_ref().clone(), right_base.as_ref().clone()))
+        }
+        (Bitvector32Term::Add(left_base, left_addend), _) if left_base.as_ref() == right => {
+            Some((left_addend.as_ref().clone(), Bitvector32Term::Constant(0)))
+        }
+        (Bitvector32Term::Add(left_base, left_addend), _) if left_addend.as_ref() == right => {
+            Some((left_base.as_ref().clone(), Bitvector32Term::Constant(0)))
+        }
+        (_, Bitvector32Term::Add(right_base, right_addend)) if left == right_base.as_ref() => {
+            Some((Bitvector32Term::Constant(0), right_addend.as_ref().clone()))
+        }
+        (_, Bitvector32Term::Add(right_base, right_addend)) if left == right_addend.as_ref() => {
+            Some((Bitvector32Term::Constant(0), right_base.as_ref().clone()))
+        }
+        _ => None,
+    }
+}
+
+fn bitvector_same_base_nonzero_const_offset(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> bool {
+    if let Some((left_base, left_addend)) = left.add_const_parts() {
+        if &left_base == right {
+            return left_addend != 0;
+        }
+        if let Some((right_base, right_addend)) = right.add_const_parts() {
+            return left_base == right_base && left_addend != right_addend;
+        }
+    }
+
+    if let Some((right_base, right_addend)) = right.add_const_parts() {
+        return &right_base == left && right_addend != 0;
+    }
+
+    false
 }
 
 fn collect_condition_bitvector_variables(
@@ -4141,6 +4343,10 @@ fn int32_element_index_from_offset(offset: &PointerOffsetTerm) -> Option<Bitvect
         {
             int32_element_index_from_offset(left)
         }
+        PointerOffsetTerm::Add(left, right) => Some(Bitvector32Term::add(
+            int32_element_index_from_offset(left)?,
+            int32_element_index_from_offset(right)?,
+        )),
         PointerOffsetTerm::Int32Scaled { value, byte_width } if *byte_width == 4 => {
             Some(value.as_ref().clone())
         }
@@ -9909,6 +10115,42 @@ mod tests {
                 outcome: CExpressionOutcome::Value(int32(42)),
             }
         );
+    }
+
+    #[test]
+    fn same_symbolic_base_constant_offsets_are_distinct() {
+        let base = PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(90)), 4);
+        let first = Pointer {
+            block: "arg-memory".to_string(),
+            offset: base.clone(),
+        };
+        let second = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::add(base, PointerOffsetTerm::Constant(4)),
+        };
+
+        assert!(pointers_proven_distinct(
+            &first,
+            &second,
+            &Assumptions::new()
+        ));
+    }
+
+    #[test]
+    fn additive_equality_cancellation_feeds_range_contradictions() {
+        let base = Bitvector32Term::Variable(Variable(91));
+        let index = Bitvector32Term::Variable(Variable(92));
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::equal(Bitvector32Term::add(base.clone(), index.clone()), base),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(index, Bitvector32Term::Constant(1)),
+                true,
+            );
+
+        assert!(assumptions.is_inconsistent());
     }
 
     #[test]

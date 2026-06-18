@@ -1,8 +1,9 @@
 # copy3 verifies a small array-copy loop
 
 This is a compact launch-shaped example: two array parameters, a fixed pointer
-loop, reads from source memory, writes to destination memory, loop invariants,
-and `old(...)` postconditions.
+loop, reads from source memory, writes to destination memory, explicit
+source/destination disjointness, loop invariants, and `old(...)`
+postconditions.
 
 ```c filename=copy3.c
 int32 copy3(int32 dst[3], int32 src[3]) {
@@ -22,6 +23,7 @@ verifying "copy3.c";
 int32 copy3(int32 dst[3], int32 src[3]) {
     requires valid_range(dst, 12);
     requires valid_range(src, 12);
+    requires disjoint(dst[0..3], src[0..3]);
 
     loop 0 {
         invariant i >= 0 by auto;
