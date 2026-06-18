@@ -28,7 +28,15 @@ const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClickFile {
     verifying_sources: Vec<String>,
+    predicate_definitions: Vec<PredicateDefinition>,
     function_blocks: Vec<FunctionBlock>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredicateDefinition {
+    name: String,
+    parameters: Vec<FunctionParameter>,
+    body: ClickProposition,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -150,6 +158,10 @@ pub enum ClickProposition {
         c_type: C0Type,
         name: String,
         body: Box<ClickProposition>,
+    },
+    PredicateCall {
+        name: String,
+        arguments: Vec<ContractExpression>,
     },
 }
 
@@ -277,8 +289,26 @@ impl ClickFile {
         &self.verifying_sources
     }
 
+    pub fn predicate_definitions(&self) -> &[PredicateDefinition] {
+        &self.predicate_definitions
+    }
+
     pub fn function_blocks(&self) -> &[FunctionBlock] {
         &self.function_blocks
+    }
+}
+
+impl PredicateDefinition {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn parameters(&self) -> &[FunctionParameter] {
+        &self.parameters
+    }
+
+    pub fn body(&self) -> &ClickProposition {
+        &self.body
     }
 }
 
@@ -2033,6 +2063,13 @@ impl AnnotationLowerer<'_> {
                     body: Box::new(body),
                 })
             }
+            ClickProposition::PredicateCall { name, arguments } => Ok(CProposition::Predicate {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| self.lower_invariant_contract_expression(argument))
+                    .collect::<Result<Vec<_>, _>>()?,
+            }),
         }
     }
 
@@ -2307,7 +2344,7 @@ fn click_proposition_to_c_expression(proposition: &ClickProposition) -> Option<C
             ))),
             Box::new(click_proposition_to_c_expression(right)?),
         )),
-        ClickProposition::ForAll { .. } => None,
+        ClickProposition::ForAll { .. } | ClickProposition::PredicateCall { .. } => None,
     }
 }
 
@@ -2841,6 +2878,13 @@ impl KernelPropositionLowerer {
                     body: Box::new(body),
                 })
             }
+            ClickProposition::PredicateCall { name, arguments } => Ok(Proposition::Predicate {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| self.lower_requirement_value(argument).map(Term::CValue))
+                    .collect::<Result<Vec<_>, _>>()?,
+            }),
         }
     }
 
@@ -3258,6 +3302,7 @@ fn simp_proposition(proposition: &Proposition, assumptions: &Assumptions) -> Sim
             }
         }
         Proposition::ForAll { .. }
+        | Proposition::Predicate { .. }
         | Proposition::CExpressionEvaluates { .. }
         | Proposition::CStatementExecutes { .. }
         | Proposition::CFunctionExecutes { .. }
@@ -4118,6 +4163,23 @@ fn lower_outcome_proposition_with_environment(
                 body: Box::new(body),
             })
         }
+        ClickProposition::PredicateCall { name, arguments } => Ok(Proposition::Predicate {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| {
+                    evaluate_contract_expression_with_environment(
+                        values,
+                        pre_state,
+                        post_state,
+                        result,
+                        assumptions,
+                        argument,
+                    )
+                    .map(Term::CValue)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
     }
 }
 
@@ -4397,20 +4459,26 @@ impl Parser {
 
     fn parse_file(mut self) -> Result<ClickFile, ClickError> {
         let mut verifying_sources = Vec::new();
+        let mut predicate_definitions = Vec::new();
         let mut function_blocks = Vec::new();
 
         while self.peek().is_some() {
             if self.peek_ident() == Some("verifying") {
                 verifying_sources.push(self.parse_verifying_source()?);
+            } else if self.peek_ident() == Some("predicate") {
+                predicate_definitions.push(self.parse_predicate_definition()?);
             } else {
                 function_blocks.push(self.parse_function_block()?);
             }
         }
 
-        Ok(ClickFile {
+        let file = ClickFile {
             verifying_sources,
+            predicate_definitions,
             function_blocks,
-        })
+        };
+        validate_predicate_calls(&file)?;
+        Ok(file)
     }
 
     fn parse_verifying_source(&mut self) -> Result<String, ClickError> {
@@ -4418,6 +4486,22 @@ impl Parser {
         let source_path = self.expect_string("C source path")?;
         self.expect(Token::Semicolon)?;
         Ok(source_path)
+    }
+
+    fn parse_predicate_definition(&mut self) -> Result<PredicateDefinition, ClickError> {
+        self.expect_ident_spelling("predicate")?;
+        let name = self.expect_ident("predicate name")?;
+        self.expect(Token::LParen)?;
+        let parameters = self.parse_parameters()?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::LBrace)?;
+        let body = self.parse_proposition()?;
+        self.expect(Token::RBrace)?;
+        Ok(PredicateDefinition {
+            name,
+            parameters,
+            body,
+        })
     }
 
     fn parse_function_block(&mut self) -> Result<FunctionBlock, ClickError> {
@@ -4851,7 +4935,35 @@ impl Parser {
             self.position = start;
         }
 
+        if matches!(self.peek(), Some(Token::Ident(_))) && self.peek_next() == Some(&Token::LParen)
+        {
+            return self.parse_predicate_call();
+        }
+
         self.parse_proposition_comparison()
+    }
+
+    fn parse_predicate_call(&mut self) -> Result<ClickProposition, ClickError> {
+        let name = self.expect_ident("predicate name")?;
+        self.expect(Token::LParen)?;
+        let mut arguments = Vec::new();
+        if self.peek() != Some(&Token::RParen) {
+            loop {
+                arguments.push(self.parse_contract_expression()?);
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                    }
+                    Some(Token::RParen) => break,
+                    Some(token) => {
+                        return Err(self.error(format!("expected `,` or `)`, got {token:?}")));
+                    }
+                    None => return Err(self.error("expected `,` or `)`, got end of input")),
+                }
+            }
+        }
+        self.expect(Token::RParen)?;
+        Ok(ClickProposition::PredicateCall { name, arguments })
     }
 
     fn parse_proposition_comparison(&mut self) -> Result<ClickProposition, ClickError> {
@@ -5241,6 +5353,102 @@ impl Parser {
 
     fn error(&self, message: impl Into<String>) -> ClickError {
         ClickError::new(format!("at token {}: {}", self.position, message.into()))
+    }
+}
+
+fn validate_predicate_calls(file: &ClickFile) -> Result<(), ClickError> {
+    let mut predicates = BTreeMap::new();
+    for definition in file.predicate_definitions() {
+        if predicates
+            .insert(definition.name().to_string(), definition.parameters().len())
+            .is_some()
+        {
+            return Err(ClickError::new(format!(
+                "duplicate predicate definition `{}`",
+                definition.name()
+            )));
+        }
+    }
+
+    for definition in file.predicate_definitions() {
+        validate_predicate_calls_in_proposition(
+            definition.body(),
+            &predicates,
+            &format!("predicate `{}`", definition.name()),
+        )?;
+    }
+
+    for function in file.function_blocks() {
+        for requirement in function.requires() {
+            if let Requirement::Proposition(proposition) = requirement {
+                validate_predicate_calls_in_proposition(
+                    proposition,
+                    &predicates,
+                    &format!("requires clause in `{}`", function.signature().name()),
+                )?;
+            }
+        }
+
+        for structural_clause in function.structural_clauses() {
+            for item in structural_clause.items() {
+                if let Some(proposition) = item.proposition() {
+                    validate_predicate_calls_in_proposition(
+                        proposition,
+                        &predicates,
+                        &format!(
+                            "{:?} clause in `{}`",
+                            item.kind(),
+                            function.signature().name()
+                        ),
+                    )?;
+                }
+            }
+        }
+
+        for ensure in function.ensures() {
+            match ensure.ensure() {
+                Ensure::Proposition(proposition) => validate_predicate_calls_in_proposition(
+                    proposition,
+                    &predicates,
+                    &format!("ensures clause in `{}`", function.signature().name()),
+                )?,
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_predicate_calls_in_proposition(
+    proposition: &ClickProposition,
+    predicates: &BTreeMap<String, usize>,
+    context: &str,
+) -> Result<(), ClickError> {
+    match proposition {
+        ClickProposition::Comparison { .. } => Ok(()),
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            validate_predicate_calls_in_proposition(left, predicates, context)?;
+            validate_predicate_calls_in_proposition(right, predicates, context)
+        }
+        ClickProposition::Not(body) | ClickProposition::ForAll { body, .. } => {
+            validate_predicate_calls_in_proposition(body, predicates, context)
+        }
+        ClickProposition::PredicateCall { name, arguments } => {
+            let Some(arity) = predicates.get(name) else {
+                return Err(ClickError::new(format!(
+                    "unknown predicate `{name}` in {context}"
+                )));
+            };
+            if *arity != arguments.len() {
+                return Err(ClickError::new(format!(
+                    "predicate `{name}` expects {arity} argument(s), got {} in {context}",
+                    arguments.len()
+                )));
+            }
+            Ok(())
+        }
     }
 }
 
@@ -5908,10 +6116,16 @@ mod tests {
         let source = r#"
             verifying "logic.c";
 
+            predicate nonnegative(int32 x) {
+                x >= 0
+            }
+
             int32 logic(int32 x) {
                 requires x >= 0 and x < 10;
+                requires nonnegative(x);
                 ensures bounded: result >= 0 and result < 10 by auto;
                 ensures implication: result == x implies result >= 0 by auto;
+                ensures named_predicate: nonnegative(result) by auto;
                 ensures quantified: forall (int32 k) {
                     0 <= k implies k >= 0
                 } by auto;
@@ -5922,9 +6136,15 @@ mod tests {
         let file = parse(source).expect("proposition syntax should parse");
         let function = &file.function_blocks()[0];
 
+        assert_eq!(file.predicate_definitions().len(), 1);
+        assert_eq!(file.predicate_definitions()[0].name(), "nonnegative");
         assert!(matches!(
             function.requires()[0],
             Requirement::Proposition(ClickProposition::And(_, _))
+        ));
+        assert!(matches!(
+            function.requires()[1],
+            Requirement::Proposition(ClickProposition::PredicateCall { .. })
         ));
         assert!(matches!(
             function.ensures()[0].ensure(),
@@ -5936,6 +6156,10 @@ mod tests {
         ));
         assert!(matches!(
             function.ensures()[2].ensure(),
+            Ensure::Proposition(ClickProposition::PredicateCall { .. })
+        ));
+        assert!(matches!(
+            function.ensures()[3].ensure(),
             Ensure::Proposition(ClickProposition::ForAll { .. })
         ));
         assert_eq!(function.effects().len(), 2);
@@ -5944,6 +6168,76 @@ mod tests {
             Effect::Mutable(segments) => assert_eq!(segments.len(), 2),
             effect => panic!("expected mutable effect, got {effect:?}"),
         }
+    }
+
+    #[test]
+    fn rejects_unknown_predicate_call() {
+        let source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures unknown(x) by auto;
+            }
+        "#;
+
+        let error = parse(source).expect_err("unknown predicate should fail");
+
+        assert!(
+            error.message().contains("unknown predicate `unknown`"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn rejects_predicate_call_with_wrong_arity() {
+        let source = r#"
+            verifying "identity.c";
+
+            predicate nonnegative(int32 x) {
+                x >= 0
+            }
+
+            int32 identity(int32 x) {
+                ensures nonnegative(x, x) by auto;
+            }
+        "#;
+
+        let error = parse(source).expect_err("wrong predicate arity should fail");
+
+        assert!(
+            error
+                .message()
+                .contains("predicate `nonnegative` expects 1 argument(s), got 2"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn verifies_opaque_predicate_from_requirement() {
+        let c_source = r#"
+            int32 identity_pointer_fact(int32* p) {
+                return 0;
+            }
+        "#;
+        let click_source = r#"
+            verifying "identity_pointer_fact.c";
+
+            predicate sorted_pair(int32* p) {
+                p[0] <= p[1]
+            }
+
+            int32 identity_pointer_fact(int32* p) {
+                requires sorted_pair(p);
+                ensures still_sorted: sorted_pair(p) by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("identity_pointer_fact.c", c_source)])
+            .expect("exact opaque predicate fact should verify");
+
+        assert_eq!(verified.len(), 1);
     }
 
     #[test]

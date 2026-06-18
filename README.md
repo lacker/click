@@ -233,6 +233,24 @@ p[0] == old(p[0])
 forall (int32 k) { 0 <= k and k < n implies p[k] == old(p[k]) }
 ```
 
+`.click` can define named predicates:
+
+```text
+predicate sorted_pair(int32 p[2]) {
+    p[0] <= p[1]
+}
+
+int32 keep_sorted_pair(int32 p[2]) {
+    requires sorted_pair(p);
+    ensures still_sorted: sorted_pair(p);
+}
+```
+
+Predicate calls are opaque propositions in this first slice. The verifier can
+reuse an exact predicate fact from `requires` or a loop invariant, but it does
+not unfold the predicate body by default. Explicit unfolding/theorem support is
+future proof-language work.
+
 Logical structure uses Click words: `and`, `or`, `not`, `implies`, and
 `forall`. C operators such as `&&`, `||`, and `!` remain C expression syntax
 and are not reused as proposition connectives. Proposition comparisons embed
@@ -395,6 +413,8 @@ The first memory-safety demos are fixed-size pointer loops:
   an `int32*`.
 - `local_array_loop()` and `local_array_loop_frame()` cover bounded local-array
   loop execution plus an explicit per-step local-array frame clause.
+- `compare_swap2()`, `sort3()`, and `bubble_sort3_loop()` prove fixed-size
+  sorting properties: nondecreasing order plus explicit permutation claims.
 - `copy3(int32 dst[3], int32 src[3])` copies three cells from `src` to `dst`
   under an explicit `disjoint(dst[0..3], src[0..3])` requirement and proves
   `old(src[i])` postconditions.

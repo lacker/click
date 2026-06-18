@@ -139,6 +139,10 @@ pub enum CProposition {
         variable: Variable,
         body: Box<CProposition>,
     },
+    Predicate {
+        name: String,
+        arguments: Vec<CExpression>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -354,6 +358,10 @@ pub enum Term {
 pub enum Proposition {
     Equal(Term, Term),
     ConditionIs(ConditionTerm, bool),
+    Predicate {
+        name: String,
+        arguments: Vec<Term>,
+    },
     CExpressionEvaluates {
         state: CState,
         expression: CExpression,
@@ -1408,6 +1416,9 @@ impl Assumptions {
 
     fn has_condition_fact(&self, condition: ConditionTerm, value: bool) -> bool {
         self.condition_facts.get(&condition) == Some(&value)
+            || self.condition_facts.iter().any(|(fact, fact_value)| {
+                *fact_value == value && self.condition_matches(fact, &condition)
+            })
     }
 
     fn bitvector_terms_equal_from_facts(
@@ -2017,6 +2028,14 @@ impl Assumptions {
         if memories_match_for_pointer_load(left_memory, right_memory, left_pointer) {
             return true;
         }
+        if memories_match_for_pointer_load_under_assumptions(
+            left_memory,
+            right_memory,
+            left_pointer,
+            self,
+        ) {
+            return true;
+        }
 
         self.prop_facts.iter().any(|proposition| match proposition {
             Proposition::CMemoryMutatesOnly {
@@ -2277,6 +2296,44 @@ impl Assumptions {
                     || fact_left == target_left
                         && self.bitvector_terms_proven_equal(fact_right, target_right)
             }
+            (
+                ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedLessThan(target_left, target_right),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedLessEqual(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedLessEqual(target_left, target_right),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedGreaterThan(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedGreaterThan(target_left, target_right),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedGreaterEqual(target_left, target_right),
+            ) => {
+                self.bitvector_terms_proven_equal(fact_left, target_left)
+                    && self.bitvector_terms_proven_equal(fact_right, target_right)
+            }
+            (
+                ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedGreaterThan(target_left, target_right),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedGreaterThan(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedLessThan(target_left, target_right),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedLessEqual(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedGreaterEqual(target_left, target_right),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedLessEqual(target_left, target_right),
+            ) => {
+                self.bitvector_terms_proven_equal(fact_left, target_right)
+                    && self.bitvector_terms_proven_equal(fact_right, target_left)
+            }
             _ => false,
         }
     }
@@ -2333,6 +2390,19 @@ impl Assumptions {
             }
         }
 
+        let condition_facts = self.condition_facts.iter().collect::<Vec<_>>();
+        for left_index in 0..condition_facts.len() {
+            for right_index in left_index + 1..condition_facts.len() {
+                let ((left_condition, left_value), (right_condition, right_value)) =
+                    (condition_facts[left_index], condition_facts[right_index]);
+                if left_value != right_value
+                    && self.condition_matches(left_condition, right_condition)
+                {
+                    return true;
+                }
+            }
+        }
+
         for (equal_left, equal_right) in &equal_facts {
             if disequal_facts
                 .iter()
@@ -2346,12 +2416,14 @@ impl Assumptions {
         }
 
         for (left, right, strict) in &order_facts {
-            if *strict && left == right {
+            if *strict && self.bitvector_terms_proven_equal(left, right) {
                 return true;
             }
             if equal_facts.iter().any(|(equal_left, equal_right)| {
-                (left == equal_left && right == equal_right)
-                    || (left == equal_right && right == equal_left)
+                (self.bitvector_terms_proven_equal(left, equal_left)
+                    && self.bitvector_terms_proven_equal(right, equal_right))
+                    || (self.bitvector_terms_proven_equal(left, equal_right)
+                        && self.bitvector_terms_proven_equal(right, equal_left))
             }) && *strict
             {
                 return true;
@@ -2359,7 +2431,9 @@ impl Assumptions {
             if order_facts
                 .iter()
                 .any(|(other_left, other_right, other_strict)| {
-                    left == other_right && right == other_left && (*strict || *other_strict)
+                    self.bitvector_terms_proven_equal(left, other_right)
+                        && self.bitvector_terms_proven_equal(right, other_left)
+                        && (*strict || *other_strict)
                 })
             {
                 return true;
@@ -3797,6 +3871,36 @@ fn memories_match_for_pointer_load(left: &CMemory, right: &CMemory, pointer: &Po
                 .filter(|(cell_pointer, _)| cell_pointer.block == pointer.block))
 }
 
+fn memories_match_for_pointer_load_under_assumptions(
+    left: &CMemory,
+    right: &CMemory,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    if memories_match_for_pointer_load(left, right, pointer) {
+        return true;
+    }
+    if pointer.block.starts_with("local:") {
+        return false;
+    }
+    if !left
+        .blocks
+        .iter()
+        .filter(|(block, _)| !block.starts_with("local:"))
+        .eq(right
+            .blocks
+            .iter()
+            .filter(|(block, _)| !block.starts_with("local:")))
+    {
+        return false;
+    }
+
+    left.differing_cell_pointers(right)
+        .into_iter()
+        .filter(|cell_pointer| !cell_pointer.block.starts_with("local:"))
+        .all(|cell_pointer| pointers_proven_distinct(&cell_pointer, pointer, assumptions))
+}
+
 fn memory_matches_effect_summary_endpoint(
     expected: &CMemory,
     actual: &CMemory,
@@ -4059,6 +4163,13 @@ fn substitute_bitvector_variable_in_proposition(
             substitute_bitvector_variable_in_condition(condition, from, to),
             *value,
         ),
+        Proposition::Predicate { name, arguments } => Proposition::Predicate {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_bitvector_variable_in_term(argument, from, to))
+                .collect(),
+        },
         Proposition::And(left, right) => Proposition::And(
             Box::new(substitute_bitvector_variable_in_proposition(left, from, to)),
             Box::new(substitute_bitvector_variable_in_proposition(
@@ -4086,6 +4197,26 @@ fn substitute_bitvector_variable_in_proposition(
             body: Box::new(substitute_bitvector_variable_in_proposition(body, from, to)),
         },
         proposition => proposition.clone(),
+    }
+}
+
+fn substitute_bitvector_variable_in_term(
+    term: &Term,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> Term {
+    match term {
+        Term::Condition(condition) => Term::Condition(substitute_bitvector_variable_in_condition(
+            condition, from, to,
+        )),
+        Term::Bitvector32(bits) => Term::Bitvector32(substitute_bitvector_variable(bits, from, to)),
+        Term::PointerOffset(offset) => Term::PointerOffset(
+            substitute_bitvector_variable_in_pointer_offset(offset, from, to),
+        ),
+        Term::CValue(value) => {
+            Term::CValue(substitute_bitvector_variable_in_c_value(value, from, to))
+        }
+        _ => term.clone(),
     }
 }
 
@@ -4906,7 +5037,69 @@ fn lower_c_proposition_at_state(
                     .collect(),
             )
         }
+        CProposition::Predicate { name, arguments } => {
+            lower_c_predicate_proposition_at_state(state, name, arguments, assumptions, budget)
+        }
     }
+}
+
+fn lower_c_predicate_proposition_at_state(
+    state: &CState,
+    name: &str,
+    arguments: &[CExpression],
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CPropositionPath>> {
+    let mut paths = vec![CPropositionPath {
+        proposition: Proposition::Predicate {
+            name: name.to_string(),
+            arguments: Vec::new(),
+        },
+        facts: Vec::new(),
+        obligations: Vec::new(),
+    }];
+
+    for argument in arguments {
+        let argument_paths = evaluate_c_expression_paths(state, argument, assumptions, budget)?;
+        let mut next_paths = Vec::new();
+        for prefix_path in paths {
+            let path_assumptions = assumptions_with_path_context(
+                assumptions,
+                &prefix_path.facts,
+                &prefix_path.obligations,
+            );
+            for argument_path in &argument_paths {
+                let CExpressionOutcome::Value(value) = &argument_path.outcome else {
+                    continue;
+                };
+                let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                    &prefix_path.facts,
+                    &prefix_path.obligations,
+                    &argument_path.facts,
+                    &argument_path.obligations,
+                    &path_assumptions,
+                ) else {
+                    continue;
+                };
+                let Proposition::Predicate {
+                    name,
+                    mut arguments,
+                } = prefix_path.proposition.clone()
+                else {
+                    unreachable!("predicate lowering should carry predicate propositions")
+                };
+                arguments.push(Term::CValue(value.clone()));
+                next_paths.push(CPropositionPath {
+                    proposition: Proposition::Predicate { name, arguments },
+                    facts,
+                    obligations,
+                });
+            }
+        }
+        paths = next_paths;
+    }
+
+    Ok(paths)
 }
 
 fn lower_c_binary_proposition_at_state(
@@ -10084,6 +10277,86 @@ mod tests {
             ),
             true,
         )));
+    }
+
+    #[test]
+    fn unrelated_external_cell_store_preserves_memory_load_with_stack_temporary() {
+        let old_memory = CMemory::new();
+        let p0 = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let p1 = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let stack_memory = CMemory::new()
+            .with_block("local:tmp", 4)
+            .store(CMemory::local_pointer("tmp"), int32(0));
+        let current_memory = stack_memory.clone().store(
+            p0.clone(),
+            int32(Bitvector32Term::MemoryLoad(
+                Box::new(stack_memory),
+                Box::new(p0),
+            )),
+        );
+
+        assert!(Assumptions::new().proves(&Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::MemoryLoad(Box::new(current_memory), Box::new(p1.clone())),
+                Bitvector32Term::MemoryLoad(Box::new(old_memory), Box::new(p1)),
+            ),
+            true,
+        )));
+    }
+
+    #[test]
+    fn equivalent_memory_load_order_facts_can_be_inconsistent() {
+        let old_memory = CMemory::new();
+        let stack_memory = CMemory::new()
+            .with_block("local:tmp", 4)
+            .store(CMemory::local_pointer("tmp"), int32(0));
+        let p0 = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let old_p0 = Bitvector32Term::MemoryLoad(Box::new(old_memory), Box::new(p0.clone()));
+        let stack_p0 = Bitvector32Term::MemoryLoad(Box::new(stack_memory), Box::new(p0));
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_less_than(old_p0.clone(), stack_p0.clone()),
+                true,
+            )
+            .assume_condition(ConditionTerm::signed_less_than(stack_p0, old_p0), true);
+
+        assert!(assumptions.proves(&false_equals_true_proposition()));
+    }
+
+    #[test]
+    fn equivalent_condition_facts_with_different_truth_values_are_inconsistent() {
+        let p0 = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let p1 = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let memory_a = CMemory::new()
+            .with_block("local:i", 4)
+            .store(CMemory::local_pointer("i"), int32(0));
+        let memory_b = CMemory::new()
+            .with_block("local:i", 4)
+            .store(CMemory::local_pointer("i"), int32(1));
+        let left_a = Bitvector32Term::MemoryLoad(Box::new(memory_a.clone()), Box::new(p0.clone()));
+        let right_a = Bitvector32Term::MemoryLoad(Box::new(memory_a), Box::new(p1.clone()));
+        let left_b = Bitvector32Term::MemoryLoad(Box::new(memory_b.clone()), Box::new(p0));
+        let right_b = Bitvector32Term::MemoryLoad(Box::new(memory_b), Box::new(p1));
+        let assumptions = Assumptions::new()
+            .assume_condition(ConditionTerm::signed_less_than(left_a, right_a), true)
+            .assume_condition(ConditionTerm::signed_less_than(left_b, right_b), false);
+
+        assert!(assumptions.proves(&false_equals_true_proposition()));
     }
 
     #[test]
