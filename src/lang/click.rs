@@ -2467,6 +2467,12 @@ fn initial_call(
                     Bitvector32Term::Variable(Variable(arguments.len() as u64)),
                 )));
             }
+            C0Type::Int32Array(_) => {
+                return Err(ClickError::new(format!(
+                    "array parameter `{}` should have lowered to `int32*`",
+                    parameter.name()
+                )));
+            }
         }
     }
 

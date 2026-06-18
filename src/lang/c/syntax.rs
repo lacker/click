@@ -18,6 +18,7 @@ pub struct C0Parameter {
 pub enum C0Type {
     Int32,
     Int32Pointer,
+    Int32Array(u32),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -130,6 +131,7 @@ impl C0Type {
         match self {
             Self::Int32 => crate::megakernel::CType::Int32,
             Self::Int32Pointer => crate::megakernel::CType::Int32Pointer,
+            Self::Int32Array(length) => crate::megakernel::CType::Int32Array(length),
         }
     }
 }
@@ -374,6 +376,47 @@ impl Parser {
         Ok(C0Type::Int32Pointer)
     }
 
+    fn parse_local_array_suffix(&mut self, c_type: C0Type) -> Result<C0Type, C0SyntaxError> {
+        if self.peek() != Some(&Token::LBracket) {
+            return Ok(c_type);
+        }
+        if c_type != C0Type::Int32 {
+            return Err(C0SyntaxError::new(
+                "only `int32 name[N]` local arrays are supported",
+            ));
+        }
+
+        self.position += 1;
+        let length = match self.next() {
+            Some(Token::Number(number)) => {
+                let length = number.parse::<u32>().map_err(|_| {
+                    C0SyntaxError::new(format!("array length `{number}` is out of range"))
+                })?;
+                if length == 0 {
+                    return Err(C0SyntaxError::new("local arrays must have positive length"));
+                }
+                if length.checked_mul(4).is_none() {
+                    return Err(C0SyntaxError::new(format!(
+                        "array length `{number}` is too large for int32 elements"
+                    )));
+                }
+                length
+            }
+            Some(token) => {
+                return Err(C0SyntaxError::new(format!(
+                    "expected local array length, got {token:?}"
+                )));
+            }
+            None => {
+                return Err(C0SyntaxError::new(
+                    "expected local array length, got end of input",
+                ));
+            }
+        };
+        self.expect(Token::RBracket)?;
+        Ok(C0Type::Int32Array(length))
+    }
+
     fn parse_block_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
         self.expect(Token::LBrace)?;
         let mut statements = Vec::new();
@@ -439,6 +482,7 @@ impl Parser {
             Some(Token::Ident(name)) if name == "int32" => {
                 let c_type = self.parse_type()?;
                 let name = self.expect_ident("local name")?;
+                let c_type = self.parse_local_array_suffix(c_type)?;
                 self.expect(Token::Semicolon)?;
                 Ok(C0Statement::Declare { c_type, name })
             }

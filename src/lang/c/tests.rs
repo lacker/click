@@ -713,6 +713,164 @@ fn c0_syntax_targets_megakernel_local_address_of() {
 }
 
 #[test]
+fn c0_syntax_targets_megakernel_local_array_storage() {
+    let function = syntax::parse_function(
+        r#"
+        int32 local_array_roundtrip() {
+            int32 a[3];
+            a[0] = 5;
+            a[1] = 7;
+            return a[1];
+        }
+        "#,
+    )
+    .expect("local array function should parse")
+    .to_megakernel_function();
+
+    let a0 = crate::megakernel::Pointer {
+        block: "local:a".to_string(),
+        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+    };
+    let a1 = crate::megakernel::Pointer {
+        block: "local:a".to_string(),
+        offset: crate::megakernel::PointerOffsetTerm::Constant(4),
+    };
+    let state = crate::megakernel::CState::new();
+    let final_state = crate::megakernel::CState::new().with_memory(
+        crate::megakernel::CMemory::new()
+            .with_block("local:a", 12)
+            .store(a0, crate::megakernel::int32(5))
+            .store(a1, crate::megakernel::int32(7)),
+    );
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("local array function should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::megakernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments: Vec::new(),
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(7),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_local_array_decays_to_pointer_argument() {
+    let read_first = syntax::parse_function(
+        r#"
+        int32 read_first(int32* p) {
+            return p[0];
+        }
+        "#,
+    )
+    .expect("helper function should parse")
+    .to_megakernel_function();
+    let caller = syntax::parse_function(
+        r#"
+        int32 caller() {
+            int32 a[2];
+            a[0] = 11;
+            int32 result;
+            result = read_first(a);
+            return result;
+        }
+        "#,
+    )
+    .expect("caller function should parse")
+    .to_megakernel_function();
+
+    let a0 = crate::megakernel::Pointer {
+        block: "local:a".to_string(),
+        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+    };
+    let result_pointer = crate::megakernel::Pointer {
+        block: "local:result".to_string(),
+        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+    };
+    let environment = crate::megakernel::CFunctionEnvironment::new().with_function(read_first);
+    let state = crate::megakernel::CState::new();
+    let final_state = crate::megakernel::CState::new().with_memory(
+        crate::megakernel::CMemory::new()
+            .with_block("local:a", 8)
+            .with_block("local:result", 4)
+            .store(a0, crate::megakernel::int32(11))
+            .store(result_pointer, crate::megakernel::int32(11)),
+    );
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution_with_environment(
+        state.clone(),
+        caller.clone(),
+        Vec::new(),
+        Default::default(),
+        environment,
+    )
+    .expect("local array should decay to pointer argument");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::megakernel::Proposition::CFunctionExecutes {
+            state,
+            function: caller,
+            arguments: Vec::new(),
+            outcome: crate::megakernel::CFunctionOutcome::Return {
+                value: crate::megakernel::int32(11),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_rejects_assignment_to_local_array_object() {
+    let function = syntax::parse_function(
+        r#"
+        int32 bad_assign(int32* p) {
+            int32 a[3];
+            a = p;
+            return 0;
+        }
+        "#,
+    )
+    .expect("array assignment function should parse")
+    .to_megakernel_function();
+
+    let pointer = crate::megakernel::Pointer {
+        block: "block".to_string(),
+        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+    };
+    let state = crate::megakernel::CState::new();
+    let arguments = vec![crate::megakernel::c_pointer_value(pointer)];
+    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Default::default(),
+    )
+    .expect("array assignment should execute to a type error");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::megakernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome: crate::megakernel::CFunctionOutcome::RuntimeError(
+                crate::megakernel::CRuntimeError::TypeMismatch
+            ),
+        }
+    );
+}
+
+#[test]
 fn c0_syntax_targets_megakernel_int32_subtraction_and_comparisons() {
     let function = syntax::parse_function(
         r#"

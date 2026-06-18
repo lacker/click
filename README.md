@@ -81,9 +81,10 @@ configuration when multiple ABIs matter.
 C expression semantics distinguish lvalue evaluation from rvalue evaluation.
 An lvalue identifies a C object, either a named local object or a memory object,
 and rvalue evaluation reads from that object. This is the C-native basis for
-`x`, `*p`, `p[i]`, assignment targets, and address-of expressions; it is also
-the path toward real local array objects rather than treating arrays as secret
-pointers.
+`x`, `*p`, `p[i]`, assignment targets, and address-of expressions. Local arrays
+are stack memory objects: `int32 a[3];` allocates a local memory block, and `a`
+decays to an `int32*` rvalue for indexing and function arguments. Direct
+assignment to an array object is rejected.
 
 ## Proof Vocabulary
 
@@ -149,7 +150,7 @@ to drive the design. It currently supports:
 - integer literals and variables
 - signed comparisons and equality, returning `int32` `0` or `1` like C
 - signed addition and subtraction, with signed-overflow undefined behavior
-- local `int32` and `int32*` declarations
+- local `int32`, `int32*`, and fixed-size `int32[N]` declarations
 - assignment and sequencing
 - `if` / `else` with C scalar truthiness
 - `while`, currently concrete/budget-capped for execution, plus a native
@@ -388,6 +389,8 @@ The first memory-safety demos are fixed-size pointer loops:
 
 - `fill3(int32* p)` / `fill3_array_loop(int32 p[3])` write three consecutive
   `int32` cells through `p[i]` and read back the final cell.
+- `local_array_roundtrip()` writes and reads a fixed-size local `int32` array
+  whose name decays to a pointer for indexing.
 - `copy3(int32 dst[3], int32 src[3])` copies three cells from `src` to `dst`
   under an explicit `disjoint(dst[0..3], src[0..3])` requirement and proves
   `old(src[i])` postconditions.
@@ -415,6 +418,9 @@ The first memory-safety demos are fixed-size pointer loops:
 - `shifted_loop_effect_preserves_prefix(int32 p[], int32 n)` uses that shifted
   loop effect summary to prove `p[0] == old(p[0])` without a handwritten
   unchanged-memory invariant.
+- `shifted_copy_effect_uses_covering_disjoint(int32 dst[], int32 src[],
+  int32 n)` proves source-memory preservation when a shifted destination effect
+  summary is covered by a broader source/destination `disjoint` requirement.
 - `disjoint_symbolic_unwritten_read` proves a symbolic old-memory read from
   `requires disjoint(p[i..i + 1], p[j..j + 1])`.
 - `pointer_params_may_alias_without_disjoint` rejects a source-preservation
@@ -425,7 +431,7 @@ The first memory-safety demos are fixed-size pointer loops:
 - `copy_n_segment_invariant(int32 dst[], int32 src[], int32 n)` proves a
   symbolic copied segment with a quantified destination-prefix invariant plus a
   whole-loop mutable effect summary and a disjoint source/destination
-  requirement; the source-memory guarantee uses an explicit proof-step script.
+  requirement.
 - `simp_postconditions(int32 x)` proves straight-line postconditions with
   deterministic local simplification.
 
@@ -450,8 +456,8 @@ loop invariants. The sidecar can also prove post-state memory guarantees such as
 4. Keep the default prover expandable: successful heuristic proofs should leave
    replayable deterministic proof-step certificates wherever current proof steps
    can express the argument.
-5. Grow C-native memory objects: local arrays, richer pointer ranges, and
-   clearer effect conditions.
+5. Grow C-native memory objects: richer pointer ranges, clearer effect
+   conditions, and more local-array operations.
 6. Add richer C integer coverage: unsigned operations, more widths, casts, and
    promotion rules.
 7. Expand modular function-contract reasoning so call sites can use proven

@@ -78,6 +78,7 @@ pub enum CValue {
 pub enum CType {
     Int32,
     Int32Pointer,
+    Int32Array(u32),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -310,7 +311,13 @@ pub enum CFunctionOutcome {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CLocalEnvironment {
-    bindings: BTreeMap<String, CValue>,
+    bindings: BTreeMap<String, CLocalBinding>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+enum CLocalBinding {
+    Object(CValue),
+    Int32Array { length: u32 },
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -754,6 +761,7 @@ impl CType {
         match self {
             Self::Int32 => 4,
             Self::Int32Pointer => C_POINTER_BYTE_WIDTH,
+            Self::Int32Array(length) => length.checked_mul(4).unwrap_or(u32::MAX),
         }
     }
 }
@@ -1035,16 +1043,38 @@ impl CLocalEnvironment {
     }
 
     pub fn with(mut self, name: impl Into<String>, value: CValue) -> Self {
-        self.bindings.insert(name.into(), value);
+        self.set(name, value);
+        self
+    }
+
+    pub fn with_int32_array(mut self, name: impl Into<String>, length: u32) -> Self {
+        self.set_int32_array(name, length);
         self
     }
 
     pub fn set(&mut self, name: impl Into<String>, value: CValue) {
-        self.bindings.insert(name.into(), value);
+        self.bindings
+            .insert(name.into(), CLocalBinding::Object(value));
+    }
+
+    pub fn set_int32_array(&mut self, name: impl Into<String>, length: u32) {
+        self.bindings
+            .insert(name.into(), CLocalBinding::Int32Array { length });
     }
 
     pub fn get(&self, name: &str) -> Option<&CValue> {
+        match self.bindings.get(name) {
+            Some(CLocalBinding::Object(value)) => Some(value),
+            Some(CLocalBinding::Int32Array { .. }) | None => None,
+        }
+    }
+
+    fn binding(&self, name: &str) -> Option<&CLocalBinding> {
         self.bindings.get(name)
+    }
+
+    fn is_int32_array(&self, name: &str) -> bool {
+        matches!(self.binding(name), Some(CLocalBinding::Int32Array { .. }))
     }
 }
 
@@ -1196,6 +1226,11 @@ impl CState {
 
     pub fn with_local(mut self, name: impl Into<String>, value: CValue) -> Self {
         self.locals.set(name, value);
+        self
+    }
+
+    pub fn with_int32_array_local(mut self, name: impl Into<String>, length: u32) -> Self {
+        self.locals.set_int32_array(name, length);
         self
     }
 
@@ -2476,15 +2511,17 @@ impl Assumptions {
         start: &Bitvector32Term,
         end: &Bitvector32Term,
     ) -> bool {
-        range.base == *base
-            && self.decide(&ConditionTerm::signed_less_equal(
-                start.clone(),
-                range.start.clone(),
-            )) == Some(true)
-            && self.decide(&ConditionTerm::signed_less_equal(
-                range.end.clone(),
-                end.clone(),
-            )) == Some(true)
+        let Some(base_delta) = range.base.element_index_from_base(base) else {
+            return false;
+        };
+        let range_start = Bitvector32Term::add(base_delta.clone(), range.start.clone());
+        let range_end = Bitvector32Term::add(base_delta, range.end.clone());
+
+        self.decide(&ConditionTerm::signed_less_equal(
+            start.clone(),
+            range_start,
+        )) == Some(true)
+            && self.decide(&ConditionTerm::signed_less_equal(range_end, end.clone())) == Some(true)
     }
 }
 
@@ -4975,6 +5012,18 @@ fn evaluate_c_expression_paths(
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
+        CExpression::Variable(name) if state.locals.is_int32_array(name) => {
+            let pointer = CMemory::local_pointer(name);
+            vec![CExpressionPath {
+                outcome: if state.memory.has_block(&pointer.block) {
+                    CExpressionOutcome::Value(CValue::Pointer(pointer))
+                } else {
+                    CExpressionOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone()))
+                },
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }]
+        }
         CExpression::Variable(_) => {
             read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
         }
@@ -5086,8 +5135,13 @@ fn evaluate_c_lvalue_paths(
     budget.consume_expression_step()?;
     let paths = match expression {
         CExpression::Variable(name) => vec![CLValuePath {
-            outcome: match state.locals.get(name) {
-                Some(value) => CLValueOutcome::LValue(CLValue::local(name.clone(), value.c_type())),
+            outcome: match state.locals.binding(name) {
+                Some(CLocalBinding::Object(value)) => {
+                    CLValueOutcome::LValue(CLValue::local(name.clone(), value.c_type()))
+                }
+                Some(CLocalBinding::Int32Array { .. }) => {
+                    CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                }
                 None => CLValueOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone())),
             },
             facts: Vec::new(),
@@ -6869,6 +6923,14 @@ fn declare_local(state: &CState, name: &str, c_type: CType) -> CState {
             }),
             C_POINTER_BYTE_WIDTH,
         ),
+        CType::Int32Array(length) => {
+            let pointer = CMemory::local_pointer(name);
+            state.memory = state
+                .memory
+                .with_block(pointer.block, length.checked_mul(4).unwrap_or(u32::MAX));
+            state.locals.set_int32_array(name.to_string(), length);
+            return state;
+        }
     };
     let pointer = CMemory::local_pointer(name);
     state.memory = state
@@ -6911,6 +6973,15 @@ fn execute_c_call_assign_paths(
             .map(|path| {
                 let outcome = match path.outcome {
                     CFunctionOutcome::Return { value, mut state } => {
+                        if state.locals.is_int32_array(target) {
+                            return CStatementExecutionPath {
+                                outcome: CStatementOutcome::RuntimeError(
+                                    CRuntimeError::TypeMismatch,
+                                ),
+                                facts: path.facts,
+                                obligations: path.obligations,
+                            };
+                        }
                         sync_stack_local(&mut state, target, &value);
                         state.locals.set(target.to_string(), value);
                         CStatementOutcome::Normal(state)
@@ -7770,12 +7841,16 @@ fn havoc_loop_modified_locals(
     let mut names = BTreeSet::new();
     collect_loop_modified_locals(body, &mut names);
     for name in names {
-        let Some(value) = state.locals.get(&name) else {
+        let Some(binding) = state.locals.binding(&name) else {
+            continue;
+        };
+        let CLocalBinding::Object(value) = binding else {
             continue;
         };
         let value = match value.c_type() {
             CType::Int32 => int32(Bitvector32Term::Variable(variables.next())),
             CType::Int32Pointer => continue,
+            CType::Int32Array(_) => continue,
         };
         sync_stack_local(&mut state, &name, &value);
         state.locals.set(name, value);
@@ -10011,6 +10086,60 @@ mod tests {
             ConditionTerm::equal(
                 Bitvector32Term::MemoryLoad(Box::new(after_memory), Box::new(read_cell.clone())),
                 Bitvector32Term::MemoryLoad(Box::new(before_memory), Box::new(read_cell)),
+            ),
+            true,
+        )));
+    }
+
+    #[test]
+    fn covering_disjoint_fact_handles_shifted_mutable_range() {
+        let n = Variable(83);
+        let k = Variable(84);
+        let n_bits = Bitvector32Term::Variable(n);
+        let k_bits = Bitvector32Term::Variable(k);
+        let before_memory = CMemory::new();
+        let after_memory = CMemory::new();
+        let dst_base = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(85)), 4),
+        };
+        let src_base = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(86)), 4),
+        };
+        let src_cell = src_base.offset_by_int32_elements(k_bits.clone());
+        let shifted_dst = dst_base.offset_by_int32_elements(Bitvector32Term::Constant(1));
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(k_bits.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(k_bits, n_bits.clone()),
+                true,
+            )
+            .assume_proposition(Proposition::CMemoryDisjoint {
+                left_base: dst_base,
+                left_start: Bitvector32Term::Constant(0),
+                left_end: n_bits.clone(),
+                right_base: src_base,
+                right_start: Bitvector32Term::Constant(0),
+                right_end: n_bits.clone(),
+            })
+            .assume_proposition(Proposition::CMemoryEffectSummary {
+                before: before_memory.clone(),
+                after: after_memory.clone(),
+                mutable_ranges: vec![CMemoryRange::new(
+                    shifted_dst,
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::subtract(n_bits, Bitvector32Term::Constant(1)),
+                )],
+            });
+
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::MemoryLoad(Box::new(after_memory), Box::new(src_cell.clone())),
+                Bitvector32Term::MemoryLoad(Box::new(before_memory), Box::new(src_cell)),
             ),
             true,
         )));
