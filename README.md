@@ -124,10 +124,12 @@ This first proof-step slice uses an implicit proof state. `symbolic_execute`
 builds the C0 symbolic verification paths. `bounded_execute()` runs the
 deterministic bounded C0 executor for concrete-loop fallback proofs.
 `loop_vc(loop N)` validates the named loop's generated verification conditions.
-`frame(loop N)` validates and exposes the named loop's frame facts. `simp()`
+Bare `frame()` proves the current function-level `immutable` or `mutable`
+effect claim against the current execution mode. `frame(loop N)` validates and
+exposes the named loop's frame facts for later postcondition reasoning. `simp()`
 asks the final close step to use deterministic simplification for the claim.
-`close()` must be the final step; it packages the verified path as the
-guarantee theorem. Tactics invoke the megakernel's C symbolic-execution,
+`close()` must be the final step; it packages the verified path as the guarantee
+theorem. Tactics invoke the megakernel's C symbolic-execution,
 bounded-execution, frame-checking, simplification, and specification-checking
 axioms to prove the named guarantee. When a tactic can replay one of these
 deterministic scripts, the verified theorem records that script as its

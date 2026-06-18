@@ -945,14 +945,32 @@ fn prove_claim_by_steps(
             }
             ProofStep::Frame(target) => {
                 require_step_execution(&replay, claim_label, step_index, "frame")?;
-                require_verification_execution(&replay, claim_label, step_index, "frame")?;
                 validate_frame_step_target(
                     function_block,
                     parsed_function,
                     *target,
+                    claim,
                     claim_label,
                     step_index,
                 )?;
+                match target {
+                    None | Some(ProofStepTarget::Function) => {
+                        validate_function_frame_step(
+                            replay.execution.as_ref().expect("execution should exist"),
+                            claim,
+                            claim_label,
+                            step_index,
+                            parsed_function.parameters(),
+                            &arguments,
+                            &state,
+                            &requirement_propositions,
+                        )?;
+                    }
+                    Some(ProofStepTarget::Loop(_)) => {
+                        require_verification_execution(&replay, claim_label, step_index, "frame")?;
+                    }
+                    Some(ProofStepTarget::Statement(_)) => {}
+                }
                 replay.frames.insert(*target);
             }
             ProofStep::Simp => {
@@ -1094,11 +1112,19 @@ fn validate_frame_step_target(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
     target: Option<ProofStepTarget>,
+    claim: &FunctionClaimRef<'_>,
     claim_label: &str,
     step_index: usize,
 ) -> Result<(), ClickError> {
     match target {
-        None | Some(ProofStepTarget::Function) => Ok(()),
+        None | Some(ProofStepTarget::Function) => {
+            if matches!(claim, FunctionClaimRef::Ensure(_, _)) {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: `frame()` proves function-level effect claims; use `frame(loop N)` to use loop frame facts in an `ensures` proof"
+                )));
+            }
+            Ok(())
+        }
         Some(ProofStepTarget::Loop(loop_index)) => {
             validate_loop_step_target(parsed_function, loop_index, claim_label, step_index)?;
             if !function_block.structural_clauses().iter().any(|clause| {
@@ -1123,6 +1149,61 @@ fn validate_frame_step_target(
             )))
         }
     }
+}
+
+fn validate_function_frame_step(
+    execution: &crate::megakernel::SymbolicCExecution,
+    claim: &FunctionClaimRef<'_>,
+    claim_label: &str,
+    step_index: usize,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    requirement_propositions: &[Proposition],
+) -> Result<(), ClickError> {
+    if let Some(limit) = execution.limit() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `frame()` hit execution limit {limit:?}"
+        )));
+    }
+    if execution.paths().is_empty() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `frame()` had no complete execution path"
+        )));
+    }
+
+    for (path_index, path) in execution.paths().iter().enumerate() {
+        if !path.obligations().is_empty() {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `frame()` left obligations on path {path_index}: {}",
+                describe_obligations(path.obligations())
+            )));
+        }
+        let outcome = match implication_body(path.theorem().proposition()) {
+            Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
+            proposition => {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: `frame()` saw unexpected theorem body {proposition:?}\n  path facts: {}",
+                    describe_facts(path.facts())
+                )));
+            }
+        };
+        let mut path_requirements = requirement_propositions.to_vec();
+        path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+        check_function_claim(
+            claim_label,
+            path_index,
+            path.facts(),
+            &path_requirements,
+            claim,
+            parameters,
+            arguments,
+            state,
+            &outcome,
+        )?;
+    }
+
+    Ok(())
 }
 
 fn prove_claim_from_steps_execution(
@@ -1321,7 +1402,11 @@ fn bounded_execution_proof_step_candidates(claim: &FunctionClaimRef<'_>) -> Vec<
             vec![ProofStep::BoundedExecute, ProofStep::Simp, ProofStep::Close],
             vec![ProofStep::BoundedExecute, ProofStep::Close],
         ],
-        FunctionClaimRef::Effect(_, _) => Vec::new(),
+        FunctionClaimRef::Effect(_, _) => vec![vec![
+            ProofStep::BoundedExecute,
+            ProofStep::Frame(None),
+            ProofStep::Close,
+        ]],
     }
 }
 
@@ -5695,6 +5780,71 @@ mod tests {
 
         assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].proof_kind(), ProofKind::ProofSteps);
+    }
+
+    #[test]
+    fn verifies_mutable_effect_with_bounded_frame_steps() {
+        let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+        let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires valid_range(p, 8);
+                mutable p[1..2] by {
+                    bounded_execute();
+                    frame();
+                    close();
+                }
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+            .expect("bounded frame proof steps should prove mutable effect");
+        let expected_steps = [
+            ProofStep::BoundedExecute,
+            ProofStep::Frame(None),
+            ProofStep::Close,
+        ];
+
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].proof_kind(), ProofKind::ProofSteps);
+        assert_eq!(verified[0].proof_steps(), Some(expected_steps.as_slice()));
+    }
+
+    #[test]
+    fn bare_frame_step_rejects_ensure_claim() {
+        let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+        let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures returns_x: result == x by {
+                    symbolic_execute();
+                    frame();
+                    close();
+                }
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("identity.c", c_source)])
+            .expect_err("bare frame step should not prove postconditions");
+
+        assert!(
+            error
+                .message()
+                .contains("`frame()` proves function-level effect claims"),
+            "{}",
+            error.message()
+        );
     }
 
     #[test]
