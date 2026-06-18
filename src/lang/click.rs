@@ -119,6 +119,7 @@ pub enum StructuralItemKind {
     Invariant,
     Assert,
     Effect,
+    StepEffect,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -360,6 +361,13 @@ impl StructuralItem {
             StructuralItemClaim::Effect(effect) => Some(effect),
             StructuralItemClaim::Proposition(_) => None,
         }
+    }
+
+    fn is_effect_kind(&self) -> bool {
+        matches!(
+            self.kind,
+            StructuralItemKind::Effect | StructuralItemKind::StepEffect
+        )
     }
 
     pub fn proof(&self) -> &Proof {
@@ -1119,7 +1127,7 @@ fn validate_structural_clauses(
                             "`invariant` is only supported at `loop` targets",
                         ));
                     }
-                    if item.kind() == StructuralItemKind::Effect {
+                    if item.is_effect_kind() {
                         return Err(ClickError::new(
                             "`immutable` and `mutable` are only supported at `loop` targets inside structural proof blocks",
                         ));
@@ -1130,7 +1138,7 @@ fn validate_structural_clauses(
         }
 
         for item in structural_clause.items() {
-            if item.kind() == StructuralItemKind::Effect {
+            if item.is_effect_kind() {
                 if !item.proof().is_auto_or_frame_tactic() {
                     return Err(ClickError::new(
                         "`immutable` and `mutable` structural clauses must use `by auto;` or `by frame;`",
@@ -1201,6 +1209,12 @@ struct LabeledCheck {
     label: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LoopEffectSpan {
+    Whole,
+    Step,
+}
+
 impl AnnotationLowerer<'_> {
     fn lower_statement(
         &mut self,
@@ -1216,7 +1230,7 @@ impl AnnotationLowerer<'_> {
                 let lowered_body = self.lower_statement(body)?;
                 let loop_asserts = self.loop_assert_checks(loop_index);
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
-                let effect_checks = self.loop_effect_checks(loop_index)?;
+                let effect_checks = self.loop_effect_checks(loop_index, body)?;
                 let lowered_loop = c_while_with_invariant_and_effect_checks(
                     condition.to_megakernel_expression(),
                     Vec::new(),
@@ -1478,30 +1492,61 @@ impl AnnotationLowerer<'_> {
             .collect()
     }
 
-    fn loop_effect_checks(&self, loop_index: usize) -> Result<Vec<CLoopEffectCheck>, ClickError> {
+    fn loop_effect_checks(
+        &self,
+        loop_index: usize,
+        body: &syntax::C0Statement,
+    ) -> Result<Vec<CLoopEffectCheck>, ClickError> {
+        let modified_locals = c0_loop_modified_locals(body);
         self.structural_clauses
             .iter()
             .filter(|clause| clause.target() == &StructuralTarget::Loop(loop_index))
             .flat_map(StructuralClause::items)
-            .filter(|item| item.kind() == StructuralItemKind::Effect)
+            .filter(|item| item.is_effect_kind())
             .enumerate()
             .map(|(item_index, item)| {
                 let effect = item
                     .effect()
                     .expect("effect structural item should contain an effect");
-                let lowered = self.lower_loop_effect(effect).map_err(|message| {
-                    ClickError::new(format!("loop {loop_index} effect {item_index}: {message}"))
-                })?;
+                let span = match item.kind() {
+                    StructuralItemKind::Effect => LoopEffectSpan::Whole,
+                    StructuralItemKind::StepEffect => LoopEffectSpan::Step,
+                    _ => unreachable!("loop effect filter should only include effect items"),
+                };
+                let lowered = self
+                    .lower_loop_effect(effect, span, &modified_locals)
+                    .map_err(|message| {
+                        ClickError::new(format!("loop {loop_index} effect {item_index}: {message}"))
+                    })?;
                 let context = match effect {
-                    Effect::Immutable => format!("loop {loop_index} immutable {item_index}"),
-                    Effect::Mutable(_) => format!("loop {loop_index} mutable {item_index}"),
+                    Effect::Immutable => match span {
+                        LoopEffectSpan::Whole => {
+                            format!("loop {loop_index} immutable {item_index}")
+                        }
+                        LoopEffectSpan::Step => {
+                            format!("loop {loop_index} step immutable {item_index}")
+                        }
+                    },
+                    Effect::Mutable(_) => match span {
+                        LoopEffectSpan::Whole => {
+                            format!("loop {loop_index} mutable {item_index}")
+                        }
+                        LoopEffectSpan::Step => {
+                            format!("loop {loop_index} step mutable {item_index}")
+                        }
+                    },
                 };
                 Ok(CLoopEffectCheck::new(lowered, Some(context)))
             })
             .collect()
     }
 
-    fn lower_loop_effect(&self, effect: &Effect) -> Result<CLoopEffect, String> {
+    fn lower_loop_effect(
+        &self,
+        effect: &Effect,
+        span: LoopEffectSpan,
+        modified_locals: &BTreeSet<String>,
+    ) -> Result<CLoopEffect, String> {
         match effect {
             Effect::Immutable => Ok(CLoopEffect::Immutable),
             Effect::Mutable(segments) => segments
@@ -1512,6 +1557,15 @@ impl AnnotationLowerer<'_> {
                             "`mutable` inside `loop` expects current-state segments; `old(...)` is not supported here"
                                 .to_string(),
                         );
+                    }
+                    if span == LoopEffectSpan::Whole {
+                        let names = contract_segment_referenced_names(segment);
+                        if let Some(name) = names.iter().find(|name| modified_locals.contains(*name))
+                        {
+                            return Err(format!(
+                                "whole-loop `mutable` segment references loop-modified local `{name}`; use `step {{ ... }}` for iteration-relative effects or state a stable whole-loop range"
+                            ));
+                        }
                     }
                     Ok(CMemorySegment::new(
                         self.lower_current_invariant_c_expression(&segment.base)?,
@@ -1530,6 +1584,7 @@ fn structural_item_kind_label(kind: StructuralItemKind) -> &'static str {
         StructuralItemKind::Assert => "assert",
         StructuralItemKind::Invariant => "invariant",
         StructuralItemKind::Effect => "effect",
+        StructuralItemKind::StepEffect => "step effect",
     }
 }
 
@@ -1648,6 +1703,77 @@ fn count_statements(statement: &syntax::C0Statement) -> usize {
         } => 1 + count_statements(then_branch) + count_statements(else_branch),
         syntax::C0Statement::While { body, .. } => 1 + count_statements(body),
         _ => 1,
+    }
+}
+
+fn c0_loop_modified_locals(statement: &syntax::C0Statement) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    collect_c0_loop_modified_locals(statement, &mut names);
+    names
+}
+
+fn collect_c0_loop_modified_locals(statement: &syntax::C0Statement, names: &mut BTreeSet<String>) {
+    match statement {
+        syntax::C0Statement::Declare { .. }
+        | syntax::C0Statement::Return(_)
+        | syntax::C0Statement::Store { .. } => {}
+        syntax::C0Statement::Assign { name, .. } => {
+            names.insert(name.clone());
+        }
+        syntax::C0Statement::CallAssign { target, .. } => {
+            names.insert(target.clone());
+        }
+        syntax::C0Statement::Seq(first, second) => {
+            collect_c0_loop_modified_locals(first, names);
+            collect_c0_loop_modified_locals(second, names);
+        }
+        syntax::C0Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_c0_loop_modified_locals(then_branch, names);
+            collect_c0_loop_modified_locals(else_branch, names);
+        }
+        syntax::C0Statement::While { body, .. } => {
+            collect_c0_loop_modified_locals(body, names);
+        }
+    }
+}
+
+fn contract_segment_referenced_names(segment: &ContractSegment) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    collect_c_expression_referenced_names(&segment.base, &mut names);
+    collect_c_expression_referenced_names(&segment.start, &mut names);
+    collect_c_expression_referenced_names(&segment.end, &mut names);
+    names
+}
+
+fn collect_c_expression_referenced_names(expression: &CExpression, names: &mut BTreeSet<String>) {
+    match expression {
+        CExpression::Value(_) => {}
+        CExpression::Variable(name) => {
+            names.insert(name.clone());
+        }
+        CExpression::AddressOf(expression)
+        | CExpression::Not(expression)
+        | CExpression::Load(expression) => {
+            collect_c_expression_referenced_names(expression, names);
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Index(left, right) => {
+            collect_c_expression_referenced_names(left, names);
+            collect_c_expression_referenced_names(right, names);
+        }
     }
 }
 
@@ -3694,7 +3820,7 @@ impl Parser {
         self.expect(Token::LBrace)?;
         let mut items = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
-            items.push(self.parse_structural_item()?);
+            items.extend(self.parse_structural_items()?);
         }
         self.expect(Token::RBrace)?;
         if items.is_empty() {
@@ -3721,7 +3847,7 @@ impl Parser {
         }
     }
 
-    fn parse_structural_item(&mut self) -> Result<StructuralItem, ClickError> {
+    fn parse_structural_items(&mut self) -> Result<Vec<StructuralItem>, ClickError> {
         match self.next() {
             Some(Token::Ident(kind)) if kind == "invariant" || kind == "assert" => {
                 let item_kind = if kind == "invariant" {
@@ -3731,29 +3857,53 @@ impl Parser {
                 };
                 let proposition = self.parse_proposition()?;
                 let proof = self.parse_by_clause()?;
-                Ok(StructuralItem {
+                Ok(vec![StructuralItem {
                     kind: item_kind,
                     claim: StructuralItemClaim::Proposition(proposition),
                     proof,
-                })
+                }])
             }
             Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" => {
                 let effect = self.parse_effect_after_keyword(kind)?;
                 let proof = self.parse_by_clause()?;
-                Ok(StructuralItem {
+                Ok(vec![StructuralItem {
                     kind: StructuralItemKind::Effect,
                     claim: StructuralItemClaim::Effect(effect),
                     proof,
-                })
+                }])
+            }
+            Some(Token::Ident(kind)) if kind == "step" => {
+                self.expect(Token::LBrace)?;
+                let mut items = Vec::new();
+                while self.peek() != Some(&Token::RBrace) {
+                    let effect_kind = self.expect_ident("step effect")?;
+                    if effect_kind != "immutable" && effect_kind != "mutable" {
+                        return Err(self.error(format!(
+                            "expected `immutable` or `mutable` inside `step`, got `{effect_kind}`"
+                        )));
+                    }
+                    let effect = self.parse_effect_after_keyword(effect_kind)?;
+                    let proof = self.parse_by_clause()?;
+                    items.push(StructuralItem {
+                        kind: StructuralItemKind::StepEffect,
+                        claim: StructuralItemClaim::Effect(effect),
+                        proof,
+                    });
+                }
+                self.expect(Token::RBrace)?;
+                if items.is_empty() {
+                    return Err(self.error("`step` block must contain at least one effect"));
+                }
+                Ok(items)
             }
             Some(Token::Ident(kind)) => Err(self.error(format!(
-                "expected `invariant`, `assert`, `immutable`, or `mutable`, got `{kind}`"
+                "expected `invariant`, `assert`, `immutable`, `mutable`, or `step`, got `{kind}`"
             ))),
             Some(token) => Err(self.error(format!(
-                "expected `invariant`, `assert`, `immutable`, or `mutable`, got {token:?}"
+                "expected `invariant`, `assert`, `immutable`, `mutable`, or `step`, got {token:?}"
             ))),
             None => Err(self.error(
-                "expected `invariant`, `assert`, `immutable`, or `mutable`, got end of input",
+                "expected `invariant`, `assert`, `immutable`, `mutable`, or `step`, got end of input",
             )),
         }
     }
@@ -4681,7 +4831,9 @@ mod tests {
                     invariant i >= 0 by auto;
                     invariant i <= 3 by auto;
                     mutable p[0..n] by auto;
-                    immutable by auto;
+                    step {
+                        immutable by auto;
+                    }
                 }
 
                 ensures result == 3 by auto;
@@ -4720,6 +4872,10 @@ mod tests {
             function.structural_clauses()[1].items()[3].effect(),
             Some(Effect::Immutable)
         ));
+        assert_eq!(
+            function.structural_clauses()[1].items()[3].kind(),
+            StructuralItemKind::StepEffect
+        );
     }
 
     #[test]
@@ -5453,7 +5609,9 @@ mod tests {
                 loop 0 {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
-                    mutable p[i..i + 1] by frame;
+                    step {
+                        mutable p[i..i + 1] by frame;
+                    }
                 }
                 ensures returns_n: result == n by auto;
             }
@@ -5464,6 +5622,47 @@ mod tests {
 
         assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
+    }
+
+    #[test]
+    fn loop_whole_mutable_rejects_loop_modified_local_in_segment() {
+        let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                    mutable p[i..i + 1] by frame;
+                }
+                ensures returns_n: result == n by auto;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+            .expect_err("whole-loop mutable footprint should reject loop-modified locals");
+
+        assert!(
+            error.message().contains("whole-loop `mutable` segment"),
+            "{}",
+            error.message()
+        );
+        assert!(error.message().contains("`i`"), "{}", error.message());
+        assert!(error.message().contains("step"), "{}", error.message());
     }
 
     #[test]
@@ -5489,7 +5688,9 @@ mod tests {
                 loop 0 {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
-                    mutable p[0..i + 1] by frame;
+                    step {
+                        mutable p[0..i + 1] by frame;
+                    }
                 }
                 ensures returns_n: result == n by auto;
             }
@@ -5563,7 +5764,9 @@ mod tests {
                 loop 0 {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
-                    mutable p[i..i + 1], q[i..i + 1] by frame;
+                    step {
+                        mutable p[i..i + 1], q[i..i + 1] by frame;
+                    }
                 }
                 ensures returns_n: result == n by auto;
             }
@@ -5776,7 +5979,9 @@ mod tests {
                     invariant forall (int32 k) {
                         0 <= k and k < n implies src[k] == old(src[k])
                     } by auto;
-                    mutable dst[i..i + 1] by auto;
+                    step {
+                        mutable dst[i..i + 1] by auto;
+                    }
                 }
                 ensures returns_n: result == n by auto;
                 ensures copied_segment: forall (int32 k) {

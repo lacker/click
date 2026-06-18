@@ -1,9 +1,10 @@
-# fill_n declares its per-iteration mutable segment
+# fill_n declares its per-step mutable segment
 
-This checks that a symbolic pointer-writing loop can prove a per-iteration
-effect clause. The function-level mutable clause talks about the whole call;
-this loop-level clause talks about one loop body step under the current
-invariants and true loop condition, so it can use `i` in the segment bounds.
+This checks that a symbolic pointer-writing loop can prove an explicit
+one-body-step effect clause. Direct loop-level mutable clauses talk about the
+whole loop span; the `step` block talks about one loop body step under the
+current invariants and true loop condition, so it can use `i` in the segment
+bounds.
 
 ```c filename=fill_n_loop_mutable_segment.c
 int32 fill_n_loop_mutable_segment(int32 p[], int32 n) {
@@ -27,7 +28,9 @@ int32 fill_n_loop_mutable_segment(int32 p[], int32 n) {
     loop 0 {
         invariant i >= 0 by auto;
         invariant i <= n by auto;
-        mutable p[i..i + 1] by frame;
+        step {
+            mutable p[i..i + 1] by frame;
+        }
     }
     ensures returns_n: result == n by auto;
 }

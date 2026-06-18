@@ -270,7 +270,11 @@ statement 2 {
 loop 0 {
     invariant i >= 0 by auto;
     invariant i <= 3 by auto;
-    mutable p[i..i + 1] by frame;
+    mutable p[0..3] by frame;
+
+    step {
+        mutable p[i..i + 1] by frame;
+    }
 }
 ```
 
@@ -278,17 +282,18 @@ loop 0 {
 names the Nth `while` loop. `assert` is a one-shot ghost check at the
 structural target. `invariant` generates non-unrolling loop verification
 conditions: entry checks, one-body preservation checks, and exit facts from the
-invariant plus the false loop condition. `mutable` and `immutable` inside a
-`loop N` block are loop-level effect clauses: they check one body step under
-the current invariant facts and true loop condition. Loop-level `mutable`
-segments are evaluated at the loop head, so `mutable p[i..i + 1] by frame;`
-uses the current iteration's `i`. Function-level mutable clauses use
+invariant plus the false loop condition. Direct `mutable` and `immutable`
+inside a `loop N` block are whole-loop effect clauses: they say the dynamic
+execution of the loop mutates no externally visible memory outside the declared
+stable footprint. Whole-loop `mutable` segments may use stable names such as
+parameters, but cannot use locals modified by the loop; use an explicit
+`step { ... }` block for iteration-relative footprints such as
+`mutable p[i..i + 1] by frame;`. Function-level mutable clauses use
 function-entry parameter values. Loop-level effect clauses should usually use
 `by frame;`, though `by auto;` is still accepted for compatibility with the
-broader orchestration path. `immutable` means the loop body performs no
-externally visible memory mutation during that step. Failed proof attempts
-report the guarantee label, execution path, available requirements, path facts,
-and remaining proof obligations.
+broader orchestration path. Failed proof attempts report the guarantee label,
+execution path, available requirements, path facts, and remaining proof
+obligations.
 
 The current loop VC path handles scalar loop locals by assigning fresh symbolic
 values at the loop head. That is enough for proofs such as symbolic
@@ -353,11 +358,12 @@ The first memory-safety demos are fixed-size pointer loops:
   postcondition from an explicit quantified loop invariant.
 - `fill_n_mutable_segment(int32 p[], int32 n)` proves that a symbolic
   pointer-writing loop mutates only `p[0..n]`.
-- `fill_n_loop_mutable_segment(int32 p[], int32 n)` proves the analogous
-  loop-level effect clause for each loop body step, using the per-iteration
-  segment `p[i..i + 1]`.
+- `fill_n_loop_mutable_segment(int32 p[], int32 n)` proves an explicit
+  `step` effect clause for each loop body step, using the per-iteration segment
+  `p[i..i + 1]`.
 - `loop_frame_segment_shapes` covers additional loop-level `frame` shapes:
-  growing prefixes, shifted suffixes, and multi-segment mutable footprints.
+  whole-loop shifted suffixes plus step-relative growing prefixes and
+  multi-segment mutable footprints.
 - `disjoint_symbolic_unwritten_read` proves a symbolic old-memory read from
   `requires disjoint(p[i..i + 1], p[j..j + 1])`.
 - `count_to_three_loop_immutable()` proves a loop-level `immutable` clause for

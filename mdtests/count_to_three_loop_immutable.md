@@ -1,7 +1,8 @@
 # count_to_three loop body is externally immutable
 
 This checks that loop-level `immutable` permits stack-local loop updates while
-still proving that one loop body step does not mutate externally visible memory.
+still proving that the whole loop span does not mutate externally visible
+memory.
 
 ```c filename=count_to_three_loop_immutable.c
 int32 count_to_three_loop_immutable() {

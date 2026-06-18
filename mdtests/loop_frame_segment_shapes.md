@@ -1,8 +1,8 @@
 # loop frames support several segment shapes
 
-This checks loop-level `frame` clauses beyond the one-cell `p[i..i + 1]`
-pattern: a growing prefix, a shifted suffix, and a multi-segment mutable
-footprint.
+This checks loop-level `frame` clauses beyond the whole-loop `p[0..n]`
+pattern: explicit step-relative growing prefixes, stable whole-loop shifted
+suffixes, and step-relative multi-segment mutable footprints.
 
 ```c filename=fill_prefix.c
 int32 fill_prefix(int32 p[], int32 n) {
@@ -53,7 +53,9 @@ int32 fill_prefix(int32 p[], int32 n) {
     loop 0 {
         invariant i >= 0 by auto;
         invariant i <= n by auto;
-        mutable p[0..i + 1] by frame;
+        step {
+            mutable p[0..i + 1] by frame;
+        }
     }
     ensures returns_n: result == n by auto;
 }
@@ -78,7 +80,9 @@ int32 fill_two(int32 p[], int32 q[], int32 n) {
     loop 0 {
         invariant i >= 0 by auto;
         invariant i <= n by auto;
-        mutable p[i..i + 1], q[i..i + 1] by frame;
+        step {
+            mutable p[i..i + 1], q[i..i + 1] by frame;
+        }
     }
     ensures returns_n: result == n by auto;
 }
