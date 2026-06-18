@@ -121,15 +121,17 @@ by {
 ```
 
 This first proof-step slice uses an implicit proof state. `symbolic_execute`
-builds the C0 symbolic verification paths. `loop_vc(loop N)` validates the
-named loop's generated verification conditions. `frame(loop N)` validates and
-exposes the named loop's frame facts. `simp()` asks the final close step to use
-deterministic simplification for the claim. `close()` must be the final step;
-it packages the verified path as the guarantee theorem. Tactics invoke the
-megakernel's C symbolic-execution, frame-checking, simplification, and
-specification-checking axioms to prove the named guarantee. When a tactic can
-replay one of these deterministic scripts, the verified theorem records that
-script as its proof-step certificate.
+builds the C0 symbolic verification paths. `bounded_execute()` runs the
+deterministic bounded C0 executor for concrete-loop fallback proofs.
+`loop_vc(loop N)` validates the named loop's generated verification conditions.
+`frame(loop N)` validates and exposes the named loop's frame facts. `simp()`
+asks the final close step to use deterministic simplification for the claim.
+`close()` must be the final step; it packages the verified path as the
+guarantee theorem. Tactics invoke the megakernel's C symbolic-execution,
+bounded-execution, frame-checking, simplification, and specification-checking
+axioms to prove the named guarantee. When a tactic can replay one of these
+deterministic scripts, the verified theorem records that script as its
+proof-step certificate.
 
 ## C0 Status
 
@@ -250,7 +252,7 @@ resulting obligations. The intent is that future proof work should add named
 deterministic steps first, and let `auto` become a convenience wrapper around
 those steps. The first certificate path is in place: successful `auto` proofs
 try to attach a replayed proof-step script when today's deterministic steps can
-express the proof.
+express the proof, including bounded concrete-loop postcondition proofs.
 
 Function-level effect clauses are explicit and separate from postconditions:
 
@@ -414,8 +416,8 @@ can also prove post-state memory guarantees such as
 2. Improve fact management inside `auto`, especially using requirements,
    invariants, generated frame facts, and path facts to prove postconditions
    without bounded fallback.
-3. Expand proof-step coverage beyond symbolic execution, loop VCs, frame
-   checks, simplification, and close.
+3. Expand proof-step coverage beyond symbolic execution, bounded execution,
+   loop VCs, frame checks, simplification, and close.
 4. Broaden tactic expansion into deterministic proof steps, so more successful
    `auto` proofs leave replayable certificates.
 5. Grow C-native memory objects: local arrays, richer pointer ranges, and

@@ -212,11 +212,12 @@ pub enum Proof {
 /// A deterministic `.click` proof step.
 ///
 /// This is intentionally separate from `Tactic`: tactics may search, but proof
-/// steps should be stable and replayable. The first explicit proof steps will be
-/// added when `auto` starts emitting proof certificates.
+/// steps should be stable and replayable. Successful tactics can attach these
+/// steps as replayable proof certificates.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProofStep {
     SymbolicExecute,
+    BoundedExecute,
     LoopVc(usize),
     Frame(Option<ProofStepTarget>),
     Simp,
@@ -669,7 +670,7 @@ fn prove_claim_by_auto(
         claim,
         claim_label,
         function_environment,
-        auto_loop_verification_proof_step_candidates(function_block, claim),
+        bounded_execution_proof_step_candidates(claim),
     );
     Ok(with_proof_steps(theorems, proof_steps))
 }
@@ -859,10 +860,17 @@ fn prove_claim_by_simp(
 #[derive(Default)]
 struct ProofStepReplayState {
     execution: Option<crate::megakernel::SymbolicCExecution>,
+    execution_mode: Option<ProofStepExecutionMode>,
     loop_vcs: BTreeSet<usize>,
     frames: BTreeSet<Option<ProofStepTarget>>,
     simp: bool,
     closed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProofStepExecutionMode {
+    Verification,
+    Bounded,
 }
 
 fn prove_claim_by_steps(
@@ -892,12 +900,12 @@ fn prove_claim_by_steps(
     for (step_index, step) in steps.iter().enumerate() {
         match step {
             ProofStep::SymbolicExecute => {
-                if replay.execution.is_some() {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `symbolic_execute` was already run"
-                    )));
-                }
-                replay.execution = Some(
+                set_replay_execution(
+                    &mut replay,
+                    ProofStepExecutionMode::Verification,
+                    claim_label,
+                    step_index,
+                    "symbolic_execute",
                     prove_symbolic_c_function_verification_paths_with_environment(
                         state.clone(),
                         function.clone(),
@@ -905,10 +913,27 @@ fn prove_claim_by_steps(
                         assumptions.clone(),
                         function_environment.clone(),
                     ),
-                );
+                )?;
+            }
+            ProofStep::BoundedExecute => {
+                set_replay_execution(
+                    &mut replay,
+                    ProofStepExecutionMode::Bounded,
+                    claim_label,
+                    step_index,
+                    "bounded_execute",
+                    prove_symbolic_c_function_execution_paths_with_environment(
+                        state.clone(),
+                        function.clone(),
+                        arguments.clone(),
+                        assumptions.clone(),
+                        function_environment.clone(),
+                    ),
+                )?;
             }
             ProofStep::LoopVc(loop_index) => {
                 require_step_execution(&replay, claim_label, step_index, "loop_vc")?;
+                require_verification_execution(&replay, claim_label, step_index, "loop_vc")?;
                 validate_loop_step_target(parsed_function, *loop_index, claim_label, step_index)?;
                 validate_loop_vc_step(
                     replay.execution.as_ref().expect("execution should exist"),
@@ -920,6 +945,7 @@ fn prove_claim_by_steps(
             }
             ProofStep::Frame(target) => {
                 require_step_execution(&replay, claim_label, step_index, "frame")?;
+                require_verification_execution(&replay, claim_label, step_index, "frame")?;
                 validate_frame_step_target(
                     function_block,
                     parsed_function,
@@ -947,10 +973,14 @@ fn prove_claim_by_steps(
                 })?;
                 return prove_claim_from_steps_execution(
                     execution,
+                    replay
+                        .execution_mode
+                        .expect("close should have an execution mode"),
                     source_path,
                     function_block,
                     claim,
                     claim_label,
+                    function_environment,
                     parsed_function.parameters(),
                     &function,
                     &state,
@@ -972,6 +1002,24 @@ fn prove_claim_by_steps(
     unreachable!("closed proof-step scripts return from the close step")
 }
 
+fn set_replay_execution(
+    replay: &mut ProofStepReplayState,
+    mode: ProofStepExecutionMode,
+    claim_label: &str,
+    step_index: usize,
+    step_name: &str,
+    execution: crate::megakernel::SymbolicCExecution,
+) -> Result<(), ClickError> {
+    if let Some(existing) = replay.execution_mode {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` cannot run after {existing:?} execution was already started"
+        )));
+    }
+    replay.execution = Some(execution);
+    replay.execution_mode = Some(mode);
+    Ok(())
+}
+
 fn require_step_execution(
     replay: &ProofStepReplayState,
     claim_label: &str,
@@ -981,6 +1029,20 @@ fn require_step_execution(
     if replay.execution.is_none() {
         return Err(ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: `{step_name}` requires `symbolic_execute()` first"
+        )));
+    }
+    Ok(())
+}
+
+fn require_verification_execution(
+    replay: &ProofStepReplayState,
+    claim_label: &str,
+    step_index: usize,
+    step_name: &str,
+) -> Result<(), ClickError> {
+    if replay.execution_mode != Some(ProofStepExecutionMode::Verification) {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` requires `symbolic_execute()` rather than `bounded_execute()`"
         )));
     }
     Ok(())
@@ -1065,10 +1127,12 @@ fn validate_frame_step_target(
 
 fn prove_claim_from_steps_execution(
     execution: &crate::megakernel::SymbolicCExecution,
+    execution_mode: ProofStepExecutionMode,
     source_path: &str,
     function_block: &FunctionBlock,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
+    function_environment: &CFunctionEnvironment,
     parameters: &[syntax::C0Parameter],
     function: &CFunction,
     state: &CState,
@@ -1142,13 +1206,32 @@ fn prove_claim_from_steps_execution(
             path_requirements,
             outcome.clone(),
         );
-        let theorem = prove_c_function_satisfies_specification_from_symbolic_path(
-            function.clone(),
-            specification.clone(),
-            Assumptions::new(),
-            path.facts(),
-            path.obligations(),
-        );
+        let theorem = match execution_mode {
+            ProofStepExecutionMode::Verification => {
+                prove_c_function_satisfies_specification_from_symbolic_path(
+                    function.clone(),
+                    specification.clone(),
+                    Assumptions::new(),
+                    path.facts(),
+                    path.obligations(),
+                )
+            }
+            ProofStepExecutionMode::Bounded => {
+                prove_c_function_satisfies_specification_with_environment(
+                    function.clone(),
+                    specification.clone(),
+                    Assumptions::new(),
+                    function_environment.clone(),
+                )
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`proof steps` failed for `{claim_label}` path {path_index}: bounded execution did not satisfy the packaged specification\n  available requirements: {}\n  path facts: {}",
+                        describe_propositions(&specification.requires()),
+                        describe_facts(path.facts())
+                    ))
+                })?
+            }
+        };
 
         verified.push(VerifiedCTheorem {
             source_path: source_path.to_string(),
@@ -1230,6 +1313,16 @@ fn frame_proof_step_candidates() -> Vec<Vec<ProofStep>> {
         ProofStep::Frame(None),
         ProofStep::Close,
     ]]
+}
+
+fn bounded_execution_proof_step_candidates(claim: &FunctionClaimRef<'_>) -> Vec<Vec<ProofStep>> {
+    match claim {
+        FunctionClaimRef::Ensure(_, _) => vec![
+            vec![ProofStep::BoundedExecute, ProofStep::Simp, ProofStep::Close],
+            vec![ProofStep::BoundedExecute, ProofStep::Close],
+        ],
+        FunctionClaimRef::Effect(_, _) => Vec::new(),
+    }
 }
 
 fn auto_loop_verification_proof_step_candidates(
@@ -4609,6 +4702,10 @@ impl Parser {
                 self.expect_empty_step_args(&name)?;
                 ProofStep::SymbolicExecute
             }
+            "bounded_execute" => {
+                self.expect_empty_step_args(&name)?;
+                ProofStep::BoundedExecute
+            }
             "loop_vc" => {
                 self.expect(Token::LParen)?;
                 let target = self.parse_proof_step_target()?;
@@ -5337,6 +5434,18 @@ mod tests {
     }
 
     #[test]
+    fn parses_bounded_execute_proof_step() {
+        let source = FILL3_CLICK.replace("by auto;", "by { bounded_execute(); close(); }");
+        let file = parse(&source).expect("bounded proof-step script should parse");
+        let ensure = &file.function_blocks()[0].ensures()[0];
+
+        assert_eq!(
+            ensure.proof().steps(),
+            Some([ProofStep::BoundedExecute, ProofStep::Close].as_slice())
+        );
+    }
+
+    #[test]
     fn parses_unnamed_ensure_clause() {
         let source =
             FILL3_CLICK.replace("ensures returns_second: result == 2", "ensures result == 2");
@@ -5586,6 +5695,73 @@ mod tests {
 
         assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].proof_kind(), ProofKind::ProofSteps);
+    }
+
+    #[test]
+    fn auto_certificate_replays_for_bounded_execution() {
+        let c_source = r#"
+            int32 fill3_array_loop(int32 p[3]) {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return p[2];
+            }
+        "#;
+        let auto_click_source = r#"
+            verifying "fill3_array_loop.c";
+
+            int32 fill3_array_loop(int32 p[3]) {
+                requires valid_range(p, 12);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= 3 by auto;
+                }
+                ensures writes_third: p[2] == 2 by auto;
+            }
+        "#;
+
+        let auto_verified =
+            verify_c0_sources(auto_click_source, &[("fill3_array_loop.c", c_source)])
+                .expect("bounded auto proof should verify");
+        let expected_steps = [ProofStep::BoundedExecute, ProofStep::Simp, ProofStep::Close];
+
+        assert_eq!(auto_verified.len(), 1);
+        assert_eq!(auto_verified[0].proof_kind(), ProofKind::BoundedExecution);
+        assert_eq!(
+            auto_verified[0].proof_steps(),
+            Some(expected_steps.as_slice())
+        );
+
+        let explicit_click_source = r#"
+            verifying "fill3_array_loop.c";
+
+            int32 fill3_array_loop(int32 p[3]) {
+                requires valid_range(p, 12);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= 3 by auto;
+                }
+                ensures writes_third: p[2] == 2 by {
+                    bounded_execute();
+                    simp();
+                    close();
+                }
+            }
+        "#;
+
+        let explicit_verified =
+            verify_c0_sources(explicit_click_source, &[("fill3_array_loop.c", c_source)])
+                .expect("bounded auto certificate should replay as explicit proof steps");
+
+        assert_eq!(explicit_verified.len(), 1);
+        assert_eq!(explicit_verified[0].proof_kind(), ProofKind::ProofSteps);
+        assert_eq!(
+            explicit_verified[0].proof_steps(),
+            Some(expected_steps.as_slice())
+        );
     }
 
     #[test]
