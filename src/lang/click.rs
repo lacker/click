@@ -11,10 +11,11 @@ use crate::lang::c::syntax::{self, C0Expression, C0Type};
 use crate::megakernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CExpression, CFunction,
     CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
-    CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemorySegment, CProposition, CState,
-    CStatement, CValue, ConditionTerm, PathFact, Pointer, PointerOffsetTerm, ProofObligation,
-    Proposition, Sort, Term, Theorem, Variable, c_function, c_function_specification,
-    c_labeled_assert, c_pointer_value, c_seq, c_while_with_invariant_and_effect_checks,
+    CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CProposition,
+    CState, CStatement, CValue, ConditionTerm, PathFact, Pointer, PointerOffsetTerm,
+    ProofObligation, Proposition, Sort, Term, Theorem, Variable, c_function,
+    c_function_specification, c_labeled_assert, c_pointer_value, c_seq,
+    c_while_with_invariant_and_effect_checks,
     prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
@@ -56,9 +57,7 @@ pub enum Requirement {
         bytes: RangeBytes,
     },
     ValidRangeSegment {
-        name: String,
-        start: RangeBytes,
-        end: RangeBytes,
+        segment: ContractSegment,
     },
     Disjoint {
         left: ContractSegment,
@@ -1120,7 +1119,7 @@ fn validate_frame_step_target(
         None | Some(ProofStepTarget::Function) => {
             if matches!(claim, FunctionClaimRef::Ensure(_, _)) {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `frame()` proves function-level effect claims; use `frame(loop N)` to use loop frame facts in an `ensures` proof"
+                    "`{claim_label}` proof step {step_index}: `frame()` proves function-level effect claims; use `frame(loop N)` to use loop effect summaries in an `ensures` proof"
                 )));
             }
             Ok(())
@@ -1421,7 +1420,7 @@ fn auto_loop_verification_proof_step_candidates(
             .map(ProofStep::LoopVc),
     );
     base.extend(
-        loop_frame_targets(function_block)
+        loop_effect_summary_targets(function_block)
             .into_iter()
             .map(|loop_index| ProofStep::Frame(Some(ProofStepTarget::Loop(loop_index)))),
     );
@@ -1459,7 +1458,7 @@ fn loop_step_targets(function_block: &FunctionBlock) -> BTreeSet<usize> {
         .collect()
 }
 
-fn loop_frame_targets(function_block: &FunctionBlock) -> BTreeSet<usize> {
+fn loop_effect_summary_targets(function_block: &FunctionBlock) -> BTreeSet<usize> {
     function_block
         .structural_clauses()
         .iter()
@@ -1806,12 +1805,12 @@ fn validate_structural_clauses(
             if item.is_effect_kind() {
                 if !item.proof().is_auto_or_frame_tactic() {
                     return Err(ClickError::new(
-                        "`immutable` and `mutable` structural clauses must use `by auto;` or `by frame;`",
+                        "`immutable` and `mutable` structural clauses must use the default prover, `by auto;`, or `by frame;`",
                     ));
                 }
             } else if !item.proof().is_auto_tactic() {
                 return Err(ClickError::new(
-                    "`assert` and `invariant` structural clauses must use exactly `by auto;` in this first slice",
+                    "`assert` and `invariant` structural clauses must use the default prover or `by auto;` in this first slice",
                 ));
             }
             if item.kind() == StructuralItemKind::Assert
@@ -2445,21 +2444,11 @@ fn initial_call(
     requires: &[Requirement],
     parameters: &[syntax::C0Parameter],
 ) -> Result<(CState, Vec<CExpression>, Vec<Proposition>), ClickError> {
-    let mut valid_ranges = BTreeMap::new();
-    for requirement in requires {
-        if let Some((name, bytes)) = concrete_valid_range_block(requirement)? {
-            valid_ranges.insert(name, bytes);
-        }
-    }
-    let mut memory = CMemory::new();
     let mut arguments = Vec::new();
 
     for parameter in parameters {
         match parameter.c_type() {
             C0Type::Int32Pointer => {
-                if let Some(bytes) = valid_ranges.get(parameter.name()) {
-                    memory = memory.with_block(parameter.name(), *bytes);
-                }
                 arguments.push(c_pointer_value(Pointer {
                     block: parameter.name().to_string(),
                     offset: PointerOffsetTerm::Constant(0),
@@ -2469,6 +2458,23 @@ fn initial_call(
                 arguments.push(CExpression::Value(CValue::Int32(
                     Bitvector32Term::Variable(Variable(arguments.len() as u64)),
                 )));
+            }
+        }
+    }
+
+    let mut valid_ranges = BTreeMap::new();
+    for requirement in requires {
+        if let Some((name, bytes)) =
+            concrete_valid_range_block(requirement, parameters, &arguments)?
+        {
+            valid_ranges.insert(name, bytes);
+        }
+    }
+    let mut memory = CMemory::new();
+    for parameter in parameters {
+        if parameter.c_type() == C0Type::Int32Pointer {
+            if let Some(bytes) = valid_ranges.get(parameter.name()) {
+                memory = memory.with_block(parameter.name(), *bytes);
             }
         }
     }
@@ -2494,14 +2500,14 @@ fn initial_call(
 
 fn memory_with_symbolic_valid_range_cells(
     mut memory: CMemory,
-    valid_ranges: &BTreeMap<&str, u32>,
+    valid_ranges: &BTreeMap<String, u32>,
 ) -> CMemory {
     let base_memory = memory.clone();
     for (name, bytes) in valid_ranges {
         let mut offset: u32 = 0;
         while offset.checked_add(4).is_some_and(|end| end <= *bytes) {
             let pointer = Pointer {
-                block: (*name).to_string(),
+                block: name.clone(),
                 offset: PointerOffsetTerm::Constant(i64::from(offset)),
             };
             let value = CValue::Int32(Bitvector32Term::MemoryLoad(
@@ -2553,34 +2559,40 @@ fn valid_range_requirement_prop(
 
 fn requirement_valid_range_name(requirement: &Requirement) -> Option<&str> {
     match requirement {
-        Requirement::ValidRange { name, .. } | Requirement::ValidRangeSegment { name, .. } => {
-            Some(name)
-        }
-        Requirement::Disjoint { .. } | Requirement::Proposition(_) => None,
+        Requirement::ValidRange { name, .. } => Some(name),
+        Requirement::ValidRangeSegment { .. }
+        | Requirement::Disjoint { .. }
+        | Requirement::Proposition(_) => None,
     }
 }
 
 fn concrete_valid_range_block(
     requirement: &Requirement,
-) -> Result<Option<(&str, u32)>, ClickError> {
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Result<Option<(String, u32)>, ClickError> {
     match requirement {
         Requirement::ValidRange { name, bytes } => {
-            Ok(range_bytes_constant(bytes).map(|bytes| (name.as_str(), bytes)))
+            Ok(range_bytes_constant(bytes).map(|bytes| (name.clone(), bytes)))
         }
-        Requirement::ValidRangeSegment { name, start, end } => {
-            let (Some(start), Some(end)) = (range_bytes_constant(start), range_bytes_constant(end))
+        Requirement::ValidRangeSegment { segment } => {
+            let state = CState::new();
+            let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment)
             else {
                 return Ok(None);
             };
-            if start != 0 {
+            if segment.base.offset != PointerOffsetTerm::Constant(0)
+                || segment.start != Bitvector32Term::Constant(0)
+            {
                 return Ok(None);
             }
-            let bytes = end.checked_mul(4).ok_or_else(|| {
-                ClickError::new(format!(
-                    "`valid_range({name}[0..{end}])` overflows byte count"
-                ))
-            })?;
-            Ok(Some((name.as_str(), bytes)))
+            let Bitvector32Term::Constant(end) = segment.end else {
+                return Ok(None);
+            };
+            let bytes = end
+                .checked_mul(4)
+                .ok_or_else(|| ClickError::new("`valid_range` segment overflows byte count"))?;
+            Ok(Some((segment.base.block, bytes)))
         }
         Requirement::Disjoint { .. } | Requirement::Proposition(_) => Ok(None),
     }
@@ -2591,44 +2603,47 @@ fn valid_range_base_and_bytes(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> Result<(Pointer, Bitvector32Term), ClickError> {
-    let Some(name) = requirement_valid_range_name(requirement) else {
-        return Err(ClickError::new("expected valid_range requirement"));
-    };
-    let Some((_, argument)) = parameters
-        .iter()
-        .zip(arguments)
-        .find(|(parameter, _)| parameter.name() == name)
-    else {
-        return Err(ClickError::new(format!(
-            "`valid_range` names `{name}`, but no such parameter exists"
-        )));
-    };
-    let CExpression::Value(CValue::Pointer(base)) = argument else {
-        return Err(ClickError::new(format!(
-            "`valid_range` names `{name}`, but it is not a pointer parameter"
-        )));
-    };
     let parameter_values = parameter_values(parameters, arguments)?;
 
     match requirement {
-        Requirement::ValidRange { bytes, .. } => {
+        Requirement::ValidRange { name, bytes } => {
+            let Some((_, argument)) = parameters
+                .iter()
+                .zip(arguments)
+                .find(|(parameter, _)| parameter.name() == name)
+            else {
+                return Err(ClickError::new(format!(
+                    "`valid_range` names `{name}`, but no such parameter exists"
+                )));
+            };
+            let CExpression::Value(CValue::Pointer(base)) = argument else {
+                return Err(ClickError::new(format!(
+                    "`valid_range` names `{name}`, but it is not a pointer parameter"
+                )));
+            };
             Ok((base.clone(), lower_range_bytes(bytes, &parameter_values)?))
         }
-        Requirement::ValidRangeSegment { start, end, .. } => {
-            if let (Some(start), Some(end)) =
-                (range_bytes_constant(start), range_bytes_constant(end))
+        Requirement::ValidRangeSegment { segment } => {
+            let state = CState::new();
+            let segment = evaluate_requirement_segment(parameters, arguments, &state, segment)
+                .map_err(|message| {
+                    ClickError::new(format!("could not lower `valid_range` segment: {message}"))
+                })?;
+            if let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
+                (&segment.start, &segment.end)
             {
                 if end < start {
                     return Err(ClickError::new(format!(
-                        "`valid_range({name}[{start}..{end}])` has an end before its start"
+                        "`valid_range` segment has an end before its start: {start}..{end}"
                     )));
                 }
             }
-            let start = lower_range_bytes(start, &parameter_values)?;
-            let end = lower_range_bytes(end, &parameter_values)?;
-            let element_count = bitvector32_subtract(end, start.clone());
+            let element_count = bitvector32_subtract(segment.end.clone(), segment.start.clone());
             let bytes = bitvector32_multiply(element_count, Bitvector32Term::Constant(4));
-            Ok((offset_pointer_by_int32_elements(base.clone(), start), bytes))
+            Ok((
+                offset_pointer_by_int32_elements(segment.base, segment.start),
+                bytes,
+            ))
         }
         Requirement::Proposition(_) => Err(ClickError::new("expected valid_range requirement")),
         Requirement::Disjoint { .. } => Err(ClickError::new("expected valid_range requirement")),
@@ -3184,7 +3199,7 @@ fn simp_proposition(proposition: &Proposition, assumptions: &Assumptions) -> Sim
         | Proposition::CMemoryValidRange { .. }
         | Proposition::CMemoryDisjoint { .. }
         | Proposition::CMemoryMutatesOnly { .. }
-        | Proposition::CMemoryMutatesOnlyRanges { .. }
+        | Proposition::CMemoryEffectSummary { .. }
         | Proposition::CWhileInvariantRule { .. } => {
             if assumptions.proves(proposition) {
                 SimpProposition::True
@@ -3535,7 +3550,7 @@ fn prove_mutation_footprint(
         .memory()
         .differing_cell_pointers(pre_state.memory())
         .into_iter()
-        .filter(is_frame_relevant_pointer)
+        .filter(is_effect_relevant_pointer)
         .collect::<BTreeSet<_>>();
     writes.extend(
         path_facts
@@ -3547,7 +3562,7 @@ fn prove_mutation_footprint(
             .flatten()
             .cloned(),
     );
-    writes.retain(is_frame_relevant_pointer);
+    writes.retain(is_effect_relevant_pointer);
 
     for pointer in &writes {
         if !segments
@@ -3565,10 +3580,37 @@ fn prove_mutation_footprint(
         }
     }
 
+    let effect_summary_ranges = path_facts
+        .iter()
+        .filter_map(|fact| match fact.proposition() {
+            Proposition::CMemoryEffectSummary { mutable_ranges, .. } => {
+                Some(mutable_ranges.as_slice())
+            }
+            _ => None,
+        })
+        .flatten()
+        .filter(|range| is_effect_relevant_pointer(range.base()));
+
+    for range in effect_summary_ranges {
+        if !segments
+            .iter()
+            .any(|segment| segment_contains_range(segment, range, &assumptions))
+        {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` failed on path {path_index}: effect summary range {range:?} is outside the mutable footprint\n  mutable segments: {:?}\n  evaluated segments: {segments:?}\n  path facts: {}",
+                segments
+                    .iter()
+                    .map(|segment| &segment.source)
+                    .collect::<Vec<_>>(),
+                describe_facts(path_facts)
+            )));
+        }
+    }
+
     Ok(())
 }
 
-fn is_frame_relevant_pointer(pointer: &Pointer) -> bool {
+fn is_effect_relevant_pointer(pointer: &Pointer) -> bool {
     !pointer.block.starts_with("local:") && !pointer.block.starts_with("havoc:")
 }
 
@@ -3702,6 +3744,26 @@ fn segment_contains_pointer(
         true,
     )) && assumptions.proves(&Proposition::ConditionIs(
         signed_less_than(index, segment.end.clone()),
+        true,
+    ))
+}
+
+fn segment_contains_range(
+    segment: &EvaluatedContractSegment,
+    range: &CMemoryRange,
+    assumptions: &Assumptions,
+) -> bool {
+    let Some(base_index) = pointer_element_index_from_base(range.base(), &segment.base) else {
+        return false;
+    };
+    let range_start = bitvector32_add(base_index.clone(), range.start().clone());
+    let range_end = bitvector32_add(base_index, range.end().clone());
+
+    assumptions.proves(&Proposition::ConditionIs(
+        signed_less_equal(segment.start.clone(), range_start),
+        true,
+    )) && assumptions.proves(&Proposition::ConditionIs(
+        signed_less_equal(range_end, segment.end.clone()),
         true,
     ))
 }
@@ -4407,18 +4469,16 @@ impl Parser {
     fn parse_valid_range_requirement(&mut self) -> Result<Requirement, ClickError> {
         self.expect_ident_spelling("valid_range")?;
         self.expect(Token::LParen)?;
-        let name = self.expect_ident("range base name")?;
-        let requirement = if self.peek() == Some(&Token::LBracket) {
-            self.position += 1;
-            let start = self.parse_range_bytes()?;
-            self.expect(Token::DotDot)?;
-            let end = self.parse_range_bytes()?;
-            self.expect(Token::RBracket)?;
-            Requirement::ValidRangeSegment { name, start, end }
-        } else {
+        let requirement = if matches!(self.peek(), Some(Token::Ident(_)))
+            && self.peek_next() == Some(&Token::Comma)
+        {
+            let name = self.expect_ident("range base name")?;
             self.expect(Token::Comma)?;
             let bytes = self.parse_range_bytes()?;
             Requirement::ValidRange { name, bytes }
+        } else {
+            let segment = self.parse_current_contract_segment()?;
+            Requirement::ValidRangeSegment { segment }
         };
         self.expect(Token::RParen)?;
         Ok(requirement)
@@ -4524,7 +4584,7 @@ impl Parser {
                     StructuralItemKind::Assert
                 };
                 let proposition = self.parse_proposition()?;
-                let proof = self.parse_by_clause()?;
+                let proof = self.parse_proof_clause_or_default()?;
                 Ok(vec![StructuralItem {
                     kind: item_kind,
                     claim: StructuralItemClaim::Proposition(proposition),
@@ -4533,7 +4593,7 @@ impl Parser {
             }
             Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" => {
                 let effect = self.parse_effect_after_keyword(kind)?;
-                let proof = self.parse_by_clause()?;
+                let proof = self.parse_proof_clause_or_default()?;
                 Ok(vec![StructuralItem {
                     kind: StructuralItemKind::Effect,
                     claim: StructuralItemClaim::Effect(effect),
@@ -4551,7 +4611,7 @@ impl Parser {
                         )));
                     }
                     let effect = self.parse_effect_after_keyword(effect_kind)?;
-                    let proof = self.parse_by_clause()?;
+                    let proof = self.parse_proof_clause_or_default()?;
                     items.push(StructuralItem {
                         kind: StructuralItemKind::StepEffect,
                         claim: StructuralItemClaim::Effect(effect),
@@ -4591,7 +4651,7 @@ impl Parser {
                 return Err(self.error("expected `immutable` or `mutable`, got end of input"));
             }
         };
-        let proof = self.parse_by_clause()?;
+        let proof = self.parse_proof_clause_or_default()?;
         Ok(EffectClause { effect, proof })
     }
 
@@ -4620,7 +4680,7 @@ impl Parser {
             None
         };
         let ensure = self.parse_ensure_condition()?;
-        let proof = self.parse_by_clause()?;
+        let proof = self.parse_proof_clause_or_default()?;
 
         Ok(EnsureClause {
             name,
@@ -4778,6 +4838,15 @@ impl Parser {
         }
 
         Ok(Proof::Tactic(self.parse_tactic()?))
+    }
+
+    fn parse_proof_clause_or_default(&mut self) -> Result<Proof, ClickError> {
+        if self.peek_ident() == Some("by") {
+            self.parse_by_clause()
+        } else {
+            self.expect(Token::Semicolon)?;
+            Ok(Proof::Tactic(Tactic::Auto))
+        }
     }
 
     fn parse_proof_step(&mut self) -> Result<ProofStep, ClickError> {
@@ -5416,9 +5485,41 @@ mod tests {
         assert_eq!(
             function.requires(),
             &[Requirement::ValidRangeSegment {
-                name: "p".to_string(),
-                start: RangeBytes::Constant(0),
-                end: RangeBytes::Parameter("n".to_string()),
+                segment: ContractSegment {
+                    state: ContractSegmentState::Current,
+                    base: CExpression::Variable("p".to_string()),
+                    start: CExpression::Value(int32(0)),
+                    end: CExpression::Variable("n".to_string()),
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_valid_range_pointer_base_segment() {
+        let source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires valid_range((p + 1)[0..1]);
+                ensures result == 9 by auto;
+            }
+        "#;
+        let file = parse(source).expect("pointer-base valid_range should parse");
+        let function = &file.function_blocks()[0];
+
+        assert_eq!(
+            function.requires(),
+            &[Requirement::ValidRangeSegment {
+                segment: ContractSegment {
+                    state: ContractSegmentState::Current,
+                    base: CExpression::Add(
+                        Box::new(CExpression::Variable("p".to_string())),
+                        Box::new(CExpression::Value(int32(1))),
+                    ),
+                    start: CExpression::Value(int32(0)),
+                    end: CExpression::Value(int32(1)),
+                },
             }]
         );
     }
@@ -5464,7 +5565,7 @@ mod tests {
         assert!(
             error
                 .message()
-                .contains("`valid_range(p[3..1])` has an end before its start"),
+                .contains("`valid_range` segment has an end before its start"),
             "{}",
             error.message()
         );
@@ -5492,6 +5593,59 @@ mod tests {
         let ensure = &file.function_blocks()[0].ensures()[0];
 
         assert!(ensure.proof().is_auto_tactic());
+    }
+
+    #[test]
+    fn omitted_ensure_proof_uses_default_prover() {
+        let source = FILL3_CLICK.replace(" by auto", "");
+        let file = parse(&source).expect("sidecar should parse omitted proof clause");
+        let ensure = &file.function_blocks()[0].ensures()[0];
+
+        assert!(ensure.proof().is_auto_tactic());
+    }
+
+    #[test]
+    fn omitted_effect_proof_uses_default_prover() {
+        let source = r#"
+            verifying "zero.c";
+
+            int32 zero() {
+                immutable;
+                ensures returns_zero: result == 0;
+            }
+        "#;
+        let file = parse(source).expect("effect proof may be omitted");
+        let function = &file.function_blocks()[0];
+
+        assert!(function.effects()[0].proof().is_auto_tactic());
+        assert!(function.ensures()[0].proof().is_auto_tactic());
+    }
+
+    #[test]
+    fn omitted_structural_proofs_use_default_prover() {
+        let source = r#"
+            verifying "count.c";
+
+            int32 count() {
+                loop 0 {
+                    invariant i >= 0;
+                    mutable p[0..n];
+                    step {
+                        immutable;
+                    }
+                }
+
+                ensures result == 3;
+            }
+        "#;
+        let file = parse(source).expect("structural proof clauses may be omitted");
+        let function = &file.function_blocks()[0];
+        let items = function.structural_clauses()[0].items();
+
+        assert!(items[0].proof().is_auto_tactic());
+        assert!(items[1].proof().is_auto_tactic());
+        assert!(items[2].proof().is_auto_tactic());
+        assert!(function.ensures()[0].proof().is_auto_tactic());
     }
 
     #[test]
@@ -5780,6 +5934,30 @@ mod tests {
 
         assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].proof_kind(), ProofKind::ProofSteps);
+    }
+
+    #[test]
+    fn verifies_omitted_proof_with_default_prover() {
+        let c_source = r#"
+            int32 zero() {
+                return 0;
+            }
+        "#;
+        let click_source = r#"
+            verifying "zero.c";
+
+            int32 zero() {
+                immutable;
+                ensures returns_zero: result == 0;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("zero.c", c_source)])
+            .expect("omitted proof clauses should use the default prover");
+
+        assert_eq!(verified.len(), 2);
+        assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
+        assert_eq!(verified[1].proof_kind(), ProofKind::LoopVerification);
     }
 
     #[test]
@@ -6169,6 +6347,32 @@ mod tests {
         ));
         assert_eq!(verified[0].proof_kind(), ProofKind::Frame);
         assert_eq!(verified[1].proof_kind(), ProofKind::Frame);
+    }
+
+    #[test]
+    fn verifies_shifted_valid_range_and_mutable_segment() {
+        let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+        let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires valid_range((p + 1)[0..1]);
+                mutable (p + 1)[0..1] by frame;
+                ensures returns_written: result == 9 by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+            .expect("shifted valid_range should prove access and frame");
+
+        assert_eq!(verified.len(), 2);
+        assert_eq!(verified[0].proof_kind(), ProofKind::Frame);
+        assert_eq!(verified[1].proof_kind(), ProofKind::LoopVerification);
     }
 
     #[test]
@@ -6862,6 +7066,166 @@ mod tests {
     }
 
     #[test]
+    fn function_immutable_allows_nonwriting_loop_with_mutable_bound() {
+        let c_source = r#"
+            int32 count_pointer_bound(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "count_pointer_bound.c";
+
+            int32 count_pointer_bound(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                    mutable p[0..n] by frame;
+                }
+                immutable by frame;
+                ensures returns_n: result == n by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("count_pointer_bound.c", c_source)])
+            .expect("a mutable upper bound does not imply the loop actually writes memory");
+
+        assert_eq!(verified.len(), 2);
+        assert_eq!(verified[0].proof_kind(), ProofKind::Frame);
+        assert_eq!(verified[1].proof_kind(), ProofKind::LoopVerification);
+    }
+
+    #[test]
+    fn function_mutable_uses_loop_effect_summary() {
+        let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                    mutable p[0..n] by frame;
+                }
+                mutable p[0..n] by frame;
+                ensures returns_n: result == n by auto;
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+            .expect("function-level mutable should consume loop effect summary");
+
+        assert_eq!(verified.len(), 2);
+        assert_eq!(verified[0].proof_kind(), ProofKind::Frame);
+        assert_eq!(verified[1].proof_kind(), ProofKind::LoopVerification);
+    }
+
+    #[test]
+    fn function_mutable_rejects_loop_effect_outside_function_bound() {
+        let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                    mutable p[0..n] by frame;
+                }
+                mutable p[0..0] by frame;
+                ensures returns_n: result == n by auto;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+            .expect_err("function-level mutable should reject a wider loop effect summary");
+
+        assert!(
+            error.message().contains("effect summary range"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            error.message().contains("outside the mutable footprint"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn function_immutable_rejects_writing_loop_effect_summary() {
+        let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires valid_range(p[0..n]);
+                loop 0 {
+                    invariant i >= 0 by auto;
+                    invariant i <= n by auto;
+                    mutable p[0..n] by frame;
+                }
+                immutable by frame;
+                ensures returns_n: result == n by auto;
+            }
+        "#;
+
+        let error = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+            .expect_err("function-level immutable should reject a writing loop effect summary");
+
+        assert!(
+            error.message().contains("effect summary range"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
     fn structural_invariant_rejects_frame_tactic() {
         let c_source = r#"
             int32 count_to_three() {
@@ -6986,7 +7350,7 @@ mod tests {
         "#;
 
         let auto_verified = verify_c0_sources(auto_click_source, &[("copy_n.c", c_source)])
-            .expect("auto should prove the source-frame postcondition");
+            .expect("auto should prove the source-memory postcondition");
         let source_unchanged = auto_verified
             .iter()
             .find(|theorem| {
@@ -7197,7 +7561,7 @@ mod tests {
         };
         let initial_memory = memory_with_symbolic_valid_range_cells(
             CMemory::new().with_block("p", 12),
-            &std::collections::BTreeMap::from([("p", 12)]),
+            &std::collections::BTreeMap::from([("p".to_string(), 12)]),
         );
         let final_memory = initial_memory
             .clone()

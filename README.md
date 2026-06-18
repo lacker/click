@@ -97,16 +97,18 @@ Click uses five core proof-system words:
   cannot construct arbitrary theorems directly.
 - A **proof step** is a deterministic proof-language call that invokes an axiom
   or a fixed deterministic sequence of axioms.
-- A **proof** is a `by` clause: either a replayable sequence of proof steps, or
-  a tactic call that can later be expanded into proof steps.
+- A **proof** is a proof clause: either a replayable sequence of proof steps, or
+  a tactic call that can later be expanded into proof steps. Omitting the proof
+  clause asks Click to use its default prover, currently `auto`.
 - A **tactic** is a proof-language procedure that tries to generate a proof.
   Some tactics are deterministic; others, such as `auto`, may search. Proof
   steps should be stable and replayable.
 
 The current `.click` proof language exposes tactic calls plus a first linear
 proof-step script form. Function contracts attach `requires` clauses to the
-function and attach a `by` proof clause to each guarantee. A proof clause can
-say `by auto;`, `by simp;`, or `by frame;`, and can also use block form such as
+function. Each guarantee can attach an explicit `by` proof clause, or omit it
+to use the default prover. An explicit proof clause can say `by auto;`,
+`by simp;`, or `by frame;`, and can also use block form such as
 `by { auto; }`. Deterministic replay scripts use function-call-shaped proof
 steps:
 
@@ -126,11 +128,12 @@ deterministic bounded C0 executor for concrete-loop fallback proofs.
 `loop_vc(loop N)` validates the named loop's generated verification conditions.
 Bare `frame()` proves the current function-level `immutable` or `mutable`
 effect claim against the current execution mode. `frame(loop N)` validates and
-exposes the named loop's frame facts for later postcondition reasoning. `simp()`
-asks the final close step to use deterministic simplification for the claim.
+exposes the named loop's effect summary for later postcondition reasoning.
+`simp()` asks the final close step to use deterministic simplification for the
+claim.
 `close()` must be the final step; it packages the verified path as the guarantee
 theorem. Tactics invoke the megakernel's C symbolic-execution,
-bounded-execution, frame-checking, simplification, and specification-checking
+bounded-execution, effect-checking, simplification, and specification-checking
 axioms to prove the named guarantee. When a tactic can replay one of these
 deterministic scripts, the verified theorem records that script as its
 proof-step certificate.
@@ -195,17 +198,19 @@ verifying "fill3.c";
 
 int32 fill3(int32* p) {
     requires valid_range(p, 12);
-    ensures returns_second: result == 2 by auto;
+    ensures returns_second: result == 2;
 }
 ```
 
 The C0 signature in the `.click` file is checked against the C source and a
 mismatch is reported directly. Function-level `requires` clauses are shared by
-all guarantees. Each `ensures` clause is a separately proven guarantee with its
-own `by` proof clause. For now, `requires` supports `valid_range(pointer,
+all guarantees. Each `ensures` clause is a separately proven guarantee. Omitting
+an explicit proof clause uses the default prover; `by auto;` is still accepted
+as an explicit spelling. For now, `requires` supports `valid_range(pointer,
 bytes)` with concrete byte counts or small byte-count expressions such as
-`n * 4`, and `valid_range(pointer[start..end])` for half-open `int32` element
-segments such as `valid_range(p[0..n])`. It also supports
+`n * 4`, and `valid_range(base[start..end])` for half-open `int32` element
+segments such as `valid_range(p[0..n])` or
+`valid_range((p + 1)[0..1])`. It also supports
 `disjoint(left[start..end], right[start..end])` for half-open `int32` element
 segments. The `..` form is Click C-reference syntax, not C expression syntax.
 `requires` also supports Click propositions over parameters and literals.
@@ -225,14 +230,14 @@ and are not reused as proposition connectives. Proposition comparisons embed
 small C0 integer expressions over `result`, parameters, literals, parentheses,
 `+`, `-`, and post-state `p[i]` memory reads. Postconditions can use
 `old(expression)` to evaluate an expression in the pre-call state, which
-supports first-frame claims like `p[0] == old(p[0])`. The parser and kernel
+supports old-value claims like `p[0] == old(p[0])`. The parser and kernel
 representation accept `forall (int32 name) { ... }`. `auto` can prove simple
 quantified array-segment postconditions, including unchanged-memory cases and
-first frame facts outside a loop write footprint. `auto` also supports
+first old-value claims outside a loop write footprint. `auto` also supports
 proposition-level loop invariants, including bounded universal quantifiers over
 current-state array reads.
 
-Proof clauses currently support three tactics:
+Explicit proof clauses currently support three tactics:
 
 ```text
 by simp;
@@ -244,10 +249,11 @@ by auto;
 connectives, constant and reflexive integer comparisons, and small arithmetic
 forms such as `x + 0`. In this first version, `simp` is only accepted for
 straight-line function postconditions; it does not prove effects, generate loop
-verification conditions, infer frame facts, or instantiate quantified loop
+verification conditions, infer effect summaries, or instantiate quantified loop
 invariants. `frame` is deterministic effect checking for `immutable` and
 `mutable` clauses. It proves that the actual external writes stay inside the
-declared frame, and rejects ordinary `ensures` postconditions. `auto` is the
+declared mutable footprint, and rejects ordinary `ensures` postconditions.
+`auto` is the
 broader orchestration tactic: it runs the current symbolic-execution and loop-VC
 workflow, then uses the deterministic kernel reasoners to discharge the
 resulting obligations. The intent is that future proof work should add named
@@ -268,8 +274,9 @@ mutable dst[0..n], counter[0..1] by frame;
 `mutable pointer[start..end]` proves that every externally visible memory cell
 changed by the function falls inside the listed half-open `int32` element
 segment, evaluated against the function-entry parameter values. Multiple
-mutable segments form a union. Local stack bookkeeping and internal havoc
-markers are not part of this external frame check. `frame` checks each effect
+mutable segments form a union. This is an upper bound on writes, not a claim
+that every listed cell changed. Local stack bookkeeping and internal havoc
+markers are not part of this external effect check. `frame` checks each effect
 guarantee on every symbolic verification path. `auto` can also prove effect
 clauses, and additionally proves ordinary postconditions. That sidecar path
 parses C0 source, builds the requested initial memory, first tries loop
@@ -317,9 +324,9 @@ parameters, but cannot use locals modified by the loop; use an explicit
 `mutable p[i..i + 1] by frame;`. Function-level mutable clauses use
 function-entry parameter values. Loop-level effect clauses should usually use
 `by frame;`, though `by auto;` is still accepted for compatibility with the
-broader orchestration path. Failed proof attempts report the guarantee label,
-execution path, available requirements, path facts, and remaining proof
-obligations.
+broader orchestration path. Omitted structural proof clauses use the default
+prover. Failed proof attempts report the guarantee label, execution path,
+available requirements, path facts, and remaining proof obligations.
 
 The current loop VC path handles scalar loop locals by assigning fresh symbolic
 values at the loop head. That is enough for proofs such as symbolic
@@ -327,13 +334,13 @@ values at the loop head. That is enough for proofs such as symbolic
 safety with `valid_range(p[0..n])`. Pointer-writing loops now produce a fresh
 unknown heap state instead of implicitly preserving old memory. Written-segment
 postconditions can be proved with explicit quantified invariants such as
-`forall (int32 k) { 0 <= k and k < i implies p[k] == k }`. Old-memory frame
-proofs across pointer-writing loops can be proved with compact segment
-invariants stated directly with `old(...)`. Whole-loop `mutable` clauses now
-also become reusable frame facts: if a loop declares `mutable dst[0..n]` and a
-requirement proves `disjoint(dst[0..n], src[0..n])`, `auto` can use that frame
-fact to prove source-memory claims such as `src[k] == old(src[k])` without a
-handwritten source-frame invariant. Copy loops can prove quantified
+`forall (int32 k) { 0 <= k and k < i implies p[k] == k }`. Old-memory
+postconditions across pointer-writing loops can be proved with compact segment
+invariants stated directly with `old(...)`. Whole-loop `mutable` clauses also
+become reusable effect summaries: if a loop declares `mutable dst[0..n]` and a
+requirement proves `disjoint(dst[0..n], src[0..n])`, `auto` can use that summary
+to prove source-memory claims such as `src[k] == old(src[k])` without a
+handwritten source-invariance assertion. Copy loops can prove quantified
 destination-prefix facts such as `dst[k] == old(src[k])` using that idiom. The
 current fixed-size pointer demos continue to use bounded execution for some
 final memory facts.
@@ -381,16 +388,16 @@ The first memory-safety demos are fixed-size pointer loops:
   loop safety and `result == n` using a symbolic valid range.
 - `fill_n_segment_invariant(int32 p[], int32 n)` proves a quantified
   written-segment postcondition from a quantified loop invariant.
-- `fill_tail_keeps_first(int32 p[], int32 n)` proves an old-memory frame
+- `fill_tail_keeps_first(int32 p[], int32 n)` proves an old-memory
   postcondition from an explicit loop invariant using `old(...)`.
-- `fill_tail_old_prefix_segment(int32 p[], int32 n)` proves an old-memory frame
+- `fill_tail_old_prefix_segment(int32 p[], int32 n)` proves an old-memory
   postcondition from an explicit quantified loop invariant.
 - `fill_n_mutable_segment(int32 p[], int32 n)` proves that a symbolic
   pointer-writing loop mutates only `p[0..n]`.
 - `fill_n_loop_mutable_segment(int32 p[], int32 n)` proves an explicit
   `step` effect clause for each loop body step, using the per-iteration segment
   `p[i..i + 1]`.
-- `loop_frame_segment_shapes` covers additional loop-level `frame` shapes:
+- `loop_frame_segment_shapes` covers additional loop-level effect shapes:
   whole-loop shifted suffixes plus step-relative growing prefixes and
   multi-segment mutable footprints.
 - `disjoint_symbolic_unwritten_read` proves a symbolic old-memory read from
@@ -399,8 +406,8 @@ The first memory-safety demos are fixed-size pointer loops:
   a scalar loop that only updates stack-local state.
 - `copy_n_segment_invariant(int32 dst[], int32 src[], int32 n)` proves a
   symbolic copied segment with a quantified destination-prefix invariant plus a
-  whole-loop mutable frame and a disjoint source/destination requirement; the
-  source-frame guarantee uses an explicit proof-step script.
+  whole-loop mutable effect summary and a disjoint source/destination
+  requirement; the source-memory guarantee uses an explicit proof-step script.
 - `simp_postconditions(int32 x)` proves straight-line postconditions with
   deterministic local simplification.
 
@@ -413,17 +420,19 @@ can also prove post-state memory guarantees such as
 
 ## Near-Term Roadmap
 
-1. Continue broadening loop/function frame coverage for aliasing, pointer-base
-   expressions, richer segment arithmetic, and reusable frame facts.
+1. Continue broadening loop/function effect-summary coverage for aliasing,
+   pointer-base expressions, richer segment arithmetic, and reusable
+   writes-only summaries.
 2. Improve fact management inside `auto`, especially using requirements,
-   invariants, generated frame facts, and path facts to prove postconditions
+   invariants, generated effect summaries, and path facts to prove postconditions
    without bounded fallback.
 3. Expand proof-step coverage beyond symbolic execution, bounded execution,
-   loop VCs, frame checks, simplification, and close.
-4. Broaden tactic expansion into deterministic proof steps, so more successful
-   `auto` proofs leave replayable certificates.
+   loop VCs, effect checks, simplification, and close.
+4. Keep the default prover expandable: successful heuristic proofs should leave
+   replayable deterministic proof-step certificates wherever current proof steps
+   can express the argument.
 5. Grow C-native memory objects: local arrays, richer pointer ranges, and
-   clearer frame conditions.
+   clearer effect conditions.
 6. Add richer C integer coverage: unsigned operations, more widths, casts, and
    promotion rules.
 7. Expand modular function-contract reasoning so call sites can use proven

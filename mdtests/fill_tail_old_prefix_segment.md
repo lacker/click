@@ -1,8 +1,8 @@
-# fill_tail proves an old-value prefix frame
+# fill_tail proves an old-value prefix
 
-This checks that a memory-changing loop can prove an old-memory frame when that
-frame fact is stated as an explicit quantified invariant. The prefix is outside
-the mutated suffix.
+This checks that a memory-changing loop can prove an old-memory postcondition
+when that unchanged-memory fact is stated as an explicit quantified invariant.
+The prefix is outside the mutated suffix.
 
 ```c filename=fill_tail_old_prefix_segment.c
 int32 fill_tail_old_prefix_segment(int32 p[], int32 n) {

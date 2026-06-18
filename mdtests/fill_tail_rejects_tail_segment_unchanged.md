@@ -1,7 +1,7 @@
-# fill_tail rejects a false quantified tail frame
+# fill_tail rejects a false quantified tail preservation claim
 
-This checks that the loop frame proof does not claim preservation for a segment
-that overlaps the loop write footprint.
+This checks that the loop effect proof does not claim preservation for a
+segment that overlaps the loop write footprint.
 
 ```c filename=fill_tail_rejects_tail_segment_unchanged.c
 int32 fill_tail_rejects_tail_segment_unchanged(int32 p[], int32 n) {

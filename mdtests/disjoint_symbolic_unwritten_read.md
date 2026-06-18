@@ -1,6 +1,6 @@
 # disjoint proves a symbolic unwritten read
 
-This checks that `requires disjoint(...)` is consumed by frame reasoning. The
+This checks that `requires disjoint(...)` is consumed by effect reasoning. The
 function writes `p[i]` and reads `p[j]`; the postcondition follows because the
 two singleton ranges are declared disjoint.
 

@@ -398,10 +398,10 @@ pub enum Proposition {
         after: CMemory,
         pointers: Vec<Pointer>,
     },
-    CMemoryMutatesOnlyRanges {
+    CMemoryEffectSummary {
         before: CMemory,
         after: CMemory,
-        ranges: Vec<CMemoryRange>,
+        mutable_ranges: Vec<CMemoryRange>,
     },
     CWhileInvariantRule {
         state: CState,
@@ -1872,23 +1872,31 @@ impl Assumptions {
                         .iter()
                         .all(|pointer| pointers_proven_distinct(pointer, left_pointer, self))
             }
-            Proposition::CMemoryMutatesOnlyRanges {
+            Proposition::CMemoryEffectSummary {
                 before,
                 after,
-                ranges,
+                mutable_ranges,
             } => {
-                let matches_order =
-                    memory_matches_frame_endpoint(before, right_memory.as_ref(), left_pointer)
-                        && memory_matches_frame_endpoint(after, left_memory.as_ref(), left_pointer);
-                let matches_reverse =
-                    memory_matches_frame_endpoint(before, left_memory.as_ref(), left_pointer)
-                        && memory_matches_frame_endpoint(
-                            after,
-                            right_memory.as_ref(),
-                            left_pointer,
-                        );
+                let matches_order = memory_matches_effect_summary_endpoint(
+                    before,
+                    right_memory.as_ref(),
+                    left_pointer,
+                ) && memory_matches_effect_summary_endpoint(
+                    after,
+                    left_memory.as_ref(),
+                    left_pointer,
+                );
+                let matches_reverse = memory_matches_effect_summary_endpoint(
+                    before,
+                    left_memory.as_ref(),
+                    left_pointer,
+                ) && memory_matches_effect_summary_endpoint(
+                    after,
+                    right_memory.as_ref(),
+                    left_pointer,
+                );
                 (matches_order || matches_reverse)
-                    && self.ranges_proven_disjoint_from_pointer(ranges, left_pointer)
+                    && self.ranges_proven_disjoint_from_pointer(mutable_ranges, left_pointer)
             }
             _ => false,
         })
@@ -3591,7 +3599,11 @@ fn memories_match_for_pointer_load(left: &CMemory, right: &CMemory, pointer: &Po
                 .filter(|(cell_pointer, _)| cell_pointer.block == pointer.block))
 }
 
-fn memory_matches_frame_endpoint(expected: &CMemory, actual: &CMemory, pointer: &Pointer) -> bool {
+fn memory_matches_effect_summary_endpoint(
+    expected: &CMemory,
+    actual: &CMemory,
+    pointer: &Pointer,
+) -> bool {
     expected == actual || memories_match_for_pointer_load(expected, actual, pointer)
 }
 
@@ -6943,14 +6955,20 @@ fn execute_c_while_verification_paths(
         budget,
     )?;
     let top_state = havoc_loop_modified_locals(state, body, variables);
-    let whole_loop_effect_facts =
-        collect_whole_loop_effect_facts(state, &top_state, effect_checks, assumptions, budget)?;
+    let whole_loop_effect_summaries = collect_whole_loop_effect_summaries(
+        state,
+        &top_state,
+        effect_checks,
+        statement_may_write_memory(body),
+        assumptions,
+        budget,
+    )?;
     let preservation_summary = collect_loop_preservation_summary(
         &top_state,
         condition,
         invariant_checks,
         effect_checks,
-        &whole_loop_effect_facts,
+        &whole_loop_effect_summaries,
         body,
         assumptions,
         environment,
@@ -6983,8 +7001,8 @@ fn execute_c_while_verification_paths(
             false,
             budget,
         )? {
-            for fact in &whole_loop_effect_facts {
-                let _ = add_path_fact(&mut facts, assumptions, fact.clone());
+            for summary in &whole_loop_effect_summaries {
+                let _ = add_path_fact(&mut facts, assumptions, summary.clone());
             }
             append_required_proof_obligations(
                 &mut obligations,
@@ -7086,7 +7104,7 @@ fn collect_loop_preservation_summary(
     condition: &CExpression,
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
-    whole_loop_effect_facts: &[Proposition],
+    whole_loop_effect_summaries: &[Proposition],
     body: &CStatement,
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
@@ -7097,8 +7115,8 @@ fn collect_loop_preservation_summary(
     for (mut invariant_facts, invariant_obligations) in
         assume_invariant_checks(top_state, invariant_checks, assumptions, &[], &[], budget)?
     {
-        for fact in whole_loop_effect_facts {
-            let _ = add_path_fact(&mut invariant_facts, assumptions, fact.clone());
+        for summary in whole_loop_effect_summaries {
+            let _ = add_path_fact(&mut invariant_facts, assumptions, summary.clone());
         }
         for (condition_facts, condition_obligations) in assume_condition_truthiness(
             top_state,
@@ -7189,14 +7207,15 @@ struct EvaluatedMemorySegment {
     end: Bitvector32Term,
 }
 
-fn collect_whole_loop_effect_facts(
+fn collect_whole_loop_effect_summaries(
     before_state: &CState,
     after_state: &CState,
     effect_checks: &[CLoopEffectCheck],
+    include_mutable_summaries: bool,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<Proposition>> {
-    let mut facts = Vec::new();
+    let mut summaries = Vec::new();
     for check in effect_checks {
         if check.span() != CLoopEffectSpan::Whole {
             continue;
@@ -7204,6 +7223,10 @@ fn collect_whole_loop_effect_facts(
 
         let ranges = match check.effect() {
             CLoopEffect::Immutable => Vec::new(),
+            // A mutable clause is an upper bound. Without a memory-writing
+            // body, it is not evidence of mutation and should not block an
+            // enclosing immutable claim.
+            CLoopEffect::Mutable(_) if !include_mutable_summaries => continue,
             CLoopEffect::Mutable(segments) => {
                 let mut ranges = Vec::new();
                 let mut failed = false;
@@ -7226,13 +7249,13 @@ fn collect_whole_loop_effect_facts(
             }
         };
 
-        facts.push(Proposition::CMemoryMutatesOnlyRanges {
+        summaries.push(Proposition::CMemoryEffectSummary {
             before: before_state.memory().clone(),
             after: after_state.memory().clone(),
-            ranges,
+            mutable_ranges: ranges,
         });
     }
-    Ok(facts)
+    Ok(summaries)
 }
 
 fn collect_loop_effect_check_obligations(

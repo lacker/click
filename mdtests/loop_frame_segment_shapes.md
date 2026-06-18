@@ -1,6 +1,6 @@
-# loop frames support several segment shapes
+# loop effects support several segment shapes
 
-This checks loop-level `frame` clauses beyond the whole-loop `p[0..n]`
+This checks loop-level effect clauses beyond the whole-loop `p[0..n]`
 pattern: explicit step-relative growing prefixes, stable whole-loop shifted
 suffixes, and step-relative multi-segment mutable footprints.
 
