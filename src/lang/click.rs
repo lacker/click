@@ -457,6 +457,28 @@ impl Proof {
         self.is_auto_tactic() || self.is_frame_tactic()
     }
 
+    fn is_unfold_only_steps(&self) -> bool {
+        matches!(
+            self,
+            Self::Steps(steps)
+                if !steps.is_empty()
+                    && steps.iter().all(|step| matches!(step, ProofStep::Unfold(_)))
+        )
+    }
+
+    fn unfold_step_names(&self) -> Vec<String> {
+        match self {
+            Self::Steps(steps) => steps
+                .iter()
+                .filter_map(|step| match step {
+                    ProofStep::Unfold(name) => Some(name.clone()),
+                    _ => None,
+                })
+                .collect(),
+            Self::Tactic(_) => Vec::new(),
+        }
+    }
+
     pub fn tactic(&self) -> Option<&Tactic> {
         match self {
             Self::Tactic(tactic) => Some(tactic),
@@ -651,7 +673,19 @@ fn prove_claim_by_auto(
         function_block.requires(),
         parsed_function.parameters(),
     )?;
-    let function = annotated_function(function_block, parsed_function, &state, &arguments)?;
+    let requirement_propositions = requirements_with_structural_unfolds(
+        predicate_environment,
+        function_block,
+        &requirement_propositions,
+    )
+    .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
+    let function = annotated_function(
+        function_block,
+        parsed_function,
+        &state,
+        &arguments,
+        predicate_environment,
+    )?;
     let assumptions = assumptions_from_propositions(&requirement_propositions);
     let vc_execution = prove_symbolic_c_function_verification_paths_with_environment(
         state.clone(),
@@ -756,7 +790,19 @@ fn prove_claim_by_frame(
         function_block.requires(),
         parsed_function.parameters(),
     )?;
-    let function = annotated_function(function_block, parsed_function, &state, &arguments)?;
+    let requirement_propositions = requirements_with_structural_unfolds(
+        predicate_environment,
+        function_block,
+        &requirement_propositions,
+    )
+    .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
+    let function = annotated_function(
+        function_block,
+        parsed_function,
+        &state,
+        &arguments,
+        predicate_environment,
+    )?;
     let assumptions = assumptions_from_propositions(&requirement_propositions);
     let execution = prove_symbolic_c_function_verification_paths_with_environment(
         state.clone(),
@@ -820,7 +866,19 @@ fn prove_claim_by_simp(
         function_block.requires(),
         parsed_function.parameters(),
     )?;
-    let function = annotated_function(function_block, parsed_function, &state, &arguments)?;
+    let requirement_propositions = requirements_with_structural_unfolds(
+        predicate_environment,
+        function_block,
+        &requirement_propositions,
+    )
+    .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
+    let function = annotated_function(
+        function_block,
+        parsed_function,
+        &state,
+        &arguments,
+        predicate_environment,
+    )?;
     let proof_steps = certified_proof_steps(
         source_path,
         function_block,
@@ -962,7 +1020,19 @@ fn prove_claim_by_steps(
         function_block.requires(),
         parsed_function.parameters(),
     )?;
-    let function = annotated_function(function_block, parsed_function, &state, &arguments)?;
+    let requirement_propositions = requirements_with_structural_unfolds(
+        predicate_environment,
+        function_block,
+        &requirement_propositions,
+    )
+    .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
+    let function = annotated_function(
+        function_block,
+        parsed_function,
+        &state,
+        &arguments,
+        predicate_environment,
+    )?;
     let assumptions = assumptions_from_propositions(&requirement_propositions);
     let mut replay = ProofStepReplayState::default();
 
@@ -1464,6 +1534,34 @@ fn with_proof_steps(
     theorems
 }
 
+fn requirements_with_structural_unfolds(
+    predicate_environment: &PredicateEnvironment,
+    function_block: &FunctionBlock,
+    requirement_propositions: &[Proposition],
+) -> Result<Vec<Proposition>, String> {
+    let unfolded_predicates = structural_unfold_step_names(function_block);
+    unfold_available_predicate_facts(
+        predicate_environment,
+        &unfolded_predicates,
+        requirement_propositions,
+    )
+}
+
+fn structural_unfold_step_names(function_block: &FunctionBlock) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut names = Vec::new();
+    for clause in function_block.structural_clauses() {
+        for item in clause.items() {
+            for name in item.proof().unfold_step_names() {
+                if seen.insert(name.clone()) {
+                    names.push(name);
+                }
+            }
+        }
+    }
+    names
+}
+
 fn certified_proof_steps(
     source_path: &str,
     function_block: &FunctionBlock,
@@ -1912,9 +2010,15 @@ fn validate_structural_clauses(
                         "`immutable` and `mutable` structural clauses must use the default prover, `by auto;`, or `by frame;`",
                     ));
                 }
+            } else if item.kind() == StructuralItemKind::Invariant {
+                if !item.proof().is_auto_tactic() && !item.proof().is_unfold_only_steps() {
+                    return Err(ClickError::new(
+                        "`invariant` structural clauses must use the default prover, `by auto;`, or an unfold-only proof-step script such as `by { unfold(sorted_range); }` in this first slice",
+                    ));
+                }
             } else if !item.proof().is_auto_tactic() {
                 return Err(ClickError::new(
-                    "`assert` and `invariant` structural clauses must use the default prover or `by auto;` in this first slice",
+                    "`assert` structural clauses must use the default prover or `by auto;` in this first slice",
                 ));
             }
             if item.kind() == StructuralItemKind::Assert
@@ -1938,9 +2042,11 @@ fn annotated_function(
     parsed_function: &syntax::C0Function,
     entry_state: &CState,
     arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
 ) -> Result<CFunction, ClickError> {
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
+        predicate_environment,
         entry_state,
         entry_values: parameter_values(parsed_function.parameters(), arguments)?,
         quantified_values: BTreeMap::new(),
@@ -1963,6 +2069,7 @@ fn annotated_function(
 
 struct AnnotationLowerer<'a> {
     structural_clauses: &'a [StructuralClause],
+    predicate_environment: &'a PredicateEnvironment,
     entry_state: &'a CState,
     entry_values: BTreeMap<String, CValue>,
     quantified_values: BTreeMap<String, CValue>,
@@ -2061,16 +2168,24 @@ impl AnnotationLowerer<'_> {
             .filter(|item| item.kind() == StructuralItemKind::Invariant)
             .enumerate()
             .map(|(item_index, item)| {
+                let proposition = unfold_structural_invariant_proposition(
+                    self.predicate_environment,
+                    item.proposition()
+                        .expect("invariant structural item should contain a proposition"),
+                    item.proof(),
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "loop {loop_index} invariant {item_index}: {message}"
+                    ))
+                })?;
                 Ok(CLoopInvariantCheck::new(
-                    self.click_proposition_to_c_proposition(
-                        item.proposition()
-                            .expect("invariant structural item should contain a proposition"),
-                    )
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "loop {loop_index} invariant {item_index}: {message}"
-                        ))
-                    })?,
+                    self.click_proposition_to_c_proposition(&proposition)
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "loop {loop_index} invariant {item_index}: {message}"
+                            ))
+                        })?,
                     Some(format!("loop {loop_index} invariant {item_index} entry")),
                     Some(format!(
                         "loop {loop_index} invariant {item_index} preservation"
@@ -2349,6 +2464,379 @@ impl AnnotationLowerer<'_> {
                 .collect::<Result<Vec<_>, _>>()
                 .map(CLoopEffect::Mutable),
         }
+    }
+}
+
+fn unfold_structural_invariant_proposition(
+    predicate_environment: &PredicateEnvironment,
+    proposition: &ClickProposition,
+    proof: &Proof,
+) -> Result<ClickProposition, String> {
+    let unfolded_predicates = proof.unfold_step_names();
+    if unfolded_predicates.is_empty() {
+        return Ok(proposition.clone());
+    }
+
+    for name in &unfolded_predicates {
+        if predicate_environment.get(name).is_none() {
+            return Err(format!("unknown predicate `{name}`"));
+        }
+    }
+
+    let mut active = BTreeSet::new();
+    unfold_click_predicates_in_proposition_with_active(
+        predicate_environment,
+        &unfolded_predicates,
+        proposition,
+        &mut active,
+    )
+}
+
+fn unfold_click_predicates_in_proposition_with_active(
+    predicate_environment: &PredicateEnvironment,
+    unfolded_predicates: &[String],
+    proposition: &ClickProposition,
+    active: &mut BTreeSet<String>,
+) -> Result<ClickProposition, String> {
+    match proposition {
+        ClickProposition::PredicateCall { name, arguments }
+            if unfolded_predicates
+                .iter()
+                .any(|predicate| predicate == name) =>
+        {
+            if !active.insert(name.clone()) {
+                return Err(format!("recursive unfold of predicate `{name}`"));
+            }
+            let definition = predicate_environment
+                .get(name)
+                .ok_or_else(|| format!("unknown predicate `{name}`"))?;
+            let unfolded = instantiate_click_predicate_definition(definition, arguments)?;
+            let unfolded = unfold_click_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                &unfolded,
+                active,
+            )?;
+            active.remove(name);
+            Ok(unfolded)
+        }
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => Ok(ClickProposition::Comparison {
+            left: left.clone(),
+            operator: *operator,
+            right: right.clone(),
+        }),
+        ClickProposition::And(left, right) => Ok(ClickProposition::And(
+            Box::new(unfold_click_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                left,
+                active,
+            )?),
+            Box::new(unfold_click_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                right,
+                active,
+            )?),
+        )),
+        ClickProposition::Or(left, right) => Ok(ClickProposition::Or(
+            Box::new(unfold_click_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                left,
+                active,
+            )?),
+            Box::new(unfold_click_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                right,
+                active,
+            )?),
+        )),
+        ClickProposition::Not(body) => Ok(ClickProposition::Not(Box::new(
+            unfold_click_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                body,
+                active,
+            )?,
+        ))),
+        ClickProposition::Implies(left, right) => Ok(ClickProposition::Implies(
+            Box::new(unfold_click_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                left,
+                active,
+            )?),
+            Box::new(unfold_click_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                right,
+                active,
+            )?),
+        )),
+        ClickProposition::ForAll { c_type, name, body } => Ok(ClickProposition::ForAll {
+            c_type: *c_type,
+            name: name.clone(),
+            body: Box::new(unfold_click_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                body,
+                active,
+            )?),
+        }),
+        ClickProposition::PredicateCall { name, arguments } => {
+            Ok(ClickProposition::PredicateCall {
+                name: name.clone(),
+                arguments: arguments.clone(),
+            })
+        }
+    }
+}
+
+fn instantiate_click_predicate_definition(
+    definition: &PredicateDefinition,
+    arguments: &[ContractExpression],
+) -> Result<ClickProposition, String> {
+    if arguments.len() != definition.parameters().len() {
+        return Err(format!(
+            "predicate `{}` expects {} argument(s), got {}",
+            definition.name(),
+            definition.parameters().len(),
+            arguments.len()
+        ));
+    }
+
+    let substitutions = definition
+        .parameters()
+        .iter()
+        .zip(arguments)
+        .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
+        .collect::<BTreeMap<_, _>>();
+    substitute_click_proposition(definition.body(), &substitutions)
+}
+
+fn substitute_click_proposition(
+    proposition: &ClickProposition,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<ClickProposition, String> {
+    match proposition {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => Ok(ClickProposition::Comparison {
+            left: substitute_contract_expression(left, substitutions)?,
+            operator: *operator,
+            right: substitute_contract_expression(right, substitutions)?,
+        }),
+        ClickProposition::And(left, right) => Ok(ClickProposition::And(
+            Box::new(substitute_click_proposition(left, substitutions)?),
+            Box::new(substitute_click_proposition(right, substitutions)?),
+        )),
+        ClickProposition::Or(left, right) => Ok(ClickProposition::Or(
+            Box::new(substitute_click_proposition(left, substitutions)?),
+            Box::new(substitute_click_proposition(right, substitutions)?),
+        )),
+        ClickProposition::Not(body) => Ok(ClickProposition::Not(Box::new(
+            substitute_click_proposition(body, substitutions)?,
+        ))),
+        ClickProposition::Implies(left, right) => Ok(ClickProposition::Implies(
+            Box::new(substitute_click_proposition(left, substitutions)?),
+            Box::new(substitute_click_proposition(right, substitutions)?),
+        )),
+        ClickProposition::ForAll { c_type, name, body } => {
+            let mut scoped = substitutions.clone();
+            scoped.remove(name);
+            Ok(ClickProposition::ForAll {
+                c_type: *c_type,
+                name: name.clone(),
+                body: Box::new(substitute_click_proposition(body, &scoped)?),
+            })
+        }
+        ClickProposition::PredicateCall { name, arguments } => {
+            Ok(ClickProposition::PredicateCall {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| substitute_contract_expression(argument, substitutions))
+                    .collect::<Result<Vec<_>, _>>()?,
+            })
+        }
+    }
+}
+
+fn substitute_contract_expression(
+    expression: &ContractExpression,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<ContractExpression, String> {
+    match expression {
+        ContractExpression::Current(CExpression::Variable(name)) => Ok(substitutions
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| expression.clone())),
+        ContractExpression::Current(expression) => {
+            substitute_current_c_expression_as_contract(expression, substitutions)
+        }
+        ContractExpression::Old(expression) => Ok(ContractExpression::Old(
+            substitute_current_c_expression(expression, substitutions)?,
+        )),
+        ContractExpression::Add(left, right) => Ok(ContractExpression::Add(
+            Box::new(substitute_contract_expression(left, substitutions)?),
+            Box::new(substitute_contract_expression(right, substitutions)?),
+        )),
+        ContractExpression::Subtract(left, right) => Ok(ContractExpression::Subtract(
+            Box::new(substitute_contract_expression(left, substitutions)?),
+            Box::new(substitute_contract_expression(right, substitutions)?),
+        )),
+        ContractExpression::Index(base, index) => Ok(ContractExpression::Index(
+            Box::new(substitute_contract_expression(base, substitutions)?),
+            Box::new(substitute_contract_expression(index, substitutions)?),
+        )),
+    }
+}
+
+fn substitute_current_c_expression_as_contract(
+    expression: &CExpression,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<ContractExpression, String> {
+    match expression {
+        CExpression::Value(_) => Ok(ContractExpression::Current(expression.clone())),
+        CExpression::Variable(name) => Ok(substitutions
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| ContractExpression::Current(expression.clone()))),
+        CExpression::Add(left, right) => Ok(ContractExpression::Add(
+            Box::new(substitute_current_c_expression_as_contract(
+                left,
+                substitutions,
+            )?),
+            Box::new(substitute_current_c_expression_as_contract(
+                right,
+                substitutions,
+            )?),
+        )),
+        CExpression::Subtract(left, right) => Ok(ContractExpression::Subtract(
+            Box::new(substitute_current_c_expression_as_contract(
+                left,
+                substitutions,
+            )?),
+            Box::new(substitute_current_c_expression_as_contract(
+                right,
+                substitutions,
+            )?),
+        )),
+        CExpression::Index(base, index) => Ok(ContractExpression::Index(
+            Box::new(substitute_current_c_expression_as_contract(
+                base,
+                substitutions,
+            )?),
+            Box::new(substitute_current_c_expression_as_contract(
+                index,
+                substitutions,
+            )?),
+        )),
+        _ => Ok(ContractExpression::Current(
+            substitute_current_c_expression(expression, substitutions)?,
+        )),
+    }
+}
+
+fn substitute_current_c_expression(
+    expression: &CExpression,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<CExpression, String> {
+    match expression {
+        CExpression::Value(_) => Ok(expression.clone()),
+        CExpression::Variable(name) => {
+            let Some(substitution) = substitutions.get(name) else {
+                return Ok(expression.clone());
+            };
+            contract_expression_as_current_c_expression(substitution).ok_or_else(|| {
+                format!(
+                    "cannot substitute non-current expression for `{name}` inside C expression `{expression:?}`"
+                )
+            })
+        }
+        CExpression::AddressOf(body) => Ok(CExpression::AddressOf(Box::new(
+            substitute_current_c_expression(body, substitutions)?,
+        ))),
+        CExpression::LessThan(left, right) => Ok(CExpression::LessThan(
+            Box::new(substitute_current_c_expression(left, substitutions)?),
+            Box::new(substitute_current_c_expression(right, substitutions)?),
+        )),
+        CExpression::LessEqual(left, right) => Ok(CExpression::LessEqual(
+            Box::new(substitute_current_c_expression(left, substitutions)?),
+            Box::new(substitute_current_c_expression(right, substitutions)?),
+        )),
+        CExpression::GreaterThan(left, right) => Ok(CExpression::GreaterThan(
+            Box::new(substitute_current_c_expression(left, substitutions)?),
+            Box::new(substitute_current_c_expression(right, substitutions)?),
+        )),
+        CExpression::GreaterEqual(left, right) => Ok(CExpression::GreaterEqual(
+            Box::new(substitute_current_c_expression(left, substitutions)?),
+            Box::new(substitute_current_c_expression(right, substitutions)?),
+        )),
+        CExpression::Equal(left, right) => Ok(CExpression::Equal(
+            Box::new(substitute_current_c_expression(left, substitutions)?),
+            Box::new(substitute_current_c_expression(right, substitutions)?),
+        )),
+        CExpression::NotEqual(left, right) => Ok(CExpression::NotEqual(
+            Box::new(substitute_current_c_expression(left, substitutions)?),
+            Box::new(substitute_current_c_expression(right, substitutions)?),
+        )),
+        CExpression::Not(body) => Ok(CExpression::Not(Box::new(substitute_current_c_expression(
+            body,
+            substitutions,
+        )?))),
+        CExpression::And(left, right) => Ok(CExpression::And(
+            Box::new(substitute_current_c_expression(left, substitutions)?),
+            Box::new(substitute_current_c_expression(right, substitutions)?),
+        )),
+        CExpression::Or(left, right) => Ok(CExpression::Or(
+            Box::new(substitute_current_c_expression(left, substitutions)?),
+            Box::new(substitute_current_c_expression(right, substitutions)?),
+        )),
+        CExpression::Add(left, right) => Ok(CExpression::Add(
+            Box::new(substitute_current_c_expression(left, substitutions)?),
+            Box::new(substitute_current_c_expression(right, substitutions)?),
+        )),
+        CExpression::Subtract(left, right) => Ok(CExpression::Subtract(
+            Box::new(substitute_current_c_expression(left, substitutions)?),
+            Box::new(substitute_current_c_expression(right, substitutions)?),
+        )),
+        CExpression::Load(body) => Ok(CExpression::Load(Box::new(
+            substitute_current_c_expression(body, substitutions)?,
+        ))),
+        CExpression::Index(base, index) => Ok(CExpression::Index(
+            Box::new(substitute_current_c_expression(base, substitutions)?),
+            Box::new(substitute_current_c_expression(index, substitutions)?),
+        )),
+    }
+}
+
+fn contract_expression_as_current_c_expression(
+    expression: &ContractExpression,
+) -> Option<CExpression> {
+    match expression {
+        ContractExpression::Current(expression) => Some(expression.clone()),
+        ContractExpression::Old(_) => None,
+        ContractExpression::Add(left, right) => Some(CExpression::Add(
+            Box::new(contract_expression_as_current_c_expression(left)?),
+            Box::new(contract_expression_as_current_c_expression(right)?),
+        )),
+        ContractExpression::Subtract(left, right) => Some(CExpression::Subtract(
+            Box::new(contract_expression_as_current_c_expression(left)?),
+            Box::new(contract_expression_as_current_c_expression(right)?),
+        )),
+        ContractExpression::Index(base, index) => Some(CExpression::Index(
+            Box::new(contract_expression_as_current_c_expression(base)?),
+            Box::new(contract_expression_as_current_c_expression(index)?),
+        )),
     }
 }
 
@@ -8292,10 +8780,67 @@ mod tests {
         assert!(
             error
                 .message()
-                .contains("`assert` and `invariant` structural clauses"),
+                .contains("`invariant` structural clauses must use"),
             "{}",
             error.message()
         );
+    }
+
+    #[test]
+    fn structural_invariant_allows_unfold_only_steps() {
+        let c_source = r#"
+            int32 loop_sorted_range_invariant(int32 p[3]) {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+        let click_source = r#"
+            verifying "loop_sorted_range_invariant.c";
+
+            predicate sorted(int32 p[], int32 n) {
+                sorted_range(p, 0, n)
+            }
+
+            predicate sorted_range(int32 p[], int32 lo, int32 hi) {
+                forall (int32 i) {
+                    forall (int32 j) {
+                        0 <= i and 0 <= j and lo <= i and i < j and j < hi implies p[i] <= p[j]
+                    }
+                }
+            }
+
+            int32 loop_sorted_range_invariant(int32 p[3]) {
+                requires valid_range(p[0..3]);
+                requires sorted(p, 3);
+                loop 0 {
+                    invariant i >= 0 and i <= 3 by auto;
+                    invariant sorted(p, 3) by {
+                        unfold(sorted);
+                        unfold(sorted_range);
+                    }
+                    immutable by frame;
+                }
+                ensures still_sorted: sorted(p, 3) by {
+                    symbolic_execute();
+                    loop_vc(loop 0);
+                    frame(loop 0);
+                    unfold(sorted);
+                    unfold(sorted_range);
+                    simp();
+                    close();
+                }
+            }
+        "#;
+
+        let verified =
+            verify_c0_sources(click_source, &[("loop_sorted_range_invariant.c", c_source)])
+                .expect("unfold-only structural invariant script should verify");
+
+        assert_eq!(verified.len(), 1);
     }
 
     #[test]

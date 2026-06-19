@@ -132,7 +132,10 @@ Bare `frame()` proves the current function-level `immutable` or `mutable`
 effect claim against the current execution mode. `frame(loop N)` validates and
 exposes the named loop's effect summary for later postcondition reasoning.
 `unfold(name)` explicitly replaces matching predicate calls with the named
-predicate's body while replaying the final proof check.
+predicate's body. In an `ensures` proof script it unfolds matching predicate
+facts and goals during the final proof check. In a loop `invariant`, an
+unfold-only proof block exposes predicate bodies before the loop verification
+condition is generated.
 `simp()` asks the final close step to use deterministic simplification for the
 claim.
 `close()` must be the final step; it packages the verified path as the guarantee
@@ -240,10 +243,20 @@ forall (int32 k) { 0 <= k and k < n implies p[k] == old(p[k]) }
 
 ```text
 predicate sorted(int32 p[], int32 n) {
+    sorted_range(p, 0, n)
+}
+
+predicate sorted_range(int32 p[], int32 lo, int32 hi) {
     forall (int32 i) {
         forall (int32 j) {
-            0 <= i and 0 <= j and i < j and j < n implies p[i] <= p[j]
+            0 <= i and 0 <= j and lo <= i and i < j and j < hi implies p[i] <= p[j]
         }
+    }
+}
+
+predicate all_le_range(int32 p[], int32 lo, int32 hi, int32 x) {
+    forall (int32 k) {
+        0 <= k and lo <= k and k < hi implies p[k] <= x
     }
 }
 
@@ -264,7 +277,17 @@ Predicate calls are opaque propositions in this first slice. The verifier can
 reuse an exact predicate fact from `requires` or a loop invariant, but it does
 not unfold the predicate body by default. A deterministic proof-step script can
 use `unfold(predicate_name);` to unfold matching predicate facts and goals
-explicitly.
+explicitly. Loop invariants can use an unfold-only structural proof block to
+make a predicate body visible to the loop VC:
+
+```text
+loop 0 {
+    invariant sorted(p, 3) by {
+        unfold(sorted);
+        unfold(sorted_range);
+    }
+}
+```
 
 Logical structure uses Click words: `and`, `or`, `not`, `implies`, and
 `forall`. C operators such as `&&`, `||`, and `!` remain C expression syntax
@@ -345,6 +368,10 @@ statement 2 {
 loop 0 {
     invariant i >= 0 by auto;
     invariant i <= 3 by auto;
+    invariant sorted(p, 3) by {
+        unfold(sorted);
+        unfold(sorted_range);
+    }
     mutable p[0..3] by frame;
 
     step {
@@ -357,7 +384,11 @@ loop 0 {
 names the Nth `while` loop. `assert` is a one-shot ghost check at the
 structural target. `invariant` generates non-unrolling loop verification
 conditions: entry checks, one-body preservation checks, and exit facts from the
-invariant plus the false loop condition. Direct `mutable` and `immutable`
+invariant plus the false loop condition. In this slice, invariant proof blocks
+may either use `by auto;` or an unfold-only script such as
+`by { unfold(sorted); unfold(sorted_range); }`; full proof-step scripts for
+invariant entry and preservation are not separate proof blocks yet. Direct
+`mutable` and `immutable`
 inside a `loop N` block are whole-loop effect clauses: they say the dynamic
 execution of the loop mutates no externally visible memory outside the declared
 stable footprint. Whole-loop `mutable` segments may use stable names such as
