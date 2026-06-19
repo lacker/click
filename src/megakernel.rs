@@ -2377,7 +2377,34 @@ impl Assumptions {
             }
             _ => self.prop_facts.contains(proposition),
         };
-        direct || self.proves_by_finite_context_split(proposition)
+        direct
+            || self.proves_by_finite_context_split(proposition)
+            || self.proves_by_disjunction_cases(proposition)
+    }
+
+    fn proves_by_disjunction_cases(&self, proposition: &Proposition) -> bool {
+        if !matches!(proposition, Proposition::Or(_, _)) {
+            return false;
+        }
+
+        for disjunction in &self.prop_facts {
+            let mut cases = Vec::new();
+            collect_or_cases(disjunction, &mut cases);
+            if cases.len() < 2 || cases.len() > DISJUNCTION_CASE_LIMIT {
+                continue;
+            }
+
+            let mut base = self.clone();
+            base.prop_facts.remove(disjunction);
+            if cases.iter().all(|case| {
+                base.clone()
+                    .assume_proposition(case.clone())
+                    .proves(proposition)
+            }) {
+                return true;
+            }
+        }
+        false
     }
 
     fn proves_finite_forall(&self, proposition: &Proposition) -> bool {
@@ -4263,6 +4290,7 @@ fn condition_as_order_fact(
 
 const FINITE_FORALL_INSTANTIATION_LIMIT: usize = 128;
 const FINITE_CONTEXT_SPLIT_LIMIT: usize = 8;
+const DISJUNCTION_CASE_LIMIT: usize = 8;
 
 #[derive(Clone, Debug, Default)]
 struct FiniteForAllRange {
@@ -4291,6 +4319,16 @@ fn collect_forall_chain<'a>(
             collect_forall_chain(body, variables)
         }
         proposition => proposition,
+    }
+}
+
+fn collect_or_cases(proposition: &Proposition, cases: &mut Vec<Proposition>) {
+    match proposition {
+        Proposition::Or(left, right) => {
+            collect_or_cases(left, cases);
+            collect_or_cases(right, cases);
+        }
+        proposition => cases.push(proposition.clone()),
     }
 }
 
@@ -10689,6 +10727,25 @@ mod tests {
             ConditionTerm::signed_less_equal(load_0, load_2),
             true,
         )));
+    }
+
+    #[test]
+    fn assumptions_prove_by_bounded_disjunction_cases() {
+        let x = Bitvector32Term::Variable(Variable(89));
+        let x_is_zero = Proposition::ConditionIs(
+            ConditionTerm::equal(x.clone(), Bitvector32Term::Constant(0)),
+            true,
+        );
+        let x_is_one = Proposition::ConditionIs(
+            ConditionTerm::equal(x.clone(), Bitvector32Term::Constant(1)),
+            true,
+        );
+        let assumptions = Assumptions::new().assume_proposition(Proposition::Or(
+            Box::new(x_is_zero.clone()),
+            Box::new(x_is_one.clone()),
+        ));
+
+        assert!(assumptions.proves(&Proposition::Or(Box::new(x_is_one), Box::new(x_is_zero),)));
     }
 
     #[test]

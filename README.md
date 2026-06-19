@@ -463,6 +463,8 @@ The first memory-safety demos are fixed-size pointer loops:
   sorting properties: nondecreasing order plus explicit permutation claims.
 - `bubble_sort3_two_pass()` proves three-cell sortedness from loop VCs and
   quantified invariants, without falling back to bounded execution.
+- `sort3_permutation_predicate()` packages the explicit six-way three-cell
+  permutation claim as a named Click predicate and unfolds it at the proof site.
 - `copy3(int32 dst[3], int32 src[3])` copies three cells from `src` to `dst`
   under an explicit `disjoint(dst[0..3], src[0..3])` requirement and proves
   `old(src[i])` postconditions.
