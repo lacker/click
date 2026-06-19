@@ -1814,6 +1814,17 @@ impl Assumptions {
         right: &Bitvector32Term,
         require_strict: bool,
     ) -> bool {
+        let order_facts = self.condition_order_facts();
+        self.has_order_path_in_facts(left, right, require_strict, &order_facts)
+    }
+
+    fn has_order_path_in_facts(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        require_strict: bool,
+        order_facts: &[(Bitvector32Term, Bitvector32Term, bool)],
+    ) -> bool {
         let mut stack = vec![(left.clone(), false)];
         let mut seen = BTreeSet::new();
         while let Some((current, strict_so_far)) = stack.pop() {
@@ -1825,18 +1836,122 @@ impl Assumptions {
             {
                 return true;
             }
-            for (condition, value) in &self.condition_facts {
-                let Some((edge_left, edge_right, edge_strict)) =
-                    condition_as_order_fact(condition, *value)
-                else {
-                    continue;
-                };
-                if self.bitvector_terms_proven_equal(&current, &edge_left) {
-                    stack.push((edge_right, strict_so_far || edge_strict));
+            for (edge_left, edge_right, edge_strict) in order_facts {
+                if self.bitvector_terms_proven_equal(&current, edge_left) {
+                    stack.push((edge_right.clone(), strict_so_far || *edge_strict));
                 }
             }
         }
         false
+    }
+
+    fn condition_order_facts(&self) -> Vec<(Bitvector32Term, Bitvector32Term, bool)> {
+        self.condition_facts
+            .iter()
+            .filter_map(|(condition, value)| condition_as_order_fact(condition, *value))
+            .collect()
+    }
+
+    fn collect_derived_order_facts(
+        &self,
+        order_facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
+    ) {
+        for proposition in &self.prop_facts {
+            self.collect_derived_order_facts_from_proposition(proposition, order_facts);
+        }
+    }
+
+    fn collect_derived_order_facts_from_proposition(
+        &self,
+        proposition: &Proposition,
+        order_facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
+    ) {
+        match proposition {
+            Proposition::ConditionIs(condition, value) => {
+                if let Some(order_fact) = condition_as_order_fact(condition, *value) {
+                    order_facts.push(order_fact);
+                }
+            }
+            Proposition::And(left, right) => {
+                self.collect_derived_order_facts_from_proposition(left, order_facts);
+                self.collect_derived_order_facts_from_proposition(right, order_facts);
+            }
+            Proposition::Implies(left, right) if self.proves_without_prop_facts(left) => {
+                self.collect_derived_order_facts_from_proposition(right, order_facts);
+            }
+            Proposition::ForAll { .. } => {
+                self.collect_finite_forall_order_facts(proposition, order_facts);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_finite_forall_order_facts(
+        &self,
+        proposition: &Proposition,
+        order_facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
+    ) {
+        let mut variables = Vec::new();
+        let body = collect_forall_chain(proposition, &mut variables);
+        if variables.is_empty() {
+            return;
+        }
+        let Some(ranges) = finite_forall_ranges(&variables, body) else {
+            return;
+        };
+        let Some(instantiation_count) = ranges.iter().try_fold(1usize, |count, range| {
+            let width = usize::try_from(range.upper - range.lower + 1).ok()?;
+            count.checked_mul(width)
+        }) else {
+            return;
+        };
+        if instantiation_count > FINITE_FORALL_INSTANTIATION_LIMIT {
+            return;
+        }
+
+        let mut values = Vec::with_capacity(variables.len());
+        self.collect_finite_forall_order_fact_instantiations(
+            body,
+            &variables,
+            &ranges,
+            &mut values,
+            order_facts,
+        );
+    }
+
+    fn collect_finite_forall_order_fact_instantiations(
+        &self,
+        body: &Proposition,
+        variables: &[Variable],
+        ranges: &[FiniteForAllRange],
+        values: &mut Vec<i64>,
+        order_facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
+    ) {
+        if values.len() == variables.len() {
+            let mut instantiated = body.clone();
+            for (variable, value) in variables.iter().zip(values.iter()) {
+                instantiated = substitute_bitvector_variable_in_proposition(
+                    &instantiated,
+                    *variable,
+                    &signed_i64_bitvector_constant(*value),
+                );
+            }
+            self.collect_derived_order_facts_from_proposition(&instantiated, order_facts);
+            return;
+        }
+
+        let range = &ranges[values.len()];
+        for value in range.lower..=range.upper {
+            values.push(value);
+            self.collect_finite_forall_order_fact_instantiations(
+                body,
+                variables,
+                ranges,
+                values,
+                order_facts,
+            );
+            values.pop();
+        }
     }
 
     fn has_upper_bound_below(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
@@ -2237,7 +2352,7 @@ impl Assumptions {
             return true;
         }
 
-        match proposition {
+        let direct = match proposition {
             Proposition::ConditionIs(condition, value) => {
                 self.decide(condition) == Some(*value)
                     || self.proves_condition_from_facts(condition, *value)
@@ -2261,7 +2376,8 @@ impl Assumptions {
                 self.proves_memory_access(memory, pointer, 4)
             }
             _ => self.prop_facts.contains(proposition),
-        }
+        };
+        direct || self.proves_by_finite_context_split(proposition)
     }
 
     fn proves_finite_forall(&self, proposition: &Proposition) -> bool {
@@ -2318,6 +2434,78 @@ impl Assumptions {
         true
     }
 
+    fn proves_by_finite_context_split(&self, proposition: &Proposition) -> bool {
+        let mut variables = BTreeSet::new();
+        collect_proposition_bitvector_variables(proposition, &mut variables);
+        let mut candidates = variables
+            .into_iter()
+            .filter_map(|variable| {
+                self.finite_context_range(variable)
+                    .map(|range| (variable, range))
+            })
+            .filter(|(_, range)| range.lower <= range.upper)
+            .collect::<Vec<_>>();
+        candidates.sort_by_key(|(_, range)| range.upper - range.lower);
+
+        let Some((variable, range)) = candidates.into_iter().next() else {
+            return false;
+        };
+        let Ok(width) = usize::try_from(range.upper - range.lower + 1) else {
+            return false;
+        };
+        if width > FINITE_CONTEXT_SPLIT_LIMIT {
+            return false;
+        }
+
+        let instances = (range.lower..=range.upper)
+            .map(|value| {
+                substitute_bitvector_variable_in_proposition(
+                    proposition,
+                    variable,
+                    &signed_i64_bitvector_constant(value),
+                )
+            })
+            .collect::<Vec<_>>();
+        if instances
+            .iter()
+            .all(|instantiated| instantiated == proposition)
+        {
+            return false;
+        }
+
+        instances
+            .iter()
+            .all(|instantiated| self.proves(instantiated))
+    }
+
+    fn finite_context_range(&self, variable: Variable) -> Option<FiniteForAllRange> {
+        let mut range = IntegerRangeFacts::default();
+        for (condition, value) in &self.condition_facts {
+            let Some((left, right, strict)) = condition_as_order_fact(condition, *value) else {
+                continue;
+            };
+            match (bitvector_variable(&left), signed_bitvector_constant(&right)) {
+                (Some(fact_variable), Some(bound)) if fact_variable == variable => {
+                    let upper = if strict { bound.checked_sub(1)? } else { bound };
+                    range.upper = Some(range.upper.map_or(upper, |current| current.min(upper)));
+                }
+                _ => {}
+            }
+            match (signed_bitvector_constant(&left), bitvector_variable(&right)) {
+                (Some(bound), Some(fact_variable)) if fact_variable == variable => {
+                    let lower = if strict { bound.checked_add(1)? } else { bound };
+                    range.lower = Some(range.lower.map_or(lower, |current| current.max(lower)));
+                }
+                _ => {}
+            }
+        }
+
+        let (Some(lower), Some(upper)) = (range.lower, range.upper) else {
+            return None;
+        };
+        Some(FiniteForAllRange { lower, upper })
+    }
+
     fn proves_condition_from_facts(&self, condition: &ConditionTerm, value: bool) -> bool {
         self.condition_facts
             .iter()
@@ -2328,6 +2516,20 @@ impl Assumptions {
                 .prop_facts
                 .iter()
                 .any(|proposition| self.proposition_proves_condition(proposition, condition, value))
+            || self.proves_condition_from_derived_order_facts(condition, value)
+    }
+
+    fn proves_condition_from_derived_order_facts(
+        &self,
+        condition: &ConditionTerm,
+        value: bool,
+    ) -> bool {
+        let Some((left, right, strict)) = condition_as_order_fact(condition, value) else {
+            return false;
+        };
+        let mut order_facts = self.condition_order_facts();
+        self.collect_derived_order_facts(&mut order_facts);
+        self.has_order_path_in_facts(&left, &right, strict, &order_facts)
     }
 
     fn proposition_proves_condition(
@@ -2785,6 +2987,14 @@ impl ProofObligation {
 
     pub fn context(&self) -> Option<&str> {
         self.context.as_deref()
+    }
+
+    fn map_proposition(self, f: impl FnOnce(Proposition) -> Proposition) -> Self {
+        Self {
+            proposition: f(self.proposition),
+            context: self.context,
+            assumable: self.assumable,
+        }
     }
 }
 
@@ -4052,6 +4262,7 @@ fn condition_as_order_fact(
 }
 
 const FINITE_FORALL_INSTANTIATION_LIMIT: usize = 128;
+const FINITE_CONTEXT_SPLIT_LIMIT: usize = 8;
 
 #[derive(Clone, Debug, Default)]
 struct FiniteForAllRange {
@@ -4405,6 +4616,381 @@ fn bitvector_same_base_nonzero_const_offset(
     false
 }
 
+fn collect_proposition_bitvector_variables(
+    proposition: &Proposition,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match proposition {
+        Proposition::Equal(left, right) => {
+            collect_term_bitvector_variables(left, variables);
+            collect_term_bitvector_variables(right, variables);
+        }
+        Proposition::ConditionIs(condition, _) => {
+            collect_condition_bitvector_variables(condition, variables);
+        }
+        Proposition::Predicate { arguments, .. } => {
+            for argument in arguments {
+                collect_term_bitvector_variables(argument, variables);
+            }
+        }
+        Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome,
+        } => {
+            collect_c_state_bitvector_variables(state, variables);
+            collect_c_expression_bitvector_variables(expression, variables);
+            collect_c_expression_outcome_bitvector_variables(outcome, variables);
+        }
+        Proposition::CStatementExecutes {
+            state,
+            statement,
+            outcome,
+        } => {
+            collect_c_state_bitvector_variables(state, variables);
+            collect_c_statement_bitvector_variables(statement, variables);
+            collect_c_statement_outcome_bitvector_variables(outcome, variables);
+        }
+        Proposition::CFunctionExecutes {
+            state,
+            arguments,
+            function,
+            outcome,
+        } => {
+            collect_c_state_bitvector_variables(state, variables);
+            for argument in arguments {
+                collect_c_expression_bitvector_variables(argument, variables);
+            }
+            collect_c_function_bitvector_variables(function, variables);
+            collect_c_function_outcome_bitvector_variables(outcome, variables);
+        }
+        Proposition::CFunctionSatisfiesSpecification {
+            function,
+            specification,
+        } => {
+            collect_c_function_bitvector_variables(function, variables);
+            collect_c_function_specification_bitvector_variables(specification, variables);
+        }
+        Proposition::CMemoryLoads {
+            memory,
+            pointer,
+            outcome,
+        } => {
+            collect_memory_bitvector_variables(memory, variables);
+            collect_pointer_bitvector_variables(pointer, variables);
+            collect_c_expression_outcome_bitvector_variables(outcome, variables);
+        }
+        Proposition::CMemoryCanLoad { memory, pointer }
+        | Proposition::CMemoryCanStore { memory, pointer } => {
+            collect_memory_bitvector_variables(memory, variables);
+            collect_pointer_bitvector_variables(pointer, variables);
+        }
+        Proposition::CMemoryValidRange {
+            memory,
+            base,
+            bytes,
+        } => {
+            collect_memory_bitvector_variables(memory, variables);
+            collect_pointer_bitvector_variables(base, variables);
+            collect_bitvector_variables(bytes, variables);
+        }
+        Proposition::CMemoryDisjoint {
+            left_base,
+            left_start,
+            left_end,
+            right_base,
+            right_start,
+            right_end,
+        } => {
+            collect_pointer_bitvector_variables(left_base, variables);
+            collect_bitvector_variables(left_start, variables);
+            collect_bitvector_variables(left_end, variables);
+            collect_pointer_bitvector_variables(right_base, variables);
+            collect_bitvector_variables(right_start, variables);
+            collect_bitvector_variables(right_end, variables);
+        }
+        Proposition::CMemoryMutatesOnly {
+            before,
+            after,
+            pointers,
+        } => {
+            collect_memory_bitvector_variables(before, variables);
+            collect_memory_bitvector_variables(after, variables);
+            for pointer in pointers {
+                collect_pointer_bitvector_variables(pointer, variables);
+            }
+        }
+        Proposition::CMemoryEffectSummary {
+            before,
+            after,
+            mutable_ranges,
+        } => {
+            collect_memory_bitvector_variables(before, variables);
+            collect_memory_bitvector_variables(after, variables);
+            for range in mutable_ranges {
+                collect_c_memory_range_bitvector_variables(range, variables);
+            }
+        }
+        Proposition::CWhileInvariantRule {
+            state,
+            condition,
+            invariant,
+            body,
+            preserved,
+            postcondition,
+        } => {
+            collect_c_state_bitvector_variables(state, variables);
+            collect_c_expression_bitvector_variables(condition, variables);
+            for proposition in invariant {
+                collect_proposition_bitvector_variables(proposition, variables);
+            }
+            collect_c_statement_bitvector_variables(body, variables);
+            for proposition in preserved {
+                collect_proposition_bitvector_variables(proposition, variables);
+            }
+            collect_proposition_bitvector_variables(postcondition, variables);
+        }
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            collect_proposition_bitvector_variables(left, variables);
+            collect_proposition_bitvector_variables(right, variables);
+        }
+        Proposition::Not(body) => collect_proposition_bitvector_variables(body, variables),
+        Proposition::ForAll { var, body, .. } => {
+            collect_proposition_bitvector_variables(body, variables);
+            variables.remove(var);
+        }
+    }
+}
+
+fn collect_term_bitvector_variables(term: &Term, variables: &mut BTreeSet<Variable>) {
+    match term {
+        Term::Condition(condition) => collect_condition_bitvector_variables(condition, variables),
+        Term::Bitvector32(bits) => collect_bitvector_variables(bits, variables),
+        Term::PointerOffset(offset) => {
+            collect_pointer_offset_bitvector_variables(offset, variables)
+        }
+        Term::CValue(value) => collect_c_value_bitvector_variables(value, variables),
+        Term::CExpressionOutcome(outcome) => {
+            collect_c_expression_outcome_bitvector_variables(outcome, variables);
+        }
+        Term::CStatementOutcome(outcome) => {
+            collect_c_statement_outcome_bitvector_variables(outcome, variables);
+        }
+        Term::CFunctionOutcome(outcome) => {
+            collect_c_function_outcome_bitvector_variables(outcome, variables);
+        }
+        Term::CMemory(memory) => collect_memory_bitvector_variables(memory, variables),
+        Term::CState(state) => collect_c_state_bitvector_variables(state, variables),
+    }
+}
+
+fn collect_c_expression_bitvector_variables(
+    expression: &CExpression,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match expression {
+        CExpression::Value(value) => collect_c_value_bitvector_variables(value, variables),
+        CExpression::Variable(_) => {}
+        CExpression::AddressOf(body) | CExpression::Not(body) | CExpression::Load(body) => {
+            collect_c_expression_bitvector_variables(body, variables);
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Index(left, right) => {
+            collect_c_expression_bitvector_variables(left, variables);
+            collect_c_expression_bitvector_variables(right, variables);
+        }
+    }
+}
+
+fn collect_c_statement_bitvector_variables(
+    statement: &CStatement,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match statement {
+        CStatement::Declare { .. } => {}
+        CStatement::Assign { expression, .. }
+        | CStatement::Return(expression)
+        | CStatement::Assert {
+            condition: expression,
+            ..
+        } => {
+            collect_c_expression_bitvector_variables(expression, variables);
+        }
+        CStatement::CallAssign { arguments, .. } => {
+            for argument in arguments {
+                collect_c_expression_bitvector_variables(argument, variables);
+            }
+        }
+        CStatement::Seq(first, second) => {
+            collect_c_statement_bitvector_variables(first, variables);
+            collect_c_statement_bitvector_variables(second, variables);
+        }
+        CStatement::Store { pointer, value } => {
+            collect_c_expression_bitvector_variables(pointer, variables);
+            collect_c_expression_bitvector_variables(value, variables);
+        }
+        CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_c_expression_bitvector_variables(condition, variables);
+            collect_c_statement_bitvector_variables(then_branch, variables);
+            collect_c_statement_bitvector_variables(else_branch, variables);
+        }
+        CStatement::While {
+            condition,
+            invariant,
+            invariant_checks,
+            effect_checks,
+            body,
+        } => {
+            collect_c_expression_bitvector_variables(condition, variables);
+            for proposition in invariant {
+                collect_proposition_bitvector_variables(proposition, variables);
+            }
+            for check in invariant_checks {
+                collect_c_proposition_bitvector_variables(check.proposition(), variables);
+            }
+            for check in effect_checks {
+                collect_loop_effect_bitvector_variables(check.effect(), variables);
+            }
+            collect_c_statement_bitvector_variables(body, variables);
+        }
+    }
+}
+
+fn collect_c_proposition_bitvector_variables(
+    proposition: &CProposition,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match proposition {
+        CProposition::Comparison { left, right, .. } => {
+            collect_c_expression_bitvector_variables(left, variables);
+            collect_c_expression_bitvector_variables(right, variables);
+        }
+        CProposition::And(left, right)
+        | CProposition::Or(left, right)
+        | CProposition::Implies(left, right) => {
+            collect_c_proposition_bitvector_variables(left, variables);
+            collect_c_proposition_bitvector_variables(right, variables);
+        }
+        CProposition::Not(body) => collect_c_proposition_bitvector_variables(body, variables),
+        CProposition::ForAllInt32 { variable, body, .. } => {
+            collect_c_proposition_bitvector_variables(body, variables);
+            variables.remove(variable);
+        }
+        CProposition::Predicate { arguments, .. } => {
+            for argument in arguments {
+                collect_c_expression_bitvector_variables(argument, variables);
+            }
+        }
+    }
+}
+
+fn collect_loop_effect_bitvector_variables(
+    effect: &CLoopEffect,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match effect {
+        CLoopEffect::Immutable => {}
+        CLoopEffect::Mutable(segments) => {
+            for segment in segments {
+                collect_c_expression_bitvector_variables(&segment.base, variables);
+                collect_c_expression_bitvector_variables(&segment.start, variables);
+                collect_c_expression_bitvector_variables(&segment.end, variables);
+            }
+        }
+    }
+}
+
+fn collect_c_expression_outcome_bitvector_variables(
+    outcome: &CExpressionOutcome,
+    variables: &mut BTreeSet<Variable>,
+) {
+    if let CExpressionOutcome::Value(value) = outcome {
+        collect_c_value_bitvector_variables(value, variables);
+    }
+}
+
+fn collect_c_statement_outcome_bitvector_variables(
+    outcome: &CStatementOutcome,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match outcome {
+        CStatementOutcome::Normal(state) => collect_c_state_bitvector_variables(state, variables),
+        CStatementOutcome::Return { value, state } => {
+            collect_c_value_bitvector_variables(value, variables);
+            collect_c_state_bitvector_variables(state, variables);
+        }
+        CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => {}
+    }
+}
+
+fn collect_c_function_outcome_bitvector_variables(
+    outcome: &CFunctionOutcome,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match outcome {
+        CFunctionOutcome::Return { value, state } => {
+            collect_c_value_bitvector_variables(value, variables);
+            collect_c_state_bitvector_variables(state, variables);
+        }
+        CFunctionOutcome::UndefinedBehavior(_) | CFunctionOutcome::RuntimeError(_) => {}
+    }
+}
+
+fn collect_c_state_bitvector_variables(state: &CState, variables: &mut BTreeSet<Variable>) {
+    for binding in state.locals.bindings.values() {
+        match binding {
+            CLocalBinding::Object(value) => collect_c_value_bitvector_variables(value, variables),
+            CLocalBinding::ArrayObject { .. } => {}
+        }
+    }
+    collect_memory_bitvector_variables(&state.memory, variables);
+}
+
+fn collect_c_function_bitvector_variables(
+    function: &CFunction,
+    variables: &mut BTreeSet<Variable>,
+) {
+    collect_c_statement_bitvector_variables(function.body(), variables);
+}
+
+fn collect_c_function_specification_bitvector_variables(
+    specification: &CFunctionSpecification,
+    variables: &mut BTreeSet<Variable>,
+) {
+    collect_c_state_bitvector_variables(specification.state(), variables);
+    for argument in specification.arguments() {
+        collect_c_expression_bitvector_variables(argument, variables);
+    }
+    for requirement in specification.requires() {
+        collect_proposition_bitvector_variables(requirement, variables);
+    }
+    collect_c_function_outcome_bitvector_variables(specification.outcome(), variables);
+}
+
+fn collect_c_memory_range_bitvector_variables(
+    range: &CMemoryRange,
+    variables: &mut BTreeSet<Variable>,
+) {
+    collect_pointer_bitvector_variables(&range.base, variables);
+    collect_bitvector_variables(&range.start, variables);
+    collect_bitvector_variables(&range.end, variables);
+}
+
 fn collect_condition_bitvector_variables(
     condition: &ConditionTerm,
     variables: &mut BTreeSet<Variable>,
@@ -4487,6 +5073,10 @@ fn substitute_bitvector_variable_in_proposition(
     to: &Bitvector32Term,
 ) -> Proposition {
     match proposition {
+        Proposition::Equal(left, right) => Proposition::Equal(
+            substitute_bitvector_variable_in_term(left, from, to),
+            substitute_bitvector_variable_in_term(right, from, to),
+        ),
         Proposition::ConditionIs(condition, value) => Proposition::ConditionIs(
             substitute_bitvector_variable_in_condition(condition, from, to),
             *value,
@@ -4497,6 +5087,143 @@ fn substitute_bitvector_variable_in_proposition(
                 .iter()
                 .map(|argument| substitute_bitvector_variable_in_term(argument, from, to))
                 .collect(),
+        },
+        Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome,
+        } => Proposition::CExpressionEvaluates {
+            state: substitute_bitvector_variable_in_c_state(state, from, to),
+            expression: substitute_bitvector_variable_in_c_expression(expression, from, to),
+            outcome: substitute_bitvector_variable_in_c_expression_outcome(outcome, from, to),
+        },
+        Proposition::CStatementExecutes {
+            state,
+            statement,
+            outcome,
+        } => Proposition::CStatementExecutes {
+            state: substitute_bitvector_variable_in_c_state(state, from, to),
+            statement: substitute_bitvector_variable_in_c_statement(statement, from, to),
+            outcome: substitute_bitvector_variable_in_c_statement_outcome(outcome, from, to),
+        },
+        Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome,
+        } => Proposition::CFunctionExecutes {
+            state: substitute_bitvector_variable_in_c_state(state, from, to),
+            function: substitute_bitvector_variable_in_c_function(function, from, to),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_bitvector_variable_in_c_expression(argument, from, to))
+                .collect(),
+            outcome: substitute_bitvector_variable_in_c_function_outcome(outcome, from, to),
+        },
+        Proposition::CFunctionSatisfiesSpecification {
+            function,
+            specification,
+        } => Proposition::CFunctionSatisfiesSpecification {
+            function: substitute_bitvector_variable_in_c_function(function, from, to),
+            specification: substitute_bitvector_variable_in_c_function_specification(
+                specification,
+                from,
+                to,
+            ),
+        },
+        Proposition::CMemoryLoads {
+            memory,
+            pointer,
+            outcome,
+        } => Proposition::CMemoryLoads {
+            memory: substitute_bitvector_variable_in_memory(memory, from, to),
+            pointer: substitute_bitvector_variable_in_pointer(pointer, from, to),
+            outcome: substitute_bitvector_variable_in_c_expression_outcome(outcome, from, to),
+        },
+        Proposition::CMemoryCanLoad { memory, pointer } => Proposition::CMemoryCanLoad {
+            memory: substitute_bitvector_variable_in_memory(memory, from, to),
+            pointer: substitute_bitvector_variable_in_pointer(pointer, from, to),
+        },
+        Proposition::CMemoryCanStore { memory, pointer } => Proposition::CMemoryCanStore {
+            memory: substitute_bitvector_variable_in_memory(memory, from, to),
+            pointer: substitute_bitvector_variable_in_pointer(pointer, from, to),
+        },
+        Proposition::CMemoryValidRange {
+            memory,
+            base,
+            bytes,
+        } => Proposition::CMemoryValidRange {
+            memory: substitute_bitvector_variable_in_memory(memory, from, to),
+            base: substitute_bitvector_variable_in_pointer(base, from, to),
+            bytes: substitute_bitvector_variable(bytes, from, to),
+        },
+        Proposition::CMemoryDisjoint {
+            left_base,
+            left_start,
+            left_end,
+            right_base,
+            right_start,
+            right_end,
+        } => Proposition::CMemoryDisjoint {
+            left_base: substitute_bitvector_variable_in_pointer(left_base, from, to),
+            left_start: substitute_bitvector_variable(left_start, from, to),
+            left_end: substitute_bitvector_variable(left_end, from, to),
+            right_base: substitute_bitvector_variable_in_pointer(right_base, from, to),
+            right_start: substitute_bitvector_variable(right_start, from, to),
+            right_end: substitute_bitvector_variable(right_end, from, to),
+        },
+        Proposition::CMemoryMutatesOnly {
+            before,
+            after,
+            pointers,
+        } => Proposition::CMemoryMutatesOnly {
+            before: substitute_bitvector_variable_in_memory(before, from, to),
+            after: substitute_bitvector_variable_in_memory(after, from, to),
+            pointers: pointers
+                .iter()
+                .map(|pointer| substitute_bitvector_variable_in_pointer(pointer, from, to))
+                .collect(),
+        },
+        Proposition::CMemoryEffectSummary {
+            before,
+            after,
+            mutable_ranges,
+        } => Proposition::CMemoryEffectSummary {
+            before: substitute_bitvector_variable_in_memory(before, from, to),
+            after: substitute_bitvector_variable_in_memory(after, from, to),
+            mutable_ranges: mutable_ranges
+                .iter()
+                .map(|range| substitute_bitvector_variable_in_c_memory_range(range, from, to))
+                .collect(),
+        },
+        Proposition::CWhileInvariantRule {
+            state,
+            condition,
+            invariant,
+            body,
+            preserved,
+            postcondition,
+        } => Proposition::CWhileInvariantRule {
+            state: substitute_bitvector_variable_in_c_state(state, from, to),
+            condition: substitute_bitvector_variable_in_c_expression(condition, from, to),
+            invariant: invariant
+                .iter()
+                .map(|proposition| {
+                    substitute_bitvector_variable_in_proposition(proposition, from, to)
+                })
+                .collect(),
+            body: substitute_bitvector_variable_in_c_statement(body, from, to),
+            preserved: preserved
+                .iter()
+                .map(|proposition| {
+                    substitute_bitvector_variable_in_proposition(proposition, from, to)
+                })
+                .collect(),
+            postcondition: Box::new(substitute_bitvector_variable_in_proposition(
+                postcondition,
+                from,
+                to,
+            )),
         },
         Proposition::And(left, right) => Proposition::And(
             Box::new(substitute_bitvector_variable_in_proposition(left, from, to)),
@@ -4544,7 +5271,450 @@ fn substitute_bitvector_variable_in_term(
         Term::CValue(value) => {
             Term::CValue(substitute_bitvector_variable_in_c_value(value, from, to))
         }
-        _ => term.clone(),
+        Term::CExpressionOutcome(outcome) => Term::CExpressionOutcome(
+            substitute_bitvector_variable_in_c_expression_outcome(outcome, from, to),
+        ),
+        Term::CStatementOutcome(outcome) => Term::CStatementOutcome(
+            substitute_bitvector_variable_in_c_statement_outcome(outcome, from, to),
+        ),
+        Term::CFunctionOutcome(outcome) => Term::CFunctionOutcome(
+            substitute_bitvector_variable_in_c_function_outcome(outcome, from, to),
+        ),
+        Term::CMemory(memory) => {
+            Term::CMemory(substitute_bitvector_variable_in_memory(memory, from, to))
+        }
+        Term::CState(state) => {
+            Term::CState(substitute_bitvector_variable_in_c_state(state, from, to))
+        }
+    }
+}
+
+fn substitute_bitvector_variable_in_c_expression(
+    expression: &CExpression,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CExpression {
+    match expression {
+        CExpression::Value(value) => {
+            CExpression::Value(substitute_bitvector_variable_in_c_value(value, from, to))
+        }
+        CExpression::Variable(name) => CExpression::Variable(name.clone()),
+        CExpression::AddressOf(body) => CExpression::AddressOf(Box::new(
+            substitute_bitvector_variable_in_c_expression(body, from, to),
+        )),
+        CExpression::Not(body) => CExpression::Not(Box::new(
+            substitute_bitvector_variable_in_c_expression(body, from, to),
+        )),
+        CExpression::Load(body) => CExpression::Load(Box::new(
+            substitute_bitvector_variable_in_c_expression(body, from, to),
+        )),
+        CExpression::LessThan(left, right) => CExpression::LessThan(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+        CExpression::LessEqual(left, right) => CExpression::LessEqual(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+        CExpression::GreaterThan(left, right) => CExpression::GreaterThan(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+        CExpression::GreaterEqual(left, right) => CExpression::GreaterEqual(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+        CExpression::Equal(left, right) => CExpression::Equal(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+        CExpression::NotEqual(left, right) => CExpression::NotEqual(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+        CExpression::And(left, right) => CExpression::And(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+        CExpression::Or(left, right) => CExpression::Or(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+        CExpression::Add(left, right) => CExpression::Add(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+        CExpression::Subtract(left, right) => CExpression::Subtract(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+        CExpression::Index(left, right) => CExpression::Index(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+    }
+}
+
+fn substitute_bitvector_variable_in_c_statement(
+    statement: &CStatement,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CStatement {
+    match statement {
+        CStatement::Declare { name, c_type } => CStatement::Declare {
+            name: name.clone(),
+            c_type: *c_type,
+        },
+        CStatement::Assign { name, expression } => CStatement::Assign {
+            name: name.clone(),
+            expression: substitute_bitvector_variable_in_c_expression(expression, from, to),
+        },
+        CStatement::CallAssign {
+            target,
+            function_name,
+            arguments,
+        } => CStatement::CallAssign {
+            target: target.clone(),
+            function_name: function_name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_bitvector_variable_in_c_expression(argument, from, to))
+                .collect(),
+        },
+        CStatement::Assert { condition, label } => CStatement::Assert {
+            condition: substitute_bitvector_variable_in_c_expression(condition, from, to),
+            label: label.clone(),
+        },
+        CStatement::Seq(first, second) => CStatement::Seq(
+            Box::new(substitute_bitvector_variable_in_c_statement(
+                first, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_statement(
+                second, from, to,
+            )),
+        ),
+        CStatement::Return(expression) => CStatement::Return(
+            substitute_bitvector_variable_in_c_expression(expression, from, to),
+        ),
+        CStatement::Store { pointer, value } => CStatement::Store {
+            pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
+            value: substitute_bitvector_variable_in_c_expression(value, from, to),
+        },
+        CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => CStatement::If {
+            condition: substitute_bitvector_variable_in_c_expression(condition, from, to),
+            then_branch: Box::new(substitute_bitvector_variable_in_c_statement(
+                then_branch,
+                from,
+                to,
+            )),
+            else_branch: Box::new(substitute_bitvector_variable_in_c_statement(
+                else_branch,
+                from,
+                to,
+            )),
+        },
+        CStatement::While {
+            condition,
+            invariant,
+            invariant_checks,
+            effect_checks,
+            body,
+        } => CStatement::While {
+            condition: substitute_bitvector_variable_in_c_expression(condition, from, to),
+            invariant: invariant
+                .iter()
+                .map(|proposition| {
+                    substitute_bitvector_variable_in_proposition(proposition, from, to)
+                })
+                .collect(),
+            invariant_checks: invariant_checks
+                .iter()
+                .map(|check| CLoopInvariantCheck {
+                    proposition: substitute_bitvector_variable_in_c_proposition(
+                        check.proposition(),
+                        from,
+                        to,
+                    ),
+                    entry_context: check.entry_context.clone(),
+                    preservation_context: check.preservation_context.clone(),
+                })
+                .collect(),
+            effect_checks: effect_checks
+                .iter()
+                .map(|check| CLoopEffectCheck {
+                    effect: substitute_bitvector_variable_in_loop_effect(check.effect(), from, to),
+                    span: check.span,
+                    context: check.context.clone(),
+                })
+                .collect(),
+            body: Box::new(substitute_bitvector_variable_in_c_statement(body, from, to)),
+        },
+    }
+}
+
+fn substitute_bitvector_variable_in_c_proposition(
+    proposition: &CProposition,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CProposition {
+    match proposition {
+        CProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => CProposition::Comparison {
+            left: substitute_bitvector_variable_in_c_expression(left, from, to),
+            operator: *operator,
+            right: substitute_bitvector_variable_in_c_expression(right, from, to),
+        },
+        CProposition::And(left, right) => CProposition::And(
+            Box::new(substitute_bitvector_variable_in_c_proposition(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_proposition(
+                right, from, to,
+            )),
+        ),
+        CProposition::Or(left, right) => CProposition::Or(
+            Box::new(substitute_bitvector_variable_in_c_proposition(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_proposition(
+                right, from, to,
+            )),
+        ),
+        CProposition::Not(body) => CProposition::Not(Box::new(
+            substitute_bitvector_variable_in_c_proposition(body, from, to),
+        )),
+        CProposition::Implies(left, right) => CProposition::Implies(
+            Box::new(substitute_bitvector_variable_in_c_proposition(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_proposition(
+                right, from, to,
+            )),
+        ),
+        CProposition::ForAllInt32 {
+            name,
+            variable,
+            body,
+        } if *variable != from => CProposition::ForAllInt32 {
+            name: name.clone(),
+            variable: *variable,
+            body: Box::new(substitute_bitvector_variable_in_c_proposition(
+                body, from, to,
+            )),
+        },
+        CProposition::Predicate { name, arguments } => CProposition::Predicate {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_bitvector_variable_in_c_expression(argument, from, to))
+                .collect(),
+        },
+        proposition => proposition.clone(),
+    }
+}
+
+fn substitute_bitvector_variable_in_loop_effect(
+    effect: &CLoopEffect,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CLoopEffect {
+    match effect {
+        CLoopEffect::Immutable => CLoopEffect::Immutable,
+        CLoopEffect::Mutable(segments) => CLoopEffect::Mutable(
+            segments
+                .iter()
+                .map(|segment| CMemorySegment {
+                    base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
+                    start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
+                    end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+                })
+                .collect(),
+        ),
+    }
+}
+
+fn substitute_bitvector_variable_in_c_expression_outcome(
+    outcome: &CExpressionOutcome,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CExpressionOutcome {
+    match outcome {
+        CExpressionOutcome::Value(value) => {
+            CExpressionOutcome::Value(substitute_bitvector_variable_in_c_value(value, from, to))
+        }
+        CExpressionOutcome::UndefinedBehavior(kind) => {
+            CExpressionOutcome::UndefinedBehavior(kind.clone())
+        }
+        CExpressionOutcome::RuntimeError(kind) => CExpressionOutcome::RuntimeError(kind.clone()),
+    }
+}
+
+fn substitute_bitvector_variable_in_c_statement_outcome(
+    outcome: &CStatementOutcome,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CStatementOutcome {
+    match outcome {
+        CStatementOutcome::Normal(state) => {
+            CStatementOutcome::Normal(substitute_bitvector_variable_in_c_state(state, from, to))
+        }
+        CStatementOutcome::Return { value, state } => CStatementOutcome::Return {
+            value: substitute_bitvector_variable_in_c_value(value, from, to),
+            state: substitute_bitvector_variable_in_c_state(state, from, to),
+        },
+        CStatementOutcome::UndefinedBehavior(kind) => {
+            CStatementOutcome::UndefinedBehavior(kind.clone())
+        }
+        CStatementOutcome::RuntimeError(kind) => CStatementOutcome::RuntimeError(kind.clone()),
+    }
+}
+
+fn substitute_bitvector_variable_in_c_function_outcome(
+    outcome: &CFunctionOutcome,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CFunctionOutcome {
+    match outcome {
+        CFunctionOutcome::Return { value, state } => CFunctionOutcome::Return {
+            value: substitute_bitvector_variable_in_c_value(value, from, to),
+            state: substitute_bitvector_variable_in_c_state(state, from, to),
+        },
+        CFunctionOutcome::UndefinedBehavior(kind) => {
+            CFunctionOutcome::UndefinedBehavior(kind.clone())
+        }
+        CFunctionOutcome::RuntimeError(kind) => CFunctionOutcome::RuntimeError(kind.clone()),
+    }
+}
+
+fn substitute_bitvector_variable_in_c_state(
+    state: &CState,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CState {
+    let bindings = state
+        .locals
+        .bindings
+        .iter()
+        .map(|(name, binding)| {
+            let binding = match binding {
+                CLocalBinding::Object(value) => {
+                    CLocalBinding::Object(substitute_bitvector_variable_in_c_value(value, from, to))
+                }
+                CLocalBinding::ArrayObject {
+                    element_type,
+                    length,
+                } => CLocalBinding::ArrayObject {
+                    element_type: *element_type,
+                    length: *length,
+                },
+            };
+            (name.clone(), binding)
+        })
+        .collect();
+    CState {
+        locals: CLocalEnvironment { bindings },
+        memory: substitute_bitvector_variable_in_memory(&state.memory, from, to),
+    }
+}
+
+fn substitute_bitvector_variable_in_c_function(
+    function: &CFunction,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CFunction {
+    CFunction {
+        return_type: function.return_type,
+        name: function.name.clone(),
+        parameters: function.parameters.clone(),
+        body: substitute_bitvector_variable_in_c_statement(function.body(), from, to),
+    }
+}
+
+fn substitute_bitvector_variable_in_c_function_specification(
+    specification: &CFunctionSpecification,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CFunctionSpecification {
+    CFunctionSpecification {
+        state: substitute_bitvector_variable_in_c_state(specification.state(), from, to),
+        arguments: specification
+            .arguments()
+            .iter()
+            .map(|argument| substitute_bitvector_variable_in_c_expression(argument, from, to))
+            .collect(),
+        requires: specification
+            .requires()
+            .iter()
+            .map(|requirement| substitute_bitvector_variable_in_proposition(requirement, from, to))
+            .collect(),
+        outcome: substitute_bitvector_variable_in_c_function_outcome(
+            specification.outcome(),
+            from,
+            to,
+        ),
+    }
+}
+
+fn substitute_bitvector_variable_in_c_memory_range(
+    range: &CMemoryRange,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CMemoryRange {
+    CMemoryRange {
+        base: substitute_bitvector_variable_in_pointer(&range.base, from, to),
+        start: substitute_bitvector_variable(&range.start, from, to),
+        end: substitute_bitvector_variable(&range.end, from, to),
     }
 }
 
@@ -5321,11 +6491,22 @@ fn lower_c_proposition_at_state(
                 for right_path in
                     lower_c_proposition_at_state(state, right, &right_assumptions, budget)?
                 {
+                    let guarded_right_obligations = right_path
+                        .obligations
+                        .iter()
+                        .cloned()
+                        .map(|obligation| {
+                            let antecedent = left_path.proposition.clone();
+                            obligation.map_proposition(|proposition| {
+                                Proposition::Implies(Box::new(antecedent), Box::new(proposition))
+                            })
+                        })
+                        .collect::<Vec<_>>();
                     if let Some((facts, obligations)) = merge_path_facts_and_obligations(
                         &left_path.facts,
                         &left_path.obligations,
                         &right_path.facts,
-                        &right_path.obligations,
+                        &guarded_right_obligations,
                         assumptions,
                     ) {
                         paths.push(CPropositionPath {
@@ -5360,7 +6541,17 @@ fn lower_c_proposition_at_state(
                             body: Box::new(path.proposition),
                         },
                         facts: path.facts,
-                        obligations: path.obligations,
+                        obligations: path
+                            .obligations
+                            .into_iter()
+                            .map(|obligation| {
+                                obligation.map_proposition(|proposition| Proposition::ForAll {
+                                    var: *variable,
+                                    sort: Sort::CInt32,
+                                    body: Box::new(proposition),
+                                })
+                            })
+                            .collect(),
                     })
                     .collect(),
             )
@@ -9418,6 +10609,86 @@ mod tests {
             pointer: pointer.clone(),
         }));
         assert!(assumptions.proves(&Proposition::CMemoryCanStore { memory, pointer }));
+    }
+
+    #[test]
+    fn assumptions_split_small_finite_context_variable() {
+        let j = Bitvector32Term::Variable(Variable(87));
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(j.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(j.clone(), Bitvector32Term::Constant(2)),
+                true,
+            );
+        let proposition = Proposition::Or(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(j.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(j, Bitvector32Term::Constant(1)),
+                true,
+            )),
+        );
+
+        assert!(assumptions.proves(&proposition));
+    }
+
+    #[test]
+    fn finite_forall_order_fact_participates_in_transitive_order_path() {
+        let memory = CMemory::new();
+        let indexed_load = |index| {
+            Bitvector32Term::MemoryLoad(
+                Box::new(memory.clone()),
+                Box::new(Pointer {
+                    block: "arg-memory".to_string(),
+                    offset: PointerOffsetTerm::scale_int32(index, 4),
+                }),
+            )
+        };
+        let k = Variable(88);
+        let k_bits = Bitvector32Term::Variable(k);
+        let load_k = indexed_load(k_bits.clone());
+        let load_0 = indexed_load(Bitvector32Term::Constant(0));
+        let load_1 = indexed_load(Bitvector32Term::Constant(1));
+        let load_2 = indexed_load(Bitvector32Term::Constant(2));
+        let finite_order_fact = Proposition::ForAll {
+            var: k,
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::Implies(
+                Box::new(Proposition::And(
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::signed_less_equal(
+                            Bitvector32Term::Constant(0),
+                            k_bits.clone(),
+                        ),
+                        true,
+                    )),
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::signed_less_than(k_bits, Bitvector32Term::Constant(1)),
+                        true,
+                    )),
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(load_k, load_1.clone()),
+                    true,
+                )),
+            )),
+        };
+        let assumptions = Assumptions::new()
+            .assume_proposition(finite_order_fact)
+            .assume_condition(
+                ConditionTerm::signed_less_equal(load_1, load_2.clone()),
+                true,
+            );
+
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(load_0, load_2),
+            true,
+        )));
     }
 
     #[test]
