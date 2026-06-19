@@ -181,6 +181,11 @@ pub enum ContractExpression {
     Add(Box<ContractExpression>, Box<ContractExpression>),
     Subtract(Box<ContractExpression>, Box<ContractExpression>),
     Index(Box<ContractExpression>, Box<ContractExpression>),
+    If {
+        condition: Box<ClickProposition>,
+        then_branch: Box<ContractExpression>,
+        else_branch: Box<ContractExpression>,
+    },
     Call {
         name: String,
         arguments: Vec<ContractExpression>,
@@ -2382,6 +2387,9 @@ impl AnnotationLowerer<'_> {
                 Box::new(self.lower_invariant_contract_expression(base)?),
                 Box::new(self.lower_invariant_contract_expression(index)?),
             )),
+            ContractExpression::If { .. } => Err(
+                "`if` expressions are not supported in loop invariant C lowering yet".to_string(),
+            ),
             ContractExpression::Call { name, arguments } => {
                 let definition = self
                     .click_function_environment
@@ -2456,6 +2464,10 @@ impl AnnotationLowerer<'_> {
                     )),
                 })
             }
+            ContractExpression::If { .. } => Err(
+                "`if` expressions are not supported in loop invariant old-state evaluation yet"
+                    .to_string(),
+            ),
             ContractExpression::Call { name, arguments } => {
                 let definition = self
                     .click_function_environment
@@ -2871,6 +2883,15 @@ fn substitute_contract_expression(
             Box::new(substitute_contract_expression(base, substitutions)?),
             Box::new(substitute_contract_expression(index, substitutions)?),
         )),
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => Ok(ContractExpression::If {
+            condition: Box::new(substitute_click_proposition(condition, substitutions)?),
+            then_branch: Box::new(substitute_contract_expression(then_branch, substitutions)?),
+            else_branch: Box::new(substitute_contract_expression(else_branch, substitutions)?),
+        }),
         ContractExpression::Call { name, arguments } => Ok(ContractExpression::Call {
             name: name.clone(),
             arguments: arguments
@@ -3018,6 +3039,7 @@ fn contract_expression_as_current_c_expression(
             Box::new(contract_expression_as_current_c_expression(base)?),
             Box::new(contract_expression_as_current_c_expression(index)?),
         )),
+        ContractExpression::If { .. } => None,
         ContractExpression::Call { .. } => None,
     }
 }
@@ -3118,6 +3140,7 @@ fn contract_expression_to_current_c_expression(
             Box::new(contract_expression_to_current_c_expression(base)?),
             Box::new(contract_expression_to_current_c_expression(index)?),
         )),
+        ContractExpression::If { .. } => None,
         ContractExpression::Call { .. } => None,
     }
 }
@@ -3684,6 +3707,25 @@ impl KernelPropositionLowerer {
             ContractExpression::Index(_, _) => Err(ClickError::new(
                 "memory reads are not supported in `requires` propositions yet",
             )),
+            ContractExpression::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let condition = self.lower_requirement_proposition(condition)?;
+                let assumptions = Assumptions::new();
+                if assumptions.proves(&condition) {
+                    return self.lower_requirement_value(then_branch);
+                }
+                if assumptions_prove_proposition_false(&assumptions, &condition) {
+                    return self.lower_requirement_value(else_branch);
+                }
+
+                let then_value = self.lower_requirement_value(then_branch)?;
+                let else_value = self.lower_requirement_value(else_branch)?;
+                conditional_contract_value(&condition, then_value, else_value)
+                    .map_err(ClickError::new)
+            }
             ContractExpression::Call { name, arguments } => {
                 let state = CState::new().with_memory(self.memory.clone());
                 evaluate_click_function_call(
@@ -3743,6 +3785,62 @@ fn comparison_proposition(
         return Err(ClickError::new("unsupported proposition comparison"));
     };
     Ok(Proposition::ConditionIs(condition, value))
+}
+
+fn proposition_as_single_condition(proposition: &Proposition) -> Option<(ConditionTerm, bool)> {
+    match proposition {
+        Proposition::ConditionIs(condition, value) => Some((condition.clone(), *value)),
+        Proposition::Not(body) => {
+            let Proposition::ConditionIs(condition, value) = body.as_ref() else {
+                return None;
+            };
+            Some((condition.clone(), !*value))
+        }
+        _ => None,
+    }
+}
+
+fn assumptions_prove_proposition_false(
+    assumptions: &Assumptions,
+    proposition: &Proposition,
+) -> bool {
+    match proposition {
+        Proposition::ConditionIs(condition, value) => {
+            assumptions.proves(&Proposition::ConditionIs(condition.clone(), !*value))
+        }
+        _ => assumptions.proves(&Proposition::Not(Box::new(proposition.clone()))),
+    }
+}
+
+fn conditional_contract_value(
+    proposition: &Proposition,
+    then_value: CValue,
+    else_value: CValue,
+) -> Result<CValue, String> {
+    if then_value == else_value {
+        return Ok(then_value);
+    }
+
+    let Some((condition, expected)) = proposition_as_single_condition(proposition) else {
+        return Err(
+            "symbolic `if` expressions currently require a single comparison condition".to_string(),
+        );
+    };
+
+    let (CValue::Int32(then_term), CValue::Int32(else_term)) = (then_value, else_value) else {
+        return Err(
+            "symbolic `if` expressions currently support only int32 branch values".to_string(),
+        );
+    };
+
+    let (then_term, else_term) = if expected {
+        (then_term, else_term)
+    } else {
+        (else_term, then_term)
+    };
+    Ok(CValue::Int32(Bitvector32Term::if_then_else(
+        condition, then_term, else_term,
+    )))
 }
 
 fn lower_contract_add(left: CValue, right: CValue) -> Result<CValue, ClickError> {
@@ -4494,6 +4592,61 @@ fn evaluate_predicate_contract_expression(
             let pointer = evaluate_postcondition_pointer_add(base, index)?;
             evaluate_contract_memory_load(&state, pointer, assumptions)
         }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let mut condition_values = values.clone();
+            let mut next_variable = 2_500_000;
+            let condition = lower_predicate_body_proposition_with_environment(
+                &mut condition_values,
+                memory,
+                assumptions,
+                condition,
+                &mut next_variable,
+                click_function_environment,
+                active_functions,
+            )?;
+            if assumptions.proves(&condition) {
+                return evaluate_predicate_contract_expression(
+                    values,
+                    memory,
+                    assumptions,
+                    then_branch,
+                    click_function_environment,
+                    active_functions,
+                );
+            }
+            if assumptions_prove_proposition_false(assumptions, &condition) {
+                return evaluate_predicate_contract_expression(
+                    values,
+                    memory,
+                    assumptions,
+                    else_branch,
+                    click_function_environment,
+                    active_functions,
+                );
+            }
+
+            let then_value = evaluate_predicate_contract_expression(
+                values,
+                memory,
+                assumptions,
+                then_branch,
+                click_function_environment,
+                active_functions,
+            )?;
+            let else_value = evaluate_predicate_contract_expression(
+                values,
+                memory,
+                assumptions,
+                else_branch,
+                click_function_environment,
+                active_functions,
+            )?;
+            conditional_contract_value(&condition, then_value, else_value)
+        }
         ContractExpression::Call { name, arguments } => evaluate_click_function_call(
             click_function_environment,
             name,
@@ -4727,6 +4880,14 @@ fn simp_bitvector_const(term: &Bitvector32Term) -> Option<u32> {
         Bitvector32Term::Multiply(left, right) => {
             Some(simp_bitvector_const(left)?.wrapping_mul(simp_bitvector_const(right)?))
         }
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => match simp_condition_without_assumptions(condition)? {
+            true => simp_bitvector_const(then_term),
+            false => simp_bitvector_const(else_term),
+        },
     }
 }
 
@@ -4742,6 +4903,19 @@ fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32Term {
         Bitvector32Term::Multiply(left, right) => {
             bitvector32_multiply(simp_bitvector(left), simp_bitvector(right))
         }
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => match simp_condition_without_assumptions(condition) {
+            Some(true) => simp_bitvector(then_term),
+            Some(false) => simp_bitvector(else_term),
+            None => Bitvector32Term::if_then_else(
+                condition.as_ref().clone(),
+                simp_bitvector(then_term),
+                simp_bitvector(else_term),
+            ),
+        },
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             Bitvector32Term::MemoryLoad(memory.clone(), pointer.clone())
         }
@@ -5620,6 +5794,71 @@ fn evaluate_contract_expression_with_environment(
             )?;
             let pointer = evaluate_postcondition_pointer_add(base, index)?;
             evaluate_contract_memory_load(post_state, pointer, assumptions)
+        }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let mut values = parameter_values.clone();
+            let mut next_variable = 2_000_000;
+            let condition = lower_outcome_proposition_with_environment(
+                &mut values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                condition,
+                &mut next_variable,
+                click_function_environment,
+                active_functions,
+            )?;
+            if assumptions.proves(&condition) {
+                return evaluate_contract_expression_with_environment(
+                    parameter_values,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    then_branch,
+                    click_function_environment,
+                    active_functions,
+                );
+            }
+            if assumptions_prove_proposition_false(assumptions, &condition) {
+                return evaluate_contract_expression_with_environment(
+                    parameter_values,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    else_branch,
+                    click_function_environment,
+                    active_functions,
+                );
+            }
+
+            let then_value = evaluate_contract_expression_with_environment(
+                parameter_values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                then_branch,
+                click_function_environment,
+                active_functions,
+            )?;
+            let else_value = evaluate_contract_expression_with_environment(
+                parameter_values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                else_branch,
+                click_function_environment,
+                active_functions,
+            )?;
+            conditional_contract_value(&condition, then_value, else_value)
         }
         ContractExpression::Call { name, arguments } => evaluate_click_function_call(
             click_function_environment,
@@ -6703,6 +6942,26 @@ impl Parser {
     }
 
     fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
+        if self.peek_ident() == Some("if") {
+            self.position += 1;
+            let condition = self.parse_proposition()?;
+            self.expect(Token::LBrace)?;
+            let then_branch = self.parse_contract_expression()?;
+            self.expect(Token::RBrace)?;
+            if self.peek_ident() != Some("else") {
+                return Err(self.error("expected `else` in `if` expression"));
+            }
+            self.position += 1;
+            self.expect(Token::LBrace)?;
+            let else_branch = self.parse_contract_expression()?;
+            self.expect(Token::RBrace)?;
+            return Ok(ContractExpression::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(then_branch),
+                else_branch: Box::new(else_branch),
+            });
+        }
+
         if self.peek_ident() == Some("old") && self.peek_next() == Some(&Token::LParen) {
             self.position += 2;
             let expression = self.parse_contract_expression()?;
@@ -7031,6 +7290,15 @@ fn validate_contract_expression_calls(
             validate_contract_expression_calls(left, click_functions, context)?;
             validate_contract_expression_calls(right, click_functions, context)
         }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            validate_if_condition_proposition(condition, click_functions, context)?;
+            validate_contract_expression_calls(then_branch, click_functions, context)?;
+            validate_contract_expression_calls(else_branch, click_functions, context)
+        }
         ContractExpression::Call { name, arguments } => {
             let Some(arity) = click_functions.get(name) else {
                 return Err(ClickError::new(format!(
@@ -7051,6 +7319,31 @@ fn validate_contract_expression_calls(
     }
 }
 
+fn validate_if_condition_proposition(
+    proposition: &ClickProposition,
+    click_functions: &BTreeMap<String, usize>,
+    context: &str,
+) -> Result<(), ClickError> {
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            validate_contract_expression_calls(left, click_functions, context)?;
+            validate_contract_expression_calls(right, click_functions, context)
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            validate_if_condition_proposition(left, click_functions, context)?;
+            validate_if_condition_proposition(right, click_functions, context)
+        }
+        ClickProposition::Not(body) | ClickProposition::ForAll { body, .. } => {
+            validate_if_condition_proposition(body, click_functions, context)
+        }
+        ClickProposition::PredicateCall { name, .. } => Err(ClickError::new(format!(
+            "predicate call `{name}` is not supported in `if` expression condition in {context}"
+        ))),
+    }
+}
+
 fn contains_old_expression(expression: &ContractExpression) -> bool {
     match expression {
         ContractExpression::Old(_) => true,
@@ -7060,7 +7353,35 @@ fn contains_old_expression(expression: &ContractExpression) -> bool {
         | ContractExpression::Index(left, right) => {
             contains_old_expression(left) || contains_old_expression(right)
         }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            proposition_contains_old_expression(condition)
+                || contains_old_expression(then_branch)
+                || contains_old_expression(else_branch)
+        }
         ContractExpression::Call { arguments, .. } => arguments.iter().any(contains_old_expression),
+    }
+}
+
+fn proposition_contains_old_expression(proposition: &ClickProposition) -> bool {
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            contains_old_expression(left) || contains_old_expression(right)
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            proposition_contains_old_expression(left) || proposition_contains_old_expression(right)
+        }
+        ClickProposition::Not(body) | ClickProposition::ForAll { body, .. } => {
+            proposition_contains_old_expression(body)
+        }
+        ClickProposition::PredicateCall { arguments, .. } => {
+            arguments.iter().any(contains_old_expression)
+        }
     }
 }
 
@@ -7074,8 +7395,43 @@ fn collect_click_function_calls(expression: &ContractExpression, calls: &mut BTr
             collect_click_function_calls(left, calls);
             collect_click_function_calls(right, calls);
         }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_click_function_calls_in_proposition(condition, calls);
+            collect_click_function_calls(then_branch, calls);
+            collect_click_function_calls(else_branch, calls);
+        }
         ContractExpression::Call { name, arguments } => {
             calls.insert(name.clone());
+            for argument in arguments {
+                collect_click_function_calls(argument, calls);
+            }
+        }
+    }
+}
+
+fn collect_click_function_calls_in_proposition(
+    proposition: &ClickProposition,
+    calls: &mut BTreeSet<String>,
+) {
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            collect_click_function_calls(left, calls);
+            collect_click_function_calls(right, calls);
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            collect_click_function_calls_in_proposition(left, calls);
+            collect_click_function_calls_in_proposition(right, calls);
+        }
+        ClickProposition::Not(body) | ClickProposition::ForAll { body, .. } => {
+            collect_click_function_calls_in_proposition(body, calls);
+        }
+        ClickProposition::PredicateCall { arguments, .. } => {
             for argument in arguments {
                 collect_click_function_calls(argument, calls);
             }

@@ -34,6 +34,11 @@ pub enum Bitvector32Term {
     Add(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Subtract(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Multiply(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    If {
+        condition: Box<ConditionTerm>,
+        then_term: Box<Bitvector32Term>,
+        else_term: Box<Bitvector32Term>,
+    },
     MemoryLoad(Box<CMemory>, Box<Pointer>),
 }
 
@@ -544,6 +549,15 @@ impl Bitvector32Term {
             Self::Add(left, right) => Some(left.as_const()?.wrapping_add(right.as_const()?)),
             Self::Subtract(left, right) => Some(left.as_const()?.wrapping_sub(right.as_const()?)),
             Self::Multiply(left, right) => Some(left.as_const()?.wrapping_mul(right.as_const()?)),
+            Self::If {
+                condition,
+                then_term,
+                else_term,
+            } => match condition.as_ref() {
+                ConditionTerm::Constant(true) => then_term.as_const(),
+                ConditionTerm::Constant(false) => else_term.as_const(),
+                _ => None,
+            },
         }
     }
 
@@ -654,6 +668,19 @@ impl Bitvector32Term {
                 Self::subtract(Self::Constant(0), right_base.as_ref().clone())
             }
             _ => Self::Subtract(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub fn if_then_else(condition: ConditionTerm, then_term: Self, else_term: Self) -> Self {
+        match condition {
+            ConditionTerm::Constant(true) => then_term,
+            ConditionTerm::Constant(false) => else_term,
+            _ if then_term == else_term => then_term,
+            condition => Self::If {
+                condition: Box::new(condition),
+                then_term: Box::new(then_term),
+                else_term: Box::new(else_term),
+            },
         }
     }
 }
@@ -1405,12 +1432,27 @@ impl Assumptions {
     fn decide(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
             ConditionTerm::Constant(value) => Some(*value),
-            _ => self
-                .condition_facts
-                .get(condition)
-                .copied()
-                .or_else(|| self.decide_from_order_facts(condition))
-                .or_else(|| self.decide_from_overflow_facts(condition)),
+            _ => {
+                let simplified = self.simplify_condition_under_assumptions(condition);
+                if simplified != *condition {
+                    return match simplified {
+                        ConditionTerm::Constant(value) => Some(value),
+                        simplified => self
+                            .condition_facts
+                            .get(condition)
+                            .copied()
+                            .or_else(|| self.condition_facts.get(&simplified).copied())
+                            .or_else(|| self.decide_from_order_facts(&simplified))
+                            .or_else(|| self.decide_from_overflow_facts(&simplified)),
+                    };
+                }
+
+                self.condition_facts
+                    .get(condition)
+                    .copied()
+                    .or_else(|| self.decide_from_order_facts(condition))
+                    .or_else(|| self.decide_from_overflow_facts(condition))
+            }
         }
     }
 
@@ -1455,6 +1497,102 @@ impl Assumptions {
         }
 
         false
+    }
+
+    fn simplify_condition_under_assumptions(&self, condition: &ConditionTerm) -> ConditionTerm {
+        match condition {
+            ConditionTerm::Constant(value) => ConditionTerm::Constant(*value),
+            ConditionTerm::Variable(variable) => ConditionTerm::Variable(*variable),
+            ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+                ConditionTerm::signed_less_than(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+                ConditionTerm::signed_less_equal(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+                ConditionTerm::signed_greater_than(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+                ConditionTerm::signed_greater_equal(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector32Equal(left, right) => ConditionTerm::equal(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+                ConditionTerm::signed_add_overflows(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+                ConditionTerm::signed_subtract_overflows(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
+            ConditionTerm::PointerOffsetEqual(left, right) => {
+                ConditionTerm::pointer_offset_equal(left.as_ref().clone(), right.as_ref().clone())
+            }
+        }
+    }
+
+    fn simplify_bitvector_under_assumptions(&self, term: &Bitvector32Term) -> Bitvector32Term {
+        match term {
+            Bitvector32Term::Constant(value) => Bitvector32Term::Constant(*value),
+            Bitvector32Term::Variable(variable) => Bitvector32Term::Variable(*variable),
+            Bitvector32Term::Add(left, right) => Bitvector32Term::add(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::Subtract(left, right) => Bitvector32Term::subtract(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::Multiply(left, right) => {
+                let left = self.simplify_bitvector_under_assumptions(left);
+                let right = self.simplify_bitvector_under_assumptions(right);
+                match (&left, &right) {
+                    (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+                        Bitvector32Term::Constant(left.wrapping_mul(*right))
+                    }
+                    (_, Bitvector32Term::Constant(1)) => left,
+                    (Bitvector32Term::Constant(1), _) => right,
+                    (_, Bitvector32Term::Constant(0)) | (Bitvector32Term::Constant(0), _) => {
+                        Bitvector32Term::Constant(0)
+                    }
+                    _ => Bitvector32Term::Multiply(Box::new(left), Box::new(right)),
+                }
+            }
+            Bitvector32Term::If {
+                condition,
+                then_term,
+                else_term,
+            } => match self.decide(condition) {
+                Some(true) => self.simplify_bitvector_under_assumptions(then_term),
+                Some(false) => self.simplify_bitvector_under_assumptions(else_term),
+                None => Bitvector32Term::if_then_else(
+                    condition.as_ref().clone(),
+                    self.simplify_bitvector_under_assumptions(then_term),
+                    self.simplify_bitvector_under_assumptions(else_term),
+                ),
+            },
+            Bitvector32Term::MemoryLoad(memory, pointer) => {
+                Bitvector32Term::MemoryLoad(memory.clone(), pointer.clone())
+            }
+        }
     }
 
     fn order_facts_force_equal(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
@@ -5064,6 +5202,15 @@ fn collect_bitvector_variables(term: &Bitvector32Term, variables: &mut BTreeSet<
             collect_bitvector_variables(left, variables);
             collect_bitvector_variables(right, variables);
         }
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => {
+            collect_condition_bitvector_variables(condition, variables);
+            collect_bitvector_variables(then_term, variables);
+            collect_bitvector_variables(else_term, variables);
+        }
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             collect_memory_bitvector_variables(memory, variables);
             collect_pointer_bitvector_variables(pointer, variables);
@@ -5827,6 +5974,15 @@ fn substitute_bitvector_variable(
         Bitvector32Term::Multiply(left, right) => Bitvector32Term::Multiply(
             Box::new(substitute_bitvector_variable(left, from, to)),
             Box::new(substitute_bitvector_variable(right, from, to)),
+        ),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => Bitvector32Term::if_then_else(
+            substitute_bitvector_variable_in_condition(condition, from, to),
+            substitute_bitvector_variable(then_term, from, to),
+            substitute_bitvector_variable(else_term, from, to),
         ),
         Bitvector32Term::MemoryLoad(memory, pointer) => Bitvector32Term::MemoryLoad(
             Box::new(substitute_bitvector_variable_in_memory(memory, from, to)),

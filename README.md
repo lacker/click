@@ -249,14 +249,19 @@ function inc(int32 x) -> int32 {
 function head(int32 p[]) -> int32 {
     p[0]
 }
+
+function eq_as_int(int32 x, int32 y) -> int32 {
+    if x == y { 1 } else { 0 }
+}
 ```
 
 Click functions are specification-level definitions, not executable C
 functions. They can be called inside proposition expressions and inside
 `old(...)`, so `old(head(p))` evaluates the same definition against function
 entry memory. This first slice supports non-recursive expression bodies over
-parameters, literals, `+`, `-`, indexing, and other pure Click function calls.
-Recursive definitions and range folds are intentionally not part of this slice.
+parameters, literals, `+`, `-`, indexing, `if` expressions with Click
+proposition conditions, and other pure Click function calls. Recursive
+definitions and range folds are intentionally not part of this slice.
 
 `.click` can define named predicates:
 
