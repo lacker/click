@@ -461,6 +461,8 @@ The first memory-safety demos are fixed-size pointer loops:
   loop execution plus an explicit per-step local-array frame clause.
 - `compare_swap2()`, `sort3()`, and `bubble_sort3_loop()` prove fixed-size
   sorting properties: nondecreasing order plus explicit permutation claims.
+- `bubble_sort3_two_pass()` proves three-cell sortedness from loop VCs and
+  quantified invariants, without falling back to bounded execution.
 - `copy3(int32 dst[3], int32 src[3])` copies three cells from `src` to `dst`
   under an explicit `disjoint(dst[0..3], src[0..3])` requirement and proves
   `old(src[i])` postconditions.
