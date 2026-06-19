@@ -1645,6 +1645,7 @@ impl Assumptions {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
                 if self.subtract_same_const_order_fact(&left, &right, true)
+                    || self.has_order_path(&left, &right, true)
                     || self.has_condition_fact(
                         ConditionTerm::signed_greater_than(right.clone(), left.clone()),
                         true,
@@ -1676,31 +1677,38 @@ impl Assumptions {
             ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
-                if left.add_const_base(1).is_some_and(|base| {
-                    self.has_condition_fact(
-                        ConditionTerm::signed_less_than(base, right.clone()),
+                if self.has_order_path(&left, &right, false)
+                    || left.add_const_base(1).is_some_and(|base| {
+                        self.has_condition_fact(
+                            ConditionTerm::signed_less_than(base, right.clone()),
+                            true,
+                        )
+                    })
+                    || right.subtract_one_base().is_some_and(|base| {
+                        let zero = Bitvector32Term::Constant(0);
+                        left == zero
+                            && (self.has_condition_fact(
+                                ConditionTerm::signed_greater_than(base.clone(), zero.clone()),
+                                true,
+                            ) || self.has_lower_bound_above(&base, &zero))
+                    })
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_less_than(left.clone(), right.clone()),
                         true,
                     )
-                }) || right.subtract_one_base().is_some_and(|base| {
-                    let zero = Bitvector32Term::Constant(0);
-                    left == zero
-                        && (self.has_condition_fact(
-                            ConditionTerm::signed_greater_than(base.clone(), zero.clone()),
-                            true,
-                        ) || self.has_lower_bound_above(&base, &zero))
-                }) || self.has_condition_fact(
-                    ConditionTerm::signed_less_than(left.clone(), right.clone()),
-                    true,
-                ) || self.has_condition_fact(
-                    ConditionTerm::signed_greater_equal(right.clone(), left.clone()),
-                    true,
-                ) || self.has_condition_fact(
-                    ConditionTerm::signed_greater_than(right.clone(), left.clone()),
-                    true,
-                ) || self.has_condition_fact(
-                    ConditionTerm::signed_greater_than(left.clone(), right.clone()),
-                    false,
-                ) || self.has_lower_bound_at_or_above(&right, &left)
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_greater_equal(right.clone(), left.clone()),
+                        true,
+                    )
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_greater_than(right.clone(), left.clone()),
+                        true,
+                    )
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_greater_than(left.clone(), right.clone()),
+                        false,
+                    )
+                    || self.has_lower_bound_at_or_above(&right, &left)
                     || self.has_add_const_lower_bound_at_or_above(&right, &left)
                     || self.nonnegative_offset_is_proven_at_or_above(&left, &right)
                     || self.order_facts_force_equal(&left, &right)
@@ -1717,19 +1725,26 @@ impl Assumptions {
             ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
-                if left.add_const_base(1).is_some_and(|base| {
-                    right == Bitvector32Term::Constant(0)
-                        && self.has_condition_fact(
-                            ConditionTerm::signed_greater_equal(base, Bitvector32Term::Constant(0)),
-                            true,
-                        )
-                }) || self.has_condition_fact(
-                    ConditionTerm::signed_less_than(right.clone(), left.clone()),
-                    true,
-                ) || self.has_condition_fact(
-                    ConditionTerm::signed_less_equal(left.clone(), right.clone()),
-                    false,
-                ) || self.has_lower_bound_above(&left, &right)
+                if self.has_order_path(&right, &left, true)
+                    || left.add_const_base(1).is_some_and(|base| {
+                        right == Bitvector32Term::Constant(0)
+                            && self.has_condition_fact(
+                                ConditionTerm::signed_greater_equal(
+                                    base,
+                                    Bitvector32Term::Constant(0),
+                                ),
+                                true,
+                            )
+                    })
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_less_than(right.clone(), left.clone()),
+                        true,
+                    )
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+                        false,
+                    )
+                    || self.has_lower_bound_above(&left, &right)
                     || self.has_add_const_lower_bound_above(&left, &right)
                 {
                     Some(true)
@@ -1749,25 +1764,34 @@ impl Assumptions {
             ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
-                if left.add_const_base(1).is_some_and(|base| {
-                    right == Bitvector32Term::Constant(0)
-                        && self.has_condition_fact(
-                            ConditionTerm::signed_greater_equal(base, Bitvector32Term::Constant(0)),
-                            true,
-                        )
-                }) || self.has_condition_fact(
-                    ConditionTerm::signed_greater_than(left.clone(), right.clone()),
-                    true,
-                ) || self.has_condition_fact(
-                    ConditionTerm::signed_less_equal(right.clone(), left.clone()),
-                    true,
-                ) || self.has_condition_fact(
-                    ConditionTerm::signed_less_than(right.clone(), left.clone()),
-                    true,
-                ) || self.has_condition_fact(
-                    ConditionTerm::signed_less_than(left.clone(), right.clone()),
-                    false,
-                ) || self.has_lower_bound_at_or_above(&left, &right)
+                if self.has_order_path(&right, &left, false)
+                    || left.add_const_base(1).is_some_and(|base| {
+                        right == Bitvector32Term::Constant(0)
+                            && self.has_condition_fact(
+                                ConditionTerm::signed_greater_equal(
+                                    base,
+                                    Bitvector32Term::Constant(0),
+                                ),
+                                true,
+                            )
+                    })
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_greater_than(left.clone(), right.clone()),
+                        true,
+                    )
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_less_equal(right.clone(), left.clone()),
+                        true,
+                    )
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_less_than(right.clone(), left.clone()),
+                        true,
+                    )
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_less_than(left.clone(), right.clone()),
+                        false,
+                    )
+                    || self.has_lower_bound_at_or_above(&left, &right)
                     || self.has_add_const_lower_bound_at_or_above(&left, &right)
                     || self.order_facts_force_equal(&left, &right)
                 {
@@ -1782,6 +1806,37 @@ impl Assumptions {
             }
             _ => None,
         }
+    }
+
+    fn has_order_path(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        require_strict: bool,
+    ) -> bool {
+        let mut stack = vec![(left.clone(), false)];
+        let mut seen = BTreeSet::new();
+        while let Some((current, strict_so_far)) = stack.pop() {
+            if !seen.insert((current.clone(), strict_so_far)) {
+                continue;
+            }
+            if self.bitvector_terms_proven_equal(&current, right)
+                && (!require_strict || strict_so_far)
+            {
+                return true;
+            }
+            for (condition, value) in &self.condition_facts {
+                let Some((edge_left, edge_right, edge_strict)) =
+                    condition_as_order_fact(condition, *value)
+                else {
+                    continue;
+                };
+                if self.bitvector_terms_proven_equal(&current, &edge_left) {
+                    stack.push((edge_right, strict_so_far || edge_strict));
+                }
+            }
+        }
+        false
     }
 
     fn has_upper_bound_below(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
@@ -2198,7 +2253,7 @@ impl Assumptions {
                 sort: Sort::CInt32,
                 body,
                 ..
-            } => self.proves(body),
+            } => self.proves_finite_forall(proposition) || self.proves(body),
             Proposition::CMemoryCanLoad { memory, pointer } => {
                 self.proves_memory_access(memory, pointer, 4)
             }
@@ -2207,6 +2262,60 @@ impl Assumptions {
             }
             _ => self.prop_facts.contains(proposition),
         }
+    }
+
+    fn proves_finite_forall(&self, proposition: &Proposition) -> bool {
+        let mut variables = Vec::new();
+        let body = collect_forall_chain(proposition, &mut variables);
+        if variables.is_empty() {
+            return false;
+        }
+        let Some(ranges) = finite_forall_ranges(&variables, body) else {
+            return false;
+        };
+        let Some(instantiation_count) = ranges.iter().try_fold(1usize, |count, range| {
+            let width = usize::try_from(range.upper - range.lower + 1).ok()?;
+            count.checked_mul(width)
+        }) else {
+            return false;
+        };
+        if instantiation_count > FINITE_FORALL_INSTANTIATION_LIMIT {
+            return false;
+        }
+
+        let mut values = Vec::with_capacity(variables.len());
+        self.proves_finite_forall_instantiations(body, &variables, &ranges, &mut values)
+    }
+
+    fn proves_finite_forall_instantiations(
+        &self,
+        body: &Proposition,
+        variables: &[Variable],
+        ranges: &[FiniteForAllRange],
+        values: &mut Vec<i64>,
+    ) -> bool {
+        if values.len() == variables.len() {
+            let mut instantiated = body.clone();
+            for (variable, value) in variables.iter().zip(values.iter()) {
+                instantiated = substitute_bitvector_variable_in_proposition(
+                    &instantiated,
+                    *variable,
+                    &signed_i64_bitvector_constant(*value),
+                );
+            }
+            return self.proves(&instantiated);
+        }
+
+        let range = &ranges[values.len()];
+        for value in range.lower..=range.upper {
+            values.push(value);
+            if !self.proves_finite_forall_instantiations(body, variables, ranges, values) {
+                values.pop();
+                return false;
+            }
+            values.pop();
+        }
+        true
     }
 
     fn proves_condition_from_facts(&self, condition: &ConditionTerm, value: bool) -> bool {
@@ -3917,17 +4026,236 @@ fn condition_as_order_fact(
         (ConditionTerm::Bitvector32SignedLessThan(left, right), true) => {
             Some((left.as_ref().clone(), right.as_ref().clone(), true))
         }
+        (ConditionTerm::Bitvector32SignedLessThan(left, right), false) => {
+            Some((right.as_ref().clone(), left.as_ref().clone(), false))
+        }
         (ConditionTerm::Bitvector32SignedLessEqual(left, right), true) => {
             Some((left.as_ref().clone(), right.as_ref().clone(), false))
+        }
+        (ConditionTerm::Bitvector32SignedLessEqual(left, right), false) => {
+            Some((right.as_ref().clone(), left.as_ref().clone(), true))
         }
         (ConditionTerm::Bitvector32SignedGreaterThan(left, right), true) => {
             Some((right.as_ref().clone(), left.as_ref().clone(), true))
         }
+        (ConditionTerm::Bitvector32SignedGreaterThan(left, right), false) => {
+            Some((left.as_ref().clone(), right.as_ref().clone(), false))
+        }
         (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), true) => {
             Some((right.as_ref().clone(), left.as_ref().clone(), false))
         }
+        (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), false) => {
+            Some((left.as_ref().clone(), right.as_ref().clone(), true))
+        }
         _ => None,
     }
+}
+
+const FINITE_FORALL_INSTANTIATION_LIMIT: usize = 128;
+
+#[derive(Clone, Debug, Default)]
+struct FiniteForAllRange {
+    lower: i64,
+    upper: i64,
+}
+
+#[derive(Clone, Debug)]
+struct VariableOrderEdge {
+    lower: Variable,
+    upper: Variable,
+    strict: bool,
+}
+
+fn collect_forall_chain<'a>(
+    proposition: &'a Proposition,
+    variables: &mut Vec<Variable>,
+) -> &'a Proposition {
+    match proposition {
+        Proposition::ForAll {
+            var,
+            sort: Sort::CInt32,
+            body,
+        } => {
+            variables.push(*var);
+            collect_forall_chain(body, variables)
+        }
+        proposition => proposition,
+    }
+}
+
+fn finite_forall_ranges(
+    variables: &[Variable],
+    body: &Proposition,
+) -> Option<Vec<FiniteForAllRange>> {
+    let variable_set = variables.iter().copied().collect::<BTreeSet<_>>();
+    let mut ranges = variables
+        .iter()
+        .copied()
+        .map(|variable| (variable, IntegerRangeFacts::default()))
+        .collect::<BTreeMap<_, _>>();
+    let mut edges = Vec::new();
+    let mut order_facts = Vec::new();
+    collect_implication_antecedent_order_facts(body, &mut order_facts);
+
+    for (left, right, strict) in order_facts {
+        match (bitvector_variable(&left), signed_bitvector_constant(&right)) {
+            (Some(variable), Some(bound)) if variable_set.contains(&variable) => {
+                let upper = if strict { bound.checked_sub(1)? } else { bound };
+                tighten_upper_bound(&mut ranges, variable, upper);
+                continue;
+            }
+            _ => {}
+        }
+        match (signed_bitvector_constant(&left), bitvector_variable(&right)) {
+            (Some(bound), Some(variable)) if variable_set.contains(&variable) => {
+                let lower = if strict { bound.checked_add(1)? } else { bound };
+                tighten_lower_bound(&mut ranges, variable, lower);
+                continue;
+            }
+            _ => {}
+        }
+        match (bitvector_variable(&left), bitvector_variable(&right)) {
+            (Some(lower), Some(upper))
+                if variable_set.contains(&lower) && variable_set.contains(&upper) =>
+            {
+                edges.push(VariableOrderEdge {
+                    lower,
+                    upper,
+                    strict,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    propagate_variable_order_bounds(&mut ranges, &edges)?;
+
+    variables
+        .iter()
+        .map(|variable| {
+            let range = ranges.get(variable)?;
+            let (Some(lower), Some(upper)) = (range.lower, range.upper) else {
+                return None;
+            };
+            if lower > upper || upper - lower > 32 {
+                return None;
+            }
+            Some(FiniteForAllRange { lower, upper })
+        })
+        .collect()
+}
+
+fn collect_implication_antecedent_order_facts(
+    proposition: &Proposition,
+    facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
+) {
+    match proposition {
+        Proposition::Implies(left, _) => collect_order_facts_from_assumed_proposition(left, facts),
+        Proposition::And(left, right) | Proposition::Or(left, right) => {
+            collect_implication_antecedent_order_facts(left, facts);
+            collect_implication_antecedent_order_facts(right, facts);
+        }
+        Proposition::ForAll { body, .. } => collect_implication_antecedent_order_facts(body, facts),
+        Proposition::Not(_)
+        | Proposition::ConditionIs(_, _)
+        | Proposition::Equal(_, _)
+        | Proposition::Predicate { .. }
+        | Proposition::CExpressionEvaluates { .. }
+        | Proposition::CStatementExecutes { .. }
+        | Proposition::CFunctionExecutes { .. }
+        | Proposition::CFunctionSatisfiesSpecification { .. }
+        | Proposition::CMemoryLoads { .. }
+        | Proposition::CMemoryCanLoad { .. }
+        | Proposition::CMemoryCanStore { .. }
+        | Proposition::CMemoryValidRange { .. }
+        | Proposition::CMemoryDisjoint { .. }
+        | Proposition::CMemoryMutatesOnly { .. }
+        | Proposition::CMemoryEffectSummary { .. }
+        | Proposition::CWhileInvariantRule { .. } => {}
+    }
+}
+
+fn collect_order_facts_from_assumed_proposition(
+    proposition: &Proposition,
+    facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
+) {
+    match proposition {
+        Proposition::ConditionIs(condition, value) => {
+            if let Some(fact) = condition_as_order_fact(condition, *value) {
+                facts.push(fact);
+            }
+        }
+        Proposition::And(left, right) => {
+            collect_order_facts_from_assumed_proposition(left, facts);
+            collect_order_facts_from_assumed_proposition(right, facts);
+        }
+        _ => {}
+    }
+}
+
+fn tighten_lower_bound(
+    ranges: &mut BTreeMap<Variable, IntegerRangeFacts>,
+    variable: Variable,
+    lower: i64,
+) {
+    if let Some(range) = ranges.get_mut(&variable) {
+        range.lower = Some(range.lower.map_or(lower, |current| current.max(lower)));
+    }
+}
+
+fn tighten_upper_bound(
+    ranges: &mut BTreeMap<Variable, IntegerRangeFacts>,
+    variable: Variable,
+    upper: i64,
+) {
+    if let Some(range) = ranges.get_mut(&variable) {
+        range.upper = Some(range.upper.map_or(upper, |current| current.min(upper)));
+    }
+}
+
+fn propagate_variable_order_bounds(
+    ranges: &mut BTreeMap<Variable, IntegerRangeFacts>,
+    edges: &[VariableOrderEdge],
+) -> Option<()> {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for edge in edges {
+            let lower_range = ranges.get(&edge.lower)?;
+            let upper_range = ranges.get(&edge.upper)?;
+            let offset = if edge.strict { 1 } else { 0 };
+            let inferred_lower_upper = upper_range
+                .upper
+                .and_then(|upper| upper.checked_sub(offset));
+            let inferred_upper_lower = lower_range
+                .lower
+                .and_then(|lower| lower.checked_add(offset));
+
+            if let Some(upper) = inferred_lower_upper {
+                let range = ranges.get_mut(&edge.lower)?;
+                let new_upper = range.upper.map_or(upper, |current| current.min(upper));
+                if range.upper != Some(new_upper) {
+                    range.upper = Some(new_upper);
+                    changed = true;
+                }
+            }
+
+            if let Some(lower) = inferred_upper_lower {
+                let range = ranges.get_mut(&edge.upper)?;
+                let new_lower = range.lower.map_or(lower, |current| current.max(lower));
+                if range.lower != Some(new_lower) {
+                    range.lower = Some(new_lower);
+                    changed = true;
+                }
+            }
+        }
+    }
+    Some(())
+}
+
+fn signed_i64_bitvector_constant(value: i64) -> Bitvector32Term {
+    debug_assert!((i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(&value));
+    Bitvector32Term::Constant(value as i32 as u32)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -9154,6 +9482,75 @@ mod tests {
         assert!(assumptions.proves(&forall_int32(
             index,
             Proposition::Implies(Box::new(in_segment), Box::new(can_load_index)),
+        )));
+    }
+
+    #[test]
+    fn assumptions_prove_finite_forall_int32_by_instantiation() {
+        let i = Variable(92);
+        let j = Variable(93);
+        let i_bits = Bitvector32Term::Variable(i);
+        let j_bits = Bitvector32Term::Variable(j);
+        let antecedent = Proposition::And(
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(
+                        i_bits.clone(),
+                        Bitvector32Term::Constant(0),
+                    ),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(
+                        j_bits.clone(),
+                        Bitvector32Term::Constant(0),
+                    ),
+                    true,
+                )),
+            )),
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(i_bits.clone(), j_bits.clone()),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(j_bits, Bitvector32Term::Constant(3)),
+                    true,
+                )),
+            )),
+        );
+        let consequent = Proposition::Or(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(i_bits.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(i_bits, Bitvector32Term::Constant(1)),
+                true,
+            )),
+        );
+
+        assert!(Assumptions::new().proves(&forall_int32(
+            i,
+            forall_int32(
+                j,
+                Proposition::Implies(Box::new(antecedent), Box::new(consequent)),
+            ),
+        )));
+    }
+
+    #[test]
+    fn order_solver_uses_negated_less_than_transitively() {
+        let a = Bitvector32Term::Variable(Variable(94));
+        let b = Bitvector32Term::Variable(Variable(95));
+        let c = Bitvector32Term::Variable(Variable(96));
+        let assumptions = Assumptions::new()
+            .assume_condition(ConditionTerm::signed_less_than(b.clone(), a.clone()), false)
+            .assume_condition(ConditionTerm::signed_less_than(c.clone(), b), false);
+
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(a, c),
+            true,
         )));
     }
 

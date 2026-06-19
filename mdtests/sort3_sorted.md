@@ -34,9 +34,27 @@ int32 sort3(int32 p[3]) {
 ```click
 verifying "sort3.c";
 
+predicate sorted(int32 p[], int32 n) {
+    sorted_range(p, 0, n)
+}
+
+predicate sorted_range(int32 p[], int32 lo, int32 hi) {
+    forall (int32 i) {
+        forall (int32 j) {
+            0 <= i and 0 <= j and lo <= i and i < j and j < hi implies p[i] <= p[j]
+        }
+    }
+}
+
 int32 sort3(int32 p[3]) {
     requires valid_range(p[0..3]);
-    ensures sorted: p[0] <= p[1] and p[1] <= p[2] by auto;
+    ensures sorted: sorted(p, 3) by {
+        symbolic_execute();
+        unfold(sorted);
+        unfold(sorted_range);
+        simp();
+        close();
+    }
 }
 ```
 
