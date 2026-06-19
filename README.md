@@ -239,9 +239,36 @@ p[0] == old(p[0])
 forall (int32 k) { 0 <= k and k < n implies p[k] == old(p[k]) }
 ```
 
+`.click` can define pure value functions with expression bodies:
+
+```text
+function inc(int32 x) -> int32 {
+    x + 1
+}
+
+function head(int32 p[]) -> int32 {
+    p[0]
+}
+```
+
+Click functions are specification-level definitions, not executable C
+functions. They can be called inside proposition expressions and inside
+`old(...)`, so `old(head(p))` evaluates the same definition against function
+entry memory. This first slice supports non-recursive expression bodies over
+parameters, literals, `+`, `-`, indexing, and other pure Click function calls.
+Recursive definitions and range folds are intentionally not part of this slice.
+
 `.click` can define named predicates:
 
 ```text
+function inc(int32 x) -> int32 {
+    x + 1
+}
+
+predicate one_more(int32 x, int32 y) {
+    inc(x) == y
+}
+
 predicate sorted(int32 p[], int32 n) {
     sorted_range(p, 0, n)
 }
@@ -465,6 +492,9 @@ The first memory-safety demos are fixed-size pointer loops:
   quantified invariants, without falling back to bounded execution.
 - `sort3_permutation_predicate()` packages the explicit six-way three-cell
   permutation claim as a named Click predicate and unfolds it at the proof site.
+- `pure_click_functions` defines expression-bodied Click functions with `->`,
+  uses them in predicates and postconditions, and evaluates `old(function(...))`
+  against entry memory.
 - `copy3(int32 dst[3], int32 src[3])` copies three cells from `src` to `dst`
   under an explicit `disjoint(dst[0..3], src[0..3])` requirement and proves
   `old(src[i])` postconditions.

@@ -29,6 +29,7 @@ const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
 pub struct ClickFile {
     verifying_sources: Vec<String>,
     predicate_definitions: Vec<PredicateDefinition>,
+    click_function_definitions: Vec<ClickFunctionDefinition>,
     function_blocks: Vec<FunctionBlock>,
 }
 
@@ -37,6 +38,14 @@ pub struct PredicateDefinition {
     name: String,
     parameters: Vec<FunctionParameter>,
     body: ClickProposition,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClickFunctionDefinition {
+    name: String,
+    parameters: Vec<FunctionParameter>,
+    return_type: C0Type,
+    body: ContractExpression,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -168,10 +177,14 @@ pub enum ClickProposition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContractExpression {
     Current(CExpression),
-    Old(CExpression),
+    Old(Box<ContractExpression>),
     Add(Box<ContractExpression>, Box<ContractExpression>),
     Subtract(Box<ContractExpression>, Box<ContractExpression>),
     Index(Box<ContractExpression>, Box<ContractExpression>),
+    Call {
+        name: String,
+        arguments: Vec<ContractExpression>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -275,6 +288,26 @@ impl PredicateEnvironment {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct ClickFunctionEnvironment {
+    definitions: BTreeMap<String, ClickFunctionDefinition>,
+}
+
+impl ClickFunctionEnvironment {
+    fn new(definitions: &[ClickFunctionDefinition]) -> Self {
+        Self {
+            definitions: definitions
+                .iter()
+                .map(|definition| (definition.name().to_string(), definition.clone()))
+                .collect(),
+        }
+    }
+
+    fn get(&self, name: &str) -> Option<&ClickFunctionDefinition> {
+        self.definitions.get(name)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedCTheorem {
     pub source_path: String,
     pub function_block: FunctionBlock,
@@ -314,6 +347,10 @@ impl ClickFile {
         &self.predicate_definitions
     }
 
+    pub fn click_function_definitions(&self) -> &[ClickFunctionDefinition] {
+        &self.click_function_definitions
+    }
+
     pub fn function_blocks(&self) -> &[FunctionBlock] {
         &self.function_blocks
     }
@@ -329,6 +366,24 @@ impl PredicateDefinition {
     }
 
     pub fn body(&self) -> &ClickProposition {
+        &self.body
+    }
+}
+
+impl ClickFunctionDefinition {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn parameters(&self) -> &[FunctionParameter] {
+        &self.parameters
+    }
+
+    pub fn return_type(&self) -> C0Type {
+        self.return_type
+    }
+
+    pub fn body(&self) -> &ContractExpression {
         &self.body
     }
 }
@@ -543,6 +598,8 @@ pub fn verify_c0_sources(
     let parsed_sources = parse_verified_sources(&file, &c_sources)?;
     let function_environment = build_function_environment(&parsed_sources);
     let predicate_environment = PredicateEnvironment::new(file.predicate_definitions());
+    let click_function_environment =
+        ClickFunctionEnvironment::new(file.click_function_definitions());
     let mut verified = Vec::new();
 
     for function_block in file.function_blocks {
@@ -568,6 +625,7 @@ pub fn verify_c0_sources(
                         &claim_label,
                         &function_environment,
                         &predicate_environment,
+                        &click_function_environment,
                     )?;
                     verified.extend(theorems);
                 }
@@ -580,6 +638,7 @@ pub fn verify_c0_sources(
                         &claim_label,
                         &function_environment,
                         &predicate_environment,
+                        &click_function_environment,
                     )?;
                     verified.extend(theorems);
                 }
@@ -592,6 +651,7 @@ pub fn verify_c0_sources(
                         &claim_label,
                         &function_environment,
                         &predicate_environment,
+                        &click_function_environment,
                     )?;
                     verified.extend(theorems);
                 }
@@ -604,6 +664,7 @@ pub fn verify_c0_sources(
                         &claim_label,
                         &function_environment,
                         &predicate_environment,
+                        &click_function_environment,
                         steps,
                     )?;
                     verified.extend(theorems);
@@ -667,14 +728,17 @@ fn prove_claim_by_auto(
     claim_label: &str,
     function_environment: &CFunctionEnvironment,
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let (state, arguments, requirement_propositions) = initial_call(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
+        click_function_environment,
     )?;
     let requirement_propositions = requirements_with_structural_unfolds(
         predicate_environment,
+        click_function_environment,
         function_block,
         &requirement_propositions,
     )
@@ -685,6 +749,7 @@ fn prove_claim_by_auto(
         &state,
         &arguments,
         predicate_environment,
+        click_function_environment,
     )?;
     let assumptions = assumptions_from_propositions(&requirement_propositions);
     let vc_execution = prove_symbolic_c_function_verification_paths_with_environment(
@@ -711,6 +776,7 @@ fn prove_claim_by_auto(
         &state,
         &arguments,
         &requirement_propositions,
+        click_function_environment,
     ) {
         Ok(theorems) => {
             let proof_steps = certified_proof_steps(
@@ -721,6 +787,7 @@ fn prove_claim_by_auto(
                 claim_label,
                 function_environment,
                 predicate_environment,
+                click_function_environment,
                 auto_loop_verification_proof_step_candidates(function_block, claim),
             );
             return Ok(with_proof_steps(theorems, proof_steps));
@@ -756,6 +823,7 @@ fn prove_claim_by_auto(
         &state,
         &arguments,
         &requirement_propositions,
+        click_function_environment,
     )?;
     let proof_steps = certified_proof_steps(
         source_path,
@@ -765,6 +833,7 @@ fn prove_claim_by_auto(
         claim_label,
         function_environment,
         predicate_environment,
+        click_function_environment,
         bounded_execution_proof_step_candidates(claim),
     );
     Ok(with_proof_steps(theorems, proof_steps))
@@ -778,6 +847,7 @@ fn prove_claim_by_frame(
     claim_label: &str,
     function_environment: &CFunctionEnvironment,
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if matches!(claim, FunctionClaimRef::Ensure(_, _)) {
         return Err(ClickError::new(format!(
@@ -789,9 +859,11 @@ fn prove_claim_by_frame(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
+        click_function_environment,
     )?;
     let requirement_propositions = requirements_with_structural_unfolds(
         predicate_environment,
+        click_function_environment,
         function_block,
         &requirement_propositions,
     )
@@ -802,6 +874,7 @@ fn prove_claim_by_frame(
         &state,
         &arguments,
         predicate_environment,
+        click_function_environment,
     )?;
     let assumptions = assumptions_from_propositions(&requirement_propositions);
     let execution = prove_symbolic_c_function_verification_paths_with_environment(
@@ -832,6 +905,7 @@ fn prove_claim_by_frame(
         &state,
         &arguments,
         &requirement_propositions,
+        click_function_environment,
     )?;
     let proof_steps = certified_proof_steps(
         source_path,
@@ -841,6 +915,7 @@ fn prove_claim_by_frame(
         claim_label,
         function_environment,
         predicate_environment,
+        click_function_environment,
         frame_proof_step_candidates(),
     );
     Ok(with_proof_steps(theorems, proof_steps))
@@ -854,6 +929,7 @@ fn prove_claim_by_simp(
     claim_label: &str,
     function_environment: &CFunctionEnvironment,
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if count_loops(parsed_function.body()) != 0 {
         return Err(ClickError::new(format!(
@@ -865,9 +941,11 @@ fn prove_claim_by_simp(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
+        click_function_environment,
     )?;
     let requirement_propositions = requirements_with_structural_unfolds(
         predicate_environment,
+        click_function_environment,
         function_block,
         &requirement_propositions,
     )
@@ -878,6 +956,7 @@ fn prove_claim_by_simp(
         &state,
         &arguments,
         predicate_environment,
+        click_function_environment,
     )?;
     let proof_steps = certified_proof_steps(
         source_path,
@@ -887,6 +966,7 @@ fn prove_claim_by_simp(
         claim_label,
         function_environment,
         predicate_environment,
+        click_function_environment,
         vec![vec![
             ProofStep::SymbolicExecute,
             ProofStep::Simp,
@@ -947,6 +1027,7 @@ fn prove_claim_by_simp(
             &state,
             &outcome,
             predicate_environment,
+            click_function_environment,
             &[],
         )?;
         let specification = c_function_specification(
@@ -1007,6 +1088,7 @@ fn prove_claim_by_steps(
     claim_label: &str,
     function_environment: &CFunctionEnvironment,
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     steps: &[ProofStep],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if steps.is_empty() {
@@ -1019,9 +1101,11 @@ fn prove_claim_by_steps(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
+        click_function_environment,
     )?;
     let requirement_propositions = requirements_with_structural_unfolds(
         predicate_environment,
+        click_function_environment,
         function_block,
         &requirement_propositions,
     )
@@ -1032,6 +1116,7 @@ fn prove_claim_by_steps(
         &state,
         &arguments,
         predicate_environment,
+        click_function_environment,
     )?;
     let assumptions = assumptions_from_propositions(&requirement_propositions);
     let mut replay = ProofStepReplayState::default();
@@ -1149,6 +1234,7 @@ fn prove_claim_by_steps(
                     claim_label,
                     function_environment,
                     predicate_environment,
+                    click_function_environment,
                     parsed_function.parameters(),
                     &function,
                     &state,
@@ -1352,6 +1438,7 @@ fn validate_function_frame_step(
             state,
             &outcome,
             &PredicateEnvironment::new(&[]),
+            &ClickFunctionEnvironment::new(&[]),
             &[],
         )?;
     }
@@ -1368,6 +1455,7 @@ fn prove_claim_from_steps_execution(
     claim_label: &str,
     function_environment: &CFunctionEnvironment,
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     parameters: &[syntax::C0Parameter],
     function: &CFunction,
     state: &CState,
@@ -1413,6 +1501,7 @@ fn prove_claim_from_steps_execution(
         path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
         path_requirements = unfold_available_predicate_facts(
             predicate_environment,
+            click_function_environment,
             unfolded_predicates,
             &path_requirements,
         )
@@ -1433,6 +1522,7 @@ fn prove_claim_from_steps_execution(
                 state,
                 &outcome,
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
             )?;
         } else {
@@ -1447,6 +1537,7 @@ fn prove_claim_from_steps_execution(
                 state,
                 &outcome,
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
             )?;
         }
@@ -1536,12 +1627,14 @@ fn with_proof_steps(
 
 fn requirements_with_structural_unfolds(
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     function_block: &FunctionBlock,
     requirement_propositions: &[Proposition],
 ) -> Result<Vec<Proposition>, String> {
     let unfolded_predicates = structural_unfold_step_names(function_block);
     unfold_available_predicate_facts(
         predicate_environment,
+        click_function_environment,
         &unfolded_predicates,
         requirement_propositions,
     )
@@ -1570,6 +1663,7 @@ fn certified_proof_steps(
     claim_label: &str,
     function_environment: &CFunctionEnvironment,
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     candidates: Vec<Vec<ProofStep>>,
 ) -> Option<Vec<ProofStep>> {
     candidates.into_iter().find(|steps| {
@@ -1581,6 +1675,7 @@ fn certified_proof_steps(
             claim_label,
             function_environment,
             predicate_environment,
+            click_function_environment,
             steps,
         )
         .is_ok()
@@ -1724,6 +1819,7 @@ fn prove_claim_from_execution(
     state: &CState,
     arguments: &[CExpression],
     requirement_propositions: &[Proposition],
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let proof_kind = execution_kind.proof_kind();
     let tactic_name = execution_kind.tactic_name();
@@ -1764,6 +1860,7 @@ fn prove_claim_from_execution(
             state,
             &outcome,
             &PredicateEnvironment::new(&[]),
+            click_function_environment,
             &[],
         )?;
         let path_requirements_description = describe_propositions(&path_requirements);
@@ -2043,10 +2140,12 @@ fn annotated_function(
     entry_state: &CState,
     arguments: &[CExpression],
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<CFunction, ClickError> {
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
         predicate_environment,
+        click_function_environment,
         entry_state,
         entry_values: parameter_values(parsed_function.parameters(), arguments)?,
         quantified_values: BTreeMap::new(),
@@ -2070,6 +2169,7 @@ fn annotated_function(
 struct AnnotationLowerer<'a> {
     structural_clauses: &'a [StructuralClause],
     predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
     entry_state: &'a CState,
     entry_values: BTreeMap<String, CValue>,
     quantified_values: BTreeMap<String, CValue>,
@@ -2268,7 +2368,7 @@ impl AnnotationLowerer<'_> {
                 self.lower_current_invariant_c_expression(expression)
             }
             ContractExpression::Old(expression) => Ok(CExpression::Value(
-                self.evaluate_old_invariant_c_expression(expression)?,
+                self.evaluate_old_invariant_contract_expression(expression)?,
             )),
             ContractExpression::Add(left, right) => Ok(CExpression::Add(
                 Box::new(self.lower_invariant_contract_expression(left)?),
@@ -2282,6 +2382,14 @@ impl AnnotationLowerer<'_> {
                 Box::new(self.lower_invariant_contract_expression(base)?),
                 Box::new(self.lower_invariant_contract_expression(index)?),
             )),
+            ContractExpression::Call { name, arguments } => {
+                let definition = self
+                    .click_function_environment
+                    .get(name)
+                    .ok_or_else(|| format!("unknown function `{name}`"))?;
+                let unfolded = instantiate_click_function_definition(definition, arguments)?;
+                self.lower_invariant_contract_expression(&unfolded)
+            }
         }
     }
 
@@ -2312,6 +2420,50 @@ impl AnnotationLowerer<'_> {
             expression => Err(format!(
                 "unsupported expression in loop invariant: `{expression:?}`"
             )),
+        }
+    }
+
+    fn evaluate_old_invariant_contract_expression(
+        &self,
+        expression: &ContractExpression,
+    ) -> Result<CValue, String> {
+        match expression {
+            ContractExpression::Current(expression) => {
+                self.evaluate_old_invariant_c_expression(expression)
+            }
+            ContractExpression::Old(expression) => {
+                self.evaluate_old_invariant_contract_expression(expression)
+            }
+            ContractExpression::Add(left, right) => {
+                let left = self.evaluate_old_invariant_contract_expression(left)?;
+                let right = self.evaluate_old_invariant_contract_expression(right)?;
+                evaluate_postcondition_add(left, right)
+            }
+            ContractExpression::Subtract(left, right) => {
+                let left = self.evaluate_old_invariant_contract_expression(left)?;
+                let right = self.evaluate_old_invariant_contract_expression(right)?;
+                evaluate_postcondition_sub(left, right)
+            }
+            ContractExpression::Index(base, index) => {
+                let base = self.evaluate_old_invariant_contract_expression(base)?;
+                let index = self.evaluate_old_invariant_contract_expression(index)?;
+                let pointer = evaluate_postcondition_pointer_add(base, index)?;
+                Ok(match self.entry_state.memory().load(&pointer) {
+                    crate::megakernel::CExpressionOutcome::Value(value) => value,
+                    _ => CValue::Int32(Bitvector32Term::MemoryLoad(
+                        Box::new(self.entry_state.memory().clone()),
+                        Box::new(pointer),
+                    )),
+                })
+            }
+            ContractExpression::Call { name, arguments } => {
+                let definition = self
+                    .click_function_environment
+                    .get(name)
+                    .ok_or_else(|| format!("unknown function `{name}`"))?;
+                let unfolded = instantiate_click_function_definition(definition, arguments)?;
+                self.evaluate_old_invariant_contract_expression(&unfolded)
+            }
         }
     }
 
@@ -2620,6 +2772,28 @@ fn instantiate_click_predicate_definition(
     substitute_click_proposition(definition.body(), &substitutions)
 }
 
+fn instantiate_click_function_definition(
+    definition: &ClickFunctionDefinition,
+    arguments: &[ContractExpression],
+) -> Result<ContractExpression, String> {
+    if arguments.len() != definition.parameters().len() {
+        return Err(format!(
+            "function `{}` expects {} argument(s), got {}",
+            definition.name(),
+            definition.parameters().len(),
+            arguments.len()
+        ));
+    }
+
+    let substitutions = definition
+        .parameters()
+        .iter()
+        .zip(arguments)
+        .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
+        .collect::<BTreeMap<_, _>>();
+    substitute_contract_expression(definition.body(), &substitutions)
+}
+
 fn substitute_click_proposition(
     proposition: &ClickProposition,
     substitutions: &BTreeMap<String, ContractExpression>,
@@ -2682,9 +2856,9 @@ fn substitute_contract_expression(
         ContractExpression::Current(expression) => {
             substitute_current_c_expression_as_contract(expression, substitutions)
         }
-        ContractExpression::Old(expression) => Ok(ContractExpression::Old(
-            substitute_current_c_expression(expression, substitutions)?,
-        )),
+        ContractExpression::Old(expression) => Ok(ContractExpression::Old(Box::new(
+            substitute_contract_expression(expression, substitutions)?,
+        ))),
         ContractExpression::Add(left, right) => Ok(ContractExpression::Add(
             Box::new(substitute_contract_expression(left, substitutions)?),
             Box::new(substitute_contract_expression(right, substitutions)?),
@@ -2697,6 +2871,13 @@ fn substitute_contract_expression(
             Box::new(substitute_contract_expression(base, substitutions)?),
             Box::new(substitute_contract_expression(index, substitutions)?),
         )),
+        ContractExpression::Call { name, arguments } => Ok(ContractExpression::Call {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_contract_expression(argument, substitutions))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
     }
 }
 
@@ -2837,6 +3018,7 @@ fn contract_expression_as_current_c_expression(
             Box::new(contract_expression_as_current_c_expression(base)?),
             Box::new(contract_expression_as_current_c_expression(index)?),
         )),
+        ContractExpression::Call { .. } => None,
     }
 }
 
@@ -2936,6 +3118,7 @@ fn contract_expression_to_current_c_expression(
             Box::new(contract_expression_to_current_c_expression(base)?),
             Box::new(contract_expression_to_current_c_expression(index)?),
         )),
+        ContractExpression::Call { .. } => None,
     }
 }
 
@@ -3042,6 +3225,7 @@ fn initial_call(
     function_name: &str,
     requires: &[Requirement],
     parameters: &[syntax::C0Parameter],
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<(CState, Vec<CExpression>, Vec<Proposition>), ClickError> {
     let mut arguments = Vec::new();
 
@@ -3092,8 +3276,13 @@ fn initial_call(
 
     let mut memory = CMemory::new();
     memory = memory_with_symbolic_valid_range_cells(memory, &valid_ranges);
-    let requirement_propositions =
-        requirement_propositions(requires, parameters, &arguments, &memory)?;
+    let requirement_propositions = requirement_propositions(
+        requires,
+        parameters,
+        &arguments,
+        &memory,
+        click_function_environment,
+    )?;
     Ok((
         CState::new().with_memory(memory),
         arguments,
@@ -3129,6 +3318,7 @@ fn requirement_propositions(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     memory: &CMemory,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<Proposition>, ClickError> {
     requires
         .iter()
@@ -3139,9 +3329,13 @@ fn requirement_propositions(
             Requirement::Disjoint { left, right } => {
                 disjoint_requirement_prop(parameters, arguments, memory, left, right)
             }
-            Requirement::Proposition(proposition) => {
-                requirement_proposition_prop(parameters, arguments, memory, proposition)
-            }
+            Requirement::Proposition(proposition) => requirement_proposition_prop(
+                parameters,
+                arguments,
+                memory,
+                proposition,
+                click_function_environment,
+            ),
         })
         .collect()
 }
@@ -3346,9 +3540,11 @@ fn requirement_proposition_prop(
     arguments: &[CExpression],
     memory: &CMemory,
     proposition: &ClickProposition,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, ClickError> {
     let parameter_values = parameter_values(parameters, arguments)?;
-    let mut lowerer = KernelPropositionLowerer::new(parameter_values, memory.clone());
+    let mut lowerer =
+        KernelPropositionLowerer::new(parameter_values, memory.clone(), click_function_environment);
     lowerer.lower_requirement_proposition(proposition)
 }
 
@@ -3374,14 +3570,22 @@ fn parameter_values(
 struct KernelPropositionLowerer {
     values: BTreeMap<String, CValue>,
     memory: CMemory,
+    click_function_environment: ClickFunctionEnvironment,
+    active_functions: BTreeSet<String>,
     next_variable: u64,
 }
 
 impl KernelPropositionLowerer {
-    fn new(values: BTreeMap<String, CValue>, memory: CMemory) -> Self {
+    fn new(
+        values: BTreeMap<String, CValue>,
+        memory: CMemory,
+        click_function_environment: &ClickFunctionEnvironment,
+    ) -> Self {
         Self {
             values,
             memory,
+            click_function_environment: click_function_environment.clone(),
+            active_functions: BTreeSet::new(),
             next_variable: 2_000_000,
         }
     }
@@ -3457,7 +3661,7 @@ impl KernelPropositionLowerer {
     }
 
     fn lower_requirement_value(
-        &self,
+        &mut self,
         expression: &ContractExpression,
     ) -> Result<CValue, ClickError> {
         match expression {
@@ -3480,6 +3684,21 @@ impl KernelPropositionLowerer {
             ContractExpression::Index(_, _) => Err(ClickError::new(
                 "memory reads are not supported in `requires` propositions yet",
             )),
+            ContractExpression::Call { name, arguments } => {
+                let state = CState::new().with_memory(self.memory.clone());
+                evaluate_click_function_call(
+                    &self.click_function_environment.clone(),
+                    name,
+                    arguments,
+                    &self.values,
+                    &state,
+                    &state,
+                    None,
+                    &Assumptions::new(),
+                    &mut self.active_functions,
+                )
+                .map_err(ClickError::new)
+            }
         }
     }
 
@@ -3696,6 +3915,7 @@ fn check_function_claim(
     pre_state: &CState,
     outcome: &CFunctionOutcome,
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
     match claim {
@@ -3711,6 +3931,7 @@ fn check_function_claim(
                 pre_state,
                 outcome,
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
             )?,
         },
@@ -3741,6 +3962,7 @@ fn check_function_claim_by_simp(
     pre_state: &CState,
     outcome: &CFunctionOutcome,
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
     match claim {
@@ -3756,6 +3978,7 @@ fn check_function_claim_by_simp(
                 pre_state,
                 outcome,
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
             ),
         },
@@ -3776,6 +3999,7 @@ fn prove_ensure_proposition_by_simp(
     pre_state: &CState,
     outcome: &CFunctionOutcome,
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
     let CFunctionOutcome::Return { value, state } = outcome else {
@@ -3792,6 +4016,7 @@ fn prove_ensure_proposition_by_simp(
         value,
         available_propositions,
         proposition,
+        click_function_environment,
     )
     .map_err(|message| {
         ClickError::new(format!(
@@ -3801,6 +4026,7 @@ fn prove_ensure_proposition_by_simp(
     let assumptions = assumptions_from_propositions(available_propositions);
     proposition = unfold_predicates_in_proposition(
         predicate_environment,
+        click_function_environment,
         unfolded_predicates,
         &proposition,
         &assumptions,
@@ -3821,6 +4047,7 @@ fn prove_ensure_proposition_by_simp(
 
 fn unfold_available_predicate_facts(
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
     available_propositions: &[Proposition],
 ) -> Result<Vec<Proposition>, String> {
@@ -3833,6 +4060,7 @@ fn unfold_available_predicate_facts(
     for proposition in available_propositions {
         let unfolded = unfold_predicates_in_proposition(
             predicate_environment,
+            click_function_environment,
             unfolded_predicates,
             proposition,
             &assumptions,
@@ -3846,6 +4074,7 @@ fn unfold_available_predicate_facts(
 
 fn unfold_predicates_in_proposition(
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
     proposition: &Proposition,
     assumptions: &Assumptions,
@@ -3853,6 +4082,7 @@ fn unfold_predicates_in_proposition(
     let mut active = BTreeSet::new();
     unfold_predicates_in_proposition_with_active(
         predicate_environment,
+        click_function_environment,
         unfolded_predicates,
         proposition,
         assumptions,
@@ -3862,6 +4092,7 @@ fn unfold_predicates_in_proposition(
 
 fn unfold_predicates_in_proposition_with_active(
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
     proposition: &Proposition,
     assumptions: &Assumptions,
@@ -3879,9 +4110,15 @@ fn unfold_predicates_in_proposition_with_active(
             let definition = predicate_environment
                 .get(name)
                 .ok_or_else(|| format!("unknown predicate `{name}`"))?;
-            let unfolded = instantiate_predicate_definition(definition, arguments, assumptions)?;
+            let unfolded = instantiate_predicate_definition(
+                definition,
+                arguments,
+                assumptions,
+                click_function_environment,
+            )?;
             let unfolded = unfold_predicates_in_proposition_with_active(
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
                 &unfolded,
                 assumptions,
@@ -3893,6 +4130,7 @@ fn unfold_predicates_in_proposition_with_active(
         Proposition::And(left, right) => Ok(Proposition::And(
             Box::new(unfold_predicates_in_proposition_with_active(
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
                 left,
                 assumptions,
@@ -3900,6 +4138,7 @@ fn unfold_predicates_in_proposition_with_active(
             )?),
             Box::new(unfold_predicates_in_proposition_with_active(
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
                 right,
                 assumptions,
@@ -3909,6 +4148,7 @@ fn unfold_predicates_in_proposition_with_active(
         Proposition::Or(left, right) => Ok(Proposition::Or(
             Box::new(unfold_predicates_in_proposition_with_active(
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
                 left,
                 assumptions,
@@ -3916,6 +4156,7 @@ fn unfold_predicates_in_proposition_with_active(
             )?),
             Box::new(unfold_predicates_in_proposition_with_active(
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
                 right,
                 assumptions,
@@ -3925,6 +4166,7 @@ fn unfold_predicates_in_proposition_with_active(
         Proposition::Not(body) => Ok(Proposition::Not(Box::new(
             unfold_predicates_in_proposition_with_active(
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
                 body,
                 assumptions,
@@ -3934,6 +4176,7 @@ fn unfold_predicates_in_proposition_with_active(
         Proposition::Implies(left, right) => {
             let left = unfold_predicates_in_proposition_with_active(
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
                 left,
                 assumptions,
@@ -3942,6 +4185,7 @@ fn unfold_predicates_in_proposition_with_active(
             let right_assumptions = assumptions.clone().assume_proposition(left.clone());
             let right = unfold_predicates_in_proposition_with_active(
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
                 right,
                 &right_assumptions,
@@ -3954,6 +4198,7 @@ fn unfold_predicates_in_proposition_with_active(
             sort: sort.clone(),
             body: Box::new(unfold_predicates_in_proposition_with_active(
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
                 body,
                 assumptions,
@@ -3968,6 +4213,7 @@ fn instantiate_predicate_definition(
     definition: &PredicateDefinition,
     arguments: &[Term],
     assumptions: &Assumptions,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
     if arguments.len() != definition.parameters().len() + 1 {
         return Err(format!(
@@ -3997,12 +4243,15 @@ fn instantiate_predicate_definition(
     }
 
     let mut next_variable = 2_500_000;
+    let mut active_functions = BTreeSet::new();
     lower_predicate_body_proposition_with_environment(
         &mut values,
         memory,
         assumptions,
         definition.body(),
         &mut next_variable,
+        click_function_environment,
+        &mut active_functions,
     )
 }
 
@@ -4012,6 +4261,8 @@ fn lower_predicate_body_proposition_with_environment(
     assumptions: &Assumptions,
     proposition: &ClickProposition,
     next_variable: &mut u64,
+    click_function_environment: &ClickFunctionEnvironment,
+    active_functions: &mut BTreeSet<String>,
 ) -> Result<Proposition, String> {
     match proposition {
         ClickProposition::Comparison {
@@ -4019,8 +4270,22 @@ fn lower_predicate_body_proposition_with_environment(
             operator,
             right,
         } => {
-            let left = evaluate_predicate_contract_expression(values, memory, assumptions, left)?;
-            let right = evaluate_predicate_contract_expression(values, memory, assumptions, right)?;
+            let left = evaluate_predicate_contract_expression(
+                values,
+                memory,
+                assumptions,
+                left,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_predicate_contract_expression(
+                values,
+                memory,
+                assumptions,
+                right,
+                click_function_environment,
+                active_functions,
+            )?;
             comparison_proposition(left, *operator, right).map_err(|error| error.message)
         }
         ClickProposition::And(left, right) => Ok(Proposition::And(
@@ -4030,6 +4295,8 @@ fn lower_predicate_body_proposition_with_environment(
                 assumptions,
                 left,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?),
             Box::new(lower_predicate_body_proposition_with_environment(
                 values,
@@ -4037,6 +4304,8 @@ fn lower_predicate_body_proposition_with_environment(
                 assumptions,
                 right,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?),
         )),
         ClickProposition::Or(left, right) => Ok(Proposition::Or(
@@ -4046,6 +4315,8 @@ fn lower_predicate_body_proposition_with_environment(
                 assumptions,
                 left,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?),
             Box::new(lower_predicate_body_proposition_with_environment(
                 values,
@@ -4053,6 +4324,8 @@ fn lower_predicate_body_proposition_with_environment(
                 assumptions,
                 right,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?),
         )),
         ClickProposition::Not(body) => Ok(Proposition::Not(Box::new(
@@ -4062,6 +4335,8 @@ fn lower_predicate_body_proposition_with_environment(
                 assumptions,
                 body,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?,
         ))),
         ClickProposition::Implies(left, right) => {
@@ -4071,6 +4346,8 @@ fn lower_predicate_body_proposition_with_environment(
                 assumptions,
                 left,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?;
             let right_assumptions = assumptions.clone().assume_proposition(left.clone());
             let right = lower_predicate_body_proposition_with_environment(
@@ -4079,6 +4356,8 @@ fn lower_predicate_body_proposition_with_environment(
                 &right_assumptions,
                 right,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?;
             Ok(Proposition::Implies(Box::new(left), Box::new(right)))
         }
@@ -4098,6 +4377,8 @@ fn lower_predicate_body_proposition_with_environment(
                 assumptions,
                 body,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?;
             match previous {
                 Some(value) => {
@@ -4124,6 +4405,8 @@ fn lower_predicate_body_proposition_with_environment(
                             memory,
                             assumptions,
                             argument,
+                            click_function_environment,
+                            active_functions,
                         )
                         .map(Term::CValue)
                     })
@@ -4142,6 +4425,8 @@ fn evaluate_predicate_contract_expression(
     memory: &CMemory,
     assumptions: &Assumptions,
     expression: &ContractExpression,
+    click_function_environment: &ClickFunctionEnvironment,
+    active_functions: &mut BTreeSet<String>,
 ) -> Result<CValue, String> {
     let state = CState::new().with_memory(memory.clone());
     match expression {
@@ -4152,21 +4437,74 @@ fn evaluate_predicate_contract_expression(
             Err("`old(...)` is not available in predicate definitions".to_string())
         }
         ContractExpression::Add(left, right) => {
-            let left = evaluate_predicate_contract_expression(values, memory, assumptions, left)?;
-            let right = evaluate_predicate_contract_expression(values, memory, assumptions, right)?;
+            let left = evaluate_predicate_contract_expression(
+                values,
+                memory,
+                assumptions,
+                left,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_predicate_contract_expression(
+                values,
+                memory,
+                assumptions,
+                right,
+                click_function_environment,
+                active_functions,
+            )?;
             evaluate_postcondition_add(left, right)
         }
         ContractExpression::Subtract(left, right) => {
-            let left = evaluate_predicate_contract_expression(values, memory, assumptions, left)?;
-            let right = evaluate_predicate_contract_expression(values, memory, assumptions, right)?;
+            let left = evaluate_predicate_contract_expression(
+                values,
+                memory,
+                assumptions,
+                left,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_predicate_contract_expression(
+                values,
+                memory,
+                assumptions,
+                right,
+                click_function_environment,
+                active_functions,
+            )?;
             evaluate_postcondition_sub(left, right)
         }
         ContractExpression::Index(base, index) => {
-            let base = evaluate_predicate_contract_expression(values, memory, assumptions, base)?;
-            let index = evaluate_predicate_contract_expression(values, memory, assumptions, index)?;
+            let base = evaluate_predicate_contract_expression(
+                values,
+                memory,
+                assumptions,
+                base,
+                click_function_environment,
+                active_functions,
+            )?;
+            let index = evaluate_predicate_contract_expression(
+                values,
+                memory,
+                assumptions,
+                index,
+                click_function_environment,
+                active_functions,
+            )?;
             let pointer = evaluate_postcondition_pointer_add(base, index)?;
             evaluate_contract_memory_load(&state, pointer, assumptions)
         }
+        ContractExpression::Call { name, arguments } => evaluate_click_function_call(
+            click_function_environment,
+            name,
+            arguments,
+            values,
+            &state,
+            &state,
+            None,
+            assumptions,
+            active_functions,
+        ),
     }
 }
 
@@ -4451,6 +4789,7 @@ fn prove_ensure_proposition(
     pre_state: &CState,
     outcome: &CFunctionOutcome,
     predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
     match proposition {
@@ -4468,6 +4807,7 @@ fn prove_ensure_proposition(
                     value,
                     available_propositions,
                     left,
+                    click_function_environment,
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
@@ -4482,6 +4822,7 @@ fn prove_ensure_proposition(
                     value,
                     available_propositions,
                     right,
+                    click_function_environment,
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
@@ -4520,6 +4861,7 @@ fn prove_ensure_proposition(
                 pre_state,
                 outcome,
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
             )?;
             prove_ensure_proposition(
@@ -4533,6 +4875,7 @@ fn prove_ensure_proposition(
                 pre_state,
                 outcome,
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
             )?;
         }
@@ -4551,6 +4894,7 @@ fn prove_ensure_proposition(
                 value,
                 available_propositions,
                 proposition,
+                click_function_environment,
             )
             .map_err(|message| {
                 ClickError::new(format!(
@@ -4560,6 +4904,7 @@ fn prove_ensure_proposition(
             let assumptions = assumptions_from_propositions(available_propositions);
             proposition = unfold_predicates_in_proposition(
                 predicate_environment,
+                click_function_environment,
                 unfolded_predicates,
                 &proposition,
                 &assumptions,
@@ -4944,17 +5289,21 @@ fn evaluate_contract_expression(
     result: &CValue,
     available_propositions: &[Proposition],
     expression: &ContractExpression,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<CValue, String> {
     let parameter_values =
         parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let assumptions = assumptions_from_propositions(available_propositions);
+    let mut active_functions = BTreeSet::new();
     evaluate_contract_expression_with_environment(
         &parameter_values,
         pre_state,
         post_state,
-        result,
+        Some(result),
         &assumptions,
         expression,
+        click_function_environment,
+        &mut active_functions,
     )
 }
 
@@ -4966,18 +5315,22 @@ fn lower_outcome_proposition(
     result: &CValue,
     available_propositions: &[Proposition],
     proposition: &ClickProposition,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
     let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let assumptions = assumptions_from_propositions(available_propositions);
     let mut next_variable = 2_000_000;
+    let mut active_functions = BTreeSet::new();
     lower_outcome_proposition_with_environment(
         &mut values,
         pre_state,
         post_state,
-        result,
+        Some(result),
         &assumptions,
         proposition,
         &mut next_variable,
+        click_function_environment,
+        &mut active_functions,
     )
 }
 
@@ -4985,10 +5338,12 @@ fn lower_outcome_proposition_with_environment(
     values: &mut BTreeMap<String, CValue>,
     pre_state: &CState,
     post_state: &CState,
-    result: &CValue,
+    result: Option<&CValue>,
     assumptions: &Assumptions,
     proposition: &ClickProposition,
     next_variable: &mut u64,
+    click_function_environment: &ClickFunctionEnvironment,
+    active_functions: &mut BTreeSet<String>,
 ) -> Result<Proposition, String> {
     match proposition {
         ClickProposition::Comparison {
@@ -5003,6 +5358,8 @@ fn lower_outcome_proposition_with_environment(
                 result,
                 assumptions,
                 left,
+                click_function_environment,
+                active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
                 values,
@@ -5011,6 +5368,8 @@ fn lower_outcome_proposition_with_environment(
                 result,
                 assumptions,
                 right,
+                click_function_environment,
+                active_functions,
             )?;
             comparison_proposition(left, *operator, right).map_err(|error| error.message)
         }
@@ -5023,6 +5382,8 @@ fn lower_outcome_proposition_with_environment(
                 assumptions,
                 left,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?),
             Box::new(lower_outcome_proposition_with_environment(
                 values,
@@ -5032,6 +5393,8 @@ fn lower_outcome_proposition_with_environment(
                 assumptions,
                 right,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?),
         )),
         ClickProposition::Or(left, right) => Ok(Proposition::Or(
@@ -5043,6 +5406,8 @@ fn lower_outcome_proposition_with_environment(
                 assumptions,
                 left,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?),
             Box::new(lower_outcome_proposition_with_environment(
                 values,
@@ -5052,6 +5417,8 @@ fn lower_outcome_proposition_with_environment(
                 assumptions,
                 right,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?),
         )),
         ClickProposition::Not(body) => Ok(Proposition::Not(Box::new(
@@ -5063,6 +5430,8 @@ fn lower_outcome_proposition_with_environment(
                 assumptions,
                 body,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?,
         ))),
         ClickProposition::Implies(left, right) => {
@@ -5074,6 +5443,8 @@ fn lower_outcome_proposition_with_environment(
                 assumptions,
                 left,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?;
             let right_assumptions = assumptions.clone().assume_proposition(left.clone());
             let right = lower_outcome_proposition_with_environment(
@@ -5084,6 +5455,8 @@ fn lower_outcome_proposition_with_environment(
                 &right_assumptions,
                 right,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?;
             Ok(Proposition::Implies(Box::new(left), Box::new(right)))
         }
@@ -5105,6 +5478,8 @@ fn lower_outcome_proposition_with_environment(
                 assumptions,
                 body,
                 next_variable,
+                click_function_environment,
+                active_functions,
             )?;
             match previous {
                 Some(value) => {
@@ -5133,6 +5508,8 @@ fn lower_outcome_proposition_with_environment(
                             result,
                             assumptions,
                             argument,
+                            click_function_environment,
+                            active_functions,
                         )
                         .map(Term::CValue)
                     })
@@ -5150,24 +5527,29 @@ fn evaluate_contract_expression_with_environment(
     parameter_values: &BTreeMap<String, CValue>,
     pre_state: &CState,
     post_state: &CState,
-    result: &CValue,
+    result: Option<&CValue>,
     assumptions: &Assumptions,
     expression: &ContractExpression,
+    click_function_environment: &ClickFunctionEnvironment,
+    active_functions: &mut BTreeSet<String>,
 ) -> Result<CValue, String> {
     match expression {
         ContractExpression::Current(expression) => evaluate_c_contract_expression(
             parameter_values,
             post_state,
-            Some(result),
+            result,
             assumptions,
             expression,
         ),
-        ContractExpression::Old(expression) => evaluate_c_contract_expression(
+        ContractExpression::Old(expression) => evaluate_contract_expression_with_environment(
             parameter_values,
+            pre_state,
             pre_state,
             None,
             assumptions,
             expression,
+            click_function_environment,
+            active_functions,
         ),
         ContractExpression::Add(left, right) => {
             let left = evaluate_contract_expression_with_environment(
@@ -5177,6 +5559,8 @@ fn evaluate_contract_expression_with_environment(
                 result,
                 assumptions,
                 left,
+                click_function_environment,
+                active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
                 parameter_values,
@@ -5185,6 +5569,8 @@ fn evaluate_contract_expression_with_environment(
                 result,
                 assumptions,
                 right,
+                click_function_environment,
+                active_functions,
             )?;
             evaluate_postcondition_add(left, right)
         }
@@ -5196,6 +5582,8 @@ fn evaluate_contract_expression_with_environment(
                 result,
                 assumptions,
                 left,
+                click_function_environment,
+                active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
                 parameter_values,
@@ -5204,6 +5592,8 @@ fn evaluate_contract_expression_with_environment(
                 result,
                 assumptions,
                 right,
+                click_function_environment,
+                active_functions,
             )?;
             evaluate_postcondition_sub(left, right)
         }
@@ -5215,6 +5605,8 @@ fn evaluate_contract_expression_with_environment(
                 result,
                 assumptions,
                 base,
+                click_function_environment,
+                active_functions,
             )?;
             let index = evaluate_contract_expression_with_environment(
                 parameter_values,
@@ -5223,11 +5615,96 @@ fn evaluate_contract_expression_with_environment(
                 result,
                 assumptions,
                 index,
+                click_function_environment,
+                active_functions,
             )?;
             let pointer = evaluate_postcondition_pointer_add(base, index)?;
             evaluate_contract_memory_load(post_state, pointer, assumptions)
         }
+        ContractExpression::Call { name, arguments } => evaluate_click_function_call(
+            click_function_environment,
+            name,
+            arguments,
+            parameter_values,
+            pre_state,
+            post_state,
+            result,
+            assumptions,
+            active_functions,
+        ),
     }
+}
+
+fn evaluate_click_function_call(
+    click_function_environment: &ClickFunctionEnvironment,
+    name: &str,
+    arguments: &[ContractExpression],
+    parameter_values: &BTreeMap<String, CValue>,
+    pre_state: &CState,
+    post_state: &CState,
+    result: Option<&CValue>,
+    assumptions: &Assumptions,
+    active_functions: &mut BTreeSet<String>,
+) -> Result<CValue, String> {
+    let definition = click_function_environment
+        .get(name)
+        .ok_or_else(|| format!("unknown function `{name}`"))?;
+    if arguments.len() != definition.parameters().len() {
+        return Err(format!(
+            "function `{}` expects {} argument(s), got {}",
+            definition.name(),
+            definition.parameters().len(),
+            arguments.len()
+        ));
+    }
+    if !active_functions.insert(name.to_string()) {
+        return Err(format!(
+            "recursive function call `{name}` is not supported yet"
+        ));
+    }
+
+    let mut function_values = BTreeMap::new();
+    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+        let value = evaluate_contract_expression_with_environment(
+            parameter_values,
+            pre_state,
+            post_state,
+            result,
+            assumptions,
+            argument,
+            click_function_environment,
+            active_functions,
+        )?;
+        function_values.insert(parameter.name().to_string(), value);
+    }
+
+    let value = evaluate_contract_expression_with_environment(
+        &function_values,
+        post_state,
+        post_state,
+        None,
+        assumptions,
+        definition.body(),
+        click_function_environment,
+        active_functions,
+    )?;
+    active_functions.remove(name);
+
+    if !c_value_matches_click_type(&value, definition.return_type()) {
+        return Err(format!(
+            "function `{}` returned {value:?}, which does not match {:?}",
+            definition.name(),
+            definition.return_type()
+        ));
+    }
+    Ok(value)
+}
+
+fn c_value_matches_click_type(value: &CValue, c_type: C0Type) -> bool {
+    matches!(
+        (value, c_type),
+        (CValue::Int32(_), C0Type::Int32) | (CValue::Pointer(_), C0Type::Int32Pointer)
+    )
 }
 
 fn evaluate_c_contract_expression(
@@ -5396,6 +5873,7 @@ enum Token {
     Comma,
     Semicolon,
     DotDot,
+    Arrow,
     EqualEqual,
     BangEqual,
     LessThan,
@@ -5423,6 +5901,7 @@ impl Parser {
     fn parse_file(mut self) -> Result<ClickFile, ClickError> {
         let mut verifying_sources = Vec::new();
         let mut predicate_definitions = Vec::new();
+        let mut click_function_definitions = Vec::new();
         let mut function_blocks = Vec::new();
 
         while self.peek().is_some() {
@@ -5430,6 +5909,8 @@ impl Parser {
                 verifying_sources.push(self.parse_verifying_source()?);
             } else if self.peek_ident() == Some("predicate") {
                 predicate_definitions.push(self.parse_predicate_definition()?);
+            } else if self.peek_ident() == Some("function") {
+                click_function_definitions.push(self.parse_click_function_definition()?);
             } else {
                 function_blocks.push(self.parse_function_block()?);
             }
@@ -5438,9 +5919,10 @@ impl Parser {
         let file = ClickFile {
             verifying_sources,
             predicate_definitions,
+            click_function_definitions,
             function_blocks,
         };
-        validate_predicate_calls(&file)?;
+        validate_click_definitions(&file)?;
         Ok(file)
     }
 
@@ -5463,6 +5945,25 @@ impl Parser {
         Ok(PredicateDefinition {
             name,
             parameters,
+            body,
+        })
+    }
+
+    fn parse_click_function_definition(&mut self) -> Result<ClickFunctionDefinition, ClickError> {
+        self.expect_ident_spelling("function")?;
+        let name = self.expect_ident("function name")?;
+        self.expect(Token::LParen)?;
+        let parameters = self.parse_parameters()?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::Arrow)?;
+        let return_type = self.parse_type()?;
+        self.expect(Token::LBrace)?;
+        let body = self.parse_contract_expression()?;
+        self.expect(Token::RBrace)?;
+        Ok(ClickFunctionDefinition {
+            name,
+            parameters,
+            return_type,
             body,
         })
     }
@@ -5900,14 +6401,41 @@ impl Parser {
 
         if matches!(self.peek(), Some(Token::Ident(_))) && self.peek_next() == Some(&Token::LParen)
         {
-            return self.parse_predicate_call();
+            let start = self.position;
+            let (name, arguments) = self.parse_call_arguments("predicate or function name")?;
+            match self.peek() {
+                Some(
+                    Token::EqualEqual
+                    | Token::BangEqual
+                    | Token::LessThan
+                    | Token::LessEqual
+                    | Token::GreaterThan
+                    | Token::GreaterEqual,
+                ) => {
+                    let operator = self.parse_comparison_operator("proposition")?;
+                    let right = self.parse_contract_expression()?;
+                    return Ok(ClickProposition::Comparison {
+                        left: ContractExpression::Call { name, arguments },
+                        operator,
+                        right,
+                    });
+                }
+                Some(Token::Plus | Token::Minus | Token::LBracket) => {
+                    self.position = start;
+                    return self.parse_proposition_comparison();
+                }
+                _ => return Ok(ClickProposition::PredicateCall { name, arguments }),
+            }
         }
 
         self.parse_proposition_comparison()
     }
 
-    fn parse_predicate_call(&mut self) -> Result<ClickProposition, ClickError> {
-        let name = self.expect_ident("predicate name")?;
+    fn parse_call_arguments(
+        &mut self,
+        expected_name: &str,
+    ) -> Result<(String, Vec<ContractExpression>), ClickError> {
+        let name = self.expect_ident(expected_name)?;
         self.expect(Token::LParen)?;
         let mut arguments = Vec::new();
         if self.peek() != Some(&Token::RParen) {
@@ -5926,7 +6454,7 @@ impl Parser {
             }
         }
         self.expect(Token::RParen)?;
-        Ok(ClickProposition::PredicateCall { name, arguments })
+        Ok((name, arguments))
     }
 
     fn parse_proposition_comparison(&mut self) -> Result<ClickProposition, ClickError> {
@@ -6177,11 +6705,15 @@ impl Parser {
     fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
         if self.peek_ident() == Some("old") && self.peek_next() == Some(&Token::LParen) {
             self.position += 2;
-            let expression = self.parse_ensure_expression()?;
+            let expression = self.parse_contract_expression()?;
             self.expect(Token::RParen)?;
-            return Ok(ContractExpression::Old(
-                expression.to_megakernel_expression(),
-            ));
+            return Ok(ContractExpression::Old(Box::new(expression)));
+        }
+
+        if matches!(self.peek(), Some(Token::Ident(_))) && self.peek_next() == Some(&Token::LParen)
+        {
+            let (name, arguments) = self.parse_call_arguments("function name")?;
+            return Ok(ContractExpression::Call { name, arguments });
         }
 
         match self.next() {
@@ -6325,7 +6857,7 @@ impl Parser {
     }
 }
 
-fn validate_predicate_calls(file: &ClickFile) -> Result<(), ClickError> {
+fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
     let mut predicates = BTreeMap::new();
     for definition in file.predicate_definitions() {
         if predicates
@@ -6339,20 +6871,60 @@ fn validate_predicate_calls(file: &ClickFile) -> Result<(), ClickError> {
         }
     }
 
+    let mut click_functions = BTreeMap::new();
+    for definition in file.click_function_definitions() {
+        if predicates.contains_key(definition.name()) {
+            return Err(ClickError::new(format!(
+                "`{}` is defined as both a predicate and a function",
+                definition.name()
+            )));
+        }
+        if click_functions
+            .insert(definition.name().to_string(), definition.parameters().len())
+            .is_some()
+        {
+            return Err(ClickError::new(format!(
+                "duplicate function definition `{}`",
+                definition.name()
+            )));
+        }
+    }
+
     for definition in file.predicate_definitions() {
         validate_predicate_calls_in_proposition(
             definition.body(),
             &predicates,
+            &click_functions,
             &format!("predicate `{}`", definition.name()),
         )?;
     }
 
+    let mut function_calls = BTreeMap::new();
+    for definition in file.click_function_definitions() {
+        validate_click_function_expression(
+            definition.body(),
+            &click_functions,
+            &format!("function `{}`", definition.name()),
+        )?;
+        let mut calls = BTreeSet::new();
+        collect_click_function_calls(definition.body(), &mut calls);
+        function_calls.insert(definition.name().to_string(), calls);
+    }
+    reject_recursive_click_functions(&function_calls)?;
+
     for function in file.function_blocks() {
+        if click_functions.contains_key(function.signature().name()) {
+            return Err(ClickError::new(format!(
+                "`{}` is defined as both a Click function and a C function spec",
+                function.signature().name()
+            )));
+        }
         for requirement in function.requires() {
             if let Requirement::Proposition(proposition) = requirement {
                 validate_predicate_calls_in_proposition(
                     proposition,
                     &predicates,
+                    &click_functions,
                     &format!("requires clause in `{}`", function.signature().name()),
                 )?;
             }
@@ -6364,6 +6936,7 @@ fn validate_predicate_calls(file: &ClickFile) -> Result<(), ClickError> {
                     validate_predicate_calls_in_proposition(
                         proposition,
                         &predicates,
+                        &click_functions,
                         &format!(
                             "{:?} clause in `{}`",
                             item.kind(),
@@ -6379,6 +6952,7 @@ fn validate_predicate_calls(file: &ClickFile) -> Result<(), ClickError> {
                 Ensure::Proposition(proposition) => validate_predicate_calls_in_proposition(
                     proposition,
                     &predicates,
+                    &click_functions,
                     &format!("ensures clause in `{}`", function.signature().name()),
                 )?,
             }
@@ -6391,18 +6965,22 @@ fn validate_predicate_calls(file: &ClickFile) -> Result<(), ClickError> {
 fn validate_predicate_calls_in_proposition(
     proposition: &ClickProposition,
     predicates: &BTreeMap<String, usize>,
+    click_functions: &BTreeMap<String, usize>,
     context: &str,
 ) -> Result<(), ClickError> {
     match proposition {
-        ClickProposition::Comparison { .. } => Ok(()),
+        ClickProposition::Comparison { left, right, .. } => {
+            validate_contract_expression_calls(left, click_functions, context)?;
+            validate_contract_expression_calls(right, click_functions, context)
+        }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
-            validate_predicate_calls_in_proposition(left, predicates, context)?;
-            validate_predicate_calls_in_proposition(right, predicates, context)
+            validate_predicate_calls_in_proposition(left, predicates, click_functions, context)?;
+            validate_predicate_calls_in_proposition(right, predicates, click_functions, context)
         }
         ClickProposition::Not(body) | ClickProposition::ForAll { body, .. } => {
-            validate_predicate_calls_in_proposition(body, predicates, context)
+            validate_predicate_calls_in_proposition(body, predicates, click_functions, context)
         }
         ClickProposition::PredicateCall { name, arguments } => {
             let Some(arity) = predicates.get(name) else {
@@ -6416,9 +6994,127 @@ fn validate_predicate_calls_in_proposition(
                     arguments.len()
                 )));
             }
+            for argument in arguments {
+                validate_contract_expression_calls(argument, click_functions, context)?;
+            }
             Ok(())
         }
     }
+}
+
+fn validate_click_function_expression(
+    expression: &ContractExpression,
+    click_functions: &BTreeMap<String, usize>,
+    context: &str,
+) -> Result<(), ClickError> {
+    if contains_old_expression(expression) {
+        return Err(ClickError::new(format!(
+            "`old(...)` is not available inside {context}"
+        )));
+    }
+    validate_contract_expression_calls(expression, click_functions, context)
+}
+
+fn validate_contract_expression_calls(
+    expression: &ContractExpression,
+    click_functions: &BTreeMap<String, usize>,
+    context: &str,
+) -> Result<(), ClickError> {
+    match expression {
+        ContractExpression::Current(_) => Ok(()),
+        ContractExpression::Old(body) => {
+            validate_contract_expression_calls(body, click_functions, context)
+        }
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Index(left, right) => {
+            validate_contract_expression_calls(left, click_functions, context)?;
+            validate_contract_expression_calls(right, click_functions, context)
+        }
+        ContractExpression::Call { name, arguments } => {
+            let Some(arity) = click_functions.get(name) else {
+                return Err(ClickError::new(format!(
+                    "unknown function `{name}` in {context}"
+                )));
+            };
+            if *arity != arguments.len() {
+                return Err(ClickError::new(format!(
+                    "function `{name}` expects {arity} argument(s), got {} in {context}",
+                    arguments.len()
+                )));
+            }
+            for argument in arguments {
+                validate_contract_expression_calls(argument, click_functions, context)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn contains_old_expression(expression: &ContractExpression) -> bool {
+    match expression {
+        ContractExpression::Old(_) => true,
+        ContractExpression::Current(_) => false,
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Index(left, right) => {
+            contains_old_expression(left) || contains_old_expression(right)
+        }
+        ContractExpression::Call { arguments, .. } => arguments.iter().any(contains_old_expression),
+    }
+}
+
+fn collect_click_function_calls(expression: &ContractExpression, calls: &mut BTreeSet<String>) {
+    match expression {
+        ContractExpression::Current(_) => {}
+        ContractExpression::Old(body) => collect_click_function_calls(body, calls),
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Index(left, right) => {
+            collect_click_function_calls(left, calls);
+            collect_click_function_calls(right, calls);
+        }
+        ContractExpression::Call { name, arguments } => {
+            calls.insert(name.clone());
+            for argument in arguments {
+                collect_click_function_calls(argument, calls);
+            }
+        }
+    }
+}
+
+fn reject_recursive_click_functions(
+    function_calls: &BTreeMap<String, BTreeSet<String>>,
+) -> Result<(), ClickError> {
+    fn visit(
+        name: &str,
+        function_calls: &BTreeMap<String, BTreeSet<String>>,
+        visiting: &mut BTreeSet<String>,
+        visited: &mut BTreeSet<String>,
+    ) -> Result<(), ClickError> {
+        if visited.contains(name) {
+            return Ok(());
+        }
+        if !visiting.insert(name.to_string()) {
+            return Err(ClickError::new(format!(
+                "recursive function definition involving `{name}` is not supported yet"
+            )));
+        }
+        if let Some(calls) = function_calls.get(name) {
+            for callee in calls {
+                visit(callee, function_calls, visiting, visited)?;
+            }
+        }
+        visiting.remove(name);
+        visited.insert(name.to_string());
+        Ok(())
+    }
+
+    let mut visited = BTreeSet::new();
+    for name in function_calls.keys() {
+        visit(name, function_calls, &mut BTreeSet::new(), &mut visited)?;
+    }
+    Ok(())
 }
 
 fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
@@ -6482,8 +7178,13 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
                 index += 1;
             }
             '-' => {
-                tokens.push(Token::Minus);
-                index += 1;
+                if chars.get(index + 1) == Some(&'>') {
+                    tokens.push(Token::Arrow);
+                    index += 2;
+                } else {
+                    tokens.push(Token::Minus);
+                    index += 1;
+                }
             }
             '*' => {
                 tokens.push(Token::Star);
@@ -6648,10 +7349,7 @@ mod tests {
     }
 
     fn old_index(base: &str, index: u32) -> ContractExpression {
-        ContractExpression::Old(CExpression::Index(
-            Box::new(CExpression::Variable(base.to_string())),
-            Box::new(CExpression::Value(int32(index))),
-        ))
+        ContractExpression::Old(Box::new(current_index(base, index)))
     }
 
     fn ensure_comparison(
