@@ -118,6 +118,7 @@ by {
     symbolic_execute();
     loop_vc(loop 0);
     frame(loop 0);
+    unfold(sorted);
     simp();
     close();
 }
@@ -130,6 +131,8 @@ deterministic bounded C0 executor for concrete-loop fallback proofs.
 Bare `frame()` proves the current function-level `immutable` or `mutable`
 effect claim against the current execution mode. `frame(loop N)` validates and
 exposes the named loop's effect summary for later postcondition reasoning.
+`unfold(name)` explicitly replaces matching predicate calls with the named
+predicate's body while replaying the final proof check.
 `simp()` asks the final close step to use deterministic simplification for the
 claim.
 `close()` must be the final step; it packages the verified path as the guarantee
@@ -236,20 +239,32 @@ forall (int32 k) { 0 <= k and k < n implies p[k] == old(p[k]) }
 `.click` can define named predicates:
 
 ```text
-predicate sorted_pair(int32 p[2]) {
-    p[0] <= p[1]
+predicate sorted(int32 p[], int32 n) {
+    forall (int32 i) {
+        forall (int32 j) {
+            0 <= i and 0 <= j and i < j and j < n implies p[i] <= p[j]
+        }
+    }
 }
 
-int32 keep_sorted_pair(int32 p[2]) {
-    requires sorted_pair(p);
-    ensures still_sorted: sorted_pair(p);
+int32 keep_sorted(int32 p[], int32 n) {
+    requires n >= 0;
+    requires valid_range(p[0..n]);
+    requires sorted(p, n);
+    ensures still_sorted: sorted(p, n) by {
+        symbolic_execute();
+        unfold(sorted);
+        simp();
+        close();
+    }
 }
 ```
 
 Predicate calls are opaque propositions in this first slice. The verifier can
 reuse an exact predicate fact from `requires` or a loop invariant, but it does
-not unfold the predicate body by default. Explicit unfolding/theorem support is
-future proof-language work.
+not unfold the predicate body by default. A deterministic proof-step script can
+use `unfold(predicate_name);` to unfold matching predicate facts and goals
+explicitly.
 
 Logical structure uses Click words: `and`, `or`, `not`, `implies`, and
 `forall`. C operators such as `&&`, `||`, and `!` remain C expression syntax

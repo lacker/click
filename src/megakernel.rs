@@ -5053,7 +5053,7 @@ fn lower_c_predicate_proposition_at_state(
     let mut paths = vec![CPropositionPath {
         proposition: Proposition::Predicate {
             name: name.to_string(),
-            arguments: Vec::new(),
+            arguments: vec![Term::CMemory(state.memory().clone())],
         },
         facts: Vec::new(),
         obligations: Vec::new(),

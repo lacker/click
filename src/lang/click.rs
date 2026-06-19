@@ -228,12 +228,13 @@ pub enum Proof {
 /// This is intentionally separate from `Tactic`: tactics may search, but proof
 /// steps should be stable and replayable. Successful tactics can attach these
 /// steps as replayable proof certificates.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofStep {
     SymbolicExecute,
     BoundedExecute,
     LoopVc(usize),
     Frame(Option<ProofStepTarget>),
+    Unfold(String),
     Simp,
     Close,
 }
@@ -251,6 +252,26 @@ pub enum Tactic {
     Auto,
     Frame,
     Simp,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PredicateEnvironment {
+    definitions: BTreeMap<String, PredicateDefinition>,
+}
+
+impl PredicateEnvironment {
+    fn new(definitions: &[PredicateDefinition]) -> Self {
+        Self {
+            definitions: definitions
+                .iter()
+                .map(|definition| (definition.name().to_string(), definition.clone()))
+                .collect(),
+        }
+    }
+
+    fn get(&self, name: &str) -> Option<&PredicateDefinition> {
+        self.definitions.get(name)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -499,6 +520,7 @@ pub fn verify_c0_sources(
     let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
     let parsed_sources = parse_verified_sources(&file, &c_sources)?;
     let function_environment = build_function_environment(&parsed_sources);
+    let predicate_environment = PredicateEnvironment::new(file.predicate_definitions());
     let mut verified = Vec::new();
 
     for function_block in file.function_blocks {
@@ -523,6 +545,7 @@ pub fn verify_c0_sources(
                         &claim,
                         &claim_label,
                         &function_environment,
+                        &predicate_environment,
                     )?;
                     verified.extend(theorems);
                 }
@@ -534,6 +557,7 @@ pub fn verify_c0_sources(
                         &claim,
                         &claim_label,
                         &function_environment,
+                        &predicate_environment,
                     )?;
                     verified.extend(theorems);
                 }
@@ -545,6 +569,7 @@ pub fn verify_c0_sources(
                         &claim,
                         &claim_label,
                         &function_environment,
+                        &predicate_environment,
                     )?;
                     verified.extend(theorems);
                 }
@@ -556,6 +581,7 @@ pub fn verify_c0_sources(
                         &claim,
                         &claim_label,
                         &function_environment,
+                        &predicate_environment,
                         steps,
                     )?;
                     verified.extend(theorems);
@@ -618,6 +644,7 @@ fn prove_claim_by_auto(
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
     function_environment: &CFunctionEnvironment,
+    predicate_environment: &PredicateEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let (state, arguments, requirement_propositions) = initial_call(
         function_block.signature.name(),
@@ -659,6 +686,7 @@ fn prove_claim_by_auto(
                 claim,
                 claim_label,
                 function_environment,
+                predicate_environment,
                 auto_loop_verification_proof_step_candidates(function_block, claim),
             );
             return Ok(with_proof_steps(theorems, proof_steps));
@@ -702,6 +730,7 @@ fn prove_claim_by_auto(
         claim,
         claim_label,
         function_environment,
+        predicate_environment,
         bounded_execution_proof_step_candidates(claim),
     );
     Ok(with_proof_steps(theorems, proof_steps))
@@ -714,6 +743,7 @@ fn prove_claim_by_frame(
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
     function_environment: &CFunctionEnvironment,
+    predicate_environment: &PredicateEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if matches!(claim, FunctionClaimRef::Ensure(_, _)) {
         return Err(ClickError::new(format!(
@@ -764,6 +794,7 @@ fn prove_claim_by_frame(
         claim,
         claim_label,
         function_environment,
+        predicate_environment,
         frame_proof_step_candidates(),
     );
     Ok(with_proof_steps(theorems, proof_steps))
@@ -776,6 +807,7 @@ fn prove_claim_by_simp(
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
     function_environment: &CFunctionEnvironment,
+    predicate_environment: &PredicateEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if count_loops(parsed_function.body()) != 0 {
         return Err(ClickError::new(format!(
@@ -796,6 +828,7 @@ fn prove_claim_by_simp(
         claim,
         claim_label,
         function_environment,
+        predicate_environment,
         vec![vec![
             ProofStep::SymbolicExecute,
             ProofStep::Simp,
@@ -855,6 +888,8 @@ fn prove_claim_by_simp(
             &arguments,
             &state,
             &outcome,
+            predicate_environment,
+            &[],
         )?;
         let specification = c_function_specification(
             state.clone(),
@@ -895,6 +930,7 @@ struct ProofStepReplayState {
     execution_mode: Option<ProofStepExecutionMode>,
     loop_vcs: BTreeSet<usize>,
     frames: BTreeSet<Option<ProofStepTarget>>,
+    unfolded_predicates: Vec<String>,
     simp: bool,
     closed: bool,
 }
@@ -912,6 +948,7 @@ fn prove_claim_by_steps(
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
     function_environment: &CFunctionEnvironment,
+    predicate_environment: &PredicateEnvironment,
     steps: &[ProofStep],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if steps.is_empty() {
@@ -1005,6 +1042,16 @@ fn prove_claim_by_steps(
                 }
                 replay.frames.insert(*target);
             }
+            ProofStep::Unfold(name) => {
+                if predicate_environment.get(name).is_none() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: unknown predicate `{name}`"
+                    )));
+                }
+                if !replay.unfolded_predicates.contains(name) {
+                    replay.unfolded_predicates.push(name.clone());
+                }
+            }
             ProofStep::Simp => {
                 require_step_execution(&replay, claim_label, step_index, "simp")?;
                 replay.simp = true;
@@ -1031,11 +1078,13 @@ fn prove_claim_by_steps(
                     claim,
                     claim_label,
                     function_environment,
+                    predicate_environment,
                     parsed_function.parameters(),
                     &function,
                     &state,
                     &arguments,
                     &requirement_propositions,
+                    &replay.unfolded_predicates,
                     replay.simp,
                     steps,
                 );
@@ -1232,6 +1281,8 @@ fn validate_function_frame_step(
             arguments,
             state,
             &outcome,
+            &PredicateEnvironment::new(&[]),
+            &[],
         )?;
     }
 
@@ -1246,11 +1297,13 @@ fn prove_claim_from_steps_execution(
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
     function_environment: &CFunctionEnvironment,
+    predicate_environment: &PredicateEnvironment,
     parameters: &[syntax::C0Parameter],
     function: &CFunction,
     state: &CState,
     arguments: &[CExpression],
     requirement_propositions: &[Proposition],
+    unfolded_predicates: &[String],
     use_simp: bool,
     proof_steps: &[ProofStep],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
@@ -1288,6 +1341,16 @@ fn prove_claim_from_steps_execution(
 
         let mut path_requirements = requirement_propositions.to_vec();
         path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+        path_requirements = unfold_available_predicate_facts(
+            predicate_environment,
+            unfolded_predicates,
+            &path_requirements,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`proof steps` failed for `{claim_label}` path {path_index}: {message}"
+            ))
+        })?;
         if use_simp {
             check_function_claim_by_simp(
                 claim_label,
@@ -1299,6 +1362,8 @@ fn prove_claim_from_steps_execution(
                 arguments,
                 state,
                 &outcome,
+                predicate_environment,
+                unfolded_predicates,
             )?;
         } else {
             check_function_claim(
@@ -1311,6 +1376,8 @@ fn prove_claim_from_steps_execution(
                 arguments,
                 state,
                 &outcome,
+                predicate_environment,
+                unfolded_predicates,
             )?;
         }
         let specification = c_function_specification(
@@ -1404,6 +1471,7 @@ fn certified_proof_steps(
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
     function_environment: &CFunctionEnvironment,
+    predicate_environment: &PredicateEnvironment,
     candidates: Vec<Vec<ProofStep>>,
 ) -> Option<Vec<ProofStep>> {
     candidates.into_iter().find(|steps| {
@@ -1414,6 +1482,7 @@ fn certified_proof_steps(
             claim,
             claim_label,
             function_environment,
+            predicate_environment,
             steps,
         )
         .is_ok()
@@ -1596,6 +1665,8 @@ fn prove_claim_from_execution(
             arguments,
             state,
             &outcome,
+            &PredicateEnvironment::new(&[]),
+            &[],
         )?;
         let path_requirements_description = describe_propositions(&path_requirements);
         let specification = c_function_specification(
@@ -2581,7 +2652,7 @@ fn requirement_propositions(
                 disjoint_requirement_prop(parameters, arguments, memory, left, right)
             }
             Requirement::Proposition(proposition) => {
-                requirement_proposition_prop(parameters, arguments, proposition)
+                requirement_proposition_prop(parameters, arguments, memory, proposition)
             }
         })
         .collect()
@@ -2785,10 +2856,11 @@ fn lower_range_bytes(
 fn requirement_proposition_prop(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
+    memory: &CMemory,
     proposition: &ClickProposition,
 ) -> Result<Proposition, ClickError> {
     let parameter_values = parameter_values(parameters, arguments)?;
-    let mut lowerer = KernelPropositionLowerer::new(parameter_values);
+    let mut lowerer = KernelPropositionLowerer::new(parameter_values, memory.clone());
     lowerer.lower_requirement_proposition(proposition)
 }
 
@@ -2813,13 +2885,15 @@ fn parameter_values(
 
 struct KernelPropositionLowerer {
     values: BTreeMap<String, CValue>,
+    memory: CMemory,
     next_variable: u64,
 }
 
 impl KernelPropositionLowerer {
-    fn new(values: BTreeMap<String, CValue>) -> Self {
+    fn new(values: BTreeMap<String, CValue>, memory: CMemory) -> Self {
         Self {
             values,
+            memory,
             next_variable: 2_000_000,
         }
     }
@@ -2878,13 +2952,19 @@ impl KernelPropositionLowerer {
                     body: Box::new(body),
                 })
             }
-            ClickProposition::PredicateCall { name, arguments } => Ok(Proposition::Predicate {
-                name: name.clone(),
-                arguments: arguments
-                    .iter()
-                    .map(|argument| self.lower_requirement_value(argument).map(Term::CValue))
-                    .collect::<Result<Vec<_>, _>>()?,
-            }),
+            ClickProposition::PredicateCall { name, arguments } => {
+                let mut lowered_arguments = vec![Term::CMemory(self.memory.clone())];
+                lowered_arguments.extend(
+                    arguments
+                        .iter()
+                        .map(|argument| self.lower_requirement_value(argument).map(Term::CValue))
+                        .collect::<Result<Vec<_>, _>>()?,
+                );
+                Ok(Proposition::Predicate {
+                    name: name.clone(),
+                    arguments: lowered_arguments,
+                })
+            }
         }
     }
 
@@ -3127,6 +3207,8 @@ fn check_function_claim(
     arguments: &[CExpression],
     pre_state: &CState,
     outcome: &CFunctionOutcome,
+    predicate_environment: &PredicateEnvironment,
+    unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
     match claim {
         FunctionClaimRef::Ensure(_, ensure_clause) => match ensure_clause.ensure() {
@@ -3140,6 +3222,8 @@ fn check_function_claim(
                 arguments,
                 pre_state,
                 outcome,
+                predicate_environment,
+                unfolded_predicates,
             )?,
         },
         FunctionClaimRef::Effect(_, effect_clause) => prove_effect_clause(
@@ -3168,6 +3252,8 @@ fn check_function_claim_by_simp(
     arguments: &[CExpression],
     pre_state: &CState,
     outcome: &CFunctionOutcome,
+    predicate_environment: &PredicateEnvironment,
+    unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
     match claim {
         FunctionClaimRef::Ensure(_, ensure_clause) => match ensure_clause.ensure() {
@@ -3181,6 +3267,8 @@ fn check_function_claim_by_simp(
                 arguments,
                 pre_state,
                 outcome,
+                predicate_environment,
+                unfolded_predicates,
             ),
         },
         FunctionClaimRef::Effect(_, _) => Err(ClickError::new(format!(
@@ -3199,6 +3287,8 @@ fn prove_ensure_proposition_by_simp(
     arguments: &[CExpression],
     pre_state: &CState,
     outcome: &CFunctionOutcome,
+    predicate_environment: &PredicateEnvironment,
+    unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
     let CFunctionOutcome::Return { value, state } = outcome else {
         return Err(ClickError::new(format!(
@@ -3206,7 +3296,7 @@ fn prove_ensure_proposition_by_simp(
             describe_facts(path_facts)
         )));
     };
-    let proposition = lower_outcome_proposition(
+    let mut proposition = lower_outcome_proposition(
         parameters,
         arguments,
         pre_state,
@@ -3221,12 +3311,374 @@ fn prove_ensure_proposition_by_simp(
         ))
     })?;
     let assumptions = assumptions_from_propositions(available_propositions);
+    proposition = unfold_predicates_in_proposition(
+        predicate_environment,
+        unfolded_predicates,
+        &proposition,
+        &assumptions,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`simp` failed for `{ensure_label}` path {path_index}: {message}"
+        ))
+    })?;
     match simp_proposition(&proposition, &assumptions) {
         SimpProposition::True => Ok(()),
         simplified => Err(ClickError::new(format!(
             "`simp` failed for `{ensure_label}` path {path_index}: simplified proposition was not true: {simplified:?}\n  original proposition: {proposition:?}\n  path facts: {}",
             describe_facts(path_facts)
         ))),
+    }
+}
+
+fn unfold_available_predicate_facts(
+    predicate_environment: &PredicateEnvironment,
+    unfolded_predicates: &[String],
+    available_propositions: &[Proposition],
+) -> Result<Vec<Proposition>, String> {
+    if unfolded_predicates.is_empty() {
+        return Ok(available_propositions.to_vec());
+    }
+
+    let assumptions = assumptions_from_propositions(available_propositions);
+    let mut propositions = available_propositions.to_vec();
+    for proposition in available_propositions {
+        let unfolded = unfold_predicates_in_proposition(
+            predicate_environment,
+            unfolded_predicates,
+            proposition,
+            &assumptions,
+        )?;
+        if &unfolded != proposition && !propositions.contains(&unfolded) {
+            propositions.push(unfolded);
+        }
+    }
+    Ok(propositions)
+}
+
+fn unfold_predicates_in_proposition(
+    predicate_environment: &PredicateEnvironment,
+    unfolded_predicates: &[String],
+    proposition: &Proposition,
+    assumptions: &Assumptions,
+) -> Result<Proposition, String> {
+    let mut active = BTreeSet::new();
+    unfold_predicates_in_proposition_with_active(
+        predicate_environment,
+        unfolded_predicates,
+        proposition,
+        assumptions,
+        &mut active,
+    )
+}
+
+fn unfold_predicates_in_proposition_with_active(
+    predicate_environment: &PredicateEnvironment,
+    unfolded_predicates: &[String],
+    proposition: &Proposition,
+    assumptions: &Assumptions,
+    active: &mut BTreeSet<String>,
+) -> Result<Proposition, String> {
+    match proposition {
+        Proposition::Predicate { name, arguments }
+            if unfolded_predicates
+                .iter()
+                .any(|predicate| predicate == name) =>
+        {
+            if !active.insert(name.clone()) {
+                return Err(format!("recursive unfold of predicate `{name}`"));
+            }
+            let definition = predicate_environment
+                .get(name)
+                .ok_or_else(|| format!("unknown predicate `{name}`"))?;
+            let unfolded = instantiate_predicate_definition(definition, arguments, assumptions)?;
+            let unfolded = unfold_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                &unfolded,
+                assumptions,
+                active,
+            )?;
+            active.remove(name);
+            Ok(unfolded)
+        }
+        Proposition::And(left, right) => Ok(Proposition::And(
+            Box::new(unfold_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                left,
+                assumptions,
+                active,
+            )?),
+            Box::new(unfold_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                right,
+                assumptions,
+                active,
+            )?),
+        )),
+        Proposition::Or(left, right) => Ok(Proposition::Or(
+            Box::new(unfold_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                left,
+                assumptions,
+                active,
+            )?),
+            Box::new(unfold_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                right,
+                assumptions,
+                active,
+            )?),
+        )),
+        Proposition::Not(body) => Ok(Proposition::Not(Box::new(
+            unfold_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                body,
+                assumptions,
+                active,
+            )?,
+        ))),
+        Proposition::Implies(left, right) => {
+            let left = unfold_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                left,
+                assumptions,
+                active,
+            )?;
+            let right_assumptions = assumptions.clone().assume_proposition(left.clone());
+            let right = unfold_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                right,
+                &right_assumptions,
+                active,
+            )?;
+            Ok(Proposition::Implies(Box::new(left), Box::new(right)))
+        }
+        Proposition::ForAll { var, sort, body } => Ok(Proposition::ForAll {
+            var: *var,
+            sort: sort.clone(),
+            body: Box::new(unfold_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                body,
+                assumptions,
+                active,
+            )?),
+        }),
+        _ => Ok(proposition.clone()),
+    }
+}
+
+fn instantiate_predicate_definition(
+    definition: &PredicateDefinition,
+    arguments: &[Term],
+    assumptions: &Assumptions,
+) -> Result<Proposition, String> {
+    if arguments.len() != definition.parameters().len() + 1 {
+        return Err(format!(
+            "predicate `{}` has malformed lowered argument count: expected hidden memory plus {} argument(s), got {}",
+            definition.name(),
+            definition.parameters().len(),
+            arguments.len()
+        ));
+    }
+
+    let Term::CMemory(memory) = &arguments[0] else {
+        return Err(format!(
+            "predicate `{}` is missing its hidden memory argument",
+            definition.name()
+        ));
+    };
+    let mut values = BTreeMap::new();
+    for (parameter, argument) in definition.parameters().iter().zip(&arguments[1..]) {
+        let Term::CValue(value) = argument else {
+            return Err(format!(
+                "predicate `{}` argument `{}` did not lower to a C value",
+                definition.name(),
+                parameter.name()
+            ));
+        };
+        values.insert(parameter.name().to_string(), value.clone());
+    }
+
+    let mut next_variable = 2_500_000;
+    lower_predicate_body_proposition_with_environment(
+        &mut values,
+        memory,
+        assumptions,
+        definition.body(),
+        &mut next_variable,
+    )
+}
+
+fn lower_predicate_body_proposition_with_environment(
+    values: &mut BTreeMap<String, CValue>,
+    memory: &CMemory,
+    assumptions: &Assumptions,
+    proposition: &ClickProposition,
+    next_variable: &mut u64,
+) -> Result<Proposition, String> {
+    match proposition {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => {
+            let left = evaluate_predicate_contract_expression(values, memory, assumptions, left)?;
+            let right = evaluate_predicate_contract_expression(values, memory, assumptions, right)?;
+            comparison_proposition(left, *operator, right).map_err(|error| error.message)
+        }
+        ClickProposition::And(left, right) => Ok(Proposition::And(
+            Box::new(lower_predicate_body_proposition_with_environment(
+                values,
+                memory,
+                assumptions,
+                left,
+                next_variable,
+            )?),
+            Box::new(lower_predicate_body_proposition_with_environment(
+                values,
+                memory,
+                assumptions,
+                right,
+                next_variable,
+            )?),
+        )),
+        ClickProposition::Or(left, right) => Ok(Proposition::Or(
+            Box::new(lower_predicate_body_proposition_with_environment(
+                values,
+                memory,
+                assumptions,
+                left,
+                next_variable,
+            )?),
+            Box::new(lower_predicate_body_proposition_with_environment(
+                values,
+                memory,
+                assumptions,
+                right,
+                next_variable,
+            )?),
+        )),
+        ClickProposition::Not(body) => Ok(Proposition::Not(Box::new(
+            lower_predicate_body_proposition_with_environment(
+                values,
+                memory,
+                assumptions,
+                body,
+                next_variable,
+            )?,
+        ))),
+        ClickProposition::Implies(left, right) => {
+            let left = lower_predicate_body_proposition_with_environment(
+                values,
+                memory,
+                assumptions,
+                left,
+                next_variable,
+            )?;
+            let right_assumptions = assumptions.clone().assume_proposition(left.clone());
+            let right = lower_predicate_body_proposition_with_environment(
+                values,
+                memory,
+                &right_assumptions,
+                right,
+                next_variable,
+            )?;
+            Ok(Proposition::Implies(Box::new(left), Box::new(right)))
+        }
+        ClickProposition::ForAll { c_type, name, body } => {
+            if *c_type != C0Type::Int32 {
+                return Err("only `forall (int32 ...)` is supported".to_string());
+            }
+            let variable = Variable(*next_variable);
+            *next_variable += 1;
+            let previous = values.insert(
+                name.clone(),
+                CValue::Int32(Bitvector32Term::Variable(variable)),
+            );
+            let body = lower_predicate_body_proposition_with_environment(
+                values,
+                memory,
+                assumptions,
+                body,
+                next_variable,
+            )?;
+            match previous {
+                Some(value) => {
+                    values.insert(name.clone(), value);
+                }
+                None => {
+                    values.remove(name);
+                }
+            }
+            Ok(Proposition::ForAll {
+                var: variable,
+                sort: Sort::CInt32,
+                body: Box::new(body),
+            })
+        }
+        ClickProposition::PredicateCall { name, arguments } => {
+            let mut lowered_arguments = vec![Term::CMemory(memory.clone())];
+            lowered_arguments.extend(
+                arguments
+                    .iter()
+                    .map(|argument| {
+                        evaluate_predicate_contract_expression(
+                            values,
+                            memory,
+                            assumptions,
+                            argument,
+                        )
+                        .map(Term::CValue)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+            Ok(Proposition::Predicate {
+                name: name.clone(),
+                arguments: lowered_arguments,
+            })
+        }
+    }
+}
+
+fn evaluate_predicate_contract_expression(
+    values: &BTreeMap<String, CValue>,
+    memory: &CMemory,
+    assumptions: &Assumptions,
+    expression: &ContractExpression,
+) -> Result<CValue, String> {
+    let state = CState::new().with_memory(memory.clone());
+    match expression {
+        ContractExpression::Current(expression) => {
+            evaluate_c_contract_expression(values, &state, None, assumptions, expression)
+        }
+        ContractExpression::Old(_) => {
+            Err("`old(...)` is not available in predicate definitions".to_string())
+        }
+        ContractExpression::Add(left, right) => {
+            let left = evaluate_predicate_contract_expression(values, memory, assumptions, left)?;
+            let right = evaluate_predicate_contract_expression(values, memory, assumptions, right)?;
+            evaluate_postcondition_add(left, right)
+        }
+        ContractExpression::Subtract(left, right) => {
+            let left = evaluate_predicate_contract_expression(values, memory, assumptions, left)?;
+            let right = evaluate_predicate_contract_expression(values, memory, assumptions, right)?;
+            evaluate_postcondition_sub(left, right)
+        }
+        ContractExpression::Index(base, index) => {
+            let base = evaluate_predicate_contract_expression(values, memory, assumptions, base)?;
+            let index = evaluate_predicate_contract_expression(values, memory, assumptions, index)?;
+            let pointer = evaluate_postcondition_pointer_add(base, index)?;
+            evaluate_contract_memory_load(&state, pointer, assumptions)
+        }
     }
 }
 
@@ -3510,6 +3962,8 @@ fn prove_ensure_proposition(
     arguments: &[CExpression],
     pre_state: &CState,
     outcome: &CFunctionOutcome,
+    predicate_environment: &PredicateEnvironment,
+    unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
     match proposition {
         ClickProposition::Comparison {
@@ -3577,6 +4031,8 @@ fn prove_ensure_proposition(
                 arguments,
                 pre_state,
                 outcome,
+                predicate_environment,
+                unfolded_predicates,
             )?;
             prove_ensure_proposition(
                 ensure_label,
@@ -3588,6 +4044,8 @@ fn prove_ensure_proposition(
                 arguments,
                 pre_state,
                 outcome,
+                predicate_environment,
+                unfolded_predicates,
             )?;
         }
         _ => {
@@ -3597,7 +4055,7 @@ fn prove_ensure_proposition(
                     describe_facts(path_facts)
                 )));
             };
-            let proposition = lower_outcome_proposition(
+            let mut proposition = lower_outcome_proposition(
                 parameters,
                 arguments,
                 pre_state,
@@ -3612,6 +4070,17 @@ fn prove_ensure_proposition(
                 ))
             })?;
             let assumptions = assumptions_from_propositions(available_propositions);
+            proposition = unfold_predicates_in_proposition(
+                predicate_environment,
+                unfolded_predicates,
+                &proposition,
+                &assumptions,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`ensures {proposition:?}` failed for `{ensure_label}` path {path_index}: {message}"
+                ))
+            })?;
             if !assumptions.proves(&proposition) {
                 return Err(ClickError::new(format!(
                     "`ensures {proposition:?}` failed for `{ensure_label}` path {path_index}: proposition was not provable\n  path facts: {}",
@@ -4163,23 +4632,29 @@ fn lower_outcome_proposition_with_environment(
                 body: Box::new(body),
             })
         }
-        ClickProposition::PredicateCall { name, arguments } => Ok(Proposition::Predicate {
-            name: name.clone(),
-            arguments: arguments
-                .iter()
-                .map(|argument| {
-                    evaluate_contract_expression_with_environment(
-                        values,
-                        pre_state,
-                        post_state,
-                        result,
-                        assumptions,
-                        argument,
-                    )
-                    .map(Term::CValue)
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        }),
+        ClickProposition::PredicateCall { name, arguments } => {
+            let mut lowered_arguments = vec![Term::CMemory(post_state.memory().clone())];
+            lowered_arguments.extend(
+                arguments
+                    .iter()
+                    .map(|argument| {
+                        evaluate_contract_expression_with_environment(
+                            values,
+                            pre_state,
+                            post_state,
+                            result,
+                            assumptions,
+                            argument,
+                        )
+                        .map(Term::CValue)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+            Ok(Proposition::Predicate {
+                name: name.clone(),
+                arguments: lowered_arguments,
+            })
+        }
     }
 }
 
@@ -5074,6 +5549,12 @@ impl Parser {
                 };
                 self.expect(Token::RParen)?;
                 ProofStep::Frame(target)
+            }
+            "unfold" => {
+                self.expect(Token::LParen)?;
+                let predicate = self.expect_ident("predicate name")?;
+                self.expect(Token::RParen)?;
+                ProofStep::Unfold(predicate)
             }
             "simp" => {
                 self.expect_empty_step_args(&name)?;
@@ -5975,6 +6456,29 @@ mod tests {
     }
 
     #[test]
+    fn parses_unfold_proof_step() {
+        let source = FILL3_CLICK.replace(
+            "by auto;",
+            "by { symbolic_execute(); unfold(sorted); simp(); close(); }",
+        );
+        let file = parse(&source).expect("unfold proof-step script should parse");
+        let ensure = &file.function_blocks()[0].ensures()[0];
+
+        assert_eq!(
+            ensure.proof().steps(),
+            Some(
+                [
+                    ProofStep::SymbolicExecute,
+                    ProofStep::Unfold("sorted".to_string()),
+                    ProofStep::Simp,
+                    ProofStep::Close,
+                ]
+                .as_slice()
+            )
+        );
+    }
+
+    #[test]
     fn parses_unnamed_ensure_clause() {
         let source =
             FILL3_CLICK.replace("ensures returns_second: result == 2", "ensures result == 2");
@@ -6236,6 +6740,126 @@ mod tests {
 
         let verified = verify_c0_sources(click_source, &[("identity_pointer_fact.c", c_source)])
             .expect("exact opaque predicate fact should verify");
+
+        assert_eq!(verified.len(), 1);
+    }
+
+    #[test]
+    fn unfolds_predicate_requirement_to_prove_consequence() {
+        let c_source = r#"
+            int32 keep_pair(int32* p) {
+                return 0;
+            }
+        "#;
+        let click_source = r#"
+            verifying "keep_pair.c";
+
+            predicate sorted_pair(int32* p) {
+                p[0] <= p[1]
+            }
+
+            int32 keep_pair(int32* p) {
+                requires valid_range(p, 8);
+                requires sorted_pair(p);
+                ensures consequence: p[0] <= p[1] by {
+                    symbolic_execute();
+                    unfold(sorted_pair);
+                    simp();
+                    close();
+                }
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("keep_pair.c", c_source)])
+            .expect("unfolded predicate requirement should prove its body");
+
+        assert_eq!(verified.len(), 1);
+        assert_eq!(
+            verified[0].proof_steps(),
+            Some(
+                [
+                    ProofStep::SymbolicExecute,
+                    ProofStep::Unfold("sorted_pair".to_string()),
+                    ProofStep::Simp,
+                    ProofStep::Close,
+                ]
+                .as_slice()
+            )
+        );
+    }
+
+    #[test]
+    fn unfolds_predicate_goal_to_prove_compare_swap_sorted() {
+        let c_source = r#"
+            int32 compare_swap2(int32* p) {
+                int32 tmp;
+                if (p[1] < p[0]) {
+                    tmp = p[0];
+                    p[0] = p[1];
+                    p[1] = tmp;
+                } else {
+                    tmp = 0;
+                }
+                return 0;
+            }
+        "#;
+        let click_source = r#"
+            verifying "compare_swap2.c";
+
+            predicate sorted_pair(int32* p) {
+                p[0] <= p[1]
+            }
+
+            int32 compare_swap2(int32* p) {
+                requires valid_range(p, 8);
+                ensures sorted: sorted_pair(p) by {
+                    symbolic_execute();
+                    unfold(sorted_pair);
+                    simp();
+                    close();
+                }
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("compare_swap2.c", c_source)])
+            .expect("unfolded predicate goal should prove compare-swap sortedness");
+
+        assert_eq!(verified.len(), 2);
+    }
+
+    #[test]
+    fn unfolds_general_sorted_predicate() {
+        let c_source = r#"
+            int32 keep_sorted(int32* p, int32 n) {
+                return 0;
+            }
+        "#;
+        let click_source = r#"
+            verifying "keep_sorted.c";
+
+            predicate sorted(int32* p, int32 n) {
+                forall (int32 i) {
+                    forall (int32 j) {
+                        0 <= i and 0 <= j and i < j and j < n implies p[i] <= p[j]
+                    }
+                }
+            }
+
+            int32 keep_sorted(int32* p, int32 n) {
+                requires n >= 0;
+                requires valid_range(p[0..n]);
+                requires sorted(p, n);
+                ensures still_sorted: sorted(p, n) by {
+                    symbolic_execute();
+                    unfold(sorted);
+                    simp();
+                    close();
+                }
+            }
+        "#;
+
+        let verified = verify_c0_sources(click_source, &[("keep_sorted.c", c_source)])
+            .expect("general sorted predicate should unfold deterministically");
 
         assert_eq!(verified.len(), 1);
     }
