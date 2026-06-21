@@ -85,6 +85,8 @@ of inventing syntax from memory.
   old-memory proof.
 - `mdtests/pure_click_functions.md`: `function`, `let`, `if`, `.fold`, `.all`,
   `.any`, stdlib `count`, and `permutation`.
+- `mdtests/click_array_refs.md`: array refs carrying current and old memory into
+  pure Click functions and predicates.
 
 ## Sorting And Permutation
 
@@ -93,7 +95,8 @@ of inventing syntax from memory.
 - `mdtests/compare_swap2_permutation.md`: stdlib `permutation` proof over a
   current array and `old(p)`.
 - `mdtests/sort3_sorted.md`: three-cell sorting.
-- `mdtests/sort3_permutation.md`: explicit six-way permutation claim.
+- `mdtests/sort3_permutation.md`: stdlib `permutation` proof for three-cell
+  sorting.
 - `mdtests/sort3_permutation_predicate.md`: explicit permutation packaged as a
   predicate.
 - `mdtests/bubble_sort3_loop_sorted.md`: loop-shaped three-cell sorting.

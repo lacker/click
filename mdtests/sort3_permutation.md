@@ -1,8 +1,7 @@
-# sort3 preserves the three-cell permutation
+# sort3 preserves the stdlib three-cell permutation
 
-This checks the explicit six-way permutation claim for fixed-size sorting. It is
-intentionally verbose: this is the baseline before introducing better notation
-for multisets or permutation predicates.
+This checks that the standard-library `permutation` predicate can prove a
+three-cell sorting network preserves the entry-state multiset.
 
 ```c filename=sort3_permutation.c
 int32 sort3_permutation(int32 p[3]) {
@@ -37,19 +36,12 @@ verifying "sort3_permutation.c";
 
 int32 sort3_permutation(int32 p[3]) {
     requires valid_range(p[0..3]);
-    ensures permutation:
-        (p[0] == old(p[0]) and p[1] == old(p[1]) and p[2] == old(p[2]))
-        or
-        (p[0] == old(p[0]) and p[1] == old(p[2]) and p[2] == old(p[1]))
-        or
-        (p[0] == old(p[1]) and p[1] == old(p[0]) and p[2] == old(p[2]))
-        or
-        (p[0] == old(p[1]) and p[1] == old(p[2]) and p[2] == old(p[0]))
-        or
-        (p[0] == old(p[2]) and p[1] == old(p[0]) and p[2] == old(p[1]))
-        or
-        (p[0] == old(p[2]) and p[1] == old(p[1]) and p[2] == old(p[0]))
-        by auto;
+    ensures permutation: permutation(p, old(p), 0, 3) by {
+        symbolic_execute();
+        unfold(permutation);
+        simp();
+        close();
+    }
 }
 ```
 

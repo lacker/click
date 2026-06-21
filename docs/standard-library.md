@@ -60,6 +60,13 @@ user Click definition conflict.
 preserves `permutation(p, old(p), 0, 2)` without copying the original values
 into a separate snapshot array.
 
+`mdtests/sort3_permutation.md` proves the same stdlib predicate for a three-cell
+sorting network:
+
+```click
+permutation(p, old(p), 0, 3)
+```
+
 ## Adding A Library Function
 
 1. Add the definition to `stdlib/prelude.click`.
