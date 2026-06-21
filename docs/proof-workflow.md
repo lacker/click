@@ -1,0 +1,146 @@
+# Proof Workflow
+
+Click proofs live in `by` clauses.
+
+## Tactics
+
+Currently accepted tactics:
+
+```click
+by auto;
+by simp;
+by frame;
+```
+
+Omitting a proof clause uses `auto`.
+
+`auto` is the broad orchestration tactic. It runs the current symbolic
+execution, loop-VC, effect-checking, simplification, and bounded-execution
+fallback paths as needed.
+
+`simp` is deterministic local normalization. It is useful for straight-line
+postconditions and unfolded predicate goals. It simplifies logical connectives,
+constant/reflexive integer comparisons, small arithmetic forms, concrete folds,
+and several kernel equality patterns.
+
+`frame` proves `immutable` and `mutable` effect clauses. It rejects ordinary
+postconditions.
+
+## Proof-Step Scripts
+
+Deterministic proof scripts use function-call-shaped proof steps:
+
+```click
+by {
+    symbolic_execute();
+    unfold(sorted);
+    simp();
+    close();
+}
+```
+
+Current proof steps:
+
+- `symbolic_execute();`: build symbolic verification paths for the C0 function.
+- `bounded_execute();`: use deterministic bounded execution for concrete-loop
+  fallback proofs.
+- `loop_vc(loop N);`: check the generated verification conditions for loop `N`.
+- `frame();`: prove the current function-level effect claim.
+- `frame(loop N);`: prove the effect summary for loop `N` and expose it for
+  later postcondition reasoning.
+- `unfold(name);`: unfold matching predicate facts and goals.
+- `simp();`: request deterministic simplification during close.
+- `close();`: finish the proof. This must be the final proof step.
+
+Some successful `auto` proofs record replayable proof-step certificates when the
+current proof-step language can express the argument.
+
+## Structural Blocks
+
+Structural proof blocks name source locations:
+
+```click
+statement 2 {
+    assert i == 0 by auto;
+}
+
+loop 0 {
+    invariant i >= 0 by auto;
+    invariant i <= n by auto;
+    mutable p[0..n] by frame;
+
+    step {
+        mutable p[i..i + 1] by frame;
+    }
+}
+```
+
+`statement N` names the Nth source statement in structural order. `loop N`
+names the Nth `while` loop.
+
+`assert` is a one-shot ghost check at the target statement. It currently accepts
+the executable proposition fragment over current-state C0 expressions.
+
+`invariant` generates loop-entry, preservation, and exit obligations. Invariant
+proof blocks can use `by auto;` or an unfold-only script such as:
+
+```click
+by {
+    unfold(sorted);
+    unfold(sorted_range);
+}
+```
+
+Full proof-step scripts for invariant entry and preservation are not separate
+surface proof blocks yet.
+
+## Loop Effects
+
+Whole-loop effects:
+
+```click
+loop 0 {
+    mutable p[0..n] by frame;
+}
+```
+
+Step-relative effects:
+
+```click
+loop 0 {
+    step {
+        mutable p[i..i + 1] by frame;
+    }
+}
+```
+
+Whole-loop mutable segments must use stable names such as parameters. They
+cannot depend on locals modified by the loop. Use `step` effects for
+iteration-relative footprints.
+
+Loop effect summaries are reusable. For example, if a loop mutates only
+`dst[0..n]` and requirements prove `disjoint(dst[0..n], src[0..n])`, `auto` can
+use that effect summary to prove source-memory postconditions without a
+handwritten source-invariance invariant.
+
+## Debugging Failed Proofs
+
+Failure messages usually include:
+
+- guarantee label
+- execution path index
+- available requirements
+- path facts
+- remaining proof obligations
+- simplified proposition for failed `simp`
+
+Practical approach:
+
+1. Find the failing mdtest and the exact guarantee label.
+2. Read path facts to learn which branch/path failed.
+3. If a predicate is still opaque, add `unfold(predicate_name);`.
+4. If memory preservation is missing, check `valid_range`, `disjoint`,
+   `immutable`, `mutable`, and loop effects.
+5. If arithmetic overflow appears, add numeric requirements or invariants.
+6. If the proof needs a general new pattern, add a focused mdtest and then a
+   deterministic kernel/proof rule.
