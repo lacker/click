@@ -39,6 +39,14 @@ pub enum Bitvector32Term {
         then_term: Box<Bitvector32Term>,
         else_term: Box<Bitvector32Term>,
     },
+    RangeFold {
+        start: Box<Bitvector32Term>,
+        end: Box<Bitvector32Term>,
+        initial: Box<Bitvector32Term>,
+        accumulator: Variable,
+        item: Variable,
+        body: Box<Bitvector32Term>,
+    },
     MemoryLoad(Box<CMemory>, Box<Pointer>),
 }
 
@@ -558,6 +566,7 @@ impl Bitvector32Term {
                 ConditionTerm::Constant(false) => else_term.as_const(),
                 _ => None,
             },
+            Self::RangeFold { .. } => None,
         }
     }
 
@@ -681,6 +690,24 @@ impl Bitvector32Term {
                 then_term: Box::new(then_term),
                 else_term: Box::new(else_term),
             },
+        }
+    }
+
+    pub fn range_fold(
+        start: Self,
+        end: Self,
+        initial: Self,
+        accumulator: Variable,
+        item: Variable,
+        body: Self,
+    ) -> Self {
+        Self::RangeFold {
+            start: Box::new(start),
+            end: Box::new(end),
+            initial: Box::new(initial),
+            accumulator,
+            item,
+            body: Box::new(body),
         }
     }
 }
@@ -1589,6 +1616,21 @@ impl Assumptions {
                     self.simplify_bitvector_under_assumptions(else_term),
                 ),
             },
+            Bitvector32Term::RangeFold {
+                start,
+                end,
+                initial,
+                accumulator,
+                item,
+                body,
+            } => Bitvector32Term::range_fold(
+                self.simplify_bitvector_under_assumptions(start),
+                self.simplify_bitvector_under_assumptions(end),
+                self.simplify_bitvector_under_assumptions(initial),
+                *accumulator,
+                *item,
+                self.simplify_bitvector_under_assumptions(body),
+            ),
             Bitvector32Term::MemoryLoad(memory, pointer) => {
                 Bitvector32Term::MemoryLoad(memory.clone(), pointer.clone())
             }
@@ -5211,6 +5253,21 @@ fn collect_bitvector_variables(term: &Bitvector32Term, variables: &mut BTreeSet<
             collect_bitvector_variables(then_term, variables);
             collect_bitvector_variables(else_term, variables);
         }
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            collect_bitvector_variables(start, variables);
+            collect_bitvector_variables(end, variables);
+            collect_bitvector_variables(initial, variables);
+            collect_bitvector_variables(body, variables);
+            variables.remove(accumulator);
+            variables.remove(item);
+        }
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             collect_memory_bitvector_variables(memory, variables);
             collect_pointer_bitvector_variables(pointer, variables);
@@ -5984,6 +6041,28 @@ fn substitute_bitvector_variable(
             substitute_bitvector_variable(then_term, from, to),
             substitute_bitvector_variable(else_term, from, to),
         ),
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            let body = if *accumulator == from || *item == from {
+                body.as_ref().clone()
+            } else {
+                substitute_bitvector_variable(body, from, to)
+            };
+            Bitvector32Term::range_fold(
+                substitute_bitvector_variable(start, from, to),
+                substitute_bitvector_variable(end, from, to),
+                substitute_bitvector_variable(initial, from, to),
+                *accumulator,
+                *item,
+                body,
+            )
+        }
         Bitvector32Term::MemoryLoad(memory, pointer) => Bitvector32Term::MemoryLoad(
             Box::new(substitute_bitvector_variable_in_memory(memory, from, to)),
             Box::new(substitute_bitvector_variable_in_pointer(pointer, from, to)),

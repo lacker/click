@@ -26,6 +26,20 @@ const EXTERNAL_ARGUMENT_MEMORY_BLOCK: &str = "arg-memory";
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
 const MAX_CONCRETE_RANGE_FOLD_STEPS: i64 = 1024;
 
+const CLICK_STANDARD_LIBRARY: &str = r#"
+function count(int32 p[], int32 lo, int32 hi, int32 x) -> int32 {
+    (lo..hi).fold(0, |acc, k| {
+        acc + if p[k] == x { 1 } else { 0 }
+    })
+}
+
+predicate permutation(int32 a[], int32 b[], int32 lo, int32 hi) {
+    forall (int32 x) {
+        count(a, lo, hi, x) == count(b, lo, hi, x)
+    }
+}
+"#;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClickFile {
     verifying_sources: Vec<String>,
@@ -169,6 +183,18 @@ pub enum ClickProposition {
         name: String,
         body: Box<ClickProposition>,
     },
+    RangeAll {
+        start: ContractExpression,
+        end: ContractExpression,
+        item: String,
+        body: Box<ClickProposition>,
+    },
+    RangeAny {
+        start: ContractExpression,
+        end: ContractExpression,
+        item: String,
+        body: Box<ClickProposition>,
+    },
     PredicateCall {
         name: String,
         arguments: Vec<ContractExpression>,
@@ -193,6 +219,11 @@ pub enum ContractExpression {
         initial: Box<ContractExpression>,
         accumulator: String,
         item: String,
+        body: Box<ContractExpression>,
+    },
+    Let {
+        name: String,
+        value: Box<ContractExpression>,
         body: Box<ContractExpression>,
     },
     Call {
@@ -611,9 +642,10 @@ pub fn verify_c0_sources(
     let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
     let parsed_sources = parse_verified_sources(&file, &c_sources)?;
     let function_environment = build_function_environment(&parsed_sources);
-    let predicate_environment = PredicateEnvironment::new(file.predicate_definitions());
-    let click_function_environment =
-        ClickFunctionEnvironment::new(file.click_function_definitions());
+    let predicate_definitions = combined_predicate_definitions(&file)?;
+    let click_function_definitions = combined_click_function_definitions(&file)?;
+    let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
+    let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
     let mut verified = Vec::new();
 
     for function_block in file.function_blocks {
@@ -2363,6 +2395,10 @@ impl AnnotationLowerer<'_> {
                     body: Box::new(body),
                 })
             }
+            ClickProposition::RangeAll { .. } | ClickProposition::RangeAny { .. } => Err(
+                "range proposition methods are not supported in loop invariant C lowering yet"
+                    .to_string(),
+            ),
             ClickProposition::PredicateCall { name, arguments } => Ok(CProposition::Predicate {
                 name: name.clone(),
                 arguments: arguments
@@ -2401,6 +2437,9 @@ impl AnnotationLowerer<'_> {
             ),
             ContractExpression::RangeFold { .. } => Err(
                 "`fold` expressions are not supported in loop invariant C lowering yet".to_string(),
+            ),
+            ContractExpression::Let { .. } => Err(
+                "`let` expressions are not supported in loop invariant C lowering yet".to_string(),
             ),
             ContractExpression::Call { name, arguments } => {
                 let definition = self
@@ -2482,6 +2521,10 @@ impl AnnotationLowerer<'_> {
             ),
             ContractExpression::RangeFold { .. } => Err(
                 "`fold` expressions are not supported in loop invariant old-state evaluation yet"
+                    .to_string(),
+            ),
+            ContractExpression::Let { .. } => Err(
+                "`let` expressions are not supported in loop invariant old-state evaluation yet"
                     .to_string(),
             ),
             ContractExpression::Call { name, arguments } => {
@@ -2769,6 +2812,38 @@ fn unfold_click_predicates_in_proposition_with_active(
                 active,
             )?),
         }),
+        ClickProposition::RangeAll {
+            start,
+            end,
+            item,
+            body,
+        } => Ok(ClickProposition::RangeAll {
+            start: start.clone(),
+            end: end.clone(),
+            item: item.clone(),
+            body: Box::new(unfold_click_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                body,
+                active,
+            )?),
+        }),
+        ClickProposition::RangeAny {
+            start,
+            end,
+            item,
+            body,
+        } => Ok(ClickProposition::RangeAny {
+            start: start.clone(),
+            end: end.clone(),
+            item: item.clone(),
+            body: Box::new(unfold_click_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                body,
+                active,
+            )?),
+        }),
         ClickProposition::PredicateCall { name, arguments } => {
             Ok(ClickProposition::PredicateCall {
                 name: name.clone(),
@@ -2860,6 +2935,36 @@ fn substitute_click_proposition(
                 body: Box::new(substitute_click_proposition(body, &scoped)?),
             })
         }
+        ClickProposition::RangeAll {
+            start,
+            end,
+            item,
+            body,
+        } => {
+            let mut scoped = substitutions.clone();
+            scoped.remove(item);
+            Ok(ClickProposition::RangeAll {
+                start: substitute_contract_expression(start, substitutions)?,
+                end: substitute_contract_expression(end, substitutions)?,
+                item: item.clone(),
+                body: Box::new(substitute_click_proposition(body, &scoped)?),
+            })
+        }
+        ClickProposition::RangeAny {
+            start,
+            end,
+            item,
+            body,
+        } => {
+            let mut scoped = substitutions.clone();
+            scoped.remove(item);
+            Ok(ClickProposition::RangeAny {
+                start: substitute_contract_expression(start, substitutions)?,
+                end: substitute_contract_expression(end, substitutions)?,
+                item: item.clone(),
+                body: Box::new(substitute_click_proposition(body, &scoped)?),
+            })
+        }
         ClickProposition::PredicateCall { name, arguments } => {
             Ok(ClickProposition::PredicateCall {
                 name: name.clone(),
@@ -2925,6 +3030,15 @@ fn substitute_contract_expression(
                 initial: Box::new(substitute_contract_expression(initial, substitutions)?),
                 accumulator: accumulator.clone(),
                 item: item.clone(),
+                body: Box::new(substitute_contract_expression(body, &scoped)?),
+            })
+        }
+        ContractExpression::Let { name, value, body } => {
+            let mut scoped = substitutions.clone();
+            scoped.remove(name);
+            Ok(ContractExpression::Let {
+                name: name.clone(),
+                value: Box::new(substitute_contract_expression(value, substitutions)?),
                 body: Box::new(substitute_contract_expression(body, &scoped)?),
             })
         }
@@ -3075,7 +3189,9 @@ fn contract_expression_as_current_c_expression(
             Box::new(contract_expression_as_current_c_expression(base)?),
             Box::new(contract_expression_as_current_c_expression(index)?),
         )),
-        ContractExpression::If { .. } | ContractExpression::RangeFold { .. } => None,
+        ContractExpression::If { .. }
+        | ContractExpression::RangeFold { .. }
+        | ContractExpression::Let { .. } => None,
         ContractExpression::Call { .. } => None,
     }
 }
@@ -3143,7 +3259,10 @@ fn click_proposition_to_c_expression(proposition: &ClickProposition) -> Option<C
             ))),
             Box::new(click_proposition_to_c_expression(right)?),
         )),
-        ClickProposition::ForAll { .. } | ClickProposition::PredicateCall { .. } => None,
+        ClickProposition::ForAll { .. }
+        | ClickProposition::RangeAll { .. }
+        | ClickProposition::RangeAny { .. }
+        | ClickProposition::PredicateCall { .. } => None,
     }
 }
 
@@ -3176,7 +3295,9 @@ fn contract_expression_to_current_c_expression(
             Box::new(contract_expression_to_current_c_expression(base)?),
             Box::new(contract_expression_to_current_c_expression(index)?),
         )),
-        ContractExpression::If { .. } | ContractExpression::RangeFold { .. } => None,
+        ContractExpression::If { .. }
+        | ContractExpression::RangeFold { .. }
+        | ContractExpression::Let { .. } => None,
         ContractExpression::Call { .. } => None,
     }
 }
@@ -3703,6 +3824,83 @@ impl KernelPropositionLowerer {
                     body: Box::new(body),
                 })
             }
+            ClickProposition::RangeAll {
+                start,
+                end,
+                item,
+                body,
+            } => {
+                let start = int32_term_value(
+                    self.lower_requirement_value(start)?,
+                    "range `all` start bound",
+                )
+                .map_err(ClickError::new)?;
+                let end =
+                    int32_term_value(self.lower_requirement_value(end)?, "range `all` end bound")
+                        .map_err(ClickError::new)?;
+                let variable = Variable(self.next_variable);
+                self.next_variable += 1;
+                let item_value = CValue::Int32(Bitvector32Term::Variable(variable));
+                let outer_values = self.values.clone();
+                self.values.insert(item.clone(), item_value.clone());
+                let body = match self.lower_requirement_proposition(body) {
+                    Ok(body) => body,
+                    Err(error) => {
+                        self.values = outer_values;
+                        return Err(error);
+                    }
+                };
+                self.values = outer_values;
+                let CValue::Int32(item_bits) = item_value else {
+                    unreachable!("range `all` item value is always int32")
+                };
+                let range = conjunction(
+                    Proposition::ConditionIs(signed_less_equal(start, item_bits.clone()), true),
+                    Proposition::ConditionIs(signed_less_than(item_bits, end), true),
+                );
+                Ok(Proposition::ForAll {
+                    var: variable,
+                    sort: Sort::CInt32,
+                    body: Box::new(Proposition::Implies(Box::new(range), Box::new(body))),
+                })
+            }
+            ClickProposition::RangeAny {
+                start,
+                end,
+                item,
+                body,
+            } => {
+                let start = int32_term_value(
+                    self.lower_requirement_value(start)?,
+                    "range `any` start bound",
+                )
+                .map_err(ClickError::new)?;
+                let end =
+                    int32_term_value(self.lower_requirement_value(end)?, "range `any` end bound")
+                        .map_err(ClickError::new)?;
+                let start =
+                    concrete_bound_from_term(&start, "any", "start").map_err(ClickError::new)?;
+                let end = concrete_bound_from_term(&end, "any", "end").map_err(ClickError::new)?;
+                let outer_values = self.values.clone();
+                let mut proposition = false_proposition();
+                for index in concrete_fold_range(start, end).map_err(ClickError::new)? {
+                    self.values = outer_values.clone();
+                    self.values.insert(
+                        item.clone(),
+                        CValue::Int32(Bitvector32Term::Constant(index as u32)),
+                    );
+                    let body = match self.lower_requirement_proposition(body) {
+                        Ok(body) => body,
+                        Err(error) => {
+                            self.values = outer_values;
+                            return Err(error);
+                        }
+                    };
+                    proposition = disjunction(proposition, body);
+                }
+                self.values = outer_values;
+                Ok(proposition)
+            }
             ClickProposition::PredicateCall { name, arguments } => {
                 let mut lowered_arguments = vec![Term::CMemory(self.memory.clone())];
                 lowered_arguments.extend(
@@ -3770,29 +3968,69 @@ impl KernelPropositionLowerer {
                 item,
                 body,
             } => {
-                let start = concrete_fold_bound(self.lower_requirement_value(start)?, "start")
+                let start = int32_term_value(self.lower_requirement_value(start)?, "fold start")
                     .map_err(ClickError::new)?;
-                let end = concrete_fold_bound(self.lower_requirement_value(end)?, "end")
+                let end = int32_term_value(self.lower_requirement_value(end)?, "fold end")
                     .map_err(ClickError::new)?;
                 let mut value = self.lower_requirement_value(initial)?;
                 let outer_values = self.values.clone();
-                for index in concrete_fold_range(start, end).map_err(ClickError::new)? {
-                    self.values = outer_values.clone();
-                    self.values.insert(accumulator.clone(), value);
-                    self.values.insert(
-                        item.clone(),
-                        CValue::Int32(Bitvector32Term::Constant(index as u32)),
-                    );
-                    match self.lower_requirement_value(body) {
-                        Ok(next) => value = next,
-                        Err(error) => {
-                            self.values = outer_values;
-                            return Err(error);
+                match (
+                    concrete_bound_from_term(&start, "fold", "start"),
+                    concrete_bound_from_term(&end, "fold", "end"),
+                ) {
+                    (Ok(start), Ok(end)) => {
+                        for index in concrete_fold_range(start, end).map_err(ClickError::new)? {
+                            self.values = outer_values.clone();
+                            self.values.insert(accumulator.clone(), value);
+                            self.values.insert(
+                                item.clone(),
+                                CValue::Int32(Bitvector32Term::Constant(index as u32)),
+                            );
+                            match self.lower_requirement_value(body) {
+                                Ok(next) => value = next,
+                                Err(error) => {
+                                    self.values = outer_values;
+                                    return Err(error);
+                                }
+                            }
                         }
+                        self.values = outer_values;
+                        Ok(value)
+                    }
+                    _ => {
+                        self.values = outer_values.clone();
+                        self.values.insert(accumulator.clone(), value.clone());
+                        self.values.insert(
+                            item.clone(),
+                            CValue::Int32(Bitvector32Term::Variable(fold_bound_variable(item, 1))),
+                        );
+                        self.values.insert(
+                            accumulator.clone(),
+                            CValue::Int32(Bitvector32Term::Variable(fold_bound_variable(
+                                accumulator,
+                                0,
+                            ))),
+                        );
+                        let body_value = match self.lower_requirement_value(body) {
+                            Ok(body_value) => body_value,
+                            Err(error) => {
+                                self.values = outer_values;
+                                return Err(error);
+                            }
+                        };
+                        self.values = outer_values;
+                        symbolic_range_fold_value(start, end, value, accumulator, item, body_value)
+                            .map_err(ClickError::new)
                     }
                 }
+            }
+            ContractExpression::Let { name, value, body } => {
+                let value = self.lower_requirement_value(value)?;
+                let outer_values = self.values.clone();
+                self.values.insert(name.clone(), value);
+                let body_value = self.lower_requirement_value(body);
                 self.values = outer_values;
-                Ok(value)
+                body_value
             }
             ContractExpression::Call { name, arguments } => {
                 let state = CState::new().with_memory(self.memory.clone());
@@ -3911,17 +4149,41 @@ fn conditional_contract_value(
     )))
 }
 
-fn concrete_fold_bound(value: CValue, label: &str) -> Result<i32, String> {
+fn true_proposition() -> Proposition {
+    Proposition::ConditionIs(ConditionTerm::Constant(true), true)
+}
+
+fn false_proposition() -> Proposition {
+    Proposition::ConditionIs(ConditionTerm::Constant(false), true)
+}
+
+fn conjunction(left: Proposition, right: Proposition) -> Proposition {
+    match (&left, &right) {
+        (Proposition::ConditionIs(ConditionTerm::Constant(true), true), _) => right,
+        (_, Proposition::ConditionIs(ConditionTerm::Constant(true), true)) => left,
+        (Proposition::ConditionIs(ConditionTerm::Constant(false), true), _)
+        | (_, Proposition::ConditionIs(ConditionTerm::Constant(false), true)) => {
+            false_proposition()
+        }
+        _ => Proposition::And(Box::new(left), Box::new(right)),
+    }
+}
+
+fn disjunction(left: Proposition, right: Proposition) -> Proposition {
+    match (&left, &right) {
+        (Proposition::ConditionIs(ConditionTerm::Constant(false), true), _) => right,
+        (_, Proposition::ConditionIs(ConditionTerm::Constant(false), true)) => left,
+        (Proposition::ConditionIs(ConditionTerm::Constant(true), true), _)
+        | (_, Proposition::ConditionIs(ConditionTerm::Constant(true), true)) => true_proposition(),
+        _ => Proposition::Or(Box::new(left), Box::new(right)),
+    }
+}
+
+fn int32_term_value(value: CValue, label: &str) -> Result<Bitvector32Term, String> {
     let CValue::Int32(bits) = value else {
-        return Err(format!("`fold` {label} bound is not int32"));
+        return Err(format!("`{label}` is not int32"));
     };
-    let bits = simp_bitvector(&bits);
-    let Bitvector32Term::Constant(value) = bits else {
-        return Err(format!(
-            "symbolic `fold` {label} bounds are not supported yet"
-        ));
-    };
-    Ok(value as i32)
+    Ok(simp_bitvector(&bits))
 }
 
 fn concrete_fold_range(start: i32, end: i32) -> Result<std::ops::Range<i32>, String> {
@@ -3935,6 +4197,49 @@ fn concrete_fold_range(start: i32, end: i32) -> Result<std::ops::Range<i32>, Str
         ));
     }
     Ok(start..end)
+}
+
+fn concrete_bound_from_term(
+    term: &Bitvector32Term,
+    construct: &str,
+    label: &str,
+) -> Result<i32, String> {
+    let term = simp_bitvector(term);
+    let Bitvector32Term::Constant(value) = term else {
+        return Err(format!(
+            "symbolic `{construct}` {label} bounds are not supported yet"
+        ));
+    };
+    Ok(value as i32)
+}
+
+fn fold_bound_variable(name: &str, salt: u64) -> Variable {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ salt;
+    for byte in name.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x1000_0000_01b3);
+    }
+    Variable(3_000_000 + (hash % 1_000_000_000))
+}
+
+fn symbolic_range_fold_value(
+    start: Bitvector32Term,
+    end: Bitvector32Term,
+    initial: CValue,
+    accumulator: &str,
+    item: &str,
+    body_value: CValue,
+) -> Result<CValue, String> {
+    let initial = int32_term_value(initial, "fold initial value")?;
+    let body = int32_term_value(body_value, "fold body value")?;
+    Ok(CValue::Int32(Bitvector32Term::range_fold(
+        start,
+        end,
+        initial,
+        fold_bound_variable(accumulator, 0),
+        fold_bound_variable(item, 1),
+        body,
+    )))
 }
 
 fn lower_contract_add(left: CValue, right: CValue) -> Result<CValue, ClickError> {
@@ -4586,6 +4891,126 @@ fn lower_predicate_body_proposition_with_environment(
                 body: Box::new(body),
             })
         }
+        ClickProposition::RangeAll {
+            start,
+            end,
+            item,
+            body,
+        } => {
+            let start = int32_term_value(
+                evaluate_predicate_contract_expression(
+                    values,
+                    memory,
+                    assumptions,
+                    start,
+                    click_function_environment,
+                    active_functions,
+                )?,
+                "range `all` start bound",
+            )?;
+            let end = int32_term_value(
+                evaluate_predicate_contract_expression(
+                    values,
+                    memory,
+                    assumptions,
+                    end,
+                    click_function_environment,
+                    active_functions,
+                )?,
+                "range `all` end bound",
+            )?;
+            let variable = Variable(*next_variable);
+            *next_variable += 1;
+            let item_value = CValue::Int32(Bitvector32Term::Variable(variable));
+            let outer_values = values.clone();
+            values.insert(item.clone(), item_value.clone());
+            let body = match lower_predicate_body_proposition_with_environment(
+                values,
+                memory,
+                assumptions,
+                body,
+                next_variable,
+                click_function_environment,
+                active_functions,
+            ) {
+                Ok(body) => body,
+                Err(error) => {
+                    *values = outer_values;
+                    return Err(error);
+                }
+            };
+            *values = outer_values;
+            let CValue::Int32(item_bits) = item_value else {
+                unreachable!("range `all` item value is always int32")
+            };
+            let range = conjunction(
+                Proposition::ConditionIs(signed_less_equal(start, item_bits.clone()), true),
+                Proposition::ConditionIs(signed_less_than(item_bits, end), true),
+            );
+            Ok(Proposition::ForAll {
+                var: variable,
+                sort: Sort::CInt32,
+                body: Box::new(Proposition::Implies(Box::new(range), Box::new(body))),
+            })
+        }
+        ClickProposition::RangeAny {
+            start,
+            end,
+            item,
+            body,
+        } => {
+            let start = int32_term_value(
+                evaluate_predicate_contract_expression(
+                    values,
+                    memory,
+                    assumptions,
+                    start,
+                    click_function_environment,
+                    active_functions,
+                )?,
+                "range `any` start bound",
+            )?;
+            let end = int32_term_value(
+                evaluate_predicate_contract_expression(
+                    values,
+                    memory,
+                    assumptions,
+                    end,
+                    click_function_environment,
+                    active_functions,
+                )?,
+                "range `any` end bound",
+            )?;
+            let start = concrete_bound_from_term(&start, "any", "start")?;
+            let end = concrete_bound_from_term(&end, "any", "end")?;
+            let outer_values = values.clone();
+            let mut proposition = false_proposition();
+            for index in concrete_fold_range(start, end)? {
+                *values = outer_values.clone();
+                values.insert(
+                    item.clone(),
+                    CValue::Int32(Bitvector32Term::Constant(index as u32)),
+                );
+                let body = match lower_predicate_body_proposition_with_environment(
+                    values,
+                    memory,
+                    assumptions,
+                    body,
+                    next_variable,
+                    click_function_environment,
+                    active_functions,
+                ) {
+                    Ok(body) => body,
+                    Err(error) => {
+                        *values = outer_values;
+                        return Err(error);
+                    }
+                };
+                proposition = disjunction(proposition, body);
+            }
+            *values = outer_values;
+            Ok(proposition)
+        }
         ClickProposition::PredicateCall { name, arguments } => {
             let mut lowered_arguments = vec![Term::CMemory(memory.clone())];
             lowered_arguments.extend(
@@ -4749,7 +5174,7 @@ fn evaluate_predicate_contract_expression(
             item,
             body,
         } => {
-            let start = concrete_fold_bound(
+            let start = int32_term_value(
                 evaluate_predicate_contract_expression(
                     values,
                     memory,
@@ -4758,9 +5183,9 @@ fn evaluate_predicate_contract_expression(
                     click_function_environment,
                     active_functions,
                 )?,
-                "start",
+                "fold start",
             )?;
-            let end = concrete_fold_bound(
+            let end = int32_term_value(
                 evaluate_predicate_contract_expression(
                     values,
                     memory,
@@ -4769,7 +5194,7 @@ fn evaluate_predicate_contract_expression(
                     click_function_environment,
                     active_functions,
                 )?,
-                "end",
+                "fold end",
             )?;
             let mut value = evaluate_predicate_contract_expression(
                 values,
@@ -4779,23 +5204,73 @@ fn evaluate_predicate_contract_expression(
                 click_function_environment,
                 active_functions,
             )?;
-            for index in concrete_fold_range(start, end)? {
-                let mut fold_values = values.clone();
-                fold_values.insert(accumulator.clone(), value);
-                fold_values.insert(
-                    item.clone(),
-                    CValue::Int32(Bitvector32Term::Constant(index as u32)),
-                );
-                value = evaluate_predicate_contract_expression(
-                    &fold_values,
-                    memory,
-                    assumptions,
-                    body,
-                    click_function_environment,
-                    active_functions,
-                )?;
+            match (
+                concrete_bound_from_term(&start, "fold", "start"),
+                concrete_bound_from_term(&end, "fold", "end"),
+            ) {
+                (Ok(start), Ok(end)) => {
+                    for index in concrete_fold_range(start, end)? {
+                        let mut fold_values = values.clone();
+                        fold_values.insert(accumulator.clone(), value);
+                        fold_values.insert(
+                            item.clone(),
+                            CValue::Int32(Bitvector32Term::Constant(index as u32)),
+                        );
+                        value = evaluate_predicate_contract_expression(
+                            &fold_values,
+                            memory,
+                            assumptions,
+                            body,
+                            click_function_environment,
+                            active_functions,
+                        )?;
+                    }
+                    Ok(value)
+                }
+                _ => {
+                    let mut fold_values = values.clone();
+                    fold_values.insert(
+                        accumulator.clone(),
+                        CValue::Int32(Bitvector32Term::Variable(fold_bound_variable(
+                            accumulator,
+                            0,
+                        ))),
+                    );
+                    fold_values.insert(
+                        item.clone(),
+                        CValue::Int32(Bitvector32Term::Variable(fold_bound_variable(item, 1))),
+                    );
+                    let body_value = evaluate_predicate_contract_expression(
+                        &fold_values,
+                        memory,
+                        assumptions,
+                        body,
+                        click_function_environment,
+                        active_functions,
+                    )?;
+                    symbolic_range_fold_value(start, end, value, accumulator, item, body_value)
+                }
             }
-            Ok(value)
+        }
+        ContractExpression::Let { name, value, body } => {
+            let value = evaluate_predicate_contract_expression(
+                values,
+                memory,
+                assumptions,
+                value,
+                click_function_environment,
+                active_functions,
+            )?;
+            let mut let_values = values.clone();
+            let_values.insert(name.clone(), value);
+            evaluate_predicate_contract_expression(
+                &let_values,
+                memory,
+                assumptions,
+                body,
+                click_function_environment,
+                active_functions,
+            )
         }
         ContractExpression::Call { name, arguments } => evaluate_click_function_call(
             click_function_environment,
@@ -5020,7 +5495,9 @@ fn simp_condition_without_assumptions(condition: &ConditionTerm) -> Option<bool>
 fn simp_bitvector_const(term: &Bitvector32Term) -> Option<u32> {
     match term {
         Bitvector32Term::Constant(value) => Some(*value),
-        Bitvector32Term::Variable(_) | Bitvector32Term::MemoryLoad(_, _) => None,
+        Bitvector32Term::Variable(_)
+        | Bitvector32Term::RangeFold { .. }
+        | Bitvector32Term::MemoryLoad(_, _) => None,
         Bitvector32Term::Add(left, right) => {
             Some(simp_bitvector_const(left)?.wrapping_add(simp_bitvector_const(right)?))
         }
@@ -5066,6 +5543,21 @@ fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32Term {
                 simp_bitvector(else_term),
             ),
         },
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => Bitvector32Term::range_fold(
+            simp_bitvector(start),
+            simp_bitvector(end),
+            simp_bitvector(initial),
+            *accumulator,
+            *item,
+            simp_bitvector(body),
+        ),
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             Bitvector32Term::MemoryLoad(memory.clone(), pointer.clone())
         }
@@ -5819,6 +6311,138 @@ fn lower_outcome_proposition_with_environment(
                 body: Box::new(body),
             })
         }
+        ClickProposition::RangeAll {
+            start,
+            end,
+            item,
+            body,
+        } => {
+            let start = int32_term_value(
+                evaluate_contract_expression_with_environment(
+                    values,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    start,
+                    click_function_environment,
+                    active_functions,
+                )?,
+                "range `all` start bound",
+            )?;
+            let end = int32_term_value(
+                evaluate_contract_expression_with_environment(
+                    values,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    end,
+                    click_function_environment,
+                    active_functions,
+                )?,
+                "range `all` end bound",
+            )?;
+            let variable = Variable(*next_variable);
+            *next_variable += 1;
+            let item_value = CValue::Int32(Bitvector32Term::Variable(variable));
+            let outer_values = values.clone();
+            values.insert(item.clone(), item_value.clone());
+            let body = match lower_outcome_proposition_with_environment(
+                values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                body,
+                next_variable,
+                click_function_environment,
+                active_functions,
+            ) {
+                Ok(body) => body,
+                Err(error) => {
+                    *values = outer_values;
+                    return Err(error);
+                }
+            };
+            *values = outer_values;
+            let CValue::Int32(item_bits) = item_value else {
+                unreachable!("range `all` item value is always int32")
+            };
+            let range = conjunction(
+                Proposition::ConditionIs(signed_less_equal(start, item_bits.clone()), true),
+                Proposition::ConditionIs(signed_less_than(item_bits, end), true),
+            );
+            Ok(Proposition::ForAll {
+                var: variable,
+                sort: Sort::CInt32,
+                body: Box::new(Proposition::Implies(Box::new(range), Box::new(body))),
+            })
+        }
+        ClickProposition::RangeAny {
+            start,
+            end,
+            item,
+            body,
+        } => {
+            let start = int32_term_value(
+                evaluate_contract_expression_with_environment(
+                    values,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    start,
+                    click_function_environment,
+                    active_functions,
+                )?,
+                "range `any` start bound",
+            )?;
+            let end = int32_term_value(
+                evaluate_contract_expression_with_environment(
+                    values,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    end,
+                    click_function_environment,
+                    active_functions,
+                )?,
+                "range `any` end bound",
+            )?;
+            let start = concrete_bound_from_term(&start, "any", "start")?;
+            let end = concrete_bound_from_term(&end, "any", "end")?;
+            let outer_values = values.clone();
+            let mut proposition = false_proposition();
+            for index in concrete_fold_range(start, end)? {
+                *values = outer_values.clone();
+                values.insert(
+                    item.clone(),
+                    CValue::Int32(Bitvector32Term::Constant(index as u32)),
+                );
+                let body = match lower_outcome_proposition_with_environment(
+                    values,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    body,
+                    next_variable,
+                    click_function_environment,
+                    active_functions,
+                ) {
+                    Ok(body) => body,
+                    Err(error) => {
+                        *values = outer_values;
+                        return Err(error);
+                    }
+                };
+                proposition = disjunction(proposition, body);
+            }
+            *values = outer_values;
+            Ok(proposition)
+        }
         ClickProposition::PredicateCall { name, arguments } => {
             let mut lowered_arguments = vec![Term::CMemory(post_state.memory().clone())];
             lowered_arguments.extend(
@@ -6018,7 +6642,7 @@ fn evaluate_contract_expression_with_environment(
             item,
             body,
         } => {
-            let start = concrete_fold_bound(
+            let start = int32_term_value(
                 evaluate_contract_expression_with_environment(
                     parameter_values,
                     pre_state,
@@ -6029,9 +6653,9 @@ fn evaluate_contract_expression_with_environment(
                     click_function_environment,
                     active_functions,
                 )?,
-                "start",
+                "fold start",
             )?;
-            let end = concrete_fold_bound(
+            let end = int32_term_value(
                 evaluate_contract_expression_with_environment(
                     parameter_values,
                     pre_state,
@@ -6042,7 +6666,7 @@ fn evaluate_contract_expression_with_environment(
                     click_function_environment,
                     active_functions,
                 )?,
-                "end",
+                "fold end",
             )?;
             let mut value = evaluate_contract_expression_with_environment(
                 parameter_values,
@@ -6054,25 +6678,81 @@ fn evaluate_contract_expression_with_environment(
                 click_function_environment,
                 active_functions,
             )?;
-            for index in concrete_fold_range(start, end)? {
-                let mut fold_values = parameter_values.clone();
-                fold_values.insert(accumulator.clone(), value);
-                fold_values.insert(
-                    item.clone(),
-                    CValue::Int32(Bitvector32Term::Constant(index as u32)),
-                );
-                value = evaluate_contract_expression_with_environment(
-                    &fold_values,
-                    pre_state,
-                    post_state,
-                    result,
-                    assumptions,
-                    body,
-                    click_function_environment,
-                    active_functions,
-                )?;
+            match (
+                concrete_bound_from_term(&start, "fold", "start"),
+                concrete_bound_from_term(&end, "fold", "end"),
+            ) {
+                (Ok(start), Ok(end)) => {
+                    for index in concrete_fold_range(start, end)? {
+                        let mut fold_values = parameter_values.clone();
+                        fold_values.insert(accumulator.clone(), value);
+                        fold_values.insert(
+                            item.clone(),
+                            CValue::Int32(Bitvector32Term::Constant(index as u32)),
+                        );
+                        value = evaluate_contract_expression_with_environment(
+                            &fold_values,
+                            pre_state,
+                            post_state,
+                            result,
+                            assumptions,
+                            body,
+                            click_function_environment,
+                            active_functions,
+                        )?;
+                    }
+                    Ok(value)
+                }
+                _ => {
+                    let mut fold_values = parameter_values.clone();
+                    fold_values.insert(
+                        accumulator.clone(),
+                        CValue::Int32(Bitvector32Term::Variable(fold_bound_variable(
+                            accumulator,
+                            0,
+                        ))),
+                    );
+                    fold_values.insert(
+                        item.clone(),
+                        CValue::Int32(Bitvector32Term::Variable(fold_bound_variable(item, 1))),
+                    );
+                    let body_value = evaluate_contract_expression_with_environment(
+                        &fold_values,
+                        pre_state,
+                        post_state,
+                        result,
+                        assumptions,
+                        body,
+                        click_function_environment,
+                        active_functions,
+                    )?;
+                    symbolic_range_fold_value(start, end, value, accumulator, item, body_value)
+                }
             }
-            Ok(value)
+        }
+        ContractExpression::Let { name, value, body } => {
+            let value = evaluate_contract_expression_with_environment(
+                parameter_values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                value,
+                click_function_environment,
+                active_functions,
+            )?;
+            let mut let_values = parameter_values.clone();
+            let_values.insert(name.clone(), value);
+            evaluate_contract_expression_with_environment(
+                &let_values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                body,
+                click_function_environment,
+                active_functions,
+            )
         }
         ContractExpression::Call { name, arguments } => evaluate_click_function_call(
             click_function_environment,
@@ -6328,6 +7008,7 @@ enum Token {
     Dot,
     DotDot,
     Arrow,
+    Equal,
     EqualEqual,
     BangEqual,
     LessThan,
@@ -6354,6 +7035,12 @@ impl Parser {
     }
 
     fn parse_file(mut self) -> Result<ClickFile, ClickError> {
+        let file = self.parse_file_items()?;
+        validate_click_definitions(&file)?;
+        Ok(file)
+    }
+
+    fn parse_file_items(&mut self) -> Result<ClickFile, ClickError> {
         let mut verifying_sources = Vec::new();
         let mut predicate_definitions = Vec::new();
         let mut click_function_definitions = Vec::new();
@@ -6377,7 +7064,6 @@ impl Parser {
             click_function_definitions,
             function_blocks,
         };
-        validate_click_definitions(&file)?;
         Ok(file)
     }
 
@@ -6843,6 +7529,16 @@ impl Parser {
 
         if self.peek() == Some(&Token::LParen) {
             let start = self.position;
+            match self.parse_range_proposition_method() {
+                Ok(proposition) => return Ok(proposition),
+                Err(_) => {
+                    self.position = start;
+                }
+            }
+        }
+
+        if self.peek() == Some(&Token::LParen) {
+            let start = self.position;
             self.position += 1;
             let grouped = self.parse_proposition().and_then(|proposition| {
                 self.expect(Token::RParen)?;
@@ -6884,6 +7580,51 @@ impl Parser {
         }
 
         self.parse_proposition_comparison()
+    }
+
+    fn parse_range_proposition_method(&mut self) -> Result<ClickProposition, ClickError> {
+        self.expect(Token::LParen)?;
+        let start = self.parse_contract_expression()?;
+        self.expect(Token::DotDot)?;
+        let end = self.parse_contract_expression()?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::Dot)?;
+        let method = self.expect_ident("range proposition method")?;
+        if method != "all" && method != "any" {
+            return Err(self.error(format!(
+                "unsupported range proposition method `{method}`; expected `all` or `any`"
+            )));
+        }
+
+        self.expect(Token::LParen)?;
+        self.expect(Token::Pipe)?;
+        let item = self.expect_ident("range item name")?;
+        self.expect(Token::Pipe)?;
+        let body = if self.peek() == Some(&Token::LBrace) {
+            self.position += 1;
+            let body = self.parse_proposition()?;
+            self.expect(Token::RBrace)?;
+            body
+        } else {
+            self.parse_proposition()?
+        };
+        self.expect(Token::RParen)?;
+
+        match method.as_str() {
+            "all" => Ok(ClickProposition::RangeAll {
+                start,
+                end,
+                item,
+                body: Box::new(body),
+            }),
+            "any" => Ok(ClickProposition::RangeAny {
+                start,
+                end,
+                item,
+                body: Box::new(body),
+            }),
+            _ => unreachable!("range proposition method checked above"),
+        }
     }
 
     fn parse_call_arguments(
@@ -7158,6 +7899,20 @@ impl Parser {
     }
 
     fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
+        if self.peek_ident() == Some("let") {
+            self.position += 1;
+            let name = self.expect_ident("let binding name")?;
+            self.expect(Token::Equal)?;
+            let value = self.parse_contract_expression()?;
+            self.expect(Token::Semicolon)?;
+            let body = self.parse_contract_expression()?;
+            return Ok(ContractExpression::Let {
+                name,
+                value: Box::new(value),
+                body: Box::new(body),
+            });
+        }
+
         if self.peek_ident() == Some("if") {
             self.position += 1;
             let condition = self.parse_proposition()?;
@@ -7379,9 +8134,43 @@ impl Parser {
     }
 }
 
+fn standard_library_definitions()
+-> Result<(Vec<PredicateDefinition>, Vec<ClickFunctionDefinition>), ClickError> {
+    let mut parser = Parser::new(CLICK_STANDARD_LIBRARY)?;
+    let file = parser.parse_file_items()?;
+    if !file.verifying_sources().is_empty() || !file.function_blocks().is_empty() {
+        return Err(ClickError::new(
+            "internal Click standard library must not contain verifying sources or C function specs",
+        ));
+    }
+    Ok((
+        file.predicate_definitions().to_vec(),
+        file.click_function_definitions().to_vec(),
+    ))
+}
+
+fn combined_predicate_definitions(
+    file: &ClickFile,
+) -> Result<Vec<PredicateDefinition>, ClickError> {
+    let (mut definitions, _) = standard_library_definitions()?;
+    definitions.extend(file.predicate_definitions().iter().cloned());
+    Ok(definitions)
+}
+
+fn combined_click_function_definitions(
+    file: &ClickFile,
+) -> Result<Vec<ClickFunctionDefinition>, ClickError> {
+    let (_, mut definitions) = standard_library_definitions()?;
+    definitions.extend(file.click_function_definitions().iter().cloned());
+    Ok(definitions)
+}
+
 fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
+    let predicate_definitions = combined_predicate_definitions(file)?;
+    let click_function_definitions = combined_click_function_definitions(file)?;
+
     let mut predicates = BTreeMap::new();
-    for definition in file.predicate_definitions() {
+    for definition in &predicate_definitions {
         if predicates
             .insert(definition.name().to_string(), definition.parameters().len())
             .is_some()
@@ -7394,7 +8183,7 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
     }
 
     let mut click_functions = BTreeMap::new();
-    for definition in file.click_function_definitions() {
+    for definition in &click_function_definitions {
         if predicates.contains_key(definition.name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a predicate and a function",
@@ -7412,7 +8201,7 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
         }
     }
 
-    for definition in file.predicate_definitions() {
+    for definition in &predicate_definitions {
         validate_predicate_calls_in_proposition(
             definition.body(),
             &predicates,
@@ -7422,7 +8211,7 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
     }
 
     let mut function_calls = BTreeMap::new();
-    for definition in file.click_function_definitions() {
+    for definition in &click_function_definitions {
         validate_click_function_expression(
             definition.body(),
             &click_functions,
@@ -7434,8 +8223,14 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
     }
     reject_recursive_click_functions(&function_calls)?;
 
+    let user_click_functions = file
+        .click_function_definitions()
+        .iter()
+        .map(|definition| definition.name())
+        .collect::<BTreeSet<_>>();
+
     for function in file.function_blocks() {
-        if click_functions.contains_key(function.signature().name()) {
+        if user_click_functions.contains(function.signature().name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a Click function and a C function spec",
                 function.signature().name()
@@ -7502,6 +8297,16 @@ fn validate_predicate_calls_in_proposition(
             validate_predicate_calls_in_proposition(right, predicates, click_functions, context)
         }
         ClickProposition::Not(body) | ClickProposition::ForAll { body, .. } => {
+            validate_predicate_calls_in_proposition(body, predicates, click_functions, context)
+        }
+        ClickProposition::RangeAll {
+            start, end, body, ..
+        }
+        | ClickProposition::RangeAny {
+            start, end, body, ..
+        } => {
+            validate_contract_expression_calls(start, click_functions, context)?;
+            validate_contract_expression_calls(end, click_functions, context)?;
             validate_predicate_calls_in_proposition(body, predicates, click_functions, context)
         }
         ClickProposition::PredicateCall { name, arguments } => {
@@ -7574,6 +8379,10 @@ fn validate_contract_expression_calls(
             validate_contract_expression_calls(initial, click_functions, context)?;
             validate_contract_expression_calls(body, click_functions, context)
         }
+        ContractExpression::Let { value, body, .. } => {
+            validate_contract_expression_calls(value, click_functions, context)?;
+            validate_contract_expression_calls(body, click_functions, context)
+        }
         ContractExpression::Call { name, arguments } => {
             let Some(arity) = click_functions.get(name) else {
                 return Err(ClickError::new(format!(
@@ -7613,6 +8422,16 @@ fn validate_if_condition_proposition(
         ClickProposition::Not(body) | ClickProposition::ForAll { body, .. } => {
             validate_if_condition_proposition(body, click_functions, context)
         }
+        ClickProposition::RangeAll {
+            start, end, body, ..
+        }
+        | ClickProposition::RangeAny {
+            start, end, body, ..
+        } => {
+            validate_contract_expression_calls(start, click_functions, context)?;
+            validate_contract_expression_calls(end, click_functions, context)?;
+            validate_if_condition_proposition(body, click_functions, context)
+        }
         ClickProposition::PredicateCall { name, .. } => Err(ClickError::new(format!(
             "predicate call `{name}` is not supported in `if` expression condition in {context}"
         ))),
@@ -7649,6 +8468,9 @@ fn contains_old_expression(expression: &ContractExpression) -> bool {
                 || contains_old_expression(initial)
                 || contains_old_expression(body)
         }
+        ContractExpression::Let { value, body, .. } => {
+            contains_old_expression(value) || contains_old_expression(body)
+        }
         ContractExpression::Call { arguments, .. } => arguments.iter().any(contains_old_expression),
     }
 }
@@ -7665,6 +8487,16 @@ fn proposition_contains_old_expression(proposition: &ClickProposition) -> bool {
         }
         ClickProposition::Not(body) | ClickProposition::ForAll { body, .. } => {
             proposition_contains_old_expression(body)
+        }
+        ClickProposition::RangeAll {
+            start, end, body, ..
+        }
+        | ClickProposition::RangeAny {
+            start, end, body, ..
+        } => {
+            contains_old_expression(start)
+                || contains_old_expression(end)
+                || proposition_contains_old_expression(body)
         }
         ClickProposition::PredicateCall { arguments, .. } => {
             arguments.iter().any(contains_old_expression)
@@ -7703,6 +8535,10 @@ fn collect_click_function_calls(expression: &ContractExpression, calls: &mut BTr
             collect_click_function_calls(initial, calls);
             collect_click_function_calls(body, calls);
         }
+        ContractExpression::Let { value, body, .. } => {
+            collect_click_function_calls(value, calls);
+            collect_click_function_calls(body, calls);
+        }
         ContractExpression::Call { name, arguments } => {
             calls.insert(name.clone());
             for argument in arguments {
@@ -7728,6 +8564,16 @@ fn collect_click_function_calls_in_proposition(
             collect_click_function_calls_in_proposition(right, calls);
         }
         ClickProposition::Not(body) | ClickProposition::ForAll { body, .. } => {
+            collect_click_function_calls_in_proposition(body, calls);
+        }
+        ClickProposition::RangeAll {
+            start, end, body, ..
+        }
+        | ClickProposition::RangeAny {
+            start, end, body, ..
+        } => {
+            collect_click_function_calls(start, calls);
+            collect_click_function_calls(end, calls);
             collect_click_function_calls_in_proposition(body, calls);
         }
         ClickProposition::PredicateCall { arguments, .. } => {
@@ -7881,9 +8727,8 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
                     tokens.push(Token::EqualEqual);
                     index += 2;
                 } else {
-                    return Err(ClickError::new(format!(
-                        "expected `==`, got `=` at byte offset {index}"
-                    )));
+                    tokens.push(Token::Equal);
+                    index += 1;
                 }
             }
             '"' => {

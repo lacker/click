@@ -255,7 +255,8 @@ function eq_as_int(int32 x, int32 y) -> int32 {
 }
 
 function count3(int32 p[], int32 x) -> int32 {
-    (0..3).fold(0, |acc, k| {
+    let initial = 0;
+    (0..3).fold(initial, |acc, k| {
         acc + if p[k] == x { 1 } else { 0 }
     })
 }
@@ -265,11 +266,22 @@ Click functions are specification-level definitions, not executable C
 functions. They can be called inside proposition expressions and inside
 `old(...)`, so `old(head(p))` evaluates the same definition against function
 entry memory. This first slice supports non-recursive expression bodies over
-parameters, literals, `+`, `-`, indexing, `if` expressions with Click
-proposition conditions, concrete bounded range folds like
-`(0..3).fold(0, |acc, k| { ... })`, and other pure Click function calls.
-Recursive definitions and symbolic range folds are intentionally not part of
-this slice.
+parameters, literals, `+`, `-`, indexing, `let name = value; body`, `if`
+expressions with Click proposition conditions, bounded range folds like
+`(lo..hi).fold(0, |acc, k| { ... })`, and other pure Click function calls.
+Folds with concrete bounds are unrolled; folds with symbolic bounds are kept as
+symbolic value terms for later reasoning. Recursive definitions are rejected.
+
+Click has a small standard library that is parsed as ordinary Click source, not
+as hard-coded kernel concepts. Today it defines:
+
+```text
+function count(int32 p[], int32 lo, int32 hi, int32 x) -> int32
+predicate permutation(int32 a[], int32 b[], int32 lo, int32 hi)
+```
+
+`count` is a pure fold over `p[lo..hi]`, and `permutation` says that every
+`int32` value has the same count in both arrays over the same range.
 
 `.click` can define named predicates:
 
@@ -298,6 +310,14 @@ predicate all_le_range(int32 p[], int32 lo, int32 hi, int32 x) {
     forall (int32 k) {
         0 <= k and lo <= k and k < hi implies p[k] <= x
     }
+}
+
+predicate all_le_range2(int32 p[], int32 lo, int32 hi, int32 x) {
+    (lo..hi).all(|k| { p[k] <= x })
+}
+
+predicate contains_first3(int32 p[], int32 x) {
+    (0..3).any(|k| { p[k] == x })
 }
 
 int32 keep_sorted(int32 p[], int32 n) {
@@ -330,8 +350,11 @@ loop 0 {
 ```
 
 Logical structure uses Click words: `and`, `or`, `not`, `implies`, and
-`forall`. C operators such as `&&`, `||`, and `!` remain C expression syntax
-and are not reused as proposition connectives. Proposition comparisons embed
+`forall`. Range propositions use Rust-style method syntax:
+`(lo..hi).all(|k| { ... })` lowers to a bounded universal proposition, while
+`(lo..hi).any(|k| { ... })` currently requires concrete bounds and unrolls to a
+finite disjunction. C operators such as `&&`, `||`, and `!` remain C expression
+syntax and are not reused as proposition connectives. Proposition comparisons embed
 small C0 integer expressions over `result`, parameters, literals, parentheses,
 `+`, `-`, and post-state `p[i]` memory reads. Postconditions can use
 `old(expression)` to evaluate an expression in the pre-call state, which

@@ -49,11 +49,25 @@ int32 count_three_matches(int32 p[3], int32 x) {
 }
 ```
 
+```c filename=range_helpers.c
+int32 range_helpers() {
+    return 0;
+}
+```
+
+```c filename=identity_permutation.c
+int32 identity_permutation(int32 p[3]) {
+    return 0;
+}
+```
+
 ```click
 verifying "pure_click_functions.c";
 verifying "read_first_with_function.c";
 verifying "branch_indicator.c";
 verifying "count_three_matches.c";
+verifying "range_helpers.c";
+verifying "identity_permutation.c";
 
 function inc(int32 x) -> int32 {
     x + 1
@@ -68,7 +82,8 @@ function eq_as_int(int32 x, int32 y) -> int32 {
 }
 
 function count3(int32 p[], int32 x) -> int32 {
-    (0..3).fold(0, |acc, k| {
+    let initial = 0;
+    (0..3).fold(initial, |acc, k| {
         acc + if p[k] == x { 1 } else { 0 }
     })
 }
@@ -101,6 +116,30 @@ int32 branch_indicator(int32 x, int32 y) {
 int32 count_three_matches(int32 p[3], int32 x) {
     requires valid_range(p[0..3]);
     ensures result_value: result == count3(p, x) by auto;
+    ensures stdlib_count_value: result == count(p, 0, 3, x) by auto;
+}
+
+int32 range_helpers() {
+    ensures all_reflexive: (0..3).all(|k| { k == k }) by {
+        symbolic_execute();
+        simp();
+        close();
+    }
+    ensures any_has_one: (0..3).any(|k| { k == 1 }) by {
+        symbolic_execute();
+        simp();
+        close();
+    }
+}
+
+int32 identity_permutation(int32 p[3]) {
+    requires valid_range(p[0..3]);
+    ensures same_multiset: permutation(p, p, 0, 3) by {
+        symbolic_execute();
+        unfold(permutation);
+        simp();
+        close();
+    }
 }
 ```
 
