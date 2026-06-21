@@ -221,6 +221,14 @@ pub enum ContractExpression {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct ClickArrayRef {
+    memory: CMemory,
+    pointer: Pointer,
+}
+
+type ClickArrayRefs = BTreeMap<String, ClickArrayRef>;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractSegment {
     state: ContractSegmentState,
     base: CExpression,
@@ -465,6 +473,10 @@ impl FunctionParameter {
     pub fn name(&self) -> &str {
         &self.name
     }
+}
+
+fn parameter_is_click_array_ref(parameter: &FunctionParameter) -> bool {
+    parameter.c_type() == C0Type::Int32Pointer
 }
 
 impl EnsureClause {
@@ -768,6 +780,7 @@ fn prove_claim_by_auto(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
+        predicate_environment,
         click_function_environment,
     )?;
     let requirement_propositions = requirements_with_structural_unfolds(
@@ -810,6 +823,7 @@ fn prove_claim_by_auto(
         &state,
         &arguments,
         &requirement_propositions,
+        predicate_environment,
         click_function_environment,
     ) {
         Ok(theorems) => {
@@ -857,6 +871,7 @@ fn prove_claim_by_auto(
         &state,
         &arguments,
         &requirement_propositions,
+        predicate_environment,
         click_function_environment,
     )?;
     let proof_steps = certified_proof_steps(
@@ -893,6 +908,7 @@ fn prove_claim_by_frame(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
+        predicate_environment,
         click_function_environment,
     )?;
     let requirement_propositions = requirements_with_structural_unfolds(
@@ -939,6 +955,7 @@ fn prove_claim_by_frame(
         &state,
         &arguments,
         &requirement_propositions,
+        predicate_environment,
         click_function_environment,
     )?;
     let proof_steps = certified_proof_steps(
@@ -975,6 +992,7 @@ fn prove_claim_by_simp(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
+        predicate_environment,
         click_function_environment,
     )?;
     let requirement_propositions = requirements_with_structural_unfolds(
@@ -1135,6 +1153,7 @@ fn prove_claim_by_steps(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
+        predicate_environment,
         click_function_environment,
     )?;
     let requirement_propositions = requirements_with_structural_unfolds(
@@ -1853,6 +1872,7 @@ fn prove_claim_from_execution(
     state: &CState,
     arguments: &[CExpression],
     requirement_propositions: &[Proposition],
+    predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let proof_kind = execution_kind.proof_kind();
@@ -1893,7 +1913,7 @@ fn prove_claim_from_execution(
             arguments,
             state,
             &outcome,
-            &PredicateEnvironment::new(&[]),
+            predicate_environment,
             click_function_environment,
             &[],
         )?;
@@ -3393,6 +3413,7 @@ fn initial_call(
     function_name: &str,
     requires: &[Requirement],
     parameters: &[syntax::C0Parameter],
+    predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<(CState, Vec<CExpression>, Vec<Proposition>), ClickError> {
     let mut arguments = Vec::new();
@@ -3449,6 +3470,7 @@ fn initial_call(
         parameters,
         &arguments,
         &memory,
+        predicate_environment,
         click_function_environment,
     )?;
     Ok((
@@ -3486,6 +3508,7 @@ fn requirement_propositions(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<Proposition>, ClickError> {
     requires
@@ -3502,6 +3525,7 @@ fn requirement_propositions(
                 arguments,
                 memory,
                 proposition,
+                predicate_environment,
                 click_function_environment,
             ),
         })
@@ -3708,11 +3732,16 @@ fn requirement_proposition_prop(
     arguments: &[CExpression],
     memory: &CMemory,
     proposition: &ClickProposition,
+    predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, ClickError> {
     let parameter_values = parameter_values(parameters, arguments)?;
-    let mut lowerer =
-        KernelPropositionLowerer::new(parameter_values, memory.clone(), click_function_environment);
+    let mut lowerer = KernelPropositionLowerer::new(
+        parameter_values,
+        memory.clone(),
+        predicate_environment,
+        click_function_environment,
+    );
     lowerer.lower_requirement_proposition(proposition)
 }
 
@@ -3737,7 +3766,9 @@ fn parameter_values(
 
 struct KernelPropositionLowerer {
     values: BTreeMap<String, CValue>,
+    array_refs: ClickArrayRefs,
     memory: CMemory,
+    predicate_environment: PredicateEnvironment,
     click_function_environment: ClickFunctionEnvironment,
     active_functions: BTreeSet<String>,
     next_variable: u64,
@@ -3747,11 +3778,14 @@ impl KernelPropositionLowerer {
     fn new(
         values: BTreeMap<String, CValue>,
         memory: CMemory,
+        predicate_environment: &PredicateEnvironment,
         click_function_environment: &ClickFunctionEnvironment,
     ) -> Self {
         Self {
             values,
+            array_refs: BTreeMap::new(),
             memory,
+            predicate_environment: predicate_environment.clone(),
             click_function_environment: click_function_environment.clone(),
             active_functions: BTreeSet::new(),
             next_variable: 2_000_000,
@@ -3890,13 +3924,25 @@ impl KernelPropositionLowerer {
                 Ok(proposition)
             }
             ClickProposition::PredicateCall { name, arguments } => {
-                let mut lowered_arguments = vec![Term::CMemory(self.memory.clone())];
-                lowered_arguments.extend(
-                    arguments
-                        .iter()
-                        .map(|argument| self.lower_requirement_value(argument).map(Term::CValue))
-                        .collect::<Result<Vec<_>, _>>()?,
-                );
+                let definition = self
+                    .predicate_environment
+                    .get(name)
+                    .ok_or_else(|| ClickError::new(format!("unknown predicate `{name}`")))?;
+                let state = CState::new().with_memory(self.memory.clone());
+                let lowered_arguments = lower_predicate_call_arguments_with_environment(
+                    definition,
+                    arguments,
+                    &self.values,
+                    &self.array_refs,
+                    &state,
+                    &state,
+                    None,
+                    &Assumptions::new(),
+                    &self.predicate_environment,
+                    &self.click_function_environment,
+                    &mut self.active_functions,
+                )
+                .map_err(ClickError::new)?;
                 Ok(Proposition::Predicate {
                     name: name.clone(),
                     arguments: lowered_arguments,
@@ -4027,10 +4073,12 @@ impl KernelPropositionLowerer {
                     name,
                     arguments,
                     &self.values,
+                    &self.array_refs,
                     &state,
                     &state,
                     None,
                     &Assumptions::new(),
+                    &self.predicate_environment.clone(),
                     &mut self.active_functions,
                 )
                 .map_err(ClickError::new)
@@ -4501,6 +4549,7 @@ fn prove_ensure_proposition_by_simp(
         value,
         available_propositions,
         proposition,
+        predicate_environment,
         click_function_environment,
     )
     .map_err(|message| {
@@ -4599,6 +4648,7 @@ fn unfold_predicates_in_proposition_with_active(
                 definition,
                 arguments,
                 assumptions,
+                predicate_environment,
                 click_function_environment,
             )?;
             let unfolded = unfold_predicates_in_proposition_with_active(
@@ -4698,54 +4748,146 @@ fn instantiate_predicate_definition(
     definition: &PredicateDefinition,
     arguments: &[Term],
     assumptions: &Assumptions,
+    predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
-    if arguments.len() != definition.parameters().len() + 1 {
-        return Err(format!(
-            "predicate `{}` has malformed lowered argument count: expected hidden memory plus {} argument(s), got {}",
-            definition.name(),
-            definition.parameters().len(),
-            arguments.len()
-        ));
-    }
-
-    let Term::CMemory(memory) = &arguments[0] else {
-        return Err(format!(
-            "predicate `{}` is missing its hidden memory argument",
-            definition.name()
-        ));
-    };
-    let mut values = BTreeMap::new();
-    for (parameter, argument) in definition.parameters().iter().zip(&arguments[1..]) {
-        let Term::CValue(value) = argument else {
-            return Err(format!(
-                "predicate `{}` argument `{}` did not lower to a C value",
-                definition.name(),
-                parameter.name()
-            ));
-        };
-        values.insert(parameter.name().to_string(), value.clone());
-    }
+    let (memory, mut values, array_refs) = decode_predicate_arguments(definition, arguments)?;
 
     let mut next_variable = 2_500_000;
     let mut active_functions = BTreeSet::new();
     lower_predicate_body_proposition_with_environment(
         &mut values,
-        memory,
+        &array_refs,
+        &memory,
         assumptions,
         definition.body(),
         &mut next_variable,
+        predicate_environment,
         click_function_environment,
         &mut active_functions,
     )
 }
 
+fn decode_predicate_arguments(
+    definition: &PredicateDefinition,
+    arguments: &[Term],
+) -> Result<(CMemory, BTreeMap<String, CValue>, ClickArrayRefs), String> {
+    let expanded_len = definition
+        .parameters()
+        .iter()
+        .map(|parameter| {
+            if parameter_is_click_array_ref(parameter) {
+                2
+            } else {
+                1
+            }
+        })
+        .sum::<usize>();
+
+    if arguments.len() == expanded_len {
+        let mut values = BTreeMap::new();
+        let mut array_refs = BTreeMap::new();
+        let mut default_memory = None;
+        let mut index = 0;
+        for parameter in definition.parameters() {
+            if parameter_is_click_array_ref(parameter) {
+                let Some(Term::CMemory(memory)) = arguments.get(index) else {
+                    return Err(format!(
+                        "predicate `{}` argument `{}` is missing its array-ref memory",
+                        definition.name(),
+                        parameter.name()
+                    ));
+                };
+                let Some(Term::CValue(CValue::Pointer(pointer))) = arguments.get(index + 1) else {
+                    return Err(format!(
+                        "predicate `{}` argument `{}` is missing its array-ref pointer",
+                        definition.name(),
+                        parameter.name()
+                    ));
+                };
+                default_memory.get_or_insert_with(|| memory.clone());
+                values.insert(
+                    parameter.name().to_string(),
+                    CValue::Pointer(pointer.clone()),
+                );
+                array_refs.insert(
+                    parameter.name().to_string(),
+                    ClickArrayRef {
+                        memory: memory.clone(),
+                        pointer: pointer.clone(),
+                    },
+                );
+                index += 2;
+            } else {
+                let Some(Term::CValue(value)) = arguments.get(index) else {
+                    return Err(format!(
+                        "predicate `{}` argument `{}` did not lower to a C value",
+                        definition.name(),
+                        parameter.name()
+                    ));
+                };
+                values.insert(parameter.name().to_string(), value.clone());
+                index += 1;
+            }
+        }
+        return Ok((default_memory.unwrap_or_default(), values, array_refs));
+    }
+
+    if arguments.len() == definition.parameters().len() + 1 {
+        let Term::CMemory(memory) = &arguments[0] else {
+            return Err(format!(
+                "predicate `{}` is missing its legacy hidden memory argument",
+                definition.name()
+            ));
+        };
+        let mut values = BTreeMap::new();
+        let mut array_refs = BTreeMap::new();
+        for (parameter, argument) in definition.parameters().iter().zip(&arguments[1..]) {
+            let Term::CValue(value) = argument else {
+                return Err(format!(
+                    "predicate `{}` argument `{}` did not lower to a C value",
+                    definition.name(),
+                    parameter.name()
+                ));
+            };
+            if parameter_is_click_array_ref(parameter) {
+                let CValue::Pointer(pointer) = value else {
+                    return Err(format!(
+                        "predicate `{}` argument `{}` did not lower to a pointer",
+                        definition.name(),
+                        parameter.name()
+                    ));
+                };
+                array_refs.insert(
+                    parameter.name().to_string(),
+                    ClickArrayRef {
+                        memory: memory.clone(),
+                        pointer: pointer.clone(),
+                    },
+                );
+            }
+            values.insert(parameter.name().to_string(), value.clone());
+        }
+        return Ok((memory.clone(), values, array_refs));
+    }
+
+    Err(format!(
+        "predicate `{}` has malformed lowered argument count: expected {} expanded argument term(s), or legacy hidden memory plus {} argument(s), got {}",
+        definition.name(),
+        expanded_len,
+        definition.parameters().len(),
+        arguments.len()
+    ))
+}
+
 fn lower_predicate_body_proposition_with_environment(
     values: &mut BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
     memory: &CMemory,
     assumptions: &Assumptions,
     proposition: &ClickProposition,
     next_variable: &mut u64,
+    predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<Proposition, String> {
@@ -4757,17 +4899,21 @@ fn lower_predicate_body_proposition_with_environment(
         } => {
             let left = evaluate_predicate_contract_expression(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 left,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             let right = evaluate_predicate_contract_expression(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 right,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
@@ -4776,19 +4922,23 @@ fn lower_predicate_body_proposition_with_environment(
         ClickProposition::And(left, right) => Ok(Proposition::And(
             Box::new(lower_predicate_body_proposition_with_environment(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 left,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?),
             Box::new(lower_predicate_body_proposition_with_environment(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 right,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?),
@@ -4796,19 +4946,23 @@ fn lower_predicate_body_proposition_with_environment(
         ClickProposition::Or(left, right) => Ok(Proposition::Or(
             Box::new(lower_predicate_body_proposition_with_environment(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 left,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?),
             Box::new(lower_predicate_body_proposition_with_environment(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 right,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?),
@@ -4816,10 +4970,12 @@ fn lower_predicate_body_proposition_with_environment(
         ClickProposition::Not(body) => Ok(Proposition::Not(Box::new(
             lower_predicate_body_proposition_with_environment(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 body,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?,
@@ -4827,20 +4983,24 @@ fn lower_predicate_body_proposition_with_environment(
         ClickProposition::Implies(left, right) => {
             let left = lower_predicate_body_proposition_with_environment(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 left,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             let right_assumptions = assumptions.clone().assume_proposition(left.clone());
             let right = lower_predicate_body_proposition_with_environment(
                 values,
+                array_refs,
                 memory,
                 &right_assumptions,
                 right,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
@@ -4858,10 +5018,12 @@ fn lower_predicate_body_proposition_with_environment(
             );
             let body = lower_predicate_body_proposition_with_environment(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 body,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
@@ -4888,9 +5050,11 @@ fn lower_predicate_body_proposition_with_environment(
             let start = int32_term_value(
                 evaluate_predicate_contract_expression(
                     values,
+                    array_refs,
                     memory,
                     assumptions,
                     start,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 )?,
@@ -4899,9 +5063,11 @@ fn lower_predicate_body_proposition_with_environment(
             let end = int32_term_value(
                 evaluate_predicate_contract_expression(
                     values,
+                    array_refs,
                     memory,
                     assumptions,
                     end,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 )?,
@@ -4914,10 +5080,12 @@ fn lower_predicate_body_proposition_with_environment(
             values.insert(item.clone(), item_value.clone());
             let body = match lower_predicate_body_proposition_with_environment(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 body,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             ) {
@@ -4950,9 +5118,11 @@ fn lower_predicate_body_proposition_with_environment(
             let start = int32_term_value(
                 evaluate_predicate_contract_expression(
                     values,
+                    array_refs,
                     memory,
                     assumptions,
                     start,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 )?,
@@ -4961,9 +5131,11 @@ fn lower_predicate_body_proposition_with_environment(
             let end = int32_term_value(
                 evaluate_predicate_contract_expression(
                     values,
+                    array_refs,
                     memory,
                     assumptions,
                     end,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 )?,
@@ -4981,10 +5153,12 @@ fn lower_predicate_body_proposition_with_environment(
                 );
                 let body = match lower_predicate_body_proposition_with_environment(
                     values,
+                    array_refs,
                     memory,
                     assumptions,
                     body,
                     next_variable,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 ) {
@@ -5000,23 +5174,23 @@ fn lower_predicate_body_proposition_with_environment(
             Ok(proposition)
         }
         ClickProposition::PredicateCall { name, arguments } => {
-            let mut lowered_arguments = vec![Term::CMemory(memory.clone())];
-            lowered_arguments.extend(
-                arguments
-                    .iter()
-                    .map(|argument| {
-                        evaluate_predicate_contract_expression(
-                            values,
-                            memory,
-                            assumptions,
-                            argument,
-                            click_function_environment,
-                            active_functions,
-                        )
-                        .map(Term::CValue)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            );
+            let definition = predicate_environment
+                .get(name)
+                .ok_or_else(|| format!("unknown predicate `{name}`"))?;
+            let state = CState::new().with_memory(memory.clone());
+            let lowered_arguments = lower_predicate_call_arguments_with_environment(
+                definition,
+                arguments,
+                values,
+                array_refs,
+                &state,
+                &state,
+                None,
+                assumptions,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
             Ok(Proposition::Predicate {
                 name: name.clone(),
                 arguments: lowered_arguments,
@@ -5027,9 +5201,11 @@ fn lower_predicate_body_proposition_with_environment(
 
 fn evaluate_predicate_contract_expression(
     values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
     memory: &CMemory,
     assumptions: &Assumptions,
     expression: &ContractExpression,
+    predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<CValue, String> {
@@ -5044,17 +5220,21 @@ fn evaluate_predicate_contract_expression(
         ContractExpression::Add(left, right) => {
             let left = evaluate_predicate_contract_expression(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 left,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             let right = evaluate_predicate_contract_expression(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 right,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
@@ -5063,41 +5243,57 @@ fn evaluate_predicate_contract_expression(
         ContractExpression::Subtract(left, right) => {
             let left = evaluate_predicate_contract_expression(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 left,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             let right = evaluate_predicate_contract_expression(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 right,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             evaluate_postcondition_sub(left, right)
         }
         ContractExpression::Index(base, index) => {
-            let base = evaluate_predicate_contract_expression(
+            if contains_old_expression(base) {
+                return Err("`old(...)` is not available in predicate definitions".to_string());
+            }
+            let array_ref = evaluate_contract_array_ref_with_environment(
                 values,
-                memory,
+                array_refs,
+                &state,
+                &state,
+                None,
                 assumptions,
                 base,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             let index = evaluate_predicate_contract_expression(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 index,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
-            let pointer = evaluate_postcondition_pointer_add(base, index)?;
-            evaluate_contract_memory_load(&state, pointer, assumptions)
+            let CValue::Int32(index) = index else {
+                return Err(format!("array index did not evaluate to int32: `{index:?}`"));
+            };
+            let pointer = offset_pointer_by_int32_elements(array_ref.pointer, index);
+            evaluate_contract_memory_load_from_memory(&array_ref.memory, pointer, assumptions)
         }
         ContractExpression::If {
             condition,
@@ -5108,19 +5304,23 @@ fn evaluate_predicate_contract_expression(
             let mut next_variable = 2_500_000;
             let condition = lower_predicate_body_proposition_with_environment(
                 &mut condition_values,
+                array_refs,
                 memory,
                 assumptions,
                 condition,
                 &mut next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             if assumptions.proves(&condition) {
                 return evaluate_predicate_contract_expression(
                     values,
+                    array_refs,
                     memory,
                     assumptions,
                     then_branch,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 );
@@ -5128,9 +5328,11 @@ fn evaluate_predicate_contract_expression(
             if assumptions_prove_proposition_false(assumptions, &condition) {
                 return evaluate_predicate_contract_expression(
                     values,
+                    array_refs,
                     memory,
                     assumptions,
                     else_branch,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 );
@@ -5138,17 +5340,21 @@ fn evaluate_predicate_contract_expression(
 
             let then_value = evaluate_predicate_contract_expression(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 then_branch,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             let else_value = evaluate_predicate_contract_expression(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 else_branch,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
@@ -5165,9 +5371,11 @@ fn evaluate_predicate_contract_expression(
             let start = int32_term_value(
                 evaluate_predicate_contract_expression(
                     values,
+                    array_refs,
                     memory,
                     assumptions,
                     start,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 )?,
@@ -5176,9 +5384,11 @@ fn evaluate_predicate_contract_expression(
             let end = int32_term_value(
                 evaluate_predicate_contract_expression(
                     values,
+                    array_refs,
                     memory,
                     assumptions,
                     end,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 )?,
@@ -5186,9 +5396,11 @@ fn evaluate_predicate_contract_expression(
             )?;
             let mut value = evaluate_predicate_contract_expression(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 initial,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
@@ -5206,9 +5418,11 @@ fn evaluate_predicate_contract_expression(
                         );
                         value = evaluate_predicate_contract_expression(
                             &fold_values,
+                            array_refs,
                             memory,
                             assumptions,
                             body,
+                            predicate_environment,
                             click_function_environment,
                             active_functions,
                         )?;
@@ -5230,9 +5444,11 @@ fn evaluate_predicate_contract_expression(
                     );
                     let body_value = evaluate_predicate_contract_expression(
                         &fold_values,
+                        array_refs,
                         memory,
                         assumptions,
                         body,
+                        predicate_environment,
                         click_function_environment,
                         active_functions,
                     )?;
@@ -5243,9 +5459,11 @@ fn evaluate_predicate_contract_expression(
         ContractExpression::Let { name, value, body } => {
             let value = evaluate_predicate_contract_expression(
                 values,
+                array_refs,
                 memory,
                 assumptions,
                 value,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
@@ -5253,9 +5471,11 @@ fn evaluate_predicate_contract_expression(
             let_values.insert(name.clone(), value);
             evaluate_predicate_contract_expression(
                 &let_values,
+                array_refs,
                 memory,
                 assumptions,
                 body,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )
@@ -5265,10 +5485,12 @@ fn evaluate_predicate_contract_expression(
             name,
             arguments,
             values,
+            array_refs,
             &state,
             &state,
             None,
             assumptions,
+            predicate_environment,
             active_functions,
         ),
     }
@@ -5611,6 +5833,7 @@ fn prove_ensure_proposition(
                     value,
                     available_propositions,
                     left,
+                    predicate_environment,
                     click_function_environment,
                 )
                 .map_err(|message| {
@@ -5626,6 +5849,7 @@ fn prove_ensure_proposition(
                     value,
                     available_propositions,
                     right,
+                    predicate_environment,
                     click_function_environment,
                 )
                 .map_err(|message| {
@@ -5698,6 +5922,7 @@ fn prove_ensure_proposition(
                 value,
                 available_propositions,
                 proposition,
+                predicate_environment,
                 click_function_environment,
             )
             .map_err(|message| {
@@ -6093,19 +6318,23 @@ fn evaluate_contract_expression(
     result: &CValue,
     available_propositions: &[Proposition],
     expression: &ContractExpression,
+    predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<CValue, String> {
     let parameter_values =
         parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let array_refs = BTreeMap::new();
     let assumptions = assumptions_from_propositions(available_propositions);
     let mut active_functions = BTreeSet::new();
     evaluate_contract_expression_with_environment(
         &parameter_values,
+        &array_refs,
         pre_state,
         post_state,
         Some(result),
         &assumptions,
         expression,
+        predicate_environment,
         click_function_environment,
         &mut active_functions,
     )
@@ -6119,20 +6348,24 @@ fn lower_outcome_proposition(
     result: &CValue,
     available_propositions: &[Proposition],
     proposition: &ClickProposition,
+    predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
     let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let array_refs = BTreeMap::new();
     let assumptions = assumptions_from_propositions(available_propositions);
     let mut next_variable = 2_000_000;
     let mut active_functions = BTreeSet::new();
     lower_outcome_proposition_with_environment(
         &mut values,
+        &array_refs,
         pre_state,
         post_state,
         Some(result),
         &assumptions,
         proposition,
         &mut next_variable,
+        predicate_environment,
         click_function_environment,
         &mut active_functions,
     )
@@ -6140,12 +6373,14 @@ fn lower_outcome_proposition(
 
 fn lower_outcome_proposition_with_environment(
     values: &mut BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
     pre_state: &CState,
     post_state: &CState,
     result: Option<&CValue>,
     assumptions: &Assumptions,
     proposition: &ClickProposition,
     next_variable: &mut u64,
+    predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<Proposition, String> {
@@ -6157,21 +6392,25 @@ fn lower_outcome_proposition_with_environment(
         } => {
             let left = evaluate_contract_expression_with_environment(
                 values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 left,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
                 values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 right,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
@@ -6180,23 +6419,27 @@ fn lower_outcome_proposition_with_environment(
         ClickProposition::And(left, right) => Ok(Proposition::And(
             Box::new(lower_outcome_proposition_with_environment(
                 values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 left,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?),
             Box::new(lower_outcome_proposition_with_environment(
                 values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 right,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?),
@@ -6204,23 +6447,27 @@ fn lower_outcome_proposition_with_environment(
         ClickProposition::Or(left, right) => Ok(Proposition::Or(
             Box::new(lower_outcome_proposition_with_environment(
                 values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 left,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?),
             Box::new(lower_outcome_proposition_with_environment(
                 values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 right,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?),
@@ -6228,12 +6475,14 @@ fn lower_outcome_proposition_with_environment(
         ClickProposition::Not(body) => Ok(Proposition::Not(Box::new(
             lower_outcome_proposition_with_environment(
                 values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 body,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?,
@@ -6241,24 +6490,28 @@ fn lower_outcome_proposition_with_environment(
         ClickProposition::Implies(left, right) => {
             let left = lower_outcome_proposition_with_environment(
                 values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 left,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             let right_assumptions = assumptions.clone().assume_proposition(left.clone());
             let right = lower_outcome_proposition_with_environment(
                 values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 &right_assumptions,
                 right,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
@@ -6276,12 +6529,14 @@ fn lower_outcome_proposition_with_environment(
             );
             let body = lower_outcome_proposition_with_environment(
                 values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 body,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
@@ -6308,11 +6563,13 @@ fn lower_outcome_proposition_with_environment(
             let start = int32_term_value(
                 evaluate_contract_expression_with_environment(
                     values,
+                    array_refs,
                     pre_state,
                     post_state,
                     result,
                     assumptions,
                     start,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 )?,
@@ -6321,11 +6578,13 @@ fn lower_outcome_proposition_with_environment(
             let end = int32_term_value(
                 evaluate_contract_expression_with_environment(
                     values,
+                    array_refs,
                     pre_state,
                     post_state,
                     result,
                     assumptions,
                     end,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 )?,
@@ -6338,12 +6597,14 @@ fn lower_outcome_proposition_with_environment(
             values.insert(item.clone(), item_value.clone());
             let body = match lower_outcome_proposition_with_environment(
                 values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 body,
                 next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             ) {
@@ -6376,11 +6637,13 @@ fn lower_outcome_proposition_with_environment(
             let start = int32_term_value(
                 evaluate_contract_expression_with_environment(
                     values,
+                    array_refs,
                     pre_state,
                     post_state,
                     result,
                     assumptions,
                     start,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 )?,
@@ -6389,11 +6652,13 @@ fn lower_outcome_proposition_with_environment(
             let end = int32_term_value(
                 evaluate_contract_expression_with_environment(
                     values,
+                    array_refs,
                     pre_state,
                     post_state,
                     result,
                     assumptions,
                     end,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 )?,
@@ -6411,12 +6676,14 @@ fn lower_outcome_proposition_with_environment(
                 );
                 let body = match lower_outcome_proposition_with_environment(
                     values,
+                    array_refs,
                     pre_state,
                     post_state,
                     result,
                     assumptions,
                     body,
                     next_variable,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 ) {
@@ -6432,25 +6699,44 @@ fn lower_outcome_proposition_with_environment(
             Ok(proposition)
         }
         ClickProposition::PredicateCall { name, arguments } => {
-            let mut lowered_arguments = vec![Term::CMemory(post_state.memory().clone())];
-            lowered_arguments.extend(
-                arguments
-                    .iter()
-                    .map(|argument| {
-                        evaluate_contract_expression_with_environment(
-                            values,
-                            pre_state,
-                            post_state,
-                            result,
-                            assumptions,
-                            argument,
-                            click_function_environment,
-                            active_functions,
-                        )
-                        .map(Term::CValue)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            );
+            let lowered_arguments = if let Some(definition) = predicate_environment.get(name) {
+                lower_predicate_call_arguments_with_environment(
+                    definition,
+                    arguments,
+                    values,
+                    array_refs,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    predicate_environment,
+                    click_function_environment,
+                    active_functions,
+                )?
+            } else {
+                let mut lowered_arguments = vec![Term::CMemory(post_state.memory().clone())];
+                lowered_arguments.extend(
+                    arguments
+                        .iter()
+                        .map(|argument| {
+                            evaluate_contract_expression_with_environment(
+                                values,
+                                array_refs,
+                                pre_state,
+                                post_state,
+                                result,
+                                assumptions,
+                                argument,
+                                predicate_environment,
+                                click_function_environment,
+                                active_functions,
+                            )
+                            .map(Term::CValue)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                );
+                lowered_arguments
+            };
             Ok(Proposition::Predicate {
                 name: name.clone(),
                 arguments: lowered_arguments,
@@ -6461,11 +6747,13 @@ fn lower_outcome_proposition_with_environment(
 
 fn evaluate_contract_expression_with_environment(
     parameter_values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
     pre_state: &CState,
     post_state: &CState,
     result: Option<&CValue>,
     assumptions: &Assumptions,
     expression: &ContractExpression,
+    predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<CValue, String> {
@@ -6479,32 +6767,38 @@ fn evaluate_contract_expression_with_environment(
         ),
         ContractExpression::Old(expression) => evaluate_contract_expression_with_environment(
             parameter_values,
+            array_refs,
             pre_state,
             pre_state,
             None,
             assumptions,
             expression,
+            predicate_environment,
             click_function_environment,
             active_functions,
         ),
         ContractExpression::Add(left, right) => {
             let left = evaluate_contract_expression_with_environment(
                 parameter_values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 left,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
                 parameter_values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 right,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
@@ -6513,49 +6807,60 @@ fn evaluate_contract_expression_with_environment(
         ContractExpression::Subtract(left, right) => {
             let left = evaluate_contract_expression_with_environment(
                 parameter_values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 left,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
                 parameter_values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 right,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             evaluate_postcondition_sub(left, right)
         }
         ContractExpression::Index(base, index) => {
-            let base = evaluate_contract_expression_with_environment(
+            let array_ref = evaluate_contract_array_ref_with_environment(
                 parameter_values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 base,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             let index = evaluate_contract_expression_with_environment(
                 parameter_values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 index,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
-            let pointer = evaluate_postcondition_pointer_add(base, index)?;
-            evaluate_contract_memory_load(post_state, pointer, assumptions)
+            let CValue::Int32(index) = index else {
+                return Err(format!("array index did not evaluate to int32: `{index:?}`"));
+            };
+            let pointer = offset_pointer_by_int32_elements(array_ref.pointer, index);
+            evaluate_contract_memory_load_from_memory(&array_ref.memory, pointer, assumptions)
         }
         ContractExpression::If {
             condition,
@@ -6566,23 +6871,27 @@ fn evaluate_contract_expression_with_environment(
             let mut next_variable = 2_000_000;
             let condition = lower_outcome_proposition_with_environment(
                 &mut values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 condition,
                 &mut next_variable,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             if assumptions.proves(&condition) {
                 return evaluate_contract_expression_with_environment(
                     parameter_values,
+                    array_refs,
                     pre_state,
                     post_state,
                     result,
                     assumptions,
                     then_branch,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 );
@@ -6590,11 +6899,13 @@ fn evaluate_contract_expression_with_environment(
             if assumptions_prove_proposition_false(assumptions, &condition) {
                 return evaluate_contract_expression_with_environment(
                     parameter_values,
+                    array_refs,
                     pre_state,
                     post_state,
                     result,
                     assumptions,
                     else_branch,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 );
@@ -6602,21 +6913,25 @@ fn evaluate_contract_expression_with_environment(
 
             let then_value = evaluate_contract_expression_with_environment(
                 parameter_values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 then_branch,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
             let else_value = evaluate_contract_expression_with_environment(
                 parameter_values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 else_branch,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
@@ -6633,11 +6948,13 @@ fn evaluate_contract_expression_with_environment(
             let start = int32_term_value(
                 evaluate_contract_expression_with_environment(
                     parameter_values,
+                    array_refs,
                     pre_state,
                     post_state,
                     result,
                     assumptions,
                     start,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 )?,
@@ -6646,11 +6963,13 @@ fn evaluate_contract_expression_with_environment(
             let end = int32_term_value(
                 evaluate_contract_expression_with_environment(
                     parameter_values,
+                    array_refs,
                     pre_state,
                     post_state,
                     result,
                     assumptions,
                     end,
+                    predicate_environment,
                     click_function_environment,
                     active_functions,
                 )?,
@@ -6658,11 +6977,13 @@ fn evaluate_contract_expression_with_environment(
             )?;
             let mut value = evaluate_contract_expression_with_environment(
                 parameter_values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 initial,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
@@ -6680,11 +7001,13 @@ fn evaluate_contract_expression_with_environment(
                         );
                         value = evaluate_contract_expression_with_environment(
                             &fold_values,
+                            array_refs,
                             pre_state,
                             post_state,
                             result,
                             assumptions,
                             body,
+                            predicate_environment,
                             click_function_environment,
                             active_functions,
                         )?;
@@ -6706,11 +7029,13 @@ fn evaluate_contract_expression_with_environment(
                     );
                     let body_value = evaluate_contract_expression_with_environment(
                         &fold_values,
+                        array_refs,
                         pre_state,
                         post_state,
                         result,
                         assumptions,
                         body,
+                        predicate_environment,
                         click_function_environment,
                         active_functions,
                     )?;
@@ -6721,11 +7046,13 @@ fn evaluate_contract_expression_with_environment(
         ContractExpression::Let { name, value, body } => {
             let value = evaluate_contract_expression_with_environment(
                 parameter_values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 value,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )?;
@@ -6733,11 +7060,13 @@ fn evaluate_contract_expression_with_environment(
             let_values.insert(name.clone(), value);
             evaluate_contract_expression_with_environment(
                 &let_values,
+                array_refs,
                 pre_state,
                 post_state,
                 result,
                 assumptions,
                 body,
+                predicate_environment,
                 click_function_environment,
                 active_functions,
             )
@@ -6747,10 +7076,12 @@ fn evaluate_contract_expression_with_environment(
             name,
             arguments,
             parameter_values,
+            array_refs,
             pre_state,
             post_state,
             result,
             assumptions,
+            predicate_environment,
             active_functions,
         ),
     }
@@ -6761,10 +7092,12 @@ fn evaluate_click_function_call(
     name: &str,
     arguments: &[ContractExpression],
     parameter_values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
     pre_state: &CState,
     post_state: &CState,
     result: Option<&CValue>,
     assumptions: &Assumptions,
+    predicate_environment: &PredicateEnvironment,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<CValue, String> {
     let definition = click_function_environment
@@ -6785,27 +7118,50 @@ fn evaluate_click_function_call(
     }
 
     let mut function_values = BTreeMap::new();
+    let mut function_array_refs = BTreeMap::new();
     for (parameter, argument) in definition.parameters().iter().zip(arguments) {
-        let value = evaluate_contract_expression_with_environment(
-            parameter_values,
-            pre_state,
-            post_state,
-            result,
-            assumptions,
-            argument,
-            click_function_environment,
-            active_functions,
-        )?;
+        let value = if parameter_is_click_array_ref(parameter) {
+            let array_ref = evaluate_contract_array_ref_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                argument,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let pointer = array_ref.pointer.clone();
+            function_array_refs.insert(parameter.name().to_string(), array_ref);
+            CValue::Pointer(pointer)
+        } else {
+            evaluate_contract_expression_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                argument,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?
+        };
         function_values.insert(parameter.name().to_string(), value);
     }
 
     let value = evaluate_contract_expression_with_environment(
         &function_values,
+        &function_array_refs,
         post_state,
         post_state,
         None,
         assumptions,
         definition.body(),
+        predicate_environment,
         click_function_environment,
         active_functions,
     )?;
@@ -6819,6 +7175,309 @@ fn evaluate_click_function_call(
         ));
     }
     Ok(value)
+}
+
+fn evaluate_contract_array_ref_with_environment(
+    parameter_values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    post_state: &CState,
+    result: Option<&CValue>,
+    assumptions: &Assumptions,
+    expression: &ContractExpression,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    active_functions: &mut BTreeSet<String>,
+) -> Result<ClickArrayRef, String> {
+    match expression {
+        ContractExpression::Old(expression) => {
+            let pointer_value = evaluate_contract_expression_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                pre_state,
+                None,
+                assumptions,
+                expression,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let CValue::Pointer(pointer) = pointer_value else {
+                return Err(format!(
+                    "array reference expression inside `old(...)` did not evaluate to a pointer: `{pointer_value:?}`"
+                ));
+            };
+            Ok(ClickArrayRef {
+                memory: pre_state.memory().clone(),
+                pointer,
+            })
+        }
+        ContractExpression::Current(CExpression::Variable(name)) => {
+            if let Some(array_ref) = array_refs.get(name) {
+                return Ok(array_ref.clone());
+            }
+            let pointer_value = evaluate_contract_expression_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                expression,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let CValue::Pointer(pointer) = pointer_value else {
+                return Err(format!(
+                    "array reference `{name}` did not evaluate to a pointer: `{pointer_value:?}`"
+                ));
+            };
+            Ok(ClickArrayRef {
+                memory: post_state.memory().clone(),
+                pointer,
+            })
+        }
+        ContractExpression::Add(left, right) => {
+            if let Ok(array_ref) = evaluate_contract_array_ref_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                left,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            ) {
+                let offset = evaluate_contract_expression_with_environment(
+                    parameter_values,
+                    array_refs,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    right,
+                    predicate_environment,
+                    click_function_environment,
+                    active_functions,
+                )?;
+                let CValue::Int32(offset) = offset else {
+                    return Err(format!(
+                        "array reference offset did not evaluate to int32: `{offset:?}`"
+                    ));
+                };
+                return Ok(ClickArrayRef {
+                    memory: array_ref.memory,
+                    pointer: offset_pointer_by_int32_elements(array_ref.pointer, offset),
+                });
+            }
+            if let Ok(array_ref) = evaluate_contract_array_ref_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                right,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            ) {
+                let offset = evaluate_contract_expression_with_environment(
+                    parameter_values,
+                    array_refs,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    left,
+                    predicate_environment,
+                    click_function_environment,
+                    active_functions,
+                )?;
+                let CValue::Int32(offset) = offset else {
+                    return Err(format!(
+                        "array reference offset did not evaluate to int32: `{offset:?}`"
+                    ));
+                };
+                return Ok(ClickArrayRef {
+                    memory: array_ref.memory,
+                    pointer: offset_pointer_by_int32_elements(array_ref.pointer, offset),
+                });
+            }
+            evaluate_pointer_expression_as_current_array_ref(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                expression,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )
+        }
+        ContractExpression::Subtract(left, right) => {
+            if let Ok(array_ref) = evaluate_contract_array_ref_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                left,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            ) {
+                let offset = evaluate_contract_expression_with_environment(
+                    parameter_values,
+                    array_refs,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    right,
+                    predicate_environment,
+                    click_function_environment,
+                    active_functions,
+                )?;
+                let CValue::Int32(offset) = offset else {
+                    return Err(format!(
+                        "array reference offset did not evaluate to int32: `{offset:?}`"
+                    ));
+                };
+                return Ok(ClickArrayRef {
+                    memory: array_ref.memory,
+                    pointer: offset_pointer_by_int32_elements(
+                        array_ref.pointer,
+                        bitvector32_subtract(Bitvector32Term::Constant(0), offset),
+                    ),
+                });
+            }
+            evaluate_pointer_expression_as_current_array_ref(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                expression,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )
+        }
+        _ => evaluate_pointer_expression_as_current_array_ref(
+            parameter_values,
+            array_refs,
+            pre_state,
+            post_state,
+            result,
+            assumptions,
+            expression,
+            predicate_environment,
+            click_function_environment,
+            active_functions,
+        ),
+    }
+}
+
+fn evaluate_pointer_expression_as_current_array_ref(
+    parameter_values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    post_state: &CState,
+    result: Option<&CValue>,
+    assumptions: &Assumptions,
+    expression: &ContractExpression,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    active_functions: &mut BTreeSet<String>,
+) -> Result<ClickArrayRef, String> {
+    let pointer_value = evaluate_contract_expression_with_environment(
+        parameter_values,
+        array_refs,
+        pre_state,
+        post_state,
+        result,
+        assumptions,
+        expression,
+        predicate_environment,
+        click_function_environment,
+        active_functions,
+    )?;
+    let CValue::Pointer(pointer) = pointer_value else {
+        return Err(format!(
+            "array reference expression did not evaluate to a pointer: `{pointer_value:?}`"
+        ));
+    };
+    Ok(ClickArrayRef {
+        memory: post_state.memory().clone(),
+        pointer,
+    })
+}
+
+fn lower_predicate_call_arguments_with_environment(
+    definition: &PredicateDefinition,
+    arguments: &[ContractExpression],
+    parameter_values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    post_state: &CState,
+    result: Option<&CValue>,
+    assumptions: &Assumptions,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    active_functions: &mut BTreeSet<String>,
+) -> Result<Vec<Term>, String> {
+    if arguments.len() != definition.parameters().len() {
+        return Err(format!(
+            "predicate `{}` expects {} argument(s), got {}",
+            definition.name(),
+            definition.parameters().len(),
+            arguments.len()
+        ));
+    }
+
+    let mut lowered_arguments = Vec::new();
+    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+        if parameter_is_click_array_ref(parameter) {
+            let array_ref = evaluate_contract_array_ref_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                argument,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            lowered_arguments.push(Term::CMemory(array_ref.memory));
+            lowered_arguments.push(Term::CValue(CValue::Pointer(array_ref.pointer)));
+        } else {
+            let value = evaluate_contract_expression_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                argument,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            lowered_arguments.push(Term::CValue(value));
+        }
+    }
+    Ok(lowered_arguments)
 }
 
 fn c_value_matches_click_type(value: &CValue, c_type: C0Type) -> bool {
@@ -6892,15 +7551,23 @@ fn evaluate_contract_memory_load(
     pointer: Pointer,
     assumptions: &Assumptions,
 ) -> Result<CValue, String> {
-    match state.memory().load(&pointer) {
+    evaluate_contract_memory_load_from_memory(state.memory(), pointer, assumptions)
+}
+
+fn evaluate_contract_memory_load_from_memory(
+    memory: &CMemory,
+    pointer: Pointer,
+    assumptions: &Assumptions,
+) -> Result<CValue, String> {
+    match memory.load(&pointer) {
         crate::megakernel::CExpressionOutcome::Value(value) => Ok(value),
         _ if assumptions.proves(&Proposition::CMemoryCanLoad {
-            memory: state.memory().clone(),
+            memory: memory.clone(),
             pointer: pointer.clone(),
         }) =>
         {
             Ok(CValue::Int32(Bitvector32Term::MemoryLoad(
-                Box::new(state.memory().clone()),
+                Box::new(memory.clone()),
                 Box::new(pointer),
             )))
         }

@@ -28,12 +28,14 @@ reused, but proving a predicate body or using its consequences generally needs:
 unfold(predicate_name);
 ```
 
-## `old(...)` Has One Entry State
+## `old(...)` Is Still A Surface Construct
 
-`old(...)` evaluates in the function-entry memory. Predicates themselves carry
-one implicit memory argument. A predicate like `permutation(a, b, lo, hi)`
-compares two arrays in the same memory state; it does not automatically compare
-current `a` to old `a`.
+`old(...)` evaluates in the function-entry memory. As an array argument to a
+pure Click function or predicate, `old(p)` becomes an entry-state array ref, so
+`permutation(p, old(p), lo, hi)` has the expected old-vs-current meaning.
+
+There is still no public `ref<int32>` syntax. Array refs are an internal pure
+Click lowering concept for parameters written as `int32 p[]` or `int32* p`.
 
 ## Symbolic `.any` Is Not General Yet
 

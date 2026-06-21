@@ -27,7 +27,9 @@ predicate permutation(int32 a[], int32 b[], int32 lo, int32 hi) {
 
 `count` is a pure Click function over a range. `permutation` is a Click
 predicate saying every `int32` value has the same count in both arrays over the
-same half-open range.
+same half-open range. The array parameters are Click array refs, so callers can
+write `permutation(p, old(p), lo, hi)` to compare current memory with
+entry-state memory.
 
 ## Kernel Support
 
@@ -55,7 +57,7 @@ user Click definition conflict.
 ## Current Example
 
 `mdtests/compare_swap2_permutation.md` proves that a two-cell compare-swap
-preserves `permutation(p, original, 0, 2)` after copying the original values
+preserves `permutation(p, old(p), 0, 2)` without copying the original values
 into a separate snapshot array.
 
 ## Adding A Library Function

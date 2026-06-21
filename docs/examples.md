@@ -91,7 +91,7 @@ of inventing syntax from memory.
 - `mdtests/compare_swap2_sorted.md`: two-cell sorting.
 - `mdtests/compare_swap2_sorted_predicate.md`: sorted predicate.
 - `mdtests/compare_swap2_permutation.md`: stdlib `permutation` proof over a
-  copied snapshot array.
+  current array and `old(p)`.
 - `mdtests/sort3_sorted.md`: three-cell sorting.
 - `mdtests/sort3_permutation.md`: explicit six-way permutation claim.
 - `mdtests/sort3_permutation_predicate.md`: explicit permutation packaged as a

@@ -9,13 +9,15 @@ If you are a fresh agent, read these in order:
 1. [quickstart.md](quickstart.md): how to run the project and add an mdtest.
 2. [c0-subset.md](c0-subset.md): the C fragment Click understands today.
 3. [click-language.md](click-language.md): `.click` syntax and semantics.
-4. [proof-workflow.md](proof-workflow.md): tactics, proof steps, and debugging.
-5. [memory-model.md](memory-model.md): pointers, ranges, aliasing, and frames.
-6. [standard-library.md](standard-library.md): `stdlib/prelude.click`.
-7. [examples.md](examples.md): canonical mdtests by proof pattern.
-8. [limitations.md](limitations.md): current boundaries and common traps.
-9. [feature-playbook.md](feature-playbook.md): how to extend Click safely.
-10. [megakernel.md](megakernel.md): implementation map for Rust changes.
+4. [click-core.md](click-core.md): how C values elaborate into pure Click
+   values such as array refs.
+5. [proof-workflow.md](proof-workflow.md): tactics, proof steps, and debugging.
+6. [memory-model.md](memory-model.md): pointers, ranges, aliasing, and frames.
+7. [standard-library.md](standard-library.md): `stdlib/prelude.click`.
+8. [examples.md](examples.md): canonical mdtests by proof pattern.
+9. [limitations.md](limitations.md): current boundaries and common traps.
+10. [feature-playbook.md](feature-playbook.md): how to extend Click safely.
+11. [megakernel.md](megakernel.md): implementation map for Rust changes.
 
 [proof-landscape.md](proof-landscape.md) is the roadmap/design map. Read it
 after the operational docs when deciding what proof capability should come next.
@@ -35,6 +37,8 @@ prove each guarantee. The system is intentionally small but already supports:
   specs.
 - Named Click predicates, explicit `unfold`, and a small standard prelude with
   `count` and `permutation`.
+- Memory-qualified Click array refs for pure functions and predicates, including
+  `old(p)` as an entry-state array argument.
 
 ## High-Value Commands
 

@@ -76,6 +76,11 @@ ensures forall (int32 k) { 0 <= k and k < n implies p[k] == old(p[k]) } by auto;
 
 Inside `old(...)`, `result` is unavailable.
 
+When `old(p)` is passed as an array argument to a pure Click function or
+predicate, it becomes an entry-state Click array ref. For example,
+`permutation(p, old(p), 0, 2)` compares post-state `p` to entry-state `p`.
+See [click-core.md](click-core.md).
+
 ## Pure Click Functions
 
 Click functions are specification-level value definitions, not executable C
@@ -102,6 +107,11 @@ Supported expression features include parameters, literals, `+`, `-`, indexing,
 `let name = value; body`, `if proposition { then } else { else }`, range
 `.fold`, and calls to other non-recursive Click functions. Recursive Click
 functions are rejected.
+
+In pure Click function parameters, `int32 p[]` and `int32* p` are treated as
+array-ref parameters. Indexing `p[k]` loads from the memory snapshot carried by
+that argument. This is why `count(p, ...)` can be called with either current
+`p` or `old(p)`.
 
 Concrete folds are unrolled. Symbolic folds remain `RangeFold` value terms in
 the megakernel and can be reasoned about by supported fold laws.
@@ -135,6 +145,10 @@ ensures sorted: sorted_range(p, 0, n) by {
 
 In loop invariants, an unfold-only proof block exposes predicate bodies before
 the loop verification condition is generated.
+
+Like pure Click functions, predicate array parameters are Click array refs.
+A predicate can compare two arrays from different memory states when its caller
+passes arguments such as `p` and `old(p)`.
 
 ## Effects
 

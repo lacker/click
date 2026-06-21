@@ -70,6 +70,22 @@ ensures forall (int32 k) {
 Pointer-writing loops do not implicitly preserve old memory. Use explicit loop
 invariants, loop effect summaries, or disjointness facts.
 
+When an array parameter is passed to a pure Click function or predicate,
+`old(p)` means the entry-state array ref, not just the old pointer value:
+
+```click
+ensures permutation(p, old(p), 0, 2) by {
+    symbolic_execute();
+    unfold(permutation);
+    simp();
+    close();
+}
+```
+
+The current `p` argument carries post-state memory. The `old(p)` argument
+carries function-entry memory. Both carry the same C pointer value unless the
+pointer variable itself changed.
+
 ## Effects And Frames
 
 Function-level effects:
@@ -106,15 +122,22 @@ int32 local_array_roundtrip() {
 The local array block is ordinary memory for load/store semantics, but it does
 not count as an external mutation.
 
-## Snapshot Arrays
+## Click Array Refs
 
-Predicates take one implicit memory state. A predicate such as:
+A pure Click function or predicate parameter written as an array or pointer:
 
 ```click
 predicate permutation(int32 a[], int32 b[], int32 lo, int32 hi)
 ```
 
-compares `a` and `b` in the same state. It does not compare current `a` to old
-`a` unless the arguments themselves encode that snapshot. A common pattern is
-to copy an original array into a separate snapshot array and then prove
-`permutation(current, snapshot, lo, hi)`.
+receives pure array refs for `a` and `b`. Each ref carries:
+
+- a `CMemory` snapshot
+- a C pointer
+
+Indexing `a[k]` inside the predicate loads from `a`'s carried memory, not from
+some global ambient predicate memory. This lets `permutation(p, old(p), lo, hi)`
+compare post-state `p` to entry-state `p` without copying a snapshot array.
+
+See [click-core.md](click-core.md) for the full C-pointer versus Click-array-ref
+model.
