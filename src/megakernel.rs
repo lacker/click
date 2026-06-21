@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 const C_POINTER_BYTE_WIDTH: u32 = 8;
+const RANGE_FOLD_CONCRETE_UNROLL_LIMIT: i64 = 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Variable(pub u64);
@@ -701,6 +702,37 @@ impl Bitvector32Term {
         item: Variable,
         body: Self,
     ) -> Self {
+        if start == end {
+            return initial;
+        }
+
+        if Self::add(start.clone(), Self::Constant(1)) == end {
+            return instantiate_range_fold_step(&body, accumulator, &initial, item, &start);
+        }
+
+        if let (Some(start_value), Some(end_value)) = (
+            signed_bitvector_constant(&start),
+            signed_bitvector_constant(&end),
+        ) {
+            let length = end_value - start_value;
+            if length <= 0 {
+                return initial;
+            }
+            if length <= RANGE_FOLD_CONCRETE_UNROLL_LIMIT {
+                let mut value = initial;
+                for index in start_value..end_value {
+                    value = instantiate_range_fold_step(
+                        &body,
+                        accumulator,
+                        &value,
+                        item,
+                        &signed_i64_bitvector_constant(index),
+                    );
+                }
+                return value;
+            }
+        }
+
         Self::RangeFold {
             start: Box::new(start),
             end: Box::new(end),
@@ -1723,6 +1755,12 @@ impl Assumptions {
             ConditionTerm::Bitvector32Equal(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
+                if self.bitvector_add_terms_proven_equal(&left, &right)
+                    || self.count_fold_split_terms_proven_equal(&left, &right)
+                {
+                    return Some(true);
+                }
+
                 if let Some((left, right)) =
                     bitvector_equality_after_additive_cancellation(&left, &right)
                 {
@@ -2861,7 +2899,93 @@ impl Assumptions {
         left: &Bitvector32Term,
         right: &Bitvector32Term,
     ) -> bool {
-        left == right || self.memory_loads_proven_equal(left, right)
+        left == right
+            || self.bitvector_if_terms_proven_equal(left, right)
+            || self.bitvector_add_terms_proven_equal(left, right)
+            || self.count_fold_split_terms_proven_equal(left, right)
+            || self.memory_loads_proven_equal(left, right)
+    }
+
+    fn bitvector_if_terms_proven_equal(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        let (
+            Bitvector32Term::If {
+                condition: left_condition,
+                then_term: left_then,
+                else_term: left_else,
+            },
+            Bitvector32Term::If {
+                condition: right_condition,
+                then_term: right_then,
+                else_term: right_else,
+            },
+        ) = (left, right)
+        else {
+            return false;
+        };
+
+        (left_condition == right_condition
+            || self.condition_matches(left_condition, right_condition)
+            || self.condition_matches(right_condition, left_condition))
+            && self.bitvector_terms_proven_equal(left_then, right_then)
+            && self.bitvector_terms_proven_equal(left_else, right_else)
+    }
+
+    fn bitvector_add_terms_proven_equal(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        if !matches!(left, Bitvector32Term::Add(_, _))
+            && !matches!(right, Bitvector32Term::Add(_, _))
+        {
+            return false;
+        }
+
+        let mut left_terms = Vec::new();
+        let mut left_constant = 0u32;
+        collect_bitvector_add_terms(left, &mut left_terms, &mut left_constant);
+
+        let mut right_terms = Vec::new();
+        let mut right_constant = 0u32;
+        collect_bitvector_add_terms(right, &mut right_terms, &mut right_constant);
+
+        if left_constant != right_constant || left_terms.len() != right_terms.len() {
+            return false;
+        }
+
+        for left_term in left_terms {
+            let Some(index) = right_terms.iter().position(|right_term| {
+                self.bitvector_addend_terms_proven_equal(&left_term, right_term)
+            }) else {
+                return false;
+            };
+            right_terms.remove(index);
+        }
+
+        right_terms.is_empty()
+    }
+
+    fn bitvector_addend_terms_proven_equal(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        left == right
+            || self.bitvector_if_terms_proven_equal(left, right)
+            || self.bitvector_terms_equal_from_facts(left, right)
+            || self.memory_loads_proven_equal(left, right)
+    }
+
+    fn count_fold_split_terms_proven_equal(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        count_fold_split_matches(left, right, self) || count_fold_split_matches(right, left, self)
     }
 
     fn proves_without_prop_facts(&self, proposition: &Proposition) -> bool {
@@ -4687,6 +4811,17 @@ fn signed_i64_bitvector_constant(value: i64) -> Bitvector32Term {
     Bitvector32Term::Constant(value as i32 as u32)
 }
 
+fn instantiate_range_fold_step(
+    body: &Bitvector32Term,
+    accumulator: Variable,
+    accumulator_value: &Bitvector32Term,
+    item: Variable,
+    item_value: &Bitvector32Term,
+) -> Bitvector32Term {
+    let body = substitute_bitvector_variable(body, accumulator, accumulator_value);
+    substitute_bitvector_variable(&body, item, item_value)
+}
+
 #[derive(Clone, Debug, Default)]
 struct IntegerRangeFacts {
     lower: Option<i64>,
@@ -4812,6 +4947,109 @@ fn bitvector_equality_after_additive_cancellation(
         }
         _ => None,
     }
+}
+
+#[derive(Clone, Debug)]
+struct CountFoldParts {
+    start: Bitvector32Term,
+    end: Bitvector32Term,
+    accumulator: Variable,
+    item: Variable,
+    contribution: Bitvector32Term,
+}
+
+fn collect_bitvector_add_terms(
+    term: &Bitvector32Term,
+    terms: &mut Vec<Bitvector32Term>,
+    constant: &mut u32,
+) {
+    match term {
+        Bitvector32Term::Add(left, right) => {
+            collect_bitvector_add_terms(left, terms, constant);
+            collect_bitvector_add_terms(right, terms, constant);
+        }
+        Bitvector32Term::Constant(value) => {
+            *constant = constant.wrapping_add(*value);
+        }
+        term => terms.push(term.clone()),
+    }
+}
+
+fn count_fold_parts(term: &Bitvector32Term) -> Option<CountFoldParts> {
+    let Bitvector32Term::RangeFold {
+        start,
+        end,
+        initial,
+        accumulator,
+        item,
+        body,
+    } = term
+    else {
+        return None;
+    };
+
+    if initial.as_ref() != &Bitvector32Term::Constant(0) {
+        return None;
+    }
+
+    let contribution = match body.as_ref() {
+        Bitvector32Term::Add(left, right)
+            if left.as_ref() == &Bitvector32Term::Variable(*accumulator) =>
+        {
+            right.as_ref().clone()
+        }
+        Bitvector32Term::Add(left, right)
+            if right.as_ref() == &Bitvector32Term::Variable(*accumulator) =>
+        {
+            left.as_ref().clone()
+        }
+        _ => return None,
+    };
+
+    Some(CountFoldParts {
+        start: start.as_ref().clone(),
+        end: end.as_ref().clone(),
+        accumulator: *accumulator,
+        item: *item,
+        contribution,
+    })
+}
+
+fn count_fold_split_matches(
+    whole: &Bitvector32Term,
+    split: &Bitvector32Term,
+    assumptions: &Assumptions,
+) -> bool {
+    let Some(whole) = count_fold_parts(whole) else {
+        return false;
+    };
+    let Bitvector32Term::Add(left, right) = split else {
+        return false;
+    };
+
+    count_fold_split_parts_match(&whole, left.as_ref(), right.as_ref(), assumptions)
+        || count_fold_split_parts_match(&whole, right.as_ref(), left.as_ref(), assumptions)
+}
+
+fn count_fold_split_parts_match(
+    whole: &CountFoldParts,
+    first: &Bitvector32Term,
+    second: &Bitvector32Term,
+    assumptions: &Assumptions,
+) -> bool {
+    let (Some(first), Some(second)) = (count_fold_parts(first), count_fold_parts(second)) else {
+        return false;
+    };
+
+    whole.accumulator == first.accumulator
+        && whole.accumulator == second.accumulator
+        && whole.item == first.item
+        && whole.item == second.item
+        && assumptions.bitvector_terms_proven_equal(&whole.contribution, &first.contribution)
+        && assumptions.bitvector_terms_proven_equal(&whole.contribution, &second.contribution)
+        && assumptions.bitvector_terms_proven_equal(&whole.start, &first.start)
+        && assumptions.bitvector_terms_proven_equal(&first.end, &second.start)
+        && assumptions.bitvector_terms_proven_equal(&whole.end, &second.end)
 }
 
 fn bitvector_same_base_nonzero_const_offset(
@@ -12574,6 +12812,74 @@ mod tests {
             );
 
         assert!(assumptions.is_inconsistent());
+    }
+
+    #[test]
+    fn range_fold_simplifies_empty_and_one_step_ranges() {
+        let accumulator = Variable(93);
+        let item = Variable(94);
+        let x = Bitvector32Term::Variable(Variable(95));
+        let body = Bitvector32Term::add(Bitvector32Term::Variable(accumulator), x.clone());
+
+        assert_eq!(
+            Bitvector32Term::range_fold(
+                Bitvector32Term::Constant(4),
+                Bitvector32Term::Constant(4),
+                Bitvector32Term::Constant(7),
+                accumulator,
+                item,
+                body.clone(),
+            ),
+            Bitvector32Term::Constant(7)
+        );
+
+        assert_eq!(
+            Bitvector32Term::range_fold(
+                Bitvector32Term::Variable(Variable(96)),
+                Bitvector32Term::add(
+                    Bitvector32Term::Variable(Variable(96)),
+                    Bitvector32Term::Constant(1)
+                ),
+                Bitvector32Term::Constant(7),
+                accumulator,
+                item,
+                body,
+            ),
+            Bitvector32Term::add(Bitvector32Term::Constant(7), x)
+        );
+    }
+
+    #[test]
+    fn count_shaped_range_fold_split_is_proven_equal() {
+        let lo = Bitvector32Term::Variable(Variable(97));
+        let mid = Bitvector32Term::Variable(Variable(98));
+        let hi = Bitvector32Term::Variable(Variable(99));
+        let x = Bitvector32Term::Variable(Variable(100));
+        let accumulator = Variable(101);
+        let item = Variable(102);
+        let contribution = Bitvector32Term::if_then_else(
+            ConditionTerm::equal(Bitvector32Term::Variable(item), x),
+            Bitvector32Term::Constant(1),
+            Bitvector32Term::Constant(0),
+        );
+        let body = Bitvector32Term::add(Bitvector32Term::Variable(accumulator), contribution);
+        let count = |start: Bitvector32Term, end: Bitvector32Term| {
+            Bitvector32Term::range_fold(
+                start,
+                end,
+                Bitvector32Term::Constant(0),
+                accumulator,
+                item,
+                body.clone(),
+            )
+        };
+        let whole = count(lo.clone(), hi.clone());
+        let split = Bitvector32Term::add(count(lo, mid.clone()), count(mid, hi));
+
+        assert!(Assumptions::new().proves(&Proposition::ConditionIs(
+            ConditionTerm::equal(whole, split),
+            true,
+        )));
     }
 
     #[test]

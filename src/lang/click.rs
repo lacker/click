@@ -26,19 +26,7 @@ const EXTERNAL_ARGUMENT_MEMORY_BLOCK: &str = "arg-memory";
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
 const MAX_CONCRETE_RANGE_FOLD_STEPS: i64 = 1024;
 
-const CLICK_STANDARD_LIBRARY: &str = r#"
-function count(int32 p[], int32 lo, int32 hi, int32 x) -> int32 {
-    (lo..hi).fold(0, |acc, k| {
-        acc + if p[k] == x { 1 } else { 0 }
-    })
-}
-
-predicate permutation(int32 a[], int32 b[], int32 lo, int32 hi) {
-    forall (int32 x) {
-        count(a, lo, hi, x) == count(b, lo, hi, x)
-    }
-}
-"#;
+const CLICK_STANDARD_LIBRARY: &str = include_str!("../../stdlib/prelude.click");
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClickFile {

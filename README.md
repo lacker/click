@@ -272,8 +272,8 @@ expressions with Click proposition conditions, bounded range folds like
 Folds with concrete bounds are unrolled; folds with symbolic bounds are kept as
 symbolic value terms for later reasoning. Recursive definitions are rejected.
 
-Click has a small standard library that is parsed as ordinary Click source, not
-as hard-coded kernel concepts. Today it defines:
+Click has a small standard library in `stdlib/prelude.click`. It is parsed as
+ordinary Click source, not as hard-coded kernel concepts. Today it defines:
 
 ```text
 function count(int32 p[], int32 lo, int32 hi, int32 x) -> int32
@@ -281,7 +281,10 @@ predicate permutation(int32 a[], int32 b[], int32 lo, int32 hi)
 ```
 
 `count` is a pure fold over `p[lo..hi]`, and `permutation` says that every
-`int32` value has the same count in both arrays over the same range.
+`int32` value has the same count in both arrays over the same range. The kernel
+knows basic fold facts needed by these definitions: empty folds collapse to the
+initial value, one-step and small concrete folds unfold by substitution, and
+count-shaped folds can be matched across a split range.
 
 `.click` can define named predicates:
 
