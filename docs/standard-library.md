@@ -67,6 +67,13 @@ sorting network:
 permutation(p, old(p), 0, 3)
 ```
 
+`mdtests/bubble_sort3_loop_permutation.md` proves the same predicate for a
+loop-shaped fixed-size bubble sort using bounded execution.
+
+`mdtests/loop_stdlib_permutation_invariant.md` is an expected-fail target for
+using stdlib `permutation` directly as a loop invariant. That path currently
+stops because invariant lowering cannot represent the `.fold` inside `count`.
+
 ## Adding A Library Function
 
 1. Add the definition to `stdlib/prelude.click`.
