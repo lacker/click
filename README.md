@@ -253,6 +253,12 @@ function head(int32 p[]) -> int32 {
 function eq_as_int(int32 x, int32 y) -> int32 {
     if x == y { 1 } else { 0 }
 }
+
+function count3(int32 p[], int32 x) -> int32 {
+    (0..3).fold(0, |acc, k| {
+        acc + if p[k] == x { 1 } else { 0 }
+    })
+}
 ```
 
 Click functions are specification-level definitions, not executable C
@@ -260,8 +266,10 @@ functions. They can be called inside proposition expressions and inside
 `old(...)`, so `old(head(p))` evaluates the same definition against function
 entry memory. This first slice supports non-recursive expression bodies over
 parameters, literals, `+`, `-`, indexing, `if` expressions with Click
-proposition conditions, and other pure Click function calls. Recursive
-definitions and range folds are intentionally not part of this slice.
+proposition conditions, concrete bounded range folds like
+`(0..3).fold(0, |acc, k| { ... })`, and other pure Click function calls.
+Recursive definitions and symbolic range folds are intentionally not part of
+this slice.
 
 `.click` can define named predicates:
 

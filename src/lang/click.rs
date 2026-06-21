@@ -24,6 +24,7 @@ use crate::megakernel::{
 
 const EXTERNAL_ARGUMENT_MEMORY_BLOCK: &str = "arg-memory";
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
+const MAX_CONCRETE_RANGE_FOLD_STEPS: i64 = 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClickFile {
@@ -185,6 +186,14 @@ pub enum ContractExpression {
         condition: Box<ClickProposition>,
         then_branch: Box<ContractExpression>,
         else_branch: Box<ContractExpression>,
+    },
+    RangeFold {
+        start: Box<ContractExpression>,
+        end: Box<ContractExpression>,
+        initial: Box<ContractExpression>,
+        accumulator: String,
+        item: String,
+        body: Box<ContractExpression>,
     },
     Call {
         name: String,
@@ -2390,6 +2399,9 @@ impl AnnotationLowerer<'_> {
             ContractExpression::If { .. } => Err(
                 "`if` expressions are not supported in loop invariant C lowering yet".to_string(),
             ),
+            ContractExpression::RangeFold { .. } => Err(
+                "`fold` expressions are not supported in loop invariant C lowering yet".to_string(),
+            ),
             ContractExpression::Call { name, arguments } => {
                 let definition = self
                     .click_function_environment
@@ -2466,6 +2478,10 @@ impl AnnotationLowerer<'_> {
             }
             ContractExpression::If { .. } => Err(
                 "`if` expressions are not supported in loop invariant old-state evaluation yet"
+                    .to_string(),
+            ),
+            ContractExpression::RangeFold { .. } => Err(
+                "`fold` expressions are not supported in loop invariant old-state evaluation yet"
                     .to_string(),
             ),
             ContractExpression::Call { name, arguments } => {
@@ -2892,6 +2908,26 @@ fn substitute_contract_expression(
             then_branch: Box::new(substitute_contract_expression(then_branch, substitutions)?),
             else_branch: Box::new(substitute_contract_expression(else_branch, substitutions)?),
         }),
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            let mut scoped = substitutions.clone();
+            scoped.remove(accumulator);
+            scoped.remove(item);
+            Ok(ContractExpression::RangeFold {
+                start: Box::new(substitute_contract_expression(start, substitutions)?),
+                end: Box::new(substitute_contract_expression(end, substitutions)?),
+                initial: Box::new(substitute_contract_expression(initial, substitutions)?),
+                accumulator: accumulator.clone(),
+                item: item.clone(),
+                body: Box::new(substitute_contract_expression(body, &scoped)?),
+            })
+        }
         ContractExpression::Call { name, arguments } => Ok(ContractExpression::Call {
             name: name.clone(),
             arguments: arguments
@@ -3039,7 +3075,7 @@ fn contract_expression_as_current_c_expression(
             Box::new(contract_expression_as_current_c_expression(base)?),
             Box::new(contract_expression_as_current_c_expression(index)?),
         )),
-        ContractExpression::If { .. } => None,
+        ContractExpression::If { .. } | ContractExpression::RangeFold { .. } => None,
         ContractExpression::Call { .. } => None,
     }
 }
@@ -3140,7 +3176,7 @@ fn contract_expression_to_current_c_expression(
             Box::new(contract_expression_to_current_c_expression(base)?),
             Box::new(contract_expression_to_current_c_expression(index)?),
         )),
-        ContractExpression::If { .. } => None,
+        ContractExpression::If { .. } | ContractExpression::RangeFold { .. } => None,
         ContractExpression::Call { .. } => None,
     }
 }
@@ -3726,6 +3762,38 @@ impl KernelPropositionLowerer {
                 conditional_contract_value(&condition, then_value, else_value)
                     .map_err(ClickError::new)
             }
+            ContractExpression::RangeFold {
+                start,
+                end,
+                initial,
+                accumulator,
+                item,
+                body,
+            } => {
+                let start = concrete_fold_bound(self.lower_requirement_value(start)?, "start")
+                    .map_err(ClickError::new)?;
+                let end = concrete_fold_bound(self.lower_requirement_value(end)?, "end")
+                    .map_err(ClickError::new)?;
+                let mut value = self.lower_requirement_value(initial)?;
+                let outer_values = self.values.clone();
+                for index in concrete_fold_range(start, end).map_err(ClickError::new)? {
+                    self.values = outer_values.clone();
+                    self.values.insert(accumulator.clone(), value);
+                    self.values.insert(
+                        item.clone(),
+                        CValue::Int32(Bitvector32Term::Constant(index as u32)),
+                    );
+                    match self.lower_requirement_value(body) {
+                        Ok(next) => value = next,
+                        Err(error) => {
+                            self.values = outer_values;
+                            return Err(error);
+                        }
+                    }
+                }
+                self.values = outer_values;
+                Ok(value)
+            }
             ContractExpression::Call { name, arguments } => {
                 let state = CState::new().with_memory(self.memory.clone());
                 evaluate_click_function_call(
@@ -3841,6 +3909,32 @@ fn conditional_contract_value(
     Ok(CValue::Int32(Bitvector32Term::if_then_else(
         condition, then_term, else_term,
     )))
+}
+
+fn concrete_fold_bound(value: CValue, label: &str) -> Result<i32, String> {
+    let CValue::Int32(bits) = value else {
+        return Err(format!("`fold` {label} bound is not int32"));
+    };
+    let bits = simp_bitvector(&bits);
+    let Bitvector32Term::Constant(value) = bits else {
+        return Err(format!(
+            "symbolic `fold` {label} bounds are not supported yet"
+        ));
+    };
+    Ok(value as i32)
+}
+
+fn concrete_fold_range(start: i32, end: i32) -> Result<std::ops::Range<i32>, String> {
+    let length = i64::from(end) - i64::from(start);
+    if length <= 0 {
+        return Ok(start..start);
+    }
+    if length > MAX_CONCRETE_RANGE_FOLD_STEPS {
+        return Err(format!(
+            "`fold` range has {length} iterations; the current concrete unroll limit is {MAX_CONCRETE_RANGE_FOLD_STEPS}"
+        ));
+    }
+    Ok(start..end)
 }
 
 fn lower_contract_add(left: CValue, right: CValue) -> Result<CValue, ClickError> {
@@ -4646,6 +4740,62 @@ fn evaluate_predicate_contract_expression(
                 active_functions,
             )?;
             conditional_contract_value(&condition, then_value, else_value)
+        }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            let start = concrete_fold_bound(
+                evaluate_predicate_contract_expression(
+                    values,
+                    memory,
+                    assumptions,
+                    start,
+                    click_function_environment,
+                    active_functions,
+                )?,
+                "start",
+            )?;
+            let end = concrete_fold_bound(
+                evaluate_predicate_contract_expression(
+                    values,
+                    memory,
+                    assumptions,
+                    end,
+                    click_function_environment,
+                    active_functions,
+                )?,
+                "end",
+            )?;
+            let mut value = evaluate_predicate_contract_expression(
+                values,
+                memory,
+                assumptions,
+                initial,
+                click_function_environment,
+                active_functions,
+            )?;
+            for index in concrete_fold_range(start, end)? {
+                let mut fold_values = values.clone();
+                fold_values.insert(accumulator.clone(), value);
+                fold_values.insert(
+                    item.clone(),
+                    CValue::Int32(Bitvector32Term::Constant(index as u32)),
+                );
+                value = evaluate_predicate_contract_expression(
+                    &fold_values,
+                    memory,
+                    assumptions,
+                    body,
+                    click_function_environment,
+                    active_functions,
+                )?;
+            }
+            Ok(value)
         }
         ContractExpression::Call { name, arguments } => evaluate_click_function_call(
             click_function_environment,
@@ -5860,6 +6010,70 @@ fn evaluate_contract_expression_with_environment(
             )?;
             conditional_contract_value(&condition, then_value, else_value)
         }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            let start = concrete_fold_bound(
+                evaluate_contract_expression_with_environment(
+                    parameter_values,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    start,
+                    click_function_environment,
+                    active_functions,
+                )?,
+                "start",
+            )?;
+            let end = concrete_fold_bound(
+                evaluate_contract_expression_with_environment(
+                    parameter_values,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    end,
+                    click_function_environment,
+                    active_functions,
+                )?,
+                "end",
+            )?;
+            let mut value = evaluate_contract_expression_with_environment(
+                parameter_values,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                initial,
+                click_function_environment,
+                active_functions,
+            )?;
+            for index in concrete_fold_range(start, end)? {
+                let mut fold_values = parameter_values.clone();
+                fold_values.insert(accumulator.clone(), value);
+                fold_values.insert(
+                    item.clone(),
+                    CValue::Int32(Bitvector32Term::Constant(index as u32)),
+                );
+                value = evaluate_contract_expression_with_environment(
+                    &fold_values,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    body,
+                    click_function_environment,
+                    active_functions,
+                )?;
+            }
+            Ok(value)
+        }
         ContractExpression::Call { name, arguments } => evaluate_click_function_call(
             click_function_environment,
             name,
@@ -6111,6 +6325,7 @@ enum Token {
     Colon,
     Comma,
     Semicolon,
+    Dot,
     DotDot,
     Arrow,
     EqualEqual,
@@ -6122,6 +6337,7 @@ enum Token {
     Plus,
     Minus,
     Star,
+    Pipe,
 }
 
 struct Parser {
@@ -6987,12 +7203,59 @@ impl Parser {
             ))),
             Some(Token::LParen) => {
                 let expression = self.parse_contract_expression()?;
+                if self.peek() == Some(&Token::DotDot) {
+                    self.position += 1;
+                    let end = self.parse_contract_expression()?;
+                    self.expect(Token::RParen)?;
+                    return self.parse_range_fold(expression, end);
+                }
                 self.expect(Token::RParen)?;
                 Ok(expression)
             }
             Some(token) => Err(self.error(format!("expected contract expression, got {token:?}"))),
             None => Err(self.error("expected contract expression, got end of input")),
         }
+    }
+
+    fn parse_range_fold(
+        &mut self,
+        start: ContractExpression,
+        end: ContractExpression,
+    ) -> Result<ContractExpression, ClickError> {
+        self.expect(Token::Dot)?;
+        let method = self.expect_ident("range method")?;
+        if method != "fold" {
+            return Err(self.error(format!(
+                "unsupported range method `{method}`; expected `fold`"
+            )));
+        }
+
+        self.expect(Token::LParen)?;
+        let initial = self.parse_contract_expression()?;
+        self.expect(Token::Comma)?;
+        self.expect(Token::Pipe)?;
+        let accumulator = self.expect_ident("fold accumulator name")?;
+        self.expect(Token::Comma)?;
+        let item = self.expect_ident("fold item name")?;
+        self.expect(Token::Pipe)?;
+        let body = if self.peek() == Some(&Token::LBrace) {
+            self.position += 1;
+            let body = self.parse_contract_expression()?;
+            self.expect(Token::RBrace)?;
+            body
+        } else {
+            self.parse_contract_expression()?
+        };
+        self.expect(Token::RParen)?;
+
+        Ok(ContractExpression::RangeFold {
+            start: Box::new(start),
+            end: Box::new(end),
+            initial: Box::new(initial),
+            accumulator,
+            item,
+            body: Box::new(body),
+        })
     }
 
     fn parse_ensure_add(&mut self) -> Result<C0Expression, ClickError> {
@@ -7299,6 +7562,18 @@ fn validate_contract_expression_calls(
             validate_contract_expression_calls(then_branch, click_functions, context)?;
             validate_contract_expression_calls(else_branch, click_functions, context)
         }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            validate_contract_expression_calls(start, click_functions, context)?;
+            validate_contract_expression_calls(end, click_functions, context)?;
+            validate_contract_expression_calls(initial, click_functions, context)?;
+            validate_contract_expression_calls(body, click_functions, context)
+        }
         ContractExpression::Call { name, arguments } => {
             let Some(arity) = click_functions.get(name) else {
                 return Err(ClickError::new(format!(
@@ -7362,6 +7637,18 @@ fn contains_old_expression(expression: &ContractExpression) -> bool {
                 || contains_old_expression(then_branch)
                 || contains_old_expression(else_branch)
         }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            contains_old_expression(start)
+                || contains_old_expression(end)
+                || contains_old_expression(initial)
+                || contains_old_expression(body)
+        }
         ContractExpression::Call { arguments, .. } => arguments.iter().any(contains_old_expression),
     }
 }
@@ -7403,6 +7690,18 @@ fn collect_click_function_calls(expression: &ContractExpression, calls: &mut BTr
             collect_click_function_calls_in_proposition(condition, calls);
             collect_click_function_calls(then_branch, calls);
             collect_click_function_calls(else_branch, calls);
+        }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            collect_click_function_calls(start, calls);
+            collect_click_function_calls(end, calls);
+            collect_click_function_calls(initial, calls);
+            collect_click_function_calls(body, calls);
         }
         ContractExpression::Call { name, arguments } => {
             calls.insert(name.clone());
@@ -7524,9 +7823,8 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
                     tokens.push(Token::DotDot);
                     index += 2;
                 } else {
-                    return Err(ClickError::new(format!(
-                        "expected `..`, got `.` at byte offset {index}"
-                    )));
+                    tokens.push(Token::Dot);
+                    index += 1;
                 }
             }
             '+' => {
@@ -7544,6 +7842,10 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
             }
             '*' => {
                 tokens.push(Token::Star);
+                index += 1;
+            }
+            '|' => {
+                tokens.push(Token::Pipe);
                 index += 1;
             }
             '<' => {
