@@ -36,6 +36,19 @@ The important rule is that C state is never ambient in core Click. Surface Click
 is elaborated against a chosen state, and that state becomes an explicit
 `CMemory`, `Pointer`, or `CValue` inside the term.
 
+In `src/lang/click.rs`, invariant elaboration is driven by
+`SpecElaborationContext`. That context carries:
+
+- scalar bindings already elaborated to `SpecExpression`
+- array-ref bindings as explicit `{ memory, pointer }` pairs
+- the memory that current C-looking reads should use
+
+`old(expr)` is not a separate expression language. In loop invariants it
+re-elaborates `expr` under a derived context whose current memory is the
+function-entry memory and whose ordinary variables are rebound to entry values.
+This is what lets `old(count(p, 0, n, x))` lower through the ordinary stdlib
+`count` definition and keep its `.fold` as core Click.
+
 ## C Pointers Versus Click Array Refs
 
 A C pointer says where:
@@ -136,8 +149,13 @@ An old array argument still means the function-entry memory:
 ClickArrayRef { memory: function_entry_memory, pointer: p }
 ```
 
-This is represented in the megakernel with `CSpecExpression` and
-`CSpecProposition`: spec/core forms that can embed current-state C expressions
+More generally, `old(expr)` inside an invariant switches elaboration of `expr`
+to the function-entry context. Current memory reads inside that expression
+become fixed-memory reads, so pure helpers such as `count` do not need a
+separate old-state evaluator.
+
+This is represented in the megakernel with `SpecExpression` and
+`SpecProposition`: spec/core forms that can embed current-state C expressions
 but can also represent pure `if`, `let`, `.fold`, and explicit fixed-memory
 loads. This is why an invariant can unfold `permutation` and then evaluate the
 `.fold` inside stdlib `count` without pretending that the fold is executable C.

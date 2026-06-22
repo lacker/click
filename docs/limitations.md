@@ -30,9 +30,15 @@ unfold(predicate_name);
 
 ## `old(...)` Is Still A Surface Construct
 
-`old(...)` evaluates in the function-entry memory. As an array argument to a
-pure Click function or predicate, `old(p)` becomes an entry-state array ref, so
-`permutation(p, old(p), lo, hi)` has the expected old-vs-current meaning.
+`old(...)` is surface syntax for elaborating an expression in the function-entry
+context. As an array argument to a pure Click function or predicate, `old(p)`
+becomes an entry-state array ref, so `permutation(p, old(p), lo, hi)` has the
+expected old-vs-current meaning.
+
+Loop-invariant lowering now applies that same model to old-state pure
+functions, so `old(count(p, lo, hi, x))` can elaborate through stdlib `count`
+and preserve its `.fold` in core Click. The elaborator still rejects attempts
+to capture non-fixed local spec bindings inside `old(...)`.
 
 There is still no public `ref<int32>` syntax. Array refs are an internal pure
 Click lowering concept for parameters written as `int32 p[]` or `int32* p`.

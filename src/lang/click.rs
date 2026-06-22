@@ -11,10 +11,10 @@ use crate::lang::c::syntax::{self, C0Expression, C0Type};
 use crate::megakernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CExpression, CFunction,
     CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
-    CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CSpecExpression,
-    CSpecMemory, CSpecProposition, CState, CStatement, CValue, ConditionTerm, PathFact, Pointer,
-    PointerOffsetTerm, ProofObligation, Proposition, Sort, Term, Theorem, Variable, c_function,
-    c_function_specification, c_labeled_assert, c_pointer_value, c_seq,
+    CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CState,
+    CStatement, CValue, ConditionTerm, PathFact, Pointer, PointerOffsetTerm, ProofObligation,
+    Proposition, Sort, SpecExpression, SpecMemory, SpecProposition, Term, Theorem, Variable,
+    c_function, c_function_specification, c_labeled_assert, c_pointer_value, c_seq,
     c_while_with_invariant_and_effect_checks,
     prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
@@ -229,21 +229,61 @@ struct ClickArrayRef {
 type ClickArrayRefs = BTreeMap<String, ClickArrayRef>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum InvariantSpecMemory {
-    Current,
-    Fixed(CMemory),
+struct SpecArrayRef {
+    memory: SpecMemory,
+    pointer: SpecExpression,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct InvariantSpecArrayRef {
-    memory: InvariantSpecMemory,
-    pointer: CSpecExpression,
+struct SpecElaborationContext {
+    values: BTreeMap<String, SpecExpression>,
+    array_refs: BTreeMap<String, SpecArrayRef>,
+    current_memory: SpecMemory,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct InvariantSpecEnvironment {
-    values: BTreeMap<String, CSpecExpression>,
-    array_refs: BTreeMap<String, InvariantSpecArrayRef>,
+impl Default for SpecElaborationContext {
+    fn default() -> Self {
+        Self {
+            values: BTreeMap::new(),
+            array_refs: BTreeMap::new(),
+            current_memory: SpecMemory::Current,
+        }
+    }
+}
+
+impl SpecElaborationContext {
+    fn with_current_memory(current_memory: SpecMemory) -> Self {
+        Self {
+            current_memory,
+            ..Self::default()
+        }
+    }
+
+    fn old_state(
+        &self,
+        entry_values: &BTreeMap<String, CValue>,
+        entry_memory: &CMemory,
+    ) -> Result<Self, String> {
+        let mut values = entry_values
+            .iter()
+            .map(|(name, value)| (name.clone(), SpecExpression::Value(value.clone())))
+            .collect::<BTreeMap<_, _>>();
+
+        for (name, value) in &self.values {
+            if !matches!(value, SpecExpression::Value(_)) {
+                return Err(format!(
+                    "`old(...)` cannot capture non-fixed spec value `{name}`: `{value:?}`"
+                ));
+            }
+            values.insert(name.clone(), value.clone());
+        }
+
+        Ok(Self {
+            values,
+            array_refs: BTreeMap::new(),
+            current_memory: SpecMemory::Fixed(entry_memory.clone()),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2352,9 +2392,9 @@ impl AnnotationLowerer<'_> {
                     ))
                 })?;
                 Ok(CLoopInvariantCheck::new(
-                    self.click_proposition_to_c_spec_proposition(
+                    self.click_proposition_to_spec_proposition(
                         &proposition,
-                        &InvariantSpecEnvironment::default(),
+                        &SpecElaborationContext::default(),
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
@@ -2370,35 +2410,35 @@ impl AnnotationLowerer<'_> {
             .collect()
     }
 
-    fn click_proposition_to_c_spec_proposition(
+    fn click_proposition_to_spec_proposition(
         &mut self,
         proposition: &ClickProposition,
-        environment: &InvariantSpecEnvironment,
-    ) -> Result<CSpecProposition, String> {
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecProposition, String> {
         match proposition {
             ClickProposition::Comparison {
                 left,
                 operator,
                 right,
-            } => Ok(CSpecProposition::Comparison {
-                left: self.lower_invariant_contract_expression_to_spec(left, environment)?,
+            } => Ok(SpecProposition::Comparison {
+                left: self.lower_contract_expression_to_spec(left, environment)?,
                 operator: c_comparison_operator(*operator),
-                right: self.lower_invariant_contract_expression_to_spec(right, environment)?,
+                right: self.lower_contract_expression_to_spec(right, environment)?,
             }),
-            ClickProposition::And(left, right) => Ok(CSpecProposition::And(
-                Box::new(self.click_proposition_to_c_spec_proposition(left, environment)?),
-                Box::new(self.click_proposition_to_c_spec_proposition(right, environment)?),
+            ClickProposition::And(left, right) => Ok(SpecProposition::And(
+                Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
+                Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
             )),
-            ClickProposition::Or(left, right) => Ok(CSpecProposition::Or(
-                Box::new(self.click_proposition_to_c_spec_proposition(left, environment)?),
-                Box::new(self.click_proposition_to_c_spec_proposition(right, environment)?),
+            ClickProposition::Or(left, right) => Ok(SpecProposition::Or(
+                Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
+                Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
             )),
-            ClickProposition::Not(body) => Ok(CSpecProposition::Not(Box::new(
-                self.click_proposition_to_c_spec_proposition(body, environment)?,
+            ClickProposition::Not(body) => Ok(SpecProposition::Not(Box::new(
+                self.click_proposition_to_spec_proposition(body, environment)?,
             ))),
-            ClickProposition::Implies(left, right) => Ok(CSpecProposition::Implies(
-                Box::new(self.click_proposition_to_c_spec_proposition(left, environment)?),
-                Box::new(self.click_proposition_to_c_spec_proposition(right, environment)?),
+            ClickProposition::Implies(left, right) => Ok(SpecProposition::Implies(
+                Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
+                Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
             )),
             ClickProposition::ForAll { c_type, name, body } => {
                 if *c_type != C0Type::Int32 {
@@ -2409,13 +2449,13 @@ impl AnnotationLowerer<'_> {
                 let mut body_environment = environment.clone();
                 body_environment.values.insert(
                     name.clone(),
-                    CSpecExpression::Value(CValue::Int32(Bitvector32Term::Variable(variable))),
+                    SpecExpression::Value(CValue::Int32(Bitvector32Term::Variable(variable))),
                 );
                 let previous = self.quantified_values.insert(
                     name.clone(),
                     CValue::Int32(Bitvector32Term::Variable(variable)),
                 );
-                let body = self.click_proposition_to_c_spec_proposition(body, &body_environment)?;
+                let body = self.click_proposition_to_spec_proposition(body, &body_environment)?;
                 match previous {
                     Some(value) => {
                         self.quantified_values.insert(name.clone(), value);
@@ -2424,7 +2464,7 @@ impl AnnotationLowerer<'_> {
                         self.quantified_values.remove(name);
                     }
                 }
-                Ok(CSpecProposition::ForAllInt32 {
+                Ok(SpecProposition::ForAllInt32 {
                     name: name.clone(),
                     variable,
                     body: Box::new(body),
@@ -2434,49 +2474,44 @@ impl AnnotationLowerer<'_> {
                 "range proposition methods are not supported in loop invariant spec lowering yet"
                     .to_string(),
             ),
-            ClickProposition::PredicateCall { name, arguments } => {
-                Ok(CSpecProposition::Predicate {
-                    name: name.clone(),
-                    arguments: arguments
-                        .iter()
-                        .map(|argument| {
-                            self.lower_invariant_contract_expression_to_spec(argument, environment)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                })
-            }
+            ClickProposition::PredicateCall { name, arguments } => Ok(SpecProposition::Predicate {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| self.lower_contract_expression_to_spec(argument, environment))
+                    .collect::<Result<Vec<_>, _>>()?,
+            }),
         }
     }
 
-    fn lower_invariant_contract_expression_to_spec(
+    fn lower_contract_expression_to_spec(
         &mut self,
         expression: &ContractExpression,
-        environment: &InvariantSpecEnvironment,
-    ) -> Result<CSpecExpression, String> {
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecExpression, String> {
         match expression {
             ContractExpression::Current(expression) => {
-                self.lower_current_invariant_c_expression_to_spec(expression, environment)
+                self.lower_current_c_expression_to_spec(expression, environment)
             }
-            ContractExpression::Old(expression) => Ok(CSpecExpression::Value(
-                self.evaluate_old_invariant_contract_expression_in_spec_environment(
-                    expression,
-                    environment,
-                )?,
+            ContractExpression::Old(expression) => {
+                let old_environment =
+                    environment.old_state(&self.entry_values, self.entry_state.memory())?;
+                self.lower_contract_expression_to_spec(expression, &old_environment)
+            }
+            ContractExpression::Add(left, right) => Ok(SpecExpression::Add(
+                Box::new(self.lower_contract_expression_to_spec(left, environment)?),
+                Box::new(self.lower_contract_expression_to_spec(right, environment)?),
             )),
-            ContractExpression::Add(left, right) => Ok(CSpecExpression::Add(
-                Box::new(self.lower_invariant_contract_expression_to_spec(left, environment)?),
-                Box::new(self.lower_invariant_contract_expression_to_spec(right, environment)?),
-            )),
-            ContractExpression::Subtract(left, right) => Ok(CSpecExpression::Subtract(
-                Box::new(self.lower_invariant_contract_expression_to_spec(left, environment)?),
-                Box::new(self.lower_invariant_contract_expression_to_spec(right, environment)?),
+            ContractExpression::Subtract(left, right) => Ok(SpecExpression::Subtract(
+                Box::new(self.lower_contract_expression_to_spec(left, environment)?),
+                Box::new(self.lower_contract_expression_to_spec(right, environment)?),
             )),
             ContractExpression::Index(base, index) => {
-                let array_ref = self.lower_invariant_array_ref_to_spec(base, environment)?;
-                let index = self.lower_invariant_contract_expression_to_spec(index, environment)?;
-                Ok(CSpecExpression::MemoryLoad {
-                    memory: c_spec_memory(array_ref.memory),
-                    pointer: Box::new(CSpecExpression::Add(
+                let array_ref = self.lower_array_ref_to_spec(base, environment)?;
+                let index = self.lower_contract_expression_to_spec(index, environment)?;
+                Ok(SpecExpression::MemoryLoad {
+                    memory: array_ref.memory,
+                    pointer: Box::new(SpecExpression::Add(
                         Box::new(array_ref.pointer),
                         Box::new(index),
                     )),
@@ -2486,15 +2521,15 @@ impl AnnotationLowerer<'_> {
                 condition,
                 then_branch,
                 else_branch,
-            } => Ok(CSpecExpression::If {
+            } => Ok(SpecExpression::If {
                 condition: Box::new(
-                    self.click_proposition_to_c_spec_proposition(condition, environment)?,
+                    self.click_proposition_to_spec_proposition(condition, environment)?,
                 ),
                 then_branch: Box::new(
-                    self.lower_invariant_contract_expression_to_spec(then_branch, environment)?,
+                    self.lower_contract_expression_to_spec(then_branch, environment)?,
                 ),
                 else_branch: Box::new(
-                    self.lower_invariant_contract_expression_to_spec(else_branch, environment)?,
+                    self.lower_contract_expression_to_spec(else_branch, environment)?,
                 ),
             }),
             ContractExpression::RangeFold {
@@ -2508,92 +2543,94 @@ impl AnnotationLowerer<'_> {
                 let mut body_environment = environment.clone();
                 body_environment.values.insert(
                     accumulator.clone(),
-                    CSpecExpression::CExpression(CExpression::Variable(accumulator.clone())),
+                    SpecExpression::CExpression(CExpression::Variable(accumulator.clone())),
                 );
                 body_environment.values.insert(
                     item.clone(),
-                    CSpecExpression::CExpression(CExpression::Variable(item.clone())),
+                    SpecExpression::CExpression(CExpression::Variable(item.clone())),
                 );
-                Ok(CSpecExpression::RangeFold {
-                    start: Box::new(
-                        self.lower_invariant_contract_expression_to_spec(start, environment)?,
-                    ),
-                    end: Box::new(
-                        self.lower_invariant_contract_expression_to_spec(end, environment)?,
-                    ),
+                Ok(SpecExpression::RangeFold {
+                    start: Box::new(self.lower_contract_expression_to_spec(start, environment)?),
+                    end: Box::new(self.lower_contract_expression_to_spec(end, environment)?),
                     initial: Box::new(
-                        self.lower_invariant_contract_expression_to_spec(initial, environment)?,
+                        self.lower_contract_expression_to_spec(initial, environment)?,
                     ),
                     accumulator: accumulator.clone(),
                     item: item.clone(),
                     body: Box::new(
-                        self.lower_invariant_contract_expression_to_spec(body, &body_environment)?,
+                        self.lower_contract_expression_to_spec(body, &body_environment)?,
                     ),
                 })
             }
             ContractExpression::Let { name, value, body } => {
-                let value = self.lower_invariant_contract_expression_to_spec(value, environment)?;
+                let value = self.lower_contract_expression_to_spec(value, environment)?;
                 let mut body_environment = environment.clone();
                 body_environment.values.insert(
                     name.clone(),
-                    CSpecExpression::CExpression(CExpression::Variable(name.clone())),
+                    SpecExpression::CExpression(CExpression::Variable(name.clone())),
                 );
-                Ok(CSpecExpression::Let {
+                Ok(SpecExpression::Let {
                     name: name.clone(),
                     value: Box::new(value),
                     body: Box::new(
-                        self.lower_invariant_contract_expression_to_spec(body, &body_environment)?,
+                        self.lower_contract_expression_to_spec(body, &body_environment)?,
                     ),
                 })
             }
             ContractExpression::Call { name, arguments } => {
-                self.lower_invariant_click_function_call_to_spec(name, arguments, environment)
+                self.lower_click_function_call_to_spec(name, arguments, environment)
             }
         }
     }
 
-    fn lower_current_invariant_c_expression_to_spec(
+    fn lower_current_c_expression_to_spec(
         &self,
         expression: &CExpression,
-        environment: &InvariantSpecEnvironment,
-    ) -> Result<CSpecExpression, String> {
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecExpression, String> {
         match expression {
-            CExpression::Value(value) => Ok(CSpecExpression::Value(value.clone())),
-            CExpression::Variable(name) => {
-                Ok(environment.values.get(name).cloned().unwrap_or_else(|| {
-                    CSpecExpression::CExpression(CExpression::Variable(name.clone()))
-                }))
-            }
-            CExpression::Add(left, right) => Ok(CSpecExpression::Add(
-                Box::new(self.lower_current_invariant_c_expression_to_spec(left, environment)?),
-                Box::new(self.lower_current_invariant_c_expression_to_spec(right, environment)?),
+            CExpression::Value(value) => Ok(SpecExpression::Value(value.clone())),
+            CExpression::Variable(name) => match environment.values.get(name) {
+                Some(value) => Ok(value.clone()),
+                None if matches!(environment.current_memory, SpecMemory::Fixed(_)) => {
+                    if name == "result" {
+                        Err("`result` is not available inside `old(...)`".to_string())
+                    } else {
+                        Err(format!("unknown old-state variable `{name}`"))
+                    }
+                }
+                None => Ok(SpecExpression::CExpression(CExpression::Variable(
+                    name.clone(),
+                ))),
+            },
+            CExpression::Add(left, right) => Ok(SpecExpression::Add(
+                Box::new(self.lower_current_c_expression_to_spec(left, environment)?),
+                Box::new(self.lower_current_c_expression_to_spec(right, environment)?),
             )),
-            CExpression::Subtract(left, right) => Ok(CSpecExpression::Subtract(
-                Box::new(self.lower_current_invariant_c_expression_to_spec(left, environment)?),
-                Box::new(self.lower_current_invariant_c_expression_to_spec(right, environment)?),
+            CExpression::Subtract(left, right) => Ok(SpecExpression::Subtract(
+                Box::new(self.lower_current_c_expression_to_spec(left, environment)?),
+                Box::new(self.lower_current_c_expression_to_spec(right, environment)?),
             )),
             CExpression::Index(base, index) => {
-                let pointer = CSpecExpression::Add(
-                    Box::new(self.lower_current_invariant_c_expression_to_spec(base, environment)?),
-                    Box::new(
-                        self.lower_current_invariant_c_expression_to_spec(index, environment)?,
-                    ),
+                let pointer = SpecExpression::Add(
+                    Box::new(self.lower_current_c_expression_to_spec(base, environment)?),
+                    Box::new(self.lower_current_c_expression_to_spec(index, environment)?),
                 );
-                Ok(CSpecExpression::MemoryLoad {
-                    memory: CSpecMemory::Current,
+                Ok(SpecExpression::MemoryLoad {
+                    memory: environment.current_memory.clone(),
                     pointer: Box::new(pointer),
                 })
             }
-            expression => Ok(CSpecExpression::CExpression(expression.clone())),
+            expression => Ok(SpecExpression::CExpression(expression.clone())),
         }
     }
 
-    fn lower_invariant_click_function_call_to_spec(
+    fn lower_click_function_call_to_spec(
         &mut self,
         name: &str,
         arguments: &[ContractExpression],
-        environment: &InvariantSpecEnvironment,
-    ) -> Result<CSpecExpression, String> {
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecExpression, String> {
         let definition = self
             .click_function_environment
             .get(name)
@@ -2607,132 +2644,95 @@ impl AnnotationLowerer<'_> {
             ));
         }
 
-        let mut function_environment = InvariantSpecEnvironment::default();
+        let mut function_environment =
+            SpecElaborationContext::with_current_memory(environment.current_memory.clone());
         for (parameter, argument) in definition.parameters().iter().zip(arguments) {
             if parameter_is_click_array_ref(parameter) {
                 function_environment.array_refs.insert(
                     parameter.name().to_string(),
-                    self.lower_invariant_array_ref_to_spec(argument, environment)?,
+                    self.lower_array_ref_to_spec(argument, environment)?,
                 );
             } else {
                 function_environment.values.insert(
                     parameter.name().to_string(),
-                    self.lower_invariant_contract_expression_to_spec(argument, environment)?,
+                    self.lower_contract_expression_to_spec(argument, environment)?,
                 );
             }
         }
 
-        self.lower_invariant_contract_expression_to_spec(definition.body(), &function_environment)
+        self.lower_contract_expression_to_spec(definition.body(), &function_environment)
     }
 
-    fn lower_invariant_array_ref_to_spec(
+    fn lower_array_ref_to_spec(
         &mut self,
         expression: &ContractExpression,
-        environment: &InvariantSpecEnvironment,
-    ) -> Result<InvariantSpecArrayRef, String> {
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecArrayRef, String> {
         match expression {
             ContractExpression::Old(expression) => {
-                let pointer_value = self
-                    .evaluate_old_invariant_contract_expression_in_spec_environment(
-                        expression,
-                        environment,
-                    )?;
-                let CValue::Pointer(pointer) = pointer_value else {
-                    return Err(format!(
-                        "array reference expression inside `old(...)` did not evaluate to a pointer: `{pointer_value:?}`"
-                    ));
-                };
-                Ok(InvariantSpecArrayRef {
-                    memory: InvariantSpecMemory::Fixed(self.entry_state.memory().clone()),
-                    pointer: CSpecExpression::Value(CValue::Pointer(pointer)),
-                })
+                let old_environment =
+                    environment.old_state(&self.entry_values, self.entry_state.memory())?;
+                self.lower_array_ref_to_spec(expression, &old_environment)
             }
             ContractExpression::Current(CExpression::Variable(name)) => {
                 if let Some(array_ref) = environment.array_refs.get(name) {
                     return Ok(array_ref.clone());
                 }
-                Ok(InvariantSpecArrayRef {
-                    memory: InvariantSpecMemory::Current,
-                    pointer: self.lower_current_invariant_c_expression_to_spec(
+                Ok(SpecArrayRef {
+                    memory: environment.current_memory.clone(),
+                    pointer: self.lower_current_c_expression_to_spec(
                         &CExpression::Variable(name.clone()),
                         environment,
                     )?,
                 })
             }
             ContractExpression::Add(left, right) => {
-                if let Ok(array_ref) = self.lower_invariant_array_ref_to_spec(left, environment) {
-                    let offset =
-                        self.lower_invariant_contract_expression_to_spec(right, environment)?;
-                    return Ok(InvariantSpecArrayRef {
+                if let Ok(array_ref) = self.lower_array_ref_to_spec(left, environment) {
+                    let offset = self.lower_contract_expression_to_spec(right, environment)?;
+                    return Ok(SpecArrayRef {
                         memory: array_ref.memory,
-                        pointer: CSpecExpression::Add(
-                            Box::new(array_ref.pointer),
-                            Box::new(offset),
-                        ),
+                        pointer: SpecExpression::Add(Box::new(array_ref.pointer), Box::new(offset)),
                     });
                 }
-                if let Ok(array_ref) = self.lower_invariant_array_ref_to_spec(right, environment) {
-                    let offset =
-                        self.lower_invariant_contract_expression_to_spec(left, environment)?;
-                    return Ok(InvariantSpecArrayRef {
+                if let Ok(array_ref) = self.lower_array_ref_to_spec(right, environment) {
+                    let offset = self.lower_contract_expression_to_spec(left, environment)?;
+                    return Ok(SpecArrayRef {
                         memory: array_ref.memory,
-                        pointer: CSpecExpression::Add(
-                            Box::new(array_ref.pointer),
-                            Box::new(offset),
-                        ),
+                        pointer: SpecExpression::Add(Box::new(array_ref.pointer), Box::new(offset)),
                     });
                 }
-                Ok(InvariantSpecArrayRef {
-                    memory: InvariantSpecMemory::Current,
-                    pointer: self
-                        .lower_invariant_contract_expression_to_spec(expression, environment)?,
+                Ok(SpecArrayRef {
+                    memory: environment.current_memory.clone(),
+                    pointer: self.lower_contract_expression_to_spec(expression, environment)?,
                 })
             }
             ContractExpression::Subtract(left, right) => {
-                if let Ok(array_ref) = self.lower_invariant_array_ref_to_spec(left, environment) {
-                    let offset =
-                        self.lower_invariant_contract_expression_to_spec(right, environment)?;
-                    let negative_offset = CSpecExpression::Subtract(
-                        Box::new(CSpecExpression::Value(CValue::Int32(
+                if let Ok(array_ref) = self.lower_array_ref_to_spec(left, environment) {
+                    let offset = self.lower_contract_expression_to_spec(right, environment)?;
+                    let negative_offset = SpecExpression::Subtract(
+                        Box::new(SpecExpression::Value(CValue::Int32(
                             Bitvector32Term::Constant(0),
                         ))),
                         Box::new(offset),
                     );
-                    return Ok(InvariantSpecArrayRef {
+                    return Ok(SpecArrayRef {
                         memory: array_ref.memory,
-                        pointer: CSpecExpression::Add(
+                        pointer: SpecExpression::Add(
                             Box::new(array_ref.pointer),
                             Box::new(negative_offset),
                         ),
                     });
                 }
-                Ok(InvariantSpecArrayRef {
-                    memory: InvariantSpecMemory::Current,
-                    pointer: self
-                        .lower_invariant_contract_expression_to_spec(expression, environment)?,
+                Ok(SpecArrayRef {
+                    memory: environment.current_memory.clone(),
+                    pointer: self.lower_contract_expression_to_spec(expression, environment)?,
                 })
             }
-            _ => Ok(InvariantSpecArrayRef {
-                memory: InvariantSpecMemory::Current,
-                pointer: self
-                    .lower_invariant_contract_expression_to_spec(expression, environment)?,
+            _ => Ok(SpecArrayRef {
+                memory: environment.current_memory.clone(),
+                pointer: self.lower_contract_expression_to_spec(expression, environment)?,
             }),
         }
-    }
-
-    fn evaluate_old_invariant_contract_expression_in_spec_environment(
-        &self,
-        expression: &ContractExpression,
-        environment: &InvariantSpecEnvironment,
-    ) -> Result<CValue, String> {
-        for (name, value) in &environment.values {
-            if !matches!(value, CSpecExpression::Value(_)) {
-                return Err(format!(
-                    "`old(...)` cannot evaluate non-fixed spec value `{name}`: `{value:?}`"
-                ));
-            }
-        }
-        self.evaluate_old_invariant_contract_expression(expression)
     }
 
     fn lower_current_invariant_c_expression(
@@ -2761,105 +2761,6 @@ impl AnnotationLowerer<'_> {
             )),
             expression => Err(format!(
                 "unsupported expression in loop invariant: `{expression:?}`"
-            )),
-        }
-    }
-
-    fn evaluate_old_invariant_contract_expression(
-        &self,
-        expression: &ContractExpression,
-    ) -> Result<CValue, String> {
-        match expression {
-            ContractExpression::Current(expression) => {
-                self.evaluate_old_invariant_c_expression(expression)
-            }
-            ContractExpression::Old(expression) => {
-                self.evaluate_old_invariant_contract_expression(expression)
-            }
-            ContractExpression::Add(left, right) => {
-                let left = self.evaluate_old_invariant_contract_expression(left)?;
-                let right = self.evaluate_old_invariant_contract_expression(right)?;
-                evaluate_postcondition_add(left, right)
-            }
-            ContractExpression::Subtract(left, right) => {
-                let left = self.evaluate_old_invariant_contract_expression(left)?;
-                let right = self.evaluate_old_invariant_contract_expression(right)?;
-                evaluate_postcondition_sub(left, right)
-            }
-            ContractExpression::Index(base, index) => {
-                let base = self.evaluate_old_invariant_contract_expression(base)?;
-                let index = self.evaluate_old_invariant_contract_expression(index)?;
-                let pointer = evaluate_postcondition_pointer_add(base, index)?;
-                Ok(match self.entry_state.memory().load(&pointer) {
-                    crate::megakernel::CExpressionOutcome::Value(value) => value,
-                    _ => CValue::Int32(Bitvector32Term::MemoryLoad(
-                        Box::new(self.entry_state.memory().clone()),
-                        Box::new(pointer),
-                    )),
-                })
-            }
-            ContractExpression::If { .. } => Err(
-                "`if` expressions are not supported in loop invariant old-state evaluation yet"
-                    .to_string(),
-            ),
-            ContractExpression::RangeFold { .. } => Err(
-                "`fold` expressions are not supported in loop invariant old-state evaluation yet"
-                    .to_string(),
-            ),
-            ContractExpression::Let { .. } => Err(
-                "`let` expressions are not supported in loop invariant old-state evaluation yet"
-                    .to_string(),
-            ),
-            ContractExpression::Call { name, arguments } => {
-                let definition = self
-                    .click_function_environment
-                    .get(name)
-                    .ok_or_else(|| format!("unknown function `{name}`"))?;
-                let unfolded = instantiate_click_function_definition(definition, arguments)?;
-                self.evaluate_old_invariant_contract_expression(&unfolded)
-            }
-        }
-    }
-
-    fn evaluate_old_invariant_c_expression(
-        &self,
-        expression: &CExpression,
-    ) -> Result<CValue, String> {
-        match expression {
-            CExpression::Value(value) => Ok(value.clone()),
-            CExpression::Variable(name) if name == "result" => {
-                Err("`result` is not available inside `old(...)`".to_string())
-            }
-            CExpression::Variable(name) => self
-                .quantified_values
-                .get(name)
-                .or_else(|| self.entry_values.get(name))
-                .cloned()
-                .ok_or_else(|| format!("unknown old-state variable `{name}`")),
-            CExpression::Add(left, right) => {
-                let left = self.evaluate_old_invariant_c_expression(left)?;
-                let right = self.evaluate_old_invariant_c_expression(right)?;
-                evaluate_postcondition_add(left, right)
-            }
-            CExpression::Subtract(left, right) => {
-                let left = self.evaluate_old_invariant_c_expression(left)?;
-                let right = self.evaluate_old_invariant_c_expression(right)?;
-                evaluate_postcondition_sub(left, right)
-            }
-            CExpression::Index(base, index) => {
-                let base = self.evaluate_old_invariant_c_expression(base)?;
-                let index = self.evaluate_old_invariant_c_expression(index)?;
-                let pointer = evaluate_postcondition_pointer_add(base, index)?;
-                Ok(match self.entry_state.memory().load(&pointer) {
-                    crate::megakernel::CExpressionOutcome::Value(value) => value,
-                    _ => CValue::Int32(Bitvector32Term::MemoryLoad(
-                        Box::new(self.entry_state.memory().clone()),
-                        Box::new(pointer),
-                    )),
-                })
-            }
-            expression => Err(format!(
-                "unsupported expression inside loop invariant `old(...)`: `{expression:?}`"
             )),
         }
     }
@@ -2970,13 +2871,6 @@ impl AnnotationLowerer<'_> {
                 .collect::<Result<Vec<_>, _>>()
                 .map(CLoopEffect::Mutable),
         }
-    }
-}
-
-fn c_spec_memory(memory: InvariantSpecMemory) -> CSpecMemory {
-    match memory {
-        InvariantSpecMemory::Current => CSpecMemory::Current,
-        InvariantSpecMemory::Fixed(memory) => CSpecMemory::Fixed(memory),
     }
 }
 
@@ -3163,28 +3057,6 @@ fn instantiate_click_predicate_definition(
         .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
         .collect::<BTreeMap<_, _>>();
     substitute_click_proposition(definition.body(), &substitutions)
-}
-
-fn instantiate_click_function_definition(
-    definition: &ClickFunctionDefinition,
-    arguments: &[ContractExpression],
-) -> Result<ContractExpression, String> {
-    if arguments.len() != definition.parameters().len() {
-        return Err(format!(
-            "function `{}` expects {} argument(s), got {}",
-            definition.name(),
-            definition.parameters().len(),
-            arguments.len()
-        ));
-    }
-
-    let substitutions = definition
-        .parameters()
-        .iter()
-        .zip(arguments)
-        .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
-        .collect::<BTreeMap<_, _>>();
-    substitute_contract_expression(definition.body(), &substitutions)
 }
 
 fn substitute_click_proposition(
@@ -8491,7 +8363,9 @@ impl Parser {
             self.position = start;
         }
 
-        if matches!(self.peek(), Some(Token::Ident(_))) && self.peek_next() == Some(&Token::LParen)
+        if matches!(self.peek(), Some(Token::Ident(_)))
+            && self.peek_ident() != Some("old")
+            && self.peek_next() == Some(&Token::LParen)
         {
             let start = self.position;
             let (name, arguments) = self.parse_call_arguments("predicate or function name")?;

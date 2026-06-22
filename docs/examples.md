@@ -104,4 +104,6 @@ of inventing syntax from memory.
   `permutation` proof using bounded execution.
 - `mdtests/loop_stdlib_permutation_invariant.md`: stdlib `permutation` as a
   direct loop invariant using spec lowering for the `.fold` inside `count`.
+- `mdtests/loop_old_count_invariant.md`: old-state stdlib `count` inside a loop
+  invariant, exercising `old(...)` as entry-context spec elaboration.
 - `mdtests/bubble_sort3_two_pass_sorted.md`: loop VCs for sortedness.

@@ -138,82 +138,60 @@ pub enum CComparisonOperator {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum CProposition {
-    Comparison {
-        left: CExpression,
-        operator: CComparisonOperator,
-        right: CExpression,
-    },
-    And(Box<CProposition>, Box<CProposition>),
-    Or(Box<CProposition>, Box<CProposition>),
-    Not(Box<CProposition>),
-    Implies(Box<CProposition>, Box<CProposition>),
-    ForAllInt32 {
-        name: String,
-        variable: Variable,
-        body: Box<CProposition>,
-    },
-    Predicate {
-        name: String,
-        arguments: Vec<CExpression>,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum CSpecMemory {
+pub enum SpecMemory {
     Current,
     Fixed(CMemory),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum CSpecExpression {
+pub enum SpecExpression {
     Value(CValue),
     CExpression(CExpression),
-    Add(Box<CSpecExpression>, Box<CSpecExpression>),
-    Subtract(Box<CSpecExpression>, Box<CSpecExpression>),
+    Add(Box<SpecExpression>, Box<SpecExpression>),
+    Subtract(Box<SpecExpression>, Box<SpecExpression>),
     If {
-        condition: Box<CSpecProposition>,
-        then_branch: Box<CSpecExpression>,
-        else_branch: Box<CSpecExpression>,
+        condition: Box<SpecProposition>,
+        then_branch: Box<SpecExpression>,
+        else_branch: Box<SpecExpression>,
     },
     RangeFold {
-        start: Box<CSpecExpression>,
-        end: Box<CSpecExpression>,
-        initial: Box<CSpecExpression>,
+        start: Box<SpecExpression>,
+        end: Box<SpecExpression>,
+        initial: Box<SpecExpression>,
         accumulator: String,
         item: String,
-        body: Box<CSpecExpression>,
+        body: Box<SpecExpression>,
     },
     Let {
         name: String,
-        value: Box<CSpecExpression>,
-        body: Box<CSpecExpression>,
+        value: Box<SpecExpression>,
+        body: Box<SpecExpression>,
     },
     MemoryLoad {
-        memory: CSpecMemory,
-        pointer: Box<CSpecExpression>,
+        memory: SpecMemory,
+        pointer: Box<SpecExpression>,
     },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum CSpecProposition {
+pub enum SpecProposition {
     Comparison {
-        left: CSpecExpression,
+        left: SpecExpression,
         operator: CComparisonOperator,
-        right: CSpecExpression,
+        right: SpecExpression,
     },
-    And(Box<CSpecProposition>, Box<CSpecProposition>),
-    Or(Box<CSpecProposition>, Box<CSpecProposition>),
-    Not(Box<CSpecProposition>),
-    Implies(Box<CSpecProposition>, Box<CSpecProposition>),
+    And(Box<SpecProposition>, Box<SpecProposition>),
+    Or(Box<SpecProposition>, Box<SpecProposition>),
+    Not(Box<SpecProposition>),
+    Implies(Box<SpecProposition>, Box<SpecProposition>),
     ForAllInt32 {
         name: String,
         variable: Variable,
-        body: Box<CSpecProposition>,
+        body: Box<SpecProposition>,
     },
     Predicate {
         name: String,
-        arguments: Vec<CSpecExpression>,
+        arguments: Vec<SpecExpression>,
     },
 }
 
@@ -258,7 +236,7 @@ pub enum CStatement {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CLoopInvariantCheck {
-    proposition: CSpecProposition,
+    proposition: SpecProposition,
     entry_context: Option<String>,
     preservation_context: Option<String>,
 }
@@ -1060,7 +1038,7 @@ impl CFunction {
 
 impl CLoopInvariantCheck {
     pub fn new(
-        proposition: CSpecProposition,
+        proposition: SpecProposition,
         entry_context: Option<String>,
         preservation_context: Option<String>,
     ) -> Self {
@@ -1071,7 +1049,7 @@ impl CLoopInvariantCheck {
         }
     }
 
-    pub fn proposition(&self) -> &CSpecProposition {
+    pub fn proposition(&self) -> &SpecProposition {
         &self.proposition
     }
 
@@ -5375,7 +5353,7 @@ fn collect_c_statement_bitvector_variables(
                 collect_proposition_bitvector_variables(proposition, variables);
             }
             for check in invariant_checks {
-                collect_c_spec_proposition_bitvector_variables(check.proposition(), variables);
+                collect_spec_proposition_bitvector_variables(check.proposition(), variables);
             }
             for check in effect_checks {
                 collect_loop_effect_bitvector_variables(check.effect(), variables);
@@ -5385,39 +5363,39 @@ fn collect_c_statement_bitvector_variables(
     }
 }
 
-fn collect_c_spec_memory_bitvector_variables(
-    memory: &CSpecMemory,
+fn collect_spec_memory_bitvector_variables(
+    memory: &SpecMemory,
     variables: &mut BTreeSet<Variable>,
 ) {
     match memory {
-        CSpecMemory::Current => {}
-        CSpecMemory::Fixed(memory) => collect_memory_bitvector_variables(memory, variables),
+        SpecMemory::Current => {}
+        SpecMemory::Fixed(memory) => collect_memory_bitvector_variables(memory, variables),
     }
 }
 
-fn collect_c_spec_expression_bitvector_variables(
-    expression: &CSpecExpression,
+fn collect_spec_expression_bitvector_variables(
+    expression: &SpecExpression,
     variables: &mut BTreeSet<Variable>,
 ) {
     match expression {
-        CSpecExpression::Value(value) => collect_c_value_bitvector_variables(value, variables),
-        CSpecExpression::CExpression(expression) => {
+        SpecExpression::Value(value) => collect_c_value_bitvector_variables(value, variables),
+        SpecExpression::CExpression(expression) => {
             collect_c_expression_bitvector_variables(expression, variables);
         }
-        CSpecExpression::Add(left, right) | CSpecExpression::Subtract(left, right) => {
-            collect_c_spec_expression_bitvector_variables(left, variables);
-            collect_c_spec_expression_bitvector_variables(right, variables);
+        SpecExpression::Add(left, right) | SpecExpression::Subtract(left, right) => {
+            collect_spec_expression_bitvector_variables(left, variables);
+            collect_spec_expression_bitvector_variables(right, variables);
         }
-        CSpecExpression::If {
+        SpecExpression::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            collect_c_spec_proposition_bitvector_variables(condition, variables);
-            collect_c_spec_expression_bitvector_variables(then_branch, variables);
-            collect_c_spec_expression_bitvector_variables(else_branch, variables);
+            collect_spec_proposition_bitvector_variables(condition, variables);
+            collect_spec_expression_bitvector_variables(then_branch, variables);
+            collect_spec_expression_bitvector_variables(else_branch, variables);
         }
-        CSpecExpression::RangeFold {
+        SpecExpression::RangeFold {
             start,
             end,
             initial,
@@ -5425,51 +5403,51 @@ fn collect_c_spec_expression_bitvector_variables(
             item: _,
             body,
         } => {
-            collect_c_spec_expression_bitvector_variables(start, variables);
-            collect_c_spec_expression_bitvector_variables(end, variables);
-            collect_c_spec_expression_bitvector_variables(initial, variables);
-            collect_c_spec_expression_bitvector_variables(body, variables);
+            collect_spec_expression_bitvector_variables(start, variables);
+            collect_spec_expression_bitvector_variables(end, variables);
+            collect_spec_expression_bitvector_variables(initial, variables);
+            collect_spec_expression_bitvector_variables(body, variables);
         }
-        CSpecExpression::Let {
+        SpecExpression::Let {
             name: _,
             value,
             body,
         } => {
-            collect_c_spec_expression_bitvector_variables(value, variables);
-            collect_c_spec_expression_bitvector_variables(body, variables);
+            collect_spec_expression_bitvector_variables(value, variables);
+            collect_spec_expression_bitvector_variables(body, variables);
         }
-        CSpecExpression::MemoryLoad { memory, pointer } => {
-            collect_c_spec_memory_bitvector_variables(memory, variables);
-            collect_c_spec_expression_bitvector_variables(pointer, variables);
+        SpecExpression::MemoryLoad { memory, pointer } => {
+            collect_spec_memory_bitvector_variables(memory, variables);
+            collect_spec_expression_bitvector_variables(pointer, variables);
         }
     }
 }
 
-fn collect_c_spec_proposition_bitvector_variables(
-    proposition: &CSpecProposition,
+fn collect_spec_proposition_bitvector_variables(
+    proposition: &SpecProposition,
     variables: &mut BTreeSet<Variable>,
 ) {
     match proposition {
-        CSpecProposition::Comparison { left, right, .. } => {
-            collect_c_spec_expression_bitvector_variables(left, variables);
-            collect_c_spec_expression_bitvector_variables(right, variables);
+        SpecProposition::Comparison { left, right, .. } => {
+            collect_spec_expression_bitvector_variables(left, variables);
+            collect_spec_expression_bitvector_variables(right, variables);
         }
-        CSpecProposition::And(left, right)
-        | CSpecProposition::Or(left, right)
-        | CSpecProposition::Implies(left, right) => {
-            collect_c_spec_proposition_bitvector_variables(left, variables);
-            collect_c_spec_proposition_bitvector_variables(right, variables);
+        SpecProposition::And(left, right)
+        | SpecProposition::Or(left, right)
+        | SpecProposition::Implies(left, right) => {
+            collect_spec_proposition_bitvector_variables(left, variables);
+            collect_spec_proposition_bitvector_variables(right, variables);
         }
-        CSpecProposition::Not(body) => {
-            collect_c_spec_proposition_bitvector_variables(body, variables);
+        SpecProposition::Not(body) => {
+            collect_spec_proposition_bitvector_variables(body, variables);
         }
-        CSpecProposition::ForAllInt32 { variable, body, .. } => {
-            collect_c_spec_proposition_bitvector_variables(body, variables);
+        SpecProposition::ForAllInt32 { variable, body, .. } => {
+            collect_spec_proposition_bitvector_variables(body, variables);
             variables.remove(variable);
         }
-        CSpecProposition::Predicate { arguments, .. } => {
+        SpecProposition::Predicate { arguments, .. } => {
             for argument in arguments {
-                collect_c_spec_expression_bitvector_variables(argument, variables);
+                collect_spec_expression_bitvector_variables(argument, variables);
             }
         }
     }
@@ -6078,7 +6056,7 @@ fn substitute_bitvector_variable_in_c_statement(
             invariant_checks: invariant_checks
                 .iter()
                 .map(|check| CLoopInvariantCheck {
-                    proposition: substitute_bitvector_variable_in_c_spec_proposition(
+                    proposition: substitute_bitvector_variable_in_spec_proposition(
                         check.proposition(),
                         from,
                         to,
@@ -6100,166 +6078,166 @@ fn substitute_bitvector_variable_in_c_statement(
     }
 }
 
-fn substitute_bitvector_variable_in_c_spec_memory(
-    memory: &CSpecMemory,
+fn substitute_bitvector_variable_in_spec_memory(
+    memory: &SpecMemory,
     from: Variable,
     to: &Bitvector32Term,
-) -> CSpecMemory {
+) -> SpecMemory {
     match memory {
-        CSpecMemory::Current => CSpecMemory::Current,
-        CSpecMemory::Fixed(memory) => {
-            CSpecMemory::Fixed(substitute_bitvector_variable_in_memory(memory, from, to))
+        SpecMemory::Current => SpecMemory::Current,
+        SpecMemory::Fixed(memory) => {
+            SpecMemory::Fixed(substitute_bitvector_variable_in_memory(memory, from, to))
         }
     }
 }
 
-fn substitute_bitvector_variable_in_c_spec_expression(
-    expression: &CSpecExpression,
+fn substitute_bitvector_variable_in_spec_expression(
+    expression: &SpecExpression,
     from: Variable,
     to: &Bitvector32Term,
-) -> CSpecExpression {
+) -> SpecExpression {
     match expression {
-        CSpecExpression::Value(value) => {
-            CSpecExpression::Value(substitute_bitvector_variable_in_c_value(value, from, to))
+        SpecExpression::Value(value) => {
+            SpecExpression::Value(substitute_bitvector_variable_in_c_value(value, from, to))
         }
-        CSpecExpression::CExpression(expression) => CSpecExpression::CExpression(
+        SpecExpression::CExpression(expression) => SpecExpression::CExpression(
             substitute_bitvector_variable_in_c_expression(expression, from, to),
         ),
-        CSpecExpression::Add(left, right) => CSpecExpression::Add(
-            Box::new(substitute_bitvector_variable_in_c_spec_expression(
+        SpecExpression::Add(left, right) => SpecExpression::Add(
+            Box::new(substitute_bitvector_variable_in_spec_expression(
                 left, from, to,
             )),
-            Box::new(substitute_bitvector_variable_in_c_spec_expression(
+            Box::new(substitute_bitvector_variable_in_spec_expression(
                 right, from, to,
             )),
         ),
-        CSpecExpression::Subtract(left, right) => CSpecExpression::Subtract(
-            Box::new(substitute_bitvector_variable_in_c_spec_expression(
+        SpecExpression::Subtract(left, right) => SpecExpression::Subtract(
+            Box::new(substitute_bitvector_variable_in_spec_expression(
                 left, from, to,
             )),
-            Box::new(substitute_bitvector_variable_in_c_spec_expression(
+            Box::new(substitute_bitvector_variable_in_spec_expression(
                 right, from, to,
             )),
         ),
-        CSpecExpression::If {
+        SpecExpression::If {
             condition,
             then_branch,
             else_branch,
-        } => CSpecExpression::If {
-            condition: Box::new(substitute_bitvector_variable_in_c_spec_proposition(
+        } => SpecExpression::If {
+            condition: Box::new(substitute_bitvector_variable_in_spec_proposition(
                 condition, from, to,
             )),
-            then_branch: Box::new(substitute_bitvector_variable_in_c_spec_expression(
+            then_branch: Box::new(substitute_bitvector_variable_in_spec_expression(
                 then_branch,
                 from,
                 to,
             )),
-            else_branch: Box::new(substitute_bitvector_variable_in_c_spec_expression(
+            else_branch: Box::new(substitute_bitvector_variable_in_spec_expression(
                 else_branch,
                 from,
                 to,
             )),
         },
-        CSpecExpression::RangeFold {
+        SpecExpression::RangeFold {
             start,
             end,
             initial,
             accumulator,
             item,
             body,
-        } => CSpecExpression::RangeFold {
-            start: Box::new(substitute_bitvector_variable_in_c_spec_expression(
+        } => SpecExpression::RangeFold {
+            start: Box::new(substitute_bitvector_variable_in_spec_expression(
                 start, from, to,
             )),
-            end: Box::new(substitute_bitvector_variable_in_c_spec_expression(
+            end: Box::new(substitute_bitvector_variable_in_spec_expression(
                 end, from, to,
             )),
-            initial: Box::new(substitute_bitvector_variable_in_c_spec_expression(
+            initial: Box::new(substitute_bitvector_variable_in_spec_expression(
                 initial, from, to,
             )),
             accumulator: accumulator.clone(),
             item: item.clone(),
-            body: Box::new(substitute_bitvector_variable_in_c_spec_expression(
+            body: Box::new(substitute_bitvector_variable_in_spec_expression(
                 body, from, to,
             )),
         },
-        CSpecExpression::Let { name, value, body } => CSpecExpression::Let {
+        SpecExpression::Let { name, value, body } => SpecExpression::Let {
             name: name.clone(),
-            value: Box::new(substitute_bitvector_variable_in_c_spec_expression(
+            value: Box::new(substitute_bitvector_variable_in_spec_expression(
                 value, from, to,
             )),
-            body: Box::new(substitute_bitvector_variable_in_c_spec_expression(
+            body: Box::new(substitute_bitvector_variable_in_spec_expression(
                 body, from, to,
             )),
         },
-        CSpecExpression::MemoryLoad { memory, pointer } => CSpecExpression::MemoryLoad {
-            memory: substitute_bitvector_variable_in_c_spec_memory(memory, from, to),
-            pointer: Box::new(substitute_bitvector_variable_in_c_spec_expression(
+        SpecExpression::MemoryLoad { memory, pointer } => SpecExpression::MemoryLoad {
+            memory: substitute_bitvector_variable_in_spec_memory(memory, from, to),
+            pointer: Box::new(substitute_bitvector_variable_in_spec_expression(
                 pointer, from, to,
             )),
         },
     }
 }
 
-fn substitute_bitvector_variable_in_c_spec_proposition(
-    proposition: &CSpecProposition,
+fn substitute_bitvector_variable_in_spec_proposition(
+    proposition: &SpecProposition,
     from: Variable,
     to: &Bitvector32Term,
-) -> CSpecProposition {
+) -> SpecProposition {
     match proposition {
-        CSpecProposition::Comparison {
+        SpecProposition::Comparison {
             left,
             operator,
             right,
-        } => CSpecProposition::Comparison {
-            left: substitute_bitvector_variable_in_c_spec_expression(left, from, to),
+        } => SpecProposition::Comparison {
+            left: substitute_bitvector_variable_in_spec_expression(left, from, to),
             operator: *operator,
-            right: substitute_bitvector_variable_in_c_spec_expression(right, from, to),
+            right: substitute_bitvector_variable_in_spec_expression(right, from, to),
         },
-        CSpecProposition::And(left, right) => CSpecProposition::And(
-            Box::new(substitute_bitvector_variable_in_c_spec_proposition(
+        SpecProposition::And(left, right) => SpecProposition::And(
+            Box::new(substitute_bitvector_variable_in_spec_proposition(
                 left, from, to,
             )),
-            Box::new(substitute_bitvector_variable_in_c_spec_proposition(
+            Box::new(substitute_bitvector_variable_in_spec_proposition(
                 right, from, to,
             )),
         ),
-        CSpecProposition::Or(left, right) => CSpecProposition::Or(
-            Box::new(substitute_bitvector_variable_in_c_spec_proposition(
+        SpecProposition::Or(left, right) => SpecProposition::Or(
+            Box::new(substitute_bitvector_variable_in_spec_proposition(
                 left, from, to,
             )),
-            Box::new(substitute_bitvector_variable_in_c_spec_proposition(
+            Box::new(substitute_bitvector_variable_in_spec_proposition(
                 right, from, to,
             )),
         ),
-        CSpecProposition::Not(body) => CSpecProposition::Not(Box::new(
-            substitute_bitvector_variable_in_c_spec_proposition(body, from, to),
+        SpecProposition::Not(body) => SpecProposition::Not(Box::new(
+            substitute_bitvector_variable_in_spec_proposition(body, from, to),
         )),
-        CSpecProposition::Implies(left, right) => CSpecProposition::Implies(
-            Box::new(substitute_bitvector_variable_in_c_spec_proposition(
+        SpecProposition::Implies(left, right) => SpecProposition::Implies(
+            Box::new(substitute_bitvector_variable_in_spec_proposition(
                 left, from, to,
             )),
-            Box::new(substitute_bitvector_variable_in_c_spec_proposition(
+            Box::new(substitute_bitvector_variable_in_spec_proposition(
                 right, from, to,
             )),
         ),
-        CSpecProposition::ForAllInt32 {
+        SpecProposition::ForAllInt32 {
             name,
             variable,
             body,
-        } if *variable != from => CSpecProposition::ForAllInt32 {
+        } if *variable != from => SpecProposition::ForAllInt32 {
             name: name.clone(),
             variable: *variable,
-            body: Box::new(substitute_bitvector_variable_in_c_spec_proposition(
+            body: Box::new(substitute_bitvector_variable_in_spec_proposition(
                 body, from, to,
             )),
         },
-        CSpecProposition::Predicate { name, arguments } => CSpecProposition::Predicate {
+        SpecProposition::Predicate { name, arguments } => SpecProposition::Predicate {
             name: name.clone(),
             arguments: arguments
                 .iter()
                 .map(|argument| {
-                    substitute_bitvector_variable_in_c_spec_expression(argument, from, to)
+                    substitute_bitvector_variable_in_spec_expression(argument, from, to)
                 })
                 .collect(),
         },
@@ -7137,31 +7115,31 @@ fn assumptions_with_propositions(
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct CPropositionPath {
+struct SpecPropositionPath {
     proposition: Proposition,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct CSpecExpressionPath {
+struct SpecExpressionPath {
     value: CValue,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
 }
 
-fn lower_c_spec_proposition_at_state(
+fn lower_spec_proposition_at_state(
     state: &CState,
-    proposition: &CSpecProposition,
+    proposition: &SpecProposition,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CPropositionPath>> {
+) -> ExecutionResult<Vec<SpecPropositionPath>> {
     match proposition {
-        CSpecProposition::Comparison {
+        SpecProposition::Comparison {
             left,
             operator,
             right,
-        } => lower_c_spec_comparison_proposition_at_state(
+        } => lower_spec_comparison_proposition_at_state(
             state,
             left,
             *operator,
@@ -7169,16 +7147,16 @@ fn lower_c_spec_proposition_at_state(
             assumptions,
             budget,
         ),
-        CSpecProposition::And(left, right) => {
+        SpecProposition::And(left, right) => {
             let mut paths = Vec::new();
-            for left_path in lower_c_spec_proposition_at_state(state, left, assumptions, budget)? {
+            for left_path in lower_spec_proposition_at_state(state, left, assumptions, budget)? {
                 let right_assumptions = assumptions_with_path_context(
                     assumptions,
                     &left_path.facts,
                     &left_path.obligations,
                 );
                 for right_path in
-                    lower_c_spec_proposition_at_state(state, right, &right_assumptions, budget)?
+                    lower_spec_proposition_at_state(state, right, &right_assumptions, budget)?
                 {
                     if let Some((facts, obligations)) = merge_path_facts_and_obligations(
                         &left_path.facts,
@@ -7187,7 +7165,7 @@ fn lower_c_spec_proposition_at_state(
                         &right_path.obligations,
                         assumptions,
                     ) {
-                        paths.push(CPropositionPath {
+                        paths.push(SpecPropositionPath {
                             proposition: Proposition::And(
                                 Box::new(left_path.proposition.clone()),
                                 Box::new(right_path.proposition),
@@ -7200,7 +7178,7 @@ fn lower_c_spec_proposition_at_state(
             }
             Ok(paths)
         }
-        CSpecProposition::Or(left, right) => lower_c_spec_binary_proposition_at_state(
+        SpecProposition::Or(left, right) => lower_spec_binary_proposition_at_state(
             state,
             left,
             right,
@@ -7208,11 +7186,11 @@ fn lower_c_spec_proposition_at_state(
             budget,
             |left, right| Proposition::Or(Box::new(left), Box::new(right)),
         ),
-        CSpecProposition::Not(body) => {
+        SpecProposition::Not(body) => {
             Ok(
-                lower_c_spec_proposition_at_state(state, body, assumptions, budget)?
+                lower_spec_proposition_at_state(state, body, assumptions, budget)?
                     .into_iter()
-                    .map(|path| CPropositionPath {
+                    .map(|path| SpecPropositionPath {
                         proposition: Proposition::Not(Box::new(path.proposition)),
                         facts: path.facts,
                         obligations: path.obligations,
@@ -7220,9 +7198,9 @@ fn lower_c_spec_proposition_at_state(
                     .collect(),
             )
         }
-        CSpecProposition::Implies(left, right) => {
+        SpecProposition::Implies(left, right) => {
             let mut paths = Vec::new();
-            for left_path in lower_c_spec_proposition_at_state(state, left, assumptions, budget)? {
+            for left_path in lower_spec_proposition_at_state(state, left, assumptions, budget)? {
                 let right_assumptions = assumptions_with_path_context(
                     assumptions,
                     &left_path.facts,
@@ -7230,7 +7208,7 @@ fn lower_c_spec_proposition_at_state(
                 )
                 .assume_proposition(left_path.proposition.clone());
                 for right_path in
-                    lower_c_spec_proposition_at_state(state, right, &right_assumptions, budget)?
+                    lower_spec_proposition_at_state(state, right, &right_assumptions, budget)?
                 {
                     let guarded_right_obligations = right_path
                         .obligations
@@ -7250,7 +7228,7 @@ fn lower_c_spec_proposition_at_state(
                         &guarded_right_obligations,
                         assumptions,
                     ) {
-                        paths.push(CPropositionPath {
+                        paths.push(SpecPropositionPath {
                             proposition: Proposition::Implies(
                                 Box::new(left_path.proposition.clone()),
                                 Box::new(right_path.proposition),
@@ -7263,7 +7241,7 @@ fn lower_c_spec_proposition_at_state(
             }
             Ok(paths)
         }
-        CSpecProposition::ForAllInt32 {
+        SpecProposition::ForAllInt32 {
             name,
             variable,
             body,
@@ -7273,9 +7251,9 @@ fn lower_c_spec_proposition_at_state(
                 .locals
                 .set(name.clone(), int32(Bitvector32Term::Variable(*variable)));
             Ok(
-                lower_c_spec_proposition_at_state(&state, body, assumptions, budget)?
+                lower_spec_proposition_at_state(&state, body, assumptions, budget)?
                     .into_iter()
-                    .map(|path| CPropositionPath {
+                    .map(|path| SpecPropositionPath {
                         proposition: Proposition::ForAll {
                             var: *variable,
                             sort: Sort::CInt32,
@@ -7297,26 +7275,25 @@ fn lower_c_spec_proposition_at_state(
                     .collect(),
             )
         }
-        CSpecProposition::Predicate { name, arguments } => {
-            lower_c_spec_predicate_proposition_at_state(state, name, arguments, assumptions, budget)
+        SpecProposition::Predicate { name, arguments } => {
+            lower_spec_predicate_proposition_at_state(state, name, arguments, assumptions, budget)
         }
     }
 }
 
-fn lower_c_spec_binary_proposition_at_state(
+fn lower_spec_binary_proposition_at_state(
     state: &CState,
-    left: &CSpecProposition,
-    right: &CSpecProposition,
+    left: &SpecProposition,
+    right: &SpecProposition,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
     combine: impl Fn(Proposition, Proposition) -> Proposition,
-) -> ExecutionResult<Vec<CPropositionPath>> {
+) -> ExecutionResult<Vec<SpecPropositionPath>> {
     let mut paths = Vec::new();
-    for left_path in lower_c_spec_proposition_at_state(state, left, assumptions, budget)? {
+    for left_path in lower_spec_proposition_at_state(state, left, assumptions, budget)? {
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
-        for right_path in
-            lower_c_spec_proposition_at_state(state, right, &right_assumptions, budget)?
+        for right_path in lower_spec_proposition_at_state(state, right, &right_assumptions, budget)?
         {
             if let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &left_path.facts,
@@ -7325,7 +7302,7 @@ fn lower_c_spec_binary_proposition_at_state(
                 &right_path.obligations,
                 assumptions,
             ) {
-                paths.push(CPropositionPath {
+                paths.push(SpecPropositionPath {
                     proposition: combine(left_path.proposition.clone(), right_path.proposition),
                     facts,
                     obligations,
@@ -7336,20 +7313,19 @@ fn lower_c_spec_binary_proposition_at_state(
     Ok(paths)
 }
 
-fn lower_c_spec_comparison_proposition_at_state(
+fn lower_spec_comparison_proposition_at_state(
     state: &CState,
-    left: &CSpecExpression,
+    left: &SpecExpression,
     operator: CComparisonOperator,
-    right: &CSpecExpression,
+    right: &SpecExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CPropositionPath>> {
+) -> ExecutionResult<Vec<SpecPropositionPath>> {
     let mut paths = Vec::new();
-    for left_path in evaluate_c_spec_expression_paths(state, left, assumptions, budget)? {
+    for left_path in evaluate_spec_expression_paths(state, left, assumptions, budget)? {
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
-        for right_path in
-            evaluate_c_spec_expression_paths(state, right, &right_assumptions, budget)?
+        for right_path in evaluate_spec_expression_paths(state, right, &right_assumptions, budget)?
         {
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &left_path.facts,
@@ -7363,7 +7339,7 @@ fn lower_c_spec_comparison_proposition_at_state(
             if let Some(proposition) =
                 c_value_comparison_proposition(&left_path.value, operator, &right_path.value)
             {
-                paths.push(CPropositionPath {
+                paths.push(SpecPropositionPath {
                     proposition,
                     facts,
                     obligations,
@@ -7374,14 +7350,14 @@ fn lower_c_spec_comparison_proposition_at_state(
     Ok(paths)
 }
 
-fn lower_c_spec_predicate_proposition_at_state(
+fn lower_spec_predicate_proposition_at_state(
     state: &CState,
     name: &str,
-    arguments: &[CSpecExpression],
+    arguments: &[SpecExpression],
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CPropositionPath>> {
-    let mut paths = vec![CPropositionPath {
+) -> ExecutionResult<Vec<SpecPropositionPath>> {
+    let mut paths = vec![SpecPropositionPath {
         proposition: Proposition::Predicate {
             name: name.to_string(),
             arguments: vec![Term::CMemory(state.memory().clone())],
@@ -7391,8 +7367,7 @@ fn lower_c_spec_predicate_proposition_at_state(
     }];
 
     for argument in arguments {
-        let argument_paths =
-            evaluate_c_spec_expression_paths(state, argument, assumptions, budget)?;
+        let argument_paths = evaluate_spec_expression_paths(state, argument, assumptions, budget)?;
         let mut next_paths = Vec::new();
         for prefix_path in paths {
             let path_assumptions = assumptions_with_path_context(
@@ -7418,7 +7393,7 @@ fn lower_c_spec_predicate_proposition_at_state(
                     unreachable!("predicate lowering should carry predicate propositions")
                 };
                 arguments.push(Term::CValue(argument_path.value.clone()));
-                next_paths.push(CPropositionPath {
+                next_paths.push(SpecPropositionPath {
                     proposition: Proposition::Predicate { name, arguments },
                     facts,
                     obligations,
@@ -7431,29 +7406,29 @@ fn lower_c_spec_predicate_proposition_at_state(
     Ok(paths)
 }
 
-fn evaluate_c_spec_expression_paths(
+fn evaluate_spec_expression_paths(
     state: &CState,
-    expression: &CSpecExpression,
+    expression: &SpecExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CSpecExpressionPath>> {
+) -> ExecutionResult<Vec<SpecExpressionPath>> {
     budget.consume_expression_step()?;
     let paths = match expression {
-        CSpecExpression::Value(value) => vec![CSpecExpressionPath {
+        SpecExpression::Value(value) => vec![SpecExpressionPath {
             value: value.clone(),
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
-        CSpecExpression::CExpression(expression) => {
+        SpecExpression::CExpression(expression) => {
             evaluate_c_expression_paths(state, expression, assumptions, budget)?
                 .into_iter()
                 .filter_map(c_expression_path_value)
                 .collect()
         }
-        CSpecExpression::Add(left, right) => {
-            evaluate_c_spec_add_paths(state, left, right, assumptions, budget)?
+        SpecExpression::Add(left, right) => {
+            evaluate_spec_add_paths(state, left, right, assumptions, budget)?
         }
-        CSpecExpression::Subtract(left, right) => evaluate_c_spec_int32_binary_paths(
+        SpecExpression::Subtract(left, right) => evaluate_spec_int32_binary_paths(
             state,
             left,
             right,
@@ -7463,11 +7438,11 @@ fn evaluate_c_spec_expression_paths(
                 apply_c_int32_subtract(left, right, facts, obligations, assumptions)
             },
         )?,
-        CSpecExpression::If {
+        SpecExpression::If {
             condition,
             then_branch,
             else_branch,
-        } => evaluate_c_spec_if_paths(
+        } => evaluate_spec_if_paths(
             state,
             condition,
             then_branch,
@@ -7475,14 +7450,14 @@ fn evaluate_c_spec_expression_paths(
             assumptions,
             budget,
         )?,
-        CSpecExpression::RangeFold {
+        SpecExpression::RangeFold {
             start,
             end,
             initial,
             accumulator,
             item,
             body,
-        } => evaluate_c_spec_range_fold_paths(
+        } => evaluate_spec_range_fold_paths(
             state,
             start,
             end,
@@ -7493,9 +7468,9 @@ fn evaluate_c_spec_expression_paths(
             assumptions,
             budget,
         )?,
-        CSpecExpression::Let { name, value, body } => {
+        SpecExpression::Let { name, value, body } => {
             let mut paths = Vec::new();
-            for value_path in evaluate_c_spec_expression_paths(state, value, assumptions, budget)? {
+            for value_path in evaluate_spec_expression_paths(state, value, assumptions, budget)? {
                 let mut body_state = state.clone();
                 body_state
                     .locals
@@ -7506,7 +7481,7 @@ fn evaluate_c_spec_expression_paths(
                     &value_path.obligations,
                 );
                 for body_path in
-                    evaluate_c_spec_expression_paths(&body_state, body, &body_assumptions, budget)?
+                    evaluate_spec_expression_paths(&body_state, body, &body_assumptions, budget)?
                 {
                     if let Some((facts, obligations)) = merge_path_facts_and_obligations(
                         &value_path.facts,
@@ -7515,7 +7490,7 @@ fn evaluate_c_spec_expression_paths(
                         &body_path.obligations,
                         assumptions,
                     ) {
-                        paths.push(CSpecExpressionPath {
+                        paths.push(SpecExpressionPath {
                             value: body_path.value,
                             facts,
                             obligations,
@@ -7525,17 +7500,16 @@ fn evaluate_c_spec_expression_paths(
             }
             paths
         }
-        CSpecExpression::MemoryLoad { memory, pointer } => {
+        SpecExpression::MemoryLoad { memory, pointer } => {
             let mut paths = Vec::new();
-            for pointer_path in
-                evaluate_c_spec_expression_paths(state, pointer, assumptions, budget)?
+            for pointer_path in evaluate_spec_expression_paths(state, pointer, assumptions, budget)?
             {
                 let CValue::Pointer(pointer) = pointer_path.value else {
                     continue;
                 };
                 let memory = match memory {
-                    CSpecMemory::Current => state.memory(),
-                    CSpecMemory::Fixed(memory) => memory,
+                    SpecMemory::Current => state.memory(),
+                    SpecMemory::Fixed(memory) => memory,
                 };
                 paths.extend(
                     evaluate_c_memory_load_paths(
@@ -7557,30 +7531,29 @@ fn evaluate_c_spec_expression_paths(
     Ok(paths)
 }
 
-fn c_expression_path_value(path: CExpressionPath) -> Option<CSpecExpressionPath> {
+fn c_expression_path_value(path: CExpressionPath) -> Option<SpecExpressionPath> {
     let CExpressionOutcome::Value(value) = path.outcome else {
         return None;
     };
-    Some(CSpecExpressionPath {
+    Some(SpecExpressionPath {
         value,
         facts: path.facts,
         obligations: path.obligations,
     })
 }
 
-fn evaluate_c_spec_add_paths(
+fn evaluate_spec_add_paths(
     state: &CState,
-    left: &CSpecExpression,
-    right: &CSpecExpression,
+    left: &SpecExpression,
+    right: &SpecExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CSpecExpressionPath>> {
+) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
-    for left_path in evaluate_c_spec_expression_paths(state, left, assumptions, budget)? {
+    for left_path in evaluate_spec_expression_paths(state, left, assumptions, budget)? {
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
-        for right_path in
-            evaluate_c_spec_expression_paths(state, right, &right_assumptions, budget)?
+        for right_path in evaluate_spec_expression_paths(state, right, &right_assumptions, budget)?
         {
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &left_path.facts,
@@ -7607,10 +7580,10 @@ fn evaluate_c_spec_add_paths(
     Ok(paths)
 }
 
-fn evaluate_c_spec_int32_binary_paths(
+fn evaluate_spec_int32_binary_paths(
     state: &CState,
-    left: &CSpecExpression,
-    right: &CSpecExpression,
+    left: &SpecExpression,
+    right: &SpecExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
     apply: impl Fn(
@@ -7619,16 +7592,15 @@ fn evaluate_c_spec_int32_binary_paths(
         Vec<PathFact>,
         Vec<ProofObligation>,
     ) -> Vec<CExpressionPath>,
-) -> ExecutionResult<Vec<CSpecExpressionPath>> {
+) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
-    for left_path in evaluate_c_spec_expression_paths(state, left, assumptions, budget)? {
+    for left_path in evaluate_spec_expression_paths(state, left, assumptions, budget)? {
         let CValue::Int32(left) = left_path.value else {
             continue;
         };
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
-        for right_path in
-            evaluate_c_spec_expression_paths(state, right, &right_assumptions, budget)?
+        for right_path in evaluate_spec_expression_paths(state, right, &right_assumptions, budget)?
         {
             let CValue::Int32(right) = right_path.value else {
                 continue;
@@ -7652,17 +7624,16 @@ fn evaluate_c_spec_int32_binary_paths(
     Ok(paths)
 }
 
-fn evaluate_c_spec_if_paths(
+fn evaluate_spec_if_paths(
     state: &CState,
-    condition: &CSpecProposition,
-    then_branch: &CSpecExpression,
-    else_branch: &CSpecExpression,
+    condition: &SpecProposition,
+    then_branch: &SpecExpression,
+    else_branch: &SpecExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CSpecExpressionPath>> {
+) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
-    for condition_path in lower_c_spec_proposition_at_state(state, condition, assumptions, budget)?
-    {
+    for condition_path in lower_spec_proposition_at_state(state, condition, assumptions, budget)? {
         let branch_assumptions = assumptions_with_path_context(
             assumptions,
             &condition_path.facts,
@@ -7681,19 +7652,19 @@ fn evaluate_c_spec_if_paths(
 
         let branch_paths = match condition_truth {
             Some(true) => {
-                evaluate_c_spec_expression_paths(state, then_branch, &branch_assumptions, budget)?
+                evaluate_spec_expression_paths(state, then_branch, &branch_assumptions, budget)?
             }
             Some(false) => {
-                evaluate_c_spec_expression_paths(state, else_branch, &branch_assumptions, budget)?
+                evaluate_spec_expression_paths(state, else_branch, &branch_assumptions, budget)?
             }
             None => {
-                let then_paths = evaluate_c_spec_expression_paths(
+                let then_paths = evaluate_spec_expression_paths(
                     state,
                     then_branch,
                     &branch_assumptions,
                     budget,
                 )?;
-                let else_paths = evaluate_c_spec_expression_paths(
+                let else_paths = evaluate_spec_expression_paths(
                     state,
                     else_branch,
                     &branch_assumptions,
@@ -7711,14 +7682,14 @@ fn evaluate_c_spec_if_paths(
                         ) else {
                             continue;
                         };
-                        let Some(value) = conditional_c_spec_value(
+                        let Some(value) = conditional_spec_value(
                             &condition_path.proposition,
                             then_path.value.clone(),
                             else_path.value.clone(),
                         ) else {
                             continue;
                         };
-                        branch_paths.push(CSpecExpressionPath {
+                        branch_paths.push(SpecExpressionPath {
                             value,
                             facts,
                             obligations,
@@ -7737,7 +7708,7 @@ fn evaluate_c_spec_if_paths(
                 &branch_path.obligations,
                 assumptions,
             ) {
-                paths.push(CSpecExpressionPath {
+                paths.push(SpecExpressionPath {
                     value: branch_path.value,
                     facts,
                     obligations,
@@ -7748,25 +7719,25 @@ fn evaluate_c_spec_if_paths(
     Ok(paths)
 }
 
-fn evaluate_c_spec_range_fold_paths(
+fn evaluate_spec_range_fold_paths(
     state: &CState,
-    start: &CSpecExpression,
-    end: &CSpecExpression,
-    initial: &CSpecExpression,
+    start: &SpecExpression,
+    end: &SpecExpression,
+    initial: &SpecExpression,
     accumulator: &str,
     item: &str,
-    body: &CSpecExpression,
+    body: &SpecExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CSpecExpressionPath>> {
+) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
-    for start_path in evaluate_c_spec_expression_paths(state, start, assumptions, budget)? {
+    for start_path in evaluate_spec_expression_paths(state, start, assumptions, budget)? {
         let CValue::Int32(start) = start_path.value else {
             continue;
         };
         let start_assumptions =
             assumptions_with_path_context(assumptions, &start_path.facts, &start_path.obligations);
-        for end_path in evaluate_c_spec_expression_paths(state, end, &start_assumptions, budget)? {
+        for end_path in evaluate_spec_expression_paths(state, end, &start_assumptions, budget)? {
             let CValue::Int32(end) = end_path.value else {
                 continue;
             };
@@ -7782,7 +7753,7 @@ fn evaluate_c_spec_range_fold_paths(
             let bound_assumptions =
                 assumptions_with_path_context(assumptions, &bound_facts, &bound_obligations);
             for initial_path in
-                evaluate_c_spec_expression_paths(state, initial, &bound_assumptions, budget)?
+                evaluate_spec_expression_paths(state, initial, &bound_assumptions, budget)?
             {
                 let Some((facts, obligations)) = merge_path_facts_and_obligations(
                     &bound_facts,
@@ -7793,7 +7764,7 @@ fn evaluate_c_spec_range_fold_paths(
                 ) else {
                     continue;
                 };
-                let Some(path) = evaluate_c_spec_range_fold_body_path(
+                let Some(path) = evaluate_spec_range_fold_body_path(
                     state,
                     start.clone(),
                     end.clone(),
@@ -7816,32 +7787,32 @@ fn evaluate_c_spec_range_fold_paths(
     Ok(paths)
 }
 
-fn evaluate_c_spec_range_fold_body_path(
+fn evaluate_spec_range_fold_body_path(
     state: &CState,
     start: Bitvector32Term,
     end: Bitvector32Term,
     initial: CValue,
     accumulator: &str,
     item: &str,
-    body: &CSpecExpression,
+    body: &SpecExpression,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Option<CSpecExpressionPath>> {
+) -> ExecutionResult<Option<SpecExpressionPath>> {
     match (start.as_const(), end.as_const()) {
         (Some(start), Some(end)) => {
             let mut value = initial;
             let mut facts = facts;
             let mut obligations = obligations;
-            for index in concrete_c_spec_fold_range(start as i32, end as i32) {
+            for index in concrete_spec_fold_range(start as i32, end as i32) {
                 let mut body_state = state.clone();
                 body_state.locals.set(accumulator.to_string(), value);
                 body_state.locals.set(item.to_string(), int32(index as u32));
                 let body_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
                 let mut body_paths =
-                    evaluate_c_spec_expression_paths(&body_state, body, &body_assumptions, budget)?;
+                    evaluate_spec_expression_paths(&body_state, body, &body_assumptions, budget)?;
                 let Some(body_path) = body_paths.pop() else {
                     return Ok(None);
                 };
@@ -7861,7 +7832,7 @@ fn evaluate_c_spec_range_fold_body_path(
                 facts = next_facts;
                 obligations = next_obligations;
             }
-            Ok(Some(CSpecExpressionPath {
+            Ok(Some(SpecExpressionPath {
                 value,
                 facts,
                 obligations,
@@ -7871,20 +7842,18 @@ fn evaluate_c_spec_range_fold_body_path(
             let mut body_state = state.clone();
             body_state.locals.set(
                 accumulator.to_string(),
-                int32(Bitvector32Term::Variable(c_spec_fold_bound_variable(
+                int32(Bitvector32Term::Variable(spec_fold_bound_variable(
                     accumulator,
                     0,
                 ))),
             );
             body_state.locals.set(
                 item.to_string(),
-                int32(Bitvector32Term::Variable(c_spec_fold_bound_variable(
-                    item, 1,
-                ))),
+                int32(Bitvector32Term::Variable(spec_fold_bound_variable(item, 1))),
             );
             let body_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
             let mut body_paths =
-                evaluate_c_spec_expression_paths(&body_state, body, &body_assumptions, budget)?;
+                evaluate_spec_expression_paths(&body_state, body, &body_assumptions, budget)?;
             let Some(body_path) = body_paths.pop() else {
                 return Ok(None);
             };
@@ -7900,7 +7869,7 @@ fn evaluate_c_spec_range_fold_body_path(
             ) else {
                 return Ok(None);
             };
-            let Some(value) = symbolic_c_spec_range_fold_value(
+            let Some(value) = symbolic_spec_range_fold_value(
                 start,
                 end,
                 initial,
@@ -7910,7 +7879,7 @@ fn evaluate_c_spec_range_fold_body_path(
             ) else {
                 return Ok(None);
             };
-            Ok(Some(CSpecExpressionPath {
+            Ok(Some(SpecExpressionPath {
                 value,
                 facts,
                 obligations,
@@ -7919,7 +7888,7 @@ fn evaluate_c_spec_range_fold_body_path(
     }
 }
 
-fn concrete_c_spec_fold_range(start: i32, end: i32) -> std::ops::Range<i32> {
+fn concrete_spec_fold_range(start: i32, end: i32) -> std::ops::Range<i32> {
     if start <= end {
         start..end
     } else {
@@ -7927,7 +7896,7 @@ fn concrete_c_spec_fold_range(start: i32, end: i32) -> std::ops::Range<i32> {
     }
 }
 
-fn c_spec_fold_bound_variable(name: &str, salt: u64) -> Variable {
+fn spec_fold_bound_variable(name: &str, salt: u64) -> Variable {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ salt;
     for byte in name.bytes() {
         hash ^= u64::from(byte);
@@ -7936,7 +7905,7 @@ fn c_spec_fold_bound_variable(name: &str, salt: u64) -> Variable {
     Variable(3_000_000 + (hash % 1_000_000_000))
 }
 
-fn symbolic_c_spec_range_fold_value(
+fn symbolic_spec_range_fold_value(
     start: Bitvector32Term,
     end: Bitvector32Term,
     initial: CValue,
@@ -7954,13 +7923,13 @@ fn symbolic_c_spec_range_fold_value(
         start,
         end,
         initial,
-        c_spec_fold_bound_variable(accumulator, 0),
-        c_spec_fold_bound_variable(item, 1),
+        spec_fold_bound_variable(accumulator, 0),
+        spec_fold_bound_variable(item, 1),
         body,
     )))
 }
 
-fn conditional_c_spec_value(
+fn conditional_spec_value(
     proposition: &Proposition,
     then_value: CValue,
     else_value: CValue,
@@ -10399,7 +10368,7 @@ fn collect_invariant_check_obligations(
         for (facts, obligations) in contexts {
             let effective_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
-            for path in lower_c_spec_proposition_at_state(
+            for path in lower_spec_proposition_at_state(
                 state,
                 check.proposition(),
                 &effective_assumptions,
@@ -10833,7 +10802,7 @@ fn assume_invariant_checks(
         for (facts, obligations) in contexts {
             let effective_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
-            for path in lower_c_spec_proposition_at_state(
+            for path in lower_spec_proposition_at_state(
                 state,
                 check.proposition(),
                 &effective_assumptions,

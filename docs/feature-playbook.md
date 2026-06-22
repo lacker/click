@@ -39,7 +39,7 @@ Checklist:
   - requirements
   - predicate bodies
   - outcomes/postconditions
-  - old-state evaluation
+  - old-state spec elaboration
   - loop invariants, or explicitly reject with a clear diagnostic
 - Add mdtests and docs.
 

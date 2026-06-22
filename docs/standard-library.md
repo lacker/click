@@ -75,6 +75,11 @@ direct loop invariant. The invariant and the postcondition both unfold
 `permutation`; the unfolded `count` calls elaborate to pure fold terms over
 explicit current and entry memory snapshots.
 
+`mdtests/loop_old_count_invariant.md` is a focused regression for
+`old(count(...))` inside a loop invariant. It checks that old-state pure
+functions are elaborated through the same stdlib definition rather than through
+a separate eager old-state evaluator.
+
 ## Adding A Library Function
 
 1. Add the definition to `stdlib/prelude.click`.

@@ -29,7 +29,7 @@ In `src/megakernel.rs`:
   equality, overflow, and pointer-offset equality.
 - `CValue`, `Pointer`, `CMemory`, `CState`: C semantic state.
 - `CExpression`, `CStatement`, `CFunction`: lowered C0 syntax.
-- `CSpecExpression`, `CSpecProposition`: pure specification forms used for
+- `SpecExpression`, `SpecProposition`: pure specification forms used for
   state-parametric loop invariants. They can embed current-state C expressions,
   fixed-memory loads, pure `if`, `let`, and `RangeFold`.
 - `Proposition`: proof propositions, C semantic judgments, memory facts, loop
@@ -93,10 +93,16 @@ evaluated in different contexts:
 - loop invariants
 - old-state expressions
 
-Loop invariants should lower to `CSpecProposition`, not `CProposition`.
-`CProposition` is C-expression-shaped; `CSpecProposition` is Click-core-shaped
-and is evaluated at the concrete symbolic state where the loop VC needs the
-invariant.
+Loop invariants lower to `SpecProposition`. This is intentionally
+Click-core-shaped rather than C-expression-shaped, so it can carry pure
+function bodies such as `.fold` and is evaluated at the concrete symbolic state
+where the loop VC needs the invariant.
+
+`SpecElaborationContext` in `src/lang/click.rs` is the current bridge from
+surface Click into that core form. It records scalar spec bindings, Click
+array refs, and the memory used for C-looking reads. In loop invariants,
+`old(expr)` derives a new context with function-entry memory and entry scalar
+values, then elaborates `expr` normally.
 
 When adding a new Click expression or proposition form, search all existing enum
 matches for `ContractExpression` and `ClickProposition`. Missing one context
