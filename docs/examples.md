@@ -102,6 +102,6 @@ of inventing syntax from memory.
 - `mdtests/bubble_sort3_loop_sorted.md`: loop-shaped three-cell sorting.
 - `mdtests/bubble_sort3_loop_permutation.md`: loop-shaped stdlib
   `permutation` proof using bounded execution.
-- `mdtests/loop_stdlib_permutation_invariant.md`: expected-fail target for
-  stdlib `permutation` as a direct loop invariant.
+- `mdtests/loop_stdlib_permutation_invariant.md`: stdlib `permutation` as a
+  direct loop invariant using spec lowering for the `.fold` inside `count`.
 - `mdtests/bubble_sort3_two_pass_sorted.md`: loop VCs for sortedness.

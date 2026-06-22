@@ -18,6 +18,24 @@ Click has three layers:
 The surface layer is convenience syntax. It elaborates C-looking expressions
 into pure values over explicit memory states.
 
+## Surface Versus Core
+
+Surface Click is context-sensitive. A term such as `p[k]` or `old(p)` is not
+itself the final proof object; it still depends on where the term appears.
+
+Core Click is pure and explicit. It may still mention C semantic data, but only
+as values:
+
+```text
+load(memory_snapshot, pointer + k)
+RangeFold(start, end, initial, ...)
+ForAll(var, body)
+```
+
+The important rule is that C state is never ambient in core Click. Surface Click
+is elaborated against a chosen state, and that state becomes an explicit
+`CMemory`, `Pointer`, or `CValue` inside the term.
+
 ## C Pointers Versus Click Array Refs
 
 A C pointer says where:
@@ -95,6 +113,34 @@ permutation(
 
 This is why `permutation` can live in `stdlib/prelude.click`: it is an ordinary
 Click predicate over pure array refs, not a kernel-level permutation concept.
+
+## Loop Invariants
+
+Loop invariants use the same surface-to-core idea, but they are state-parametric.
+The lowered invariant is evaluated at:
+
+1. the pre-loop entry state
+2. the symbolic loop-head state
+3. the post-body preservation state
+
+A current array argument in a loop invariant means the array in whichever loop
+state is being checked:
+
+```text
+ClickArrayRef { memory: loop_state.memory, pointer: p }
+```
+
+An old array argument still means the function-entry memory:
+
+```text
+ClickArrayRef { memory: function_entry_memory, pointer: p }
+```
+
+This is represented in the megakernel with `CSpecExpression` and
+`CSpecProposition`: spec/core forms that can embed current-state C expressions
+but can also represent pure `if`, `let`, `.fold`, and explicit fixed-memory
+loads. This is why an invariant can unfold `permutation` and then evaluate the
+`.fold` inside stdlib `count` without pretending that the fold is executable C.
 
 ## Source Spelling Today
 

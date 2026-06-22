@@ -48,10 +48,10 @@ Pure `.fold` supports concrete unrolling and symbolic `RangeFold` terms. The
 kernel knows useful fold facts for current stdlib `count` proofs, but it is not
 a general induction engine for arbitrary folds.
 
-Loop invariant C lowering cannot yet represent pure Click `.fold` values over
-the current loop memory. This means stdlib `permutation(p, old(p), lo, hi)`
-works for bounded loop execution, but not yet as a direct loop invariant. See
-`mdtests/loop_stdlib_permutation_invariant.md`.
+Loop invariants now elaborate through spec lowering, so unfolded pure Click
+functions can contain `if`, `let`, and `.fold` values over explicit current and
+entry memory snapshots. This supports direct invariants such as
+`permutation(p, old(p), lo, hi)` when the proof unfolds the relevant predicate.
 
 ## Loop Invariants Need Explicit Facts
 

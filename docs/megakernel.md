@@ -29,6 +29,9 @@ In `src/megakernel.rs`:
   equality, overflow, and pointer-offset equality.
 - `CValue`, `Pointer`, `CMemory`, `CState`: C semantic state.
 - `CExpression`, `CStatement`, `CFunction`: lowered C0 syntax.
+- `CSpecExpression`, `CSpecProposition`: pure specification forms used for
+  state-parametric loop invariants. They can embed current-state C expressions,
+  fixed-memory loads, pure `if`, `let`, and `RangeFold`.
 - `Proposition`: proof propositions, C semantic judgments, memory facts, loop
   invariant rules.
 - `Assumptions`: known condition/proposition facts plus deterministic reasoning.
@@ -89,6 +92,11 @@ evaluated in different contexts:
 - postconditions/outcomes
 - loop invariants
 - old-state expressions
+
+Loop invariants should lower to `CSpecProposition`, not `CProposition`.
+`CProposition` is C-expression-shaped; `CSpecProposition` is Click-core-shaped
+and is evaluated at the concrete symbolic state where the loop VC needs the
+invariant.
 
 When adding a new Click expression or proposition form, search all existing enum
 matches for `ContractExpression` and `ClickProposition`. Missing one context

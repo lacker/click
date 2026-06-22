@@ -1,9 +1,9 @@
-# loop invariant cannot yet carry stdlib permutation
+# loop invariant carries stdlib permutation
 
-This captures the current limitation for the direct loop-invariant form of the
-standard-library `permutation` predicate. Unfolding `permutation` reaches
-`count`, which uses `.fold`; loop invariant C lowering cannot yet represent pure
-Click fold values over the current loop memory.
+This checks the direct loop-invariant form of the standard-library
+`permutation` predicate. Unfolding `permutation` reaches `count`, which uses
+`.fold`; loop invariant spec lowering keeps that as pure Click core over
+explicit current and entry memory snapshots.
 
 ```c filename=loop_stdlib_permutation_invariant.c
 int32 loop_stdlib_permutation_invariant(int32 p[3]) {
@@ -32,6 +32,7 @@ int32 loop_stdlib_permutation_invariant(int32 p[3]) {
         symbolic_execute();
         loop_vc(loop 0);
         frame(loop 0);
+        unfold(permutation);
         simp();
         close();
     }
@@ -39,5 +40,5 @@ int32 loop_stdlib_permutation_invariant(int32 p[3]) {
 ```
 
 ```expect
-fail: `fold` expressions are not supported in loop invariant C lowering yet
+pass
 ```
