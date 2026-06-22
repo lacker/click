@@ -30,8 +30,8 @@ In `src/megakernel.rs`:
 - `CValue`, `CType`, `Pointer`, `CMemory`, `CState`: C semantic state,
   including `int32`, `uint8`, pointers, and typed memory loads/stores.
 - `CExpression`, `CStatement`, `CFunction`: lowered C0 syntax.
-- `SpecExpression`, `SpecProposition`: pure specification forms used for
-  state-parametric loop invariants. They can embed current-state C expressions,
+- `SpecExpression`, `SpecProposition`: Kernel Click forms used for
+  state-parametric loop invariants. They can include current-state C fragments,
   fixed-memory loads, pure `if`, `let`, and `RangeFold`.
 - `Proposition`: proof propositions, C semantic judgments, memory facts, loop
   invariant rules.
@@ -94,14 +94,14 @@ evaluated in different contexts:
 - loop invariants
 - old-state expressions
 
-Loop invariants lower to `SpecProposition`. This is intentionally
-Click-core-shaped rather than C-expression-shaped, so it can carry pure
-function bodies such as `.fold` and is evaluated at the concrete symbolic state
-where the loop VC needs the invariant.
+Loop invariants lower to `SpecProposition`. This is intentionally Kernel
+Click-shaped rather than C-fragment-shaped, so it can carry pure function
+bodies such as `.fold` and is evaluated at the concrete symbolic state where
+the loop VC needs the invariant.
 
 `SpecElaborationContext` in `src/lang/click.rs` is the current bridge from
-surface Click into that core form. It records scalar spec bindings, Click
-array refs, and the memory used for C-looking reads. Surface contract
+Surface Click into Kernel Click. It records scalar spec bindings, Click
+array refs, and the memory used for C-fragment reads. Surface contract
 evaluation also uses `ClickArrayRef { memory, pointer, element_type }` so
 `uint8[]` indexing scales by one byte and returns `uint8`. Loop-invariant spec
 lowering mirrors this with typed `SpecArrayRef`, typed `SpecExpression::MemoryLoad`,

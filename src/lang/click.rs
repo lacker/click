@@ -191,7 +191,8 @@ pub enum ClickProposition {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContractExpression {
-    Current(CExpression),
+    /// A C0 expression fragment appearing inside Surface Click.
+    CFragment(CExpression),
     Old(Box<ContractExpression>),
     Add(Box<ContractExpression>, Box<ContractExpression>),
     Subtract(Box<ContractExpression>, Box<ContractExpression>),
@@ -2514,8 +2515,8 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<SpecExpression, String> {
         match expression {
-            ContractExpression::Current(expression) => {
-                self.lower_current_c_expression_to_spec(expression, environment)
+            ContractExpression::CFragment(expression) => {
+                self.lower_c_fragment_to_spec(expression, environment)
             }
             ContractExpression::Old(expression) => {
                 let old_environment =
@@ -2609,7 +2610,7 @@ impl AnnotationLowerer<'_> {
         }
     }
 
-    fn lower_current_c_expression_to_spec(
+    fn lower_c_fragment_to_spec(
         &self,
         expression: &CExpression,
         environment: &SpecElaborationContext,
@@ -2630,22 +2631,20 @@ impl AnnotationLowerer<'_> {
                 ))),
             },
             CExpression::Add(left, right) => Ok(SpecExpression::Add(
-                Box::new(self.lower_current_c_expression_to_spec(left, environment)?),
-                Box::new(self.lower_current_c_expression_to_spec(right, environment)?),
+                Box::new(self.lower_c_fragment_to_spec(left, environment)?),
+                Box::new(self.lower_c_fragment_to_spec(right, environment)?),
             )),
             CExpression::Subtract(left, right) => Ok(SpecExpression::Subtract(
-                Box::new(self.lower_current_c_expression_to_spec(left, environment)?),
-                Box::new(self.lower_current_c_expression_to_spec(right, environment)?),
+                Box::new(self.lower_c_fragment_to_spec(left, environment)?),
+                Box::new(self.lower_c_fragment_to_spec(right, environment)?),
             )),
             CExpression::Index(base, index) => {
                 let element_type = self
                     .c_expression_array_element_type(base, environment)
                     .unwrap_or(CType::Int32);
                 let pointer = SpecExpression::PointerOffset {
-                    pointer: Box::new(self.lower_current_c_expression_to_spec(base, environment)?),
-                    elements: Box::new(
-                        self.lower_current_c_expression_to_spec(index, environment)?,
-                    ),
+                    pointer: Box::new(self.lower_c_fragment_to_spec(base, environment)?),
+                    elements: Box::new(self.lower_c_fragment_to_spec(index, environment)?),
                     byte_width: element_type.byte_width(),
                 };
                 Ok(SpecExpression::MemoryLoad {
@@ -2724,13 +2723,13 @@ impl AnnotationLowerer<'_> {
                     environment.old_state(&self.entry_values, self.entry_state.memory())?;
                 self.lower_array_ref_to_spec(expression, &old_environment)
             }
-            ContractExpression::Current(CExpression::Variable(name)) => {
+            ContractExpression::CFragment(CExpression::Variable(name)) => {
                 if let Some(array_ref) = environment.array_refs.get(name) {
                     return Ok(array_ref.clone());
                 }
                 Ok(SpecArrayRef {
                     memory: environment.current_memory.clone(),
-                    pointer: self.lower_current_c_expression_to_spec(
+                    pointer: self.lower_c_fragment_to_spec(
                         &CExpression::Variable(name.clone()),
                         environment,
                     )?,
@@ -2817,7 +2816,7 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> CType {
         match expression {
-            ContractExpression::Current(CExpression::Variable(name)) => environment
+            ContractExpression::CFragment(CExpression::Variable(name)) => environment
                 .array_refs
                 .get(name)
                 .map(|array_ref| array_ref.element_type)
@@ -3269,12 +3268,12 @@ fn substitute_contract_expression(
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ContractExpression, String> {
     match expression {
-        ContractExpression::Current(CExpression::Variable(name)) => Ok(substitutions
+        ContractExpression::CFragment(CExpression::Variable(name)) => Ok(substitutions
             .get(name)
             .cloned()
             .unwrap_or_else(|| expression.clone())),
-        ContractExpression::Current(expression) => {
-            substitute_current_c_expression_as_contract(expression, substitutions)
+        ContractExpression::CFragment(expression) => {
+            substitute_c_fragment_as_contract(expression, substitutions)
         }
         ContractExpression::Old(expression) => Ok(ContractExpression::Old(Box::new(
             substitute_contract_expression(expression, substitutions)?,
@@ -3339,53 +3338,36 @@ fn substitute_contract_expression(
     }
 }
 
-fn substitute_current_c_expression_as_contract(
+fn substitute_c_fragment_as_contract(
     expression: &CExpression,
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ContractExpression, String> {
     match expression {
-        CExpression::Value(_) => Ok(ContractExpression::Current(expression.clone())),
+        CExpression::Value(_) => Ok(ContractExpression::CFragment(expression.clone())),
         CExpression::Variable(name) => Ok(substitutions
             .get(name)
             .cloned()
-            .unwrap_or_else(|| ContractExpression::Current(expression.clone()))),
+            .unwrap_or_else(|| ContractExpression::CFragment(expression.clone()))),
         CExpression::Add(left, right) => Ok(ContractExpression::Add(
-            Box::new(substitute_current_c_expression_as_contract(
-                left,
-                substitutions,
-            )?),
-            Box::new(substitute_current_c_expression_as_contract(
-                right,
-                substitutions,
-            )?),
+            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
         )),
         CExpression::Subtract(left, right) => Ok(ContractExpression::Subtract(
-            Box::new(substitute_current_c_expression_as_contract(
-                left,
-                substitutions,
-            )?),
-            Box::new(substitute_current_c_expression_as_contract(
-                right,
-                substitutions,
-            )?),
+            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
         )),
         CExpression::Index(base, index) => Ok(ContractExpression::Index(
-            Box::new(substitute_current_c_expression_as_contract(
-                base,
-                substitutions,
-            )?),
-            Box::new(substitute_current_c_expression_as_contract(
-                index,
-                substitutions,
-            )?),
+            Box::new(substitute_c_fragment_as_contract(base, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract(index, substitutions)?),
         )),
-        _ => Ok(ContractExpression::Current(
-            substitute_current_c_expression(expression, substitutions)?,
-        )),
+        _ => Ok(ContractExpression::CFragment(substitute_c_fragment(
+            expression,
+            substitutions,
+        )?)),
     }
 }
 
-fn substitute_current_c_expression(
+fn substitute_c_fragment(
     expression: &CExpression,
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<CExpression, String> {
@@ -3395,86 +3377,85 @@ fn substitute_current_c_expression(
             let Some(substitution) = substitutions.get(name) else {
                 return Ok(expression.clone());
             };
-            contract_expression_as_current_c_expression(substitution).ok_or_else(|| {
+            contract_expression_as_c_fragment(substitution).ok_or_else(|| {
                 format!(
-                    "cannot substitute non-current expression for `{name}` inside C expression `{expression:?}`"
+                    "cannot substitute non-C-fragment expression for `{name}` inside C fragment `{expression:?}`"
                 )
             })
         }
         CExpression::AddressOf(body) => Ok(CExpression::AddressOf(Box::new(
-            substitute_current_c_expression(body, substitutions)?,
+            substitute_c_fragment(body, substitutions)?,
         ))),
         CExpression::LessThan(left, right) => Ok(CExpression::LessThan(
-            Box::new(substitute_current_c_expression(left, substitutions)?),
-            Box::new(substitute_current_c_expression(right, substitutions)?),
+            Box::new(substitute_c_fragment(left, substitutions)?),
+            Box::new(substitute_c_fragment(right, substitutions)?),
         )),
         CExpression::LessEqual(left, right) => Ok(CExpression::LessEqual(
-            Box::new(substitute_current_c_expression(left, substitutions)?),
-            Box::new(substitute_current_c_expression(right, substitutions)?),
+            Box::new(substitute_c_fragment(left, substitutions)?),
+            Box::new(substitute_c_fragment(right, substitutions)?),
         )),
         CExpression::GreaterThan(left, right) => Ok(CExpression::GreaterThan(
-            Box::new(substitute_current_c_expression(left, substitutions)?),
-            Box::new(substitute_current_c_expression(right, substitutions)?),
+            Box::new(substitute_c_fragment(left, substitutions)?),
+            Box::new(substitute_c_fragment(right, substitutions)?),
         )),
         CExpression::GreaterEqual(left, right) => Ok(CExpression::GreaterEqual(
-            Box::new(substitute_current_c_expression(left, substitutions)?),
-            Box::new(substitute_current_c_expression(right, substitutions)?),
+            Box::new(substitute_c_fragment(left, substitutions)?),
+            Box::new(substitute_c_fragment(right, substitutions)?),
         )),
         CExpression::Equal(left, right) => Ok(CExpression::Equal(
-            Box::new(substitute_current_c_expression(left, substitutions)?),
-            Box::new(substitute_current_c_expression(right, substitutions)?),
+            Box::new(substitute_c_fragment(left, substitutions)?),
+            Box::new(substitute_c_fragment(right, substitutions)?),
         )),
         CExpression::NotEqual(left, right) => Ok(CExpression::NotEqual(
-            Box::new(substitute_current_c_expression(left, substitutions)?),
-            Box::new(substitute_current_c_expression(right, substitutions)?),
+            Box::new(substitute_c_fragment(left, substitutions)?),
+            Box::new(substitute_c_fragment(right, substitutions)?),
         )),
-        CExpression::Not(body) => Ok(CExpression::Not(Box::new(substitute_current_c_expression(
+        CExpression::Not(body) => Ok(CExpression::Not(Box::new(substitute_c_fragment(
             body,
             substitutions,
         )?))),
         CExpression::And(left, right) => Ok(CExpression::And(
-            Box::new(substitute_current_c_expression(left, substitutions)?),
-            Box::new(substitute_current_c_expression(right, substitutions)?),
+            Box::new(substitute_c_fragment(left, substitutions)?),
+            Box::new(substitute_c_fragment(right, substitutions)?),
         )),
         CExpression::Or(left, right) => Ok(CExpression::Or(
-            Box::new(substitute_current_c_expression(left, substitutions)?),
-            Box::new(substitute_current_c_expression(right, substitutions)?),
+            Box::new(substitute_c_fragment(left, substitutions)?),
+            Box::new(substitute_c_fragment(right, substitutions)?),
         )),
         CExpression::Add(left, right) => Ok(CExpression::Add(
-            Box::new(substitute_current_c_expression(left, substitutions)?),
-            Box::new(substitute_current_c_expression(right, substitutions)?),
+            Box::new(substitute_c_fragment(left, substitutions)?),
+            Box::new(substitute_c_fragment(right, substitutions)?),
         )),
         CExpression::Subtract(left, right) => Ok(CExpression::Subtract(
-            Box::new(substitute_current_c_expression(left, substitutions)?),
-            Box::new(substitute_current_c_expression(right, substitutions)?),
+            Box::new(substitute_c_fragment(left, substitutions)?),
+            Box::new(substitute_c_fragment(right, substitutions)?),
         )),
-        CExpression::Load(body) => Ok(CExpression::Load(Box::new(
-            substitute_current_c_expression(body, substitutions)?,
-        ))),
+        CExpression::Load(body) => Ok(CExpression::Load(Box::new(substitute_c_fragment(
+            body,
+            substitutions,
+        )?))),
         CExpression::Index(base, index) => Ok(CExpression::Index(
-            Box::new(substitute_current_c_expression(base, substitutions)?),
-            Box::new(substitute_current_c_expression(index, substitutions)?),
+            Box::new(substitute_c_fragment(base, substitutions)?),
+            Box::new(substitute_c_fragment(index, substitutions)?),
         )),
     }
 }
 
-fn contract_expression_as_current_c_expression(
-    expression: &ContractExpression,
-) -> Option<CExpression> {
+fn contract_expression_as_c_fragment(expression: &ContractExpression) -> Option<CExpression> {
     match expression {
-        ContractExpression::Current(expression) => Some(expression.clone()),
+        ContractExpression::CFragment(expression) => Some(expression.clone()),
         ContractExpression::Old(_) => None,
         ContractExpression::Add(left, right) => Some(CExpression::Add(
-            Box::new(contract_expression_as_current_c_expression(left)?),
-            Box::new(contract_expression_as_current_c_expression(right)?),
+            Box::new(contract_expression_as_c_fragment(left)?),
+            Box::new(contract_expression_as_c_fragment(right)?),
         )),
         ContractExpression::Subtract(left, right) => Some(CExpression::Subtract(
-            Box::new(contract_expression_as_current_c_expression(left)?),
-            Box::new(contract_expression_as_current_c_expression(right)?),
+            Box::new(contract_expression_as_c_fragment(left)?),
+            Box::new(contract_expression_as_c_fragment(right)?),
         )),
         ContractExpression::Index(base, index) => Some(CExpression::Index(
-            Box::new(contract_expression_as_current_c_expression(base)?),
-            Box::new(contract_expression_as_current_c_expression(index)?),
+            Box::new(contract_expression_as_c_fragment(base)?),
+            Box::new(contract_expression_as_c_fragment(index)?),
         )),
         ContractExpression::If { .. }
         | ContractExpression::RangeFold { .. }
@@ -3508,8 +3489,8 @@ fn click_proposition_to_c_expression(proposition: &ClickProposition) -> Option<C
             operator,
             right,
         } => {
-            let left = contract_expression_to_current_c_expression(left)?;
-            let right = contract_expression_to_current_c_expression(right)?;
+            let left = contract_expression_to_c_fragment(left)?;
+            let right = contract_expression_to_c_fragment(right)?;
             Some(match operator {
                 ComparisonOperator::Equal => CExpression::Equal(Box::new(left), Box::new(right)),
                 ComparisonOperator::NotEqual => {
@@ -3564,23 +3545,21 @@ fn c_comparison_operator(operator: ComparisonOperator) -> CComparisonOperator {
     }
 }
 
-fn contract_expression_to_current_c_expression(
-    expression: &ContractExpression,
-) -> Option<CExpression> {
+fn contract_expression_to_c_fragment(expression: &ContractExpression) -> Option<CExpression> {
     match expression {
-        ContractExpression::Current(expression) => Some(expression.clone()),
+        ContractExpression::CFragment(expression) => Some(expression.clone()),
         ContractExpression::Old(_) => None,
         ContractExpression::Add(left, right) => Some(CExpression::Add(
-            Box::new(contract_expression_to_current_c_expression(left)?),
-            Box::new(contract_expression_to_current_c_expression(right)?),
+            Box::new(contract_expression_to_c_fragment(left)?),
+            Box::new(contract_expression_to_c_fragment(right)?),
         )),
         ContractExpression::Subtract(left, right) => Some(CExpression::Subtract(
-            Box::new(contract_expression_to_current_c_expression(left)?),
-            Box::new(contract_expression_to_current_c_expression(right)?),
+            Box::new(contract_expression_to_c_fragment(left)?),
+            Box::new(contract_expression_to_c_fragment(right)?),
         )),
         ContractExpression::Index(base, index) => Some(CExpression::Index(
-            Box::new(contract_expression_to_current_c_expression(base)?),
-            Box::new(contract_expression_to_current_c_expression(index)?),
+            Box::new(contract_expression_to_c_fragment(base)?),
+            Box::new(contract_expression_to_c_fragment(index)?),
         )),
         ContractExpression::If { .. }
         | ContractExpression::RangeFold { .. }
@@ -4305,7 +4284,7 @@ impl KernelPropositionLowerer {
         expression: &ContractExpression,
     ) -> Result<CValue, ClickError> {
         match expression {
-            ContractExpression::Current(expression) => {
+            ContractExpression::CFragment(expression) => {
                 self.lower_requirement_c_expression(expression)
             }
             ContractExpression::Old(_) => Err(ClickError::new(
@@ -5595,7 +5574,7 @@ fn evaluate_predicate_contract_expression(
 ) -> Result<CValue, String> {
     let state = CState::new().with_memory(memory.clone());
     match expression {
-        ContractExpression::Current(expression) => {
+        ContractExpression::CFragment(expression) => {
             evaluate_c_contract_expression(values, &state, None, assumptions, expression)
         }
         ContractExpression::Old(_) => {
@@ -7143,7 +7122,7 @@ fn evaluate_contract_expression_with_environment(
     active_functions: &mut BTreeSet<String>,
 ) -> Result<CValue, String> {
     match expression {
-        ContractExpression::Current(expression) => evaluate_c_contract_expression(
+        ContractExpression::CFragment(expression) => evaluate_c_contract_expression(
             parameter_values,
             post_state,
             result,
@@ -7643,7 +7622,7 @@ fn evaluate_contract_array_ref_with_environment(
                 element_type,
             })
         }
-        ContractExpression::Current(CExpression::Variable(name)) => {
+        ContractExpression::CFragment(CExpression::Variable(name)) => {
             if let Some(array_ref) = array_refs.get(name) {
                 return Ok(array_ref.clone());
             }
@@ -7838,7 +7817,7 @@ fn contract_array_ref_element_type(
     expression: &ContractExpression,
 ) -> Option<CType> {
     match expression {
-        ContractExpression::Current(CExpression::Variable(name)) => {
+        ContractExpression::CFragment(CExpression::Variable(name)) => {
             array_refs.get(name).map(|array_ref| array_ref.element_type)
         }
         ContractExpression::Old(expression) => {
@@ -9149,14 +9128,14 @@ impl Parser {
                 Err(self.error("expected contract expression, got `by`"))
             }
             Some(Token::Ident(name)) => {
-                Ok(ContractExpression::Current(CExpression::Variable(name)))
+                Ok(ContractExpression::CFragment(CExpression::Variable(name)))
             }
-            Some(Token::Number(value)) => Ok(ContractExpression::Current(CExpression::Value(
+            Some(Token::Number(value)) => Ok(ContractExpression::CFragment(CExpression::Value(
                 CValue::Int32(Bitvector32Term::Constant(value)),
             ))),
-            Some(Token::CharLiteral(value)) => Ok(ContractExpression::Current(CExpression::Value(
-                CValue::UInt8(Bitvector32Term::Constant(u32::from(value))),
-            ))),
+            Some(Token::CharLiteral(value)) => Ok(ContractExpression::CFragment(
+                CExpression::Value(CValue::UInt8(Bitvector32Term::Constant(u32::from(value)))),
+            )),
             Some(Token::LParen) => {
                 let expression = self.parse_contract_expression()?;
                 if self.peek() == Some(&Token::DotDot) {
@@ -9550,7 +9529,7 @@ fn validate_contract_expression_calls(
     context: &str,
 ) -> Result<(), ClickError> {
     match expression {
-        ContractExpression::Current(_) => Ok(()),
+        ContractExpression::CFragment(_) => Ok(()),
         ContractExpression::Old(body) => {
             validate_contract_expression_calls(body, click_functions, context)
         }
@@ -9643,7 +9622,7 @@ fn validate_if_condition_proposition(
 fn contains_old_expression(expression: &ContractExpression) -> bool {
     match expression {
         ContractExpression::Old(_) => true,
-        ContractExpression::Current(_) => false,
+        ContractExpression::CFragment(_) => false,
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
         | ContractExpression::Index(left, right) => {
@@ -9708,7 +9687,7 @@ fn proposition_contains_old_expression(proposition: &ClickProposition) -> bool {
 
 fn collect_click_function_calls(expression: &ContractExpression, calls: &mut BTreeSet<String>) {
     match expression {
-        ContractExpression::Current(_) => {}
+        ContractExpression::CFragment(_) => {}
         ContractExpression::Old(body) => collect_click_function_calls(body, calls),
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
@@ -10084,7 +10063,7 @@ mod tests {
     "#;
 
     fn current(expression: CExpression) -> ContractExpression {
-        ContractExpression::Current(expression)
+        ContractExpression::CFragment(expression)
     }
 
     fn current_var(name: &str) -> ContractExpression {

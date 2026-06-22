@@ -2,7 +2,8 @@
 
 C0 is this repository's small C subset. It is not a standard language. The
 subset exists so proof features can be developed against a precise target before
-Click grows toward real C.
+Click grows toward real C. When C0 syntax appears inside Surface Click, this
+documentation calls that syntax a **C fragment**.
 
 ## Supported Types
 
@@ -90,7 +91,7 @@ These are not general C features yet:
 - structs, unions, enums
 - unsigned integers other than the narrow `uint8` byte type
 - integer widths other than `int32`
-- multiplication in ordinary C expressions
+- multiplication in ordinary C fragments
 - casts and promotions
 - pointer comparisons beyond the supported equality/range patterns
 - heap allocation

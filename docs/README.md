@@ -7,7 +7,8 @@ the full reference manual.
 If you are a fresh agent, read these in order:
 
 1. [quickstart.md](quickstart.md): how to run the project and add an mdtest.
-2. [c0-subset.md](c0-subset.md): the C fragment Click understands today.
+2. [c0-subset.md](c0-subset.md): the C subset and C fragments Click
+   understands today.
 3. [click-language.md](click-language.md): `.click` syntax and semantics.
 4. [click-core.md](click-core.md): how C values elaborate into pure Click
    values such as array refs.
@@ -39,6 +40,15 @@ prove each guarantee. The system is intentionally small but already supports:
   `count` and `permutation`.
 - Memory-qualified, element-typed Click array refs for pure functions and
   predicates, including `old(p)` as an entry-state array argument.
+
+Use these names consistently:
+
+- **Kernel Click**: the explicit proof core the megakernel reasons about.
+- **Surface Click**: user-written `.click` syntax such as contracts,
+  invariants, pure functions, predicates, `old`, quantifiers, and folds.
+- **C fragments**: pieces of C0 syntax inside Surface Click. They keep C-like
+  local parsing and typing, but Surface Click owns their meaning and elaborates
+  them into Kernel Click.
 
 ## High-Value Commands
 

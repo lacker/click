@@ -2,6 +2,14 @@
 
 Click files are sidecar specifications for C0 sources.
 
+Terminology:
+
+- **Surface Click** is the user-written `.click` language described here.
+- **C fragments** are pieces of C0 syntax inside Surface Click, such as
+  `p[k]`, `x + 1`, and `result == n`.
+- **Kernel Click** is the explicit proof core produced by elaboration. Users
+  normally do not write it directly.
+
 ## File Shape
 
 ```click
@@ -41,7 +49,7 @@ requires disjoint(dst[0..n], src[0..n]);
 right[start..end])` use half-open `int32` element ranges. The byte count is
 derived from the base pointer's element type: four bytes for `int32[]`, one
 byte for `uint8[]`. This `..` syntax is Click contract syntax, not C
-expression syntax.
+fragment syntax.
 
 `requires` can also use Click propositions, but direct memory reads in
 requirements are intentionally limited. If a precondition needs memory reads,
@@ -58,7 +66,7 @@ forall (int32 k) { 0 <= k and k < n implies p[k] == old(p[k]) }
 ```
 
 Do not use C logical operators such as `&&`, `||`, or `!` in Click
-propositions. Those remain C expression syntax.
+propositions. Those remain C-fragment syntax.
 
 Range proposition helpers:
 

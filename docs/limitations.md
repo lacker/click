@@ -48,7 +48,7 @@ expected old-vs-current meaning.
 
 Loop-invariant lowering now applies that same model to old-state pure
 functions, so `old(count(p, lo, hi, x))` can elaborate through stdlib `count`
-and preserve its `.fold` in core Click. The elaborator still rejects attempts
+and preserve its `.fold` in Kernel Click. The elaborator still rejects attempts
 to capture non-fixed local spec bindings inside `old(...)`.
 
 There is still no public `ref<T>` syntax. Array refs are an internal pure Click

@@ -79,7 +79,7 @@ loop 0 {
 names the Nth `while` loop.
 
 `assert` is a one-shot ghost check at the target statement. It currently accepts
-the executable proposition fragment over current-state C0 expressions.
+the executable proposition fragment over current-state C fragments.
 
 `invariant` generates loop-entry, preservation, and exit obligations. Invariant
 proof blocks can use `by auto;` or an unfold-only script such as:

@@ -20,7 +20,9 @@ will have exactly the names used here.
 
 The current `.click` language exposes function-level `requires` clauses and
 per-guarantee `ensures ... by auto;` clauses, backed by native C symbolic
-execution and specification-checking axioms in the megakernel.
+execution and specification-checking axioms in the megakernel. Surface Click
+may contain **C fragments**: pieces of C0 syntax that keep C-like local syntax
+and typing but elaborate into explicit Kernel Click.
 
 ## Competitor Families
 
@@ -44,7 +46,7 @@ new proof workflow concepts too early.
 
 | Capability | Common source | Click axiom family | Click tactic surface | Current mdtest |
 | --- | --- | --- | --- | --- |
-| Scalar execution | symbolic evaluators, SMT-backed automation | C expression/statement execution | `auto`, later `symbolic_execute` | `mdtests/scalar.md`, `mdtests/argument_result.md`, `mdtests/max_symbolic.md` |
+| Scalar execution | symbolic evaluators, SMT-backed automation | C-fragment/statement execution | `auto`, later `symbolic_execute` | `mdtests/scalar.md`, `mdtests/argument_result.md`, `mdtests/max_symbolic.md` |
 | C undefined behavior | CBMC, Frama-C/WP, UBSan-style checks | undefined behavior-aware C execution | `auto`, later `check_undefined_behavior` or verification-condition output | `mdtests/overflow.md`, `mdtests/increment_requires_no_overflow.md`, `mdtests/increment_without_requires.md` |
 | Pointer range safety | C verifiers, separation logic | memory-validity and range axioms | `auto`, later `bounds` or `frame` | `mdtests/pointer_range.md`, `mdtests/pointer_range_missing_requires.md`, `mdtests/fill_n_symbolic_pointer_loop.md` |
 | Memory postconditions | ACSL/Dafny/F* function contracts | final-state memory evaluation | `auto`, later `frame` | `mdtests/fill3_memory_postconditions.md`, `mdtests/fill3_bad_memory_postcondition.md`, `mdtests/copy3_array_demo.md` |

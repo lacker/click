@@ -1,7 +1,7 @@
 # Click proposition logic
 
 This checks Click proposition syntax in a sidecar proof. The logical words
-`and`, `not`, and `implies` are Click syntax, distinct from C expression
+`and`, `not`, and `implies` are Click syntax, distinct from C-fragment
 operators.
 
 ```c filename=identity_prop.c

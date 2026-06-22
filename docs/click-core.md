@@ -1,30 +1,31 @@
 # Click Core Model
 
-This page explains how C expressions and Click expressions meet. It is the
-mental model agents should use when changing lowering code.
+This page explains how Surface Click, C fragments, and Kernel Click meet. It
+is the mental model agents should use when changing lowering code.
 
 ## Three Layers
 
 Click has three layers:
 
-1. C execution layer: mutable C0 state, C values, C pointers, statements, and
-   memory updates.
-2. Click surface layer: `.click` syntax that can mention C-looking expressions
-   such as `p[k]`, `old(p[k])`, `count(p, 0, n, x)`, and
-   `permutation(p, old(p), 0, n)`.
-3. Click core layer: pure specification values and propositions sent to the
-   megakernel.
+1. **Kernel Click**: pure, explicit specification values and propositions sent
+   to the megakernel.
+2. **Surface Click**: user-written `.click` syntax such as `requires`,
+   `ensures`, `invariant`, `old`, pure functions, predicates, quantifiers,
+   and folds.
+3. **C fragments**: pieces of C0 syntax inside Surface Click, such as `p[k]`,
+   `x + 1`, or `result == n`.
 
-The surface layer is convenience syntax. It elaborates C-looking expressions
-into pure values over explicit memory states.
+Surface Click is convenience syntax. It may contain C fragments, but Surface
+Click owns their meaning and elaborates everything into Kernel Click over
+explicit memory states.
 
 ## Surface Versus Core
 
 Surface Click is context-sensitive. A term such as `p[k]` or `old(p)` is not
 itself the final proof object; it still depends on where the term appears.
 
-Core Click is pure and explicit. It may still mention C semantic data, but only
-as values:
+Kernel Click is pure and explicit. It may still mention C semantic data, but
+only as values:
 
 ```text
 load(memory_snapshot, pointer + k)
@@ -32,23 +33,23 @@ RangeFold(start, end, initial, ...)
 ForAll(var, body)
 ```
 
-The important rule is that C state is never ambient in core Click. Surface Click
-is elaborated against a chosen state, and that state becomes an explicit
+The important rule is that C state is never ambient in Kernel Click. Surface
+Click is elaborated against a chosen state, and that state becomes an explicit
 `CMemory`, `Pointer`, or `CValue` inside the term.
 
 In `src/lang/click.rs`, invariant elaboration is driven by
 `SpecElaborationContext`. That context carries:
 
 - scalar bindings already elaborated to `SpecExpression`
-- array-ref bindings as explicit `{ memory, pointer }` pairs in core spec
+- array-ref bindings as explicit `{ memory, pointer }` pairs in Kernel Click
   elaboration and typed `ClickArrayRef` values in surface contract evaluation
-- the memory that current C-looking reads should use
+- the memory that current C-fragment reads should use
 
 `old(expr)` is not a separate expression language. In loop invariants it
 re-elaborates `expr` under a derived context whose current memory is the
 function-entry memory and whose ordinary variables are rebound to entry values.
 This is what lets `old(count(p, 0, n, x))` lower through the ordinary stdlib
-`count` definition and keep its `.fold` as core Click.
+`count` definition and keep its `.fold` as Kernel Click.
 
 ## C Pointers Versus Click Array Refs
 
@@ -161,10 +162,10 @@ become fixed-memory reads, so pure helpers such as `count` do not need a
 separate old-state evaluator.
 
 This is represented in the megakernel with `SpecExpression` and
-`SpecProposition`: spec/core forms that can embed current-state C expressions
-but can also represent pure `if`, `let`, `.fold`, and explicit fixed-memory
-loads. This is why an invariant can unfold `permutation` and then evaluate the
-`.fold` inside stdlib `count` without pretending that the fold is executable C.
+`SpecProposition`: Kernel Click forms that can include current-state C
+fragments, pure `if`, `let`, `.fold`, and explicit fixed-memory loads. This is
+why an invariant can unfold `permutation` and then evaluate the `.fold` inside
+stdlib `count` without pretending that the fold is executable C.
 
 ## Source Spelling Today
 
