@@ -5,8 +5,24 @@ This page lists boundaries that agents should not silently assume away.
 ## C0 Is Small
 
 Click does not parse general C. See [c0-subset.md](c0-subset.md). Missing
-features include structs, unsigned integers, casts, globals, heap allocation,
-`for` loops, `switch`, and many operators.
+features include structs, unsigned integers beyond the narrow `uint8` byte
+type, casts, globals, heap allocation, `for` loops, `switch`, and many
+operators.
+
+## Type Support Is Still Narrow
+
+The verifier supports `int32` and a byte-like `uint8` type, including `uint8*`,
+`uint8[]`, ASCII character literals, byte loads/stores, byte equality, and
+typed Click array refs. This is not a full C integer model: there are no casts,
+promotions, signedness conversions, or general unsigned arithmetic yet.
+
+Ordered comparisons are supported for `int32`. `uint8` currently has equality,
+inequality, truthiness, memory access, and return-value support.
+
+Typed byte array refs are implemented for ordinary contract evaluation and
+pure Click function/predicate calls there. Loop-invariant spec lowering still
+uses an untyped `SpecExpression::MemoryLoad`, so byte-oriented pure helpers in
+invariants need a typed spec-core pass.
 
 ## Aliasing Is Default
 
@@ -40,8 +56,9 @@ functions, so `old(count(p, lo, hi, x))` can elaborate through stdlib `count`
 and preserve its `.fold` in core Click. The elaborator still rejects attempts
 to capture non-fixed local spec bindings inside `old(...)`.
 
-There is still no public `ref<int32>` syntax. Array refs are an internal pure
-Click lowering concept for parameters written as `int32 p[]` or `int32* p`.
+There is still no public `ref<T>` syntax. Array refs are an internal pure Click
+lowering concept for parameters written as `int32 p[]`, `int32* p`,
+`uint8 p[]`, or `uint8* p`.
 
 ## Symbolic `.any` Is Not General Yet
 

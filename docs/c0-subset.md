@@ -7,10 +7,12 @@ Click grows toward real C.
 ## Supported Types
 
 - `int32`
+- `uint8`
 - `int32*`
-- Function parameters written as `int32 p[]` or `int32 p[3]`, lowered like C
-  array parameters to `int32*`.
-- Local fixed-size arrays such as `int32 a[3];`.
+- `uint8*`
+- Function parameters written as `int32 p[]`, `int32 p[3]`, `uint8 p[]`, or
+  `uint8 p[3]`, lowered like C array parameters to pointers.
+- Local fixed-size arrays such as `int32 a[3];` and `uint8 bytes[16];`.
 
 Pointers are semantic objects with provenance blocks and pointer-offset terms.
 They are not modeled as `int32` values. The current target layout assumes
@@ -21,6 +23,7 @@ They are not modeled as `int32` values. The current target layout assumes
 Supported C0 surface includes:
 
 - integer literals and variables
+- ASCII byte character literals such as `'x'`, `'\n'`, and `'\0'`
 - signed `+` and `-`
 - signed comparisons and equality
 - assignment and sequencing
@@ -28,14 +31,16 @@ Supported C0 surface includes:
 - `while`
 - `return`
 - address-of lvalues
-- pointer arithmetic for `int32*`
+- pointer arithmetic for `int32*` and `uint8*`, scaled by the pointee width
 - pointer loads and stores
-- `p[i]` indexing for `int32*`
+- `p[i]` indexing for `int32*` and `uint8*`
 - known function calls through the current function environment
-- local `int32`, `int32*`, and fixed-size `int32[N]` declarations
+- local scalar, pointer, and fixed-size array declarations for `int32` and
+  `uint8`
 
 Comparisons return C-style `int32` values: `0` or `1`. They are not Click
-propositions by themselves.
+propositions by themselves. Ordered comparisons are currently for `int32`;
+`uint8` supports equality, inequality, truthiness, loads, stores, and returns.
 
 ## Undefined Behavior
 
@@ -56,15 +61,17 @@ depending on the symbolic execution path. Prove access safety with
 Local arrays allocate stack memory blocks:
 
 ```c
-int32 local_array_roundtrip() {
-    int32 a[3];
-    a[0] = 7;
+uint8 local_byte_array() {
+    uint8 a[2];
+    a[0] = 'x';
+    a[1] = 'y';
     return a[0];
 }
 ```
 
-An array name decays to an `int32*` rvalue for indexing and function arguments.
-Direct assignment to an array object is rejected.
+An array name decays to a pointer rvalue for indexing and function arguments.
+Direct assignment to an array object is rejected. `int32` arrays allocate four
+bytes per element; `uint8` arrays allocate one byte per element.
 
 ## Loops
 
@@ -81,7 +88,7 @@ Do not expect unconstrained symbolic loops to be unrolled automatically.
 These are not general C features yet:
 
 - structs, unions, enums
-- unsigned integers
+- unsigned integers other than the narrow `uint8` byte type
 - integer widths other than `int32`
 - multiplication in ordinary C expressions
 - casts and promotions

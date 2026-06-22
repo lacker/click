@@ -31,6 +31,11 @@ same half-open range. The array parameters are Click array refs, so callers can
 write `permutation(p, old(p), lo, hi)` to compare current memory with
 entry-state memory.
 
+The current prelude definitions are intentionally `int32`-specific. The
+language can now represent `uint8` array refs, but byte-oriented library
+helpers should be added as ordinary Click definitions with their own mdtests
+rather than by making `count` magically generic.
+
 ## Kernel Support
 
 The names `count` and `permutation` are library names, not kernel concepts.

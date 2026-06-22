@@ -13,8 +13,8 @@ Pointer { block, offset }
 ```
 
 The pointer block carries provenance. Pointer offsets are separate terms, not
-raw integers. Current C0 pointer arithmetic is for `int32*`, so `p + k` scales
-`k` by four bytes.
+raw integers. C0 pointer arithmetic is scaled by the pointee type: `int32*`
+adds four bytes per element, while `uint8*` adds one byte per element.
 
 ## Argument Memory And Aliasing
 
@@ -42,8 +42,10 @@ requires valid_range(p[0..n]);
 requires valid_range((p + 1)[0..n - 1]);
 ```
 
-Segment forms are half-open `int32` element ranges. `valid_range(p[0..n])`
-means cells `p[0]` through `p[n - 1]` are available for `int32` access.
+Segment forms are half-open `int32` element ranges. For `int32 p[]`,
+`valid_range(p[0..n])` means cells `p[0]` through `p[n - 1]` are available for
+four-byte `int32` access. For `uint8 p[]`, the same spelling covers `n`
+one-byte elements.
 
 Symbolic memory access usually needs:
 
@@ -134,10 +136,13 @@ receives pure array refs for `a` and `b`. Each ref carries:
 
 - a `CMemory` snapshot
 - a C pointer
+- an element type, currently `int32` or `uint8`
 
 Indexing `a[k]` inside the predicate loads from `a`'s carried memory, not from
-some global ambient predicate memory. This lets `permutation(p, old(p), lo, hi)`
-compare post-state `p` to entry-state `p` without copying a snapshot array.
+some global ambient predicate memory. The element type decides pointer scaling
+and whether the load yields an `int32` or `uint8` value. This lets
+`permutation(p, old(p), lo, hi)` compare post-state `p` to entry-state `p`
+without copying a snapshot array.
 
 See [click-core.md](click-core.md) for the full C-pointer versus Click-array-ref
 model.

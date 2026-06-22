@@ -17,8 +17,11 @@ pub struct C0Parameter {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum C0Type {
     Int32,
+    UInt8,
     Int32Pointer,
+    UInt8Pointer,
     Int32Array(u32),
+    UInt8Array(u32),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -58,6 +61,7 @@ pub enum C0Expression {
     Variable(String),
     AddressOf(Box<C0Expression>),
     Int32Literal(u32),
+    UInt8Literal(u8),
     LessThan(Box<C0Expression>, Box<C0Expression>),
     LessEqual(Box<C0Expression>, Box<C0Expression>),
     GreaterThan(Box<C0Expression>, Box<C0Expression>),
@@ -130,8 +134,11 @@ impl C0Type {
     pub fn to_megakernel_type(self) -> crate::megakernel::CType {
         match self {
             Self::Int32 => crate::megakernel::CType::Int32,
+            Self::UInt8 => crate::megakernel::CType::UInt8,
             Self::Int32Pointer => crate::megakernel::CType::Int32Pointer,
+            Self::UInt8Pointer => crate::megakernel::CType::UInt8Pointer,
             Self::Int32Array(length) => crate::megakernel::CType::Int32Array(length),
+            Self::UInt8Array(length) => crate::megakernel::CType::UInt8Array(length),
         }
     }
 }
@@ -194,6 +201,7 @@ impl C0Expression {
                 target.to_megakernel_expression(),
             )),
             Self::Int32Literal(value) => crate::megakernel::c_int32_literal(*value),
+            Self::UInt8Literal(value) => crate::megakernel::c_uint8_literal(*value),
             Self::LessThan(left, right) => crate::megakernel::c_less_than(
                 left.to_megakernel_expression(),
                 right.to_megakernel_expression(),
@@ -266,6 +274,7 @@ pub fn parse_function(source: &str) -> Result<C0Function, C0SyntaxError> {
 enum Token {
     Ident(String),
     Number(String),
+    CharLiteral(u8),
     LParen,
     RParen,
     LBracket,
@@ -341,19 +350,28 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<C0Type, C0SyntaxError> {
         match self.next() {
-            Some(Token::Ident(name)) if name == "int32" => {
+            Some(Token::Ident(name)) if name == "int32" || name == "uint8" => {
+                let scalar_type = if name == "int32" {
+                    C0Type::Int32
+                } else {
+                    C0Type::UInt8
+                };
                 if self.peek() == Some(&Token::Star) {
                     self.position += 1;
-                    Ok(C0Type::Int32Pointer)
+                    Ok(match scalar_type {
+                        C0Type::Int32 => C0Type::Int32Pointer,
+                        C0Type::UInt8 => C0Type::UInt8Pointer,
+                        _ => unreachable!("scalar type should not be aggregate"),
+                    })
                 } else {
-                    Ok(C0Type::Int32)
+                    Ok(scalar_type)
                 }
             }
             Some(token) => Err(C0SyntaxError::new(format!(
-                "expected type `int32`, got {token:?}"
+                "expected type `int32` or `uint8`, got {token:?}"
             ))),
             None => Err(C0SyntaxError::new(
-                "expected type `int32`, got end of input",
+                "expected type `int32` or `uint8`, got end of input",
             )),
         }
     }
@@ -362,9 +380,19 @@ impl Parser {
         if self.peek() != Some(&Token::LBracket) {
             return Ok(c_type);
         }
-        if c_type != C0Type::Int32 {
+        let pointer_type = match c_type {
+            C0Type::Int32 => C0Type::Int32Pointer,
+            C0Type::UInt8 => C0Type::UInt8Pointer,
+            _ => {
+                return Err(C0SyntaxError::new(
+                    "only scalar array parameters are supported",
+                ));
+            }
+        };
+
+        if !matches!(c_type, C0Type::Int32 | C0Type::UInt8) {
             return Err(C0SyntaxError::new(
-                "only `int32 name[]` array parameters are supported",
+                "only scalar array parameters are supported",
             ));
         }
 
@@ -373,18 +401,19 @@ impl Parser {
             self.position += 1;
         }
         self.expect(Token::RBracket)?;
-        Ok(C0Type::Int32Pointer)
+        Ok(pointer_type)
     }
 
     fn parse_local_array_suffix(&mut self, c_type: C0Type) -> Result<C0Type, C0SyntaxError> {
         if self.peek() != Some(&Token::LBracket) {
             return Ok(c_type);
         }
-        if c_type != C0Type::Int32 {
-            return Err(C0SyntaxError::new(
-                "only `int32 name[N]` local arrays are supported",
-            ));
-        }
+        let (array_type, element_width, element_name): (fn(u32) -> C0Type, u32, &str) = match c_type
+        {
+            C0Type::Int32 => (C0Type::Int32Array, 4u32, "int32"),
+            C0Type::UInt8 => (C0Type::UInt8Array, 1u32, "uint8"),
+            _ => return Err(C0SyntaxError::new("only scalar local arrays are supported")),
+        };
 
         self.position += 1;
         let length = match self.next() {
@@ -395,9 +424,9 @@ impl Parser {
                 if length == 0 {
                     return Err(C0SyntaxError::new("local arrays must have positive length"));
                 }
-                if length.checked_mul(4).is_none() {
+                if length.checked_mul(element_width).is_none() {
                     return Err(C0SyntaxError::new(format!(
-                        "array length `{number}` is too large for int32 elements"
+                        "array length `{number}` is too large for {element_name} elements"
                     )));
                 }
                 length
@@ -414,7 +443,7 @@ impl Parser {
             }
         };
         self.expect(Token::RBracket)?;
-        Ok(C0Type::Int32Array(length))
+        Ok(array_type(length))
     }
 
     fn parse_block_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
@@ -479,7 +508,7 @@ impl Parser {
                 self.expect(Token::Semicolon)?;
                 Ok(C0Statement::Assign { name, expression })
             }
-            Some(Token::Ident(name)) if name == "int32" => {
+            Some(Token::Ident(name)) if name == "int32" || name == "uint8" => {
                 let c_type = self.parse_type()?;
                 let name = self.expect_ident("local name")?;
                 let c_type = self.parse_local_array_suffix(c_type)?;
@@ -704,6 +733,7 @@ impl Parser {
                 }
                 Ok(C0Expression::Int32Literal(value))
             }
+            Some(Token::CharLiteral(value)) => Ok(C0Expression::UInt8Literal(value)),
             Some(Token::LParen) => {
                 let expression = self.parse_expression()?;
                 self.expect(Token::RParen)?;
@@ -822,6 +852,13 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
             continue;
         }
 
+        if ch == '\'' {
+            let (value, next_index) = parse_char_literal(&chars, index)?;
+            tokens.push(Token::CharLiteral(value));
+            index = next_index;
+            continue;
+        }
+
         if index + 1 < chars.len() {
             let token = match (ch, chars[index + 1]) {
                 ('=', '=') => Some(Token::EqualEqual),
@@ -865,6 +902,47 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
     }
 
     Ok(tokens)
+}
+
+fn parse_char_literal(chars: &[char], start: usize) -> Result<(u8, usize), C0SyntaxError> {
+    let Some(first) = chars.get(start + 1).copied() else {
+        return Err(C0SyntaxError::new("unterminated character literal"));
+    };
+    let (value, end) = if first == '\\' {
+        let Some(escaped) = chars.get(start + 2).copied() else {
+            return Err(C0SyntaxError::new("unterminated character literal"));
+        };
+        let value = match escaped {
+            'n' => b'\n',
+            'r' => b'\r',
+            't' => b'\t',
+            '0' => b'\0',
+            '\\' => b'\\',
+            '\'' => b'\'',
+            '"' => b'"',
+            other => {
+                return Err(C0SyntaxError::new(format!(
+                    "unsupported character escape `\\{other}`"
+                )));
+            }
+        };
+        (value, start + 3)
+    } else {
+        if !first.is_ascii() {
+            return Err(C0SyntaxError::new(
+                "only ASCII character literals are supported",
+            ));
+        }
+        (first as u8, start + 2)
+    };
+
+    if chars.get(end) != Some(&'\'') {
+        return Err(C0SyntaxError::new(
+            "character literals must contain exactly one byte",
+        ));
+    }
+
+    Ok((value, end + 1))
 }
 
 fn is_ident_start(ch: char) -> bool {

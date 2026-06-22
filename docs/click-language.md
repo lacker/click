@@ -17,6 +17,10 @@ int32 function_name(int32 p[], int32 n) {
 `verifying "file.c";` names a C source supplied to the verifier. Function
 signatures in the `.click` file are checked against the parsed C0 source.
 
+Click signatures currently understand `int32`, `uint8`, `int32*`, `uint8*`,
+and array-parameter spellings such as `int32 p[]` and `uint8 bytes[]`.
+Character literals such as `'x'`, `'\n'`, and `'\0'` are `uint8` values.
+
 Each `ensures` clause is a separate guarantee. A guarantee may be labeled with
 `label:`. Omitting a proof clause uses the default prover, currently `auto`.
 
@@ -34,8 +38,10 @@ requires disjoint(dst[0..n], src[0..n]);
 ```
 
 `valid_range(base[start..end])` and `disjoint(left[start..end],
-right[start..end])` use half-open `int32` element ranges. This `..` syntax is
-Click contract syntax, not C expression syntax.
+right[start..end])` use half-open `int32` element ranges. The byte count is
+derived from the base pointer's element type: four bytes for `int32[]`, one
+byte for `uint8[]`. This `..` syntax is Click contract syntax, not C
+expression syntax.
 
 `requires` can also use Click propositions, but direct memory reads in
 requirements are intentionally limited. If a precondition needs memory reads,
@@ -109,9 +115,16 @@ Supported expression features include parameters, literals, `+`, `-`, indexing,
 functions are rejected.
 
 In pure Click function parameters, `int32 p[]` and `int32* p` are treated as
-array-ref parameters. Indexing `p[k]` loads from the memory snapshot carried by
-that argument. This is why `count(p, ...)` can be called with either current
-`p` or `old(p)`.
+array-ref parameters. `uint8 p[]` and `uint8* p` are also array-ref parameters,
+with one-byte indexing and `uint8` loads. Indexing `p[k]` loads from the memory
+snapshot carried by that argument. This is why `count(p, ...)` can be called
+with either current `p` or `old(p)`.
+
+Click array refs carry their element type. Passing an `int32[]` ref to a pure
+Click function or predicate parameter declared as `uint8[]` is rejected.
+Byte array refs are supported in ordinary contract evaluation. Loop-invariant
+spec lowering still has an older untyped `MemoryLoad` core form, so byte-array
+pure helpers in invariants are a known remaining gap.
 
 Concrete folds are unrolled. Symbolic folds remain `RangeFold` value terms in
 the megakernel and can be reasoned about by supported fold laws.

@@ -27,7 +27,8 @@ In `src/megakernel.rs`:
 - `PointerOffsetTerm`: pointer-offset expressions.
 - `ConditionTerm`: proof-level truth-valued conditions such as signed order,
   equality, overflow, and pointer-offset equality.
-- `CValue`, `Pointer`, `CMemory`, `CState`: C semantic state.
+- `CValue`, `CType`, `Pointer`, `CMemory`, `CState`: C semantic state,
+  including `int32`, `uint8`, pointers, and typed memory loads/stores.
 - `CExpression`, `CStatement`, `CFunction`: lowered C0 syntax.
 - `SpecExpression`, `SpecProposition`: pure specification forms used for
   state-parametric loop invariants. They can embed current-state C expressions,
@@ -100,9 +101,15 @@ where the loop VC needs the invariant.
 
 `SpecElaborationContext` in `src/lang/click.rs` is the current bridge from
 surface Click into that core form. It records scalar spec bindings, Click
-array refs, and the memory used for C-looking reads. In loop invariants,
+array refs, and the memory used for C-looking reads. Surface contract
+evaluation also uses `ClickArrayRef { memory, pointer, element_type }` so
+`uint8[]` indexing scales by one byte and returns `uint8`. In loop invariants,
 `old(expr)` derives a new context with function-entry memory and entry scalar
 values, then elaborates `expr` normally.
+
+Memory access obligations carry the operation byte width. Do not infer load or
+store width only from pointer syntax; the operation type is what determines
+whether an access needs one byte or four bytes.
 
 When adding a new Click expression or proposition form, search all existing enum
 matches for `ContractExpression` and `ClickProposition`. Missing one context

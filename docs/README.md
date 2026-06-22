@@ -28,8 +28,8 @@ Click is a proof sidecar for a tiny C subset called C0. A `.click` file names
 one or more C sources, gives C functions contracts, and asks the megakernel to
 prove each guarantee. The system is intentionally small but already supports:
 
-- C0 symbolic execution over scalar code, pointers, memory, local arrays, and
-  loops with invariants.
+- C0 symbolic execution over `int32`, `uint8`, pointers, memory, local arrays,
+  and loops with invariants.
 - Function contracts with `requires`, `ensures`, `immutable`, and `mutable`.
 - Click propositions with `and`, `or`, `not`, `implies`, `forall`, range
   `.all` and concrete range `.any`.
@@ -37,8 +37,8 @@ prove each guarantee. The system is intentionally small but already supports:
   specs.
 - Named Click predicates, explicit `unfold`, and a small standard prelude with
   `count` and `permutation`.
-- Memory-qualified Click array refs for pure functions and predicates, including
-  `old(p)` as an entry-state array argument.
+- Memory-qualified, element-typed Click array refs for pure functions and
+  predicates, including `old(p)` as an entry-state array argument.
 
 ## High-Value Commands
 

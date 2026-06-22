@@ -12,9 +12,9 @@ use crate::megakernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CExpression, CFunction,
     CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
     CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CState,
-    CStatement, CValue, ConditionTerm, PathFact, Pointer, PointerOffsetTerm, ProofObligation,
-    Proposition, Sort, SpecExpression, SpecMemory, SpecProposition, Term, Theorem, Variable,
-    c_function, c_function_specification, c_labeled_assert, c_pointer_value, c_seq,
+    CStatement, CType, CValue, ConditionTerm, PathFact, Pointer, PointerOffsetTerm,
+    ProofObligation, Proposition, Sort, SpecExpression, SpecMemory, SpecProposition, Term, Theorem,
+    Variable, c_function, c_function_specification, c_labeled_assert, c_pointer_value, c_seq,
     c_while_with_invariant_and_effect_checks,
     prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
@@ -224,6 +224,7 @@ pub enum ContractExpression {
 struct ClickArrayRef {
     memory: CMemory,
     pointer: Pointer,
+    element_type: CType,
 }
 
 type ClickArrayRefs = BTreeMap<String, ClickArrayRef>;
@@ -534,7 +535,18 @@ impl FunctionParameter {
 }
 
 fn parameter_is_click_array_ref(parameter: &FunctionParameter) -> bool {
-    parameter.c_type() == C0Type::Int32Pointer
+    matches!(
+        parameter.c_type(),
+        C0Type::Int32Pointer | C0Type::UInt8Pointer
+    )
+}
+
+fn click_array_element_type(c_type: C0Type) -> Option<CType> {
+    match c_type {
+        C0Type::Int32Pointer | C0Type::Int32Array(_) => Some(CType::Int32),
+        C0Type::UInt8Pointer | C0Type::UInt8Array(_) => Some(CType::UInt8),
+        C0Type::Int32 | C0Type::UInt8 => None,
+    }
 }
 
 impl EnsureClause {
@@ -3585,14 +3597,30 @@ fn initial_call(
                     ),
                 }));
             }
+            C0Type::UInt8Pointer => {
+                arguments.push(c_pointer_value(Pointer {
+                    block: EXTERNAL_ARGUMENT_MEMORY_BLOCK.to_string(),
+                    offset: scale_int32_offset(
+                        Bitvector32Term::Variable(Variable(
+                            POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                        )),
+                        1,
+                    ),
+                }));
+            }
             C0Type::Int32 => {
                 arguments.push(CExpression::Value(CValue::Int32(
                     Bitvector32Term::Variable(Variable(arguments.len() as u64)),
                 )));
             }
-            C0Type::Int32Array(_) => {
+            C0Type::UInt8 => {
+                arguments.push(CExpression::Value(CValue::UInt8(
+                    Bitvector32Term::Variable(Variable(arguments.len() as u64)),
+                )));
+            }
+            C0Type::Int32Array(_) | C0Type::UInt8Array(_) => {
                 return Err(ClickError::new(format!(
-                    "array parameter `{}` should have lowered to `int32*`",
+                    "array parameter `{}` should have lowered to a pointer",
                     parameter.name()
                 )));
             }
@@ -3745,8 +3773,9 @@ fn concrete_valid_range_block(
             let Bitvector32Term::Constant(end) = segment.end else {
                 return Ok(None);
             };
+            let element_width = contract_segment_element_width(parameters, &segment.source);
             let bytes = end
-                .checked_mul(4)
+                .checked_mul(element_width)
                 .ok_or_else(|| ClickError::new("`valid_range` segment overflows byte count"))?;
             Ok(Some((
                 format!("{:?}", segment.source),
@@ -3798,9 +3827,11 @@ fn valid_range_base_and_bytes(
                 }
             }
             let element_count = bitvector32_subtract(segment.end.clone(), segment.start.clone());
-            let bytes = bitvector32_multiply(element_count, Bitvector32Term::Constant(4));
+            let element_width = contract_segment_element_width(parameters, &segment.source);
+            let bytes =
+                bitvector32_multiply(element_count, Bitvector32Term::Constant(element_width));
             Ok((
-                offset_pointer_by_int32_elements(segment.base, segment.start),
+                offset_pointer_by_elements(segment.base, segment.start, element_width),
                 bytes,
             ))
         }
@@ -3833,6 +3864,33 @@ fn disjoint_requirement_prop(
         right_start: right.start,
         right_end: right.end,
     })
+}
+
+fn contract_segment_element_width(
+    parameters: &[syntax::C0Parameter],
+    segment: &ContractSegment,
+) -> u32 {
+    contract_expression_element_width(parameters, &segment.base).unwrap_or(4)
+}
+
+fn contract_expression_element_width(
+    parameters: &[syntax::C0Parameter],
+    expression: &CExpression,
+) -> Option<u32> {
+    match expression {
+        CExpression::Variable(name) => parameters
+            .iter()
+            .find(|parameter| parameter.name() == name)
+            .and_then(|parameter| match parameter.c_type() {
+                C0Type::Int32Pointer => Some(4),
+                C0Type::UInt8Pointer => Some(1),
+                _ => None,
+            }),
+        CExpression::Add(left, right) => contract_expression_element_width(parameters, left)
+            .or_else(|| contract_expression_element_width(parameters, right)),
+        CExpression::Subtract(left, _) => contract_expression_element_width(parameters, left),
+        _ => None,
+    }
 }
 
 fn range_bytes_constant(bytes: &RangeBytes) -> Option<u32> {
@@ -3914,6 +3972,30 @@ fn parameter_values(
                 )));
             };
             Ok((parameter.name().to_string(), value.clone()))
+        })
+        .collect()
+}
+
+fn array_refs_for_parameters(
+    parameters: &[syntax::C0Parameter],
+    values: &BTreeMap<String, CValue>,
+    memory: &CMemory,
+) -> ClickArrayRefs {
+    parameters
+        .iter()
+        .filter_map(|parameter| {
+            let element_type = click_array_element_type(parameter.c_type())?;
+            let Some(CValue::Pointer(pointer)) = values.get(parameter.name()) else {
+                return None;
+            };
+            Some((
+                parameter.name().to_string(),
+                ClickArrayRef {
+                    memory: memory.clone(),
+                    pointer: pointer.clone(),
+                    element_type,
+                },
+            ))
         })
         .collect()
 }
@@ -4271,16 +4353,33 @@ fn comparison_proposition(
     operator: ComparisonOperator,
     right: CValue,
 ) -> Result<Proposition, ClickError> {
-    let CValue::Int32(left) = left else {
-        return Err(ClickError::new("left side of proposition is not int32"));
-    };
-    let CValue::Int32(right) = right else {
-        return Err(ClickError::new("right side of proposition is not int32"));
-    };
-    let Some((condition, value)) = comparison_condition(left, operator, right) else {
-        return Err(ClickError::new("unsupported proposition comparison"));
-    };
-    Ok(Proposition::ConditionIs(condition, value))
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right)) => {
+            let Some((condition, value)) = comparison_condition(left, operator, right) else {
+                return Err(ClickError::new("unsupported proposition comparison"));
+            };
+            Ok(Proposition::ConditionIs(condition, value))
+        }
+        (CValue::UInt8(left), CValue::UInt8(right)) => match operator {
+            ComparisonOperator::Equal => Ok(Proposition::ConditionIs(
+                bitvector32_equal(left, right),
+                true,
+            )),
+            ComparisonOperator::NotEqual => Ok(Proposition::ConditionIs(
+                bitvector32_equal(left, right),
+                false,
+            )),
+            ComparisonOperator::LessThan
+            | ComparisonOperator::LessEqual
+            | ComparisonOperator::GreaterThan
+            | ComparisonOperator::GreaterEqual => Err(ClickError::new(
+                "ordered byte comparisons are not supported yet",
+            )),
+        },
+        (left, right) => Err(ClickError::new(format!(
+            "cannot compare `{left:?}` and `{right:?}` in proposition"
+        ))),
+    }
 }
 
 fn proposition_as_single_condition(proposition: &Proposition) -> Option<(ConditionTerm, bool)> {
@@ -4969,6 +5068,15 @@ fn decode_predicate_arguments(
                     ClickArrayRef {
                         memory: memory.clone(),
                         pointer: pointer.clone(),
+                        element_type: click_array_element_type(parameter.c_type()).ok_or_else(
+                            || {
+                                format!(
+                                    "predicate `{}` argument `{}` is not an array-ref parameter",
+                                    definition.name(),
+                                    parameter.name()
+                                )
+                            },
+                        )?,
                     },
                 );
                 index += 2;
@@ -5017,6 +5125,15 @@ fn decode_predicate_arguments(
                     ClickArrayRef {
                         memory: memory.clone(),
                         pointer: pointer.clone(),
+                        element_type: click_array_element_type(parameter.c_type()).ok_or_else(
+                            || {
+                                format!(
+                                    "predicate `{}` argument `{}` is not an array-ref parameter",
+                                    definition.name(),
+                                    parameter.name()
+                                )
+                            },
+                        )?,
                     },
                 );
             }
@@ -5448,8 +5565,15 @@ fn evaluate_predicate_contract_expression(
                     "array index did not evaluate to int32: `{index:?}`"
                 ));
             };
-            let pointer = offset_pointer_by_int32_elements(array_ref.pointer, index);
-            evaluate_contract_memory_load_from_memory(&array_ref.memory, pointer, assumptions)
+            let element_type = array_ref.element_type;
+            let pointer =
+                offset_pointer_by_elements(array_ref.pointer, index, element_type.byte_width());
+            evaluate_contract_memory_load_from_memory(
+                &array_ref.memory,
+                pointer,
+                element_type,
+                assumptions,
+            )
         }
         ContractExpression::If {
             condition,
@@ -6435,20 +6559,12 @@ fn prove_value_comparison(
     expected: &CValue,
     available_propositions: &[Proposition],
 ) -> Option<()> {
-    let CValue::Int32(actual) = actual else {
-        return None;
-    };
-    let CValue::Int32(expected) = expected else {
-        return None;
-    };
-    let (condition, value) = comparison_condition(actual.clone(), operator, expected.clone())?;
+    let proposition = comparison_proposition(actual.clone(), operator, expected.clone()).ok()?;
     let assumptions = available_propositions
         .iter()
         .cloned()
         .fold(Assumptions::new(), Assumptions::assume_proposition);
-    assumptions
-        .proves(&Proposition::ConditionIs(condition, value))
-        .then_some(())
+    assumptions.proves(&proposition).then_some(())
 }
 
 fn comparison_condition(
@@ -6479,7 +6595,7 @@ fn evaluate_contract_expression(
 ) -> Result<CValue, String> {
     let parameter_values =
         parameter_values(parameters, arguments).map_err(|error| error.message)?;
-    let array_refs = BTreeMap::new();
+    let array_refs = array_refs_for_parameters(parameters, &parameter_values, post_state.memory());
     let assumptions = assumptions_from_propositions(available_propositions);
     let mut active_functions = BTreeSet::new();
     evaluate_contract_expression_with_environment(
@@ -6508,7 +6624,7 @@ fn lower_outcome_proposition(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
     let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
-    let array_refs = BTreeMap::new();
+    let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
     let assumptions = assumptions_from_propositions(available_propositions);
     let mut next_variable = 2_000_000;
     let mut active_functions = BTreeSet::new();
@@ -6923,7 +7039,7 @@ fn evaluate_contract_expression_with_environment(
         ),
         ContractExpression::Old(expression) => evaluate_contract_expression_with_environment(
             parameter_values,
-            array_refs,
+            &array_refs_with_memory(array_refs, pre_state.memory()),
             pre_state,
             pre_state,
             None,
@@ -7017,8 +7133,15 @@ fn evaluate_contract_expression_with_environment(
                     "array index did not evaluate to int32: `{index:?}`"
                 ));
             };
-            let pointer = offset_pointer_by_int32_elements(array_ref.pointer, index);
-            evaluate_contract_memory_load_from_memory(&array_ref.memory, pointer, assumptions)
+            let element_type = array_ref.element_type;
+            let pointer =
+                offset_pointer_by_elements(array_ref.pointer, index, element_type.byte_width());
+            evaluate_contract_memory_load_from_memory(
+                &array_ref.memory,
+                pointer,
+                element_type,
+                assumptions,
+            )
         }
         ContractExpression::If {
             condition,
@@ -7245,6 +7368,22 @@ fn evaluate_contract_expression_with_environment(
     }
 }
 
+fn array_refs_with_memory(array_refs: &ClickArrayRefs, memory: &CMemory) -> ClickArrayRefs {
+    array_refs
+        .iter()
+        .map(|(name, array_ref)| {
+            (
+                name.clone(),
+                ClickArrayRef {
+                    memory: memory.clone(),
+                    pointer: array_ref.pointer.clone(),
+                    element_type: array_ref.element_type,
+                },
+            )
+        })
+        .collect()
+}
+
 fn evaluate_click_function_call(
     click_function_environment: &ClickFunctionEnvironment,
     name: &str,
@@ -7291,6 +7430,23 @@ fn evaluate_click_function_call(
                 click_function_environment,
                 active_functions,
             )?;
+            let expected_element_type =
+                click_array_element_type(parameter.c_type()).ok_or_else(|| {
+                    format!(
+                        "function `{}` parameter `{}` is not an array-ref parameter",
+                        definition.name(),
+                        parameter.name()
+                    )
+                })?;
+            if array_ref.element_type != expected_element_type {
+                return Err(format!(
+                    "function `{}` parameter `{}` expects {:?} array elements, got {:?}",
+                    definition.name(),
+                    parameter.name(),
+                    expected_element_type,
+                    array_ref.element_type
+                ));
+            }
             let pointer = array_ref.pointer.clone();
             function_array_refs.insert(parameter.name().to_string(), array_ref);
             CValue::Pointer(pointer)
@@ -7366,9 +7522,12 @@ fn evaluate_contract_array_ref_with_environment(
                     "array reference expression inside `old(...)` did not evaluate to a pointer: `{pointer_value:?}`"
                 ));
             };
+            let element_type =
+                contract_array_ref_element_type(array_refs, expression).unwrap_or(CType::Int32);
             Ok(ClickArrayRef {
                 memory: pre_state.memory().clone(),
                 pointer,
+                element_type,
             })
         }
         ContractExpression::Current(CExpression::Variable(name)) => {
@@ -7395,6 +7554,7 @@ fn evaluate_contract_array_ref_with_environment(
             Ok(ClickArrayRef {
                 memory: post_state.memory().clone(),
                 pointer,
+                element_type: CType::Int32,
             })
         }
         ContractExpression::Add(left, right) => {
@@ -7427,9 +7587,15 @@ fn evaluate_contract_array_ref_with_environment(
                         "array reference offset did not evaluate to int32: `{offset:?}`"
                     ));
                 };
+                let element_type = array_ref.element_type;
                 return Ok(ClickArrayRef {
                     memory: array_ref.memory,
-                    pointer: offset_pointer_by_int32_elements(array_ref.pointer, offset),
+                    pointer: offset_pointer_by_elements(
+                        array_ref.pointer,
+                        offset,
+                        element_type.byte_width(),
+                    ),
+                    element_type,
                 });
             }
             if let Ok(array_ref) = evaluate_contract_array_ref_with_environment(
@@ -7461,9 +7627,15 @@ fn evaluate_contract_array_ref_with_environment(
                         "array reference offset did not evaluate to int32: `{offset:?}`"
                     ));
                 };
+                let element_type = array_ref.element_type;
                 return Ok(ClickArrayRef {
                     memory: array_ref.memory,
-                    pointer: offset_pointer_by_int32_elements(array_ref.pointer, offset),
+                    pointer: offset_pointer_by_elements(
+                        array_ref.pointer,
+                        offset,
+                        element_type.byte_width(),
+                    ),
+                    element_type,
                 });
             }
             evaluate_pointer_expression_as_current_array_ref(
@@ -7509,12 +7681,15 @@ fn evaluate_contract_array_ref_with_environment(
                         "array reference offset did not evaluate to int32: `{offset:?}`"
                     ));
                 };
+                let element_type = array_ref.element_type;
                 return Ok(ClickArrayRef {
                     memory: array_ref.memory,
-                    pointer: offset_pointer_by_int32_elements(
+                    pointer: offset_pointer_by_elements(
                         array_ref.pointer,
                         bitvector32_subtract(Bitvector32Term::Constant(0), offset),
+                        element_type.byte_width(),
                     ),
+                    element_type,
                 });
             }
             evaluate_pointer_expression_as_current_array_ref(
@@ -7542,6 +7717,24 @@ fn evaluate_contract_array_ref_with_environment(
             click_function_environment,
             active_functions,
         ),
+    }
+}
+
+fn contract_array_ref_element_type(
+    array_refs: &ClickArrayRefs,
+    expression: &ContractExpression,
+) -> Option<CType> {
+    match expression {
+        ContractExpression::Current(CExpression::Variable(name)) => {
+            array_refs.get(name).map(|array_ref| array_ref.element_type)
+        }
+        ContractExpression::Old(expression) => {
+            contract_array_ref_element_type(array_refs, expression)
+        }
+        ContractExpression::Add(left, right) => contract_array_ref_element_type(array_refs, left)
+            .or_else(|| contract_array_ref_element_type(array_refs, right)),
+        ContractExpression::Subtract(left, _) => contract_array_ref_element_type(array_refs, left),
+        _ => None,
     }
 }
 
@@ -7577,6 +7770,7 @@ fn evaluate_pointer_expression_as_current_array_ref(
     Ok(ClickArrayRef {
         memory: post_state.memory().clone(),
         pointer,
+        element_type: CType::Int32,
     })
 }
 
@@ -7617,6 +7811,23 @@ fn lower_predicate_call_arguments_with_environment(
                 click_function_environment,
                 active_functions,
             )?;
+            let expected_element_type =
+                click_array_element_type(parameter.c_type()).ok_or_else(|| {
+                    format!(
+                        "predicate `{}` parameter `{}` is not an array-ref parameter",
+                        definition.name(),
+                        parameter.name()
+                    )
+                })?;
+            if array_ref.element_type != expected_element_type {
+                return Err(format!(
+                    "predicate `{}` parameter `{}` expects {:?} array elements, got {:?}",
+                    definition.name(),
+                    parameter.name(),
+                    expected_element_type,
+                    array_ref.element_type
+                ));
+            }
             lowered_arguments.push(Term::CMemory(array_ref.memory));
             lowered_arguments.push(Term::CValue(CValue::Pointer(array_ref.pointer)));
         } else {
@@ -7641,7 +7852,10 @@ fn lower_predicate_call_arguments_with_environment(
 fn c_value_matches_click_type(value: &CValue, c_type: C0Type) -> bool {
     matches!(
         (value, c_type),
-        (CValue::Int32(_), C0Type::Int32) | (CValue::Pointer(_), C0Type::Int32Pointer)
+        (CValue::Int32(_), C0Type::Int32)
+            | (CValue::UInt8(_), C0Type::UInt8)
+            | (CValue::Pointer(_), C0Type::Int32Pointer)
+            | (CValue::Pointer(_), C0Type::UInt8Pointer)
     )
 }
 
@@ -7696,7 +7910,7 @@ fn evaluate_c_contract_expression(
                 index,
             )?;
             let pointer = evaluate_postcondition_pointer_add(base, index)?;
-            evaluate_contract_memory_load(state, pointer, assumptions)
+            evaluate_contract_memory_load(state, pointer, CType::Int32, assumptions)
         }
         _ => Err(format!(
             "unsupported postcondition expression `{expression:?}`"
@@ -7707,29 +7921,58 @@ fn evaluate_c_contract_expression(
 fn evaluate_contract_memory_load(
     state: &CState,
     pointer: Pointer,
+    value_type: CType,
     assumptions: &Assumptions,
 ) -> Result<CValue, String> {
-    evaluate_contract_memory_load_from_memory(state.memory(), pointer, assumptions)
+    evaluate_contract_memory_load_from_memory(state.memory(), pointer, value_type, assumptions)
 }
 
 fn evaluate_contract_memory_load_from_memory(
     memory: &CMemory,
     pointer: Pointer,
+    value_type: CType,
     assumptions: &Assumptions,
 ) -> Result<CValue, String> {
     match memory.load(&pointer) {
-        crate::megakernel::CExpressionOutcome::Value(value) => Ok(value),
+        crate::megakernel::CExpressionOutcome::Value(value)
+            if c_value_matches_kernel_type(&value, value_type) =>
+        {
+            Ok(value)
+        }
+        crate::megakernel::CExpressionOutcome::Value(value) => Err(format!(
+            "load from {pointer:?} produced {value:?}, not {value_type:?}"
+        )),
         _ if assumptions.proves(&Proposition::CMemoryCanLoad {
             memory: memory.clone(),
             pointer: pointer.clone(),
+            byte_width: value_type.byte_width(),
         }) =>
         {
-            Ok(CValue::Int32(Bitvector32Term::MemoryLoad(
-                Box::new(memory.clone()),
-                Box::new(pointer),
-            )))
+            symbolic_contract_memory_load(memory, pointer, value_type)
         }
         outcome => Err(format!("load from {pointer:?} produced {outcome:?}")),
+    }
+}
+
+fn c_value_matches_kernel_type(value: &CValue, c_type: CType) -> bool {
+    matches!(
+        (value, c_type),
+        (CValue::Int32(_), CType::Int32) | (CValue::UInt8(_), CType::UInt8)
+    )
+}
+
+fn symbolic_contract_memory_load(
+    memory: &CMemory,
+    pointer: Pointer,
+    value_type: CType,
+) -> Result<CValue, String> {
+    let load = Bitvector32Term::MemoryLoad(Box::new(memory.clone()), Box::new(pointer));
+    match value_type {
+        CType::Int32 => Ok(CValue::Int32(load)),
+        CType::UInt8 => Ok(CValue::UInt8(load)),
+        CType::Int32Pointer | CType::UInt8Pointer | CType::Int32Array(_) | CType::UInt8Array(_) => {
+            Err(format!("cannot symbolically load {value_type:?}"))
+        }
     }
 }
 
@@ -7771,9 +8014,20 @@ fn evaluate_postcondition_pointer_add(left: CValue, right: CValue) -> Result<Poi
 }
 
 fn offset_pointer_by_int32_elements(pointer: Pointer, elements: Bitvector32Term) -> Pointer {
+    offset_pointer_by_elements(pointer, elements, 4)
+}
+
+fn offset_pointer_by_elements(
+    pointer: Pointer,
+    elements: Bitvector32Term,
+    element_width: u32,
+) -> Pointer {
     Pointer {
         block: pointer.block,
-        offset: add_pointer_offset(pointer.offset, scale_int32_offset(elements, 4)),
+        offset: add_pointer_offset(
+            pointer.offset,
+            scale_int32_offset(elements, i64::from(element_width)),
+        ),
     }
 }
 
@@ -7808,6 +8062,7 @@ fn is_tactic_name(name: &str) -> bool {
 enum Token {
     Ident(String),
     Number(u32),
+    CharLiteral(u8),
     String(String),
     LBrace,
     RBrace,
@@ -8010,12 +8265,25 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<C0Type, ClickError> {
-        self.expect_ident_spelling("int32")?;
+        let spelling = self.expect_ident("type")?;
+        let scalar_type = match spelling.as_str() {
+            "int32" => C0Type::Int32,
+            "uint8" => C0Type::UInt8,
+            _ => {
+                return Err(self.error(format!(
+                    "expected type `int32` or `uint8`, got `{spelling}`"
+                )));
+            }
+        };
         if self.peek() == Some(&Token::Star) {
             self.position += 1;
-            Ok(C0Type::Int32Pointer)
+            Ok(match scalar_type {
+                C0Type::Int32 => C0Type::Int32Pointer,
+                C0Type::UInt8 => C0Type::UInt8Pointer,
+                _ => unreachable!("scalar type should not be aggregate"),
+            })
         } else {
-            Ok(C0Type::Int32)
+            Ok(scalar_type)
         }
     }
 
@@ -8023,16 +8291,18 @@ impl Parser {
         if self.peek() != Some(&Token::LBracket) {
             return Ok(c_type);
         }
-        if c_type != C0Type::Int32 {
-            return Err(self.error("only `int32 name[]` array parameters are supported"));
-        }
+        let pointer_type = match c_type {
+            C0Type::Int32 => C0Type::Int32Pointer,
+            C0Type::UInt8 => C0Type::UInt8Pointer,
+            _ => return Err(self.error("only scalar array parameters are supported")),
+        };
 
         self.position += 1;
         if matches!(self.peek(), Some(Token::Number(_))) {
             self.position += 1;
         }
         self.expect(Token::RBracket)?;
-        Ok(C0Type::Int32Pointer)
+        Ok(pointer_type)
     }
 
     fn parse_requirement(&mut self) -> Result<Requirement, ClickError> {
@@ -8771,6 +9041,9 @@ impl Parser {
             Some(Token::Number(value)) => Ok(ContractExpression::Current(CExpression::Value(
                 CValue::Int32(Bitvector32Term::Constant(value)),
             ))),
+            Some(Token::CharLiteral(value)) => Ok(ContractExpression::Current(CExpression::Value(
+                CValue::UInt8(Bitvector32Term::Constant(u32::from(value))),
+            ))),
             Some(Token::LParen) => {
                 let expression = self.parse_contract_expression()?;
                 if self.peek() == Some(&Token::DotDot) {
@@ -8865,6 +9138,7 @@ impl Parser {
             }
             Some(Token::Ident(name)) => Ok(C0Expression::Variable(name)),
             Some(Token::Number(value)) => Ok(C0Expression::Int32Literal(value)),
+            Some(Token::CharLiteral(value)) => Ok(C0Expression::UInt8Literal(value)),
             Some(Token::LParen) => {
                 let expression = self.parse_ensure_expression()?;
                 self.expect(Token::RParen)?;
@@ -9551,6 +9825,11 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
                 tokens.push(Token::String(value));
                 index = next_index;
             }
+            '\'' => {
+                let (value, next_index) = tokenize_char_literal(&chars, index)?;
+                tokens.push(Token::CharLiteral(value));
+                index = next_index;
+            }
             ch if ch.is_ascii_digit() => {
                 let start = index;
                 while chars.get(index).is_some_and(|next| next.is_ascii_digit()) {
@@ -9582,6 +9861,47 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
     }
 
     Ok(tokens)
+}
+
+fn tokenize_char_literal(chars: &[char], start: usize) -> Result<(u8, usize), ClickError> {
+    let Some(first) = chars.get(start + 1).copied() else {
+        return Err(ClickError::new("unterminated character literal"));
+    };
+    let (value, end) = if first == '\\' {
+        let Some(escaped) = chars.get(start + 2).copied() else {
+            return Err(ClickError::new("unterminated character literal"));
+        };
+        let value = match escaped {
+            'n' => b'\n',
+            'r' => b'\r',
+            't' => b'\t',
+            '0' => b'\0',
+            '\\' => b'\\',
+            '\'' => b'\'',
+            '"' => b'"',
+            other => {
+                return Err(ClickError::new(format!(
+                    "unsupported character escape `\\{other}`"
+                )));
+            }
+        };
+        (value, start + 3)
+    } else {
+        if !first.is_ascii() {
+            return Err(ClickError::new(
+                "only ASCII character literals are supported",
+            ));
+        }
+        (first as u8, start + 2)
+    };
+
+    if chars.get(end) != Some(&'\'') {
+        return Err(ClickError::new(
+            "character literals must contain exactly one byte",
+        ));
+    }
+
+    Ok((value, end + 1))
 }
 
 fn tokenize_string(chars: &[char], start: usize) -> Result<(String, usize), ClickError> {

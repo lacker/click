@@ -47,6 +47,13 @@ of inventing syntax from memory.
 - `mdtests/local_array_decays_to_helper.md`: array-to-pointer function call.
 - `mdtests/local_array_rejects_assignment.md`: direct array assignment fails.
 
+## Byte Values And Buffers
+
+- `mdtests/uint8_literals.md`: `uint8` returns and ASCII character literals.
+- `mdtests/uint8_buffer_read.md`: `uint8[]` parameter indexing with
+  byte-sized `valid_range`.
+- `mdtests/uint8_local_array.md`: local byte arrays and byte stores/loads.
+
 ## Loops And Invariants
 
 - `mdtests/bounded_loop.md`: concrete bounded loop execution.

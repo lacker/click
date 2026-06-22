@@ -222,6 +222,7 @@ fn c0_syntax_targets_megakernel_store_and_load() {
     let store_obligation = crate::megakernel::Proposition::CMemoryCanStore {
         memory: crate::megakernel::CMemory::new(),
         pointer,
+        byte_width: 4,
     };
     let theorem = crate::megakernel::prove_symbolic_c_execution(
         initial.clone(),
@@ -273,6 +274,7 @@ fn c0_syntax_targets_megakernel_store_and_load_function_call() {
     let store_obligation = crate::megakernel::Proposition::CMemoryCanStore {
         memory: crate::megakernel::CMemory::new(),
         pointer,
+        byte_width: 4,
     };
     let theorem = crate::megakernel::prove_symbolic_c_function_execution(
         state.clone(),

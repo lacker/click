@@ -40,7 +40,8 @@ In `src/lang/click.rs`, invariant elaboration is driven by
 `SpecElaborationContext`. That context carries:
 
 - scalar bindings already elaborated to `SpecExpression`
-- array-ref bindings as explicit `{ memory, pointer }` pairs
+- array-ref bindings as explicit `{ memory, pointer }` pairs in core spec
+  elaboration and typed `ClickArrayRef` values in surface contract evaluation
 - the memory that current C-looking reads should use
 
 `old(expr)` is not a separate expression language. In loop invariants it
@@ -60,13 +61,16 @@ Pointer { block, offset }
 A Click array ref says where and in which memory snapshot:
 
 ```text
-ClickArrayRef { memory, pointer }
+ClickArrayRef { memory, pointer, element_type }
 ```
 
 It is a pure specification value. It is not a C runtime object, it is not
 stored in C memory, and C code cannot mutate it. If C code writes through a
 pointer, that produces a new `CMemory` value. Existing array refs still refer to
 the memory snapshot they were built from.
+
+The `element_type` is currently `int32` or `uint8`. It decides both pointer
+scaling and the type of value produced by indexing the array ref.
 
 ## Surface Elaboration
 
@@ -80,8 +84,10 @@ p
 elaborates like:
 
 ```text
-ClickArrayRef { memory: post_memory, pointer: p }
+ClickArrayRef { memory: post_memory, pointer: p, element_type: int32 }
 ```
+
+For a `uint8 p[]` parameter, the same shape uses `element_type: uint8`.
 
 An old array argument means the entry-state array at the same pointer value:
 
@@ -92,7 +98,7 @@ old(p)
 elaborates like:
 
 ```text
-ClickArrayRef { memory: pre_memory, pointer: p }
+ClickArrayRef { memory: pre_memory, pointer: p, element_type: int32 }
 ```
 
 Inside a pure Click function or predicate, indexing an array-ref parameter:
@@ -104,7 +110,7 @@ p[k]
 means:
 
 ```text
-load(p.memory, p.pointer + k)
+load(p.memory, p.pointer + k * sizeof(p.element_type))
 ```
 
 So:
@@ -117,8 +123,8 @@ means:
 
 ```text
 permutation(
-  ClickArrayRef { memory: post_memory, pointer: p },
-  ClickArrayRef { memory: pre_memory, pointer: p },
+  ClickArrayRef { memory: post_memory, pointer: p, element_type: int32 },
+  ClickArrayRef { memory: pre_memory, pointer: p, element_type: int32 },
   0,
   2
 )
@@ -140,13 +146,13 @@ A current array argument in a loop invariant means the array in whichever loop
 state is being checked:
 
 ```text
-ClickArrayRef { memory: loop_state.memory, pointer: p }
+ClickArrayRef { memory: loop_state.memory, pointer: p, element_type }
 ```
 
 An old array argument still means the function-entry memory:
 
 ```text
-ClickArrayRef { memory: function_entry_memory, pointer: p }
+ClickArrayRef { memory: function_entry_memory, pointer: p, element_type }
 ```
 
 More generally, `old(expr)` inside an invariant switches elaboration of `expr`
@@ -163,8 +169,8 @@ loads. This is why an invariant can unfold `permutation` and then evaluate the
 ## Source Spelling Today
 
 There is no public `ref<int32>` syntax yet. For now, parameters written as
-`int32 p[]` or `int32* p` in pure Click `function` and `predicate` definitions
-are treated as Click array-ref parameters.
+`int32 p[]`, `int32* p`, `uint8 p[]`, or `uint8* p` in pure Click `function`
+and `predicate` definitions are treated as Click array-ref parameters.
 
 This is intentionally source-compatible with existing C-like signatures:
 
@@ -173,6 +179,16 @@ function count(int32 p[], int32 lo, int32 hi, int32 x) -> int32 { ... }
 
 predicate sorted(int32* p, int32 n) { ... }
 ```
+
+The parameter spelling fixes the array-ref element type. A pure Click function
+or predicate declared with `uint8 p[]` indexes one byte at a time and returns
+`uint8` values from `p[k]`.
+
+Ordinary postcondition and predicate/function evaluation use typed
+`ClickArrayRef` values. Loop-invariant spec lowering still uses
+`SpecArrayRef { memory, pointer }` and `SpecExpression::MemoryLoad` without a
+value type, so byte-aware pure helpers in invariants require another typed-core
+pass before they are fully supported there.
 
 In C function signatures, the same spelling still means an ordinary C pointer.
 The array-ref interpretation only applies while lowering pure Click functions
