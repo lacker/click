@@ -19,11 +19,6 @@ promotions, signedness conversions, or general unsigned arithmetic yet.
 Ordered comparisons are supported for `int32`. `uint8` currently has equality,
 inequality, truthiness, memory access, and return-value support.
 
-Typed byte array refs are implemented for ordinary contract evaluation and
-pure Click function/predicate calls there. Loop-invariant spec lowering still
-uses an untyped `SpecExpression::MemoryLoad`, so byte-oriented pure helpers in
-invariants need a typed spec-core pass.
-
 ## Aliasing Is Default
 
 Distinct pointer parameters may alias. Add `disjoint(...)` whenever a proof

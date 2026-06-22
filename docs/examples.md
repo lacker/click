@@ -53,6 +53,8 @@ of inventing syntax from memory.
 - `mdtests/uint8_buffer_read.md`: `uint8[]` parameter indexing with
   byte-sized `valid_range`.
 - `mdtests/uint8_local_array.md`: local byte arrays and byte stores/loads.
+- `mdtests/uint8_loop_invariant_pure_function.md`: `uint8[]` pure function
+  calls inside loop invariants and `old(...)`.
 
 ## Loops And Invariants
 

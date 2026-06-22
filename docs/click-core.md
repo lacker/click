@@ -185,10 +185,11 @@ or predicate declared with `uint8 p[]` indexes one byte at a time and returns
 `uint8` values from `p[k]`.
 
 Ordinary postcondition and predicate/function evaluation use typed
-`ClickArrayRef` values. Loop-invariant spec lowering still uses
-`SpecArrayRef { memory, pointer }` and `SpecExpression::MemoryLoad` without a
-value type, so byte-aware pure helpers in invariants require another typed-core
-pass before they are fully supported there.
+`ClickArrayRef` values. Loop-invariant spec lowering uses typed
+`SpecArrayRef { memory, pointer, element_type }` values plus typed
+`SpecExpression::MemoryLoad` and byte-width `SpecExpression::PointerOffset`
+nodes, so byte-aware pure helpers can appear in invariants and inside
+`old(...)`.
 
 In C function signatures, the same spelling still means an ordinary C pointer.
 The array-ref interpretation only applies while lowering pure Click functions

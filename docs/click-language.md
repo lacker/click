@@ -122,9 +122,8 @@ with either current `p` or `old(p)`.
 
 Click array refs carry their element type. Passing an `int32[]` ref to a pure
 Click function or predicate parameter declared as `uint8[]` is rejected.
-Byte array refs are supported in ordinary contract evaluation. Loop-invariant
-spec lowering still has an older untyped `MemoryLoad` core form, so byte-array
-pure helpers in invariants are a known remaining gap.
+The same typed array-ref model is used by loop-invariant spec lowering, so a
+pure helper over `uint8[]` can appear in an invariant or inside `old(...)`.
 
 Concrete folds are unrolled. Symbolic folds remain `RangeFold` value terms in
 the megakernel and can be reasoned about by supported fold laws.

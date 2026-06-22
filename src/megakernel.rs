@@ -171,9 +171,15 @@ pub enum SpecExpression {
         value: Box<SpecExpression>,
         body: Box<SpecExpression>,
     },
+    PointerOffset {
+        pointer: Box<SpecExpression>,
+        elements: Box<SpecExpression>,
+        byte_width: u32,
+    },
     MemoryLoad {
         memory: SpecMemory,
         pointer: Box<SpecExpression>,
+        value_type: CType,
     },
 }
 
@@ -1845,7 +1851,16 @@ impl Assumptions {
                             (Some(left), Some(right)) => {
                                 self.decide(&ConditionTerm::equal(left, right))
                             }
-                            _ => None,
+                            _ => {
+                                let left_bytes = byte_offset_from_pointer_offset(left);
+                                let right_bytes = byte_offset_from_pointer_offset(right);
+                                match (left_bytes, right_bytes) {
+                                    (Some(left), Some(right)) => {
+                                        self.decide(&ConditionTerm::equal(left, right))
+                                    }
+                                    _ => None,
+                                }
+                            }
                         }
                     }
                 }
@@ -5527,7 +5542,17 @@ fn collect_spec_expression_bitvector_variables(
             collect_spec_expression_bitvector_variables(value, variables);
             collect_spec_expression_bitvector_variables(body, variables);
         }
-        SpecExpression::MemoryLoad { memory, pointer } => {
+        SpecExpression::PointerOffset {
+            pointer,
+            elements,
+            byte_width: _,
+        } => {
+            collect_spec_expression_bitvector_variables(pointer, variables);
+            collect_spec_expression_bitvector_variables(elements, variables);
+        }
+        SpecExpression::MemoryLoad {
+            memory, pointer, ..
+        } => {
             collect_spec_memory_bitvector_variables(memory, variables);
             collect_spec_expression_bitvector_variables(pointer, variables);
         }
@@ -6293,11 +6318,29 @@ fn substitute_bitvector_variable_in_spec_expression(
                 body, from, to,
             )),
         },
-        SpecExpression::MemoryLoad { memory, pointer } => SpecExpression::MemoryLoad {
+        SpecExpression::PointerOffset {
+            pointer,
+            elements,
+            byte_width,
+        } => SpecExpression::PointerOffset {
+            pointer: Box::new(substitute_bitvector_variable_in_spec_expression(
+                pointer, from, to,
+            )),
+            elements: Box::new(substitute_bitvector_variable_in_spec_expression(
+                elements, from, to,
+            )),
+            byte_width: *byte_width,
+        },
+        SpecExpression::MemoryLoad {
+            memory,
+            pointer,
+            value_type,
+        } => SpecExpression::MemoryLoad {
             memory: substitute_bitvector_variable_in_spec_memory(memory, from, to),
             pointer: Box::new(substitute_bitvector_variable_in_spec_expression(
                 pointer, from, to,
             )),
+            value_type: *value_type,
         },
     }
 }
@@ -7682,7 +7725,23 @@ fn evaluate_spec_expression_paths(
             }
             paths
         }
-        SpecExpression::MemoryLoad { memory, pointer } => {
+        SpecExpression::PointerOffset {
+            pointer,
+            elements,
+            byte_width,
+        } => evaluate_spec_pointer_offset_paths(
+            state,
+            pointer,
+            elements,
+            *byte_width,
+            assumptions,
+            budget,
+        )?,
+        SpecExpression::MemoryLoad {
+            memory,
+            pointer,
+            value_type,
+        } => {
             let mut paths = Vec::new();
             for pointer_path in evaluate_spec_expression_paths(state, pointer, assumptions, budget)?
             {
@@ -7697,7 +7756,7 @@ fn evaluate_spec_expression_paths(
                     evaluate_c_memory_load_paths(
                         memory,
                         pointer,
-                        CType::Int32,
+                        *value_type,
                         pointer_path.facts,
                         pointer_path.obligations,
                         assumptions,
@@ -7710,6 +7769,49 @@ fn evaluate_spec_expression_paths(
         }
     };
     budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn evaluate_spec_pointer_offset_paths(
+    state: &CState,
+    pointer: &SpecExpression,
+    elements: &SpecExpression,
+    byte_width: u32,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecExpressionPath>> {
+    let mut paths = Vec::new();
+    for pointer_path in evaluate_spec_expression_paths(state, pointer, assumptions, budget)? {
+        let CValue::Pointer(pointer) = pointer_path.value else {
+            continue;
+        };
+        let element_assumptions = assumptions_with_path_context(
+            assumptions,
+            &pointer_path.facts,
+            &pointer_path.obligations,
+        );
+        for element_path in
+            evaluate_spec_expression_paths(state, elements, &element_assumptions, budget)?
+        {
+            let CValue::Int32(elements) = element_path.value else {
+                continue;
+            };
+            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &pointer_path.facts,
+                &pointer_path.obligations,
+                &element_path.facts,
+                &element_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+            paths.push(SpecExpressionPath {
+                value: CValue::Pointer(pointer.offset_by_elements(elements, byte_width)),
+                facts,
+                obligations,
+            });
+        }
+    }
     Ok(paths)
 }
 

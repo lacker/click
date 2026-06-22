@@ -103,9 +103,11 @@ where the loop VC needs the invariant.
 surface Click into that core form. It records scalar spec bindings, Click
 array refs, and the memory used for C-looking reads. Surface contract
 evaluation also uses `ClickArrayRef { memory, pointer, element_type }` so
-`uint8[]` indexing scales by one byte and returns `uint8`. In loop invariants,
-`old(expr)` derives a new context with function-entry memory and entry scalar
-values, then elaborates `expr` normally.
+`uint8[]` indexing scales by one byte and returns `uint8`. Loop-invariant spec
+lowering mirrors this with typed `SpecArrayRef`, typed `SpecExpression::MemoryLoad`,
+and byte-width `SpecExpression::PointerOffset`. In loop invariants, `old(expr)`
+derives a new context with function-entry memory and entry scalar values, then
+elaborates `expr` normally.
 
 Memory access obligations carry the operation byte width. Do not infer load or
 store width only from pointer syntax; the operation type is what determines

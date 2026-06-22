@@ -233,6 +233,7 @@ type ClickArrayRefs = BTreeMap<String, ClickArrayRef>;
 struct SpecArrayRef {
     memory: SpecMemory,
     pointer: SpecExpression,
+    element_type: CType,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2272,6 +2273,16 @@ fn annotated_function(
         click_function_environment,
         entry_state,
         entry_values: parameter_values(parsed_function.parameters(), arguments)?,
+        parameter_array_element_types: parsed_function
+            .parameters()
+            .iter()
+            .filter_map(|parameter| {
+                Some((
+                    parameter.name().to_string(),
+                    click_array_element_type(parameter.c_type())?,
+                ))
+            })
+            .collect(),
         quantified_values: BTreeMap::new(),
         loop_index: 0,
         statement_index: 0,
@@ -2296,6 +2307,7 @@ struct AnnotationLowerer<'a> {
     click_function_environment: &'a ClickFunctionEnvironment,
     entry_state: &'a CState,
     entry_values: BTreeMap<String, CValue>,
+    parameter_array_element_types: BTreeMap<String, CType>,
     quantified_values: BTreeMap<String, CValue>,
     loop_index: usize,
     statement_index: usize,
@@ -2523,10 +2535,12 @@ impl AnnotationLowerer<'_> {
                 let index = self.lower_contract_expression_to_spec(index, environment)?;
                 Ok(SpecExpression::MemoryLoad {
                     memory: array_ref.memory,
-                    pointer: Box::new(SpecExpression::Add(
-                        Box::new(array_ref.pointer),
-                        Box::new(index),
-                    )),
+                    pointer: Box::new(SpecExpression::PointerOffset {
+                        pointer: Box::new(array_ref.pointer),
+                        elements: Box::new(index),
+                        byte_width: array_ref.element_type.byte_width(),
+                    }),
+                    value_type: array_ref.element_type,
                 })
             }
             ContractExpression::If {
@@ -2624,13 +2638,20 @@ impl AnnotationLowerer<'_> {
                 Box::new(self.lower_current_c_expression_to_spec(right, environment)?),
             )),
             CExpression::Index(base, index) => {
-                let pointer = SpecExpression::Add(
-                    Box::new(self.lower_current_c_expression_to_spec(base, environment)?),
-                    Box::new(self.lower_current_c_expression_to_spec(index, environment)?),
-                );
+                let element_type = self
+                    .c_expression_array_element_type(base, environment)
+                    .unwrap_or(CType::Int32);
+                let pointer = SpecExpression::PointerOffset {
+                    pointer: Box::new(self.lower_current_c_expression_to_spec(base, environment)?),
+                    elements: Box::new(
+                        self.lower_current_c_expression_to_spec(index, environment)?,
+                    ),
+                    byte_width: element_type.byte_width(),
+                };
                 Ok(SpecExpression::MemoryLoad {
                     memory: environment.current_memory.clone(),
                     pointer: Box::new(pointer),
+                    value_type: element_type,
                 })
             }
             expression => Ok(SpecExpression::CExpression(expression.clone())),
@@ -2660,10 +2681,27 @@ impl AnnotationLowerer<'_> {
             SpecElaborationContext::with_current_memory(environment.current_memory.clone());
         for (parameter, argument) in definition.parameters().iter().zip(arguments) {
             if parameter_is_click_array_ref(parameter) {
-                function_environment.array_refs.insert(
-                    parameter.name().to_string(),
-                    self.lower_array_ref_to_spec(argument, environment)?,
-                );
+                let expected_element_type = click_array_element_type(parameter.c_type())
+                    .ok_or_else(|| {
+                        format!(
+                            "function `{}` parameter `{}` is not an array-ref parameter",
+                            definition.name(),
+                            parameter.name()
+                        )
+                    })?;
+                let array_ref = self.lower_array_ref_to_spec(argument, environment)?;
+                if array_ref.element_type != expected_element_type {
+                    return Err(format!(
+                        "function `{}` parameter `{}` expects {:?} array elements, got {:?}",
+                        definition.name(),
+                        parameter.name(),
+                        expected_element_type,
+                        array_ref.element_type
+                    ));
+                }
+                function_environment
+                    .array_refs
+                    .insert(parameter.name().to_string(), array_ref);
             } else {
                 function_environment.values.insert(
                     parameter.name().to_string(),
@@ -2696,26 +2734,40 @@ impl AnnotationLowerer<'_> {
                         &CExpression::Variable(name.clone()),
                         environment,
                     )?,
+                    element_type: self.array_ref_element_type_for_name(name),
                 })
             }
             ContractExpression::Add(left, right) => {
                 if let Ok(array_ref) = self.lower_array_ref_to_spec(left, environment) {
                     let offset = self.lower_contract_expression_to_spec(right, environment)?;
+                    let element_type = array_ref.element_type;
                     return Ok(SpecArrayRef {
                         memory: array_ref.memory,
-                        pointer: SpecExpression::Add(Box::new(array_ref.pointer), Box::new(offset)),
+                        pointer: SpecExpression::PointerOffset {
+                            pointer: Box::new(array_ref.pointer),
+                            elements: Box::new(offset),
+                            byte_width: element_type.byte_width(),
+                        },
+                        element_type,
                     });
                 }
                 if let Ok(array_ref) = self.lower_array_ref_to_spec(right, environment) {
                     let offset = self.lower_contract_expression_to_spec(left, environment)?;
+                    let element_type = array_ref.element_type;
                     return Ok(SpecArrayRef {
                         memory: array_ref.memory,
-                        pointer: SpecExpression::Add(Box::new(array_ref.pointer), Box::new(offset)),
+                        pointer: SpecExpression::PointerOffset {
+                            pointer: Box::new(array_ref.pointer),
+                            elements: Box::new(offset),
+                            byte_width: element_type.byte_width(),
+                        },
+                        element_type,
                     });
                 }
                 Ok(SpecArrayRef {
                     memory: environment.current_memory.clone(),
                     pointer: self.lower_contract_expression_to_spec(expression, environment)?,
+                    element_type: self.contract_array_element_type(expression, environment),
                 })
             }
             ContractExpression::Subtract(left, right) => {
@@ -2727,23 +2779,84 @@ impl AnnotationLowerer<'_> {
                         ))),
                         Box::new(offset),
                     );
+                    let element_type = array_ref.element_type;
                     return Ok(SpecArrayRef {
                         memory: array_ref.memory,
-                        pointer: SpecExpression::Add(
-                            Box::new(array_ref.pointer),
-                            Box::new(negative_offset),
-                        ),
+                        pointer: SpecExpression::PointerOffset {
+                            pointer: Box::new(array_ref.pointer),
+                            elements: Box::new(negative_offset),
+                            byte_width: element_type.byte_width(),
+                        },
+                        element_type,
                     });
                 }
                 Ok(SpecArrayRef {
                     memory: environment.current_memory.clone(),
                     pointer: self.lower_contract_expression_to_spec(expression, environment)?,
+                    element_type: self.contract_array_element_type(expression, environment),
                 })
             }
             _ => Ok(SpecArrayRef {
                 memory: environment.current_memory.clone(),
                 pointer: self.lower_contract_expression_to_spec(expression, environment)?,
+                element_type: self.contract_array_element_type(expression, environment),
             }),
+        }
+    }
+
+    fn array_ref_element_type_for_name(&self, name: &str) -> CType {
+        self.parameter_array_element_types
+            .get(name)
+            .copied()
+            .unwrap_or(CType::Int32)
+    }
+
+    fn contract_array_element_type(
+        &self,
+        expression: &ContractExpression,
+        environment: &SpecElaborationContext,
+    ) -> CType {
+        match expression {
+            ContractExpression::Current(CExpression::Variable(name)) => environment
+                .array_refs
+                .get(name)
+                .map(|array_ref| array_ref.element_type)
+                .unwrap_or_else(|| self.array_ref_element_type_for_name(name)),
+            ContractExpression::Old(expression) => {
+                self.contract_array_element_type(expression, environment)
+            }
+            ContractExpression::Add(left, right) => {
+                let left_type = self.contract_array_element_type(left, environment);
+                if left_type != CType::Int32 {
+                    return left_type;
+                }
+                self.contract_array_element_type(right, environment)
+            }
+            ContractExpression::Subtract(left, _) => {
+                self.contract_array_element_type(left, environment)
+            }
+            _ => CType::Int32,
+        }
+    }
+
+    fn c_expression_array_element_type(
+        &self,
+        expression: &CExpression,
+        environment: &SpecElaborationContext,
+    ) -> Option<CType> {
+        match expression {
+            CExpression::Variable(name) => environment
+                .array_refs
+                .get(name)
+                .map(|array_ref| array_ref.element_type)
+                .or_else(|| self.parameter_array_element_types.get(name).copied()),
+            CExpression::Add(left, right) => self
+                .c_expression_array_element_type(left, environment)
+                .or_else(|| self.c_expression_array_element_type(right, environment)),
+            CExpression::Subtract(left, _) => {
+                self.c_expression_array_element_type(left, environment)
+            }
+            _ => None,
         }
     }
 
