@@ -1299,7 +1299,20 @@ impl CMemory {
         self
     }
 
-    fn with_havoc_marker(mut self, variable: Variable) -> Self {
+    fn with_loop_memory_havoc(
+        mut self,
+        variable: Variable,
+        preserved_blocks: &BTreeSet<String>,
+    ) -> Self {
+        // A loop body that may write memory can clobber, through some
+        // pointer, any cell it can reach. Drop concrete cells outside the
+        // preserved (scalar stack local) blocks so loop-head and post-loop
+        // reads do not observe stale pre-loop values; anything that must
+        // survive the loop has to be restated as a loop invariant. The
+        // marker block additionally defeats symbolic cross-loop load
+        // equality for the remaining symbolic memory.
+        self.cells
+            .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
         self.blocks
             .insert(format!("havoc:{}", variable.0), CBlock::new(0));
         self
@@ -2341,6 +2354,21 @@ impl Assumptions {
         if left_const != right_const {
             return false;
         }
+        // `base - const` wraps; an order between the bases only carries to
+        // the subtracted terms when neither subtraction signed underflows
+        // (otherwise `a < b` would prove `a - 1 < b - 1`, false at
+        // a = INT_MIN, b = INT_MIN + 1).
+        if self.decide(&ConditionTerm::signed_subtract_overflows(
+            left_base.clone(),
+            Bitvector32Term::Constant(left_const),
+        )) != Some(false)
+            || self.decide(&ConditionTerm::signed_subtract_overflows(
+                right_base.clone(),
+                Bitvector32Term::Constant(right_const),
+            )) != Some(false)
+        {
+            return false;
+        }
 
         if strict {
             self.has_condition_fact(
@@ -2417,6 +2445,17 @@ impl Assumptions {
         let Some((base, addend)) = left.add_const_parts() else {
             return false;
         };
+        // `base + addend` wraps in two's complement, so a bound on `base`
+        // only carries to `base + addend` when that sum does not signed
+        // overflow. Without this guard `x >= 0` would wrongly prove
+        // `x + 1 > 0` (false at x = INT_MAX). See positive_offset_is_proven_above.
+        if self.decide(&ConditionTerm::signed_add_overflows(
+            base.clone(),
+            Bitvector32Term::Constant(addend),
+        )) != Some(false)
+        {
+            return false;
+        }
         self.condition_facts
             .iter()
             .any(|(fact, value)| match (fact, value) {
@@ -2450,6 +2489,16 @@ impl Assumptions {
         let Some((base, addend)) = left.add_const_parts() else {
             return false;
         };
+        // `base + addend` wraps; only carry the bound when it does not
+        // signed overflow (otherwise `x >= 0` would prove `x + 1 >= 1`,
+        // false at x = INT_MAX).
+        if self.decide(&ConditionTerm::signed_add_overflows(
+            base.clone(),
+            Bitvector32Term::Constant(addend),
+        )) != Some(false)
+        {
+            return false;
+        }
         self.condition_facts
             .iter()
             .any(|(fact, value)| match (fact, value) {
@@ -5208,6 +5257,19 @@ fn count_fold_split_parts_match(
         && assumptions.bitvector_terms_proven_equal(&whole.start, &first.start)
         && assumptions.bitvector_terms_proven_equal(&first.end, &second.start)
         && assumptions.bitvector_terms_proven_equal(&whole.end, &second.end)
+        // The split identity fold(lo,hi) = fold(lo,mid) + fold(mid,hi) only
+        // holds for lo <= mid <= hi. With half-open ranges a `mid` outside
+        // [lo, hi] makes one side empty and the other over-count, so without
+        // these bound checks the rule proves false equalities (e.g.
+        // lo=0, mid=5, hi=2 gives 2 == 3).
+        && assumptions.decide(&ConditionTerm::signed_less_equal(
+            first.start.clone(),
+            first.end.clone(),
+        )) == Some(true)
+        && assumptions.decide(&ConditionTerm::signed_less_equal(
+            second.start.clone(),
+            second.end.clone(),
+        )) == Some(true)
 }
 
 fn bitvector_same_base_nonzero_const_offset(
@@ -11260,6 +11322,13 @@ fn havoc_loop_modified_locals(
     let mut state = state.clone();
     let mut names = BTreeSet::new();
     collect_loop_modified_locals(body, &mut names);
+    let may_write_memory = statement_may_write_memory(body);
+    if may_write_memory {
+        // A local whose address escapes can be written by the loop body
+        // through a pointer without ever being assigned by name, so treat it
+        // as loop-modified too (otherwise its stale value survives the havoc).
+        names.extend(address_escaped_scalar_locals(&state, body));
+    }
     for name in names {
         let Some(binding) = state.locals.binding(&name) else {
             continue;
@@ -11279,8 +11348,22 @@ fn havoc_loop_modified_locals(
         sync_stack_local(&mut state, &name, &value);
         state.locals.set_typed(name, value, c_type);
     }
-    if statement_may_write_memory(body) {
-        state.memory = state.memory.with_havoc_marker(variables.next());
+    if may_write_memory {
+        // Keep only scalar stack local cells (havoced above and re-synced via
+        // sync_stack_local); every other concrete cell could have been
+        // overwritten by the loop body through a pointer. Address-escaped
+        // locals were havoced above, so their preserved cells now hold fresh
+        // symbolic values rather than stale ones.
+        let preserved_blocks: BTreeSet<String> = state
+            .locals
+            .bindings
+            .keys()
+            .filter(|name| state.locals.get(name).is_some())
+            .map(|name| CMemory::local_pointer(name).block)
+            .collect();
+        state.memory = state
+            .memory
+            .with_loop_memory_havoc(variables.next(), &preserved_blocks);
     }
     state
 }
@@ -11330,6 +11413,126 @@ fn collect_loop_modified_locals(statement: &CStatement, names: &mut BTreeSet<Str
         }
         CStatement::While { body, .. } => {
             collect_loop_modified_locals(body, names);
+        }
+    }
+}
+
+/// Scalar locals the loop body could write *through a pointer* without ever
+/// assigning them by name. `collect_loop_modified_locals` ignores `Store`, so
+/// these would otherwise be wrongly preserved across the loop havoc. A local
+/// counts as escaped if a live pointer in the pre-loop state already points at
+/// its block, or if the body takes its address syntactically.
+fn address_escaped_scalar_locals(state: &CState, body: &CStatement) -> BTreeSet<String> {
+    let mut escaped = BTreeSet::new();
+    collect_address_taken_locals(body, &mut escaped);
+
+    let record_pointer = |value: &CValue, escaped: &mut BTreeSet<String>| {
+        if let CValue::Pointer(pointer) = value {
+            if let Some(name) = local_name_from_pointer(pointer) {
+                escaped.insert(name.to_string());
+            }
+        }
+    };
+    for name in state.locals.bindings.keys() {
+        if let Some(value) = state.locals.get(name) {
+            record_pointer(value, &mut escaped);
+        }
+    }
+    for value in state.memory.cells.values() {
+        record_pointer(value, &mut escaped);
+    }
+    escaped
+}
+
+fn collect_address_taken_locals(statement: &CStatement, names: &mut BTreeSet<String>) {
+    match statement {
+        CStatement::Declare { .. } => {}
+        CStatement::Assign { expression, .. } => {
+            collect_address_taken_in_expression(expression, names)
+        }
+        CStatement::CallAssign { arguments, .. } => {
+            for argument in arguments {
+                collect_address_taken_in_expression(argument, names);
+            }
+        }
+        CStatement::Assert { condition, .. } => {
+            collect_address_taken_in_expression(condition, names)
+        }
+        CStatement::Return(expression) => collect_address_taken_in_expression(expression, names),
+        CStatement::Store { pointer, value } => {
+            collect_address_taken_in_expression(pointer, names);
+            collect_address_taken_in_expression(value, names);
+        }
+        CStatement::Seq(first, second) => {
+            collect_address_taken_locals(first, names);
+            collect_address_taken_locals(second, names);
+        }
+        CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_address_taken_in_expression(condition, names);
+            collect_address_taken_locals(then_branch, names);
+            collect_address_taken_locals(else_branch, names);
+        }
+        CStatement::While {
+            condition, body, ..
+        } => {
+            collect_address_taken_in_expression(condition, names);
+            collect_address_taken_locals(body, names);
+        }
+    }
+}
+
+fn collect_address_taken_in_expression(expression: &CExpression, names: &mut BTreeSet<String>) {
+    match expression {
+        // `&target`: any local reachable in the target may have its address
+        // escape, so conservatively record every variable it mentions.
+        CExpression::AddressOf(target) => collect_variable_names(target, names),
+        CExpression::Value(_) | CExpression::Variable(_) => {}
+        CExpression::Not(inner) | CExpression::Load(inner) => {
+            collect_address_taken_in_expression(inner, names)
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Index(left, right) => {
+            collect_address_taken_in_expression(left, names);
+            collect_address_taken_in_expression(right, names);
+        }
+    }
+}
+
+fn collect_variable_names(expression: &CExpression, names: &mut BTreeSet<String>) {
+    match expression {
+        CExpression::Variable(name) => {
+            names.insert(name.clone());
+        }
+        CExpression::Value(_) => {}
+        CExpression::AddressOf(inner) | CExpression::Not(inner) | CExpression::Load(inner) => {
+            collect_variable_names(inner, names)
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Index(left, right) => {
+            collect_variable_names(left, names);
+            collect_variable_names(right, names);
         }
     }
 }
@@ -13531,11 +13734,23 @@ mod tests {
             Box::new(i_bits.clone()),
             Box::new(Bitvector32Term::Constant(1)),
         );
-        let assumptions = Assumptions::new().assume_condition(
-            ConditionTerm::signed_greater_equal(i_bits, Bitvector32Term::Constant(1)),
+        // A lower bound alone is not enough: `i + 1` wraps at INT_MAX, so
+        // `i >= 1` does not entail `i + 1 >= 1` (false at i = INT_MAX).
+        let lower_only = Assumptions::new().assume_condition(
+            ConditionTerm::signed_greater_equal(i_bits.clone(), Bitvector32Term::Constant(1)),
             true,
         );
+        assert!(!lower_only.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(incremented.clone(), Bitvector32Term::Constant(1),),
+            true,
+        )));
 
+        // Knowing `i < INT_MAX` rules out signed overflow of `i + 1`, so the
+        // lower bound carries to the incremented value.
+        let assumptions = lower_only.assume_condition(
+            ConditionTerm::signed_less_than(i_bits, Bitvector32Term::Constant(i32::MAX as u32)),
+            true,
+        );
         assert!(assumptions.proves(&Proposition::ConditionIs(
             ConditionTerm::signed_greater_equal(incremented.clone(), Bitvector32Term::Constant(1),),
             true,
@@ -14060,9 +14275,22 @@ mod tests {
             )
         };
         let whole = count(lo.clone(), hi.clone());
-        let split = Bitvector32Term::add(count(lo, mid.clone()), count(mid, hi));
+        let split =
+            Bitvector32Term::add(count(lo.clone(), mid.clone()), count(mid.clone(), hi.clone()));
 
-        assert!(Assumptions::new().proves(&Proposition::ConditionIs(
+        // The split identity fold(lo,hi) = fold(lo,mid) + fold(mid,hi) only
+        // holds for lo <= mid <= hi. Without that ordering it is unsound
+        // (half-open ranges make an out-of-order mid over- or under-count),
+        // so the rule must not fire on unconstrained bounds.
+        assert!(!Assumptions::new().proves(&Proposition::ConditionIs(
+            ConditionTerm::equal(whole.clone(), split.clone()),
+            true,
+        )));
+
+        let ordered = Assumptions::new()
+            .assume_condition(ConditionTerm::signed_less_equal(lo, mid.clone()), true)
+            .assume_condition(ConditionTerm::signed_less_equal(mid, hi), true);
+        assert!(ordered.proves(&Proposition::ConditionIs(
             ConditionTerm::equal(whole, split),
             true,
         )));
