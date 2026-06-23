@@ -19,6 +19,7 @@ use crate::kernel::{
     prove_c_function_satisfies_specification_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
     prove_symbolic_c_function_verification_paths_with_environment,
+    substitute_int32_variable_in_proposition,
 };
 use crate::lang::c::syntax::{self, C0Expression, C0Type};
 
@@ -355,6 +356,8 @@ pub enum ProofStep {
     LoopVc(usize),
     Frame(Option<ProofStepTarget>),
     Unfold(String),
+    Witness(ProofWitness),
+    Choose(ProofChoice),
     Simp,
     Close,
 }
@@ -364,6 +367,23 @@ pub enum ProofStepTarget {
     Function,
     Loop(usize),
     Statement(usize),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofWitness {
+    name: String,
+    value: ContractExpression,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofChoice {
+    name: String,
+    source: ProofFactSource,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProofFactSource {
+    Requirement(usize),
 }
 
 /// A `.click` tactic.
@@ -1337,6 +1357,12 @@ fn prove_claim_by_steps(
                     replay.unfolded_predicates.push(name.clone());
                 }
             }
+            ProofStep::Witness(_) => {
+                require_step_execution(&replay, claim_label, step_index, "witness")?;
+            }
+            ProofStep::Choose(_) => {
+                require_step_execution(&replay, claim_label, step_index, "choose")?;
+            }
             ProofStep::Simp => {
                 require_step_execution(&replay, claim_label, step_index, "simp")?;
                 replay.simp = true;
@@ -1640,12 +1666,16 @@ fn prove_claim_from_steps_execution(
                 "`proof steps` failed for `{claim_label}` path {path_index}: {message}"
             ))
         })?;
-        if use_simp {
-            check_function_claim_by_simp(
+        let mut checking_requirements = path_requirements.clone();
+        let has_existence_steps = proof_steps
+            .iter()
+            .any(|step| matches!(step, ProofStep::Witness(_) | ProofStep::Choose(_)));
+        if has_existence_steps {
+            check_function_claim_with_existence_steps(
                 claim_label,
                 path_index,
                 path.facts(),
-                &path_requirements,
+                &mut checking_requirements,
                 claim,
                 parameters,
                 arguments,
@@ -1654,22 +1684,42 @@ fn prove_claim_from_steps_execution(
                 predicate_environment,
                 click_function_environment,
                 unfolded_predicates,
+                proof_steps,
+                function_block.requires().len(),
+                use_simp,
             )?;
         } else {
-            check_function_claim(
-                claim_label,
-                path_index,
-                path.facts(),
-                &path_requirements,
-                claim,
-                parameters,
-                arguments,
-                state,
-                &outcome,
-                predicate_environment,
-                click_function_environment,
-                unfolded_predicates,
-            )?;
+            if use_simp {
+                check_function_claim_by_simp(
+                    claim_label,
+                    path_index,
+                    path.facts(),
+                    &path_requirements,
+                    claim,
+                    parameters,
+                    arguments,
+                    state,
+                    &outcome,
+                    predicate_environment,
+                    click_function_environment,
+                    unfolded_predicates,
+                )?;
+            } else {
+                check_function_claim(
+                    claim_label,
+                    path_index,
+                    path.facts(),
+                    &path_requirements,
+                    claim,
+                    parameters,
+                    arguments,
+                    state,
+                    &outcome,
+                    predicate_environment,
+                    click_function_environment,
+                    unfolded_predicates,
+                )?;
+            }
         }
         let specification = c_function_specification(
             state.clone(),
@@ -4317,6 +4367,7 @@ impl KernelPropositionLowerer {
                     }
                 }
                 Ok(Proposition::Exists {
+                    name: name.clone(),
                     var: variable,
                     sort: Sort::CInt32,
                     body: Box::new(body),
@@ -4409,7 +4460,14 @@ impl KernelPropositionLowerer {
                         let CValue::Int32(item_bits) = item_value else {
                             unreachable!("range `any` item value is always int32")
                         };
-                        Ok(bounded_exists_int32(variable, start, item_bits, end, body))
+                        Ok(bounded_exists_int32(
+                            item.clone(),
+                            variable,
+                            start,
+                            item_bits,
+                            end,
+                            body,
+                        ))
                     }
                 }
             }
@@ -4751,6 +4809,7 @@ fn bounded_forall_int32(
 }
 
 fn bounded_exists_int32(
+    name: String,
     variable: Variable,
     start: Bitvector32Term,
     item: Bitvector32Term,
@@ -4758,6 +4817,7 @@ fn bounded_exists_int32(
     body: Proposition,
 ) -> Proposition {
     Proposition::Exists {
+        name,
         var: variable,
         sort: Sort::CInt32,
         body: Box::new(conjunction(
@@ -5092,6 +5152,304 @@ fn check_function_claim_by_simp(
     }
 }
 
+fn check_function_claim_with_existence_steps(
+    claim_label: &str,
+    path_index: usize,
+    path_facts: &[crate::kernel::PathFact],
+    available_propositions: &mut Vec<Proposition>,
+    claim: &FunctionClaimRef<'_>,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    outcome: &CFunctionOutcome,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+    proof_steps: &[ProofStep],
+    original_requirement_count: usize,
+    use_simp: bool,
+) -> Result<(), ClickError> {
+    let FunctionClaimRef::Ensure(_, ensure_clause) = claim else {
+        return Err(ClickError::new(format!(
+            "`witness` and `choose` proof steps currently prove proposition `ensures` clauses for `{claim_label}`; use `frame` for effect clauses"
+        )));
+    };
+    let Ensure::Proposition(surface_goal) = ensure_clause.ensure();
+    let CFunctionOutcome::Return {
+        value: result,
+        state: post_state,
+    } = outcome
+    else {
+        return Err(ClickError::new(format!(
+            "`witness`/`choose` failed for `{claim_label}` path {path_index}: outcome was {outcome:?}\n  path facts: {}",
+            describe_facts(path_facts)
+        )));
+    };
+
+    let mut values = parameter_values(parameters, arguments).map_err(|error| {
+        ClickError::new(format!(
+            "`witness`/`choose` failed for `{claim_label}` path {path_index}: {}",
+            error.message
+        ))
+    })?;
+    let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
+    let mut assumptions = assumptions_from_propositions(available_propositions);
+    let mut next_lowering_variable = 2_000_000;
+    let mut active_functions = BTreeSet::new();
+    let mut goal = lower_outcome_proposition_with_environment(
+        &mut values,
+        &array_refs,
+        pre_state,
+        post_state,
+        Some(result),
+        &assumptions,
+        surface_goal,
+        &mut next_lowering_variable,
+        predicate_environment,
+        click_function_environment,
+        &mut active_functions,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`witness`/`choose` failed for `{claim_label}` path {path_index}: could not lower goal: {message}"
+        ))
+    })?;
+
+    let mut next_choice_variable = 3_000_000;
+    for (step_index, step) in proof_steps.iter().enumerate() {
+        match step {
+            ProofStep::Choose(choice) => {
+                apply_choose_step(
+                    choice,
+                    claim_label,
+                    path_index,
+                    step_index,
+                    available_propositions,
+                    &mut values,
+                    original_requirement_count,
+                    &mut next_choice_variable,
+                )?;
+                *available_propositions = unfold_available_predicate_facts(
+                    predicate_environment,
+                    click_function_environment,
+                    unfolded_predicates,
+                    available_propositions,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: {message}"
+                    ))
+                })?;
+            }
+            ProofStep::Witness(witness) => {
+                assumptions = assumptions_from_propositions(available_propositions);
+                goal = unfold_predicates_in_proposition(
+                    predicate_environment,
+                    click_function_environment,
+                    unfolded_predicates,
+                    &goal,
+                    &assumptions,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`witness` failed for `{claim_label}` path {path_index}, proof step {step_index}: {message}"
+                    ))
+                })?;
+                let witness_value = evaluate_witness_step_value(
+                    witness,
+                    claim_label,
+                    path_index,
+                    step_index,
+                    &values,
+                    &array_refs,
+                    pre_state,
+                    post_state,
+                    result,
+                    &assumptions,
+                    predicate_environment,
+                    click_function_environment,
+                )?;
+                goal = apply_witness_step(
+                    witness,
+                    witness_value,
+                    goal,
+                    claim_label,
+                    path_index,
+                    step_index,
+                )?;
+            }
+            _ => {}
+        }
+    }
+
+    assumptions = assumptions_from_propositions(available_propositions);
+    goal = unfold_predicates_in_proposition(
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        &goal,
+        &assumptions,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`witness`/`choose` failed for `{claim_label}` path {path_index}: {message}"
+        ))
+    })?;
+
+    if use_simp {
+        match simp_proposition(&goal, &assumptions) {
+            SimpProposition::True => Ok(()),
+            simplified => Err(ClickError::new(format!(
+                "`witness`/`choose` failed for `{claim_label}` path {path_index}: simplified proposition was not true: {simplified:?}\n  instantiated goal: {goal:?}\n  path facts: {}",
+                describe_facts(path_facts)
+            ))),
+        }
+    } else if assumptions.proves(&goal) {
+        Ok(())
+    } else {
+        Err(ClickError::new(format!(
+            "`witness`/`choose` failed for `{claim_label}` path {path_index}: instantiated goal was not provable: {goal:?}\n  path facts: {}",
+            describe_facts(path_facts)
+        )))
+    }
+}
+
+fn apply_choose_step(
+    choice: &ProofChoice,
+    claim_label: &str,
+    path_index: usize,
+    step_index: usize,
+    available_propositions: &mut Vec<Proposition>,
+    values: &mut BTreeMap<String, CValue>,
+    original_requirement_count: usize,
+    next_choice_variable: &mut u64,
+) -> Result<(), ClickError> {
+    if choice.name == "result" || values.contains_key(&choice.name) {
+        return Err(ClickError::new(format!(
+            "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: `{}` is already in scope",
+            choice.name
+        )));
+    }
+
+    let source = match choice.source {
+        ProofFactSource::Requirement(index) => {
+            if index >= original_requirement_count {
+                return Err(ClickError::new(format!(
+                    "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: requirement {index} is out of range; function has {original_requirement_count} requirement(s)"
+                )));
+            }
+            available_propositions
+                .get(index)
+                .cloned()
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: requirement {index} was not available"
+                    ))
+                })?
+        }
+    };
+
+    let Proposition::Exists {
+        var, sort, body, ..
+    } = source
+    else {
+        return Err(ClickError::new(format!(
+            "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: source is not an existential proposition"
+        )));
+    };
+    if sort != Sort::CInt32 {
+        return Err(ClickError::new(format!(
+            "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: only int32 existential choices are supported"
+        )));
+    }
+
+    let chosen = Bitvector32Term::Variable(Variable(*next_choice_variable));
+    *next_choice_variable += 1;
+    values.insert(choice.name.clone(), CValue::Int32(chosen.clone()));
+    available_propositions.push(substitute_int32_variable_in_proposition(&body, var, chosen));
+    Ok(())
+}
+
+fn evaluate_witness_step_value(
+    witness: &ProofWitness,
+    claim_label: &str,
+    path_index: usize,
+    step_index: usize,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    assumptions: &Assumptions,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Bitvector32Term, ClickError> {
+    let mut active_functions = BTreeSet::new();
+    let value = evaluate_contract_expression_with_environment(
+        values,
+        array_refs,
+        pre_state,
+        post_state,
+        Some(result),
+        assumptions,
+        &witness.value,
+        predicate_environment,
+        click_function_environment,
+        &mut active_functions,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`witness` failed for `{claim_label}` path {path_index}, proof step {step_index}: could not evaluate witness value for `{}`: {message}",
+            witness.name
+        ))
+    })?;
+    let CValue::Int32(value) = value else {
+        return Err(ClickError::new(format!(
+            "`witness` failed for `{claim_label}` path {path_index}, proof step {step_index}: witness `{}` did not evaluate to int32",
+            witness.name
+        )));
+    };
+    Ok(value)
+}
+
+fn apply_witness_step(
+    witness: &ProofWitness,
+    witness_value: Bitvector32Term,
+    goal: Proposition,
+    claim_label: &str,
+    path_index: usize,
+    step_index: usize,
+) -> Result<Proposition, ClickError> {
+    let Proposition::Exists {
+        name,
+        var,
+        sort,
+        body,
+    } = goal
+    else {
+        return Err(ClickError::new(format!(
+            "`witness` failed for `{claim_label}` path {path_index}, proof step {step_index}: goal is not an existential proposition"
+        )));
+    };
+    if sort != Sort::CInt32 {
+        return Err(ClickError::new(format!(
+            "`witness` failed for `{claim_label}` path {path_index}, proof step {step_index}: only int32 existential witnesses are supported"
+        )));
+    }
+    if name != witness.name {
+        return Err(ClickError::new(format!(
+            "`witness` failed for `{claim_label}` path {path_index}, proof step {step_index}: goal binds `{name}`, but proof provided witness `{}`",
+            witness.name
+        )));
+    }
+
+    Ok(substitute_int32_variable_in_proposition(
+        &body,
+        var,
+        witness_value,
+    ))
+}
+
 fn prove_ensure_proposition_by_simp(
     ensure_label: &str,
     path_index: usize,
@@ -5311,7 +5669,13 @@ fn unfold_predicates_in_proposition_with_active(
                 active,
             )?),
         }),
-        Proposition::Exists { var, sort, body } => Ok(Proposition::Exists {
+        Proposition::Exists {
+            name,
+            var,
+            sort,
+            body,
+        } => Ok(Proposition::Exists {
+            name: name.clone(),
             var: *var,
             sort: sort.clone(),
             body: Box::new(unfold_predicates_in_proposition_with_active(
@@ -5672,6 +6036,7 @@ fn lower_predicate_body_proposition_with_environment(
                 }
             }
             Ok(Proposition::Exists {
+                name: name.clone(),
                 var: variable,
                 sort: Sort::CInt32,
                 body: Box::new(body),
@@ -5830,7 +6195,14 @@ fn lower_predicate_body_proposition_with_environment(
                     let CValue::Int32(item_bits) = item_value else {
                         unreachable!("range `any` item value is always int32")
                     };
-                    Ok(bounded_exists_int32(variable, start, item_bits, end, body))
+                    Ok(bounded_exists_int32(
+                        item.clone(),
+                        variable,
+                        start,
+                        item_bits,
+                        end,
+                        body,
+                    ))
                 }
             }
         }
@@ -7249,6 +7621,7 @@ fn lower_outcome_proposition_with_environment(
                 }
             }
             Ok(Proposition::Exists {
+                name: name.clone(),
                 var: variable,
                 sort: Sort::CInt32,
                 body: Box::new(body),
@@ -7421,7 +7794,14 @@ fn lower_outcome_proposition_with_environment(
                     let CValue::Int32(item_bits) = item_value else {
                         unreachable!("range `any` item value is always int32")
                     };
-                    Ok(bounded_exists_int32(variable, start, item_bits, end, body))
+                    Ok(bounded_exists_int32(
+                        item.clone(),
+                        variable,
+                        start,
+                        item_bits,
+                        end,
+                        body,
+                    ))
                 }
             }
         }
@@ -9324,6 +9704,22 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 ProofStep::Unfold(predicate)
             }
+            "witness" => {
+                self.expect(Token::LParen)?;
+                let name = self.expect_ident("witness variable name")?;
+                self.expect(Token::Equal)?;
+                let value = self.parse_contract_expression()?;
+                self.expect(Token::RParen)?;
+                ProofStep::Witness(ProofWitness { name, value })
+            }
+            "choose" => {
+                self.expect(Token::LParen)?;
+                let name = self.expect_ident("chosen variable name")?;
+                self.expect_ident_spelling("from")?;
+                let source = self.parse_proof_fact_source()?;
+                self.expect(Token::RParen)?;
+                ProofStep::Choose(ProofChoice { name, source })
+            }
             "simp" => {
                 self.expect_empty_step_args(&name)?;
                 ProofStep::Simp
@@ -9349,6 +9745,21 @@ impl Parser {
             return Err(self.error(format!("`{name}` expects no arguments")));
         }
         self.expect(Token::RParen)
+    }
+
+    fn parse_proof_fact_source(&mut self) -> Result<ProofFactSource, ClickError> {
+        match self.next() {
+            Some(Token::Ident(kind)) if kind == "requirement" => Ok(ProofFactSource::Requirement(
+                self.expect_index("requirement index")?,
+            )),
+            Some(Token::Ident(kind)) => Err(self.error(format!(
+                "expected proof fact source `requirement N`, got `{kind}`"
+            ))),
+            Some(token) => Err(self.error(format!(
+                "expected proof fact source `requirement N`, got {token:?}"
+            ))),
+            None => Err(self.error("expected proof fact source `requirement N`, got end of input")),
+        }
     }
 
     fn parse_proof_step_target(&mut self) -> Result<ProofStepTarget, ClickError> {
@@ -10771,6 +11182,39 @@ mod tests {
                 [
                     ProofStep::SymbolicExecute,
                     ProofStep::Unfold("sorted".to_string()),
+                    ProofStep::Simp,
+                    ProofStep::Close,
+                ]
+                .as_slice()
+            )
+        );
+    }
+
+    #[test]
+    fn parses_existential_proof_steps() {
+        let source = FILL3_CLICK.replace(
+            "by auto;",
+            "by { symbolic_execute(); choose(k from requirement 0); witness(j = k + 1); simp(); close(); }",
+        );
+        let file = parse(&source).expect("existential proof-step script should parse");
+        let ensure = &file.function_blocks()[0].ensures()[0];
+
+        assert_eq!(
+            ensure.proof().steps(),
+            Some(
+                [
+                    ProofStep::SymbolicExecute,
+                    ProofStep::Choose(ProofChoice {
+                        name: "k".to_string(),
+                        source: ProofFactSource::Requirement(0),
+                    }),
+                    ProofStep::Witness(ProofWitness {
+                        name: "j".to_string(),
+                        value: ContractExpression::Add(
+                            Box::new(current_var("k")),
+                            Box::new(current_int(1)),
+                        ),
+                    }),
                     ProofStep::Simp,
                     ProofStep::Close,
                 ]

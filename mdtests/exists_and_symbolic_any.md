@@ -2,8 +2,8 @@
 
 This checks the first existential proposition slice. Click can parse explicit
 `exists`, lower symbolic `(lo..hi).any(...)` to a kernel existential, and reuse
-matching assumptions. It does not yet synthesize witnesses for arbitrary
-existential goals.
+matching assumptions. Existential goal introduction is covered separately by the
+explicit `witness` proof step.
 
 ```c filename=exists_and_symbolic_any.c
 int32 exists_and_symbolic_any(int32 x, int32 n) {

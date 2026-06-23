@@ -175,6 +175,7 @@ pub(super) fn lower_spec_proposition_at_state(
                     .into_iter()
                     .map(|path| SpecPropositionPath {
                         proposition: Proposition::Exists {
+                            name: name.clone(),
                             var: *variable,
                             sort: Sort::CInt32,
                             body: Box::new(path.proposition),
@@ -185,6 +186,7 @@ pub(super) fn lower_spec_proposition_at_state(
                             .into_iter()
                             .map(|obligation| {
                                 obligation.map_proposition(|proposition| Proposition::Exists {
+                                    name: name.clone(),
                                     var: *variable,
                                     sort: Sort::CInt32,
                                     body: Box::new(proposition),

@@ -80,6 +80,19 @@ Range proposition helpers:
 existential proposition when its bounds are symbolic; concrete `.any` ranges
 still unroll to a finite disjunction.
 
+Existential goals are proved explicitly in proof-step scripts with `witness`.
+The witness name must match the existential binder. For a symbolic `.any`, the
+range item name is the existential binder:
+
+```click
+ensures found: (lo..hi).any(|k| { p[k] == result }) by {
+    symbolic_execute();
+    witness(k = lo);
+    simp();
+    close();
+}
+```
+
 ## `old(...)`
 
 `old(expression)` evaluates a contract expression in the function-entry state.

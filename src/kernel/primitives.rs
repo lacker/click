@@ -501,6 +501,7 @@ pub enum Proposition {
         body: Box<Proposition>,
     },
     Exists {
+        name: String,
         var: Variable,
         sort: Sort,
         body: Box<Proposition>,

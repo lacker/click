@@ -49,11 +49,43 @@ Current proof steps:
 - `frame(loop N);`: prove the effect summary for loop `N` and expose it for
   later postcondition reasoning.
 - `unfold(name);`: unfold matching predicate facts and goals.
+- `choose(k from requirement N);`: open a direct existential precondition from
+  the zero-based requirement index `N`, introducing proof-local int32 value `k`.
+- `witness(k = expression);`: prove the current existential goal by substituting
+  the given int32 expression for binder `k`.
 - `simp();`: request deterministic simplification during close.
 - `close();`: finish the proof. This must be the final proof step.
 
 Some successful `auto` proofs record replayable proof-step certificates when the
 current proof-step language can express the argument.
+
+Existential proof steps are deterministic replay steps, not search tactics. A
+typical existential-introduction proof names a witness:
+
+```click
+ensures found: (0..n).any(|k| { k == result }) by {
+    symbolic_execute();
+    witness(k = 0);
+    simp();
+    close();
+}
+```
+
+`choose` is existential elimination for facts that are already assumed. The
+current source form is intentionally narrow: `requirement N` means the Nth
+written `requires` clause, and that source must lower directly to an existential
+proposition.
+
+```click
+requires exists (int32 k) { k == x };
+ensures again: exists (int32 j) { j == x } by {
+    symbolic_execute();
+    choose(k from requirement 0);
+    witness(j = k);
+    simp();
+    close();
+}
+```
 
 ## Structural Blocks
 

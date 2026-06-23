@@ -220,6 +220,14 @@ pub fn proposition_and_all(mut propositions: Vec<Proposition>) -> Proposition {
         .fold(first, |right, left| proposition_and(left, right))
 }
 
+pub fn substitute_int32_variable_in_proposition(
+    proposition: &Proposition,
+    variable: Variable,
+    value: Bitvector32Term,
+) -> Proposition {
+    substitute_bitvector_variable_in_proposition(proposition, variable, &value)
+}
+
 pub fn c_max_body() -> CStatement {
     c_if(
         c_less_than(c_variable("a"), c_variable("b")),

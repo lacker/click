@@ -58,9 +58,14 @@ lowering concept for parameters written as `int32 p[]`, `int32* p`,
 ## Existentials Need Explicit Facts
 
 `exists (int32 k) { ... }` is supported, and symbolic `(lo..hi).any(...)`
-lowers to a bounded existential. `auto` can reuse matching existential facts,
-but it does not synthesize witnesses yet. Concrete `.any` ranges still unroll
-to finite disjunctions.
+lowers to a bounded existential. Proof-step scripts can prove existential goals
+with `witness(k = expression);` and can open direct existential preconditions
+with `choose(k from requirement N);`.
+
+The remaining limitations are automation and source selection: `auto` does not
+synthesize witnesses, and `choose` currently opens only direct existential
+`requires` clauses by zero-based requirement index. Concrete `.any` ranges still
+unroll to finite disjunctions.
 
 ## Folds Are Partly Supported
 

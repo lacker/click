@@ -1423,7 +1423,13 @@ pub(super) fn substitute_bitvector_variable_in_proposition(
             sort: sort.clone(),
             body: Box::new(substitute_bitvector_variable_in_proposition(body, from, to)),
         },
-        Proposition::Exists { var, sort, body } if *var != from => Proposition::Exists {
+        Proposition::Exists {
+            name,
+            var,
+            sort,
+            body,
+        } if *var != from => Proposition::Exists {
+            name: name.clone(),
             var: *var,
             sort: sort.clone(),
             body: Box::new(substitute_bitvector_variable_in_proposition(body, from, to)),
