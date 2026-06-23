@@ -56,8 +56,8 @@ In `src/kernel/`:
 - `SpecExpression`, `SpecProposition`: Kernel Click forms used for
   state-parametric loop invariants. They can include current-state C fragments,
   fixed-memory loads, pure `if`, `let`, and `RangeFold`.
-- `Proposition`: proof propositions, C semantic judgments, memory facts, loop
-  invariant rules.
+- `Proposition`: proof propositions, including `ForAll` and `Exists`, C
+  semantic judgments, memory facts, and loop invariant rules.
 - `Assumptions`: known condition/proposition facts plus deterministic reasoning.
 - `ProofObligation`, `PathFact`: obligations and facts produced during symbolic
   execution.

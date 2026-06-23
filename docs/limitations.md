@@ -55,10 +55,12 @@ There is still no public `ref<T>` syntax. Array refs are an internal pure Click
 lowering concept for parameters written as `int32 p[]`, `int32* p`,
 `uint8 p[]`, or `uint8* p`.
 
-## Symbolic `.any` Is Not General Yet
+## Existentials Need Explicit Facts
 
-`(lo..hi).any(...)` currently requires concrete bounds and unrolls to a finite
-disjunction. There is no general existential proposition surface yet.
+`exists (int32 k) { ... }` is supported, and symbolic `(lo..hi).any(...)`
+lowers to a bounded existential. `auto` can reuse matching existential facts,
+but it does not synthesize witnesses yet. Concrete `.any` ranges still unroll
+to finite disjunctions.
 
 ## Folds Are Partly Supported
 

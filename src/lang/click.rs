@@ -171,6 +171,11 @@ pub enum ClickProposition {
         name: String,
         body: Box<ClickProposition>,
     },
+    Exists {
+        c_type: C0Type,
+        name: String,
+        body: Box<ClickProposition>,
+    },
     RangeAll {
         start: ContractExpression,
         end: ContractExpression,
@@ -2495,10 +2500,108 @@ impl AnnotationLowerer<'_> {
                     body: Box::new(body),
                 })
             }
-            ClickProposition::RangeAll { .. } | ClickProposition::RangeAny { .. } => Err(
-                "range proposition methods are not supported in loop invariant spec lowering yet"
-                    .to_string(),
-            ),
+            ClickProposition::Exists { c_type, name, body } => {
+                if *c_type != C0Type::Int32 {
+                    return Err("only `exists (int32 ...)` is supported".to_string());
+                }
+                let variable = Variable(self.next_quantifier_variable);
+                self.next_quantifier_variable += 1;
+                let mut body_environment = environment.clone();
+                body_environment.values.insert(
+                    name.clone(),
+                    SpecExpression::Value(CValue::Int32(Bitvector32Term::Variable(variable))),
+                );
+                let previous = self.quantified_values.insert(
+                    name.clone(),
+                    CValue::Int32(Bitvector32Term::Variable(variable)),
+                );
+                let body = self.click_proposition_to_spec_proposition(body, &body_environment)?;
+                match previous {
+                    Some(value) => {
+                        self.quantified_values.insert(name.clone(), value);
+                    }
+                    None => {
+                        self.quantified_values.remove(name);
+                    }
+                }
+                Ok(SpecProposition::ExistsInt32 {
+                    name: name.clone(),
+                    variable,
+                    body: Box::new(body),
+                })
+            }
+            ClickProposition::RangeAll {
+                start,
+                end,
+                item,
+                body,
+            } => {
+                let start = self.lower_contract_expression_to_spec(start, environment)?;
+                let end = self.lower_contract_expression_to_spec(end, environment)?;
+                let variable = Variable(self.next_quantifier_variable);
+                self.next_quantifier_variable += 1;
+                let item_value =
+                    SpecExpression::Value(CValue::Int32(Bitvector32Term::Variable(variable)));
+                let mut body_environment = environment.clone();
+                body_environment
+                    .values
+                    .insert(item.clone(), item_value.clone());
+                let previous = self.quantified_values.insert(
+                    item.clone(),
+                    CValue::Int32(Bitvector32Term::Variable(variable)),
+                );
+                let body = self.click_proposition_to_spec_proposition(body, &body_environment)?;
+                match previous {
+                    Some(value) => {
+                        self.quantified_values.insert(item.clone(), value);
+                    }
+                    None => {
+                        self.quantified_values.remove(item);
+                    }
+                }
+                let range = spec_range_membership_proposition(start, item_value, end);
+                Ok(SpecProposition::ForAllInt32 {
+                    name: item.clone(),
+                    variable,
+                    body: Box::new(SpecProposition::Implies(Box::new(range), Box::new(body))),
+                })
+            }
+            ClickProposition::RangeAny {
+                start,
+                end,
+                item,
+                body,
+            } => {
+                let start = self.lower_contract_expression_to_spec(start, environment)?;
+                let end = self.lower_contract_expression_to_spec(end, environment)?;
+                let variable = Variable(self.next_quantifier_variable);
+                self.next_quantifier_variable += 1;
+                let item_value =
+                    SpecExpression::Value(CValue::Int32(Bitvector32Term::Variable(variable)));
+                let mut body_environment = environment.clone();
+                body_environment
+                    .values
+                    .insert(item.clone(), item_value.clone());
+                let previous = self.quantified_values.insert(
+                    item.clone(),
+                    CValue::Int32(Bitvector32Term::Variable(variable)),
+                );
+                let body = self.click_proposition_to_spec_proposition(body, &body_environment)?;
+                match previous {
+                    Some(value) => {
+                        self.quantified_values.insert(item.clone(), value);
+                    }
+                    None => {
+                        self.quantified_values.remove(item);
+                    }
+                }
+                let range = spec_range_membership_proposition(start, item_value, end);
+                Ok(SpecProposition::ExistsInt32 {
+                    name: item.clone(),
+                    variable,
+                    body: Box::new(SpecProposition::And(Box::new(range), Box::new(body))),
+                })
+            }
             ClickProposition::PredicateCall { name, arguments } => Ok(SpecProposition::Predicate {
                 name: name.clone(),
                 arguments: arguments
@@ -3120,6 +3223,16 @@ fn unfold_click_predicates_in_proposition_with_active(
                 active,
             )?),
         }),
+        ClickProposition::Exists { c_type, name, body } => Ok(ClickProposition::Exists {
+            c_type: *c_type,
+            name: name.clone(),
+            body: Box::new(unfold_click_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                body,
+                active,
+            )?),
+        }),
         ClickProposition::RangeAll {
             start,
             end,
@@ -3216,6 +3329,15 @@ fn substitute_click_proposition(
             let mut scoped = substitutions.clone();
             scoped.remove(name);
             Ok(ClickProposition::ForAll {
+                c_type: *c_type,
+                name: name.clone(),
+                body: Box::new(substitute_click_proposition(body, &scoped)?),
+            })
+        }
+        ClickProposition::Exists { c_type, name, body } => {
+            let mut scoped = substitutions.clone();
+            scoped.remove(name);
+            Ok(ClickProposition::Exists {
                 c_type: *c_type,
                 name: name.clone(),
                 body: Box::new(substitute_click_proposition(body, &scoped)?),
@@ -3528,6 +3650,7 @@ fn click_proposition_to_c_expression(proposition: &ClickProposition) -> Option<C
             Box::new(click_proposition_to_c_expression(right)?),
         )),
         ClickProposition::ForAll { .. }
+        | ClickProposition::Exists { .. }
         | ClickProposition::RangeAll { .. }
         | ClickProposition::RangeAny { .. }
         | ClickProposition::PredicateCall { .. } => None,
@@ -4174,6 +4297,31 @@ impl KernelPropositionLowerer {
                     body: Box::new(body),
                 })
             }
+            ClickProposition::Exists { c_type, name, body } => {
+                if *c_type != C0Type::Int32 {
+                    return Err(ClickError::new("only `exists (int32 ...)` is supported"));
+                }
+                let variable = Variable(self.next_variable);
+                self.next_variable += 1;
+                let previous = self.values.insert(
+                    name.clone(),
+                    CValue::Int32(Bitvector32Term::Variable(variable)),
+                );
+                let body = self.lower_requirement_proposition(body)?;
+                match previous {
+                    Some(value) => {
+                        self.values.insert(name.clone(), value);
+                    }
+                    None => {
+                        self.values.remove(name);
+                    }
+                }
+                Ok(Proposition::Exists {
+                    var: variable,
+                    sort: Sort::CInt32,
+                    body: Box::new(body),
+                })
+            }
             ClickProposition::RangeAll {
                 start,
                 end,
@@ -4204,15 +4352,7 @@ impl KernelPropositionLowerer {
                 let CValue::Int32(item_bits) = item_value else {
                     unreachable!("range `all` item value is always int32")
                 };
-                let range = conjunction(
-                    Proposition::ConditionIs(signed_less_equal(start, item_bits.clone()), true),
-                    Proposition::ConditionIs(signed_less_than(item_bits, end), true),
-                );
-                Ok(Proposition::ForAll {
-                    var: variable,
-                    sort: Sort::CInt32,
-                    body: Box::new(Proposition::Implies(Box::new(range), Box::new(body))),
-                })
+                Ok(bounded_forall_int32(variable, start, item_bits, end, body))
             }
             ClickProposition::RangeAny {
                 start,
@@ -4228,28 +4368,50 @@ impl KernelPropositionLowerer {
                 let end =
                     int32_term_value(self.lower_requirement_value(end)?, "range `any` end bound")
                         .map_err(ClickError::new)?;
-                let start =
-                    concrete_bound_from_term(&start, "any", "start").map_err(ClickError::new)?;
-                let end = concrete_bound_from_term(&end, "any", "end").map_err(ClickError::new)?;
                 let outer_values = self.values.clone();
-                let mut proposition = false_proposition();
-                for index in concrete_fold_range(start, end).map_err(ClickError::new)? {
-                    self.values = outer_values.clone();
-                    self.values.insert(
-                        item.clone(),
-                        CValue::Int32(Bitvector32Term::Constant(index as u32)),
-                    );
-                    let body = match self.lower_requirement_proposition(body) {
-                        Ok(body) => body,
-                        Err(error) => {
-                            self.values = outer_values;
-                            return Err(error);
+                match (
+                    concrete_bound_from_term(&start, "any", "start"),
+                    concrete_bound_from_term(&end, "any", "end"),
+                ) {
+                    (Ok(start), Ok(end)) => {
+                        let mut proposition = false_proposition();
+                        for index in concrete_fold_range(start, end).map_err(ClickError::new)? {
+                            self.values = outer_values.clone();
+                            self.values.insert(
+                                item.clone(),
+                                CValue::Int32(Bitvector32Term::Constant(index as u32)),
+                            );
+                            let body = match self.lower_requirement_proposition(body) {
+                                Ok(body) => body,
+                                Err(error) => {
+                                    self.values = outer_values;
+                                    return Err(error);
+                                }
+                            };
+                            proposition = disjunction(proposition, body);
                         }
-                    };
-                    proposition = disjunction(proposition, body);
+                        self.values = outer_values;
+                        Ok(proposition)
+                    }
+                    _ => {
+                        let variable = Variable(self.next_variable);
+                        self.next_variable += 1;
+                        let item_value = CValue::Int32(Bitvector32Term::Variable(variable));
+                        self.values.insert(item.clone(), item_value.clone());
+                        let body = match self.lower_requirement_proposition(body) {
+                            Ok(body) => body,
+                            Err(error) => {
+                                self.values = outer_values;
+                                return Err(error);
+                            }
+                        };
+                        self.values = outer_values;
+                        let CValue::Int32(item_bits) = item_value else {
+                            unreachable!("range `any` item value is always int32")
+                        };
+                        Ok(bounded_exists_int32(variable, start, item_bits, end, body))
+                    }
                 }
-                self.values = outer_values;
-                Ok(proposition)
             }
             ClickProposition::PredicateCall { name, arguments } => {
                 let definition = self
@@ -4558,6 +4720,70 @@ fn disjunction(left: Proposition, right: Proposition) -> Proposition {
         | (_, Proposition::ConditionIs(ConditionTerm::Constant(true), true)) => true_proposition(),
         _ => Proposition::Or(Box::new(left), Box::new(right)),
     }
+}
+
+fn range_membership_proposition(
+    start: Bitvector32Term,
+    item: Bitvector32Term,
+    end: Bitvector32Term,
+) -> Proposition {
+    conjunction(
+        Proposition::ConditionIs(signed_less_equal(start, item.clone()), true),
+        Proposition::ConditionIs(signed_less_than(item, end), true),
+    )
+}
+
+fn bounded_forall_int32(
+    variable: Variable,
+    start: Bitvector32Term,
+    item: Bitvector32Term,
+    end: Bitvector32Term,
+    body: Proposition,
+) -> Proposition {
+    Proposition::ForAll {
+        var: variable,
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::Implies(
+            Box::new(range_membership_proposition(start, item, end)),
+            Box::new(body),
+        )),
+    }
+}
+
+fn bounded_exists_int32(
+    variable: Variable,
+    start: Bitvector32Term,
+    item: Bitvector32Term,
+    end: Bitvector32Term,
+    body: Proposition,
+) -> Proposition {
+    Proposition::Exists {
+        var: variable,
+        sort: Sort::CInt32,
+        body: Box::new(conjunction(
+            range_membership_proposition(start, item, end),
+            body,
+        )),
+    }
+}
+
+fn spec_range_membership_proposition(
+    start: SpecExpression,
+    item: SpecExpression,
+    end: SpecExpression,
+) -> SpecProposition {
+    SpecProposition::And(
+        Box::new(SpecProposition::Comparison {
+            left: start,
+            operator: CComparisonOperator::LessEqual,
+            right: item.clone(),
+        }),
+        Box::new(SpecProposition::Comparison {
+            left: item,
+            operator: CComparisonOperator::LessThan,
+            right: end,
+        }),
+    )
 }
 
 fn int32_term_value(value: CValue, label: &str) -> Result<Bitvector32Term, String> {
@@ -5085,6 +5311,18 @@ fn unfold_predicates_in_proposition_with_active(
                 active,
             )?),
         }),
+        Proposition::Exists { var, sort, body } => Ok(Proposition::Exists {
+            var: *var,
+            sort: sort.clone(),
+            body: Box::new(unfold_predicates_in_proposition_with_active(
+                predicate_environment,
+                click_function_environment,
+                unfolded_predicates,
+                body,
+                assumptions,
+                active,
+            )?),
+        }),
         _ => Ok(proposition.clone()),
     }
 }
@@ -5404,6 +5642,41 @@ fn lower_predicate_body_proposition_with_environment(
                 body: Box::new(body),
             })
         }
+        ClickProposition::Exists { c_type, name, body } => {
+            if *c_type != C0Type::Int32 {
+                return Err("only `exists (int32 ...)` is supported".to_string());
+            }
+            let variable = Variable(*next_variable);
+            *next_variable += 1;
+            let previous = values.insert(
+                name.clone(),
+                CValue::Int32(Bitvector32Term::Variable(variable)),
+            );
+            let body = lower_predicate_body_proposition_with_environment(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                body,
+                next_variable,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            match previous {
+                Some(value) => {
+                    values.insert(name.clone(), value);
+                }
+                None => {
+                    values.remove(name);
+                }
+            }
+            Ok(Proposition::Exists {
+                var: variable,
+                sort: Sort::CInt32,
+                body: Box::new(body),
+            })
+        }
         ClickProposition::RangeAll {
             start,
             end,
@@ -5462,15 +5735,7 @@ fn lower_predicate_body_proposition_with_environment(
             let CValue::Int32(item_bits) = item_value else {
                 unreachable!("range `all` item value is always int32")
             };
-            let range = conjunction(
-                Proposition::ConditionIs(signed_less_equal(start, item_bits.clone()), true),
-                Proposition::ConditionIs(signed_less_than(item_bits, end), true),
-            );
-            Ok(Proposition::ForAll {
-                var: variable,
-                sort: Sort::CInt32,
-                body: Box::new(Proposition::Implies(Box::new(range), Box::new(body))),
-            })
+            Ok(bounded_forall_int32(variable, start, item_bits, end, body))
         }
         ClickProposition::RangeAny {
             start,
@@ -5504,37 +5769,70 @@ fn lower_predicate_body_proposition_with_environment(
                 )?,
                 "range `any` end bound",
             )?;
-            let start = concrete_bound_from_term(&start, "any", "start")?;
-            let end = concrete_bound_from_term(&end, "any", "end")?;
             let outer_values = values.clone();
-            let mut proposition = false_proposition();
-            for index in concrete_fold_range(start, end)? {
-                *values = outer_values.clone();
-                values.insert(
-                    item.clone(),
-                    CValue::Int32(Bitvector32Term::Constant(index as u32)),
-                );
-                let body = match lower_predicate_body_proposition_with_environment(
-                    values,
-                    array_refs,
-                    memory,
-                    assumptions,
-                    body,
-                    next_variable,
-                    predicate_environment,
-                    click_function_environment,
-                    active_functions,
-                ) {
-                    Ok(body) => body,
-                    Err(error) => {
-                        *values = outer_values;
-                        return Err(error);
+            match (
+                concrete_bound_from_term(&start, "any", "start"),
+                concrete_bound_from_term(&end, "any", "end"),
+            ) {
+                (Ok(start), Ok(end)) => {
+                    let mut proposition = false_proposition();
+                    for index in concrete_fold_range(start, end)? {
+                        *values = outer_values.clone();
+                        values.insert(
+                            item.clone(),
+                            CValue::Int32(Bitvector32Term::Constant(index as u32)),
+                        );
+                        let body = match lower_predicate_body_proposition_with_environment(
+                            values,
+                            array_refs,
+                            memory,
+                            assumptions,
+                            body,
+                            next_variable,
+                            predicate_environment,
+                            click_function_environment,
+                            active_functions,
+                        ) {
+                            Ok(body) => body,
+                            Err(error) => {
+                                *values = outer_values;
+                                return Err(error);
+                            }
+                        };
+                        proposition = disjunction(proposition, body);
                     }
-                };
-                proposition = disjunction(proposition, body);
+                    *values = outer_values;
+                    Ok(proposition)
+                }
+                _ => {
+                    let variable = Variable(*next_variable);
+                    *next_variable += 1;
+                    let item_value = CValue::Int32(Bitvector32Term::Variable(variable));
+                    values.insert(item.clone(), item_value.clone());
+                    let body = match lower_predicate_body_proposition_with_environment(
+                        values,
+                        array_refs,
+                        memory,
+                        assumptions,
+                        body,
+                        next_variable,
+                        predicate_environment,
+                        click_function_environment,
+                        active_functions,
+                    ) {
+                        Ok(body) => body,
+                        Err(error) => {
+                            *values = outer_values;
+                            return Err(error);
+                        }
+                    };
+                    *values = outer_values;
+                    let CValue::Int32(item_bits) = item_value else {
+                        unreachable!("range `any` item value is always int32")
+                    };
+                    Ok(bounded_exists_int32(variable, start, item_bits, end, body))
+                }
             }
-            *values = outer_values;
-            Ok(proposition)
         }
         ClickProposition::PredicateCall { name, arguments } => {
             let definition = predicate_environment
@@ -5940,6 +6238,7 @@ fn simp_proposition(proposition: &Proposition, assumptions: &Assumptions) -> Sim
             }
         }
         Proposition::ForAll { .. }
+        | Proposition::Exists { .. }
         | Proposition::Predicate { .. }
         | Proposition::CExpressionEvaluates { .. }
         | Proposition::CStatementExecutes { .. }
@@ -6918,6 +7217,43 @@ fn lower_outcome_proposition_with_environment(
                 body: Box::new(body),
             })
         }
+        ClickProposition::Exists { c_type, name, body } => {
+            if *c_type != C0Type::Int32 {
+                return Err("only `exists (int32 ...)` is supported".to_string());
+            }
+            let variable = Variable(*next_variable);
+            *next_variable += 1;
+            let previous = values.insert(
+                name.clone(),
+                CValue::Int32(Bitvector32Term::Variable(variable)),
+            );
+            let body = lower_outcome_proposition_with_environment(
+                values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                body,
+                next_variable,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            match previous {
+                Some(value) => {
+                    values.insert(name.clone(), value);
+                }
+                None => {
+                    values.remove(name);
+                }
+            }
+            Ok(Proposition::Exists {
+                var: variable,
+                sort: Sort::CInt32,
+                body: Box::new(body),
+            })
+        }
         ClickProposition::RangeAll {
             start,
             end,
@@ -6982,15 +7318,7 @@ fn lower_outcome_proposition_with_environment(
             let CValue::Int32(item_bits) = item_value else {
                 unreachable!("range `all` item value is always int32")
             };
-            let range = conjunction(
-                Proposition::ConditionIs(signed_less_equal(start, item_bits.clone()), true),
-                Proposition::ConditionIs(signed_less_than(item_bits, end), true),
-            );
-            Ok(Proposition::ForAll {
-                var: variable,
-                sort: Sort::CInt32,
-                body: Box::new(Proposition::Implies(Box::new(range), Box::new(body))),
-            })
+            Ok(bounded_forall_int32(variable, start, item_bits, end, body))
         }
         ClickProposition::RangeAny {
             start,
@@ -7028,39 +7356,74 @@ fn lower_outcome_proposition_with_environment(
                 )?,
                 "range `any` end bound",
             )?;
-            let start = concrete_bound_from_term(&start, "any", "start")?;
-            let end = concrete_bound_from_term(&end, "any", "end")?;
             let outer_values = values.clone();
-            let mut proposition = false_proposition();
-            for index in concrete_fold_range(start, end)? {
-                *values = outer_values.clone();
-                values.insert(
-                    item.clone(),
-                    CValue::Int32(Bitvector32Term::Constant(index as u32)),
-                );
-                let body = match lower_outcome_proposition_with_environment(
-                    values,
-                    array_refs,
-                    pre_state,
-                    post_state,
-                    result,
-                    assumptions,
-                    body,
-                    next_variable,
-                    predicate_environment,
-                    click_function_environment,
-                    active_functions,
-                ) {
-                    Ok(body) => body,
-                    Err(error) => {
-                        *values = outer_values;
-                        return Err(error);
+            match (
+                concrete_bound_from_term(&start, "any", "start"),
+                concrete_bound_from_term(&end, "any", "end"),
+            ) {
+                (Ok(start), Ok(end)) => {
+                    let mut proposition = false_proposition();
+                    for index in concrete_fold_range(start, end)? {
+                        *values = outer_values.clone();
+                        values.insert(
+                            item.clone(),
+                            CValue::Int32(Bitvector32Term::Constant(index as u32)),
+                        );
+                        let body = match lower_outcome_proposition_with_environment(
+                            values,
+                            array_refs,
+                            pre_state,
+                            post_state,
+                            result,
+                            assumptions,
+                            body,
+                            next_variable,
+                            predicate_environment,
+                            click_function_environment,
+                            active_functions,
+                        ) {
+                            Ok(body) => body,
+                            Err(error) => {
+                                *values = outer_values;
+                                return Err(error);
+                            }
+                        };
+                        proposition = disjunction(proposition, body);
                     }
-                };
-                proposition = disjunction(proposition, body);
+                    *values = outer_values;
+                    Ok(proposition)
+                }
+                _ => {
+                    let variable = Variable(*next_variable);
+                    *next_variable += 1;
+                    let item_value = CValue::Int32(Bitvector32Term::Variable(variable));
+                    values.insert(item.clone(), item_value.clone());
+                    let body = match lower_outcome_proposition_with_environment(
+                        values,
+                        array_refs,
+                        pre_state,
+                        post_state,
+                        result,
+                        assumptions,
+                        body,
+                        next_variable,
+                        predicate_environment,
+                        click_function_environment,
+                        active_functions,
+                    ) {
+                        Ok(body) => body,
+                        Err(error) => {
+                            *values = outer_values;
+                            return Err(error);
+                        }
+                    };
+                    *values = outer_values;
+                    let CValue::Int32(item_bits) = item_value else {
+                        unreachable!("range `any` item value is always int32")
+                    };
+                    Ok(bounded_exists_int32(variable, start, item_bits, end, body))
+                }
             }
-            *values = outer_values;
-            Ok(proposition)
         }
         ClickProposition::PredicateCall { name, arguments } => {
             let lowered_arguments = if let Some(definition) = predicate_environment.get(name) {
@@ -8702,6 +9065,22 @@ impl Parser {
             });
         }
 
+        if self.peek_ident() == Some("exists") {
+            self.position += 1;
+            self.expect(Token::LParen)?;
+            let c_type = self.parse_type()?;
+            let name = self.expect_ident("exists variable name")?;
+            self.expect(Token::RParen)?;
+            self.expect(Token::LBrace)?;
+            let body = self.parse_proposition()?;
+            self.expect(Token::RBrace)?;
+            return Ok(ClickProposition::Exists {
+                c_type,
+                name,
+                body: Box::new(body),
+            });
+        }
+
         if self.peek() == Some(&Token::LParen) {
             let start = self.position;
             match self.parse_range_proposition_method() {
@@ -9477,7 +9856,9 @@ fn validate_predicate_calls_in_proposition(
             validate_predicate_calls_in_proposition(left, predicates, click_functions, context)?;
             validate_predicate_calls_in_proposition(right, predicates, click_functions, context)
         }
-        ClickProposition::Not(body) | ClickProposition::ForAll { body, .. } => {
+        ClickProposition::Not(body)
+        | ClickProposition::ForAll { body, .. }
+        | ClickProposition::Exists { body, .. } => {
             validate_predicate_calls_in_proposition(body, predicates, click_functions, context)
         }
         ClickProposition::RangeAll {
@@ -9600,7 +9981,9 @@ fn validate_if_condition_proposition(
             validate_if_condition_proposition(left, click_functions, context)?;
             validate_if_condition_proposition(right, click_functions, context)
         }
-        ClickProposition::Not(body) | ClickProposition::ForAll { body, .. } => {
+        ClickProposition::Not(body)
+        | ClickProposition::ForAll { body, .. }
+        | ClickProposition::Exists { body, .. } => {
             validate_if_condition_proposition(body, click_functions, context)
         }
         ClickProposition::RangeAll {
@@ -9666,9 +10049,9 @@ fn proposition_contains_old_expression(proposition: &ClickProposition) -> bool {
         | ClickProposition::Implies(left, right) => {
             proposition_contains_old_expression(left) || proposition_contains_old_expression(right)
         }
-        ClickProposition::Not(body) | ClickProposition::ForAll { body, .. } => {
-            proposition_contains_old_expression(body)
-        }
+        ClickProposition::Not(body)
+        | ClickProposition::ForAll { body, .. }
+        | ClickProposition::Exists { body, .. } => proposition_contains_old_expression(body),
         ClickProposition::RangeAll {
             start, end, body, ..
         }
@@ -9744,7 +10127,9 @@ fn collect_click_function_calls_in_proposition(
             collect_click_function_calls_in_proposition(left, calls);
             collect_click_function_calls_in_proposition(right, calls);
         }
-        ClickProposition::Not(body) | ClickProposition::ForAll { body, .. } => {
+        ClickProposition::Not(body)
+        | ClickProposition::ForAll { body, .. }
+        | ClickProposition::Exists { body, .. } => {
             collect_click_function_calls_in_proposition(body, calls);
         }
         ClickProposition::RangeAll {

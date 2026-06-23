@@ -283,6 +283,7 @@ pub(super) fn collect_implication_antecedent_order_facts(
             collect_implication_antecedent_order_facts(right, facts);
         }
         Proposition::ForAll { body, .. } => collect_implication_antecedent_order_facts(body, facts),
+        Proposition::Exists { .. } => {}
         Proposition::Not(_)
         | Proposition::ConditionIs(_, _)
         | Proposition::Equal(_, _)
@@ -804,7 +805,7 @@ pub(super) fn collect_proposition_bitvector_variables(
             collect_proposition_bitvector_variables(right, variables);
         }
         Proposition::Not(body) => collect_proposition_bitvector_variables(body, variables),
-        Proposition::ForAll { var, body, .. } => {
+        Proposition::ForAll { var, body, .. } | Proposition::Exists { var, body, .. } => {
             collect_proposition_bitvector_variables(body, variables);
             variables.remove(var);
         }
@@ -1006,7 +1007,8 @@ pub(super) fn collect_spec_proposition_bitvector_variables(
         SpecProposition::Not(body) => {
             collect_spec_proposition_bitvector_variables(body, variables);
         }
-        SpecProposition::ForAllInt32 { variable, body, .. } => {
+        SpecProposition::ForAllInt32 { variable, body, .. }
+        | SpecProposition::ExistsInt32 { variable, body, .. } => {
             collect_spec_proposition_bitvector_variables(body, variables);
             variables.remove(variable);
         }
@@ -1417,6 +1419,11 @@ pub(super) fn substitute_bitvector_variable_in_proposition(
             )),
         ),
         Proposition::ForAll { var, sort, body } if *var != from => Proposition::ForAll {
+            var: *var,
+            sort: sort.clone(),
+            body: Box::new(substitute_bitvector_variable_in_proposition(body, from, to)),
+        },
+        Proposition::Exists { var, sort, body } if *var != from => Proposition::Exists {
             var: *var,
             sort: sort.clone(),
             body: Box::new(substitute_bitvector_variable_in_proposition(body, from, to)),
@@ -1836,6 +1843,17 @@ pub(super) fn substitute_bitvector_variable_in_spec_proposition(
             variable,
             body,
         } if *variable != from => SpecProposition::ForAllInt32 {
+            name: name.clone(),
+            variable: *variable,
+            body: Box::new(substitute_bitvector_variable_in_spec_proposition(
+                body, from, to,
+            )),
+        },
+        SpecProposition::ExistsInt32 {
+            name,
+            variable,
+            body,
+        } if *variable != from => SpecProposition::ExistsInt32 {
             name: name.clone(),
             variable: *variable,
             body: Box::new(substitute_bitvector_variable_in_spec_proposition(

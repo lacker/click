@@ -141,7 +141,7 @@ more reusable specifications and more predictable proof scripts.
 
 Likely additions:
 
-- Existential propositions and symbolic `.any`.
+- Witness support for existential propositions and symbolic `.any` goals.
 - More complete range combinators:
   `.all`, `.any`, `.fold`, `.map`-like derived definitions, and standard lemmas.
 - Lemma declarations:
@@ -264,7 +264,8 @@ Done means:
 
 Good next tasks from the current state:
 
-1. Add symbolic existential support and make `.any` work with symbolic bounds.
+1. Design existential witness support, now that symbolic `.any` and `exists`
+   have kernel representation and exact-fact reuse.
 2. Generalize fold/range lemmas beyond the current count-shaped rules.
 3. Add string/byte-slice stdlib predicates over `uint8[]`.
 4. Add C multiplication and simple bitwise operators with overflow/definedness

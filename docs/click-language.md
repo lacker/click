@@ -63,6 +63,7 @@ Click proposition connectives are words:
 result == x and not (result != x)
 result == x implies result >= 0
 forall (int32 k) { 0 <= k and k < n implies p[k] == old(p[k]) }
+exists (int32 k) { 0 <= k and k < n and p[k] == x }
 ```
 
 Do not use C logical operators such as `&&`, `||`, or `!` in Click
@@ -75,8 +76,9 @@ Range proposition helpers:
 (0..3).any(|k| { p[k] == x })
 ```
 
-`.all` lowers to a bounded universal proposition. `.any` currently requires
-concrete bounds and unrolls to a finite disjunction.
+`.all` lowers to a bounded universal proposition. `.any` lowers to a bounded
+existential proposition when its bounds are symbolic; concrete `.any` ranges
+still unroll to a finite disjunction.
 
 ## `old(...)`
 

@@ -34,8 +34,8 @@ prove each guarantee. The system is intentionally small but already supports:
 - C0 symbolic execution over `int32`, `uint8`, pointers, memory, local arrays,
   and loops with invariants.
 - Function contracts with `requires`, `ensures`, `immutable`, and `mutable`.
-- Click propositions with `and`, `or`, `not`, `implies`, `forall`, range
-  `.all` and concrete range `.any`.
+- Click propositions with `and`, `or`, `not`, `implies`, `forall`, `exists`,
+  range `.all`, and range `.any`.
 - Pure Click functions with `->`, `let`, `if`, range `.fold`, and calls from
   specs.
 - Named Click predicates, explicit `unfold`, and a small standard prelude with
@@ -63,7 +63,7 @@ cargo test --test mdtests
 Use `rg` to find examples before inventing syntax:
 
 ```sh
-rg -n "unfold\\(|mutable|valid_range|permutation|\\.fold|forall" mdtests docs src
+rg -n "unfold\\(|mutable|valid_range|permutation|\\.fold|forall|exists" mdtests docs src
 ```
 
 ## Editing Rule Of Thumb

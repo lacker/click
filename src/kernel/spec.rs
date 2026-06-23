@@ -161,6 +161,40 @@ pub(super) fn lower_spec_proposition_at_state(
                     .collect(),
             )
         }
+        SpecProposition::ExistsInt32 {
+            name,
+            variable,
+            body,
+        } => {
+            let mut state = state.clone();
+            state
+                .locals
+                .set(name.clone(), int32(Bitvector32Term::Variable(*variable)));
+            Ok(
+                lower_spec_proposition_at_state(&state, body, assumptions, budget)?
+                    .into_iter()
+                    .map(|path| SpecPropositionPath {
+                        proposition: Proposition::Exists {
+                            var: *variable,
+                            sort: Sort::CInt32,
+                            body: Box::new(path.proposition),
+                        },
+                        facts: path.facts,
+                        obligations: path
+                            .obligations
+                            .into_iter()
+                            .map(|obligation| {
+                                obligation.map_proposition(|proposition| Proposition::Exists {
+                                    var: *variable,
+                                    sort: Sort::CInt32,
+                                    body: Box::new(proposition),
+                                })
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            )
+        }
         SpecProposition::Predicate { name, arguments } => {
             lower_spec_predicate_proposition_at_state(state, name, arguments, assumptions, budget)
         }

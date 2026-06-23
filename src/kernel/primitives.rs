@@ -197,6 +197,11 @@ pub enum SpecProposition {
         variable: Variable,
         body: Box<SpecProposition>,
     },
+    ExistsInt32 {
+        name: String,
+        variable: Variable,
+        body: Box<SpecProposition>,
+    },
     Predicate {
         name: String,
         arguments: Vec<SpecExpression>,
@@ -491,6 +496,11 @@ pub enum Proposition {
     Not(Box<Proposition>),
     Implies(Box<Proposition>, Box<Proposition>),
     ForAll {
+        var: Variable,
+        sort: Sort,
+        body: Box<Proposition>,
+    },
+    Exists {
         var: Variable,
         sort: Sort,
         body: Box<Proposition>,
