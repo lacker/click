@@ -1,0 +1,2053 @@
+fn evaluate_c_expression(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> Option<CExpressionOutcome> {
+    let paths = evaluate_c_expression_paths(state, expression, assumptions, budget).ok()?;
+    let mut paths = paths.into_iter();
+    let path = paths.next()?;
+    if paths.next().is_some() || !path.obligations.is_empty() {
+        return None;
+    }
+    Some(path.outcome)
+}
+
+fn evaluate_c_expression_paths(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    budget.consume_expression_step()?;
+    let paths = match expression {
+        CExpression::Value(value) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(value.clone()),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }],
+        CExpression::Variable(name) if state.locals.is_array_object(name) => {
+            let pointer = CMemory::local_pointer(name);
+            vec![CExpressionPath {
+                outcome: if state.memory.has_block(&pointer.block) {
+                    CExpressionOutcome::Value(CValue::Pointer(pointer))
+                } else {
+                    CExpressionOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone()))
+                },
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }]
+        }
+        CExpression::Variable(_) => {
+            read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
+        }
+        CExpression::AddressOf(target) => {
+            address_of_lvalue_paths(state, target, assumptions, budget)?
+        }
+        CExpression::LessThan(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                condition_as_c_int32_paths(
+                    ConditionTerm::signed_less_than(left, right),
+                    facts,
+                    obligations,
+                    assumptions,
+                )
+            },
+        )?,
+        CExpression::LessEqual(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                condition_as_c_int32_paths(
+                    ConditionTerm::signed_less_equal(left, right),
+                    facts,
+                    obligations,
+                    assumptions,
+                )
+            },
+        )?,
+        CExpression::GreaterThan(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                condition_as_c_int32_paths(
+                    ConditionTerm::signed_greater_than(left, right),
+                    facts,
+                    obligations,
+                    assumptions,
+                )
+            },
+        )?,
+        CExpression::GreaterEqual(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                condition_as_c_int32_paths(
+                    ConditionTerm::signed_greater_equal(left, right),
+                    facts,
+                    obligations,
+                    assumptions,
+                )
+            },
+        )?,
+        CExpression::Equal(left, right) => {
+            evaluate_c_equal_paths(state, left, right, assumptions, budget)?
+        }
+        CExpression::NotEqual(left, right) => {
+            evaluate_c_not_equal_paths(state, left, right, assumptions, budget)?
+        }
+        CExpression::Not(expression) => {
+            evaluate_c_not_paths(state, expression, assumptions, budget)?
+        }
+        CExpression::And(left, right) => {
+            evaluate_c_logical_and_paths(state, left, right, assumptions, budget)?
+        }
+        CExpression::Or(left, right) => {
+            evaluate_c_logical_or_paths(state, left, right, assumptions, budget)?
+        }
+        CExpression::Add(left, right) => {
+            evaluate_c_add_paths(state, left, right, assumptions, budget)?
+        }
+        CExpression::Subtract(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_subtract(left, right, facts, obligations, assumptions)
+            },
+        )?,
+        CExpression::Load(_) | CExpression::Index(_, _) => {
+            read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
+        }
+    };
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn evaluate_c_lvalue_paths(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CLValuePath>> {
+    budget.consume_expression_step()?;
+    let paths = match expression {
+        CExpression::Variable(name) => vec![CLValuePath {
+            outcome: match state.locals.binding(name) {
+                Some(CLocalBinding::Object { c_type, .. }) => {
+                    CLValueOutcome::LValue(CLValue::local(name.clone(), *c_type))
+                }
+                Some(CLocalBinding::ArrayObject { .. }) => {
+                    CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                }
+                None => CLValueOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone())),
+            },
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }],
+        CExpression::Load(pointer_expression) => {
+            let mut paths = Vec::new();
+            let value_type =
+                c_expression_pointee_type(state, pointer_expression).unwrap_or(CType::Int32);
+            for pointer_path in
+                evaluate_c_expression_paths(state, pointer_expression, assumptions, budget)?
+            {
+                paths.push(match pointer_path.outcome {
+                    CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
+                        outcome: CLValueOutcome::LValue(CLValue::memory(pointer, value_type)),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExpressionOutcome::Value(_) => CLValuePath {
+                        outcome: CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExpressionOutcome::UndefinedBehavior(undefined_behavior) => CLValuePath {
+                        outcome: CLValueOutcome::UndefinedBehavior(undefined_behavior),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExpressionOutcome::RuntimeError(error) => CLValuePath {
+                        outcome: CLValueOutcome::RuntimeError(error),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                });
+            }
+            paths
+        }
+        CExpression::Index(base, index) => {
+            let mut paths = Vec::new();
+            let value_type = c_expression_pointee_type(state, base).unwrap_or(CType::Int32);
+            for pointer_path in evaluate_c_add_paths(state, base, index, assumptions, budget)? {
+                paths.push(match pointer_path.outcome {
+                    CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
+                        outcome: CLValueOutcome::LValue(CLValue::memory(pointer, value_type)),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExpressionOutcome::Value(_) => CLValuePath {
+                        outcome: CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExpressionOutcome::UndefinedBehavior(undefined_behavior) => CLValuePath {
+                        outcome: CLValueOutcome::UndefinedBehavior(undefined_behavior),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExpressionOutcome::RuntimeError(error) => CLValuePath {
+                        outcome: CLValueOutcome::RuntimeError(error),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                });
+            }
+            paths
+        }
+        _ => vec![CLValuePath {
+            outcome: CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }],
+    };
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn read_c_lvalue_expression_paths(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for lvalue_path in evaluate_c_lvalue_paths(state, expression, assumptions, budget)? {
+        paths.extend(read_c_lvalue_paths(
+            state,
+            lvalue_path.outcome,
+            lvalue_path.facts,
+            lvalue_path.obligations,
+            assumptions,
+        ));
+    }
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn read_c_lvalue_paths(
+    state: &CState,
+    outcome: CLValueOutcome,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    match outcome {
+        CLValueOutcome::LValue(lvalue) => match &lvalue.storage {
+            CLValueStorage::Local { name } => vec![CExpressionPath {
+                outcome: match state.locals.get(name) {
+                    Some(value) if lvalue.value_type.accepts(value) => {
+                        CExpressionOutcome::Value(value.clone())
+                    }
+                    Some(_) => CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    None => CExpressionOutcome::RuntimeError(CRuntimeError::UnboundVariable(
+                        name.clone(),
+                    )),
+                },
+                facts,
+                obligations,
+            }],
+            CLValueStorage::Memory { pointer } => evaluate_c_memory_load_paths(
+                &state.memory,
+                pointer.clone(),
+                lvalue.value_type,
+                facts,
+                obligations,
+                assumptions,
+            ),
+        },
+        CLValueOutcome::UndefinedBehavior(undefined_behavior) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+            facts,
+            obligations,
+        }],
+        CLValueOutcome::RuntimeError(error) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(error),
+            facts,
+            obligations,
+        }],
+    }
+}
+
+fn address_of_lvalue_paths(
+    state: &CState,
+    target: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for lvalue_path in evaluate_c_lvalue_paths(state, target, assumptions, budget)? {
+        paths.push(match lvalue_path.outcome {
+            CLValueOutcome::LValue(lvalue) => match lvalue.pointer(state) {
+                Some(pointer) => CExpressionPath {
+                    outcome: CExpressionOutcome::Value(CValue::Pointer(pointer)),
+                    facts: lvalue_path.facts,
+                    obligations: lvalue_path.obligations,
+                },
+                None => CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(CRuntimeError::UnboundVariable(
+                        format!("{target:?}"),
+                    )),
+                    facts: lvalue_path.facts,
+                    obligations: lvalue_path.obligations,
+                },
+            },
+            CLValueOutcome::UndefinedBehavior(undefined_behavior) => CExpressionPath {
+                outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                facts: lvalue_path.facts,
+                obligations: lvalue_path.obligations,
+            },
+            CLValueOutcome::RuntimeError(error) => CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(error),
+                facts: lvalue_path.facts,
+                obligations: lvalue_path.obligations,
+            },
+        });
+    }
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn c_expression_pointee_type(state: &CState, expression: &CExpression) -> Option<CType> {
+    match expression {
+        CExpression::Variable(name) => match state.locals.binding(name) {
+            Some(CLocalBinding::Object { c_type, .. }) => c_type.pointee_type(),
+            Some(CLocalBinding::ArrayObject { element_type, .. }) => Some(*element_type),
+            None => None,
+        },
+        CExpression::AddressOf(target) => c_expression_lvalue_type(state, target),
+        CExpression::Add(left, right) => c_expression_pointee_type(state, left)
+            .or_else(|| c_expression_pointee_type(state, right)),
+        CExpression::Subtract(left, _) => c_expression_pointee_type(state, left),
+        _ => None,
+    }
+}
+
+fn c_expression_lvalue_type(state: &CState, expression: &CExpression) -> Option<CType> {
+    match expression {
+        CExpression::Variable(name) => state.locals.object_type(name),
+        CExpression::Load(pointer) => c_expression_pointee_type(state, pointer),
+        CExpression::Index(base, _) => c_expression_pointee_type(state, base),
+        _ => None,
+    }
+}
+
+fn c_expression_pointer_step_width(state: &CState, expression: &CExpression) -> Option<u32> {
+    c_expression_pointee_type(state, expression).map(CType::byte_width)
+}
+
+fn condition_as_c_int32_paths(
+    condition: ConditionTerm,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    match decide_with_facts(assumptions, &facts, &condition) {
+        Some(true) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(1)),
+            facts,
+            obligations,
+        }],
+        Some(false) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(0)),
+            facts,
+            obligations,
+        }],
+        None => {
+            let mut true_facts = facts.clone();
+            add_condition_path_fact(&mut true_facts, assumptions, condition.clone(), true)
+                .expect("unknown comparison fact should be consistent");
+
+            let mut false_facts = facts;
+            add_condition_path_fact(&mut false_facts, assumptions, condition, false)
+                .expect("unknown comparison fact should be consistent");
+
+            vec![
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(1)),
+                    facts: true_facts,
+                    obligations: obligations.clone(),
+                },
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(0)),
+                    facts: false_facts,
+                    obligations,
+                },
+            ]
+        }
+    }
+}
+
+fn condition_as_c_int32_not_paths(
+    condition: ConditionTerm,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    match decide_with_facts(assumptions, &facts, &condition) {
+        Some(true) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(0)),
+            facts,
+            obligations,
+        }],
+        Some(false) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(1)),
+            facts,
+            obligations,
+        }],
+        None => {
+            let mut true_facts = facts.clone();
+            add_condition_path_fact(&mut true_facts, assumptions, condition.clone(), true)
+                .expect("unknown comparison fact should be consistent");
+
+            let mut false_facts = facts;
+            add_condition_path_fact(&mut false_facts, assumptions, condition, false)
+                .expect("unknown comparison fact should be consistent");
+
+            vec![
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(0)),
+                    facts: true_facts,
+                    obligations: obligations.clone(),
+                },
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(1)),
+                    facts: false_facts,
+                    obligations,
+                },
+            ]
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CTruthinessPath {
+    is_true: bool,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+}
+
+fn c_truthiness_paths(
+    value: CValue,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CTruthinessPath> {
+    match value {
+        CValue::Int32(bits) | CValue::UInt8(bits) => {
+            let is_zero = ConditionTerm::equal(bits, Bitvector32Term::Constant(0));
+            match decide_with_facts(assumptions, &facts, &is_zero) {
+                Some(true) => vec![CTruthinessPath {
+                    is_true: false,
+                    facts,
+                    obligations,
+                }],
+                Some(false) => vec![CTruthinessPath {
+                    is_true: true,
+                    facts,
+                    obligations,
+                }],
+                None => {
+                    let mut true_facts = facts.clone();
+                    add_condition_path_fact(&mut true_facts, assumptions, is_zero.clone(), false)
+                        .expect("unknown truthiness fact should be consistent");
+
+                    let mut false_facts = facts;
+                    add_condition_path_fact(&mut false_facts, assumptions, is_zero, true)
+                        .expect("unknown truthiness fact should be consistent");
+
+                    vec![
+                        CTruthinessPath {
+                            is_true: true,
+                            facts: true_facts,
+                            obligations: obligations.clone(),
+                        },
+                        CTruthinessPath {
+                            is_true: false,
+                            facts: false_facts,
+                            obligations,
+                        },
+                    ]
+                }
+            }
+        }
+        CValue::Pointer(pointer) => match (&pointer.block[..], &pointer.offset) {
+            ("null", PointerOffsetTerm::Constant(0)) => vec![CTruthinessPath {
+                is_true: false,
+                facts,
+                obligations,
+            }],
+            _ => vec![CTruthinessPath {
+                is_true: true,
+                facts,
+                obligations,
+            }],
+        },
+    }
+}
+
+fn c_truthiness_as_c_int32_paths(
+    value: CValue,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    c_truthiness_paths(value, facts, obligations, assumptions)
+        .into_iter()
+        .map(|path| CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(if path.is_true { 1 } else { 0 })),
+            facts: path.facts,
+            obligations: path.obligations,
+        })
+        .collect()
+}
+
+fn evaluate_c_memory_load_paths(
+    memory: &CMemory,
+    pointer: Pointer,
+    value_type: CType,
+    facts: Vec<PathFact>,
+    mut obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    let memory = memory.without_proven_distinct_cells(&pointer, assumptions);
+
+    if let Some(value) = memory.known_value(&pointer) {
+        if !value_type.accepts(&value) {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            }];
+        }
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(value),
+            facts,
+            obligations,
+        }];
+    }
+
+    if let Some((stored_pointer, stored_value)) =
+        memory.first_unresolved_same_block_cell(&pointer, assumptions)
+    {
+        let mut paths = Vec::new();
+
+        let mut equal_facts = facts.clone();
+        if add_pointer_offset_equality_path_facts(
+            &mut equal_facts,
+            assumptions,
+            pointer.offset.clone(),
+            stored_pointer.offset.clone(),
+            true,
+        )
+        .is_some()
+        {
+            paths.push(CExpressionPath {
+                outcome: if value_type.accepts(&stored_value) {
+                    CExpressionOutcome::Value(stored_value)
+                } else {
+                    CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                },
+                facts: equal_facts,
+                obligations: obligations.clone(),
+            });
+        }
+
+        let mut distinct_facts = facts;
+        if add_pointer_offset_equality_path_facts(
+            &mut distinct_facts,
+            assumptions,
+            pointer.offset.clone(),
+            stored_pointer.offset.clone(),
+            false,
+        )
+        .is_some()
+        {
+            paths.extend(evaluate_c_memory_load_paths(
+                &memory.without_cell(&stored_pointer),
+                pointer,
+                value_type,
+                distinct_facts,
+                obligations,
+                assumptions,
+            ));
+        }
+
+        return paths;
+    }
+
+    if memory.can_load_concretely(&pointer, value_type.byte_width()) {
+        let Some(value) = symbolic_load_value(&memory, &pointer, value_type) else {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            }];
+        };
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(value),
+            facts,
+            obligations,
+        }];
+    }
+
+    let proposition = Proposition::CMemoryCanLoad {
+        memory: memory.clone(),
+        pointer: pointer.clone(),
+        byte_width: value_type.byte_width(),
+    };
+    if add_proof_obligation(&mut obligations, assumptions, proposition).is_none() {
+        return Vec::new();
+    }
+
+    let Some(value) = symbolic_load_value(&memory, &pointer, value_type) else {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts,
+            obligations,
+        }];
+    };
+
+    vec![CExpressionPath {
+        outcome: CExpressionOutcome::Value(value),
+        facts,
+        obligations,
+    }]
+}
+
+fn symbolic_load_value(memory: &CMemory, pointer: &Pointer, value_type: CType) -> Option<CValue> {
+    match value_type {
+        CType::Int32 => Some(memory.symbolic_int32_load(pointer)),
+        CType::UInt8 => Some(memory.symbolic_uint8_load(pointer)),
+        CType::Int32Pointer | CType::UInt8Pointer | CType::Int32Array(_) | CType::UInt8Array(_) => {
+            None
+        }
+    }
+}
+
+fn evaluate_c_add_paths(
+    state: &CState,
+    left: &CExpression,
+    right: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    let left_step_width = c_expression_pointer_step_width(state, left);
+    let right_step_width = c_expression_pointer_step_width(state, right);
+    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
+        let CExpressionPath {
+            outcome: left_outcome,
+            facts: left_facts,
+            obligations: left_obligations,
+        } = left_path;
+
+        let left = match left_outcome {
+            CExpressionOutcome::Value(value) => value,
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+            CExpressionOutcome::RuntimeError(error) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+        };
+
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
+        for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
+            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &left_facts,
+                &left_obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+
+            let right = match right_path.outcome {
+                CExpressionOutcome::Value(value) => value,
+                CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                    paths.push(CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                        facts,
+                        obligations,
+                    });
+                    continue;
+                }
+                CExpressionOutcome::RuntimeError(error) => {
+                    paths.push(CExpressionPath {
+                        outcome: CExpressionOutcome::RuntimeError(error),
+                        facts,
+                        obligations,
+                    });
+                    continue;
+                }
+            };
+
+            paths.extend(apply_c_add(
+                left.clone(),
+                right,
+                left_step_width,
+                right_step_width,
+                facts,
+                obligations,
+                assumptions,
+            ));
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn apply_c_add(
+    left: CValue,
+    right: CValue,
+    left_step_width: Option<u32>,
+    right_step_width: Option<u32>,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right)) => {
+            apply_c_int32_add(left, right, facts, obligations, assumptions)
+        }
+        (CValue::Pointer(pointer), CValue::Int32(offset)) => {
+            let byte_width = left_step_width.unwrap_or(4);
+            vec![CExpressionPath {
+                outcome: CExpressionOutcome::Value(CValue::Pointer(
+                    pointer.offset_by_elements(offset, byte_width),
+                )),
+                facts,
+                obligations,
+            }]
+        }
+        (CValue::Int32(offset), CValue::Pointer(pointer)) => {
+            let byte_width = right_step_width.unwrap_or(4);
+            vec![CExpressionPath {
+                outcome: CExpressionOutcome::Value(CValue::Pointer(
+                    pointer.offset_by_elements(offset, byte_width),
+                )),
+                facts,
+                obligations,
+            }]
+        }
+        _ => vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts,
+            obligations,
+        }],
+    }
+}
+
+fn apply_c_int32_add(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    let overflow = ConditionTerm::signed_add_overflows(left.clone(), right.clone());
+    match decide_with_facts(assumptions, &facts, &overflow) {
+        Some(true) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
+            facts,
+            obligations,
+        }],
+        Some(false) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(Bitvector32Term::add(left, right))),
+            facts,
+            obligations,
+        }],
+        None => {
+            let mut normal_facts = facts.clone();
+            add_condition_path_fact(&mut normal_facts, assumptions, overflow.clone(), false)
+                .expect("unknown overflow fact should be consistent");
+
+            let mut overflow_facts = facts;
+            add_condition_path_fact(&mut overflow_facts, assumptions, overflow, true)
+                .expect("unknown overflow fact should be consistent");
+
+            vec![
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(Bitvector32Term::add(left, right))),
+                    facts: normal_facts,
+                    obligations: obligations.clone(),
+                },
+                CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::SignedOverflow,
+                    ),
+                    facts: overflow_facts,
+                    obligations,
+                },
+            ]
+        }
+    }
+}
+
+fn apply_c_int32_subtract(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    let overflow = ConditionTerm::signed_subtract_overflows(left.clone(), right.clone());
+    match decide_with_facts(assumptions, &facts, &overflow) {
+        Some(true) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
+            facts,
+            obligations,
+        }],
+        Some(false) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(Bitvector32Term::subtract(left, right))),
+            facts,
+            obligations,
+        }],
+        None => {
+            let mut normal_facts = facts.clone();
+            add_condition_path_fact(&mut normal_facts, assumptions, overflow.clone(), false)
+                .expect("unknown overflow fact should be consistent");
+
+            let mut overflow_facts = facts;
+            add_condition_path_fact(&mut overflow_facts, assumptions, overflow, true)
+                .expect("unknown overflow fact should be consistent");
+
+            vec![
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(Bitvector32Term::subtract(
+                        left, right,
+                    ))),
+                    facts: normal_facts,
+                    obligations: obligations.clone(),
+                },
+                CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::SignedOverflow,
+                    ),
+                    facts: overflow_facts,
+                    obligations,
+                },
+            ]
+        }
+    }
+}
+
+fn evaluate_c_equal_paths(
+    state: &CState,
+    left: &CExpression,
+    right: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
+        let CExpressionPath {
+            outcome: left_outcome,
+            facts: left_facts,
+            obligations: left_obligations,
+        } = left_path;
+
+        let left = match left_outcome {
+            CExpressionOutcome::Value(left) => left,
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+            CExpressionOutcome::RuntimeError(error) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+        };
+
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
+        for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
+            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &left_facts,
+                &left_obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+
+            match right_path.outcome {
+                CExpressionOutcome::Value(right) => {
+                    paths.extend(apply_c_equal(
+                        left.clone(),
+                        right,
+                        facts,
+                        obligations,
+                        assumptions,
+                    ));
+                }
+                CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                    paths.push(CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                        facts,
+                        obligations,
+                    })
+                }
+                CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+                }),
+            }
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn apply_c_equal(
+    left: CValue,
+    right: CValue,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right)) => condition_as_c_int32_paths(
+            ConditionTerm::equal(left, right),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::UInt8(left), CValue::UInt8(right)) => condition_as_c_int32_paths(
+            ConditionTerm::equal(left, right),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Pointer(left), CValue::Pointer(right)) => condition_as_c_int32_paths(
+            pointer_equality_condition(left, right),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Pointer(pointer), CValue::Int32(bits))
+        | (CValue::Int32(bits), CValue::Pointer(pointer))
+            if bits.as_const() == Some(0) =>
+        {
+            condition_as_c_int32_paths(
+                pointer_is_null_condition(pointer),
+                facts,
+                obligations,
+                assumptions,
+            )
+        }
+        _ => vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts,
+            obligations,
+        }],
+    }
+}
+
+fn evaluate_c_not_equal_paths(
+    state: &CState,
+    left: &CExpression,
+    right: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
+        let CExpressionPath {
+            outcome: left_outcome,
+            facts: left_facts,
+            obligations: left_obligations,
+        } = left_path;
+
+        let left = match left_outcome {
+            CExpressionOutcome::Value(left) => left,
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+            CExpressionOutcome::RuntimeError(error) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+        };
+
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
+        for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
+            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &left_facts,
+                &left_obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+
+            match right_path.outcome {
+                CExpressionOutcome::Value(right) => {
+                    paths.extend(apply_c_not_equal(
+                        left.clone(),
+                        right,
+                        facts,
+                        obligations,
+                        assumptions,
+                    ));
+                }
+                CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                    paths.push(CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                        facts,
+                        obligations,
+                    })
+                }
+                CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+                }),
+            }
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn apply_c_not_equal(
+    left: CValue,
+    right: CValue,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right)) => condition_as_c_int32_not_paths(
+            ConditionTerm::equal(left, right),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::UInt8(left), CValue::UInt8(right)) => condition_as_c_int32_not_paths(
+            ConditionTerm::equal(left, right),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Pointer(left), CValue::Pointer(right)) => condition_as_c_int32_not_paths(
+            pointer_equality_condition(left, right),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        (CValue::Pointer(pointer), CValue::Int32(bits))
+        | (CValue::Int32(bits), CValue::Pointer(pointer))
+            if bits.as_const() == Some(0) =>
+        {
+            condition_as_c_int32_not_paths(
+                pointer_is_null_condition(pointer),
+                facts,
+                obligations,
+                assumptions,
+            )
+        }
+        _ => vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts,
+            obligations,
+        }],
+    }
+}
+
+fn evaluate_c_not_paths(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
+        match path.outcome {
+            CExpressionOutcome::Value(value) => {
+                paths.extend(
+                    c_truthiness_paths(value, path.facts, path.obligations, assumptions)
+                        .into_iter()
+                        .map(|truthiness| CExpressionPath {
+                            outcome: CExpressionOutcome::Value(int32(if truthiness.is_true {
+                                0
+                            } else {
+                                1
+                            })),
+                            facts: truthiness.facts,
+                            obligations: truthiness.obligations,
+                        }),
+                );
+            }
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: path.facts,
+                    obligations: path.obligations,
+                })
+            }
+            CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(error),
+                facts: path.facts,
+                obligations: path.obligations,
+            }),
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn evaluate_c_logical_and_paths(
+    state: &CState,
+    left: &CExpression,
+    right: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
+        match left_path.outcome {
+            CExpressionOutcome::Value(left_value) => {
+                for left_truthiness in c_truthiness_paths(
+                    left_value,
+                    left_path.facts,
+                    left_path.obligations,
+                    assumptions,
+                ) {
+                    if !left_truthiness.is_true {
+                        paths.push(CExpressionPath {
+                            outcome: CExpressionOutcome::Value(int32(0)),
+                            facts: left_truthiness.facts,
+                            obligations: left_truthiness.obligations,
+                        });
+                        continue;
+                    }
+
+                    let right_assumptions = assumptions_with_path_context(
+                        assumptions,
+                        &left_truthiness.facts,
+                        &left_truthiness.obligations,
+                    );
+                    for right_path in
+                        evaluate_c_expression_paths(state, right, &right_assumptions, budget)?
+                    {
+                        let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                            &left_truthiness.facts,
+                            &left_truthiness.obligations,
+                            &right_path.facts,
+                            &right_path.obligations,
+                            assumptions,
+                        ) else {
+                            continue;
+                        };
+
+                        match right_path.outcome {
+                            CExpressionOutcome::Value(value) => {
+                                paths.extend(c_truthiness_as_c_int32_paths(
+                                    value,
+                                    facts,
+                                    obligations,
+                                    assumptions,
+                                ))
+                            }
+                            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => paths
+                                .push(CExpressionPath {
+                                    outcome: CExpressionOutcome::UndefinedBehavior(
+                                        undefined_behavior,
+                                    ),
+                                    facts,
+                                    obligations,
+                                }),
+                            CExpressionOutcome::RuntimeError(error) => {
+                                paths.push(CExpressionPath {
+                                    outcome: CExpressionOutcome::RuntimeError(error),
+                                    facts,
+                                    obligations,
+                                })
+                            }
+                        }
+                    }
+                }
+            }
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: left_path.facts,
+                    obligations: left_path.obligations,
+                })
+            }
+            CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(error),
+                facts: left_path.facts,
+                obligations: left_path.obligations,
+            }),
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn evaluate_c_logical_or_paths(
+    state: &CState,
+    left: &CExpression,
+    right: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
+        match left_path.outcome {
+            CExpressionOutcome::Value(left_value) => {
+                for left_truthiness in c_truthiness_paths(
+                    left_value,
+                    left_path.facts,
+                    left_path.obligations,
+                    assumptions,
+                ) {
+                    if left_truthiness.is_true {
+                        paths.push(CExpressionPath {
+                            outcome: CExpressionOutcome::Value(int32(1)),
+                            facts: left_truthiness.facts,
+                            obligations: left_truthiness.obligations,
+                        });
+                        continue;
+                    }
+
+                    let right_assumptions = assumptions_with_path_context(
+                        assumptions,
+                        &left_truthiness.facts,
+                        &left_truthiness.obligations,
+                    );
+                    for right_path in
+                        evaluate_c_expression_paths(state, right, &right_assumptions, budget)?
+                    {
+                        let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                            &left_truthiness.facts,
+                            &left_truthiness.obligations,
+                            &right_path.facts,
+                            &right_path.obligations,
+                            assumptions,
+                        ) else {
+                            continue;
+                        };
+
+                        match right_path.outcome {
+                            CExpressionOutcome::Value(value) => {
+                                paths.extend(c_truthiness_as_c_int32_paths(
+                                    value,
+                                    facts,
+                                    obligations,
+                                    assumptions,
+                                ))
+                            }
+                            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => paths
+                                .push(CExpressionPath {
+                                    outcome: CExpressionOutcome::UndefinedBehavior(
+                                        undefined_behavior,
+                                    ),
+                                    facts,
+                                    obligations,
+                                }),
+                            CExpressionOutcome::RuntimeError(error) => {
+                                paths.push(CExpressionPath {
+                                    outcome: CExpressionOutcome::RuntimeError(error),
+                                    facts,
+                                    obligations,
+                                })
+                            }
+                        }
+                    }
+                }
+            }
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: left_path.facts,
+                    obligations: left_path.obligations,
+                })
+            }
+            CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(error),
+                facts: left_path.facts,
+                obligations: left_path.obligations,
+            }),
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn pointer_equality_condition(left: Pointer, right: Pointer) -> ConditionTerm {
+    if left.block != right.block {
+        ConditionTerm::Constant(false)
+    } else {
+        ConditionTerm::pointer_offset_equal(left.offset, right.offset)
+    }
+}
+
+fn pointer_is_null_condition(pointer: Pointer) -> ConditionTerm {
+    pointer_equality_condition(
+        pointer,
+        Pointer {
+            block: "null".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+    )
+}
+
+fn evaluate_c_int32_binary_paths(
+    state: &CState,
+    left: &CExpression,
+    right: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+    apply: impl Fn(
+        Bitvector32Term,
+        Bitvector32Term,
+        Vec<PathFact>,
+        Vec<ProofObligation>,
+    ) -> Vec<CExpressionPath>,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
+        let CExpressionPath {
+            outcome: left_outcome,
+            facts: left_facts,
+            obligations: left_obligations,
+        } = left_path;
+
+        let left = match left_outcome {
+            CExpressionOutcome::Value(CValue::Int32(left)) => left,
+            CExpressionOutcome::Value(_) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+            CExpressionOutcome::RuntimeError(error) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+        };
+
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
+        for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
+            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &left_facts,
+                &left_obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+
+            match right_path.outcome {
+                CExpressionOutcome::Value(CValue::Int32(right)) => {
+                    paths.extend(apply(left.clone(), right, facts, obligations));
+                }
+                CExpressionOutcome::Value(_) => paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    facts,
+                    obligations,
+                }),
+                CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                    paths.push(CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                        facts,
+                        obligations,
+                    })
+                }
+                CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+                }),
+            }
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn execute_c_statement(
+    state: &CState,
+    statement: &CStatement,
+    assumptions: &Assumptions,
+) -> Option<CStatementOutcome> {
+    let paths = execute_c_statement_paths(
+        state,
+        statement,
+        assumptions,
+        &CFunctionEnvironment::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .ok()?;
+    let mut paths = paths.into_iter();
+    let path = paths.next()?;
+    if paths.next().is_some() {
+        return None;
+    }
+    Some(path.outcome)
+}
+
+fn execute_c_lvalue_assignment_paths(
+    state: &CState,
+    target: &CExpression,
+    value: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let mut paths = Vec::new();
+    for target_path in evaluate_c_lvalue_paths(state, target, assumptions, budget)? {
+        let CLValuePath {
+            outcome: target_outcome,
+            facts: target_facts,
+            obligations: target_obligations,
+        } = target_path;
+
+        let target_lvalue = match target_outcome {
+            CLValueOutcome::LValue(lvalue) => lvalue,
+            CLValueOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: target_facts,
+                    obligations: target_obligations,
+                });
+                continue;
+            }
+            CLValueOutcome::RuntimeError(error) => {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(error),
+                    facts: target_facts,
+                    obligations: target_obligations,
+                });
+                continue;
+            }
+        };
+
+        let value_assumptions =
+            assumptions_with_path_context(assumptions, &target_facts, &target_obligations);
+        for value_path in evaluate_c_expression_paths(state, value, &value_assumptions, budget)? {
+            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &target_facts,
+                &target_obligations,
+                &value_path.facts,
+                &value_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+
+            match value_path.outcome {
+                CExpressionOutcome::Value(value) => paths.extend(write_c_lvalue_paths(
+                    state,
+                    target_lvalue.clone(),
+                    value,
+                    facts,
+                    obligations,
+                    assumptions,
+                )),
+                CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                    paths.push(CStatementExecutionPath {
+                        outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+                        facts,
+                        obligations,
+                    })
+                }
+                CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+                }),
+            }
+        }
+    }
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn write_c_lvalue_paths(
+    state: &CState,
+    lvalue: CLValue,
+    value: CValue,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CStatementExecutionPath> {
+    if !lvalue.value_type.accepts(&value) {
+        return vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts,
+            obligations,
+        }];
+    }
+
+    match lvalue.storage {
+        CLValueStorage::Local { name } => {
+            let mut state = state.clone();
+            sync_stack_local(&mut state, &name, &value);
+            state.locals.set_typed(name, value, lvalue.value_type);
+            vec![CStatementExecutionPath {
+                outcome: CStatementOutcome::Normal(state),
+                facts,
+                obligations,
+            }]
+        }
+        CLValueStorage::Memory { pointer } => {
+            let Some(obligations) = add_memory_store_obligation(
+                &state.memory,
+                &pointer,
+                &value,
+                obligations,
+                assumptions,
+            ) else {
+                return Vec::new();
+            };
+            let before_memory = state.memory.clone();
+            let mut state = state.clone();
+            state.memory = state
+                .memory
+                .without_possible_aliasing_cells(&pointer, assumptions)
+                .store(pointer.clone(), value.clone());
+            let mut facts = facts;
+            if add_internal_path_fact(
+                &mut facts,
+                assumptions,
+                Proposition::CMemoryMutatesOnly {
+                    before: before_memory,
+                    after: state.memory.clone(),
+                    pointers: vec![pointer.clone()],
+                },
+            )
+            .is_none()
+            {
+                return Vec::new();
+            }
+            if let Some(name) = local_name_from_pointer(&pointer) {
+                if let Some(c_type) = state.locals.scalar_object_type(name) {
+                    state.locals.set_typed(name.to_string(), value, c_type);
+                }
+            }
+            vec![CStatementExecutionPath {
+                outcome: CStatementOutcome::Normal(state),
+                facts,
+                obligations,
+            }]
+        }
+    }
+}
+
+fn local_name_from_pointer(pointer: &Pointer) -> Option<&str> {
+    if pointer.offset != PointerOffsetTerm::Constant(0) {
+        return None;
+    }
+    pointer.block.strip_prefix("local:")
+}
+
+fn execute_c_statement_paths(
+    state: &CState,
+    statement: &CStatement,
+    assumptions: &Assumptions,
+    environment: &CFunctionEnvironment,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    budget.consume_statement_step()?;
+    let paths = match statement {
+        CStatement::Declare { name, c_type } => vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(declare_local(state, name, *c_type)),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }],
+        CStatement::Assign { name, expression } => execute_c_lvalue_assignment_paths(
+            state,
+            &c_variable(name.clone()),
+            expression,
+            assumptions,
+            budget,
+        )?,
+        CStatement::CallAssign {
+            target,
+            function_name,
+            arguments,
+        } => execute_c_call_assign_paths(
+            state,
+            target,
+            function_name,
+            arguments,
+            assumptions,
+            environment,
+            budget,
+        )?,
+        CStatement::Assert { condition, label } => {
+            execute_c_assert_paths(state, condition, label.as_deref(), assumptions, budget)?
+        }
+        CStatement::Seq(first, second) => {
+            let mut paths = Vec::new();
+            for first_path in
+                execute_c_statement_paths(state, first, assumptions, environment, budget)?
+            {
+                match first_path.outcome {
+                    CStatementOutcome::Normal(state) => {
+                        paths.extend(execute_c_statement_paths_with_prefix(
+                            &state,
+                            second,
+                            assumptions,
+                            environment,
+                            &first_path.facts,
+                            &first_path.obligations,
+                            budget,
+                        )?);
+                    }
+                    outcome @ (CStatementOutcome::Return { .. }
+                    | CStatementOutcome::UndefinedBehavior(_)
+                    | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
+                        outcome,
+                        facts: first_path.facts,
+                        obligations: first_path.obligations,
+                    }),
+                }
+            }
+            paths
+        }
+        CStatement::Return(expression) => {
+            evaluate_c_expression_paths(state, expression, assumptions, budget)?
+                .into_iter()
+                .map(|path| CStatementExecutionPath {
+                    outcome: match path.outcome {
+                        CExpressionOutcome::Value(value) => CStatementOutcome::Return {
+                            value,
+                            state: state.clone(),
+                        },
+                        CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                            CStatementOutcome::UndefinedBehavior(undefined_behavior)
+                        }
+                        CExpressionOutcome::RuntimeError(error) => {
+                            CStatementOutcome::RuntimeError(error)
+                        }
+                    },
+                    facts: path.facts,
+                    obligations: path.obligations,
+                })
+                .collect()
+        }
+        CStatement::Store { pointer, value } => execute_c_lvalue_assignment_paths(
+            state,
+            &CExpression::Load(Box::new(pointer.clone())),
+            value,
+            assumptions,
+            budget,
+        )?,
+        CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let mut paths = Vec::new();
+            for condition_path in
+                evaluate_c_expression_paths(state, condition, assumptions, budget)?
+            {
+                let CExpressionPath {
+                    outcome,
+                    facts,
+                    obligations,
+                } = condition_path;
+                match outcome {
+                    CExpressionOutcome::Value(value) => {
+                        let truthiness_paths =
+                            c_truthiness_paths(value, facts, obligations, assumptions);
+                        for truthiness_path in truthiness_paths {
+                            let branch = if truthiness_path.is_true {
+                                then_branch
+                            } else {
+                                else_branch
+                            };
+                            paths.extend(execute_c_statement_paths_with_prefix(
+                                state,
+                                branch,
+                                assumptions,
+                                environment,
+                                &truthiness_path.facts,
+                                &truthiness_path.obligations,
+                                budget,
+                            )?);
+                        }
+                    }
+                    CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                        paths.push(CStatementExecutionPath {
+                            outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+                            facts,
+                            obligations,
+                        })
+                    }
+                    CExpressionOutcome::RuntimeError(error) => {
+                        paths.push(CStatementExecutionPath {
+                            outcome: CStatementOutcome::RuntimeError(error),
+                            facts,
+                            obligations,
+                        })
+                    }
+                }
+            }
+            paths
+        }
+        CStatement::While {
+            condition,
+            invariant,
+            invariant_checks: _,
+            effect_checks: _,
+            body,
+        } => execute_c_while_paths(
+            state,
+            condition,
+            invariant,
+            body,
+            assumptions,
+            environment,
+            budget,
+        )?,
+    };
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn execute_c_assert_paths(
+    state: &CState,
+    condition: &CExpression,
+    label: Option<&str>,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let mut paths = Vec::new();
+    for condition_path in evaluate_c_expression_paths(state, condition, assumptions, budget)? {
+        let CExpressionPath {
+            outcome,
+            facts,
+            obligations,
+        } = condition_path;
+        match outcome {
+            CExpressionOutcome::Value(value) => {
+                let assertion_obligation = assertion_truthiness_obligation(&value, label);
+                for truthiness_path in c_truthiness_paths(value, facts, obligations, assumptions) {
+                    let mut obligations = truthiness_path.obligations;
+                    if !truthiness_path.is_true {
+                        obligations.push(assertion_obligation.clone());
+                    }
+                    paths.push(CStatementExecutionPath {
+                        outcome: CStatementOutcome::Normal(state.clone()),
+                        facts: truthiness_path.facts,
+                        obligations,
+                    });
+                }
+            }
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+                    facts,
+                    obligations,
+                })
+            }
+            CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(error),
+                facts,
+                obligations,
+            }),
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn assertion_truthiness_obligation(value: &CValue, label: Option<&str>) -> ProofObligation {
+    let obligation = ProofObligation::verification_condition(Proposition::Equal(
+        Term::CValue(value.clone()),
+        Term::CValue(int32(1)),
+    ));
+    match label {
+        Some(label) => obligation.with_context(label),
+        None => obligation,
+    }
+}
+
+fn execute_c_while_paths(
+    state: &CState,
+    condition: &CExpression,
+    invariant: &[Proposition],
+    body: &CStatement,
+    assumptions: &Assumptions,
+    environment: &CFunctionEnvironment,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    budget.consume_loop_unroll()?;
+
+    let mut base_obligations = Vec::new();
+    for proposition in invariant {
+        if add_proof_obligation(&mut base_obligations, assumptions, proposition.clone()).is_none() {
+            return Ok(Vec::new());
+        }
+    }
+    let loop_assumptions = assumptions_with_propositions(assumptions, invariant);
+    let mut paths = Vec::new();
+
+    for condition_path in evaluate_c_expression_paths(state, condition, &loop_assumptions, budget)?
+    {
+        let Some((condition_facts, condition_obligations)) = merge_path_facts_and_obligations(
+            &[],
+            &base_obligations,
+            &condition_path.facts,
+            &condition_path.obligations,
+            assumptions,
+        ) else {
+            continue;
+        };
+
+        match condition_path.outcome {
+            CExpressionOutcome::Value(value) => {
+                let truthiness_paths =
+                    c_truthiness_paths(value, condition_facts, condition_obligations, assumptions);
+                for truthiness_path in truthiness_paths {
+                    if truthiness_path.is_true {
+                        paths.extend(execute_c_while_body_paths(
+                            state,
+                            condition,
+                            invariant,
+                            body,
+                            assumptions,
+                            environment,
+                            truthiness_path.facts,
+                            truthiness_path.obligations,
+                            budget,
+                        )?);
+                    } else {
+                        paths.push(CStatementExecutionPath {
+                            outcome: CStatementOutcome::Normal(state.clone()),
+                            facts: truthiness_path.facts,
+                            obligations: truthiness_path.obligations,
+                        });
+                    }
+                }
+            }
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: condition_facts,
+                    obligations: condition_obligations,
+                })
+            }
+            CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(error),
+                facts: condition_facts,
+                obligations: condition_obligations,
+            }),
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn execute_c_while_body_paths(
+    state: &CState,
+    condition: &CExpression,
+    invariant: &[Proposition],
+    body: &CStatement,
+    assumptions: &Assumptions,
+    environment: &CFunctionEnvironment,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let body_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
+    let mut paths = Vec::new();
+    for body_path in execute_c_statement_paths(state, body, &body_assumptions, environment, budget)?
+    {
+        let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            &facts,
+            &obligations,
+            &body_path.facts,
+            &body_path.obligations,
+            assumptions,
+        ) else {
+            continue;
+        };
+
+        match body_path.outcome {
+            CStatementOutcome::Normal(next_state) => {
+                let next_assumptions =
+                    assumptions_with_path_context(assumptions, &facts, &obligations);
+                for path in execute_c_while_paths(
+                    &next_state,
+                    condition,
+                    invariant,
+                    body,
+                    &next_assumptions,
+                    environment,
+                    budget,
+                )? {
+                    let (facts, obligations) = merge_path_facts_and_obligations(
+                        &facts,
+                        &obligations,
+                        &path.facts,
+                        &path.obligations,
+                        assumptions,
+                    )
+                    .expect("merged loop path facts should remain consistent");
+                    paths.push(CStatementExecutionPath {
+                        outcome: path.outcome,
+                        facts,
+                        obligations,
+                    });
+                }
+            }
+            outcome @ (CStatementOutcome::Return { .. }
+            | CStatementOutcome::UndefinedBehavior(_)
+            | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
+                outcome,
+                facts,
+                obligations,
+            }),
+        }
+    }
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn declare_local(state: &CState, name: &str, c_type: CType) -> CState {
+    let mut state = state.clone();
+    let (initial_value, byte_width) = match c_type {
+        CType::Int32 => (int32(0), 4),
+        CType::UInt8 => (uint8(0), 1),
+        CType::Int32Pointer => (
+            CValue::Pointer(Pointer {
+                block: "null".to_string(),
+                offset: PointerOffsetTerm::Constant(0),
+            }),
+            C_POINTER_BYTE_WIDTH,
+        ),
+        CType::UInt8Pointer => (
+            CValue::Pointer(Pointer {
+                block: "null".to_string(),
+                offset: PointerOffsetTerm::Constant(0),
+            }),
+            C_POINTER_BYTE_WIDTH,
+        ),
+        CType::Int32Array(length) => {
+            let pointer = CMemory::local_pointer(name);
+            state.memory = state
+                .memory
+                .with_block(pointer.block, length.checked_mul(4).unwrap_or(u32::MAX));
+            state
+                .locals
+                .set_array_object(name.to_string(), CType::Int32, length);
+            return state;
+        }
+        CType::UInt8Array(length) => {
+            let pointer = CMemory::local_pointer(name);
+            state.memory = state.memory.with_block(pointer.block, length);
+            state
+                .locals
+                .set_array_object(name.to_string(), CType::UInt8, length);
+            return state;
+        }
+    };
+    let pointer = CMemory::local_pointer(name);
+    state.memory = state
+        .memory
+        .with_block(pointer.block.clone(), byte_width)
+        .store(pointer, initial_value.clone());
+    state
+        .locals
+        .set_typed(name.to_string(), initial_value, c_type);
+    state
+}
+
+fn sync_stack_local(state: &mut CState, name: &str, value: &CValue) {
+    let pointer = CMemory::local_pointer(name);
+    if state.memory.has_block(&pointer.block) {
+        state.memory = state.memory.clone().store(pointer, value.clone());
+    }
+}

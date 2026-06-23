@@ -54,8 +54,8 @@ rg -n "ClickProposition|ContractExpression" src/lang/click.rs
 Checklist:
 
 - Add parser support in `src/lang/c/syntax.rs`.
-- Lower to existing megakernel terms if possible.
-- Add new megakernel semantic terms only when needed.
+- Lower to existing kernel terms if possible.
+- Add new kernel semantic terms only when needed.
 - Add undefined-behavior obligations if C semantics require them.
 - Add C parser unit tests and mdtests.
 - Update [c0-subset.md](c0-subset.md).

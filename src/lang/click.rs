@@ -1,4 +1,4 @@
-//! Tiny `.click` sidecar verifier for the C0 megakernel path.
+//! Tiny `.click` sidecar verifier for the C0 kernel path.
 //!
 //! This is intentionally a first slice, not the final Click language. It gives
 //! us a source-file-shaped workflow for C examples while leaving the larger
@@ -7,8 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::lang::c::syntax::{self, C0Expression, C0Type};
-use crate::megakernel::{
+use crate::kernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CExpression, CFunction,
     CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
     CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CState,
@@ -21,6 +20,7 @@ use crate::megakernel::{
     prove_symbolic_c_function_execution_paths_with_environment,
     prove_symbolic_c_function_verification_paths_with_environment,
 };
+use crate::lang::c::syntax::{self, C0Expression, C0Type};
 
 const EXTERNAL_ARGUMENT_MEMORY_BLOCK: &str = "arg-memory";
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
@@ -1189,7 +1189,7 @@ fn prove_claim_by_simp(
 
 #[derive(Default)]
 struct ProofStepReplayState {
-    execution: Option<crate::megakernel::SymbolicCExecution>,
+    execution: Option<crate::kernel::SymbolicCExecution>,
     execution_mode: Option<ProofStepExecutionMode>,
     loop_vcs: BTreeSet<usize>,
     frames: BTreeSet<Option<ProofStepTarget>>,
@@ -1388,7 +1388,7 @@ fn set_replay_execution(
     claim_label: &str,
     step_index: usize,
     step_name: &str,
-    execution: crate::megakernel::SymbolicCExecution,
+    execution: crate::kernel::SymbolicCExecution,
 ) -> Result<(), ClickError> {
     if let Some(existing) = replay.execution_mode {
         return Err(ClickError::new(format!(
@@ -1444,7 +1444,7 @@ fn validate_loop_step_target(
 }
 
 fn validate_loop_vc_step(
-    execution: &crate::megakernel::SymbolicCExecution,
+    execution: &crate::kernel::SymbolicCExecution,
     loop_index: usize,
     claim_label: &str,
     step_index: usize,
@@ -1514,7 +1514,7 @@ fn validate_frame_step_target(
 }
 
 fn validate_function_frame_step(
-    execution: &crate::megakernel::SymbolicCExecution,
+    execution: &crate::kernel::SymbolicCExecution,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
     step_index: usize,
@@ -1572,7 +1572,7 @@ fn validate_function_frame_step(
 }
 
 fn prove_claim_from_steps_execution(
-    execution: &crate::megakernel::SymbolicCExecution,
+    execution: &crate::kernel::SymbolicCExecution,
     execution_mode: ProofStepExecutionMode,
     source_path: &str,
     function_block: &FunctionBlock,
@@ -1894,7 +1894,7 @@ fn loop_effect_summary_targets(function_block: &FunctionBlock) -> BTreeSet<usize
 }
 
 fn execution_obligation_error(
-    execution: &crate::megakernel::SymbolicCExecution,
+    execution: &crate::kernel::SymbolicCExecution,
     ensure_label: &str,
     requirement_propositions: &[Proposition],
 ) -> Option<ClickError> {
@@ -1903,7 +1903,7 @@ fn execution_obligation_error(
 
 fn execution_obligation_error_for_tactic(
     tactic_name: &str,
-    execution: &crate::megakernel::SymbolicCExecution,
+    execution: &crate::kernel::SymbolicCExecution,
     ensure_label: &str,
     requirement_propositions: &[Proposition],
 ) -> Option<ClickError> {
@@ -1933,7 +1933,7 @@ fn execution_obligation_error_for_tactic(
 }
 
 fn prove_claim_from_execution(
-    execution: &crate::megakernel::SymbolicCExecution,
+    execution: &crate::kernel::SymbolicCExecution,
     execution_kind: AutoExecutionKind<'_>,
     source_path: &str,
     function_block: &FunctionBlock,
@@ -2078,7 +2078,7 @@ fn build_function_environment(
     parsed_sources
         .values()
         .fold(CFunctionEnvironment::new(), |environment, (_, function)| {
-            environment.with_function(function.to_megakernel_function())
+            environment.with_function(function.to_kernel_function())
         })
 }
 
@@ -2291,12 +2291,12 @@ fn annotated_function(
     };
     let body = lowerer.lower_statement(parsed_function.body())?;
     Ok(c_function(
-        parsed_function.return_type().to_megakernel_type(),
+        parsed_function.return_type().to_kernel_type(),
         parsed_function.name().to_string(),
         parsed_function
             .parameters()
             .iter()
-            .map(syntax::C0Parameter::to_megakernel_parameter)
+            .map(syntax::C0Parameter::to_kernel_parameter)
             .collect(),
         body,
     ))
@@ -2338,7 +2338,7 @@ impl AnnotationLowerer<'_> {
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
                 let effect_checks = self.loop_effect_checks(loop_index, body)?;
                 let lowered_loop = c_while_with_invariant_and_effect_checks(
-                    condition.to_megakernel_expression(),
+                    condition.to_kernel_expression(),
                     Vec::new(),
                     invariant_checks,
                     effect_checks,
@@ -2349,7 +2349,7 @@ impl AnnotationLowerer<'_> {
             }
             statement => {
                 let statement_index = self.next_statement_index();
-                let lowered = statement.to_megakernel_statement();
+                let lowered = statement.to_kernel_statement();
                 self.prepend_statement_asserts(statement_index, lowered)
             }
         })
@@ -4785,7 +4785,7 @@ fn bitvector32_equal(left: Bitvector32Term, right: Bitvector32Term) -> Condition
 fn check_function_claim(
     claim_label: &str,
     path_index: usize,
-    path_facts: &[crate::megakernel::PathFact],
+    path_facts: &[crate::kernel::PathFact],
     available_propositions: &[Proposition],
     claim: &FunctionClaimRef<'_>,
     parameters: &[syntax::C0Parameter],
@@ -4832,7 +4832,7 @@ fn check_function_claim(
 fn check_function_claim_by_simp(
     claim_label: &str,
     path_index: usize,
-    path_facts: &[crate::megakernel::PathFact],
+    path_facts: &[crate::kernel::PathFact],
     available_propositions: &[Proposition],
     claim: &FunctionClaimRef<'_>,
     parameters: &[syntax::C0Parameter],
@@ -4869,7 +4869,7 @@ fn check_function_claim_by_simp(
 fn prove_ensure_proposition_by_simp(
     ensure_label: &str,
     path_index: usize,
-    path_facts: &[crate::megakernel::PathFact],
+    path_facts: &[crate::kernel::PathFact],
     available_propositions: &[Proposition],
     proposition: &ClickProposition,
     parameters: &[syntax::C0Parameter],
@@ -6149,7 +6149,7 @@ fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32Term {
 fn prove_effect_clause(
     claim_label: &str,
     path_index: usize,
-    path_facts: &[crate::megakernel::PathFact],
+    path_facts: &[crate::kernel::PathFact],
     available_propositions: &[Proposition],
     effect: &Effect,
     parameters: &[syntax::C0Parameter],
@@ -6179,7 +6179,7 @@ fn prove_effect_clause(
 fn prove_ensure_proposition(
     ensure_label: &str,
     path_index: usize,
-    path_facts: &[crate::megakernel::PathFact],
+    path_facts: &[crate::kernel::PathFact],
     available_propositions: &[Proposition],
     proposition: &ClickProposition,
     parameters: &[syntax::C0Parameter],
@@ -6329,7 +6329,7 @@ fn prove_ensure_proposition(
 fn prove_mutation_footprint(
     claim_label: &str,
     path_index: usize,
-    path_facts: &[crate::megakernel::PathFact],
+    path_facts: &[crate::kernel::PathFact],
     available_propositions: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -8026,12 +8026,12 @@ fn evaluate_contract_memory_load_from_memory(
     assumptions: &Assumptions,
 ) -> Result<CValue, String> {
     match memory.load(&pointer) {
-        crate::megakernel::CExpressionOutcome::Value(value)
+        crate::kernel::CExpressionOutcome::Value(value)
             if c_value_matches_kernel_type(&value, value_type) =>
         {
             Ok(value)
         }
-        crate::megakernel::CExpressionOutcome::Value(value) => Err(format!(
+        crate::kernel::CExpressionOutcome::Value(value) => Err(format!(
             "load from {pointer:?} produced {value:?}, not {value_type:?}"
         )),
         _ if assumptions.proves(&Proposition::CMemoryCanLoad {
@@ -9031,11 +9031,11 @@ impl Parser {
     }
 
     fn parse_current_contract_segment(&mut self) -> Result<ContractSegment, ClickError> {
-        let base = self.parse_ensure_primary()?.to_megakernel_expression();
+        let base = self.parse_ensure_primary()?.to_kernel_expression();
         self.expect(Token::LBracket)?;
-        let start = self.parse_ensure_expression()?.to_megakernel_expression();
+        let start = self.parse_ensure_expression()?.to_kernel_expression();
         self.expect(Token::DotDot)?;
-        let end = self.parse_ensure_expression()?.to_megakernel_expression();
+        let end = self.parse_ensure_expression()?.to_kernel_expression();
         self.expect(Token::RBracket)?;
         Ok(ContractSegment {
             state: ContractSegmentState::Current,
@@ -10039,7 +10039,7 @@ fn is_ident_continue(ch: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::megakernel::int32;
+    use crate::kernel::int32;
 
     const FILL3_C: &str = r#"
         int32 fill3(int32* p) {
@@ -12593,7 +12593,7 @@ mod tests {
             &Proposition::CFunctionSatisfiesSpecification {
                 function: syntax::parse_function(FILL3_C)
                     .expect("fill3 should parse")
-                    .to_megakernel_function(),
+                    .to_kernel_function(),
                 specification: verified.specification.clone(),
             }
         );

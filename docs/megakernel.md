@@ -1,15 +1,38 @@
-# Megakernel Implementation Map
+# Kernel Implementation Map
 
 This page is for agents modifying Rust implementation, not for users writing
 Click specs.
 
 ## Core Files
 
-- `src/megakernel.rs`: proof terms, C semantics, assumptions, symbolic
-  execution, and theorem-producing functions.
-- `src/lang/c/syntax.rs`: C0 parser and lowering to megakernel C terms.
+- `src/kernel/`: proof terms, C semantics, assumptions, symbolic execution,
+  and theorem-producing functions.
+- `src/megakernel.rs`: compatibility facade for existing `crate::megakernel`
+  callers. New code should use `crate::kernel`.
+- `src/lang/c/syntax.rs`: C0 parser and lowering to kernel C terms.
 - `src/lang/click.rs`: Click parser, validation, lowering, tactics, and proof
   orchestration.
+
+`src/kernel/mod.rs` currently uses `include!` to keep the kernel as one logical
+Rust module split across several physical files. This is intentional for now:
+it avoids a broad visibility redesign while making the implementation easier to
+navigate.
+
+Kernel files:
+
+- `primitives.rs`: core terms, C values/state, propositions, path structs, and
+  basic data-type impls.
+- `assumptions.rs`: `Assumptions`, proof obligations, path facts, and symbolic
+  execution accessors.
+- `api.rs`: public constructors and theorem-producing entry points.
+- `reasoning.rs`: deterministic proof helpers, finite forall/range reasoning,
+  substitutions, path facts, and obligation plumbing.
+- `spec.rs`: `SpecExpression`/`SpecProposition` lowering and evaluation.
+- `eval.rs`: C expression/statement evaluation and memory operations.
+- `loops.rs`: loop verification, loop effects, loop havoc, and invariant
+  helpers.
+- `functions.rs`: C function execution, argument binding, and call results.
+- `tests.rs`: kernel unit tests.
 
 ## Trusted Shape
 
@@ -20,7 +43,7 @@ axioms, even when Rust names them `prove_*`.
 
 ## Important Types
 
-In `src/megakernel.rs`:
+In `src/kernel/`:
 
 - `Bitvector32Term`: symbolic 32-bit integer terms, including arithmetic,
   `If`, `RangeFold`, and memory loads.

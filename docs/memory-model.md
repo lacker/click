@@ -5,7 +5,7 @@ failures, not arithmetic failures.
 
 ## Blocks And Pointers
 
-Megakernel memory is a map of named byte-sized blocks plus known cells. A
+Kernel memory is a map of named byte-sized blocks plus known cells. A
 pointer is a semantic object:
 
 ```text

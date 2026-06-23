@@ -18,7 +18,7 @@ If you are a fresh agent, read these in order:
 8. [examples.md](examples.md): canonical mdtests by proof pattern.
 9. [limitations.md](limitations.md): current boundaries and common traps.
 10. [feature-playbook.md](feature-playbook.md): how to extend Click safely.
-11. [megakernel.md](megakernel.md): implementation map for Rust changes.
+11. [megakernel.md](megakernel.md): kernel implementation map for Rust changes.
 
 [proof-landscape.md](proof-landscape.md) is the roadmap/design map. Read it
 after the operational docs when deciding what proof capability should come next.
@@ -26,7 +26,7 @@ after the operational docs when deciding what proof capability should come next.
 ## What Click Is Today
 
 Click is a proof sidecar for a tiny C subset called C0. A `.click` file names
-one or more C sources, gives C functions contracts, and asks the megakernel to
+one or more C sources, gives C functions contracts, and asks the kernel to
 prove each guarantee. The system is intentionally small but already supports:
 
 - C0 symbolic execution over `int32`, `uint8`, pointers, memory, local arrays,
@@ -43,7 +43,7 @@ prove each guarantee. The system is intentionally small but already supports:
 
 Use these names consistently:
 
-- **Kernel Click**: the explicit proof core the megakernel reasons about.
+- **Kernel Click**: the explicit proof core the kernel reasons about.
 - **Surface Click**: user-written `.click` syntax such as contracts,
   invariants, pure functions, predicates, `old`, quantifiers, and folds.
 - **C fragments**: pieces of C0 syntax inside Surface Click. They keep C-like

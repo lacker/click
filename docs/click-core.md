@@ -8,7 +8,7 @@ is the mental model agents should use when changing lowering code.
 Click has three layers:
 
 1. **Kernel Click**: pure, explicit specification values and propositions sent
-   to the megakernel.
+   to the kernel.
 2. **Surface Click**: user-written `.click` syntax such as `requires`,
    `ensures`, `invariant`, `old`, pure functions, predicates, quantifiers,
    and folds.
@@ -161,7 +161,7 @@ to the function-entry context. Current memory reads inside that expression
 become fixed-memory reads, so pure helpers such as `count` do not need a
 separate old-state evaluator.
 
-This is represented in the megakernel with `SpecExpression` and
+This is represented in the kernel with `SpecExpression` and
 `SpecProposition`: Kernel Click forms that can include current-state C
 fragments, pure `if`, `let`, `.fold`, and explicit fixed-memory loads. This is
 why an invariant can unfold `permutation` and then evaluate the `.fold` inside
@@ -206,7 +206,7 @@ Term::CMemory(memory), Term::CValue(CValue::Pointer(pointer))
 ```
 
 When a predicate is unfolded, Click reconstructs the array-ref environment from
-those terms before lowering the predicate body. This keeps the megakernel free
+those terms before lowering the predicate body. This keeps the kernel free
 of domain names like `permutation` while still making memory state explicit
 enough for `old(p)` to work as an array argument.
 

@@ -134,7 +134,7 @@ The same typed array-ref model is used by loop-invariant spec lowering, so a
 pure helper over `uint8[]` can appear in an invariant or inside `old(...)`.
 
 Concrete folds are unrolled. Symbolic folds remain `RangeFold` value terms in
-the megakernel and can be reasoned about by supported fold laws.
+the kernel and can be reasoned about by supported fold laws.
 
 ## Predicates
 

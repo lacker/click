@@ -1,0 +1,1548 @@
+const C_POINTER_BYTE_WIDTH: u32 = 8;
+const RANGE_FOLD_CONCRETE_UNROLL_LIMIT: i64 = 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct Variable(pub u64);
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum Sort {
+    Condition,
+    Bitvector32,
+    PointerOffset,
+    CType,
+    CInt32,
+    CPointer,
+    CValue,
+    CMemory,
+    CState,
+    CStatementOutcome,
+    CFunctionOutcome,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum Bitvector32Term {
+    Constant(u32),
+    Variable(Variable),
+    Add(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Subtract(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Multiply(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    If {
+        condition: Box<ConditionTerm>,
+        then_term: Box<Bitvector32Term>,
+        else_term: Box<Bitvector32Term>,
+    },
+    RangeFold {
+        start: Box<Bitvector32Term>,
+        end: Box<Bitvector32Term>,
+        initial: Box<Bitvector32Term>,
+        accumulator: Variable,
+        item: Variable,
+        body: Box<Bitvector32Term>,
+    },
+    MemoryLoad(Box<CMemory>, Box<Pointer>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum PointerOffsetTerm {
+    Constant(i64),
+    Variable(Variable),
+    Add(Box<PointerOffsetTerm>, Box<PointerOffsetTerm>),
+    Int32Scaled {
+        value: Box<Bitvector32Term>,
+        byte_width: i64,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum ConditionTerm {
+    Constant(bool),
+    Variable(Variable),
+    Bitvector32SignedLessThan(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32SignedLessEqual(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32SignedGreaterThan(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32SignedGreaterEqual(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32Equal(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32SignedAddOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32SignedSubtractOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    PointerOffsetEqual(Box<PointerOffsetTerm>, Box<PointerOffsetTerm>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct Pointer {
+    pub block: String,
+    pub offset: PointerOffsetTerm,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CValue {
+    Int32(Bitvector32Term),
+    UInt8(Bitvector32Term),
+    Pointer(Pointer),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CType {
+    Int32,
+    UInt8,
+    Int32Pointer,
+    UInt8Pointer,
+    Int32Array(u32),
+    UInt8Array(u32),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CLValue {
+    storage: CLValueStorage,
+    value_type: CType,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+enum CLValueStorage {
+    Local { name: String },
+    Memory { pointer: Pointer },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CExpression {
+    Value(CValue),
+    Variable(String),
+    AddressOf(Box<CExpression>),
+    LessThan(Box<CExpression>, Box<CExpression>),
+    LessEqual(Box<CExpression>, Box<CExpression>),
+    GreaterThan(Box<CExpression>, Box<CExpression>),
+    GreaterEqual(Box<CExpression>, Box<CExpression>),
+    Equal(Box<CExpression>, Box<CExpression>),
+    NotEqual(Box<CExpression>, Box<CExpression>),
+    Not(Box<CExpression>),
+    And(Box<CExpression>, Box<CExpression>),
+    Or(Box<CExpression>, Box<CExpression>),
+    Add(Box<CExpression>, Box<CExpression>),
+    Subtract(Box<CExpression>, Box<CExpression>),
+    Load(Box<CExpression>),
+    Index(Box<CExpression>, Box<CExpression>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CComparisonOperator {
+    Equal,
+    NotEqual,
+    LessThan,
+    LessEqual,
+    GreaterThan,
+    GreaterEqual,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum SpecMemory {
+    Current,
+    Fixed(CMemory),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum SpecExpression {
+    Value(CValue),
+    CExpression(CExpression),
+    Add(Box<SpecExpression>, Box<SpecExpression>),
+    Subtract(Box<SpecExpression>, Box<SpecExpression>),
+    If {
+        condition: Box<SpecProposition>,
+        then_branch: Box<SpecExpression>,
+        else_branch: Box<SpecExpression>,
+    },
+    RangeFold {
+        start: Box<SpecExpression>,
+        end: Box<SpecExpression>,
+        initial: Box<SpecExpression>,
+        accumulator: String,
+        item: String,
+        body: Box<SpecExpression>,
+    },
+    Let {
+        name: String,
+        value: Box<SpecExpression>,
+        body: Box<SpecExpression>,
+    },
+    PointerOffset {
+        pointer: Box<SpecExpression>,
+        elements: Box<SpecExpression>,
+        byte_width: u32,
+    },
+    MemoryLoad {
+        memory: SpecMemory,
+        pointer: Box<SpecExpression>,
+        value_type: CType,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum SpecProposition {
+    Comparison {
+        left: SpecExpression,
+        operator: CComparisonOperator,
+        right: SpecExpression,
+    },
+    And(Box<SpecProposition>, Box<SpecProposition>),
+    Or(Box<SpecProposition>, Box<SpecProposition>),
+    Not(Box<SpecProposition>),
+    Implies(Box<SpecProposition>, Box<SpecProposition>),
+    ForAllInt32 {
+        name: String,
+        variable: Variable,
+        body: Box<SpecProposition>,
+    },
+    Predicate {
+        name: String,
+        arguments: Vec<SpecExpression>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CStatement {
+    Declare {
+        name: String,
+        c_type: CType,
+    },
+    Assign {
+        name: String,
+        expression: CExpression,
+    },
+    CallAssign {
+        target: String,
+        function_name: String,
+        arguments: Vec<CExpression>,
+    },
+    Assert {
+        condition: CExpression,
+        label: Option<String>,
+    },
+    Seq(Box<CStatement>, Box<CStatement>),
+    Return(CExpression),
+    Store {
+        pointer: CExpression,
+        value: CExpression,
+    },
+    If {
+        condition: CExpression,
+        then_branch: Box<CStatement>,
+        else_branch: Box<CStatement>,
+    },
+    While {
+        condition: CExpression,
+        invariant: Vec<Proposition>,
+        invariant_checks: Vec<CLoopInvariantCheck>,
+        effect_checks: Vec<CLoopEffectCheck>,
+        body: Box<CStatement>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CLoopInvariantCheck {
+    proposition: SpecProposition,
+    entry_context: Option<String>,
+    preservation_context: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CLoopEffectCheck {
+    effect: CLoopEffect,
+    span: CLoopEffectSpan,
+    context: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CLoopEffect {
+    Immutable,
+    Mutable(Vec<CMemorySegment>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CLoopEffectSpan {
+    Whole,
+    Step,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CMemorySegment {
+    base: CExpression,
+    start: CExpression,
+    end: CExpression,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CMemoryRange {
+    base: Pointer,
+    start: Bitvector32Term,
+    end: Bitvector32Term,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CParameter {
+    name: String,
+    c_type: CType,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CFunction {
+    return_type: CType,
+    name: String,
+    parameters: Vec<CParameter>,
+    body: CStatement,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CFunctionSpecification {
+    state: CState,
+    arguments: Vec<CExpression>,
+    requires: Vec<Proposition>,
+    outcome: CFunctionOutcome,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CFunctionEnvironment {
+    functions: BTreeMap<String, CFunction>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CUndefinedBehavior {
+    SignedOverflow,
+    InvalidMemory,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CRuntimeError {
+    UnboundVariable(String),
+    UnknownFunction(String),
+    TypeMismatch,
+    WrongArity { expected: usize, actual: usize },
+    MissingReturn,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum ExecutionLimit {
+    ExpressionSteps,
+    StatementSteps,
+    FunctionCalls,
+    LoopUnrolls,
+    Paths,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionBudget {
+    expression_steps: usize,
+    statement_steps: usize,
+    function_calls: usize,
+    loop_unrolls: usize,
+    paths: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CExpressionOutcome {
+    Value(CValue),
+    UndefinedBehavior(CUndefinedBehavior),
+    RuntimeError(CRuntimeError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+enum CLValueOutcome {
+    LValue(CLValue),
+    UndefinedBehavior(CUndefinedBehavior),
+    RuntimeError(CRuntimeError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CStatementOutcome {
+    Normal(CState),
+    Return { value: CValue, state: CState },
+    UndefinedBehavior(CUndefinedBehavior),
+    RuntimeError(CRuntimeError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CFunctionOutcome {
+    Return { value: CValue, state: CState },
+    UndefinedBehavior(CUndefinedBehavior),
+    RuntimeError(CRuntimeError),
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CLocalEnvironment {
+    bindings: BTreeMap<String, CLocalBinding>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+enum CLocalBinding {
+    Object { value: CValue, c_type: CType },
+    ArrayObject { element_type: CType, length: u32 },
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CMemory {
+    blocks: BTreeMap<String, CBlock>,
+    cells: BTreeMap<Pointer, CValue>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CBlock {
+    size: u32,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CState {
+    locals: CLocalEnvironment,
+    memory: CMemory,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum Term {
+    Condition(ConditionTerm),
+    Bitvector32(Bitvector32Term),
+    PointerOffset(PointerOffsetTerm),
+    CValue(CValue),
+    CExpressionOutcome(CExpressionOutcome),
+    CStatementOutcome(CStatementOutcome),
+    CFunctionOutcome(CFunctionOutcome),
+    CMemory(CMemory),
+    CState(CState),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum Proposition {
+    Equal(Term, Term),
+    ConditionIs(ConditionTerm, bool),
+    Predicate {
+        name: String,
+        arguments: Vec<Term>,
+    },
+    CExpressionEvaluates {
+        state: CState,
+        expression: CExpression,
+        outcome: CExpressionOutcome,
+    },
+    CStatementExecutes {
+        state: CState,
+        statement: CStatement,
+        outcome: CStatementOutcome,
+    },
+    CFunctionExecutes {
+        state: CState,
+        function: CFunction,
+        arguments: Vec<CExpression>,
+        outcome: CFunctionOutcome,
+    },
+    CFunctionSatisfiesSpecification {
+        function: CFunction,
+        specification: CFunctionSpecification,
+    },
+    CMemoryLoads {
+        memory: CMemory,
+        pointer: Pointer,
+        outcome: CExpressionOutcome,
+    },
+    CMemoryCanLoad {
+        memory: CMemory,
+        pointer: Pointer,
+        byte_width: u32,
+    },
+    CMemoryCanStore {
+        memory: CMemory,
+        pointer: Pointer,
+        byte_width: u32,
+    },
+    CMemoryValidRange {
+        memory: CMemory,
+        base: Pointer,
+        bytes: Bitvector32Term,
+    },
+    CMemoryDisjoint {
+        left_base: Pointer,
+        left_start: Bitvector32Term,
+        left_end: Bitvector32Term,
+        right_base: Pointer,
+        right_start: Bitvector32Term,
+        right_end: Bitvector32Term,
+    },
+    CMemoryMutatesOnly {
+        before: CMemory,
+        after: CMemory,
+        pointers: Vec<Pointer>,
+    },
+    CMemoryEffectSummary {
+        before: CMemory,
+        after: CMemory,
+        mutable_ranges: Vec<CMemoryRange>,
+    },
+    CWhileInvariantRule {
+        state: CState,
+        condition: CExpression,
+        invariant: Vec<Proposition>,
+        body: CStatement,
+        preserved: Vec<Proposition>,
+        postcondition: Box<Proposition>,
+    },
+    And(Box<Proposition>, Box<Proposition>),
+    Or(Box<Proposition>, Box<Proposition>),
+    Not(Box<Proposition>),
+    Implies(Box<Proposition>, Box<Proposition>),
+    ForAll {
+        var: Variable,
+        sort: Sort,
+        body: Box<Proposition>,
+    },
+}
+
+/// An abstract proven proposition produced by kernel axioms.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Theorem {
+    proposition: Proposition,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Assumptions {
+    condition_facts: BTreeMap<ConditionTerm, bool>,
+    prop_facts: BTreeSet<Proposition>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct ProofObligation {
+    proposition: Proposition,
+    context: Option<String>,
+    assumable: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct PathFact {
+    proposition: Proposition,
+    public: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SymbolicCExecution {
+    paths: Vec<SymbolicCExecutionPath>,
+    limit: Option<ExecutionLimit>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SymbolicCExecutionPath {
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    theorem: Theorem,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CExpressionPath {
+    outcome: CExpressionOutcome,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CLValuePath {
+    outcome: CLValueOutcome,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CStatementExecutionPath {
+    outcome: CStatementOutcome,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CFunctionPath {
+    outcome: CFunctionOutcome,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CArgumentsPath {
+    values: Vec<CValue>,
+    outcome: Option<CFunctionOutcome>,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VerificationVariableGenerator {
+    next: u64,
+}
+
+impl VerificationVariableGenerator {
+    fn new(start: u64) -> Self {
+        Self { next: start }
+    }
+
+    fn next(&mut self) -> Variable {
+        let variable = Variable(self.next);
+        self.next += 1;
+        variable
+    }
+}
+
+impl Bitvector32Term {
+    pub fn var(var: Variable) -> Self {
+        Self::Variable(var)
+    }
+
+    pub fn constant(value: u32) -> Self {
+        Self::Constant(value)
+    }
+
+    fn as_const(&self) -> Option<u32> {
+        match self {
+            Self::Constant(value) => Some(*value),
+            Self::Variable(_) | Self::MemoryLoad(_, _) => None,
+            Self::Add(left, right) => Some(left.as_const()?.wrapping_add(right.as_const()?)),
+            Self::Subtract(left, right) => Some(left.as_const()?.wrapping_sub(right.as_const()?)),
+            Self::Multiply(left, right) => Some(left.as_const()?.wrapping_mul(right.as_const()?)),
+            Self::If {
+                condition,
+                then_term,
+                else_term,
+            } => match condition.as_ref() {
+                ConditionTerm::Constant(true) => then_term.as_const(),
+                ConditionTerm::Constant(false) => else_term.as_const(),
+                _ => None,
+            },
+            Self::RangeFold { .. } => None,
+        }
+    }
+
+    fn subtract_one_base(&self) -> Option<Self> {
+        match self {
+            Self::Subtract(left, right) if right.as_ref() == &Self::Constant(1) => {
+                Some(left.as_ref().clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn is_subtract_one(&self) -> bool {
+        self.subtract_one_base().is_some()
+    }
+
+    fn add_const_base(&self, value: u32) -> Option<Self> {
+        match self {
+            Self::Add(left, right) if right.as_ref() == &Self::Constant(value) => {
+                Some(left.as_ref().clone())
+            }
+            Self::Add(left, right) if left.as_ref() == &Self::Constant(value) => {
+                Some(right.as_ref().clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn add_const_parts(&self) -> Option<(Self, u32)> {
+        match self {
+            Self::Add(left, right) => match (left.as_ref(), right.as_ref()) {
+                (base, Self::Constant(value)) => Some((base.clone(), *value)),
+                (Self::Constant(value), base) => Some((base.clone(), *value)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn subtract_const_parts(&self) -> Option<(Self, u32)> {
+        match self {
+            Self::Subtract(left, right) => match right.as_ref() {
+                Self::Constant(value) => Some((left.as_ref().clone(), *value)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn add(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => {
+                Self::Constant(left.wrapping_add(*right))
+            }
+            (Self::Constant(constant), Self::Subtract(base, subtrahend))
+                if subtrahend.as_ref() == &Self::Constant(*constant) =>
+            {
+                base.as_ref().clone()
+            }
+            (Self::Subtract(base, subtrahend), Self::Constant(constant))
+                if subtrahend.as_ref() == &Self::Constant(*constant) =>
+            {
+                base.as_ref().clone()
+            }
+            (_, Self::Constant(0)) => left,
+            (Self::Constant(0), _) => right,
+            _ => Self::Add(Box::new(left), Box::new(right)),
+        }
+    }
+
+    fn subtract(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => {
+                Self::Constant(left.wrapping_sub(*right))
+            }
+            (_, Self::Constant(0)) => left,
+            _ if left == right => Self::Constant(0),
+            (Self::Add(left_base, left_addend), Self::Add(right_base, right_addend))
+                if left_base == right_base =>
+            {
+                Self::subtract(left_addend.as_ref().clone(), right_addend.as_ref().clone())
+            }
+            (Self::Add(left_base, left_addend), Self::Add(right_base, right_addend))
+                if left_base == right_addend =>
+            {
+                Self::subtract(left_addend.as_ref().clone(), right_base.as_ref().clone())
+            }
+            (Self::Add(left_base, left_addend), Self::Add(right_base, right_addend))
+                if left_addend == right_base =>
+            {
+                Self::subtract(left_base.as_ref().clone(), right_addend.as_ref().clone())
+            }
+            (Self::Add(left_base, left_addend), Self::Add(right_base, right_addend))
+                if left_addend == right_addend =>
+            {
+                Self::subtract(left_base.as_ref().clone(), right_base.as_ref().clone())
+            }
+            (Self::Add(left_base, left_addend), _) if left_base.as_ref() == &right => {
+                left_addend.as_ref().clone()
+            }
+            (Self::Add(left_base, left_addend), _) if left_addend.as_ref() == &right => {
+                left_base.as_ref().clone()
+            }
+            (_, Self::Add(right_base, right_addend)) if &left == right_base.as_ref() => {
+                Self::subtract(Self::Constant(0), right_addend.as_ref().clone())
+            }
+            (_, Self::Add(right_base, right_addend)) if &left == right_addend.as_ref() => {
+                Self::subtract(Self::Constant(0), right_base.as_ref().clone())
+            }
+            _ => Self::Subtract(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub fn if_then_else(condition: ConditionTerm, then_term: Self, else_term: Self) -> Self {
+        match condition {
+            ConditionTerm::Constant(true) => then_term,
+            ConditionTerm::Constant(false) => else_term,
+            _ if then_term == else_term => then_term,
+            condition => Self::If {
+                condition: Box::new(condition),
+                then_term: Box::new(then_term),
+                else_term: Box::new(else_term),
+            },
+        }
+    }
+
+    pub fn range_fold(
+        start: Self,
+        end: Self,
+        initial: Self,
+        accumulator: Variable,
+        item: Variable,
+        body: Self,
+    ) -> Self {
+        if start == end {
+            return initial;
+        }
+
+        if Self::add(start.clone(), Self::Constant(1)) == end {
+            return instantiate_range_fold_step(&body, accumulator, &initial, item, &start);
+        }
+
+        if let (Some(start_value), Some(end_value)) = (
+            signed_bitvector_constant(&start),
+            signed_bitvector_constant(&end),
+        ) {
+            let length = end_value - start_value;
+            if length <= 0 {
+                return initial;
+            }
+            if length <= RANGE_FOLD_CONCRETE_UNROLL_LIMIT {
+                let mut value = initial;
+                for index in start_value..end_value {
+                    value = instantiate_range_fold_step(
+                        &body,
+                        accumulator,
+                        &value,
+                        item,
+                        &signed_i64_bitvector_constant(index),
+                    );
+                }
+                return value;
+            }
+        }
+
+        Self::RangeFold {
+            start: Box::new(start),
+            end: Box::new(end),
+            initial: Box::new(initial),
+            accumulator,
+            item,
+            body: Box::new(body),
+        }
+    }
+}
+
+impl PointerOffsetTerm {
+    pub fn constant(value: i64) -> Self {
+        Self::Constant(value)
+    }
+
+    fn as_const(&self) -> Option<i64> {
+        match self {
+            Self::Constant(value) => Some(*value),
+            Self::Variable(_) => None,
+            Self::Add(left, right) => left.as_const()?.checked_add(right.as_const()?),
+            Self::Int32Scaled { value, byte_width } => {
+                let value = value.as_const()? as i32 as i64;
+                value.checked_mul(*byte_width)
+            }
+        }
+    }
+
+    fn add(left: Self, right: Self) -> Self {
+        match (left.as_const(), right.as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left + right),
+            (Some(0), _) => right,
+            (_, Some(0)) => left,
+            _ => Self::Add(Box::new(left), Box::new(right)),
+        }
+    }
+
+    fn scale_int32(value: Bitvector32Term, byte_width: i64) -> Self {
+        match value.as_const() {
+            Some(value) => Self::Constant((value as i32 as i64) * byte_width),
+            None => Self::Int32Scaled {
+                value: Box::new(value),
+                byte_width,
+            },
+        }
+    }
+}
+
+impl ConditionTerm {
+    fn signed_less_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.as_const(), right.as_const()) {
+            (Some(left), Some(right)) => Self::Constant((left as i32) < (right as i32)),
+            _ => Self::Bitvector32SignedLessThan(Box::new(left), Box::new(right)),
+        }
+    }
+
+    fn signed_less_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.as_const(), right.as_const()) {
+            (Some(left), Some(right)) => Self::Constant((left as i32) <= (right as i32)),
+            _ => Self::Bitvector32SignedLessEqual(Box::new(left), Box::new(right)),
+        }
+    }
+
+    fn signed_greater_than(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.as_const(), right.as_const()) {
+            (Some(left), Some(right)) => Self::Constant((left as i32) > (right as i32)),
+            _ => Self::Bitvector32SignedGreaterThan(Box::new(left), Box::new(right)),
+        }
+    }
+
+    fn signed_greater_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.as_const(), right.as_const()) {
+            (Some(left), Some(right)) => Self::Constant((left as i32) >= (right as i32)),
+            _ => Self::Bitvector32SignedGreaterEqual(Box::new(left), Box::new(right)),
+        }
+    }
+
+    fn equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.as_const(), right.as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left == right),
+            _ => Self::Bitvector32Equal(Box::new(left), Box::new(right)),
+        }
+    }
+
+    fn signed_add_overflows(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.as_const(), right.as_const()) {
+            (Some(left), Some(right)) => {
+                Self::Constant((left as i32).overflowing_add(right as i32).1)
+            }
+            _ => Self::Bitvector32SignedAddOverflows(Box::new(left), Box::new(right)),
+        }
+    }
+
+    fn signed_subtract_overflows(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.as_const(), right.as_const()) {
+            (Some(left), Some(right)) => {
+                Self::Constant((left as i32).overflowing_sub(right as i32).1)
+            }
+            _ => Self::Bitvector32SignedSubtractOverflows(Box::new(left), Box::new(right)),
+        }
+    }
+
+    fn pointer_offset_equal(left: PointerOffsetTerm, right: PointerOffsetTerm) -> Self {
+        match (left.as_const(), right.as_const()) {
+            (Some(left), Some(right)) => Self::Constant(left == right),
+            _ => Self::PointerOffsetEqual(Box::new(left), Box::new(right)),
+        }
+    }
+}
+
+impl CType {
+    fn accepts(self, value: &CValue) -> bool {
+        matches!(
+            (self, value),
+            (Self::Int32, CValue::Int32(_))
+                | (Self::UInt8, CValue::UInt8(_))
+                | (Self::Int32Pointer, CValue::Pointer(_))
+                | (Self::UInt8Pointer, CValue::Pointer(_))
+        )
+    }
+
+    pub fn byte_width(self) -> u32 {
+        match self {
+            Self::Int32 => 4,
+            Self::UInt8 => 1,
+            Self::Int32Pointer => C_POINTER_BYTE_WIDTH,
+            Self::UInt8Pointer => C_POINTER_BYTE_WIDTH,
+            Self::Int32Array(length) => length.checked_mul(4).unwrap_or(u32::MAX),
+            Self::UInt8Array(length) => length,
+        }
+    }
+
+    pub fn pointee_type(self) -> Option<Self> {
+        match self {
+            Self::Int32Pointer => Some(Self::Int32),
+            Self::UInt8Pointer => Some(Self::UInt8),
+            _ => None,
+        }
+    }
+}
+
+impl CValue {
+    fn c_type(&self) -> CType {
+        match self {
+            Self::Int32(_) => CType::Int32,
+            Self::UInt8(_) => CType::UInt8,
+            Self::Pointer(_) => CType::Int32Pointer,
+        }
+    }
+
+    fn byte_width(&self) -> u32 {
+        match self {
+            Self::Int32(_) => 4,
+            Self::UInt8(_) => 1,
+            Self::Pointer(_) => C_POINTER_BYTE_WIDTH,
+        }
+    }
+}
+
+impl CLValue {
+    fn local(name: impl Into<String>, value_type: CType) -> Self {
+        Self {
+            storage: CLValueStorage::Local { name: name.into() },
+            value_type,
+        }
+    }
+
+    fn memory(pointer: Pointer, value_type: CType) -> Self {
+        Self {
+            storage: CLValueStorage::Memory { pointer },
+            value_type,
+        }
+    }
+
+    pub fn value_type(&self) -> CType {
+        self.value_type
+    }
+
+    fn pointer(&self, state: &CState) -> Option<Pointer> {
+        match &self.storage {
+            CLValueStorage::Local { name } => {
+                let pointer = CMemory::local_pointer(name);
+                state.memory.has_block(&pointer.block).then_some(pointer)
+            }
+            CLValueStorage::Memory { pointer } => Some(pointer.clone()),
+        }
+    }
+}
+
+impl Pointer {
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn offset_by_int32_elements(&self, elements: Bitvector32Term) -> Self {
+        self.offset_by_elements(elements, 4)
+    }
+
+    fn offset_by_elements(&self, elements: Bitvector32Term, byte_width: u32) -> Self {
+        Self {
+            block: self.block.clone(),
+            offset: PointerOffsetTerm::add(
+                self.offset.clone(),
+                PointerOffsetTerm::scale_int32(elements, i64::from(byte_width)),
+            ),
+        }
+    }
+
+    fn element_index_from_base(&self, base: &Self) -> Option<Bitvector32Term> {
+        if self.block != base.block {
+            return None;
+        }
+
+        if self.offset == base.offset {
+            return Some(Bitvector32Term::Constant(0));
+        }
+
+        if base.offset == PointerOffsetTerm::Constant(0) {
+            return int32_element_index_from_offset(&self.offset);
+        }
+
+        match &self.offset {
+            PointerOffsetTerm::Add(left, right) if left.as_ref() == &base.offset => {
+                int32_element_index_from_offset(right)
+            }
+            PointerOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
+                int32_element_index_from_offset(left)
+            }
+            _ => {
+                if let (Some(pointer_index), Some(base_index)) = (
+                    int32_element_index_from_offset(&self.offset),
+                    int32_element_index_from_offset(&base.offset),
+                ) {
+                    Some(Bitvector32Term::subtract(pointer_index, base_index))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
+impl CParameter {
+    pub fn new(name: impl Into<String>, c_type: CType) -> Self {
+        Self {
+            name: name.into(),
+            c_type,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn c_type(&self) -> CType {
+        self.c_type
+    }
+}
+
+impl CFunction {
+    pub fn new(
+        return_type: CType,
+        name: impl Into<String>,
+        parameters: Vec<CParameter>,
+        body: CStatement,
+    ) -> Self {
+        Self {
+            return_type,
+            name: name.into(),
+            parameters,
+            body,
+        }
+    }
+
+    pub fn return_type(&self) -> CType {
+        self.return_type
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn parameters(&self) -> &[CParameter] {
+        &self.parameters
+    }
+
+    pub fn body(&self) -> &CStatement {
+        &self.body
+    }
+}
+
+impl CLoopInvariantCheck {
+    pub fn new(
+        proposition: SpecProposition,
+        entry_context: Option<String>,
+        preservation_context: Option<String>,
+    ) -> Self {
+        Self {
+            proposition,
+            entry_context,
+            preservation_context,
+        }
+    }
+
+    pub fn proposition(&self) -> &SpecProposition {
+        &self.proposition
+    }
+
+    pub fn entry_context(&self) -> Option<&str> {
+        self.entry_context.as_deref()
+    }
+
+    pub fn preservation_context(&self) -> Option<&str> {
+        self.preservation_context.as_deref()
+    }
+}
+
+impl CLoopEffectCheck {
+    pub fn new(effect: CLoopEffect, context: Option<String>) -> Self {
+        Self {
+            effect,
+            span: CLoopEffectSpan::Step,
+            context,
+        }
+    }
+
+    pub fn new_with_span(
+        effect: CLoopEffect,
+        span: CLoopEffectSpan,
+        context: Option<String>,
+    ) -> Self {
+        Self {
+            effect,
+            span,
+            context,
+        }
+    }
+
+    pub fn effect(&self) -> &CLoopEffect {
+        &self.effect
+    }
+
+    pub fn span(&self) -> CLoopEffectSpan {
+        self.span
+    }
+
+    pub fn context(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+}
+
+impl CMemorySegment {
+    pub fn new(base: CExpression, start: CExpression, end: CExpression) -> Self {
+        Self { base, start, end }
+    }
+}
+
+impl CMemoryRange {
+    pub fn new(base: Pointer, start: Bitvector32Term, end: Bitvector32Term) -> Self {
+        Self { base, start, end }
+    }
+
+    pub fn base(&self) -> &Pointer {
+        &self.base
+    }
+
+    pub fn start(&self) -> &Bitvector32Term {
+        &self.start
+    }
+
+    pub fn end(&self) -> &Bitvector32Term {
+        &self.end
+    }
+}
+
+impl CFunctionSpecification {
+    pub fn new(
+        state: CState,
+        arguments: Vec<CExpression>,
+        requires: Vec<Proposition>,
+        outcome: CFunctionOutcome,
+    ) -> Self {
+        Self {
+            state,
+            arguments,
+            requires,
+            outcome,
+        }
+    }
+
+    pub fn state(&self) -> &CState {
+        &self.state
+    }
+
+    pub fn arguments(&self) -> &[CExpression] {
+        &self.arguments
+    }
+
+    pub fn requires(&self) -> &[Proposition] {
+        &self.requires
+    }
+
+    pub fn outcome(&self) -> &CFunctionOutcome {
+        &self.outcome
+    }
+}
+
+impl CFunctionEnvironment {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_function(mut self, function: CFunction) -> Self {
+        self.functions.insert(function.name().to_string(), function);
+        self
+    }
+
+    pub fn get_function(&self, name: &str) -> Option<&CFunction> {
+        self.functions.get(name)
+    }
+}
+
+impl CLocalEnvironment {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with(mut self, name: impl Into<String>, value: CValue) -> Self {
+        self.set(name, value);
+        self
+    }
+
+    pub fn with_typed(mut self, name: impl Into<String>, value: CValue, c_type: CType) -> Self {
+        self.set_typed(name, value, c_type);
+        self
+    }
+
+    pub fn with_int32_array(mut self, name: impl Into<String>, length: u32) -> Self {
+        self.set_int32_array(name, length);
+        self
+    }
+
+    pub fn set(&mut self, name: impl Into<String>, value: CValue) {
+        let c_type = value.c_type();
+        self.set_typed(name, value, c_type);
+    }
+
+    pub fn set_typed(&mut self, name: impl Into<String>, value: CValue, c_type: CType) {
+        self.bindings
+            .insert(name.into(), CLocalBinding::Object { value, c_type });
+    }
+
+    pub fn set_int32_array(&mut self, name: impl Into<String>, length: u32) {
+        self.set_array_object(name, CType::Int32, length);
+    }
+
+    pub fn set_uint8_array(&mut self, name: impl Into<String>, length: u32) {
+        self.set_array_object(name, CType::UInt8, length);
+    }
+
+    fn set_array_object(&mut self, name: impl Into<String>, element_type: CType, length: u32) {
+        self.bindings.insert(
+            name.into(),
+            CLocalBinding::ArrayObject {
+                element_type,
+                length,
+            },
+        );
+    }
+
+    pub fn get(&self, name: &str) -> Option<&CValue> {
+        match self.bindings.get(name) {
+            Some(CLocalBinding::Object { value, .. }) => Some(value),
+            Some(CLocalBinding::ArrayObject { .. }) | None => None,
+        }
+    }
+
+    fn object_type(&self, name: &str) -> Option<CType> {
+        match self.binding(name) {
+            Some(CLocalBinding::Object { c_type, .. }) => Some(*c_type),
+            Some(CLocalBinding::ArrayObject { element_type, .. }) => Some(*element_type),
+            None => None,
+        }
+    }
+
+    fn scalar_object_type(&self, name: &str) -> Option<CType> {
+        match self.binding(name) {
+            Some(CLocalBinding::Object { c_type, .. }) => Some(*c_type),
+            Some(CLocalBinding::ArrayObject { .. }) | None => None,
+        }
+    }
+
+    fn binding(&self, name: &str) -> Option<&CLocalBinding> {
+        self.bindings.get(name)
+    }
+
+    fn is_array_object(&self, name: &str) -> bool {
+        matches!(self.binding(name), Some(CLocalBinding::ArrayObject { .. }))
+    }
+}
+
+impl CBlock {
+    pub fn new(size: u32) -> Self {
+        Self { size }
+    }
+
+    pub fn size(&self) -> u32 {
+        self.size
+    }
+}
+
+impl CMemory {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_block(mut self, block: impl Into<String>, size: u32) -> Self {
+        self.blocks.insert(block.into(), CBlock::new(size));
+        self
+    }
+
+    fn with_loop_memory_havoc(
+        mut self,
+        variable: Variable,
+        preserved_blocks: &BTreeSet<String>,
+    ) -> Self {
+        // A loop body that may write memory can clobber, through some
+        // pointer, any cell it can reach. Drop concrete cells outside the
+        // preserved (scalar stack local) blocks so loop-head and post-loop
+        // reads do not observe stale pre-loop values; anything that must
+        // survive the loop has to be restated as a loop invariant. The
+        // marker block additionally defeats symbolic cross-loop load
+        // equality for the remaining symbolic memory.
+        self.cells
+            .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
+        self.blocks
+            .insert(format!("havoc:{}", variable.0), CBlock::new(0));
+        self
+    }
+
+    pub fn store(mut self, pointer: Pointer, value: CValue) -> Self {
+        self.cells.insert(pointer, value);
+        self
+    }
+
+    pub fn load(&self, pointer: &Pointer) -> CExpressionOutcome {
+        match self.cells.get(pointer) {
+            Some(value) => CExpressionOutcome::Value(value.clone()),
+            None => CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+        }
+    }
+
+    pub fn differing_cell_pointers(&self, other: &Self) -> Vec<Pointer> {
+        let mut pointers = self.cells.keys().cloned().collect::<BTreeSet<_>>();
+        pointers.extend(other.cells.keys().cloned());
+        pointers
+            .into_iter()
+            .filter(|pointer| self.cells.get(pointer) != other.cells.get(pointer))
+            .collect()
+    }
+
+    fn known_value(&self, pointer: &Pointer) -> Option<CValue> {
+        self.cells.get(pointer).cloned()
+    }
+
+    fn without_cell(&self, pointer: &Pointer) -> Self {
+        let mut memory = self.clone();
+        memory.cells.remove(pointer);
+        memory
+    }
+
+    fn without_proven_distinct_cells(&self, pointer: &Pointer, assumptions: &Assumptions) -> Self {
+        let mut memory = self.clone();
+        memory.cells.retain(|cell_pointer, _| {
+            cell_pointer.block != pointer.block
+                || !pointers_proven_distinct(cell_pointer, pointer, assumptions)
+        });
+        memory
+    }
+
+    fn without_possible_aliasing_cells(
+        &self,
+        pointer: &Pointer,
+        assumptions: &Assumptions,
+    ) -> Self {
+        let mut memory = self.clone();
+        memory.cells.retain(|cell_pointer, _| {
+            cell_pointer.block != pointer.block
+                || pointers_proven_distinct(cell_pointer, pointer, assumptions)
+        });
+        memory
+    }
+
+    fn first_unresolved_same_block_cell(
+        &self,
+        pointer: &Pointer,
+        assumptions: &Assumptions,
+    ) -> Option<(Pointer, CValue)> {
+        self.cells
+            .iter()
+            .find(|(cell_pointer, _)| {
+                cell_pointer.block == pointer.block
+                    && *cell_pointer != pointer
+                    && assumptions
+                        .decide(&ConditionTerm::pointer_offset_equal(
+                            cell_pointer.offset.clone(),
+                            pointer.offset.clone(),
+                        ))
+                        .is_none()
+            })
+            .map(|(pointer, value)| (pointer.clone(), value.clone()))
+    }
+
+    fn local_pointer(name: &str) -> Pointer {
+        Pointer {
+            block: format!("local:{name}"),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    fn has_block(&self, block: &str) -> bool {
+        self.blocks.contains_key(block)
+    }
+
+    fn can_load_concretely(&self, pointer: &Pointer, byte_width: u32) -> bool {
+        self.cells.contains_key(pointer) || self.access_in_bounds(pointer, byte_width)
+    }
+
+    fn can_store_concretely(&self, pointer: &Pointer, value: &CValue) -> bool {
+        self.cells.contains_key(pointer) || self.access_in_bounds(pointer, value.byte_width())
+    }
+
+    fn access_in_bounds(&self, pointer: &Pointer, byte_width: u32) -> bool {
+        let Some(offset) = pointer.offset.as_const() else {
+            return false;
+        };
+        let Ok(offset) = u32::try_from(offset) else {
+            return false;
+        };
+        let Some(block) = self.blocks.get(&pointer.block) else {
+            return false;
+        };
+        offset
+            .checked_add(byte_width)
+            .is_some_and(|end| end <= block.size())
+    }
+
+    fn symbolic_int32_load(&self, pointer: &Pointer) -> CValue {
+        int32(Bitvector32Term::MemoryLoad(
+            Box::new(self.clone()),
+            Box::new(pointer.clone()),
+        ))
+    }
+
+    fn symbolic_uint8_load(&self, pointer: &Pointer) -> CValue {
+        uint8(Bitvector32Term::MemoryLoad(
+            Box::new(self.clone()),
+            Box::new(pointer.clone()),
+        ))
+    }
+}
+
+impl CState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_local(mut self, name: impl Into<String>, value: CValue) -> Self {
+        self.locals.set(name, value);
+        self
+    }
+
+    pub fn with_int32_array_local(mut self, name: impl Into<String>, length: u32) -> Self {
+        self.locals.set_int32_array(name, length);
+        self
+    }
+
+    pub fn with_memory(mut self, memory: CMemory) -> Self {
+        self.memory = memory;
+        self
+    }
+
+    pub fn locals(&self) -> &CLocalEnvironment {
+        &self.locals
+    }
+
+    pub fn memory(&self) -> &CMemory {
+        &self.memory
+    }
+}
+
+impl Theorem {
+    fn new(proposition: Proposition) -> Self {
+        Self { proposition }
+    }
+
+    pub fn proposition(&self) -> &Proposition {
+        &self.proposition
+    }
+}
+
+impl Default for ExecutionBudget {
+    fn default() -> Self {
+        Self {
+            expression_steps: 10_000,
+            statement_steps: 10_000,
+            function_calls: 1_000,
+            loop_unrolls: 256,
+            paths: 10_000,
+        }
+    }
+}
+
+impl ExecutionBudget {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_expression_steps(mut self, expression_steps: usize) -> Self {
+        self.expression_steps = expression_steps;
+        self
+    }
+
+    pub fn with_statement_steps(mut self, statement_steps: usize) -> Self {
+        self.statement_steps = statement_steps;
+        self
+    }
+
+    pub fn with_function_calls(mut self, function_calls: usize) -> Self {
+        self.function_calls = function_calls;
+        self
+    }
+
+    pub fn with_loop_unrolls(mut self, loop_unrolls: usize) -> Self {
+        self.loop_unrolls = loop_unrolls;
+        self
+    }
+
+    pub fn with_paths(mut self, paths: usize) -> Self {
+        self.paths = paths;
+        self
+    }
+
+    fn consume_expression_step(&mut self) -> ExecutionResult<()> {
+        consume_budget(&mut self.expression_steps, ExecutionLimit::ExpressionSteps)
+    }
+
+    fn consume_statement_step(&mut self) -> ExecutionResult<()> {
+        consume_budget(&mut self.statement_steps, ExecutionLimit::StatementSteps)
+    }
+
+    fn consume_function_call(&mut self) -> ExecutionResult<()> {
+        consume_budget(&mut self.function_calls, ExecutionLimit::FunctionCalls)
+    }
+
+    fn consume_loop_unroll(&mut self) -> ExecutionResult<()> {
+        consume_budget(&mut self.loop_unrolls, ExecutionLimit::LoopUnrolls)
+    }
+
+    fn consume_paths(&mut self, paths: usize) -> ExecutionResult<()> {
+        if self.paths < paths {
+            return Err(ExecutionLimit::Paths);
+        }
+        self.paths -= paths;
+        Ok(())
+    }
+}
+
+type ExecutionResult<T> = Result<T, ExecutionLimit>;
+
+fn consume_budget(remaining: &mut usize, limit: ExecutionLimit) -> ExecutionResult<()> {
+    if *remaining == 0 {
+        return Err(limit);
+    }
+    *remaining -= 1;
+    Ok(())
+}

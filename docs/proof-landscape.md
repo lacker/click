@@ -20,7 +20,7 @@ will have exactly the names used here.
 
 The current `.click` language exposes function-level `requires` clauses and
 per-guarantee `ensures ... by auto;` clauses, backed by native C symbolic
-execution and specification-checking axioms in the megakernel. Surface Click
+execution and specification-checking axioms in the kernel. Surface Click
 may contain **C fragments**: pieces of C0 syntax that keep C-like local syntax
 and typing but elaborate into explicit Kernel Click.
 

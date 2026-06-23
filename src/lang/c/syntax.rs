@@ -99,19 +99,19 @@ impl C0Function {
         &self.body
     }
 
-    pub fn body_megakernel_statement(&self) -> crate::megakernel::CStatement {
-        self.body.to_megakernel_statement()
+    pub fn body_kernel_statement(&self) -> crate::kernel::CStatement {
+        self.body.to_kernel_statement()
     }
 
-    pub fn to_megakernel_function(&self) -> crate::megakernel::CFunction {
-        crate::megakernel::c_function(
-            self.return_type.to_megakernel_type(),
+    pub fn to_kernel_function(&self) -> crate::kernel::CFunction {
+        crate::kernel::c_function(
+            self.return_type.to_kernel_type(),
             self.name.clone(),
             self.parameters
                 .iter()
-                .map(C0Parameter::to_megakernel_parameter)
+                .map(C0Parameter::to_kernel_parameter)
                 .collect(),
-            self.body.to_megakernel_statement(),
+            self.body.to_kernel_statement(),
         )
     }
 }
@@ -125,131 +125,119 @@ impl C0Parameter {
         self.c_type
     }
 
-    pub fn to_megakernel_parameter(&self) -> crate::megakernel::CParameter {
-        crate::megakernel::c_parameter(self.name.clone(), self.c_type.to_megakernel_type())
+    pub fn to_kernel_parameter(&self) -> crate::kernel::CParameter {
+        crate::kernel::c_parameter(self.name.clone(), self.c_type.to_kernel_type())
     }
 }
 
 impl C0Type {
-    pub fn to_megakernel_type(self) -> crate::megakernel::CType {
+    pub fn to_kernel_type(self) -> crate::kernel::CType {
         match self {
-            Self::Int32 => crate::megakernel::CType::Int32,
-            Self::UInt8 => crate::megakernel::CType::UInt8,
-            Self::Int32Pointer => crate::megakernel::CType::Int32Pointer,
-            Self::UInt8Pointer => crate::megakernel::CType::UInt8Pointer,
-            Self::Int32Array(length) => crate::megakernel::CType::Int32Array(length),
-            Self::UInt8Array(length) => crate::megakernel::CType::UInt8Array(length),
+            Self::Int32 => crate::kernel::CType::Int32,
+            Self::UInt8 => crate::kernel::CType::UInt8,
+            Self::Int32Pointer => crate::kernel::CType::Int32Pointer,
+            Self::UInt8Pointer => crate::kernel::CType::UInt8Pointer,
+            Self::Int32Array(length) => crate::kernel::CType::Int32Array(length),
+            Self::UInt8Array(length) => crate::kernel::CType::UInt8Array(length),
         }
     }
 }
 
 impl C0Statement {
-    pub fn to_megakernel_statement(&self) -> crate::megakernel::CStatement {
+    pub fn to_kernel_statement(&self) -> crate::kernel::CStatement {
         match self {
             Self::Declare { c_type, name } => {
-                crate::megakernel::c_declare(name.clone(), c_type.to_megakernel_type())
+                crate::kernel::c_declare(name.clone(), c_type.to_kernel_type())
             }
             Self::Assign { name, expression } => {
-                crate::megakernel::c_assign(name.clone(), expression.to_megakernel_expression())
+                crate::kernel::c_assign(name.clone(), expression.to_kernel_expression())
             }
             Self::CallAssign {
                 target,
                 function_name,
                 arguments,
-            } => crate::megakernel::c_call_assign(
+            } => crate::kernel::c_call_assign(
                 target.clone(),
                 function_name.clone(),
                 arguments
                     .iter()
-                    .map(C0Expression::to_megakernel_expression)
+                    .map(C0Expression::to_kernel_expression)
                     .collect(),
             ),
-            Self::Seq(first, second) => crate::megakernel::c_seq(
-                first.to_megakernel_statement(),
-                second.to_megakernel_statement(),
-            ),
-            Self::Return(expression) => {
-                crate::megakernel::c_return(expression.to_megakernel_expression())
+            Self::Seq(first, second) => {
+                crate::kernel::c_seq(first.to_kernel_statement(), second.to_kernel_statement())
             }
-            Self::Store { pointer, value } => crate::megakernel::c_store(
-                pointer.to_megakernel_expression(),
-                value.to_megakernel_expression(),
-            ),
+            Self::Return(expression) => crate::kernel::c_return(expression.to_kernel_expression()),
+            Self::Store { pointer, value } => {
+                crate::kernel::c_store(pointer.to_kernel_expression(), value.to_kernel_expression())
+            }
             Self::If {
                 condition,
                 then_branch,
                 else_branch,
-            } => crate::megakernel::c_if(
-                condition.to_megakernel_expression(),
-                then_branch.to_megakernel_statement(),
-                else_branch.to_megakernel_statement(),
+            } => crate::kernel::c_if(
+                condition.to_kernel_expression(),
+                then_branch.to_kernel_statement(),
+                else_branch.to_kernel_statement(),
             ),
-            Self::While { condition, body } => crate::megakernel::c_while(
-                condition.to_megakernel_expression(),
+            Self::While { condition, body } => crate::kernel::c_while(
+                condition.to_kernel_expression(),
                 Vec::new(),
-                body.to_megakernel_statement(),
+                body.to_kernel_statement(),
             ),
         }
     }
 }
 
 impl C0Expression {
-    pub fn to_megakernel_expression(&self) -> crate::megakernel::CExpression {
+    pub fn to_kernel_expression(&self) -> crate::kernel::CExpression {
         match self {
-            Self::Variable(name) => crate::megakernel::c_variable(name.clone()),
-            Self::AddressOf(target) => crate::megakernel::CExpression::AddressOf(Box::new(
-                target.to_megakernel_expression(),
-            )),
-            Self::Int32Literal(value) => crate::megakernel::c_int32_literal(*value),
-            Self::UInt8Literal(value) => crate::megakernel::c_uint8_literal(*value),
-            Self::LessThan(left, right) => crate::megakernel::c_less_than(
-                left.to_megakernel_expression(),
-                right.to_megakernel_expression(),
-            ),
-            Self::LessEqual(left, right) => crate::megakernel::c_less_equal(
-                left.to_megakernel_expression(),
-                right.to_megakernel_expression(),
-            ),
-            Self::GreaterThan(left, right) => crate::megakernel::c_greater_than(
-                left.to_megakernel_expression(),
-                right.to_megakernel_expression(),
-            ),
-            Self::GreaterEqual(left, right) => crate::megakernel::c_greater_equal(
-                left.to_megakernel_expression(),
-                right.to_megakernel_expression(),
-            ),
-            Self::Equal(left, right) => crate::megakernel::c_equal(
-                left.to_megakernel_expression(),
-                right.to_megakernel_expression(),
-            ),
-            Self::NotEqual(left, right) => crate::megakernel::c_not_equal(
-                left.to_megakernel_expression(),
-                right.to_megakernel_expression(),
-            ),
-            Self::Not(expression) => {
-                crate::megakernel::c_not(expression.to_megakernel_expression())
+            Self::Variable(name) => crate::kernel::c_variable(name.clone()),
+            Self::AddressOf(target) => {
+                crate::kernel::CExpression::AddressOf(Box::new(target.to_kernel_expression()))
             }
-            Self::And(left, right) => crate::megakernel::c_and(
-                left.to_megakernel_expression(),
-                right.to_megakernel_expression(),
+            Self::Int32Literal(value) => crate::kernel::c_int32_literal(*value),
+            Self::UInt8Literal(value) => crate::kernel::c_uint8_literal(*value),
+            Self::LessThan(left, right) => crate::kernel::c_less_than(
+                left.to_kernel_expression(),
+                right.to_kernel_expression(),
             ),
-            Self::Or(left, right) => crate::megakernel::c_or(
-                left.to_megakernel_expression(),
-                right.to_megakernel_expression(),
+            Self::LessEqual(left, right) => crate::kernel::c_less_equal(
+                left.to_kernel_expression(),
+                right.to_kernel_expression(),
             ),
-            Self::Add(left, right) => crate::megakernel::c_add(
-                left.to_megakernel_expression(),
-                right.to_megakernel_expression(),
+            Self::GreaterThan(left, right) => crate::kernel::c_greater_than(
+                left.to_kernel_expression(),
+                right.to_kernel_expression(),
             ),
-            Self::Subtract(left, right) => crate::megakernel::c_subtract(
-                left.to_megakernel_expression(),
-                right.to_megakernel_expression(),
+            Self::GreaterEqual(left, right) => crate::kernel::c_greater_equal(
+                left.to_kernel_expression(),
+                right.to_kernel_expression(),
             ),
-            Self::Load(pointer) => crate::megakernel::c_load(pointer.to_megakernel_expression()),
-            Self::Index(base, index) => crate::megakernel::c_index(
-                base.to_megakernel_expression(),
-                index.to_megakernel_expression(),
+            Self::Equal(left, right) => {
+                crate::kernel::c_equal(left.to_kernel_expression(), right.to_kernel_expression())
+            }
+            Self::NotEqual(left, right) => crate::kernel::c_not_equal(
+                left.to_kernel_expression(),
+                right.to_kernel_expression(),
             ),
+            Self::Not(expression) => crate::kernel::c_not(expression.to_kernel_expression()),
+            Self::And(left, right) => {
+                crate::kernel::c_and(left.to_kernel_expression(), right.to_kernel_expression())
+            }
+            Self::Or(left, right) => {
+                crate::kernel::c_or(left.to_kernel_expression(), right.to_kernel_expression())
+            }
+            Self::Add(left, right) => {
+                crate::kernel::c_add(left.to_kernel_expression(), right.to_kernel_expression())
+            }
+            Self::Subtract(left, right) => {
+                crate::kernel::c_subtract(left.to_kernel_expression(), right.to_kernel_expression())
+            }
+            Self::Load(pointer) => crate::kernel::c_load(pointer.to_kernel_expression()),
+            Self::Index(base, index) => {
+                crate::kernel::c_index(base.to_kernel_expression(), index.to_kernel_expression())
+            }
         }
     }
 }

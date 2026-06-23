@@ -16,13 +16,13 @@ fn c0_array_parameter_syntax_lowers_to_pointer_parameter() {
         syntax::C0Type::Int32Pointer
     );
     assert_eq!(
-        function.to_megakernel_function().parameters()[0].c_type(),
-        crate::megakernel::CType::Int32Pointer
+        function.to_kernel_function().parameters()[0].c_type(),
+        crate::kernel::CType::Int32Pointer
     );
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_max_body() {
+fn c0_syntax_targets_kernel_max_body() {
     let function = syntax::parse_function(
         r#"
         int32 max(int32 a, int32 b) {
@@ -35,39 +35,31 @@ fn c0_syntax_targets_megakernel_max_body() {
         "#,
     )
     .expect("max should parse");
-    let statement = function.body_megakernel_statement();
+    let statement = function.body_kernel_statement();
 
-    assert_eq!(statement, crate::megakernel::c_max_body());
+    assert_eq!(statement, crate::kernel::c_max_body());
 
-    let a = crate::megakernel::Variable(30);
-    let b = crate::megakernel::Variable(31);
-    let a_bits = crate::megakernel::Bitvector32Term::Variable(a);
-    let b_bits = crate::megakernel::Bitvector32Term::Variable(b);
-    let condition = crate::megakernel::c_max_lt_condition(a_bits.clone(), b_bits.clone());
-    let state = crate::megakernel::c_max_state(
-        crate::megakernel::int32(a_bits),
-        crate::megakernel::int32(b_bits),
-    );
-    let assumptions =
-        crate::megakernel::Assumptions::new().assume_condition(condition.clone(), true);
-    let theorem = crate::megakernel::prove_symbolic_c_execution(
-        state.clone(),
-        statement.clone(),
-        assumptions,
-    )
-    .expect("parsed max should symbolically execute");
+    let a = crate::kernel::Variable(30);
+    let b = crate::kernel::Variable(31);
+    let a_bits = crate::kernel::Bitvector32Term::Variable(a);
+    let b_bits = crate::kernel::Bitvector32Term::Variable(b);
+    let condition = crate::kernel::c_max_lt_condition(a_bits.clone(), b_bits.clone());
+    let state =
+        crate::kernel::c_max_state(crate::kernel::int32(a_bits), crate::kernel::int32(b_bits));
+    let assumptions = crate::kernel::Assumptions::new().assume_condition(condition.clone(), true);
+    let theorem =
+        crate::kernel::prove_symbolic_c_execution(state.clone(), statement.clone(), assumptions)
+            .expect("parsed max should symbolically execute");
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::Implies(
-            Box::new(crate::megakernel::Proposition::ConditionIs(condition, true)),
-            Box::new(crate::megakernel::Proposition::CStatementExecutes {
+        &crate::kernel::Proposition::Implies(
+            Box::new(crate::kernel::Proposition::ConditionIs(condition, true)),
+            Box::new(crate::kernel::Proposition::CStatementExecutes {
                 state: state.clone(),
                 statement,
-                outcome: crate::megakernel::CStatementOutcome::Return {
-                    value: crate::megakernel::int32(crate::megakernel::Bitvector32Term::Variable(
-                        b
-                    )),
+                outcome: crate::kernel::CStatementOutcome::Return {
+                    value: crate::kernel::int32(crate::kernel::Bitvector32Term::Variable(b)),
                     state,
                 },
             }),
@@ -76,7 +68,7 @@ fn c0_syntax_targets_megakernel_max_body() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_max_function_call() {
+fn c0_syntax_targets_kernel_max_function_call() {
     let function = syntax::parse_function(
         r#"
         int32 max(int32 a, int32 b) {
@@ -89,16 +81,16 @@ fn c0_syntax_targets_megakernel_max_function_call() {
         "#,
     )
     .expect("max should parse");
-    let function = function.to_megakernel_function();
+    let function = function.to_kernel_function();
 
-    assert_eq!(function, crate::megakernel::c_max_function());
+    assert_eq!(function, crate::kernel::c_max_function());
 
-    let state = crate::megakernel::CState::new();
+    let state = crate::kernel::CState::new();
     let arguments = vec![
-        crate::megakernel::c_int32_literal(0),
-        crate::megakernel::c_int32_literal(1),
+        crate::kernel::c_int32_literal(0),
+        crate::kernel::c_int32_literal(1),
     ];
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
@@ -108,12 +100,12 @@ fn c0_syntax_targets_megakernel_max_function_call() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state: state.clone(),
             function,
             arguments,
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(1),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(1),
                 state,
             },
         }
@@ -121,7 +113,7 @@ fn c0_syntax_targets_megakernel_max_function_call() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_assignment_and_sequence() {
+fn c0_syntax_targets_kernel_assignment_and_sequence() {
     let function = syntax::parse_function(
         r#"
         int32 inc(int32 x) {
@@ -131,10 +123,10 @@ fn c0_syntax_targets_megakernel_assignment_and_sequence() {
         "#,
     )
     .expect("assignment function should parse");
-    let statement = function.body_megakernel_statement();
-    let initial = crate::megakernel::CState::new().with_local("x", crate::megakernel::int32(1));
-    let final_state = crate::megakernel::CState::new().with_local("x", crate::megakernel::int32(2));
-    let theorem = crate::megakernel::prove_symbolic_c_execution(
+    let statement = function.body_kernel_statement();
+    let initial = crate::kernel::CState::new().with_local("x", crate::kernel::int32(1));
+    let final_state = crate::kernel::CState::new().with_local("x", crate::kernel::int32(2));
+    let theorem = crate::kernel::prove_symbolic_c_execution(
         initial.clone(),
         statement.clone(),
         Default::default(),
@@ -143,11 +135,11 @@ fn c0_syntax_targets_megakernel_assignment_and_sequence() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CStatementExecutes {
+        &crate::kernel::Proposition::CStatementExecutes {
             state: initial,
             statement,
-            outcome: crate::megakernel::CStatementOutcome::Return {
-                value: crate::megakernel::int32(2),
+            outcome: crate::kernel::CStatementOutcome::Return {
+                value: crate::kernel::int32(2),
                 state: final_state,
             },
         }
@@ -155,7 +147,7 @@ fn c0_syntax_targets_megakernel_assignment_and_sequence() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_assignment_function_call() {
+fn c0_syntax_targets_kernel_assignment_function_call() {
     let function = syntax::parse_function(
         r#"
         int32 inc(int32 x) {
@@ -165,10 +157,10 @@ fn c0_syntax_targets_megakernel_assignment_function_call() {
         "#,
     )
     .expect("assignment function should parse");
-    let function = function.to_megakernel_function();
-    let state = crate::megakernel::CState::new().with_local("caller", crate::megakernel::int32(5));
-    let arguments = vec![crate::megakernel::c_int32_literal(1)];
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+    let function = function.to_kernel_function();
+    let state = crate::kernel::CState::new().with_local("caller", crate::kernel::int32(5));
+    let arguments = vec![crate::kernel::c_int32_literal(1)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
@@ -178,12 +170,12 @@ fn c0_syntax_targets_megakernel_assignment_function_call() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state: state.clone(),
             function,
             arguments,
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(2),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(2),
                 state,
             },
         }
@@ -191,7 +183,7 @@ fn c0_syntax_targets_megakernel_assignment_function_call() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_store_and_load() {
+fn c0_syntax_targets_kernel_store_and_load() {
     let function = syntax::parse_function(
         r#"
         int32 load_after_store(int32* p) {
@@ -207,24 +199,22 @@ fn c0_syntax_targets_megakernel_store_and_load() {
         syntax::C0Type::Int32Pointer
     );
 
-    let pointer = crate::megakernel::Pointer {
+    let pointer = crate::kernel::Pointer {
         block: "block".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let statement = function.body_megakernel_statement();
-    let initial = crate::megakernel::CState::new()
-        .with_local("p", crate::megakernel::CValue::Pointer(pointer.clone()));
-    let final_state = crate::megakernel::CState::new()
-        .with_local("p", crate::megakernel::CValue::Pointer(pointer.clone()))
-        .with_memory(
-            crate::megakernel::CMemory::new().store(pointer.clone(), crate::megakernel::int32(9)),
-        );
-    let store_obligation = crate::megakernel::Proposition::CMemoryCanStore {
-        memory: crate::megakernel::CMemory::new(),
+    let statement = function.body_kernel_statement();
+    let initial = crate::kernel::CState::new()
+        .with_local("p", crate::kernel::CValue::Pointer(pointer.clone()));
+    let final_state = crate::kernel::CState::new()
+        .with_local("p", crate::kernel::CValue::Pointer(pointer.clone()))
+        .with_memory(crate::kernel::CMemory::new().store(pointer.clone(), crate::kernel::int32(9)));
+    let store_obligation = crate::kernel::Proposition::CMemoryCanStore {
+        memory: crate::kernel::CMemory::new(),
         pointer,
         byte_width: 4,
     };
-    let theorem = crate::megakernel::prove_symbolic_c_execution(
+    let theorem = crate::kernel::prove_symbolic_c_execution(
         initial.clone(),
         statement.clone(),
         Default::default(),
@@ -233,13 +223,13 @@ fn c0_syntax_targets_megakernel_store_and_load() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::Implies(
+        &crate::kernel::Proposition::Implies(
             Box::new(store_obligation),
-            Box::new(crate::megakernel::Proposition::CStatementExecutes {
+            Box::new(crate::kernel::Proposition::CStatementExecutes {
                 state: initial,
                 statement,
-                outcome: crate::megakernel::CStatementOutcome::Return {
-                    value: crate::megakernel::int32(9),
+                outcome: crate::kernel::CStatementOutcome::Return {
+                    value: crate::kernel::int32(9),
                     state: final_state,
                 },
             }),
@@ -248,7 +238,7 @@ fn c0_syntax_targets_megakernel_store_and_load() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_store_and_load_function_call() {
+fn c0_syntax_targets_kernel_store_and_load_function_call() {
     let function = syntax::parse_function(
         r#"
         int32 load_after_store(int32* p) {
@@ -258,25 +248,23 @@ fn c0_syntax_targets_megakernel_store_and_load_function_call() {
         "#,
     )
     .expect("store/load function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let pointer = crate::megakernel::Pointer {
+    let pointer = crate::kernel::Pointer {
         block: "block".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let state = crate::megakernel::CState::new().with_local("caller", crate::megakernel::int32(7));
-    let arguments = vec![crate::megakernel::c_pointer_value(pointer.clone())];
-    let final_state = crate::megakernel::CState::new()
-        .with_local("caller", crate::megakernel::int32(7))
-        .with_memory(
-            crate::megakernel::CMemory::new().store(pointer.clone(), crate::megakernel::int32(9)),
-        );
-    let store_obligation = crate::megakernel::Proposition::CMemoryCanStore {
-        memory: crate::megakernel::CMemory::new(),
+    let state = crate::kernel::CState::new().with_local("caller", crate::kernel::int32(7));
+    let arguments = vec![crate::kernel::c_pointer_value(pointer.clone())];
+    let final_state = crate::kernel::CState::new()
+        .with_local("caller", crate::kernel::int32(7))
+        .with_memory(crate::kernel::CMemory::new().store(pointer.clone(), crate::kernel::int32(9)));
+    let store_obligation = crate::kernel::Proposition::CMemoryCanStore {
+        memory: crate::kernel::CMemory::new(),
         pointer,
         byte_width: 4,
     };
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
@@ -286,14 +274,14 @@ fn c0_syntax_targets_megakernel_store_and_load_function_call() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::Implies(
+        &crate::kernel::Proposition::Implies(
             Box::new(store_obligation),
-            Box::new(crate::megakernel::Proposition::CFunctionExecutes {
+            Box::new(crate::kernel::Proposition::CFunctionExecutes {
                 state,
                 function,
                 arguments,
-                outcome: crate::megakernel::CFunctionOutcome::Return {
-                    value: crate::megakernel::int32(9),
+                outcome: crate::kernel::CFunctionOutcome::Return {
+                    value: crate::kernel::int32(9),
                     state: final_state,
                 },
             }),
@@ -302,7 +290,7 @@ fn c0_syntax_targets_megakernel_store_and_load_function_call() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_pointer_addition_load() {
+fn c0_syntax_targets_kernel_pointer_addition_load() {
     let function = syntax::parse_function(
         r#"
         int32 load_second(int32* p) {
@@ -311,22 +299,22 @@ fn c0_syntax_targets_megakernel_pointer_addition_load() {
         "#,
     )
     .expect("pointer-add load function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let base = crate::megakernel::Pointer {
+    let base = crate::kernel::Pointer {
         block: "block".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let second = crate::megakernel::Pointer {
+    let second = crate::kernel::Pointer {
         block: "block".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(4),
+        offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
-    let memory = crate::megakernel::CMemory::new()
+    let memory = crate::kernel::CMemory::new()
         .with_block("block", 16)
-        .store(second, crate::megakernel::int32(23));
-    let state = crate::megakernel::CState::new().with_memory(memory.clone());
-    let arguments = vec![crate::megakernel::c_pointer_value(base)];
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        .store(second, crate::kernel::int32(23));
+    let state = crate::kernel::CState::new().with_memory(memory.clone());
+    let arguments = vec![crate::kernel::c_pointer_value(base)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
@@ -336,12 +324,12 @@ fn c0_syntax_targets_megakernel_pointer_addition_load() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state: state.clone(),
             function,
             arguments,
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(23),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(23),
                 state,
             },
         }
@@ -349,7 +337,7 @@ fn c0_syntax_targets_megakernel_pointer_addition_load() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_array_index_load() {
+fn c0_syntax_targets_kernel_array_index_load() {
     let function = syntax::parse_function(
         r#"
         int32 load_second(int32* p) {
@@ -358,22 +346,22 @@ fn c0_syntax_targets_megakernel_array_index_load() {
         "#,
     )
     .expect("array-index load function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let base = crate::megakernel::Pointer {
+    let base = crate::kernel::Pointer {
         block: "block".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let second = crate::megakernel::Pointer {
+    let second = crate::kernel::Pointer {
         block: "block".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(4),
+        offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
-    let memory = crate::megakernel::CMemory::new()
+    let memory = crate::kernel::CMemory::new()
         .with_block("block", 16)
-        .store(second, crate::megakernel::int32(23));
-    let state = crate::megakernel::CState::new().with_memory(memory.clone());
-    let arguments = vec![crate::megakernel::c_pointer_value(base)];
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        .store(second, crate::kernel::int32(23));
+    let state = crate::kernel::CState::new().with_memory(memory.clone());
+    let arguments = vec![crate::kernel::c_pointer_value(base)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
@@ -383,12 +371,12 @@ fn c0_syntax_targets_megakernel_array_index_load() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state: state.clone(),
             function,
             arguments,
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(23),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(23),
                 state,
             },
         }
@@ -396,7 +384,7 @@ fn c0_syntax_targets_megakernel_array_index_load() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_array_index_store() {
+fn c0_syntax_targets_kernel_array_index_store() {
     let function = syntax::parse_function(
         r#"
         int32 store_second(int32* p) {
@@ -406,25 +394,25 @@ fn c0_syntax_targets_megakernel_array_index_store() {
         "#,
     )
     .expect("array-index store function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let base = crate::megakernel::Pointer {
+    let base = crate::kernel::Pointer {
         block: "block".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let second = crate::megakernel::Pointer {
+    let second = crate::kernel::Pointer {
         block: "block".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(4),
+        offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
-    let memory = crate::megakernel::CMemory::new().with_block("block", 16);
-    let state = crate::megakernel::CState::new().with_memory(memory);
-    let final_state = crate::megakernel::CState::new().with_memory(
-        crate::megakernel::CMemory::new()
+    let memory = crate::kernel::CMemory::new().with_block("block", 16);
+    let state = crate::kernel::CState::new().with_memory(memory);
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
             .with_block("block", 16)
-            .store(second, crate::megakernel::int32(7)),
+            .store(second, crate::kernel::int32(7)),
     );
-    let arguments = vec![crate::megakernel::c_pointer_value(base)];
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+    let arguments = vec![crate::kernel::c_pointer_value(base)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
@@ -434,12 +422,12 @@ fn c0_syntax_targets_megakernel_array_index_store() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state,
             function,
             arguments,
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(7),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(7),
                 state: final_state,
             },
         }
@@ -447,7 +435,7 @@ fn c0_syntax_targets_megakernel_array_index_store() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_address_of_array_index() {
+fn c0_syntax_targets_kernel_address_of_array_index() {
     let function = syntax::parse_function(
         r#"
         int32 load_second_through_address(int32* p) {
@@ -458,33 +446,33 @@ fn c0_syntax_targets_megakernel_address_of_array_index() {
         "#,
     )
     .expect("address-of array-index function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let base = crate::megakernel::Pointer {
+    let base = crate::kernel::Pointer {
         block: "block".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let second = crate::megakernel::Pointer {
+    let second = crate::kernel::Pointer {
         block: "block".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(4),
+        offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
-    let local_q = crate::megakernel::Pointer {
+    let local_q = crate::kernel::Pointer {
         block: "local:q".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let memory = crate::megakernel::CMemory::new()
+    let memory = crate::kernel::CMemory::new()
         .with_block("block", 16)
-        .store(second.clone(), crate::megakernel::int32(23));
-    let state = crate::megakernel::CState::new().with_memory(memory);
-    let final_state = crate::megakernel::CState::new().with_memory(
-        crate::megakernel::CMemory::new()
+        .store(second.clone(), crate::kernel::int32(23));
+    let state = crate::kernel::CState::new().with_memory(memory);
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
             .with_block("block", 16)
             .with_block("local:q", 8)
-            .store(second.clone(), crate::megakernel::int32(23))
-            .store(local_q, crate::megakernel::CValue::Pointer(second.clone())),
+            .store(second.clone(), crate::kernel::int32(23))
+            .store(local_q, crate::kernel::CValue::Pointer(second.clone())),
     );
-    let arguments = vec![crate::megakernel::c_pointer_value(base)];
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+    let arguments = vec![crate::kernel::c_pointer_value(base)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
@@ -494,12 +482,12 @@ fn c0_syntax_targets_megakernel_address_of_array_index() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state,
             function,
             arguments,
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(23),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(23),
                 state: final_state,
             },
         }
@@ -507,7 +495,7 @@ fn c0_syntax_targets_megakernel_address_of_array_index() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_pointer_null_equality() {
+fn c0_syntax_targets_kernel_pointer_null_equality() {
     let function = syntax::parse_function(
         r#"
         int32 is_null(int32* p) {
@@ -520,30 +508,30 @@ fn c0_syntax_targets_megakernel_pointer_null_equality() {
         "#,
     )
     .expect("pointer null check should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let null = crate::megakernel::Pointer {
+    let null = crate::kernel::Pointer {
         block: "null".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let state = crate::megakernel::CState::new();
-    let arguments = vec![crate::megakernel::c_pointer_value(null)];
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+    let state = crate::kernel::CState::new();
+    let arguments = vec![crate::kernel::c_pointer_value(null)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
-        crate::megakernel::Assumptions::new(),
+        crate::kernel::Assumptions::new(),
     )
     .expect("parsed pointer null check should execute");
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state: state.clone(),
             function,
             arguments,
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(1),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(1),
                 state,
             },
         }
@@ -551,7 +539,7 @@ fn c0_syntax_targets_megakernel_pointer_null_equality() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_logical_short_circuiting() {
+fn c0_syntax_targets_kernel_logical_short_circuiting() {
     let function = syntax::parse_function(
         r#"
         int32 safe_is_three(int32* p) {
@@ -564,58 +552,58 @@ fn c0_syntax_targets_megakernel_logical_short_circuiting() {
         "#,
     )
     .expect("logical short-circuit function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let null = crate::megakernel::Pointer {
+    let null = crate::kernel::Pointer {
         block: "null".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let pointer = crate::megakernel::Pointer {
+    let pointer = crate::kernel::Pointer {
         block: "block".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let cases = [
         (
-            crate::megakernel::CState::new(),
-            vec![crate::megakernel::c_pointer_value(null)],
-            crate::megakernel::int32(1),
+            crate::kernel::CState::new(),
+            vec![crate::kernel::c_pointer_value(null)],
+            crate::kernel::int32(1),
         ),
         (
-            crate::megakernel::CState::new().with_memory(
-                crate::megakernel::CMemory::new()
+            crate::kernel::CState::new().with_memory(
+                crate::kernel::CMemory::new()
                     .with_block("block", 4)
-                    .store(pointer.clone(), crate::megakernel::int32(3)),
+                    .store(pointer.clone(), crate::kernel::int32(3)),
             ),
-            vec![crate::megakernel::c_pointer_value(pointer.clone())],
-            crate::megakernel::int32(1),
+            vec![crate::kernel::c_pointer_value(pointer.clone())],
+            crate::kernel::int32(1),
         ),
         (
-            crate::megakernel::CState::new().with_memory(
-                crate::megakernel::CMemory::new()
+            crate::kernel::CState::new().with_memory(
+                crate::kernel::CMemory::new()
                     .with_block("block", 4)
-                    .store(pointer.clone(), crate::megakernel::int32(4)),
+                    .store(pointer.clone(), crate::kernel::int32(4)),
             ),
-            vec![crate::megakernel::c_pointer_value(pointer)],
-            crate::megakernel::int32(0),
+            vec![crate::kernel::c_pointer_value(pointer)],
+            crate::kernel::int32(0),
         ),
     ];
 
     for (state, arguments, expected) in cases {
-        let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        let theorem = crate::kernel::prove_symbolic_c_function_execution(
             state.clone(),
             function.clone(),
             arguments.clone(),
-            crate::megakernel::Assumptions::new(),
+            crate::kernel::Assumptions::new(),
         )
         .expect("logical short-circuit function should execute");
 
         assert_eq!(
             theorem.proposition(),
-            &crate::megakernel::Proposition::CFunctionExecutes {
+            &crate::kernel::Proposition::CFunctionExecutes {
                 state: state.clone(),
                 function: function.clone(),
                 arguments,
-                outcome: crate::megakernel::CFunctionOutcome::Return {
+                outcome: crate::kernel::CFunctionOutcome::Return {
                     value: expected,
                     state,
                 },
@@ -625,7 +613,7 @@ fn c0_syntax_targets_megakernel_logical_short_circuiting() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_unary_not() {
+fn c0_syntax_targets_kernel_unary_not() {
     let function = syntax::parse_function(
         r#"
         int32 not_null(int32* p) {
@@ -638,30 +626,30 @@ fn c0_syntax_targets_megakernel_unary_not() {
         "#,
     )
     .expect("unary not function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let pointer = crate::megakernel::Pointer {
+    let pointer = crate::kernel::Pointer {
         block: "block".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let state = crate::megakernel::CState::new();
-    let arguments = vec![crate::megakernel::c_pointer_value(pointer)];
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+    let state = crate::kernel::CState::new();
+    let arguments = vec![crate::kernel::c_pointer_value(pointer)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
-        crate::megakernel::Assumptions::new(),
+        crate::kernel::Assumptions::new(),
     )
     .expect("unary not function should execute");
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state: state.clone(),
             function,
             arguments,
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(1),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(1),
                 state,
             },
         }
@@ -669,7 +657,7 @@ fn c0_syntax_targets_megakernel_unary_not() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_local_address_of() {
+fn c0_syntax_targets_kernel_local_address_of() {
     let function = syntax::parse_function(
         r#"
         int32 local_read() {
@@ -680,19 +668,19 @@ fn c0_syntax_targets_megakernel_local_address_of() {
         "#,
     )
     .expect("local address-of function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let local_pointer = crate::megakernel::Pointer {
+    let local_pointer = crate::kernel::Pointer {
         block: "local:x".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let state = crate::megakernel::CState::new();
-    let final_state = crate::megakernel::CState::new().with_memory(
-        crate::megakernel::CMemory::new()
+    let state = crate::kernel::CState::new();
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
             .with_block("local:x", 4)
-            .store(local_pointer, crate::megakernel::int32(5)),
+            .store(local_pointer, crate::kernel::int32(5)),
     );
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         Vec::new(),
@@ -702,12 +690,12 @@ fn c0_syntax_targets_megakernel_local_address_of() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state,
             function,
             arguments: Vec::new(),
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(5),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(5),
                 state: final_state,
             },
         }
@@ -715,7 +703,7 @@ fn c0_syntax_targets_megakernel_local_address_of() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_local_array_storage() {
+fn c0_syntax_targets_kernel_local_array_storage() {
     let function = syntax::parse_function(
         r#"
         int32 local_array_roundtrip() {
@@ -727,24 +715,24 @@ fn c0_syntax_targets_megakernel_local_array_storage() {
         "#,
     )
     .expect("local array function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let a0 = crate::megakernel::Pointer {
+    let a0 = crate::kernel::Pointer {
         block: "local:a".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let a1 = crate::megakernel::Pointer {
+    let a1 = crate::kernel::Pointer {
         block: "local:a".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(4),
+        offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
-    let state = crate::megakernel::CState::new();
-    let final_state = crate::megakernel::CState::new().with_memory(
-        crate::megakernel::CMemory::new()
+    let state = crate::kernel::CState::new();
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
             .with_block("local:a", 12)
-            .store(a0, crate::megakernel::int32(5))
-            .store(a1, crate::megakernel::int32(7)),
+            .store(a0, crate::kernel::int32(5))
+            .store(a1, crate::kernel::int32(7)),
     );
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         Vec::new(),
@@ -754,12 +742,12 @@ fn c0_syntax_targets_megakernel_local_array_storage() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state,
             function,
             arguments: Vec::new(),
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(7),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(7),
                 state: final_state,
             },
         }
@@ -776,7 +764,7 @@ fn c0_syntax_local_array_decays_to_pointer_argument() {
         "#,
     )
     .expect("helper function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
     let caller = syntax::parse_function(
         r#"
         int32 caller() {
@@ -789,26 +777,26 @@ fn c0_syntax_local_array_decays_to_pointer_argument() {
         "#,
     )
     .expect("caller function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let a0 = crate::megakernel::Pointer {
+    let a0 = crate::kernel::Pointer {
         block: "local:a".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let result_pointer = crate::megakernel::Pointer {
+    let result_pointer = crate::kernel::Pointer {
         block: "local:result".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let environment = crate::megakernel::CFunctionEnvironment::new().with_function(read_first);
-    let state = crate::megakernel::CState::new();
-    let final_state = crate::megakernel::CState::new().with_memory(
-        crate::megakernel::CMemory::new()
+    let environment = crate::kernel::CFunctionEnvironment::new().with_function(read_first);
+    let state = crate::kernel::CState::new();
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
             .with_block("local:a", 8)
             .with_block("local:result", 4)
-            .store(a0, crate::megakernel::int32(11))
-            .store(result_pointer, crate::megakernel::int32(11)),
+            .store(a0, crate::kernel::int32(11))
+            .store(result_pointer, crate::kernel::int32(11)),
     );
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution_with_environment(
+    let theorem = crate::kernel::prove_symbolic_c_function_execution_with_environment(
         state.clone(),
         caller.clone(),
         Vec::new(),
@@ -819,12 +807,12 @@ fn c0_syntax_local_array_decays_to_pointer_argument() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state,
             function: caller,
             arguments: Vec::new(),
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(11),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(11),
                 state: final_state,
             },
         }
@@ -843,15 +831,15 @@ fn c0_syntax_rejects_assignment_to_local_array_object() {
         "#,
     )
     .expect("array assignment function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let pointer = crate::megakernel::Pointer {
+    let pointer = crate::kernel::Pointer {
         block: "block".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let state = crate::megakernel::CState::new();
-    let arguments = vec![crate::megakernel::c_pointer_value(pointer)];
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+    let state = crate::kernel::CState::new();
+    let arguments = vec![crate::kernel::c_pointer_value(pointer)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
@@ -861,19 +849,19 @@ fn c0_syntax_rejects_assignment_to_local_array_object() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state,
             function,
             arguments,
-            outcome: crate::megakernel::CFunctionOutcome::RuntimeError(
-                crate::megakernel::CRuntimeError::TypeMismatch
+            outcome: crate::kernel::CFunctionOutcome::RuntimeError(
+                crate::kernel::CRuntimeError::TypeMismatch
             ),
         }
     );
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_int32_subtraction_and_comparisons() {
+fn c0_syntax_targets_kernel_int32_subtraction_and_comparisons() {
     let function = syntax::parse_function(
         r#"
         int32 adjust(int32 x) {
@@ -890,11 +878,11 @@ fn c0_syntax_targets_megakernel_int32_subtraction_and_comparisons() {
         "#,
     )
     .expect("int32 operator function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let state = crate::megakernel::CState::new();
-    let arguments = vec![crate::megakernel::c_int32_literal(4)];
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+    let state = crate::kernel::CState::new();
+    let arguments = vec![crate::kernel::c_int32_literal(4)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
@@ -904,12 +892,12 @@ fn c0_syntax_targets_megakernel_int32_subtraction_and_comparisons() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state: state.clone(),
             function,
             arguments,
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(3),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(3),
                 state,
             },
         }
@@ -930,11 +918,11 @@ fn c0_if_condition_uses_c_int32_truthiness() {
         "#,
     )
     .expect("truthiness function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let state = crate::megakernel::CState::new();
-    let arguments = vec![crate::megakernel::c_int32_literal(7)];
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+    let state = crate::kernel::CState::new();
+    let arguments = vec![crate::kernel::c_int32_literal(7)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
@@ -944,19 +932,19 @@ fn c0_if_condition_uses_c_int32_truthiness() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state: state.clone(),
             function: function.clone(),
             arguments,
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(1),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(1),
                 state: state.clone(),
             },
         }
     );
 
-    let arguments = vec![crate::megakernel::c_int32_literal(0)];
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+    let arguments = vec![crate::kernel::c_int32_literal(0)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
@@ -966,12 +954,12 @@ fn c0_if_condition_uses_c_int32_truthiness() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state: state.clone(),
             function,
             arguments,
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(0),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(0),
                 state,
             },
         }
@@ -996,77 +984,74 @@ fn c0_clamp_demo_proves_symbolic_branch_specifications() {
         "#,
     )
     .expect("clamp should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let x = crate::megakernel::Variable(40);
-    let lo = crate::megakernel::Variable(41);
-    let hi = crate::megakernel::Variable(42);
-    let x_bits = crate::megakernel::Bitvector32Term::Variable(x);
-    let lo_bits = crate::megakernel::Bitvector32Term::Variable(lo);
-    let hi_bits = crate::megakernel::Bitvector32Term::Variable(hi);
+    let x = crate::kernel::Variable(40);
+    let lo = crate::kernel::Variable(41);
+    let hi = crate::kernel::Variable(42);
+    let x_bits = crate::kernel::Bitvector32Term::Variable(x);
+    let lo_bits = crate::kernel::Bitvector32Term::Variable(lo);
+    let hi_bits = crate::kernel::Bitvector32Term::Variable(hi);
     let arguments = vec![
-        crate::megakernel::CExpression::Value(crate::megakernel::int32(x_bits.clone())),
-        crate::megakernel::CExpression::Value(crate::megakernel::int32(lo_bits.clone())),
-        crate::megakernel::CExpression::Value(crate::megakernel::int32(hi_bits.clone())),
+        crate::kernel::CExpression::Value(crate::kernel::int32(x_bits.clone())),
+        crate::kernel::CExpression::Value(crate::kernel::int32(lo_bits.clone())),
+        crate::kernel::CExpression::Value(crate::kernel::int32(hi_bits.clone())),
     ];
-    let below_lo = crate::megakernel::ConditionTerm::Bitvector32SignedLessThan(
+    let below_lo = crate::kernel::ConditionTerm::Bitvector32SignedLessThan(
         Box::new(x_bits.clone()),
         Box::new(lo_bits.clone()),
     );
-    let above_hi = crate::megakernel::ConditionTerm::Bitvector32SignedGreaterThan(
+    let above_hi = crate::kernel::ConditionTerm::Bitvector32SignedGreaterThan(
         Box::new(x_bits.clone()),
         Box::new(hi_bits.clone()),
     );
     let cases = vec![
         (
-            vec![crate::megakernel::Proposition::ConditionIs(
+            vec![crate::kernel::Proposition::ConditionIs(
                 below_lo.clone(),
                 true,
             )],
-            crate::megakernel::int32(lo_bits),
+            crate::kernel::int32(lo_bits),
         ),
         (
             vec![
-                crate::megakernel::Proposition::ConditionIs(below_lo.clone(), false),
-                crate::megakernel::Proposition::ConditionIs(above_hi.clone(), true),
+                crate::kernel::Proposition::ConditionIs(below_lo.clone(), false),
+                crate::kernel::Proposition::ConditionIs(above_hi.clone(), true),
             ],
-            crate::megakernel::int32(hi_bits),
+            crate::kernel::int32(hi_bits),
         ),
         (
             vec![
-                crate::megakernel::Proposition::ConditionIs(below_lo, false),
-                crate::megakernel::Proposition::ConditionIs(above_hi, false),
+                crate::kernel::Proposition::ConditionIs(below_lo, false),
+                crate::kernel::Proposition::ConditionIs(above_hi, false),
             ],
-            crate::megakernel::int32(x_bits),
+            crate::kernel::int32(x_bits),
         ),
     ];
 
     for (requires, value) in cases {
-        let specification = crate::megakernel::c_function_specification(
-            crate::megakernel::CState::new(),
+        let specification = crate::kernel::c_function_specification(
+            crate::kernel::CState::new(),
             arguments.clone(),
             requires.clone(),
-            crate::megakernel::CFunctionOutcome::Return {
+            crate::kernel::CFunctionOutcome::Return {
                 value,
-                state: crate::megakernel::CState::new(),
+                state: crate::kernel::CState::new(),
             },
         );
-        let theorem = crate::megakernel::prove_c_function_satisfies_specification(
+        let theorem = crate::kernel::prove_c_function_satisfies_specification(
             function.clone(),
             specification.clone(),
-            crate::megakernel::Assumptions::new(),
+            crate::kernel::Assumptions::new(),
         )
         .expect("clamp branch specification should prove");
         let expected = requires.iter().rev().fold(
-            crate::megakernel::Proposition::CFunctionSatisfiesSpecification {
+            crate::kernel::Proposition::CFunctionSatisfiesSpecification {
                 function: function.clone(),
                 specification: specification.clone(),
             },
             |body, requirement| {
-                crate::megakernel::Proposition::Implies(
-                    Box::new(requirement.clone()),
-                    Box::new(body),
-                )
+                crate::kernel::Proposition::Implies(Box::new(requirement.clone()), Box::new(body))
             },
         );
 
@@ -1075,7 +1060,7 @@ fn c0_clamp_demo_proves_symbolic_branch_specifications() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_known_function_call_assignment() {
+fn c0_syntax_targets_kernel_known_function_call_assignment() {
     let increment = syntax::parse_function(
         r#"
         int32 increment(int32 x) {
@@ -1084,7 +1069,7 @@ fn c0_syntax_targets_megakernel_known_function_call_assignment() {
         "#,
     )
     .expect("increment function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
     let caller = syntax::parse_function(
         r#"
         int32 caller() {
@@ -1095,20 +1080,20 @@ fn c0_syntax_targets_megakernel_known_function_call_assignment() {
         "#,
     )
     .expect("caller function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let local_pointer = crate::megakernel::Pointer {
+    let local_pointer = crate::kernel::Pointer {
         block: "local:result".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let environment = crate::megakernel::CFunctionEnvironment::new().with_function(increment);
-    let state = crate::megakernel::CState::new();
-    let final_state = crate::megakernel::CState::new().with_memory(
-        crate::megakernel::CMemory::new()
+    let environment = crate::kernel::CFunctionEnvironment::new().with_function(increment);
+    let state = crate::kernel::CState::new();
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
             .with_block("local:result", 4)
-            .store(local_pointer, crate::megakernel::int32(42)),
+            .store(local_pointer, crate::kernel::int32(42)),
     );
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution_with_environment(
+    let theorem = crate::kernel::prove_symbolic_c_function_execution_with_environment(
         state.clone(),
         caller.clone(),
         Vec::new(),
@@ -1119,12 +1104,12 @@ fn c0_syntax_targets_megakernel_known_function_call_assignment() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state,
             function: caller,
             arguments: Vec::new(),
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(42),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(42),
                 state: final_state,
             },
         }
@@ -1132,7 +1117,7 @@ fn c0_syntax_targets_megakernel_known_function_call_assignment() {
 }
 
 #[test]
-fn c0_syntax_targets_megakernel_while_countdown() {
+fn c0_syntax_targets_kernel_while_countdown() {
     let function = syntax::parse_function(
         r#"
         int32 countdown(int32 x) {
@@ -1144,11 +1129,11 @@ fn c0_syntax_targets_megakernel_while_countdown() {
         "#,
     )
     .expect("while countdown function should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let state = crate::megakernel::CState::new();
-    let arguments = vec![crate::megakernel::c_int32_literal(3)];
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+    let state = crate::kernel::CState::new();
+    let arguments = vec![crate::kernel::c_int32_literal(3)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
@@ -1158,13 +1143,13 @@ fn c0_syntax_targets_megakernel_while_countdown() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state,
             function,
             arguments,
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(0),
-                state: crate::megakernel::CState::new(),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(0),
+                state: crate::kernel::CState::new(),
             },
         }
     );
@@ -1186,39 +1171,39 @@ fn c0_memory_safety_demo_fill_three_ints() {
         "#,
     )
     .expect("fill3 demo should parse")
-    .to_megakernel_function();
+    .to_kernel_function();
 
-    let base = crate::megakernel::Pointer {
+    let base = crate::kernel::Pointer {
         block: "buf".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let first = crate::megakernel::Pointer {
+    let first = crate::kernel::Pointer {
         block: "buf".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let second = crate::megakernel::Pointer {
+    let second = crate::kernel::Pointer {
         block: "buf".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(4),
+        offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
-    let third = crate::megakernel::Pointer {
+    let third = crate::kernel::Pointer {
         block: "buf".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(8),
+        offset: crate::kernel::PointerOffsetTerm::Constant(8),
     };
-    let local_i = crate::megakernel::Pointer {
+    let local_i = crate::kernel::Pointer {
         block: "local:i".to_string(),
-        offset: crate::megakernel::PointerOffsetTerm::Constant(0),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let initial_memory = crate::megakernel::CMemory::new().with_block("buf", 12);
-    let state = crate::megakernel::CState::new().with_memory(initial_memory);
-    let final_memory = crate::megakernel::CMemory::new()
+    let initial_memory = crate::kernel::CMemory::new().with_block("buf", 12);
+    let state = crate::kernel::CState::new().with_memory(initial_memory);
+    let final_memory = crate::kernel::CMemory::new()
         .with_block("buf", 12)
         .with_block("local:i", 4)
-        .store(first, crate::megakernel::int32(0))
-        .store(second, crate::megakernel::int32(1))
-        .store(third, crate::megakernel::int32(2))
-        .store(local_i, crate::megakernel::int32(3));
-    let arguments = vec![crate::megakernel::c_pointer_value(base)];
-    let theorem = crate::megakernel::prove_symbolic_c_function_execution(
+        .store(first, crate::kernel::int32(0))
+        .store(second, crate::kernel::int32(1))
+        .store(third, crate::kernel::int32(2))
+        .store(local_i, crate::kernel::int32(3));
+    let arguments = vec![crate::kernel::c_pointer_value(base)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
         arguments.clone(),
@@ -1228,13 +1213,13 @@ fn c0_memory_safety_demo_fill_three_ints() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::megakernel::Proposition::CFunctionExecutes {
+        &crate::kernel::Proposition::CFunctionExecutes {
             state,
             function,
             arguments,
-            outcome: crate::megakernel::CFunctionOutcome::Return {
-                value: crate::megakernel::int32(2),
-                state: crate::megakernel::CState::new().with_memory(final_memory),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(2),
+                state: crate::kernel::CState::new().with_memory(final_memory),
             },
         }
     );

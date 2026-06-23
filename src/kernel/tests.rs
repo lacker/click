@@ -1,0 +1,3072 @@
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn concrete_max_executes_without_list_encoding() {
+        let state = c_max_state(int32(0), int32(1));
+        let theorem =
+            prove_c_statement_execution(state.clone(), c_max_body()).expect("max should execute");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
+                state: state.clone(),
+                statement: c_max_body(),
+                outcome: CStatementOutcome::Return {
+                    value: int32(1),
+                    state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn concrete_max_function_call_preserves_caller_locals() {
+        let state = CState::new().with_local("caller", int32(99));
+        let function = c_max_function();
+        let arguments = vec![c_int32_literal(0), c_int32_literal(1)];
+        let theorem = prove_symbolic_c_function_execution(
+            state.clone(),
+            function.clone(),
+            arguments.clone(),
+            Assumptions::new(),
+        )
+        .expect("max function call should execute");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CFunctionExecutes {
+                state: state.clone(),
+                function,
+                arguments,
+                outcome: CFunctionOutcome::Return {
+                    value: int32(1),
+                    state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn symbolic_max_function_call_reports_branch_facts() {
+        let a = Variable(14);
+        let b = Variable(15);
+        let a_bits = Bitvector32Term::Variable(a);
+        let b_bits = Bitvector32Term::Variable(b);
+        let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
+        let state = CState::new();
+        let function = c_max_function();
+        let arguments = vec![
+            CExpression::Value(int32(a_bits.clone())),
+            CExpression::Value(int32(b_bits.clone())),
+        ];
+        let execution = prove_symbolic_c_function_execution_paths(
+            state.clone(),
+            function.clone(),
+            arguments.clone(),
+            Assumptions::new(),
+        );
+
+        assert_eq!(execution.paths().len(), 2);
+        assert_eq!(
+            execution.paths()[0].facts(),
+            &[PathFact::condition(condition.clone(), true)]
+        );
+        assert_eq!(
+            execution.paths()[0].obligations(),
+            &[] as &[ProofObligation]
+        );
+        assert_eq!(
+            execution.paths()[0].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(condition.clone(), true)),
+                Box::new(Proposition::CFunctionExecutes {
+                    state: state.clone(),
+                    function: function.clone(),
+                    arguments: arguments.clone(),
+                    outcome: CFunctionOutcome::Return {
+                        value: int32(b_bits),
+                        state: state.clone(),
+                    },
+                }),
+            )
+        );
+
+        assert_eq!(
+            execution.paths()[1].facts(),
+            &[PathFact::condition(condition.clone(), false)]
+        );
+        assert_eq!(
+            execution.paths()[1].obligations(),
+            &[] as &[ProofObligation]
+        );
+        assert_eq!(
+            execution.paths()[1].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(condition, false)),
+                Box::new(Proposition::CFunctionExecutes {
+                    state: state.clone(),
+                    function,
+                    arguments,
+                    outcome: CFunctionOutcome::Return {
+                        value: int32(a_bits),
+                        state,
+                    },
+                }),
+            )
+        );
+    }
+
+    #[test]
+    fn function_call_threads_memory_but_discards_callee_locals() {
+        let pointer = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let state = CState::new().with_local("caller", int32(42));
+        let function = c_function(
+            CType::Int32,
+            "store_and_load",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_seq(
+                c_store(c_variable("p"), c_int32_literal(9)),
+                c_return(c_load(c_variable("p"))),
+            ),
+        );
+        let arguments = vec![c_pointer_value(pointer.clone())];
+        let final_state = CState::new()
+            .with_local("caller", int32(42))
+            .with_memory(CMemory::new().store(pointer.clone(), int32(9)));
+        let store_obligation = Proposition::CMemoryCanStore {
+            memory: CMemory::new(),
+            pointer,
+            byte_width: 4,
+        };
+        let theorem = prove_symbolic_c_function_execution(
+            state.clone(),
+            function.clone(),
+            arguments.clone(),
+            Assumptions::new(),
+        )
+        .expect("store/load function call should execute");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::Implies(
+                Box::new(store_obligation),
+                Box::new(Proposition::CFunctionExecutes {
+                    state,
+                    function,
+                    arguments,
+                    outcome: CFunctionOutcome::Return {
+                        value: int32(9),
+                        state: final_state,
+                    },
+                }),
+            )
+        );
+    }
+
+    #[test]
+    fn concrete_function_specification_is_native_theorem() {
+        let function = c_max_function();
+        let specification = c_function_specification(
+            CState::new(),
+            vec![c_int32_literal(0), c_int32_literal(1)],
+            Vec::new(),
+            CFunctionOutcome::Return {
+                value: int32(1),
+                state: CState::new(),
+            },
+        );
+        let theorem = prove_c_function_satisfies_specification(
+            function.clone(),
+            specification.clone(),
+            Assumptions::new(),
+        )
+        .expect("concrete max specification should prove");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CFunctionSatisfiesSpecification {
+                function,
+                specification
+            }
+        );
+    }
+
+    #[test]
+    fn symbolic_function_specification_uses_requirements_as_path_facts() {
+        let a = Variable(16);
+        let b = Variable(17);
+        let a_bits = Bitvector32Term::Variable(a);
+        let b_bits = Bitvector32Term::Variable(b);
+        let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
+        let function = c_max_function();
+        let specification = c_function_specification(
+            CState::new(),
+            vec![
+                CExpression::Value(int32(a_bits)),
+                CExpression::Value(int32(b_bits)),
+            ],
+            vec![Proposition::ConditionIs(condition.clone(), true)],
+            CFunctionOutcome::Return {
+                value: int32(Bitvector32Term::Variable(b)),
+                state: CState::new(),
+            },
+        );
+        let theorem = prove_c_function_satisfies_specification(
+            function.clone(),
+            specification.clone(),
+            Assumptions::new(),
+        )
+        .expect("symbolic branch specification should prove under condition");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(condition, true)),
+                Box::new(Proposition::CFunctionSatisfiesSpecification {
+                    function,
+                    specification
+                }),
+            )
+        );
+    }
+
+    #[test]
+    fn symbolic_max_branch_specifications_include_bounds() {
+        let a = Variable(60);
+        let b = Variable(61);
+        let a_bits = Bitvector32Term::Variable(a);
+        let b_bits = Bitvector32Term::Variable(b);
+        let function = c_max_function();
+        let arguments = vec![
+            CExpression::Value(int32(a_bits.clone())),
+            CExpression::Value(int32(b_bits.clone())),
+        ];
+        let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
+
+        let right_specification = c_function_specification(
+            CState::new(),
+            arguments.clone(),
+            vec![Proposition::ConditionIs(condition.clone(), true)],
+            CFunctionOutcome::Return {
+                value: int32(b_bits.clone()),
+                state: CState::new(),
+            },
+        );
+        prove_c_function_satisfies_specification_and_propositions(
+            function.clone(),
+            right_specification,
+            Assumptions::new(),
+            vec![
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(b_bits.clone(), a_bits.clone()),
+                    true,
+                ),
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(b_bits.clone(), b_bits.clone()),
+                    true,
+                ),
+            ],
+        )
+        .expect("under a < b, max returns b and b is >= both inputs");
+
+        let left_specification = c_function_specification(
+            CState::new(),
+            arguments,
+            vec![Proposition::ConditionIs(condition, false)],
+            CFunctionOutcome::Return {
+                value: int32(a_bits.clone()),
+                state: CState::new(),
+            },
+        );
+        prove_c_function_satisfies_specification_and_propositions(
+            function,
+            left_specification,
+            Assumptions::new(),
+            vec![
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(a_bits.clone(), a_bits.clone()),
+                    true,
+                ),
+                Proposition::ConditionIs(ConditionTerm::signed_greater_equal(a_bits, b_bits), true),
+            ],
+        )
+        .expect("under not (a < b), max returns a and a is >= both inputs");
+    }
+
+    #[test]
+    fn symbolic_clamp_branch_specifications_include_bounds_under_ordered_limits() {
+        let x = Variable(62);
+        let lo = Variable(63);
+        let hi = Variable(64);
+        let x_bits = Bitvector32Term::Variable(x);
+        let lo_bits = Bitvector32Term::Variable(lo);
+        let hi_bits = Bitvector32Term::Variable(hi);
+        let ordered_limits = Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(lo_bits.clone(), hi_bits.clone()),
+            true,
+        );
+        let below_lo = ConditionTerm::signed_less_than(x_bits.clone(), lo_bits.clone());
+        let above_hi = ConditionTerm::signed_greater_than(x_bits.clone(), hi_bits.clone());
+        let function = c_function(
+            CType::Int32,
+            "clamp",
+            vec![
+                c_parameter("x", CType::Int32),
+                c_parameter("lo", CType::Int32),
+                c_parameter("hi", CType::Int32),
+            ],
+            c_if(
+                c_less_than(c_variable("x"), c_variable("lo")),
+                c_return(c_variable("lo")),
+                c_if(
+                    c_greater_than(c_variable("x"), c_variable("hi")),
+                    c_return(c_variable("hi")),
+                    c_return(c_variable("x")),
+                ),
+            ),
+        );
+        let arguments = vec![
+            CExpression::Value(int32(x_bits.clone())),
+            CExpression::Value(int32(lo_bits.clone())),
+            CExpression::Value(int32(hi_bits.clone())),
+        ];
+
+        for (requires, result, message) in [
+            (
+                vec![
+                    ordered_limits.clone(),
+                    Proposition::ConditionIs(below_lo.clone(), true),
+                ],
+                lo_bits.clone(),
+                "x below lo returns lo within bounds",
+            ),
+            (
+                vec![
+                    ordered_limits.clone(),
+                    Proposition::ConditionIs(below_lo.clone(), false),
+                    Proposition::ConditionIs(above_hi.clone(), true),
+                ],
+                hi_bits.clone(),
+                "x above hi returns hi within bounds",
+            ),
+            (
+                vec![
+                    ordered_limits.clone(),
+                    Proposition::ConditionIs(below_lo.clone(), false),
+                    Proposition::ConditionIs(above_hi.clone(), false),
+                ],
+                x_bits.clone(),
+                "x already in range returns x within bounds",
+            ),
+        ] {
+            let specification = c_function_specification(
+                CState::new(),
+                arguments.clone(),
+                requires,
+                CFunctionOutcome::Return {
+                    value: int32(result.clone()),
+                    state: CState::new(),
+                },
+            );
+            prove_c_function_satisfies_specification_and_propositions(
+                function.clone(),
+                specification,
+                Assumptions::new(),
+                vec![
+                    Proposition::ConditionIs(
+                        ConditionTerm::signed_greater_equal(result.clone(), lo_bits.clone()),
+                        true,
+                    ),
+                    Proposition::ConditionIs(
+                        ConditionTerm::signed_less_equal(result, hi_bits.clone()),
+                        true,
+                    ),
+                ],
+            )
+            .expect(message);
+        }
+    }
+
+    #[test]
+    fn incomplete_symbolic_function_specification_does_not_prove() {
+        let a = Variable(18);
+        let b = Variable(19);
+        let function = c_max_function();
+        let specification = c_function_specification(
+            CState::new(),
+            vec![
+                CExpression::Value(int32(Bitvector32Term::Variable(a))),
+                CExpression::Value(int32(Bitvector32Term::Variable(b))),
+            ],
+            Vec::new(),
+            CFunctionOutcome::Return {
+                value: int32(Bitvector32Term::Variable(b)),
+                state: CState::new(),
+            },
+        );
+
+        assert!(
+            prove_c_function_satisfies_specification(function, specification, Assumptions::new())
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn call_assign_uses_function_environment() {
+        let increment = c_function(
+            CType::Int32,
+            "increment",
+            vec![c_parameter("x", CType::Int32)],
+            c_return(c_add(c_variable("x"), c_int32_literal(1))),
+        );
+        let environment = CFunctionEnvironment::new().with_function(increment);
+        let state = CState::new();
+        let statement = c_seq(
+            c_call_assign("result", "increment", vec![c_int32_literal(41)]),
+            c_return(c_variable("result")),
+        );
+        let final_state = CState::new().with_local("result", int32(42));
+        let theorem = prove_symbolic_c_execution_with_environment(
+            state.clone(),
+            statement.clone(),
+            Assumptions::new(),
+            environment,
+        )
+        .expect("known function call should execute");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
+                state,
+                statement,
+                outcome: CStatementOutcome::Return {
+                    value: int32(42),
+                    state: final_state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_call_assign_is_runtime_error() {
+        let state = CState::new();
+        let statement = c_call_assign("result", "missing", Vec::new());
+        let theorem = prove_symbolic_c_execution_with_environment(
+            state.clone(),
+            statement.clone(),
+            Assumptions::new(),
+            CFunctionEnvironment::new(),
+        )
+        .expect("unknown function should produce a single runtime-error path");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
+                state,
+                statement,
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::UnknownFunction(
+                    "missing".to_string(),
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn while_loop_executes_concrete_countdown() {
+        let state = CState::new().with_local("x", int32(3));
+        let loop_statement = c_while(
+            c_greater_than(c_variable("x"), c_int32_literal(0)),
+            Vec::new(),
+            c_assign("x", c_subtract(c_variable("x"), c_int32_literal(1))),
+        );
+        let statement = c_seq(loop_statement, c_return(c_variable("x")));
+        let final_state = CState::new().with_local("x", int32(0));
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("concrete countdown loop should execute");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
+                state,
+                statement,
+                outcome: CStatementOutcome::Return {
+                    value: int32(0),
+                    state: final_state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn loop_budget_exhaustion_is_executor_failure_not_c_runtime_error() {
+        let state = CState::new().with_local("x", int32(0));
+        let statement = c_while(
+            c_int32_literal(1),
+            Vec::new(),
+            c_assign("x", c_variable("x")),
+        );
+        let budget = ExecutionBudget::new().with_loop_unrolls(2);
+        let execution = prove_symbolic_c_execution_paths_with_budget(
+            state.clone(),
+            statement.clone(),
+            Assumptions::new(),
+            budget.clone(),
+        );
+
+        assert_eq!(execution.limit(), Some(ExecutionLimit::LoopUnrolls));
+        assert_eq!(execution.paths(), &[] as &[SymbolicCExecutionPath]);
+        assert!(
+            prove_symbolic_c_execution_with_budget(state, statement, Assumptions::new(), budget,)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn executor_budgets_cap_steps_calls_and_paths() {
+        let state = CState::new();
+        let statement = c_return(c_int32_literal(1));
+
+        assert_eq!(
+            prove_symbolic_c_execution_paths_with_budget(
+                state.clone(),
+                statement.clone(),
+                Assumptions::new(),
+                ExecutionBudget::new().with_statement_steps(0),
+            )
+            .limit(),
+            Some(ExecutionLimit::StatementSteps)
+        );
+        assert_eq!(
+            prove_symbolic_c_execution_paths_with_budget(
+                state.clone(),
+                statement,
+                Assumptions::new(),
+                ExecutionBudget::new().with_expression_steps(0),
+            )
+            .limit(),
+            Some(ExecutionLimit::ExpressionSteps)
+        );
+
+        let function = c_function(
+            CType::Int32,
+            "id",
+            vec![c_parameter("x", CType::Int32)],
+            c_return(c_variable("x")),
+        );
+        assert_eq!(
+            prove_symbolic_c_function_execution_paths_with_budget(
+                CState::new(),
+                function,
+                vec![c_int32_literal(1)],
+                Assumptions::new(),
+                ExecutionBudget::new().with_function_calls(0),
+            )
+            .limit(),
+            Some(ExecutionLimit::FunctionCalls)
+        );
+
+        let a = Variable(75);
+        let b = Variable(76);
+        let branchy_statement = c_return(c_less_than(
+            CExpression::Value(int32(Bitvector32Term::Variable(a))),
+            CExpression::Value(int32(Bitvector32Term::Variable(b))),
+        ));
+        assert_eq!(
+            prove_symbolic_c_execution_paths_with_budget(
+                state,
+                branchy_statement,
+                Assumptions::new(),
+                ExecutionBudget::new().with_paths(3),
+            )
+            .limit(),
+            Some(ExecutionLimit::Paths)
+        );
+    }
+
+    #[test]
+    fn while_invariant_is_proof_obligation() {
+        let pointer = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let invariant = Proposition::CMemoryCanLoad {
+            memory: CMemory::new(),
+            pointer,
+            byte_width: 4,
+        };
+        let state = CState::new().with_local("x", int32(0));
+        let statement = c_while(
+            c_greater_than(c_variable("x"), c_int32_literal(0)),
+            vec![invariant.clone()],
+            c_assign("x", c_subtract(c_variable("x"), c_int32_literal(1))),
+        );
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("false loop should execute under invariant obligation");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::Implies(
+                Box::new(invariant),
+                Box::new(Proposition::CStatementExecutes {
+                    state: state.clone(),
+                    statement,
+                    outcome: CStatementOutcome::Normal(state),
+                }),
+            )
+        );
+    }
+
+    #[test]
+    fn builtin_obligation_solver_proves_trivial_props() {
+        let assumptions = Assumptions::new();
+        let memory = CMemory::new().with_block("block", 8);
+        let pointer = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+
+        assert!(assumptions.proves(&Proposition::Equal(
+            Term::Bitvector32(Bitvector32Term::Constant(7)),
+            Term::Bitvector32(Bitvector32Term::Constant(7)),
+        )));
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::Constant(true),
+            true
+        )));
+        assert!(assumptions.proves(&Proposition::CMemoryCanLoad {
+            memory: memory.clone(),
+            pointer: pointer.clone(),
+            byte_width: 4,
+        }));
+        assert!(assumptions.proves(&Proposition::CMemoryCanStore {
+            memory,
+            pointer,
+            byte_width: 4,
+        }));
+    }
+
+    #[test]
+    fn assumptions_split_small_finite_context_variable() {
+        let j = Bitvector32Term::Variable(Variable(87));
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(j.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(j.clone(), Bitvector32Term::Constant(2)),
+                true,
+            );
+        let proposition = Proposition::Or(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(j.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(j, Bitvector32Term::Constant(1)),
+                true,
+            )),
+        );
+
+        assert!(assumptions.proves(&proposition));
+    }
+
+    #[test]
+    fn finite_forall_order_fact_participates_in_transitive_order_path() {
+        let memory = CMemory::new();
+        let indexed_load = |index| {
+            Bitvector32Term::MemoryLoad(
+                Box::new(memory.clone()),
+                Box::new(Pointer {
+                    block: "arg-memory".to_string(),
+                    offset: PointerOffsetTerm::scale_int32(index, 4),
+                }),
+            )
+        };
+        let k = Variable(88);
+        let k_bits = Bitvector32Term::Variable(k);
+        let load_k = indexed_load(k_bits.clone());
+        let load_0 = indexed_load(Bitvector32Term::Constant(0));
+        let load_1 = indexed_load(Bitvector32Term::Constant(1));
+        let load_2 = indexed_load(Bitvector32Term::Constant(2));
+        let finite_order_fact = Proposition::ForAll {
+            var: k,
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::Implies(
+                Box::new(Proposition::And(
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::signed_less_equal(
+                            Bitvector32Term::Constant(0),
+                            k_bits.clone(),
+                        ),
+                        true,
+                    )),
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::signed_less_than(k_bits, Bitvector32Term::Constant(1)),
+                        true,
+                    )),
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(load_k, load_1.clone()),
+                    true,
+                )),
+            )),
+        };
+        let assumptions = Assumptions::new()
+            .assume_proposition(finite_order_fact)
+            .assume_condition(
+                ConditionTerm::signed_less_equal(load_1, load_2.clone()),
+                true,
+            );
+
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(load_0, load_2),
+            true,
+        )));
+    }
+
+    #[test]
+    fn assumptions_prove_by_bounded_disjunction_cases() {
+        let x = Bitvector32Term::Variable(Variable(89));
+        let x_is_zero = Proposition::ConditionIs(
+            ConditionTerm::equal(x.clone(), Bitvector32Term::Constant(0)),
+            true,
+        );
+        let x_is_one = Proposition::ConditionIs(
+            ConditionTerm::equal(x.clone(), Bitvector32Term::Constant(1)),
+            true,
+        );
+        let assumptions = Assumptions::new().assume_proposition(Proposition::Or(
+            Box::new(x_is_zero.clone()),
+            Box::new(x_is_one.clone()),
+        ));
+
+        assert!(assumptions.proves(&Proposition::Or(Box::new(x_is_one), Box::new(x_is_zero),)));
+    }
+
+    #[test]
+    fn known_memory_block_bounds_prove_symbolic_element_access() {
+        let index = Variable(91);
+        let index_bits = Bitvector32Term::Variable(index);
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(
+                    index_bits.clone(),
+                    Bitvector32Term::Constant(0),
+                ),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(index_bits.clone(), Bitvector32Term::Constant(3)),
+                true,
+            );
+        let memory = CMemory::new().with_block("local:a", 12);
+        let pointer = CMemory::local_pointer("a").offset_by_int32_elements(index_bits);
+
+        assert!(assumptions.proves(&Proposition::CMemoryCanLoad {
+            memory: memory.clone(),
+            pointer: pointer.clone(),
+            byte_width: 4,
+        }));
+        assert!(assumptions.proves(&Proposition::CMemoryCanStore {
+            memory,
+            pointer,
+            byte_width: 4,
+        }));
+    }
+
+    #[test]
+    fn assumptions_prove_forall_int32_array_range_body() {
+        let index = Variable(90);
+        let index_bits = Bitvector32Term::Variable(index);
+        let memory = CMemory::new().with_block("block", 12);
+        let base = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let indexed_pointer = base.offset_by_int32_elements(index_bits.clone());
+        let in_segment = Proposition::And(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_greater_equal(
+                    index_bits.clone(),
+                    Bitvector32Term::Constant(0),
+                ),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_less_than(index_bits, Bitvector32Term::Constant(3)),
+                true,
+            )),
+        );
+        let can_load_index = Proposition::CMemoryCanLoad {
+            memory: memory.clone(),
+            pointer: indexed_pointer,
+            byte_width: 4,
+        };
+        let assumptions = Assumptions::new().assume_proposition(Proposition::CMemoryValidRange {
+            memory,
+            base,
+            bytes: Bitvector32Term::Constant(12),
+        });
+
+        assert!(assumptions.proves(&forall_int32(
+            index,
+            Proposition::Implies(Box::new(in_segment), Box::new(can_load_index)),
+        )));
+    }
+
+    #[test]
+    fn assumptions_prove_finite_forall_int32_by_instantiation() {
+        let i = Variable(92);
+        let j = Variable(93);
+        let i_bits = Bitvector32Term::Variable(i);
+        let j_bits = Bitvector32Term::Variable(j);
+        let antecedent = Proposition::And(
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(
+                        i_bits.clone(),
+                        Bitvector32Term::Constant(0),
+                    ),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(
+                        j_bits.clone(),
+                        Bitvector32Term::Constant(0),
+                    ),
+                    true,
+                )),
+            )),
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(i_bits.clone(), j_bits.clone()),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(j_bits, Bitvector32Term::Constant(3)),
+                    true,
+                )),
+            )),
+        );
+        let consequent = Proposition::Or(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(i_bits.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(i_bits, Bitvector32Term::Constant(1)),
+                true,
+            )),
+        );
+
+        assert!(Assumptions::new().proves(&forall_int32(
+            i,
+            forall_int32(
+                j,
+                Proposition::Implies(Box::new(antecedent), Box::new(consequent)),
+            ),
+        )));
+    }
+
+    #[test]
+    fn order_solver_uses_negated_less_than_transitively() {
+        let a = Bitvector32Term::Variable(Variable(94));
+        let b = Bitvector32Term::Variable(Variable(95));
+        let c = Bitvector32Term::Variable(Variable(96));
+        let assumptions = Assumptions::new()
+            .assume_condition(ConditionTerm::signed_less_than(b.clone(), a.clone()), false)
+            .assume_condition(ConditionTerm::signed_less_than(c.clone(), b), false);
+
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(a, c),
+            true,
+        )));
+    }
+
+    #[test]
+    fn assumptions_do_not_prove_implication_by_treating_unknown_antecedent_as_false() {
+        let x = Bitvector32Term::Variable(Variable(91));
+        let antecedent = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(x.clone(), Bitvector32Term::Constant(0)),
+            true,
+        );
+        let consequent =
+            Proposition::ConditionIs(ConditionTerm::equal(x, Bitvector32Term::Constant(0)), true);
+
+        assert!(!Assumptions::new().proves(&Proposition::Implies(
+            Box::new(antecedent),
+            Box::new(consequent),
+        )));
+    }
+
+    #[test]
+    fn builtin_obligation_solver_discharges_concrete_invariant() {
+        let pointer = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = CMemory::new().with_block("block", 4);
+        let invariant = Proposition::CMemoryCanLoad {
+            memory: memory.clone(),
+            pointer,
+            byte_width: 4,
+        };
+        let state = CState::new().with_local("x", int32(0)).with_memory(memory);
+        let statement = c_while(
+            c_greater_than(c_variable("x"), c_int32_literal(0)),
+            vec![invariant],
+            c_assign("x", c_subtract(c_variable("x"), c_int32_literal(1))),
+        );
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("concrete invariant should be solved");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
+                state: state.clone(),
+                statement,
+                outcome: CStatementOutcome::Normal(state),
+            }
+        );
+    }
+
+    #[test]
+    fn countdown_loop_body_preserves_nonnegative_invariant_symbolically() {
+        let x = Variable(66);
+        let x_bits = Bitvector32Term::Variable(x);
+        let state = CState::new().with_local("x", int32(x_bits.clone()));
+        let statement = c_assign("x", c_subtract(c_variable("x"), c_int32_literal(1)));
+        let invariant =
+            ConditionTerm::signed_greater_equal(x_bits.clone(), Bitvector32Term::Constant(0));
+        let condition =
+            ConditionTerm::signed_greater_than(x_bits.clone(), Bitvector32Term::Constant(0));
+        let post_invariant = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(
+                Bitvector32Term::Subtract(
+                    Box::new(x_bits.clone()),
+                    Box::new(Bitvector32Term::Constant(1)),
+                ),
+                Bitvector32Term::Constant(0),
+            ),
+            true,
+        );
+        let assumptions = Assumptions::new()
+            .assume_condition(invariant.clone(), true)
+            .assume_condition(condition.clone(), true);
+        let theorem = prove_c_statement_executes_and_propositions(
+            state.clone(),
+            statement.clone(),
+            assumptions,
+            vec![post_invariant.clone()],
+        )
+        .expect("x > 0 should prove x - 1 executes and remains nonnegative");
+
+        assert_eq!(
+            theorem.proposition().peel_implications(),
+            &proposition_and(
+                Proposition::CStatementExecutes {
+                    state: state.clone(),
+                    statement,
+                    outcome: CStatementOutcome::Normal(CState::new().with_local(
+                        "x",
+                        int32(Bitvector32Term::Subtract(
+                            Box::new(x_bits),
+                            Box::new(Bitvector32Term::Constant(1)),
+                        )),
+                    ),),
+                },
+                post_invariant,
+            )
+        );
+    }
+
+    #[test]
+    fn symbolic_max_lt_branch_is_native_theorem() {
+        let a = Variable(10);
+        let b = Variable(11);
+        let theorem = prove_c_max_lt_returns_right(a, b).expect("lt branch should prove");
+        let condition = ConditionTerm::Bitvector32SignedLessThan(
+            Box::new(Bitvector32Term::Variable(a)),
+            Box::new(Bitvector32Term::Variable(b)),
+        );
+        let state = c_max_state(
+            int32(Bitvector32Term::Variable(a)),
+            int32(Bitvector32Term::Variable(b)),
+        );
+
+        assert_eq!(
+            theorem.proposition(),
+            &forall_int32(
+                a,
+                forall_int32(
+                    b,
+                    Proposition::Implies(
+                        Box::new(Proposition::ConditionIs(condition, true)),
+                        Box::new(Proposition::CStatementExecutes {
+                            state: state.clone(),
+                            statement: c_max_body(),
+                            outcome: CStatementOutcome::Return {
+                                value: int32(Bitvector32Term::Variable(b)),
+                                state,
+                            },
+                        }),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn symbolic_max_not_lt_branch_is_native_theorem() {
+        let a = Variable(12);
+        let b = Variable(13);
+        let theorem = prove_c_max_not_lt_returns_left(a, b).expect("false branch should prove");
+        let condition = ConditionTerm::Bitvector32SignedLessThan(
+            Box::new(Bitvector32Term::Variable(a)),
+            Box::new(Bitvector32Term::Variable(b)),
+        );
+        let state = c_max_state(
+            int32(Bitvector32Term::Variable(a)),
+            int32(Bitvector32Term::Variable(b)),
+        );
+
+        assert_eq!(
+            theorem.proposition(),
+            &forall_int32(
+                a,
+                forall_int32(
+                    b,
+                    Proposition::Implies(
+                        Box::new(Proposition::ConditionIs(condition, false)),
+                        Box::new(Proposition::CStatementExecutes {
+                            state: state.clone(),
+                            statement: c_max_body(),
+                            outcome: CStatementOutcome::Return {
+                                value: int32(Bitvector32Term::Variable(a)),
+                                state,
+                            },
+                        }),
+                    ),
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn signed_add_overflow_is_native_undefined_behavior() {
+        let state = CState::new();
+        let theorem = prove_c_expression_evaluation(
+            state.clone(),
+            c_add(c_int32_literal(2_147_483_647), c_int32_literal(1)),
+        )
+        .expect("concrete add should evaluate");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
+                state,
+                expression: c_add(c_int32_literal(2_147_483_647), c_int32_literal(1)),
+                outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
+            }
+        );
+    }
+
+    #[test]
+    fn int32_subtraction_is_native() {
+        let state = CState::new();
+        let statement = c_return(c_subtract(c_int32_literal(7), c_int32_literal(2)));
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("concrete subtraction should execute");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
+                state: state.clone(),
+                statement,
+                outcome: CStatementOutcome::Return {
+                    value: int32(5),
+                    state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn signed_subtract_overflow_is_native_undefined_behavior() {
+        let state = CState::new();
+        let theorem = prove_c_expression_evaluation(
+            state.clone(),
+            c_subtract(c_int32_literal(2_147_483_648), c_int32_literal(1)),
+        )
+        .expect("concrete subtraction should evaluate");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
+                state,
+                expression: c_subtract(c_int32_literal(2_147_483_648), c_int32_literal(1)),
+                outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
+            }
+        );
+    }
+
+    #[test]
+    fn int32_comparisons_return_c_int32_zero_or_one() {
+        let state = CState::new();
+        let examples = [
+            (
+                c_less_equal(c_int32_literal(2), c_int32_literal(2)),
+                int32(1),
+            ),
+            (
+                c_greater_than(c_int32_literal(3), c_int32_literal(2)),
+                int32(1),
+            ),
+            (
+                c_greater_equal(c_int32_literal(2), c_int32_literal(3)),
+                int32(0),
+            ),
+            (c_equal(c_int32_literal(4), c_int32_literal(4)), int32(1)),
+        ];
+
+        for (expression, expected) in examples {
+            let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+                .expect("comparison should evaluate");
+            assert_eq!(
+                theorem.proposition(),
+                &Proposition::CExpressionEvaluates {
+                    state: state.clone(),
+                    expression,
+                    outcome: CExpressionOutcome::Value(expected),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn pointer_equality_returns_c_int32_zero_or_one() {
+        let p = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let same = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let next = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let other = Pointer {
+            block: "other".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let state = CState::new()
+            .with_local("p", CValue::Pointer(p))
+            .with_local("same", CValue::Pointer(same))
+            .with_local("next", CValue::Pointer(next))
+            .with_local("other", CValue::Pointer(other));
+        let examples = [
+            (c_equal(c_variable("p"), c_variable("same")), int32(1)),
+            (c_equal(c_variable("p"), c_variable("next")), int32(0)),
+            (c_equal(c_variable("p"), c_variable("other")), int32(0)),
+        ];
+
+        for (expression, expected) in examples {
+            let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+                .expect("pointer equality should evaluate");
+            assert_eq!(
+                theorem.proposition(),
+                &Proposition::CExpressionEvaluates {
+                    state: state.clone(),
+                    expression,
+                    outcome: CExpressionOutcome::Value(expected),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn pointer_equality_accepts_int32_zero_as_null_pointer_constant() {
+        let null = Pointer {
+            block: "null".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let nonnull = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let state = CState::new()
+            .with_local("nullp", CValue::Pointer(null))
+            .with_local("p", CValue::Pointer(nonnull));
+        let examples = [
+            (c_equal(c_variable("nullp"), c_int32_literal(0)), int32(1)),
+            (c_equal(c_int32_literal(0), c_variable("nullp")), int32(1)),
+            (c_equal(c_variable("p"), c_int32_literal(0)), int32(0)),
+        ];
+
+        for (expression, expected) in examples {
+            let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+                .expect("null equality should evaluate");
+            assert_eq!(
+                theorem.proposition(),
+                &Proposition::CExpressionEvaluates {
+                    state: state.clone(),
+                    expression,
+                    outcome: CExpressionOutcome::Value(expected),
+                }
+            );
+        }
+
+        let invalid = c_equal(c_variable("p"), c_int32_literal(1));
+        let theorem = prove_c_expression_evaluation(state.clone(), invalid.clone())
+            .expect("invalid pointer equality should evaluate");
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
+                state,
+                expression: invalid,
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            }
+        );
+    }
+
+    #[test]
+    fn not_equal_and_not_return_c_int32_zero_or_one() {
+        let null = Pointer {
+            block: "null".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let p = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let same = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let next = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let state = CState::new()
+            .with_local("nullp", CValue::Pointer(null))
+            .with_local("p", CValue::Pointer(p))
+            .with_local("same", CValue::Pointer(same))
+            .with_local("next", CValue::Pointer(next));
+        let examples = [
+            (
+                c_not_equal(c_int32_literal(4), c_int32_literal(5)),
+                int32(1),
+            ),
+            (c_not_equal(c_variable("p"), c_variable("same")), int32(0)),
+            (c_not_equal(c_variable("p"), c_variable("next")), int32(1)),
+            (
+                c_not_equal(c_variable("nullp"), c_int32_literal(0)),
+                int32(0),
+            ),
+            (c_not(c_int32_literal(0)), int32(1)),
+            (c_not(c_int32_literal(7)), int32(0)),
+            (c_not(c_variable("nullp")), int32(1)),
+            (c_not(c_variable("p")), int32(0)),
+        ];
+
+        for (expression, expected) in examples {
+            let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+                .expect("logical expression should evaluate");
+            assert_eq!(
+                theorem.proposition(),
+                &Proposition::CExpressionEvaluates {
+                    state: state.clone(),
+                    expression,
+                    outcome: CExpressionOutcome::Value(expected),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn logical_and_or_short_circuit_right_operand() {
+        let invalid_pointer = Pointer {
+            block: "missing".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let invalid_load = c_load(c_pointer_value(invalid_pointer));
+        let state = CState::new();
+        let examples = [
+            (c_and(c_int32_literal(0), invalid_load.clone()), int32(0)),
+            (c_or(c_int32_literal(1), invalid_load.clone()), int32(1)),
+        ];
+
+        for (expression, expected) in examples {
+            let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+                .expect("short-circuit expression should evaluate");
+            assert_eq!(
+                theorem.proposition(),
+                &Proposition::CExpressionEvaluates {
+                    state: state.clone(),
+                    expression,
+                    outcome: CExpressionOutcome::Value(expected),
+                }
+            );
+        }
+
+        assert!(
+            prove_c_expression_evaluation(
+                state.clone(),
+                c_and(c_int32_literal(1), invalid_load.clone()),
+            )
+            .is_none()
+        );
+        assert!(
+            prove_c_expression_evaluation(state, c_or(c_int32_literal(0), invalid_load)).is_none()
+        );
+    }
+
+    #[test]
+    fn symbolic_pointer_equality_reports_branch_facts() {
+        let offset = Variable(80);
+        let left = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let right = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Variable(offset),
+        };
+        let condition =
+            ConditionTerm::pointer_offset_equal(left.offset.clone(), right.offset.clone());
+        let state = CState::new()
+            .with_local("p", CValue::Pointer(left))
+            .with_local("q", CValue::Pointer(right));
+        let statement = c_if(
+            c_equal(c_variable("p"), c_variable("q")),
+            c_return(c_int32_literal(1)),
+            c_return(c_int32_literal(0)),
+        );
+        let execution =
+            prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
+
+        assert_eq!(execution.paths().len(), 2);
+        assert_eq!(
+            execution.paths()[0].facts(),
+            &[PathFact::condition(condition.clone(), true)]
+        );
+        assert_eq!(
+            execution.paths()[0]
+                .theorem()
+                .proposition()
+                .peel_implications(),
+            &Proposition::CStatementExecutes {
+                state: state.clone(),
+                statement: statement.clone(),
+                outcome: CStatementOutcome::Return {
+                    value: int32(1),
+                    state: state.clone(),
+                },
+            }
+        );
+        assert_eq!(
+            execution.paths()[1].facts(),
+            &[PathFact::condition(condition, false)]
+        );
+        assert_eq!(
+            execution.paths()[1]
+                .theorem()
+                .proposition()
+                .peel_implications(),
+            &Proposition::CStatementExecutes {
+                state: state.clone(),
+                statement,
+                outcome: CStatementOutcome::Return {
+                    value: int32(0),
+                    state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn if_uses_c_int32_truthiness() {
+        let state = CState::new();
+        let statement = c_if(
+            c_int32_literal(7),
+            c_return(c_int32_literal(1)),
+            c_return(c_int32_literal(0)),
+        );
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("nonzero int32 condition should take then branch");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
+                state: state.clone(),
+                statement,
+                outcome: CStatementOutcome::Return {
+                    value: int32(1),
+                    state,
+                },
+            }
+        );
+
+        let state = CState::new();
+        let statement = c_if(
+            c_int32_literal(0),
+            c_return(c_int32_literal(1)),
+            c_return(c_int32_literal(0)),
+        );
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("zero int32 condition should take else branch");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
+                state: state.clone(),
+                statement,
+                outcome: CStatementOutcome::Return {
+                    value: int32(0),
+                    state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn assignment_and_sequence_update_native_state() {
+        let state = CState::new().with_local("x", int32(0));
+        let statement = c_seq(c_assign("x", c_int32_literal(2)), c_return(c_variable("x")));
+        let final_state = CState::new().with_local("x", int32(2));
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("assignment sequence should execute");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
+                state,
+                statement,
+                outcome: CStatementOutcome::Return {
+                    value: int32(2),
+                    state: final_state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn store_then_load_threads_native_memory() {
+        let pointer = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let state = CState::new();
+        let statement = c_seq(
+            c_store(c_pointer_value(pointer.clone()), c_int32_literal(9)),
+            c_return(c_load(c_pointer_value(pointer.clone()))),
+        );
+        let final_state =
+            CState::new().with_memory(CMemory::new().store(pointer.clone(), int32(9)));
+        let store_obligation = Proposition::CMemoryCanStore {
+            memory: CMemory::new(),
+            pointer,
+            byte_width: 4,
+        };
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("store then load should execute");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::Implies(
+                Box::new(store_obligation),
+                Box::new(Proposition::CStatementExecutes {
+                    state,
+                    statement,
+                    outcome: CStatementOutcome::Return {
+                        value: int32(9),
+                        state: final_state,
+                    },
+                }),
+            )
+        );
+    }
+
+    #[test]
+    fn symbolic_load_from_incomplete_memory_reports_validity_obligation() {
+        let pointer = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let state = CState::new().with_local("p", CValue::Pointer(pointer.clone()));
+        let statement = c_return(c_load(c_variable("p")));
+        let execution =
+            prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
+
+        assert_eq!(execution.paths().len(), 1);
+        assert_eq!(
+            execution.paths()[0].obligations(),
+            &[ProofObligation::memory_can_load(
+                CMemory::new(),
+                pointer.clone()
+            )]
+        );
+        assert_eq!(
+            execution.paths()[0].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::CMemoryCanLoad {
+                    memory: CMemory::new(),
+                    pointer: pointer.clone(),
+                    byte_width: 4,
+                }),
+                Box::new(Proposition::CStatementExecutes {
+                    state: state.clone(),
+                    statement,
+                    outcome: CStatementOutcome::Return {
+                        value: int32(Bitvector32Term::MemoryLoad(
+                            Box::new(CMemory::new()),
+                            Box::new(pointer),
+                        )),
+                        state,
+                    },
+                }),
+            )
+        );
+    }
+
+    #[test]
+    fn block_backed_store_then_load_needs_no_memory_obligation() {
+        let pointer = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = CMemory::new().with_block("block", 16);
+        let state = CState::new().with_memory(memory.clone());
+        let statement = c_seq(
+            c_store(c_pointer_value(pointer.clone()), c_int32_literal(9)),
+            c_return(c_load(c_pointer_value(pointer.clone()))),
+        );
+        let final_state = CState::new().with_memory(memory.store(pointer, int32(9)));
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("in-range block store/load should execute");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
+                state,
+                statement,
+                outcome: CStatementOutcome::Return {
+                    value: int32(9),
+                    state: final_state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn block_backed_missing_load_returns_symbolic_value_without_obligation() {
+        let pointer = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let memory = CMemory::new().with_block("block", 16);
+        let state = CState::new()
+            .with_local("p", CValue::Pointer(pointer.clone()))
+            .with_memory(memory.clone());
+        let statement = c_return(c_load(c_variable("p")));
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("in-range missing load should produce symbolic value");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
+                state: state.clone(),
+                statement,
+                outcome: CStatementOutcome::Return {
+                    value: int32(Bitvector32Term::MemoryLoad(
+                        Box::new(memory),
+                        Box::new(pointer)
+                    )),
+                    state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn pointer_addition_scales_int32_offsets_for_loads() {
+        let base = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let second = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let memory = CMemory::new()
+            .with_block("block", 16)
+            .store(second, int32(23));
+        let state = CState::new()
+            .with_local("p", CValue::Pointer(base))
+            .with_memory(memory);
+        let statement = c_return(c_load(c_add(c_variable("p"), c_int32_literal(1))));
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("pointer arithmetic load should execute");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
+                state,
+                statement,
+                outcome: CStatementOutcome::Return {
+                    value: int32(23),
+                    state: CState::new()
+                        .with_local(
+                            "p",
+                            CValue::Pointer(Pointer {
+                                block: "block".to_string(),
+                                offset: PointerOffsetTerm::Constant(0),
+                            }),
+                        )
+                        .with_memory(CMemory::new().with_block("block", 16).store(
+                            Pointer {
+                                block: "block".to_string(),
+                                offset: PointerOffsetTerm::Constant(4),
+                            },
+                            int32(23),
+                        ),),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn pointer_addition_out_of_range_load_reports_validity_obligation() {
+        let base = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let derived = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let memory = CMemory::new().with_block("block", 4);
+        let state = CState::new()
+            .with_local("p", CValue::Pointer(base))
+            .with_memory(memory.clone());
+        let statement = c_return(c_load(c_add(c_variable("p"), c_int32_literal(1))));
+        let execution =
+            prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
+
+        assert_eq!(execution.paths().len(), 1);
+        assert_eq!(
+            execution.paths()[0].obligations(),
+            &[ProofObligation::memory_can_load(
+                memory.clone(),
+                derived.clone()
+            )]
+        );
+        assert_eq!(
+            execution.paths()[0].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::CMemoryCanLoad {
+                    memory: memory.clone(),
+                    pointer: derived.clone(),
+                    byte_width: 4,
+                }),
+                Box::new(Proposition::CStatementExecutes {
+                    state: state.clone(),
+                    statement,
+                    outcome: CStatementOutcome::Return {
+                        value: int32(Bitvector32Term::MemoryLoad(
+                            Box::new(memory),
+                            Box::new(derived),
+                        )),
+                        state,
+                    },
+                }),
+            )
+        );
+    }
+
+    #[test]
+    fn fixed_bound_store_loop_touches_only_valid_pointer_range() {
+        let base = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = CMemory::new().with_block("block", 12);
+        let state = CState::new()
+            .with_local("p", CValue::Pointer(base))
+            .with_local("i", int32(0))
+            .with_memory(memory.clone());
+        let loop_statement = c_while(
+            c_less_than(c_variable("i"), c_int32_literal(3)),
+            Vec::new(),
+            c_seq(
+                c_store(c_add(c_variable("p"), c_variable("i")), c_variable("i")),
+                c_assign("i", c_add(c_variable("i"), c_int32_literal(1))),
+            ),
+        );
+        let statement = c_seq(loop_statement, c_return(c_variable("i")));
+        let final_memory = memory
+            .store(
+                Pointer {
+                    block: "block".to_string(),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                int32(0),
+            )
+            .store(
+                Pointer {
+                    block: "block".to_string(),
+                    offset: PointerOffsetTerm::Constant(4),
+                },
+                int32(1),
+            )
+            .store(
+                Pointer {
+                    block: "block".to_string(),
+                    offset: PointerOffsetTerm::Constant(8),
+                },
+                int32(2),
+            );
+        let final_state = CState::new()
+            .with_local(
+                "p",
+                CValue::Pointer(Pointer {
+                    block: "block".to_string(),
+                    offset: PointerOffsetTerm::Constant(0),
+                }),
+            )
+            .with_local("i", int32(3))
+            .with_memory(final_memory);
+        let execution =
+            prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
+
+        assert_eq!(execution.paths().len(), 1);
+        assert_eq!(
+            execution.paths()[0].obligations(),
+            &[] as &[ProofObligation]
+        );
+        assert_eq!(
+            execution.paths()[0].theorem().proposition(),
+            &Proposition::CStatementExecutes {
+                state,
+                statement,
+                outcome: CStatementOutcome::Return {
+                    value: int32(3),
+                    state: final_state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn symbolic_valid_range_discharges_pointer_access_obligation() {
+        let i = Variable(67);
+        let n = Variable(68);
+        let i_bits = Bitvector32Term::Variable(i);
+        let n_bits = Bitvector32Term::Variable(n);
+        let memory = CMemory::new();
+        let base = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let state = CState::new()
+            .with_local("p", CValue::Pointer(base.clone()))
+            .with_local("i", int32(i_bits.clone()))
+            .with_memory(memory.clone());
+        let statement = c_store(c_add(c_variable("p"), c_variable("i")), c_int32_literal(7));
+        let assumptions = Assumptions::new()
+            .assume_proposition(Proposition::CMemoryValidRange {
+                memory: memory.clone(),
+                base: base.clone(),
+                bytes: Bitvector32Term::Multiply(
+                    Box::new(n_bits.clone()),
+                    Box::new(Bitvector32Term::Constant(4)),
+                ),
+            })
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(i_bits.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(i_bits.clone(), n_bits),
+                true,
+            );
+        let execution = prove_symbolic_c_execution_paths(state, statement, assumptions);
+
+        assert_eq!(execution.paths().len(), 1);
+        assert_eq!(
+            execution.paths()[0].obligations(),
+            &[] as &[ProofObligation]
+        );
+    }
+
+    #[test]
+    fn interval_arithmetic_proves_increment_bounds_and_no_overflow() {
+        let i = Variable(69);
+        let n = Variable(70);
+        let i_bits = Bitvector32Term::Variable(i);
+        let n_bits = Bitvector32Term::Variable(n);
+        let incremented = Bitvector32Term::Add(
+            Box::new(i_bits.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        );
+        let state = CState::new().with_local("i", int32(i_bits.clone()));
+        let statement = c_assign("i", c_add(c_variable("i"), c_int32_literal(1)));
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(i_bits.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(i_bits.clone(), n_bits.clone()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(
+                    n_bits.clone(),
+                    Bitvector32Term::Constant(i32::MAX as u32),
+                ),
+                true,
+            );
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(i_bits.clone(), incremented.clone()),
+            true,
+        )));
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(i_bits.clone(), incremented.clone()),
+            true,
+        )));
+        let theorem = prove_c_statement_executes_and_propositions(
+            state,
+            statement,
+            assumptions,
+            vec![
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(
+                        incremented.clone(),
+                        Bitvector32Term::Constant(0),
+                    ),
+                    true,
+                ),
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(incremented, n_bits),
+                    true,
+                ),
+            ],
+        )
+        .expect("interval facts should prove i + 1 bounds and no signed overflow");
+
+        assert!(matches!(theorem.proposition(), Proposition::Implies(_, _)));
+    }
+
+    #[test]
+    fn interval_arithmetic_uses_lower_bound_for_incremented_values() {
+        let i = Variable(73);
+        let i_bits = Bitvector32Term::Variable(i);
+        let incremented = Bitvector32Term::Add(
+            Box::new(i_bits.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        );
+        // A lower bound alone is not enough: `i + 1` wraps at INT_MAX, so
+        // `i >= 1` does not entail `i + 1 >= 1` (false at i = INT_MAX).
+        let lower_only = Assumptions::new().assume_condition(
+            ConditionTerm::signed_greater_equal(i_bits.clone(), Bitvector32Term::Constant(1)),
+            true,
+        );
+        assert!(!lower_only.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(incremented.clone(), Bitvector32Term::Constant(1),),
+            true,
+        )));
+
+        // Knowing `i < INT_MAX` rules out signed overflow of `i + 1`, so the
+        // lower bound carries to the incremented value.
+        let assumptions = lower_only.assume_condition(
+            ConditionTerm::signed_less_than(i_bits, Bitvector32Term::Constant(i32::MAX as u32)),
+            true,
+        );
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(incremented.clone(), Bitvector32Term::Constant(1),),
+            true,
+        )));
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_greater_than(incremented, Bitvector32Term::Constant(0)),
+            true,
+        )));
+    }
+
+    #[test]
+    fn negative_equality_fact_decides_equality_false() {
+        let x = Bitvector32Term::Variable(Variable(79));
+        let assumptions = Assumptions::new().assume_condition(
+            ConditionTerm::equal(x.clone(), Bitvector32Term::Constant(0)),
+            false,
+        );
+
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::equal(Bitvector32Term::Constant(0), x,)),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn equality_facts_are_transitive() {
+        let i = Bitvector32Term::Variable(Variable(84));
+        let k = Bitvector32Term::Variable(Variable(85));
+        let assumptions = Assumptions::new()
+            .assume_condition(ConditionTerm::equal(k.clone(), i.clone()), true)
+            .assume_condition(ConditionTerm::equal(i, Bitvector32Term::Constant(1)), true);
+
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::equal(k, Bitvector32Term::Constant(1))),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn excluded_small_integer_range_is_inconsistent() {
+        let k = Bitvector32Term::Variable(Variable(80));
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), k.clone()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(k.clone(), Bitvector32Term::Constant(3)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::equal(k.clone(), Bitvector32Term::Constant(0)),
+                false,
+            )
+            .assume_condition(
+                ConditionTerm::equal(k.clone(), Bitvector32Term::Constant(1)),
+                false,
+            )
+            .assume_condition(ConditionTerm::equal(k, Bitvector32Term::Constant(2)), false);
+
+        assert!(assumptions.proves(&false_equals_true_proposition()));
+    }
+
+    #[test]
+    fn singleton_integer_range_forces_equality() {
+        let k = Bitvector32Term::Variable(Variable(86));
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), k.clone()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(k.clone(), Bitvector32Term::Constant(1)),
+                true,
+            );
+
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::equal(k, Bitvector32Term::Constant(0))),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn mutable_frame_proves_unwritten_load_equal_across_stack_locals() {
+        let i = Variable(74);
+        let i_bits = Bitvector32Term::Variable(i);
+        let old_memory = CMemory::new();
+        let loop_entry_memory = CMemory::new()
+            .with_block("local:i", 4)
+            .store(CMemory::local_pointer("i"), int32(1));
+        let loop_exit_memory = CMemory::new()
+            .with_block("local:i", 4)
+            .store(CMemory::local_pointer("i"), int32(i_bits.clone()));
+        let first_cell = Pointer {
+            block: "p".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let written_cell = Pointer {
+            block: "p".to_string(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(i_bits.clone()),
+                byte_width: 4,
+            },
+        };
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(i_bits, Bitvector32Term::Constant(1)),
+                true,
+            )
+            .assume_proposition(Proposition::CMemoryMutatesOnly {
+                before: loop_entry_memory,
+                after: loop_exit_memory.clone(),
+                pointers: vec![written_cell],
+            });
+
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::MemoryLoad(
+                    Box::new(loop_exit_memory),
+                    Box::new(first_cell.clone()),
+                ),
+                Bitvector32Term::MemoryLoad(Box::new(old_memory), Box::new(first_cell)),
+            ),
+            true,
+        )));
+    }
+
+    #[test]
+    fn unrelated_external_cell_store_preserves_memory_load_with_stack_temporary() {
+        let old_memory = CMemory::new();
+        let p0 = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let p1 = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let stack_memory = CMemory::new()
+            .with_block("local:tmp", 4)
+            .store(CMemory::local_pointer("tmp"), int32(0));
+        let current_memory = stack_memory.clone().store(
+            p0.clone(),
+            int32(Bitvector32Term::MemoryLoad(
+                Box::new(stack_memory),
+                Box::new(p0),
+            )),
+        );
+
+        assert!(Assumptions::new().proves(&Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::MemoryLoad(Box::new(current_memory), Box::new(p1.clone())),
+                Bitvector32Term::MemoryLoad(Box::new(old_memory), Box::new(p1)),
+            ),
+            true,
+        )));
+    }
+
+    #[test]
+    fn equivalent_memory_load_order_facts_can_be_inconsistent() {
+        let old_memory = CMemory::new();
+        let stack_memory = CMemory::new()
+            .with_block("local:tmp", 4)
+            .store(CMemory::local_pointer("tmp"), int32(0));
+        let p0 = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let old_p0 = Bitvector32Term::MemoryLoad(Box::new(old_memory), Box::new(p0.clone()));
+        let stack_p0 = Bitvector32Term::MemoryLoad(Box::new(stack_memory), Box::new(p0));
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_less_than(old_p0.clone(), stack_p0.clone()),
+                true,
+            )
+            .assume_condition(ConditionTerm::signed_less_than(stack_p0, old_p0), true);
+
+        assert!(assumptions.proves(&false_equals_true_proposition()));
+    }
+
+    #[test]
+    fn equivalent_condition_facts_with_different_truth_values_are_inconsistent() {
+        let p0 = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let p1 = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let memory_a = CMemory::new()
+            .with_block("local:i", 4)
+            .store(CMemory::local_pointer("i"), int32(0));
+        let memory_b = CMemory::new()
+            .with_block("local:i", 4)
+            .store(CMemory::local_pointer("i"), int32(1));
+        let left_a = Bitvector32Term::MemoryLoad(Box::new(memory_a.clone()), Box::new(p0.clone()));
+        let right_a = Bitvector32Term::MemoryLoad(Box::new(memory_a), Box::new(p1.clone()));
+        let left_b = Bitvector32Term::MemoryLoad(Box::new(memory_b.clone()), Box::new(p0));
+        let right_b = Bitvector32Term::MemoryLoad(Box::new(memory_b), Box::new(p1));
+        let assumptions = Assumptions::new()
+            .assume_condition(ConditionTerm::signed_less_than(left_a, right_a), true)
+            .assume_condition(ConditionTerm::signed_less_than(left_b, right_b), false);
+
+        assert!(assumptions.proves(&false_equals_true_proposition()));
+    }
+
+    #[test]
+    fn disjoint_range_proves_mutable_frame_cell_distinct() {
+        let i = Variable(81);
+        let j = Variable(82);
+        let i_bits = Bitvector32Term::Variable(i);
+        let j_bits = Bitvector32Term::Variable(j);
+        let before_memory = CMemory::new();
+        let after_memory = CMemory::new();
+        let base = Pointer {
+            block: "p".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let written_cell = Pointer {
+            block: "p".to_string(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(i_bits.clone()),
+                byte_width: 4,
+            },
+        };
+        let read_cell = Pointer {
+            block: "p".to_string(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(j_bits.clone()),
+                byte_width: 4,
+            },
+        };
+        let i_plus_one = Bitvector32Term::Add(
+            Box::new(i_bits.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        );
+        let j_plus_one = Bitvector32Term::Add(
+            Box::new(j_bits.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        );
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_less_than(i_bits.clone(), i_plus_one.clone()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(j_bits.clone(), j_plus_one.clone()),
+                true,
+            )
+            .assume_proposition(Proposition::CMemoryDisjoint {
+                left_base: base.clone(),
+                left_start: i_bits.clone(),
+                left_end: i_plus_one,
+                right_base: base,
+                right_start: j_bits.clone(),
+                right_end: j_plus_one,
+            })
+            .assume_proposition(Proposition::CMemoryMutatesOnly {
+                before: before_memory.clone(),
+                after: after_memory.clone(),
+                pointers: vec![written_cell],
+            });
+
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::MemoryLoad(Box::new(after_memory), Box::new(read_cell.clone())),
+                Bitvector32Term::MemoryLoad(Box::new(before_memory), Box::new(read_cell)),
+            ),
+            true,
+        )));
+    }
+
+    #[test]
+    fn covering_disjoint_fact_handles_shifted_mutable_range() {
+        let n = Variable(83);
+        let k = Variable(84);
+        let n_bits = Bitvector32Term::Variable(n);
+        let k_bits = Bitvector32Term::Variable(k);
+        let before_memory = CMemory::new();
+        let after_memory = CMemory::new();
+        let dst_base = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(85)), 4),
+        };
+        let src_base = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(86)), 4),
+        };
+        let src_cell = src_base.offset_by_int32_elements(k_bits.clone());
+        let shifted_dst = dst_base.offset_by_int32_elements(Bitvector32Term::Constant(1));
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(k_bits.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_than(k_bits, n_bits.clone()),
+                true,
+            )
+            .assume_proposition(Proposition::CMemoryDisjoint {
+                left_base: dst_base,
+                left_start: Bitvector32Term::Constant(0),
+                left_end: n_bits.clone(),
+                right_base: src_base,
+                right_start: Bitvector32Term::Constant(0),
+                right_end: n_bits.clone(),
+            })
+            .assume_proposition(Proposition::CMemoryEffectSummary {
+                before: before_memory.clone(),
+                after: after_memory.clone(),
+                mutable_ranges: vec![CMemoryRange::new(
+                    shifted_dst,
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::subtract(n_bits, Bitvector32Term::Constant(1)),
+                )],
+            });
+
+        assert!(assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::MemoryLoad(Box::new(after_memory), Box::new(src_cell.clone())),
+                Bitvector32Term::MemoryLoad(Box::new(before_memory), Box::new(src_cell)),
+            ),
+            true,
+        )));
+    }
+
+    #[test]
+    fn while_invariant_rule_proves_symbolic_loop_exit_fact() {
+        let i = Variable(71);
+        let n = Variable(72);
+        let i_bits = Bitvector32Term::Variable(i);
+        let n_bits = Bitvector32Term::Variable(n);
+        let incremented = Bitvector32Term::Add(
+            Box::new(i_bits.clone()),
+            Box::new(Bitvector32Term::Constant(1)),
+        );
+        let state = CState::new()
+            .with_local("i", int32(i_bits.clone()))
+            .with_local("n", int32(n_bits.clone()));
+        let condition = c_less_than(c_variable("i"), c_variable("n"));
+        let body = c_assign("i", c_add(c_variable("i"), c_int32_literal(1)));
+        let invariant = vec![
+            Proposition::ConditionIs(
+                ConditionTerm::signed_greater_equal(i_bits.clone(), Bitvector32Term::Constant(0)),
+                true,
+            ),
+            Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(i_bits.clone(), n_bits.clone()),
+                true,
+            ),
+        ];
+        let assumptions = invariant
+            .iter()
+            .cloned()
+            .fold(Assumptions::new(), Assumptions::assume_proposition)
+            .assume_condition(
+                ConditionTerm::signed_less_equal(
+                    n_bits.clone(),
+                    Bitvector32Term::Constant(i32::MAX as u32),
+                ),
+                true,
+            );
+        let theorem = prove_c_while_invariant_rule(
+            state,
+            condition,
+            invariant,
+            body,
+            assumptions,
+            vec![
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(
+                        incremented.clone(),
+                        Bitvector32Term::Constant(0),
+                    ),
+                    true,
+                ),
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(incremented, n_bits.clone()),
+                    true,
+                ),
+            ],
+            Proposition::ConditionIs(ConditionTerm::equal(i_bits, n_bits), true),
+        )
+        .expect("invariant rule should prove preservation and i == n on loop exit");
+
+        assert!(matches!(theorem.proposition(), Proposition::Implies(_, _)));
+    }
+
+    #[test]
+    fn same_block_frame_uses_symbolic_offset_inequality() {
+        let i = Variable(73);
+        let j = Variable(74);
+        let i_bits = Bitvector32Term::Variable(i);
+        let j_bits = Bitvector32Term::Variable(j);
+        let base = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let stored_pointer = base.offset_by_int32_elements(i_bits);
+        let loaded_pointer = base.offset_by_int32_elements(j_bits);
+        let memory = CMemory::new().store(loaded_pointer.clone(), int32(42));
+        let assumptions = Assumptions::new().assume_condition(
+            ConditionTerm::pointer_offset_equal(
+                stored_pointer.offset.clone(),
+                loaded_pointer.offset.clone(),
+            ),
+            false,
+        );
+        let theorem = prove_memory_load_after_store_distinct_under_assumptions(
+            memory.clone(),
+            stored_pointer.clone(),
+            int32(9),
+            loaded_pointer.clone(),
+            assumptions,
+        )
+        .expect("i != j should prove store p[i] preserves load p[j]");
+
+        assert_eq!(
+            theorem.proposition().peel_implications(),
+            &Proposition::CMemoryLoads {
+                memory: memory.store(stored_pointer, int32(9)),
+                pointer: loaded_pointer,
+                outcome: CExpressionOutcome::Value(int32(42)),
+            }
+        );
+    }
+
+    #[test]
+    fn same_symbolic_base_constant_offsets_are_distinct() {
+        let base = PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(90)), 4);
+        let first = Pointer {
+            block: "arg-memory".to_string(),
+            offset: base.clone(),
+        };
+        let second = Pointer {
+            block: "arg-memory".to_string(),
+            offset: PointerOffsetTerm::add(base, PointerOffsetTerm::Constant(4)),
+        };
+
+        assert!(pointers_proven_distinct(
+            &first,
+            &second,
+            &Assumptions::new()
+        ));
+    }
+
+    #[test]
+    fn additive_equality_cancellation_feeds_range_contradictions() {
+        let base = Bitvector32Term::Variable(Variable(91));
+        let index = Bitvector32Term::Variable(Variable(92));
+        let assumptions = Assumptions::new()
+            .assume_condition(
+                ConditionTerm::equal(Bitvector32Term::add(base.clone(), index.clone()), base),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(index, Bitvector32Term::Constant(1)),
+                true,
+            );
+
+        assert!(assumptions.is_inconsistent());
+    }
+
+    #[test]
+    fn range_fold_simplifies_empty_and_one_step_ranges() {
+        let accumulator = Variable(93);
+        let item = Variable(94);
+        let x = Bitvector32Term::Variable(Variable(95));
+        let body = Bitvector32Term::add(Bitvector32Term::Variable(accumulator), x.clone());
+
+        assert_eq!(
+            Bitvector32Term::range_fold(
+                Bitvector32Term::Constant(4),
+                Bitvector32Term::Constant(4),
+                Bitvector32Term::Constant(7),
+                accumulator,
+                item,
+                body.clone(),
+            ),
+            Bitvector32Term::Constant(7)
+        );
+
+        assert_eq!(
+            Bitvector32Term::range_fold(
+                Bitvector32Term::Variable(Variable(96)),
+                Bitvector32Term::add(
+                    Bitvector32Term::Variable(Variable(96)),
+                    Bitvector32Term::Constant(1)
+                ),
+                Bitvector32Term::Constant(7),
+                accumulator,
+                item,
+                body,
+            ),
+            Bitvector32Term::add(Bitvector32Term::Constant(7), x)
+        );
+    }
+
+    #[test]
+    fn count_shaped_range_fold_split_is_proven_equal() {
+        let lo = Bitvector32Term::Variable(Variable(97));
+        let mid = Bitvector32Term::Variable(Variable(98));
+        let hi = Bitvector32Term::Variable(Variable(99));
+        let x = Bitvector32Term::Variable(Variable(100));
+        let accumulator = Variable(101);
+        let item = Variable(102);
+        let contribution = Bitvector32Term::if_then_else(
+            ConditionTerm::equal(Bitvector32Term::Variable(item), x),
+            Bitvector32Term::Constant(1),
+            Bitvector32Term::Constant(0),
+        );
+        let body = Bitvector32Term::add(Bitvector32Term::Variable(accumulator), contribution);
+        let count = |start: Bitvector32Term, end: Bitvector32Term| {
+            Bitvector32Term::range_fold(
+                start,
+                end,
+                Bitvector32Term::Constant(0),
+                accumulator,
+                item,
+                body.clone(),
+            )
+        };
+        let whole = count(lo.clone(), hi.clone());
+        let split =
+            Bitvector32Term::add(count(lo.clone(), mid.clone()), count(mid.clone(), hi.clone()));
+
+        // The split identity fold(lo,hi) = fold(lo,mid) + fold(mid,hi) only
+        // holds for lo <= mid <= hi. Without that ordering it is unsound
+        // (half-open ranges make an out-of-order mid over- or under-count),
+        // so the rule must not fire on unconstrained bounds.
+        assert!(!Assumptions::new().proves(&Proposition::ConditionIs(
+            ConditionTerm::equal(whole.clone(), split.clone()),
+            true,
+        )));
+
+        let ordered = Assumptions::new()
+            .assume_condition(ConditionTerm::signed_less_equal(lo, mid.clone()), true)
+            .assume_condition(ConditionTerm::signed_less_equal(mid, hi), true);
+        assert!(ordered.proves(&Proposition::ConditionIs(
+            ConditionTerm::equal(whole, split),
+            true,
+        )));
+    }
+
+    #[test]
+    fn symbolic_store_invalidates_only_possible_aliasing_cells() {
+        let i = Variable(81);
+        let i_bits = Bitvector32Term::Variable(i);
+        let concrete_cell = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let symbolic_cell = Pointer {
+            block: "array".to_string(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(i_bits.clone()),
+                byte_width: 4,
+            },
+        };
+        let memory = CMemory::new()
+            .with_block("array", 12)
+            .store(concrete_cell.clone(), int32(42));
+
+        let aliased = memory
+            .without_possible_aliasing_cells(&symbolic_cell, &Assumptions::new())
+            .store(symbolic_cell.clone(), int32(7));
+        assert_eq!(aliased.known_value(&concrete_cell), None);
+
+        let distinct_assumptions = Assumptions::new().assume_condition(
+            ConditionTerm::equal(i_bits, Bitvector32Term::Constant(1)),
+            false,
+        );
+        let distinct = memory
+            .without_possible_aliasing_cells(&symbolic_cell, &distinct_assumptions)
+            .store(symbolic_cell, int32(7));
+        assert_eq!(distinct.known_value(&concrete_cell), Some(int32(42)));
+    }
+
+    #[test]
+    fn assumptions_resolve_materialized_symbolic_memory_load_aliases() {
+        let k = Variable(75);
+        let k_bits = Bitvector32Term::Variable(k);
+        let base_memory = CMemory::new().with_block("dst", 12).with_block("src", 12);
+        let src_pointers = [0, 4, 8].map(|offset| Pointer {
+            block: "src".to_string(),
+            offset: PointerOffsetTerm::Constant(offset),
+        });
+        let symbolic_src = Pointer {
+            block: "src".to_string(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(k_bits),
+                byte_width: 4,
+            },
+        };
+        let materialized_memory =
+            src_pointers
+                .iter()
+                .cloned()
+                .fold(base_memory.clone(), |memory, pointer| {
+                    memory.store(
+                        pointer.clone(),
+                        int32(Bitvector32Term::MemoryLoad(
+                            Box::new(base_memory.clone()),
+                            Box::new(pointer),
+                        )),
+                    )
+                });
+
+        for (index, pointer) in src_pointers.into_iter().enumerate() {
+            let assumptions = Assumptions::new()
+                .assume_condition(
+                    ConditionTerm::pointer_offset_equal(
+                        symbolic_src.offset.clone(),
+                        pointer.offset.clone(),
+                    ),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::equal(
+                        Bitvector32Term::Variable(k),
+                        Bitvector32Term::Constant(index as u32),
+                    ),
+                    true,
+                );
+
+            assert!(assumptions.proves(&Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(Box::new(base_memory.clone()), Box::new(pointer)),
+                    Bitvector32Term::MemoryLoad(
+                        Box::new(materialized_memory.clone()),
+                        Box::new(symbolic_src.clone()),
+                    ),
+                ),
+                true,
+            )));
+        }
+    }
+
+    #[test]
+    fn assumptions_prove_wrapped_materialized_load_branch_obligation() {
+        let k = Variable(76);
+        let k_bits = Bitvector32Term::Variable(k);
+        let base_memory = CMemory::new().with_block("dst", 12).with_block("src", 12);
+        let src_pointers = [0, 4, 8].map(|offset| Pointer {
+            block: "src".to_string(),
+            offset: PointerOffsetTerm::Constant(offset),
+        });
+        let symbolic_src = Pointer {
+            block: "src".to_string(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(k_bits.clone()),
+                byte_width: 4,
+            },
+        };
+        let materialized_memory =
+            src_pointers
+                .iter()
+                .cloned()
+                .fold(base_memory.clone(), |memory, pointer| {
+                    memory.store(
+                        pointer.clone(),
+                        int32(Bitvector32Term::MemoryLoad(
+                            Box::new(base_memory.clone()),
+                            Box::new(pointer),
+                        )),
+                    )
+                });
+        let body = Proposition::Implies(
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), k_bits.clone()),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(k_bits.clone(), Bitvector32Term::Constant(3)),
+                    true,
+                )),
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(
+                        Box::new(base_memory),
+                        Box::new(src_pointers[1].clone()),
+                    ),
+                    Bitvector32Term::MemoryLoad(
+                        Box::new(materialized_memory),
+                        Box::new(symbolic_src.clone()),
+                    ),
+                ),
+                true,
+            )),
+        );
+        let proposition = Proposition::Implies(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::pointer_offset_equal(
+                    symbolic_src.offset.clone(),
+                    src_pointers[0].offset.clone(),
+                ),
+                false,
+            )),
+            Box::new(Proposition::Implies(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::equal(k_bits.clone(), Bitvector32Term::Constant(0)),
+                    false,
+                )),
+                Box::new(Proposition::Implies(
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::pointer_offset_equal(
+                            symbolic_src.offset,
+                            src_pointers[1].offset.clone(),
+                        ),
+                        true,
+                    )),
+                    Box::new(Proposition::Implies(
+                        Box::new(Proposition::ConditionIs(
+                            ConditionTerm::equal(k_bits, Bitvector32Term::Constant(1)),
+                            true,
+                        )),
+                        Box::new(Proposition::ForAll {
+                            var: k,
+                            sort: Sort::CInt32,
+                            body: Box::new(body),
+                        }),
+                    )),
+                )),
+            )),
+        );
+
+        assert!(Assumptions::new().proves(&proposition));
+    }
+
+    #[test]
+    fn assumptions_prove_copied_prefix_new_cell_obligation() {
+        let i = Variable(82);
+        let k = Variable(83);
+        let i_bits = Bitvector32Term::Variable(i);
+        let k_bits = Bitvector32Term::Variable(k);
+        let base_memory = CMemory::new().with_block("dst", 12).with_block("src", 12);
+        let src_pointers = [0, 4, 8].map(|offset| Pointer {
+            block: "src".to_string(),
+            offset: PointerOffsetTerm::Constant(offset),
+        });
+        let symbolic_src = Pointer {
+            block: "src".to_string(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(k_bits.clone()),
+                byte_width: 4,
+            },
+        };
+        let materialized_memory =
+            src_pointers
+                .iter()
+                .cloned()
+                .fold(base_memory.clone(), |memory, pointer| {
+                    memory.store(
+                        pointer.clone(),
+                        int32(Bitvector32Term::MemoryLoad(
+                            Box::new(base_memory.clone()),
+                            Box::new(pointer),
+                        )),
+                    )
+                });
+        let body = Proposition::Implies(
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), k_bits.clone()),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(
+                        k_bits.clone(),
+                        Bitvector32Term::Add(
+                            Box::new(i_bits.clone()),
+                            Box::new(Bitvector32Term::Constant(1)),
+                        ),
+                    ),
+                    true,
+                )),
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(
+                        Box::new(base_memory),
+                        Box::new(src_pointers[1].clone()),
+                    ),
+                    Bitvector32Term::MemoryLoad(
+                        Box::new(materialized_memory),
+                        Box::new(symbolic_src.clone()),
+                    ),
+                ),
+                true,
+            )),
+        );
+        let proposition = Proposition::Implies(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(i_bits.clone(), Bitvector32Term::Constant(1)),
+                true,
+            )),
+            Box::new(Proposition::Implies(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::pointer_offset_equal(
+                        symbolic_src.offset,
+                        PointerOffsetTerm::Int32Scaled {
+                            value: Box::new(i_bits.clone()),
+                            byte_width: 4,
+                        },
+                    ),
+                    true,
+                )),
+                Box::new(Proposition::Implies(
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::equal(k_bits, i_bits),
+                        true,
+                    )),
+                    Box::new(Proposition::ForAll {
+                        var: k,
+                        sort: Sort::CInt32,
+                        body: Box::new(body),
+                    }),
+                )),
+            )),
+        );
+
+        assert!(Assumptions::new().proves(&proposition));
+    }
+
+    #[test]
+    fn local_declaration_allocates_stack_object_for_address_of() {
+        let local_pointer = Pointer {
+            block: "local:x".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let state = CState::new();
+        let statement = c_seq(
+            c_declare("x", CType::Int32),
+            c_seq(
+                c_assign("x", c_int32_literal(5)),
+                c_return(c_load(c_addr_of("x"))),
+            ),
+        );
+        let final_state = CState::new().with_local("x", int32(5)).with_memory(
+            CMemory::new()
+                .with_block("local:x", 4)
+                .store(local_pointer, int32(5)),
+        );
+        let theorem =
+            prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+                .expect("local declaration/address-of should execute");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
+                state,
+                statement,
+                outcome: CStatementOutcome::Return {
+                    value: int32(5),
+                    state: final_state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn symbolic_execution_stops_without_needed_overflow_fact() {
+        let left = Variable(20);
+        let right = Variable(21);
+        let state = CState::new()
+            .with_local("left", int32(Bitvector32Term::Variable(left)))
+            .with_local("right", int32(Bitvector32Term::Variable(right)));
+        let statement = c_return(c_add(c_variable("left"), c_variable("right")));
+
+        assert!(prove_symbolic_c_execution(state, statement, Assumptions::new()).is_none());
+    }
+
+    #[test]
+    fn symbolic_execution_reports_branch_facts() {
+        let a = Variable(24);
+        let b = Variable(25);
+        let a_bits = Bitvector32Term::Variable(a);
+        let b_bits = Bitvector32Term::Variable(b);
+        let condition = c_max_lt_condition(a_bits.clone(), b_bits.clone());
+        let state = c_max_state(int32(a_bits), int32(b_bits));
+        let execution =
+            prove_symbolic_c_execution_paths(state.clone(), c_max_body(), Assumptions::new());
+
+        assert_eq!(execution.paths().len(), 2);
+        assert_eq!(
+            execution.paths()[0].facts(),
+            &[PathFact::condition(condition.clone(), true)]
+        );
+        assert_eq!(
+            execution.paths()[0].obligations(),
+            &[] as &[ProofObligation]
+        );
+        assert_eq!(
+            execution.paths()[0].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(condition.clone(), true)),
+                Box::new(Proposition::CStatementExecutes {
+                    state: state.clone(),
+                    statement: c_max_body(),
+                    outcome: CStatementOutcome::Return {
+                        value: int32(Bitvector32Term::Variable(b)),
+                        state: state.clone(),
+                    },
+                }),
+            )
+        );
+
+        assert_eq!(
+            execution.paths()[1].facts(),
+            &[PathFact::condition(condition.clone(), false)]
+        );
+        assert_eq!(
+            execution.paths()[1].obligations(),
+            &[] as &[ProofObligation]
+        );
+        assert_eq!(
+            execution.paths()[1].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(condition, false)),
+                Box::new(Proposition::CStatementExecutes {
+                    state: state.clone(),
+                    statement: c_max_body(),
+                    outcome: CStatementOutcome::Return {
+                        value: int32(Bitvector32Term::Variable(a)),
+                        state,
+                    },
+                }),
+            )
+        );
+    }
+
+    #[test]
+    fn symbolic_execution_reports_overflow_facts() {
+        let left = Variable(26);
+        let right = Variable(27);
+        let left_bits = Bitvector32Term::Variable(left);
+        let right_bits = Bitvector32Term::Variable(right);
+        let state = CState::new()
+            .with_local("left", int32(left_bits.clone()))
+            .with_local("right", int32(right_bits.clone()));
+        let statement = c_return(c_add(c_variable("left"), c_variable("right")));
+        let overflow = ConditionTerm::signed_add_overflows(left_bits.clone(), right_bits.clone());
+        let execution =
+            prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
+
+        assert_eq!(execution.paths().len(), 2);
+        assert_eq!(
+            execution.paths()[0].facts(),
+            &[PathFact::condition(overflow.clone(), false)]
+        );
+        assert_eq!(
+            execution.paths()[0].obligations(),
+            &[] as &[ProofObligation]
+        );
+        assert_eq!(
+            execution.paths()[0].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(overflow.clone(), false)),
+                Box::new(Proposition::CStatementExecutes {
+                    state: state.clone(),
+                    statement: statement.clone(),
+                    outcome: CStatementOutcome::Return {
+                        value: int32(Bitvector32Term::Add(
+                            Box::new(left_bits),
+                            Box::new(right_bits)
+                        )),
+                        state: state.clone(),
+                    },
+                }),
+            )
+        );
+
+        assert_eq!(
+            execution.paths()[1].facts(),
+            &[PathFact::condition(overflow.clone(), true)]
+        );
+        assert_eq!(
+            execution.paths()[1].obligations(),
+            &[] as &[ProofObligation]
+        );
+        assert_eq!(
+            execution.paths()[1].theorem().proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(overflow, true)),
+                Box::new(Proposition::CStatementExecutes {
+                    state: state.clone(),
+                    statement,
+                    outcome: CStatementOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::SignedOverflow
+                    ),
+                }),
+            )
+        );
+    }
+
+    #[test]
+    fn symbolic_execution_uses_no_overflow_fact() {
+        let left = Variable(22);
+        let right = Variable(23);
+        let left_bits = Bitvector32Term::Variable(left);
+        let right_bits = Bitvector32Term::Variable(right);
+        let state = CState::new()
+            .with_local("left", int32(left_bits.clone()))
+            .with_local("right", int32(right_bits.clone()));
+        let statement = c_return(c_add(c_variable("left"), c_variable("right")));
+        let no_overflow =
+            ConditionTerm::signed_add_overflows(left_bits.clone(), right_bits.clone());
+        let assumptions = Assumptions::new().assume_condition(no_overflow.clone(), false);
+        let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), assumptions)
+            .expect("no-overflow fact should let symbolic add execute");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(no_overflow, false)),
+                Box::new(Proposition::CStatementExecutes {
+                    state: state.clone(),
+                    statement,
+                    outcome: CStatementOutcome::Return {
+                        value: int32(Bitvector32Term::Add(
+                            Box::new(left_bits),
+                            Box::new(right_bits)
+                        )),
+                        state,
+                    },
+                }),
+            )
+        );
+    }
+
+    #[test]
+    fn symbolic_increment_uses_int_max_bound_to_rule_out_overflow() {
+        let x = Variable(65);
+        let x_bits = Bitvector32Term::Variable(x);
+        let state = CState::new().with_local("x", int32(x_bits.clone()));
+        let statement = c_return(c_add(c_variable("x"), c_int32_literal(1)));
+        let x_lt_int_max = ConditionTerm::signed_less_than(
+            x_bits.clone(),
+            Bitvector32Term::Constant(i32::MAX as u32),
+        );
+        let assumptions = Assumptions::new().assume_condition(x_lt_int_max.clone(), true);
+        let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), assumptions)
+            .expect("x < INT_MAX should prove x + 1 does not overflow");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::Implies(
+                Box::new(Proposition::ConditionIs(x_lt_int_max, true)),
+                Box::new(Proposition::CStatementExecutes {
+                    state: state.clone(),
+                    statement,
+                    outcome: CStatementOutcome::Return {
+                        value: int32(Bitvector32Term::Add(
+                            Box::new(x_bits),
+                            Box::new(Bitvector32Term::Constant(1)),
+                        )),
+                        state,
+                    },
+                }),
+            )
+        );
+    }
+
+    #[test]
+    fn pointer_store_through_local_address_updates_named_lvalue() {
+        let local_pointer = Pointer {
+            block: "local:x".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let statement = c_seq(
+            c_declare("x", CType::Int32),
+            c_seq(
+                c_store(c_addr_of("x"), c_int32_literal(5)),
+                c_return(c_variable("x")),
+            ),
+        );
+        let final_state = CState::new().with_local("x", int32(5)).with_memory(
+            CMemory::new()
+                .with_block("local:x", 4)
+                .store(local_pointer, int32(5)),
+        );
+        let theorem =
+            prove_symbolic_c_execution(CState::new(), statement.clone(), Assumptions::new())
+                .expect("pointer store through local address should execute");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CStatementExecutes {
+                state: CState::new(),
+                statement,
+                outcome: CStatementOutcome::Return {
+                    value: int32(5),
+                    state: final_state,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn memory_load_store_are_native_theorems() {
+        let pointer = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let value = int32(7);
+        let theorem =
+            prove_memory_load_after_store_same(CMemory::new(), pointer.clone(), value.clone());
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CMemoryLoads {
+                memory: CMemory::new().store(pointer.clone(), value.clone()),
+                pointer,
+                outcome: CExpressionOutcome::Value(value),
+            }
+        );
+    }
+
+    #[test]
+    fn store_preserves_distinct_memory_cell_frame() {
+        let stored_pointer = Pointer {
+            block: "left".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let loaded_pointer = Pointer {
+            block: "right".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = CMemory::new().store(loaded_pointer.clone(), int32(42));
+        let theorem = prove_memory_load_after_store_other(
+            memory.clone(),
+            stored_pointer.clone(),
+            int32(9),
+            loaded_pointer.clone(),
+        )
+        .expect("store to distinct pointer should preserve loaded cell");
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CMemoryLoads {
+                memory: memory.store(stored_pointer, int32(9)),
+                pointer: loaded_pointer,
+                outcome: CExpressionOutcome::Value(int32(42)),
+            }
+        );
+    }
+
+    #[test]
+    fn missing_memory_load_is_native_undefined_behavior() {
+        let pointer = Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let theorem = prove_memory_load(CMemory::new(), pointer.clone());
+
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CMemoryLoads {
+                memory: CMemory::new(),
+                pointer,
+                outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+            }
+        );
+    }
+}

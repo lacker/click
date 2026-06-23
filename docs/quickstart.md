@@ -88,6 +88,7 @@ the postcondition follows on every execution path.
 - `src/lang/c/syntax.rs`: C0 parser and lowering.
 - `src/lang/click.rs`: `.click` parser, validation, lowering, tactics, mdtest
   proof orchestration.
-- `src/megakernel.rs`: C semantic terms, propositions, assumptions, symbolic
+- `src/kernel/`: C semantic terms, propositions, assumptions, symbolic
   execution, and theorem-producing axioms.
+- `src/megakernel.rs`: compatibility facade that re-exports `src/kernel/`.
 - `stdlib/prelude.click`: ordinary Click standard-library definitions.
