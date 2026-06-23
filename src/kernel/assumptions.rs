@@ -1454,8 +1454,81 @@ impl Assumptions {
                         .forall_instantiations_for_condition(proposition, condition)
                         .iter()
                         .any(|body| self.proposition_proves_condition(body, condition, value))
+                    || self
+                        .finite_forall_instantiations(proposition)
+                        .iter()
+                        .any(|body| self.proposition_proves_condition(body, condition, value))
             }
             _ => false,
+        }
+    }
+
+    pub(super) fn finite_forall_instantiations(
+        &self,
+        proposition: &Proposition,
+    ) -> Vec<Proposition> {
+        let mut variables = Vec::new();
+        let body = collect_forall_chain(proposition, &mut variables);
+        if variables.is_empty() {
+            return Vec::new();
+        }
+        let Some(ranges) = finite_forall_ranges(&variables, body) else {
+            return Vec::new();
+        };
+        let Some(instantiation_count) = ranges.iter().try_fold(1usize, |count, range| {
+            let width = usize::try_from(range.upper - range.lower + 1).ok()?;
+            count.checked_mul(width)
+        }) else {
+            return Vec::new();
+        };
+        if instantiation_count > FINITE_FORALL_INSTANTIATION_LIMIT {
+            return Vec::new();
+        }
+
+        let mut values = Vec::with_capacity(variables.len());
+        let mut instantiations = Vec::with_capacity(instantiation_count);
+        self.collect_finite_forall_condition_instantiations(
+            body,
+            &variables,
+            &ranges,
+            &mut values,
+            &mut instantiations,
+        );
+        instantiations
+    }
+
+    pub(super) fn collect_finite_forall_condition_instantiations(
+        &self,
+        body: &Proposition,
+        variables: &[Variable],
+        ranges: &[FiniteForAllRange],
+        values: &mut Vec<i64>,
+        instantiations: &mut Vec<Proposition>,
+    ) {
+        if values.len() == variables.len() {
+            let mut instantiated = body.clone();
+            for (variable, value) in variables.iter().zip(values.iter()) {
+                instantiated = substitute_bitvector_variable_in_proposition(
+                    &instantiated,
+                    *variable,
+                    &signed_i64_bitvector_constant(*value),
+                );
+            }
+            instantiations.push(instantiated);
+            return;
+        }
+
+        let range = &ranges[values.len()];
+        for value in range.lower..=range.upper {
+            values.push(value);
+            self.collect_finite_forall_condition_instantiations(
+                body,
+                variables,
+                ranges,
+                values,
+                instantiations,
+            );
+            values.pop();
         }
     }
 

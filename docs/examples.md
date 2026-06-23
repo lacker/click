@@ -96,6 +96,8 @@ of inventing syntax from memory.
   `.any`, stdlib `count`, and `permutation`.
 - `mdtests/click_array_refs.md`: array refs carrying current and old memory into
   pure Click functions and predicates.
+- `mdtests/byte_slice_stdlib.md`: stdlib byte-slice helpers over `uint8[]`,
+  including byte counts, slice equality, range equality, and all-equal facts.
 
 ## Sorting And Permutation
 

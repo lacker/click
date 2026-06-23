@@ -858,6 +858,43 @@ fn assumptions_prove_finite_forall_int32_by_instantiation() {
 }
 
 #[test]
+fn assumptions_use_finite_forall_fact_to_prove_condition() {
+    let k = Variable(94);
+    let base_left = Bitvector32Term::Variable(Variable(95));
+    let base_right = Bitvector32Term::Variable(Variable(96));
+    let k_bits = Bitvector32Term::Variable(k);
+    let antecedent = Proposition::And(
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(k_bits.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )),
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(k_bits.clone(), Bitvector32Term::Constant(3)),
+            true,
+        )),
+    );
+    let consequent = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::Add(Box::new(base_left.clone()), Box::new(k_bits.clone())),
+            Bitvector32Term::Add(Box::new(base_right.clone()), Box::new(k_bits)),
+        ),
+        true,
+    );
+    let assumptions = Assumptions::new().assume_proposition(forall_int32(
+        k,
+        Proposition::Implies(Box::new(antecedent), Box::new(consequent)),
+    ));
+
+    assert!(assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::Add(Box::new(base_left), Box::new(Bitvector32Term::Constant(1))),
+            Bitvector32Term::Add(Box::new(base_right), Box::new(Bitvector32Term::Constant(1))),
+        ),
+        true,
+    )));
+}
+
+#[test]
 fn order_solver_uses_negated_less_than_transitively() {
     let a = Bitvector32Term::Variable(Variable(94));
     let b = Bitvector32Term::Variable(Variable(95));

@@ -19,6 +19,10 @@ promotions, signedness conversions, or general unsigned arithmetic yet.
 Ordered comparisons are supported for `int32`. `uint8` currently has equality,
 inequality, truthiness, memory access, and return-value support.
 
+The prelude has initial byte-slice helpers over `uint8[]`, but there is still
+no full C string model. Null-terminated strings, casts/promotions, and byte
+ordering/bitwise arithmetic remain future work.
+
 ## Aliasing Is Default
 
 Distinct pointer parameters may alias. Add `disjoint(...)` whenever a proof
@@ -38,6 +42,10 @@ reused, but proving a predicate body or using its consequences generally needs:
 ```click
 unfold(predicate_name);
 ```
+
+For small concrete bounded `.all` facts, the prover can instantiate the
+unfolded forall when proving a matching condition. Larger or more symbolic
+range facts may still need more explicit proof support.
 
 ## `old(...)` Is Still A Surface Construct
 

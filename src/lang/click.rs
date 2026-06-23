@@ -4246,8 +4246,10 @@ fn requirement_proposition_prop(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, ClickError> {
     let parameter_values = parameter_values(parameters, arguments)?;
+    let array_refs = array_refs_for_parameters(parameters, &parameter_values, memory);
     let mut lowerer = KernelPropositionLowerer::new(
         parameter_values,
+        array_refs,
         memory.clone(),
         predicate_environment,
         click_function_environment,
@@ -4311,13 +4313,14 @@ struct KernelPropositionLowerer {
 impl KernelPropositionLowerer {
     fn new(
         values: BTreeMap<String, CValue>,
+        array_refs: ClickArrayRefs,
         memory: CMemory,
         predicate_environment: &PredicateEnvironment,
         click_function_environment: &ClickFunctionEnvironment,
     ) -> Self {
         Self {
             values,
-            array_refs: BTreeMap::new(),
+            array_refs,
             memory,
             predicate_environment: predicate_environment.clone(),
             click_function_environment: click_function_environment.clone(),
@@ -6119,14 +6122,23 @@ fn lower_predicate_body_proposition_with_environment(
             )?;
             let variable = Variable(*next_variable);
             *next_variable += 1;
-            let item_value = CValue::Int32(Bitvector32Term::Variable(variable));
+            let item_bits = Bitvector32Term::Variable(variable);
+            let item_value = CValue::Int32(item_bits.clone());
             let outer_values = values.clone();
             values.insert(item.clone(), item_value.clone());
+            let body_assumptions =
+                assumptions
+                    .clone()
+                    .assume_proposition(range_membership_proposition(
+                        start.clone(),
+                        item_bits.clone(),
+                        end.clone(),
+                    ));
             let body = match lower_predicate_body_proposition_with_environment(
                 values,
                 array_refs,
                 memory,
-                assumptions,
+                &body_assumptions,
                 body,
                 next_variable,
                 predicate_environment,
@@ -6140,9 +6152,6 @@ fn lower_predicate_body_proposition_with_environment(
                 }
             };
             *values = outer_values;
-            let CValue::Int32(item_bits) = item_value else {
-                unreachable!("range `all` item value is always int32")
-            };
             Ok(bounded_forall_int32(variable, start, item_bits, end, body))
         }
         ClickProposition::RangeAny {
@@ -6215,13 +6224,22 @@ fn lower_predicate_body_proposition_with_environment(
                 _ => {
                     let variable = Variable(*next_variable);
                     *next_variable += 1;
-                    let item_value = CValue::Int32(Bitvector32Term::Variable(variable));
+                    let item_bits = Bitvector32Term::Variable(variable);
+                    let item_value = CValue::Int32(item_bits.clone());
                     values.insert(item.clone(), item_value.clone());
+                    let body_assumptions =
+                        assumptions
+                            .clone()
+                            .assume_proposition(range_membership_proposition(
+                                start.clone(),
+                                item_bits.clone(),
+                                end.clone(),
+                            ));
                     let body = match lower_predicate_body_proposition_with_environment(
                         values,
                         array_refs,
                         memory,
-                        assumptions,
+                        &body_assumptions,
                         body,
                         next_variable,
                         predicate_environment,
@@ -6235,9 +6253,6 @@ fn lower_predicate_body_proposition_with_environment(
                         }
                     };
                     *values = outer_values;
-                    let CValue::Int32(item_bits) = item_value else {
-                        unreachable!("range `any` item value is always int32")
-                    };
                     Ok(bounded_exists_int32(
                         item.clone(),
                         variable,
@@ -7708,16 +7723,25 @@ fn lower_outcome_proposition_with_environment(
             )?;
             let variable = Variable(*next_variable);
             *next_variable += 1;
-            let item_value = CValue::Int32(Bitvector32Term::Variable(variable));
+            let item_bits = Bitvector32Term::Variable(variable);
+            let item_value = CValue::Int32(item_bits.clone());
             let outer_values = values.clone();
             values.insert(item.clone(), item_value.clone());
+            let body_assumptions =
+                assumptions
+                    .clone()
+                    .assume_proposition(range_membership_proposition(
+                        start.clone(),
+                        item_bits.clone(),
+                        end.clone(),
+                    ));
             let body = match lower_outcome_proposition_with_environment(
                 values,
                 array_refs,
                 pre_state,
                 post_state,
                 result,
-                assumptions,
+                &body_assumptions,
                 body,
                 next_variable,
                 predicate_environment,
@@ -7731,9 +7755,6 @@ fn lower_outcome_proposition_with_environment(
                 }
             };
             *values = outer_values;
-            let CValue::Int32(item_bits) = item_value else {
-                unreachable!("range `all` item value is always int32")
-            };
             Ok(bounded_forall_int32(variable, start, item_bits, end, body))
         }
         ClickProposition::RangeAny {
@@ -7812,15 +7833,24 @@ fn lower_outcome_proposition_with_environment(
                 _ => {
                     let variable = Variable(*next_variable);
                     *next_variable += 1;
-                    let item_value = CValue::Int32(Bitvector32Term::Variable(variable));
+                    let item_bits = Bitvector32Term::Variable(variable);
+                    let item_value = CValue::Int32(item_bits.clone());
                     values.insert(item.clone(), item_value.clone());
+                    let body_assumptions =
+                        assumptions
+                            .clone()
+                            .assume_proposition(range_membership_proposition(
+                                start.clone(),
+                                item_bits.clone(),
+                                end.clone(),
+                            ));
                     let body = match lower_outcome_proposition_with_environment(
                         values,
                         array_refs,
                         pre_state,
                         post_state,
                         result,
-                        assumptions,
+                        &body_assumptions,
                         body,
                         next_variable,
                         predicate_environment,
@@ -7834,9 +7864,6 @@ fn lower_outcome_proposition_with_environment(
                         }
                     };
                     *values = outer_values;
-                    let CValue::Int32(item_bits) = item_value else {
-                        unreachable!("range `any` item value is always int32")
-                    };
                     Ok(bounded_exists_int32(
                         item.clone(),
                         variable,

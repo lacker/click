@@ -81,9 +81,11 @@ Range proposition helpers:
 (0..3).any(|k| { p[k] == x })
 ```
 
-`.all` lowers to a bounded universal proposition. `.any` lowers to a bounded
-existential proposition when its bounds are symbolic; concrete `.any` ranges
-still unroll to a finite disjunction.
+`.all` lowers to a guarded bounded universal proposition. `.any` lowers to a
+bounded existential proposition when its bounds are symbolic; concrete `.any`
+ranges still unroll to a finite disjunction. While lowering the range body, the
+elaborator assumes the item is inside the range, so bodies such as `p[k] == x`
+can use `valid_range(p[lo..hi])` for memory safety.
 
 Existential goals are proved explicitly in proof-step scripts with `witness`.
 The witness name must match the existential binder. For a symbolic `.any`, the
@@ -152,6 +154,10 @@ Click array refs carry their element type. Passing an `int32[]` ref to a pure
 Click function or predicate parameter declared as `uint8[]` is rejected.
 The same typed array-ref model is used by loop-invariant spec lowering, so a
 pure helper over `uint8[]` can appear in an invariant or inside `old(...)`.
+
+The prelude currently provides byte-slice helpers over `uint8[]`: `byte_count`,
+`bytes_equal`, `bytes_equal_range`, and `bytes_all_eq`. They are ordinary Click
+functions and predicates, not built-in kernel concepts.
 
 Concrete folds are unrolled. Symbolic folds remain `RangeFold` value terms in
 the kernel and can be reasoned about by supported fold laws.

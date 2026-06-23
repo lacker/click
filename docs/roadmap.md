@@ -41,7 +41,8 @@ What exists today:
   function calls, and annotated loops.
 - Surface Click contracts, loop invariants, memory effects, predicates, pure
   functions, `if`, `let`, `.fold`, `forall`, and selected range combinators.
-- A small standard library with `count` and `permutation`.
+- A small standard library with `count`, `permutation`, and initial byte-slice
+  helpers over `uint8[]`.
 - Kernel docs that distinguish Kernel Click, Surface Click, and C fragments.
 - A kernel module split that keeps theorem construction inside `src/kernel/`.
 
@@ -151,7 +152,7 @@ Likely additions:
   better than hiding all proof search inside `simp`.
 - Predicate/function namespaces that scale with modules.
 - A richer standard library:
-  integer ranges, byte strings, null-terminated strings, array slices,
+  integer ranges, more byte-slice predicates, null-terminated strings,
   permutations, sortedness, ownership predicates, and frame predicates.
 - A clearer split between:
   executable C behavior, pure Click functions, predicates, lemmas, and proof
@@ -267,7 +268,8 @@ Good next tasks from the current state:
 
 1. Add more fold/range lemmas beyond alpha-equivalent folds and the current
    count-shaped split rules.
-2. Add string/byte-slice stdlib predicates over `uint8[]`.
+2. Add null-terminated string predicates and more byte-slice lemmas over
+   `uint8[]`.
 3. Add C multiplication and simple bitwise operators with overflow/definedness
    tests.
 4. Add structs and field loads/stores in the smallest form needed by a pilot.
