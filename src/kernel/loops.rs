@@ -1,4 +1,6 @@
-fn execute_c_call_assign_paths(
+use super::prelude::*;
+
+pub(super) fn execute_c_call_assign_paths(
     state: &CState,
     target: &str,
     function_name: &str,
@@ -57,7 +59,7 @@ fn execute_c_call_assign_paths(
     Ok(paths)
 }
 
-fn execute_c_statement_paths_with_prefix(
+pub(super) fn execute_c_statement_paths_with_prefix(
     state: &CState,
     statement: &CStatement,
     assumptions: &Assumptions,
@@ -95,7 +97,7 @@ fn execute_c_statement_paths_with_prefix(
     Ok(paths)
 }
 
-fn execute_c_statement_verification_paths(
+pub(super) fn execute_c_statement_verification_paths(
     state: &CState,
     statement: &CStatement,
     assumptions: &Assumptions,
@@ -219,7 +221,7 @@ fn execute_c_statement_verification_paths(
     Ok(paths)
 }
 
-fn execute_c_statement_verification_paths_with_prefix(
+pub(super) fn execute_c_statement_verification_paths_with_prefix(
     state: &CState,
     statement: &CStatement,
     assumptions: &Assumptions,
@@ -259,7 +261,7 @@ fn execute_c_statement_verification_paths_with_prefix(
     Ok(paths)
 }
 
-fn execute_c_while_verification_paths(
+pub(super) fn execute_c_while_verification_paths(
     state: &CState,
     condition: &CExpression,
     invariant: &[Proposition],
@@ -365,19 +367,22 @@ fn execute_c_while_verification_paths(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum InvariantPhase {
+pub(super) enum InvariantPhase {
     Entry,
     Preservation,
 }
 
-fn invariant_context(check: &CLoopInvariantCheck, phase: InvariantPhase) -> Option<&str> {
+pub(super) fn invariant_context(
+    check: &CLoopInvariantCheck,
+    phase: InvariantPhase,
+) -> Option<&str> {
     match phase {
         InvariantPhase::Entry => check.entry_context(),
         InvariantPhase::Preservation => check.preservation_context(),
     }
 }
 
-fn collect_invariant_check_obligations(
+pub(super) fn collect_invariant_check_obligations(
     state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
     phase: InvariantPhase,
@@ -426,11 +431,11 @@ fn collect_invariant_check_obligations(
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct LoopPreservationSummary {
-    obligations: Vec<ProofObligation>,
+pub(super) struct LoopPreservationSummary {
+    pub(super) obligations: Vec<ProofObligation>,
 }
 
-fn collect_loop_preservation_summary(
+pub(super) fn collect_loop_preservation_summary(
     top_state: &CState,
     condition: &CExpression,
     invariant_checks: &[CLoopInvariantCheck],
@@ -532,13 +537,13 @@ fn collect_loop_preservation_summary(
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct EvaluatedMemorySegment {
-    base: Pointer,
-    start: Bitvector32Term,
-    end: Bitvector32Term,
+pub(super) struct EvaluatedMemorySegment {
+    pub(super) base: Pointer,
+    pub(super) start: Bitvector32Term,
+    pub(super) end: Bitvector32Term,
 }
 
-fn collect_whole_loop_effect_summaries(
+pub(super) fn collect_whole_loop_effect_summaries(
     before_state: &CState,
     after_state: &CState,
     effect_checks: &[CLoopEffectCheck],
@@ -589,7 +594,7 @@ fn collect_whole_loop_effect_summaries(
     Ok(summaries)
 }
 
-fn collect_loop_effect_check_obligations(
+pub(super) fn collect_loop_effect_check_obligations(
     before_state: &CState,
     after_state: &CState,
     effect_checks: &[CLoopEffectCheck],
@@ -680,7 +685,7 @@ fn collect_loop_effect_check_obligations(
     Ok(obligations)
 }
 
-fn evaluate_loop_effect_segment(
+pub(super) fn evaluate_loop_effect_segment(
     state: &CState,
     segment: &CMemorySegment,
     assumptions: &Assumptions,
@@ -735,7 +740,7 @@ fn evaluate_loop_effect_segment(
     Ok(Ok(EvaluatedMemorySegment { base, start, end }))
 }
 
-fn evaluate_loop_effect_segment_value(
+pub(super) fn evaluate_loop_effect_segment_value(
     state: &CState,
     expression: &CExpression,
     assumptions: &Assumptions,
@@ -769,7 +774,7 @@ fn evaluate_loop_effect_segment_value(
     }
 }
 
-fn loop_effect_segment_contains_pointer(
+pub(super) fn loop_effect_segment_contains_pointer(
     segment: &EvaluatedMemorySegment,
     pointer: &Pointer,
     assumptions: &Assumptions,
@@ -786,32 +791,35 @@ fn loop_effect_segment_contains_pointer(
     ))
 }
 
-fn is_loop_effect_relevant_pointer(pointer: &Pointer) -> bool {
+pub(super) fn is_loop_effect_relevant_pointer(pointer: &Pointer) -> bool {
     !pointer.block.starts_with("local:") && !pointer.block.starts_with("havoc:")
 }
 
-fn loop_effect_failure_context(check: &CLoopEffectCheck, message: String) -> String {
+pub(super) fn loop_effect_failure_context(check: &CLoopEffectCheck, message: String) -> String {
     match check.context() {
         Some(context) => format!("{context}: {message}"),
         None => message,
     }
 }
 
-fn push_false_loop_effect_obligation(obligations: &mut Vec<ProofObligation>, context: String) {
+pub(super) fn push_false_loop_effect_obligation(
+    obligations: &mut Vec<ProofObligation>,
+    context: String,
+) {
     obligations.push(
         ProofObligation::verification_condition(false_equals_true_proposition())
             .with_context(context),
     );
 }
 
-fn false_equals_true_proposition() -> Proposition {
+pub(super) fn false_equals_true_proposition() -> Proposition {
     Proposition::Equal(
         Term::Condition(ConditionTerm::Constant(false)),
         Term::Condition(ConditionTerm::Constant(true)),
     )
 }
 
-fn assume_invariant_checks(
+pub(super) fn assume_invariant_checks(
     state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
     assumptions: &Assumptions,
@@ -850,7 +858,7 @@ fn assume_invariant_checks(
     Ok(contexts)
 }
 
-fn assume_condition_truthiness(
+pub(super) fn assume_condition_truthiness(
     state: &CState,
     condition: &CExpression,
     assumptions: &Assumptions,
@@ -886,7 +894,7 @@ fn assume_condition_truthiness(
     Ok(contexts)
 }
 
-fn havoc_loop_modified_locals(
+pub(super) fn havoc_loop_modified_locals(
     state: &CState,
     body: &CStatement,
     variables: &mut VerificationVariableGenerator,
@@ -940,7 +948,7 @@ fn havoc_loop_modified_locals(
     state
 }
 
-fn statement_may_write_memory(statement: &CStatement) -> bool {
+pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
     match statement {
         CStatement::Declare { .. }
         | CStatement::Assign { .. }
@@ -959,7 +967,7 @@ fn statement_may_write_memory(statement: &CStatement) -> bool {
     }
 }
 
-fn collect_loop_modified_locals(statement: &CStatement, names: &mut BTreeSet<String>) {
+pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut BTreeSet<String>) {
     match statement {
         CStatement::Declare { .. }
         | CStatement::Assert { .. }
@@ -994,7 +1002,7 @@ fn collect_loop_modified_locals(statement: &CStatement, names: &mut BTreeSet<Str
 /// these would otherwise be wrongly preserved across the loop havoc. A local
 /// counts as escaped if a live pointer in the pre-loop state already points at
 /// its block, or if the body takes its address syntactically.
-fn address_escaped_scalar_locals(state: &CState, body: &CStatement) -> BTreeSet<String> {
+pub(super) fn address_escaped_scalar_locals(state: &CState, body: &CStatement) -> BTreeSet<String> {
     let mut escaped = BTreeSet::new();
     collect_address_taken_locals(body, &mut escaped);
 
@@ -1016,7 +1024,7 @@ fn address_escaped_scalar_locals(state: &CState, body: &CStatement) -> BTreeSet<
     escaped
 }
 
-fn collect_address_taken_locals(statement: &CStatement, names: &mut BTreeSet<String>) {
+pub(super) fn collect_address_taken_locals(statement: &CStatement, names: &mut BTreeSet<String>) {
     match statement {
         CStatement::Declare { .. } => {}
         CStatement::Assign { expression, .. } => {
@@ -1057,7 +1065,10 @@ fn collect_address_taken_locals(statement: &CStatement, names: &mut BTreeSet<Str
     }
 }
 
-fn collect_address_taken_in_expression(expression: &CExpression, names: &mut BTreeSet<String>) {
+pub(super) fn collect_address_taken_in_expression(
+    expression: &CExpression,
+    names: &mut BTreeSet<String>,
+) {
     match expression {
         // `&target`: any local reachable in the target may have its address
         // escape, so conservatively record every variable it mentions.
@@ -1083,7 +1094,7 @@ fn collect_address_taken_in_expression(expression: &CExpression, names: &mut BTr
     }
 }
 
-fn collect_variable_names(expression: &CExpression, names: &mut BTreeSet<String>) {
+pub(super) fn collect_variable_names(expression: &CExpression, names: &mut BTreeSet<String>) {
     match expression {
         CExpression::Variable(name) => {
             names.insert(name.clone());

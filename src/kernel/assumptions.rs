@@ -1,6 +1,8 @@
+use super::prelude::*;
+
 #[cfg(test)]
 impl Proposition {
-    fn peel_implications(&self) -> &Self {
+    pub(super) fn peel_implications(&self) -> &Self {
         match self {
             Self::Implies(_, body) => body.peel_implications(),
             _ => self,
@@ -48,7 +50,7 @@ impl Assumptions {
         self
     }
 
-    fn decide(&self, condition: &ConditionTerm) -> Option<bool> {
+    pub(super) fn decide(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
             ConditionTerm::Constant(value) => Some(*value),
             _ => {
@@ -75,14 +77,14 @@ impl Assumptions {
         }
     }
 
-    fn has_condition_fact(&self, condition: ConditionTerm, value: bool) -> bool {
+    pub(super) fn has_condition_fact(&self, condition: ConditionTerm, value: bool) -> bool {
         self.condition_facts.get(&condition) == Some(&value)
             || self.condition_facts.iter().any(|(fact, fact_value)| {
                 *fact_value == value && self.condition_matches(fact, &condition)
             })
     }
 
-    fn bitvector_terms_equal_from_facts(
+    pub(super) fn bitvector_terms_equal_from_facts(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
@@ -118,7 +120,10 @@ impl Assumptions {
         false
     }
 
-    fn simplify_condition_under_assumptions(&self, condition: &ConditionTerm) -> ConditionTerm {
+    pub(super) fn simplify_condition_under_assumptions(
+        &self,
+        condition: &ConditionTerm,
+    ) -> ConditionTerm {
         match condition {
             ConditionTerm::Constant(value) => ConditionTerm::Constant(*value),
             ConditionTerm::Variable(variable) => ConditionTerm::Variable(*variable),
@@ -168,7 +173,10 @@ impl Assumptions {
         }
     }
 
-    fn simplify_bitvector_under_assumptions(&self, term: &Bitvector32Term) -> Bitvector32Term {
+    pub(super) fn simplify_bitvector_under_assumptions(
+        &self,
+        term: &Bitvector32Term,
+    ) -> Bitvector32Term {
         match term {
             Bitvector32Term::Constant(value) => Bitvector32Term::Constant(*value),
             Bitvector32Term::Variable(variable) => Bitvector32Term::Variable(*variable),
@@ -229,7 +237,11 @@ impl Assumptions {
         }
     }
 
-    fn order_facts_force_equal(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    pub(super) fn order_facts_force_equal(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
         self.has_condition_fact(
             ConditionTerm::signed_less_equal(left.clone(), right.clone()),
             true,
@@ -257,7 +269,11 @@ impl Assumptions {
         )
     }
 
-    fn range_facts_force_equal(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    pub(super) fn range_facts_force_equal(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
         let Some((variable, constant)) = bitvector_variable_and_constant(left, right) else {
             return false;
         };
@@ -293,7 +309,7 @@ impl Assumptions {
         matches!((range.lower, range.upper), (Some(lower), Some(upper)) if lower == upper && lower == constant)
     }
 
-    fn decide_from_order_facts(&self, condition: &ConditionTerm) -> Option<bool> {
+    pub(super) fn decide_from_order_facts(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
             ConditionTerm::PointerOffsetEqual(left, right) if left == right => Some(true),
             ConditionTerm::PointerOffsetEqual(left, right) => {
@@ -595,7 +611,7 @@ impl Assumptions {
         }
     }
 
-    fn has_order_path(
+    pub(super) fn has_order_path(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
@@ -605,7 +621,7 @@ impl Assumptions {
         self.has_order_path_in_facts(left, right, require_strict, &order_facts)
     }
 
-    fn has_order_path_in_facts(
+    pub(super) fn has_order_path_in_facts(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
@@ -632,14 +648,14 @@ impl Assumptions {
         false
     }
 
-    fn condition_order_facts(&self) -> Vec<(Bitvector32Term, Bitvector32Term, bool)> {
+    pub(super) fn condition_order_facts(&self) -> Vec<(Bitvector32Term, Bitvector32Term, bool)> {
         self.condition_facts
             .iter()
             .filter_map(|(condition, value)| condition_as_order_fact(condition, *value))
             .collect()
     }
 
-    fn collect_derived_order_facts(
+    pub(super) fn collect_derived_order_facts(
         &self,
         order_facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
     ) {
@@ -648,7 +664,7 @@ impl Assumptions {
         }
     }
 
-    fn collect_derived_order_facts_from_proposition(
+    pub(super) fn collect_derived_order_facts_from_proposition(
         &self,
         proposition: &Proposition,
         order_facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
@@ -673,7 +689,7 @@ impl Assumptions {
         }
     }
 
-    fn collect_finite_forall_order_facts(
+    pub(super) fn collect_finite_forall_order_facts(
         &self,
         proposition: &Proposition,
         order_facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
@@ -706,7 +722,7 @@ impl Assumptions {
         );
     }
 
-    fn collect_finite_forall_order_fact_instantiations(
+    pub(super) fn collect_finite_forall_order_fact_instantiations(
         &self,
         body: &Proposition,
         variables: &[Variable],
@@ -741,7 +757,11 @@ impl Assumptions {
         }
     }
 
-    fn has_upper_bound_below(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    pub(super) fn has_upper_bound_below(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
         self.condition_facts
             .iter()
             .any(|(fact, value)| match (fact, value) {
@@ -757,7 +777,7 @@ impl Assumptions {
             })
     }
 
-    fn has_successor_upper_bound_below(
+    pub(super) fn has_successor_upper_bound_below(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
@@ -781,7 +801,7 @@ impl Assumptions {
             })
     }
 
-    fn subtract_same_const_order_fact(
+    pub(super) fn subtract_same_const_order_fact(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
@@ -831,7 +851,11 @@ impl Assumptions {
         }
     }
 
-    fn has_lower_bound_above(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    pub(super) fn has_lower_bound_above(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
         self.condition_facts
             .iter()
             .any(|(fact, value)| match (fact, value) {
@@ -855,7 +879,11 @@ impl Assumptions {
             })
     }
 
-    fn has_lower_bound_at_or_above(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    pub(super) fn has_lower_bound_at_or_above(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
         self.condition_facts
             .iter()
             .any(|(fact, value)| match (fact, value) {
@@ -879,7 +907,7 @@ impl Assumptions {
             })
     }
 
-    fn has_add_const_lower_bound_above(
+    pub(super) fn has_add_const_lower_bound_above(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
@@ -923,7 +951,7 @@ impl Assumptions {
             })
     }
 
-    fn has_add_const_lower_bound_at_or_above(
+    pub(super) fn has_add_const_lower_bound_at_or_above(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
@@ -966,7 +994,7 @@ impl Assumptions {
             })
     }
 
-    fn positive_offset_is_proven_above(
+    pub(super) fn positive_offset_is_proven_above(
         &self,
         base: &Bitvector32Term,
         term: &Bitvector32Term,
@@ -983,7 +1011,7 @@ impl Assumptions {
         )) == Some(false)
     }
 
-    fn nonnegative_offset_is_proven_at_or_above(
+    pub(super) fn nonnegative_offset_is_proven_at_or_above(
         &self,
         base: &Bitvector32Term,
         term: &Bitvector32Term,
@@ -1000,7 +1028,11 @@ impl Assumptions {
         )) == Some(false)
     }
 
-    fn memory_loads_proven_equal(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    pub(super) fn memory_loads_proven_equal(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
         if let Some(left) = self.resolve_memory_load_term(left) {
             return self.bitvector_terms_proven_equal(&left, right);
         }
@@ -1085,7 +1117,10 @@ impl Assumptions {
         })
     }
 
-    fn resolve_memory_load_term(&self, term: &Bitvector32Term) -> Option<Bitvector32Term> {
+    pub(super) fn resolve_memory_load_term(
+        &self,
+        term: &Bitvector32Term,
+    ) -> Option<Bitvector32Term> {
         let Bitvector32Term::MemoryLoad(memory, pointer) = term else {
             return None;
         };
@@ -1095,7 +1130,11 @@ impl Assumptions {
         (&value != term).then_some(value)
     }
 
-    fn resolve_memory_load_value(&self, memory: &CMemory, pointer: &Pointer) -> Option<CValue> {
+    pub(super) fn resolve_memory_load_value(
+        &self,
+        memory: &CMemory,
+        pointer: &Pointer,
+    ) -> Option<CValue> {
         if let Some(value) = memory.known_value(pointer) {
             return Some(value);
         }
@@ -1124,7 +1163,7 @@ impl Assumptions {
             .then(|| memory.symbolic_int32_load(pointer))
     }
 
-    fn decide_from_overflow_facts(&self, condition: &ConditionTerm) -> Option<bool> {
+    pub(super) fn decide_from_overflow_facts(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
             ConditionTerm::Bitvector32SignedAddOverflows(left, right)
                 if right.as_ref() == &Bitvector32Term::Constant(1) =>
@@ -1209,7 +1248,7 @@ impl Assumptions {
             || self.proves_by_disjunction_cases(proposition)
     }
 
-    fn proves_by_disjunction_cases(&self, proposition: &Proposition) -> bool {
+    pub(super) fn proves_by_disjunction_cases(&self, proposition: &Proposition) -> bool {
         if !matches!(proposition, Proposition::Or(_, _)) {
             return false;
         }
@@ -1234,7 +1273,7 @@ impl Assumptions {
         false
     }
 
-    fn proves_finite_forall(&self, proposition: &Proposition) -> bool {
+    pub(super) fn proves_finite_forall(&self, proposition: &Proposition) -> bool {
         let mut variables = Vec::new();
         let body = collect_forall_chain(proposition, &mut variables);
         if variables.is_empty() {
@@ -1257,7 +1296,7 @@ impl Assumptions {
         self.proves_finite_forall_instantiations(body, &variables, &ranges, &mut values)
     }
 
-    fn proves_finite_forall_instantiations(
+    pub(super) fn proves_finite_forall_instantiations(
         &self,
         body: &Proposition,
         variables: &[Variable],
@@ -1288,7 +1327,7 @@ impl Assumptions {
         true
     }
 
-    fn proves_by_finite_context_split(&self, proposition: &Proposition) -> bool {
+    pub(super) fn proves_by_finite_context_split(&self, proposition: &Proposition) -> bool {
         let mut variables = BTreeSet::new();
         collect_proposition_bitvector_variables(proposition, &mut variables);
         let mut candidates = variables
@@ -1332,7 +1371,7 @@ impl Assumptions {
             .all(|instantiated| self.proves(instantiated))
     }
 
-    fn finite_context_range(&self, variable: Variable) -> Option<FiniteForAllRange> {
+    pub(super) fn finite_context_range(&self, variable: Variable) -> Option<FiniteForAllRange> {
         let mut range = IntegerRangeFacts::default();
         for (condition, value) in &self.condition_facts {
             let Some((left, right, strict)) = condition_as_order_fact(condition, *value) else {
@@ -1360,7 +1399,11 @@ impl Assumptions {
         Some(FiniteForAllRange { lower, upper })
     }
 
-    fn proves_condition_from_facts(&self, condition: &ConditionTerm, value: bool) -> bool {
+    pub(super) fn proves_condition_from_facts(
+        &self,
+        condition: &ConditionTerm,
+        value: bool,
+    ) -> bool {
         self.condition_facts
             .iter()
             .any(|(fact_condition, fact_value)| {
@@ -1373,7 +1416,7 @@ impl Assumptions {
             || self.proves_condition_from_derived_order_facts(condition, value)
     }
 
-    fn proves_condition_from_derived_order_facts(
+    pub(super) fn proves_condition_from_derived_order_facts(
         &self,
         condition: &ConditionTerm,
         value: bool,
@@ -1386,7 +1429,7 @@ impl Assumptions {
         self.has_order_path_in_facts(&left, &right, strict, &order_facts)
     }
 
-    fn proposition_proves_condition(
+    pub(super) fn proposition_proves_condition(
         &self,
         proposition: &Proposition,
         condition: &ConditionTerm,
@@ -1415,7 +1458,7 @@ impl Assumptions {
         }
     }
 
-    fn forall_instantiations_for_condition(
+    pub(super) fn forall_instantiations_for_condition(
         &self,
         proposition: &Proposition,
         condition: &ConditionTerm,
@@ -1438,7 +1481,7 @@ impl Assumptions {
             .collect()
     }
 
-    fn condition_matches(&self, fact: &ConditionTerm, target: &ConditionTerm) -> bool {
+    pub(super) fn condition_matches(&self, fact: &ConditionTerm, target: &ConditionTerm) -> bool {
         if fact == target {
             return true;
         }
@@ -1503,7 +1546,7 @@ impl Assumptions {
         }
     }
 
-    fn bitvector_terms_proven_equal(
+    pub(super) fn bitvector_terms_proven_equal(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
@@ -1515,7 +1558,7 @@ impl Assumptions {
             || self.memory_loads_proven_equal(left, right)
     }
 
-    fn bitvector_if_terms_proven_equal(
+    pub(super) fn bitvector_if_terms_proven_equal(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
@@ -1543,7 +1586,7 @@ impl Assumptions {
             && self.bitvector_terms_proven_equal(left_else, right_else)
     }
 
-    fn bitvector_add_terms_proven_equal(
+    pub(super) fn bitvector_add_terms_proven_equal(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
@@ -1578,7 +1621,7 @@ impl Assumptions {
         right_terms.is_empty()
     }
 
-    fn bitvector_addend_terms_proven_equal(
+    pub(super) fn bitvector_addend_terms_proven_equal(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
@@ -1589,7 +1632,7 @@ impl Assumptions {
             || self.memory_loads_proven_equal(left, right)
     }
 
-    fn count_fold_split_terms_proven_equal(
+    pub(super) fn count_fold_split_terms_proven_equal(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
@@ -1597,7 +1640,7 @@ impl Assumptions {
         count_fold_split_matches(left, right, self) || count_fold_split_matches(right, left, self)
     }
 
-    fn proves_without_prop_facts(&self, proposition: &Proposition) -> bool {
+    pub(super) fn proves_without_prop_facts(&self, proposition: &Proposition) -> bool {
         if solve_builtin_prop(proposition) || self.is_inconsistent() {
             return true;
         }
@@ -1620,7 +1663,7 @@ impl Assumptions {
         }
     }
 
-    fn is_inconsistent(&self) -> bool {
+    pub(super) fn is_inconsistent(&self) -> bool {
         let mut order_facts = Vec::new();
         let mut equal_facts = Vec::new();
         let mut disequal_facts = Vec::new();
@@ -1698,7 +1741,7 @@ impl Assumptions {
         false
     }
 
-    fn proves_not(&self, proposition: &Proposition) -> bool {
+    pub(super) fn proves_not(&self, proposition: &Proposition) -> bool {
         match proposition {
             Proposition::ConditionIs(condition, value) => self.decide(condition) == Some(!*value),
             Proposition::Not(body) => self.proves(body),
@@ -1708,7 +1751,12 @@ impl Assumptions {
         }
     }
 
-    fn proves_memory_access(&self, memory: &CMemory, pointer: &Pointer, byte_width: u32) -> bool {
+    pub(super) fn proves_memory_access(
+        &self,
+        memory: &CMemory,
+        pointer: &Pointer,
+        byte_width: u32,
+    ) -> bool {
         if memory.access_in_bounds(pointer, byte_width) {
             return true;
         }
@@ -1731,7 +1779,7 @@ impl Assumptions {
         })
     }
 
-    fn proves_access_from_memory_block(
+    pub(super) fn proves_access_from_memory_block(
         &self,
         memory: &CMemory,
         pointer: &Pointer,
@@ -1752,7 +1800,7 @@ impl Assumptions {
         )
     }
 
-    fn proves_access_from_valid_range(
+    pub(super) fn proves_access_from_valid_range(
         &self,
         base: &Pointer,
         bytes: &Bitvector32Term,
@@ -1793,7 +1841,11 @@ impl Assumptions {
         false
     }
 
-    fn pointers_proven_disjoint_by_range(&self, left: &Pointer, right: &Pointer) -> bool {
+    pub(super) fn pointers_proven_disjoint_by_range(
+        &self,
+        left: &Pointer,
+        right: &Pointer,
+    ) -> bool {
         self.prop_facts.iter().any(|proposition| {
             let Proposition::CMemoryDisjoint {
                 left_base,
@@ -1814,7 +1866,7 @@ impl Assumptions {
         })
     }
 
-    fn pointer_in_range(
+    pub(super) fn pointer_in_range(
         &self,
         pointer: &Pointer,
         base: &Pointer,
@@ -1831,7 +1883,7 @@ impl Assumptions {
             && self.decide(&ConditionTerm::signed_less_than(index, end.clone())) == Some(true)
     }
 
-    fn ranges_proven_disjoint_from_pointer(
+    pub(super) fn ranges_proven_disjoint_from_pointer(
         &self,
         ranges: &[CMemoryRange],
         pointer: &Pointer,
@@ -1841,7 +1893,11 @@ impl Assumptions {
             .all(|range| self.range_proven_disjoint_from_pointer(range, pointer))
     }
 
-    fn range_proven_disjoint_from_pointer(&self, range: &CMemoryRange, pointer: &Pointer) -> bool {
+    pub(super) fn range_proven_disjoint_from_pointer(
+        &self,
+        range: &CMemoryRange,
+        pointer: &Pointer,
+    ) -> bool {
         if range.base.block != pointer.block {
             return true;
         }
@@ -1878,7 +1934,7 @@ impl Assumptions {
         })
     }
 
-    fn range_covered_by_fact_range(
+    pub(super) fn range_covered_by_fact_range(
         &self,
         range: &CMemoryRange,
         base: &Pointer,
@@ -1961,7 +2017,7 @@ impl ProofObligation {
         self.context.as_deref()
     }
 
-    fn map_proposition(self, f: impl FnOnce(Proposition) -> Proposition) -> Self {
+    pub(super) fn map_proposition(self, f: impl FnOnce(Proposition) -> Proposition) -> Self {
         Self {
             proposition: f(self.proposition),
             context: self.context,
@@ -1978,7 +2034,7 @@ impl PathFact {
         }
     }
 
-    fn internal(proposition: Proposition) -> Self {
+    pub(super) fn internal(proposition: Proposition) -> Self {
         Self {
             proposition,
             public: false,
@@ -1993,7 +2049,7 @@ impl PathFact {
         &self.proposition
     }
 
-    fn is_public(&self) -> bool {
+    pub(super) fn is_public(&self) -> bool {
         self.public
     }
 }

@@ -5,19 +5,28 @@
 //! Click axioms: trusted built-in operations that produce theorem objects
 //! directly.
 //!
-//! The kernel is currently a single Rust module split across several files with
-//! `include!`. That keeps this refactor mechanical: private helper visibility
-//! remains exactly as it was in the old `megakernel.rs`, while the physical
-//! layout is small enough to navigate.
+mod api;
+mod assumptions;
+mod eval;
+mod functions;
+mod loops;
+mod primitives;
+mod reasoning;
+mod spec;
 
-use std::collections::{BTreeMap, BTreeSet};
+pub use api::*;
+pub use primitives::*;
 
-include!("primitives.rs");
-include!("assumptions.rs");
-include!("api.rs");
-include!("reasoning.rs");
-include!("spec.rs");
-include!("eval.rs");
-include!("loops.rs");
-include!("functions.rs");
-include!("tests.rs");
+mod prelude {
+    pub(super) use super::api::*;
+    pub(super) use super::eval::*;
+    pub(super) use super::functions::*;
+    pub(super) use super::loops::*;
+    pub(super) use super::primitives::*;
+    pub(super) use super::reasoning::*;
+    pub(super) use super::spec::*;
+    pub(super) use std::collections::{BTreeMap, BTreeSet};
+}
+
+#[cfg(test)]
+mod tests;

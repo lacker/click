@@ -1,3 +1,5 @@
+use super::prelude::*;
+
 pub fn int32(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::Int32(bits.into())
 }

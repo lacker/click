@@ -1,18 +1,20 @@
+use super::prelude::*;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct SpecPropositionPath {
-    proposition: Proposition,
-    facts: Vec<PathFact>,
-    obligations: Vec<ProofObligation>,
+pub(super) struct SpecPropositionPath {
+    pub(super) proposition: Proposition,
+    pub(super) facts: Vec<PathFact>,
+    pub(super) obligations: Vec<ProofObligation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct SpecExpressionPath {
-    value: CValue,
-    facts: Vec<PathFact>,
-    obligations: Vec<ProofObligation>,
+pub(super) struct SpecExpressionPath {
+    pub(super) value: CValue,
+    pub(super) facts: Vec<PathFact>,
+    pub(super) obligations: Vec<ProofObligation>,
 }
 
-fn lower_spec_proposition_at_state(
+pub(super) fn lower_spec_proposition_at_state(
     state: &CState,
     proposition: &SpecProposition,
     assumptions: &Assumptions,
@@ -165,7 +167,7 @@ fn lower_spec_proposition_at_state(
     }
 }
 
-fn lower_spec_binary_proposition_at_state(
+pub(super) fn lower_spec_binary_proposition_at_state(
     state: &CState,
     left: &SpecProposition,
     right: &SpecProposition,
@@ -197,7 +199,7 @@ fn lower_spec_binary_proposition_at_state(
     Ok(paths)
 }
 
-fn lower_spec_comparison_proposition_at_state(
+pub(super) fn lower_spec_comparison_proposition_at_state(
     state: &CState,
     left: &SpecExpression,
     operator: CComparisonOperator,
@@ -234,7 +236,7 @@ fn lower_spec_comparison_proposition_at_state(
     Ok(paths)
 }
 
-fn lower_spec_predicate_proposition_at_state(
+pub(super) fn lower_spec_predicate_proposition_at_state(
     state: &CState,
     name: &str,
     arguments: &[SpecExpression],
@@ -290,7 +292,7 @@ fn lower_spec_predicate_proposition_at_state(
     Ok(paths)
 }
 
-fn evaluate_spec_expression_paths(
+pub(super) fn evaluate_spec_expression_paths(
     state: &CState,
     expression: &SpecExpression,
     assumptions: &Assumptions,
@@ -431,7 +433,7 @@ fn evaluate_spec_expression_paths(
     Ok(paths)
 }
 
-fn evaluate_spec_pointer_offset_paths(
+pub(super) fn evaluate_spec_pointer_offset_paths(
     state: &CState,
     pointer: &SpecExpression,
     elements: &SpecExpression,
@@ -474,7 +476,7 @@ fn evaluate_spec_pointer_offset_paths(
     Ok(paths)
 }
 
-fn c_expression_path_value(path: CExpressionPath) -> Option<SpecExpressionPath> {
+pub(super) fn c_expression_path_value(path: CExpressionPath) -> Option<SpecExpressionPath> {
     let CExpressionOutcome::Value(value) = path.outcome else {
         return None;
     };
@@ -485,7 +487,7 @@ fn c_expression_path_value(path: CExpressionPath) -> Option<SpecExpressionPath> 
     })
 }
 
-fn evaluate_spec_add_paths(
+pub(super) fn evaluate_spec_add_paths(
     state: &CState,
     left: &SpecExpression,
     right: &SpecExpression,
@@ -525,7 +527,7 @@ fn evaluate_spec_add_paths(
     Ok(paths)
 }
 
-fn evaluate_spec_int32_binary_paths(
+pub(super) fn evaluate_spec_int32_binary_paths(
     state: &CState,
     left: &SpecExpression,
     right: &SpecExpression,
@@ -569,7 +571,7 @@ fn evaluate_spec_int32_binary_paths(
     Ok(paths)
 }
 
-fn evaluate_spec_if_paths(
+pub(super) fn evaluate_spec_if_paths(
     state: &CState,
     condition: &SpecProposition,
     then_branch: &SpecExpression,
@@ -664,7 +666,7 @@ fn evaluate_spec_if_paths(
     Ok(paths)
 }
 
-fn evaluate_spec_range_fold_paths(
+pub(super) fn evaluate_spec_range_fold_paths(
     state: &CState,
     start: &SpecExpression,
     end: &SpecExpression,
@@ -732,7 +734,7 @@ fn evaluate_spec_range_fold_paths(
     Ok(paths)
 }
 
-fn evaluate_spec_range_fold_body_path(
+pub(super) fn evaluate_spec_range_fold_body_path(
     state: &CState,
     start: Bitvector32Term,
     end: Bitvector32Term,
@@ -833,7 +835,7 @@ fn evaluate_spec_range_fold_body_path(
     }
 }
 
-fn concrete_spec_fold_range(start: i32, end: i32) -> std::ops::Range<i32> {
+pub(super) fn concrete_spec_fold_range(start: i32, end: i32) -> std::ops::Range<i32> {
     if start <= end {
         start..end
     } else {
@@ -841,7 +843,7 @@ fn concrete_spec_fold_range(start: i32, end: i32) -> std::ops::Range<i32> {
     }
 }
 
-fn spec_fold_bound_variable(name: &str, salt: u64) -> Variable {
+pub(super) fn spec_fold_bound_variable(name: &str, salt: u64) -> Variable {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ salt;
     for byte in name.bytes() {
         hash ^= u64::from(byte);
@@ -850,7 +852,7 @@ fn spec_fold_bound_variable(name: &str, salt: u64) -> Variable {
     Variable(3_000_000 + (hash % 1_000_000_000))
 }
 
-fn symbolic_spec_range_fold_value(
+pub(super) fn symbolic_spec_range_fold_value(
     start: Bitvector32Term,
     end: Bitvector32Term,
     initial: CValue,
@@ -874,7 +876,7 @@ fn symbolic_spec_range_fold_value(
     )))
 }
 
-fn conditional_spec_value(
+pub(super) fn conditional_spec_value(
     proposition: &Proposition,
     then_value: CValue,
     else_value: CValue,
@@ -896,7 +898,9 @@ fn conditional_spec_value(
     )))
 }
 
-fn proposition_as_single_condition(proposition: &Proposition) -> Option<(ConditionTerm, bool)> {
+pub(super) fn proposition_as_single_condition(
+    proposition: &Proposition,
+) -> Option<(ConditionTerm, bool)> {
     match proposition {
         Proposition::ConditionIs(condition, value) => Some((condition.clone(), *value)),
         Proposition::Not(body) => {
@@ -909,7 +913,7 @@ fn proposition_as_single_condition(proposition: &Proposition) -> Option<(Conditi
     }
 }
 
-fn assumptions_prove_proposition_false(
+pub(super) fn assumptions_prove_proposition_false(
     assumptions: &Assumptions,
     proposition: &Proposition,
 ) -> bool {
@@ -921,7 +925,7 @@ fn assumptions_prove_proposition_false(
     }
 }
 
-fn c_value_comparison_proposition(
+pub(super) fn c_value_comparison_proposition(
     left: &CValue,
     operator: CComparisonOperator,
     right: &CValue,

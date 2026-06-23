@@ -1,4 +1,6 @@
-fn condition_contexts_for_truthiness(
+use super::prelude::*;
+
+pub(super) fn condition_contexts_for_truthiness(
     state: &CState,
     condition: &CExpression,
     assumptions: &Assumptions,
@@ -38,7 +40,11 @@ fn condition_contexts_for_truthiness(
     contexts
 }
 
-fn pointers_proven_distinct(left: &Pointer, right: &Pointer, assumptions: &Assumptions) -> bool {
+pub(super) fn pointers_proven_distinct(
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
     left.block != right.block
         || assumptions.decide(&ConditionTerm::pointer_offset_equal(
             left.offset.clone(),
@@ -47,7 +53,11 @@ fn pointers_proven_distinct(left: &Pointer, right: &Pointer, assumptions: &Assum
         || assumptions.pointers_proven_disjoint_by_range(left, right)
 }
 
-fn pointers_proven_equal(left: &Pointer, right: &Pointer, assumptions: &Assumptions) -> bool {
+pub(super) fn pointers_proven_equal(
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
     left == right
         || left.block == right.block
             && assumptions.decide(&ConditionTerm::pointer_offset_equal(
@@ -56,7 +66,11 @@ fn pointers_proven_equal(left: &Pointer, right: &Pointer, assumptions: &Assumpti
             )) == Some(true)
 }
 
-fn memories_match_for_pointer_load(left: &CMemory, right: &CMemory, pointer: &Pointer) -> bool {
+pub(super) fn memories_match_for_pointer_load(
+    left: &CMemory,
+    right: &CMemory,
+    pointer: &Pointer,
+) -> bool {
     if left == right {
         return true;
     }
@@ -81,7 +95,7 @@ fn memories_match_for_pointer_load(left: &CMemory, right: &CMemory, pointer: &Po
                 .filter(|(cell_pointer, _)| cell_pointer.block == pointer.block))
 }
 
-fn memories_match_for_pointer_load_under_assumptions(
+pub(super) fn memories_match_for_pointer_load_under_assumptions(
     left: &CMemory,
     right: &CMemory,
     pointer: &Pointer,
@@ -111,7 +125,7 @@ fn memories_match_for_pointer_load_under_assumptions(
         .all(|cell_pointer| pointers_proven_distinct(&cell_pointer, pointer, assumptions))
 }
 
-fn memory_matches_effect_summary_endpoint(
+pub(super) fn memory_matches_effect_summary_endpoint(
     expected: &CMemory,
     actual: &CMemory,
     pointer: &Pointer,
@@ -119,7 +133,7 @@ fn memory_matches_effect_summary_endpoint(
     expected == actual || memories_match_for_pointer_load(expected, actual, pointer)
 }
 
-fn condition_as_order_fact(
+pub(super) fn condition_as_order_fact(
     condition: &ConditionTerm,
     value: bool,
 ) -> Option<(Bitvector32Term, Bitvector32Term, bool)> {
@@ -152,24 +166,24 @@ fn condition_as_order_fact(
     }
 }
 
-const FINITE_FORALL_INSTANTIATION_LIMIT: usize = 128;
-const FINITE_CONTEXT_SPLIT_LIMIT: usize = 8;
-const DISJUNCTION_CASE_LIMIT: usize = 8;
+pub(super) const FINITE_FORALL_INSTANTIATION_LIMIT: usize = 128;
+pub(super) const FINITE_CONTEXT_SPLIT_LIMIT: usize = 8;
+pub(super) const DISJUNCTION_CASE_LIMIT: usize = 8;
 
 #[derive(Clone, Debug, Default)]
-struct FiniteForAllRange {
-    lower: i64,
-    upper: i64,
+pub(super) struct FiniteForAllRange {
+    pub(super) lower: i64,
+    pub(super) upper: i64,
 }
 
 #[derive(Clone, Debug)]
-struct VariableOrderEdge {
-    lower: Variable,
-    upper: Variable,
-    strict: bool,
+pub(super) struct VariableOrderEdge {
+    pub(super) lower: Variable,
+    pub(super) upper: Variable,
+    pub(super) strict: bool,
 }
 
-fn collect_forall_chain<'a>(
+pub(super) fn collect_forall_chain<'a>(
     proposition: &'a Proposition,
     variables: &mut Vec<Variable>,
 ) -> &'a Proposition {
@@ -186,7 +200,7 @@ fn collect_forall_chain<'a>(
     }
 }
 
-fn collect_or_cases(proposition: &Proposition, cases: &mut Vec<Proposition>) {
+pub(super) fn collect_or_cases(proposition: &Proposition, cases: &mut Vec<Proposition>) {
     match proposition {
         Proposition::Or(left, right) => {
             collect_or_cases(left, cases);
@@ -196,7 +210,7 @@ fn collect_or_cases(proposition: &Proposition, cases: &mut Vec<Proposition>) {
     }
 }
 
-fn finite_forall_ranges(
+pub(super) fn finite_forall_ranges(
     variables: &[Variable],
     body: &Proposition,
 ) -> Option<Vec<FiniteForAllRange>> {
@@ -258,7 +272,7 @@ fn finite_forall_ranges(
         .collect()
 }
 
-fn collect_implication_antecedent_order_facts(
+pub(super) fn collect_implication_antecedent_order_facts(
     proposition: &Proposition,
     facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
 ) {
@@ -288,7 +302,7 @@ fn collect_implication_antecedent_order_facts(
     }
 }
 
-fn collect_order_facts_from_assumed_proposition(
+pub(super) fn collect_order_facts_from_assumed_proposition(
     proposition: &Proposition,
     facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
 ) {
@@ -306,7 +320,7 @@ fn collect_order_facts_from_assumed_proposition(
     }
 }
 
-fn tighten_lower_bound(
+pub(super) fn tighten_lower_bound(
     ranges: &mut BTreeMap<Variable, IntegerRangeFacts>,
     variable: Variable,
     lower: i64,
@@ -316,7 +330,7 @@ fn tighten_lower_bound(
     }
 }
 
-fn tighten_upper_bound(
+pub(super) fn tighten_upper_bound(
     ranges: &mut BTreeMap<Variable, IntegerRangeFacts>,
     variable: Variable,
     upper: i64,
@@ -326,7 +340,7 @@ fn tighten_upper_bound(
     }
 }
 
-fn propagate_variable_order_bounds(
+pub(super) fn propagate_variable_order_bounds(
     ranges: &mut BTreeMap<Variable, IntegerRangeFacts>,
     edges: &[VariableOrderEdge],
 ) -> Option<()> {
@@ -366,12 +380,12 @@ fn propagate_variable_order_bounds(
     Some(())
 }
 
-fn signed_i64_bitvector_constant(value: i64) -> Bitvector32Term {
+pub(super) fn signed_i64_bitvector_constant(value: i64) -> Bitvector32Term {
     debug_assert!((i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(&value));
     Bitvector32Term::Constant(value as i32 as u32)
 }
 
-fn instantiate_range_fold_step(
+pub(super) fn instantiate_range_fold_step(
     body: &Bitvector32Term,
     accumulator: Variable,
     accumulator_value: &Bitvector32Term,
@@ -383,13 +397,13 @@ fn instantiate_range_fold_step(
 }
 
 #[derive(Clone, Debug, Default)]
-struct IntegerRangeFacts {
-    lower: Option<i64>,
-    upper: Option<i64>,
-    excluded: BTreeSet<i64>,
+pub(super) struct IntegerRangeFacts {
+    pub(super) lower: Option<i64>,
+    pub(super) upper: Option<i64>,
+    pub(super) excluded: BTreeSet<i64>,
 }
 
-fn finite_integer_range_exhausted(
+pub(super) fn finite_integer_range_exhausted(
     order_facts: &[(Bitvector32Term, Bitvector32Term, bool)],
     equal_facts: &[(Bitvector32Term, Bitvector32Term)],
     disequal_facts: &[(Bitvector32Term, Bitvector32Term)],
@@ -440,22 +454,22 @@ fn finite_integer_range_exhausted(
     })
 }
 
-fn bitvector_variable(term: &Bitvector32Term) -> Option<Variable> {
+pub(super) fn bitvector_variable(term: &Bitvector32Term) -> Option<Variable> {
     match term {
         Bitvector32Term::Variable(variable) => Some(*variable),
         _ => None,
     }
 }
 
-fn signed_bitvector_constant(term: &Bitvector32Term) -> Option<i64> {
+pub(super) fn signed_bitvector_constant(term: &Bitvector32Term) -> Option<i64> {
     term.as_const().map(|value| i64::from(value as i32))
 }
 
-fn signed_u32_constant(value: u32) -> Option<i64> {
+pub(super) fn signed_u32_constant(value: u32) -> Option<i64> {
     i32::try_from(value).ok().map(i64::from)
 }
 
-fn bitvector_variable_and_constant(
+pub(super) fn bitvector_variable_and_constant(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
 ) -> Option<(Variable, i64)> {
@@ -464,7 +478,7 @@ fn bitvector_variable_and_constant(
         .or_else(|| bitvector_variable(right).zip(signed_bitvector_constant(left)))
 }
 
-fn bitvector_equality_after_additive_cancellation(
+pub(super) fn bitvector_equality_after_additive_cancellation(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
 ) -> Option<(Bitvector32Term, Bitvector32Term)> {
@@ -510,15 +524,15 @@ fn bitvector_equality_after_additive_cancellation(
 }
 
 #[derive(Clone, Debug)]
-struct CountFoldParts {
-    start: Bitvector32Term,
-    end: Bitvector32Term,
-    accumulator: Variable,
-    item: Variable,
-    contribution: Bitvector32Term,
+pub(super) struct CountFoldParts {
+    pub(super) start: Bitvector32Term,
+    pub(super) end: Bitvector32Term,
+    pub(super) accumulator: Variable,
+    pub(super) item: Variable,
+    pub(super) contribution: Bitvector32Term,
 }
 
-fn collect_bitvector_add_terms(
+pub(super) fn collect_bitvector_add_terms(
     term: &Bitvector32Term,
     terms: &mut Vec<Bitvector32Term>,
     constant: &mut u32,
@@ -535,7 +549,7 @@ fn collect_bitvector_add_terms(
     }
 }
 
-fn count_fold_parts(term: &Bitvector32Term) -> Option<CountFoldParts> {
+pub(super) fn count_fold_parts(term: &Bitvector32Term) -> Option<CountFoldParts> {
     let Bitvector32Term::RangeFold {
         start,
         end,
@@ -575,7 +589,7 @@ fn count_fold_parts(term: &Bitvector32Term) -> Option<CountFoldParts> {
     })
 }
 
-fn count_fold_split_matches(
+pub(super) fn count_fold_split_matches(
     whole: &Bitvector32Term,
     split: &Bitvector32Term,
     assumptions: &Assumptions,
@@ -591,7 +605,7 @@ fn count_fold_split_matches(
         || count_fold_split_parts_match(&whole, right.as_ref(), left.as_ref(), assumptions)
 }
 
-fn count_fold_split_parts_match(
+pub(super) fn count_fold_split_parts_match(
     whole: &CountFoldParts,
     first: &Bitvector32Term,
     second: &Bitvector32Term,
@@ -625,7 +639,7 @@ fn count_fold_split_parts_match(
         )) == Some(true)
 }
 
-fn bitvector_same_base_nonzero_const_offset(
+pub(super) fn bitvector_same_base_nonzero_const_offset(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
 ) -> bool {
@@ -645,7 +659,7 @@ fn bitvector_same_base_nonzero_const_offset(
     false
 }
 
-fn collect_proposition_bitvector_variables(
+pub(super) fn collect_proposition_bitvector_variables(
     proposition: &Proposition,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -797,7 +811,7 @@ fn collect_proposition_bitvector_variables(
     }
 }
 
-fn collect_term_bitvector_variables(term: &Term, variables: &mut BTreeSet<Variable>) {
+pub(super) fn collect_term_bitvector_variables(term: &Term, variables: &mut BTreeSet<Variable>) {
     match term {
         Term::Condition(condition) => collect_condition_bitvector_variables(condition, variables),
         Term::Bitvector32(bits) => collect_bitvector_variables(bits, variables),
@@ -819,7 +833,7 @@ fn collect_term_bitvector_variables(term: &Term, variables: &mut BTreeSet<Variab
     }
 }
 
-fn collect_c_expression_bitvector_variables(
+pub(super) fn collect_c_expression_bitvector_variables(
     expression: &CExpression,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -846,7 +860,7 @@ fn collect_c_expression_bitvector_variables(
     }
 }
 
-fn collect_c_statement_bitvector_variables(
+pub(super) fn collect_c_statement_bitvector_variables(
     statement: &CStatement,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -904,7 +918,7 @@ fn collect_c_statement_bitvector_variables(
     }
 }
 
-fn collect_spec_memory_bitvector_variables(
+pub(super) fn collect_spec_memory_bitvector_variables(
     memory: &SpecMemory,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -914,7 +928,7 @@ fn collect_spec_memory_bitvector_variables(
     }
 }
 
-fn collect_spec_expression_bitvector_variables(
+pub(super) fn collect_spec_expression_bitvector_variables(
     expression: &SpecExpression,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -974,7 +988,7 @@ fn collect_spec_expression_bitvector_variables(
     }
 }
 
-fn collect_spec_proposition_bitvector_variables(
+pub(super) fn collect_spec_proposition_bitvector_variables(
     proposition: &SpecProposition,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -1004,7 +1018,7 @@ fn collect_spec_proposition_bitvector_variables(
     }
 }
 
-fn collect_loop_effect_bitvector_variables(
+pub(super) fn collect_loop_effect_bitvector_variables(
     effect: &CLoopEffect,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -1020,7 +1034,7 @@ fn collect_loop_effect_bitvector_variables(
     }
 }
 
-fn collect_c_expression_outcome_bitvector_variables(
+pub(super) fn collect_c_expression_outcome_bitvector_variables(
     outcome: &CExpressionOutcome,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -1029,7 +1043,7 @@ fn collect_c_expression_outcome_bitvector_variables(
     }
 }
 
-fn collect_c_statement_outcome_bitvector_variables(
+pub(super) fn collect_c_statement_outcome_bitvector_variables(
     outcome: &CStatementOutcome,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -1043,7 +1057,7 @@ fn collect_c_statement_outcome_bitvector_variables(
     }
 }
 
-fn collect_c_function_outcome_bitvector_variables(
+pub(super) fn collect_c_function_outcome_bitvector_variables(
     outcome: &CFunctionOutcome,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -1056,7 +1070,10 @@ fn collect_c_function_outcome_bitvector_variables(
     }
 }
 
-fn collect_c_state_bitvector_variables(state: &CState, variables: &mut BTreeSet<Variable>) {
+pub(super) fn collect_c_state_bitvector_variables(
+    state: &CState,
+    variables: &mut BTreeSet<Variable>,
+) {
     for binding in state.locals.bindings.values() {
         match binding {
             CLocalBinding::Object { value, .. } => {
@@ -1068,14 +1085,14 @@ fn collect_c_state_bitvector_variables(state: &CState, variables: &mut BTreeSet<
     collect_memory_bitvector_variables(&state.memory, variables);
 }
 
-fn collect_c_function_bitvector_variables(
+pub(super) fn collect_c_function_bitvector_variables(
     function: &CFunction,
     variables: &mut BTreeSet<Variable>,
 ) {
     collect_c_statement_bitvector_variables(function.body(), variables);
 }
 
-fn collect_c_function_specification_bitvector_variables(
+pub(super) fn collect_c_function_specification_bitvector_variables(
     specification: &CFunctionSpecification,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -1089,7 +1106,7 @@ fn collect_c_function_specification_bitvector_variables(
     collect_c_function_outcome_bitvector_variables(specification.outcome(), variables);
 }
 
-fn collect_c_memory_range_bitvector_variables(
+pub(super) fn collect_c_memory_range_bitvector_variables(
     range: &CMemoryRange,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -1098,7 +1115,7 @@ fn collect_c_memory_range_bitvector_variables(
     collect_bitvector_variables(&range.end, variables);
 }
 
-fn collect_condition_bitvector_variables(
+pub(super) fn collect_condition_bitvector_variables(
     condition: &ConditionTerm,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -1121,7 +1138,10 @@ fn collect_condition_bitvector_variables(
     }
 }
 
-fn collect_bitvector_variables(term: &Bitvector32Term, variables: &mut BTreeSet<Variable>) {
+pub(super) fn collect_bitvector_variables(
+    term: &Bitvector32Term,
+    variables: &mut BTreeSet<Variable>,
+) {
     match term {
         Bitvector32Term::Constant(_) => {}
         Bitvector32Term::Variable(variable) => {
@@ -1164,7 +1184,7 @@ fn collect_bitvector_variables(term: &Bitvector32Term, variables: &mut BTreeSet<
     }
 }
 
-fn collect_pointer_offset_bitvector_variables(
+pub(super) fn collect_pointer_offset_bitvector_variables(
     offset: &PointerOffsetTerm,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -1180,25 +1200,34 @@ fn collect_pointer_offset_bitvector_variables(
     }
 }
 
-fn collect_pointer_bitvector_variables(pointer: &Pointer, variables: &mut BTreeSet<Variable>) {
+pub(super) fn collect_pointer_bitvector_variables(
+    pointer: &Pointer,
+    variables: &mut BTreeSet<Variable>,
+) {
     collect_pointer_offset_bitvector_variables(&pointer.offset, variables);
 }
 
-fn collect_memory_bitvector_variables(memory: &CMemory, variables: &mut BTreeSet<Variable>) {
+pub(super) fn collect_memory_bitvector_variables(
+    memory: &CMemory,
+    variables: &mut BTreeSet<Variable>,
+) {
     for (pointer, value) in &memory.cells {
         collect_pointer_bitvector_variables(pointer, variables);
         collect_c_value_bitvector_variables(value, variables);
     }
 }
 
-fn collect_c_value_bitvector_variables(value: &CValue, variables: &mut BTreeSet<Variable>) {
+pub(super) fn collect_c_value_bitvector_variables(
+    value: &CValue,
+    variables: &mut BTreeSet<Variable>,
+) {
     match value {
         CValue::Int32(bits) | CValue::UInt8(bits) => collect_bitvector_variables(bits, variables),
         CValue::Pointer(pointer) => collect_pointer_bitvector_variables(pointer, variables),
     }
 }
 
-fn substitute_bitvector_variable_in_proposition(
+pub(super) fn substitute_bitvector_variable_in_proposition(
     proposition: &Proposition,
     from: Variable,
     to: &Bitvector32Term,
@@ -1396,7 +1425,7 @@ fn substitute_bitvector_variable_in_proposition(
     }
 }
 
-fn substitute_bitvector_variable_in_term(
+pub(super) fn substitute_bitvector_variable_in_term(
     term: &Term,
     from: Variable,
     to: &Bitvector32Term,
@@ -1430,7 +1459,7 @@ fn substitute_bitvector_variable_in_term(
     }
 }
 
-fn substitute_bitvector_variable_in_c_expression(
+pub(super) fn substitute_bitvector_variable_in_c_expression(
     expression: &CExpression,
     from: Variable,
     to: &Bitvector32Term,
@@ -1540,7 +1569,7 @@ fn substitute_bitvector_variable_in_c_expression(
     }
 }
 
-fn substitute_bitvector_variable_in_c_statement(
+pub(super) fn substitute_bitvector_variable_in_c_statement(
     statement: &CStatement,
     from: Variable,
     to: &Bitvector32Term,
@@ -1641,7 +1670,7 @@ fn substitute_bitvector_variable_in_c_statement(
     }
 }
 
-fn substitute_bitvector_variable_in_spec_memory(
+pub(super) fn substitute_bitvector_variable_in_spec_memory(
     memory: &SpecMemory,
     from: Variable,
     to: &Bitvector32Term,
@@ -1654,7 +1683,7 @@ fn substitute_bitvector_variable_in_spec_memory(
     }
 }
 
-fn substitute_bitvector_variable_in_spec_expression(
+pub(super) fn substitute_bitvector_variable_in_spec_expression(
     expression: &SpecExpression,
     from: Variable,
     to: &Bitvector32Term,
@@ -1760,7 +1789,7 @@ fn substitute_bitvector_variable_in_spec_expression(
     }
 }
 
-fn substitute_bitvector_variable_in_spec_proposition(
+pub(super) fn substitute_bitvector_variable_in_spec_proposition(
     proposition: &SpecProposition,
     from: Variable,
     to: &Bitvector32Term,
@@ -1826,7 +1855,7 @@ fn substitute_bitvector_variable_in_spec_proposition(
     }
 }
 
-fn substitute_bitvector_variable_in_loop_effect(
+pub(super) fn substitute_bitvector_variable_in_loop_effect(
     effect: &CLoopEffect,
     from: Variable,
     to: &Bitvector32Term,
@@ -1846,7 +1875,7 @@ fn substitute_bitvector_variable_in_loop_effect(
     }
 }
 
-fn substitute_bitvector_variable_in_c_expression_outcome(
+pub(super) fn substitute_bitvector_variable_in_c_expression_outcome(
     outcome: &CExpressionOutcome,
     from: Variable,
     to: &Bitvector32Term,
@@ -1862,7 +1891,7 @@ fn substitute_bitvector_variable_in_c_expression_outcome(
     }
 }
 
-fn substitute_bitvector_variable_in_c_statement_outcome(
+pub(super) fn substitute_bitvector_variable_in_c_statement_outcome(
     outcome: &CStatementOutcome,
     from: Variable,
     to: &Bitvector32Term,
@@ -1882,7 +1911,7 @@ fn substitute_bitvector_variable_in_c_statement_outcome(
     }
 }
 
-fn substitute_bitvector_variable_in_c_function_outcome(
+pub(super) fn substitute_bitvector_variable_in_c_function_outcome(
     outcome: &CFunctionOutcome,
     from: Variable,
     to: &Bitvector32Term,
@@ -1899,7 +1928,7 @@ fn substitute_bitvector_variable_in_c_function_outcome(
     }
 }
 
-fn substitute_bitvector_variable_in_c_state(
+pub(super) fn substitute_bitvector_variable_in_c_state(
     state: &CState,
     from: Variable,
     to: &Bitvector32Term,
@@ -1931,7 +1960,7 @@ fn substitute_bitvector_variable_in_c_state(
     }
 }
 
-fn substitute_bitvector_variable_in_c_function(
+pub(super) fn substitute_bitvector_variable_in_c_function(
     function: &CFunction,
     from: Variable,
     to: &Bitvector32Term,
@@ -1944,7 +1973,7 @@ fn substitute_bitvector_variable_in_c_function(
     }
 }
 
-fn substitute_bitvector_variable_in_c_function_specification(
+pub(super) fn substitute_bitvector_variable_in_c_function_specification(
     specification: &CFunctionSpecification,
     from: Variable,
     to: &Bitvector32Term,
@@ -1969,7 +1998,7 @@ fn substitute_bitvector_variable_in_c_function_specification(
     }
 }
 
-fn substitute_bitvector_variable_in_c_memory_range(
+pub(super) fn substitute_bitvector_variable_in_c_memory_range(
     range: &CMemoryRange,
     from: Variable,
     to: &Bitvector32Term,
@@ -1981,7 +2010,7 @@ fn substitute_bitvector_variable_in_c_memory_range(
     }
 }
 
-fn substitute_bitvector_variable_in_condition(
+pub(super) fn substitute_bitvector_variable_in_condition(
     condition: &ConditionTerm,
     from: Variable,
     to: &Bitvector32Term,
@@ -2032,7 +2061,7 @@ fn substitute_bitvector_variable_in_condition(
     }
 }
 
-fn substitute_bitvector_variable(
+pub(super) fn substitute_bitvector_variable(
     term: &Bitvector32Term,
     from: Variable,
     to: &Bitvector32Term,
@@ -2091,7 +2120,7 @@ fn substitute_bitvector_variable(
     }
 }
 
-fn substitute_bitvector_variable_in_pointer_offset(
+pub(super) fn substitute_bitvector_variable_in_pointer_offset(
     offset: &PointerOffsetTerm,
     from: Variable,
     to: &Bitvector32Term,
@@ -2110,7 +2139,7 @@ fn substitute_bitvector_variable_in_pointer_offset(
     }
 }
 
-fn substitute_bitvector_variable_in_pointer(
+pub(super) fn substitute_bitvector_variable_in_pointer(
     pointer: &Pointer,
     from: Variable,
     to: &Bitvector32Term,
@@ -2121,7 +2150,7 @@ fn substitute_bitvector_variable_in_pointer(
     }
 }
 
-fn substitute_bitvector_variable_in_memory(
+pub(super) fn substitute_bitvector_variable_in_memory(
     memory: &CMemory,
     from: Variable,
     to: &Bitvector32Term,
@@ -2142,7 +2171,7 @@ fn substitute_bitvector_variable_in_memory(
     }
 }
 
-fn substitute_bitvector_variable_in_c_value(
+pub(super) fn substitute_bitvector_variable_in_c_value(
     value: &CValue,
     from: Variable,
     to: &Bitvector32Term,
@@ -2156,7 +2185,7 @@ fn substitute_bitvector_variable_in_c_value(
     }
 }
 
-fn memory_range_still_available(
+pub(super) fn memory_range_still_available(
     range_memory: &CMemory,
     current_memory: &CMemory,
     base: &Pointer,
@@ -2165,7 +2194,7 @@ fn memory_range_still_available(
         || range_memory.has_block(&base.block) == current_memory.has_block(&base.block)
 }
 
-fn forall_int32(var: Variable, body: Proposition) -> Proposition {
+pub(super) fn forall_int32(var: Variable, body: Proposition) -> Proposition {
     Proposition::ForAll {
         var,
         sort: Sort::CInt32,
@@ -2173,7 +2202,7 @@ fn forall_int32(var: Variable, body: Proposition) -> Proposition {
     }
 }
 
-fn wrap_proof_facts(
+pub(super) fn wrap_proof_facts(
     proposition: Proposition,
     assumptions: &Assumptions,
     facts: &[PathFact],
@@ -2215,7 +2244,7 @@ fn wrap_proof_facts(
         })
 }
 
-fn wrap_path_context(
+pub(super) fn wrap_path_context(
     proposition: Proposition,
     facts: &[PathFact],
     obligations: &[ProofObligation],
@@ -2233,7 +2262,7 @@ fn wrap_path_context(
     })
 }
 
-fn public_path_facts(facts: &[PathFact]) -> Vec<PathFact> {
+pub(super) fn public_path_facts(facts: &[PathFact]) -> Vec<PathFact> {
     facts
         .iter()
         .filter(|fact| fact.is_public())
@@ -2241,7 +2270,7 @@ fn public_path_facts(facts: &[PathFact]) -> Vec<PathFact> {
         .collect()
 }
 
-fn solve_builtin_prop(proposition: &Proposition) -> bool {
+pub(super) fn solve_builtin_prop(proposition: &Proposition) -> bool {
     match proposition {
         Proposition::Equal(left, right) => left == right,
         Proposition::ConditionIs(ConditionTerm::Constant(actual), expected) => actual == expected,
@@ -2289,7 +2318,7 @@ fn solve_builtin_prop(proposition: &Proposition) -> bool {
     }
 }
 
-fn memory_ranges_disjoint_builtin(
+pub(super) fn memory_ranges_disjoint_builtin(
     left_base: &Pointer,
     left_start: &Bitvector32Term,
     left_end: &Bitvector32Term,
@@ -2335,7 +2364,9 @@ fn memory_ranges_disjoint_builtin(
     left_end <= right_start || right_end <= left_start
 }
 
-fn int32_element_index_from_offset(offset: &PointerOffsetTerm) -> Option<Bitvector32Term> {
+pub(super) fn int32_element_index_from_offset(
+    offset: &PointerOffsetTerm,
+) -> Option<Bitvector32Term> {
     match offset {
         PointerOffsetTerm::Add(left, right) if left.as_ref() == &PointerOffsetTerm::Constant(0) => {
             int32_element_index_from_offset(right)
@@ -2362,7 +2393,10 @@ fn int32_element_index_from_offset(offset: &PointerOffsetTerm) -> Option<Bitvect
     }
 }
 
-fn pointer_byte_offset_from_base(pointer: &Pointer, base: &Pointer) -> Option<Bitvector32Term> {
+pub(super) fn pointer_byte_offset_from_base(
+    pointer: &Pointer,
+    base: &Pointer,
+) -> Option<Bitvector32Term> {
     if pointer.block != base.block {
         return None;
     }
@@ -2387,7 +2421,9 @@ fn pointer_byte_offset_from_base(pointer: &Pointer, base: &Pointer) -> Option<Bi
     }
 }
 
-fn byte_offset_from_pointer_offset(offset: &PointerOffsetTerm) -> Option<Bitvector32Term> {
+pub(super) fn byte_offset_from_pointer_offset(
+    offset: &PointerOffsetTerm,
+) -> Option<Bitvector32Term> {
     match offset {
         PointerOffsetTerm::Constant(offset) => (i32::MIN as i64..=i32::MAX as i64)
             .contains(offset)
@@ -2411,7 +2447,7 @@ fn byte_offset_from_pointer_offset(offset: &PointerOffsetTerm) -> Option<Bitvect
     }
 }
 
-fn int32_element_count_from_bytes(bytes: &Bitvector32Term) -> Option<Bitvector32Term> {
+pub(super) fn int32_element_count_from_bytes(bytes: &Bitvector32Term) -> Option<Bitvector32Term> {
     match bytes {
         Bitvector32Term::Multiply(left, right)
             if right.as_ref() == &Bitvector32Term::Constant(4) =>
@@ -2430,13 +2466,13 @@ fn int32_element_count_from_bytes(bytes: &Bitvector32Term) -> Option<Bitvector32
     }
 }
 
-fn signed_const_add(term: &Bitvector32Term, addend: u32) -> Option<Bitvector32Term> {
+pub(super) fn signed_const_add(term: &Bitvector32Term, addend: u32) -> Option<Bitvector32Term> {
     let addend = i32::try_from(addend).ok()?;
     let sum = (term.as_const()? as i32).checked_add(addend)?;
     Some(Bitvector32Term::Constant(sum as u32))
 }
 
-fn add_path_fact(
+pub(super) fn add_path_fact(
     facts: &mut Vec<PathFact>,
     assumptions: &Assumptions,
     proposition: Proposition,
@@ -2444,7 +2480,7 @@ fn add_path_fact(
     add_path_fact_with_visibility(facts, assumptions, proposition, true)
 }
 
-fn add_internal_path_fact(
+pub(super) fn add_internal_path_fact(
     facts: &mut Vec<PathFact>,
     assumptions: &Assumptions,
     proposition: Proposition,
@@ -2452,7 +2488,7 @@ fn add_internal_path_fact(
     add_path_fact_with_visibility(facts, assumptions, proposition, false)
 }
 
-fn add_path_fact_with_visibility(
+pub(super) fn add_path_fact_with_visibility(
     facts: &mut Vec<PathFact>,
     assumptions: &Assumptions,
     proposition: Proposition,
@@ -2475,7 +2511,7 @@ fn add_path_fact_with_visibility(
     Some(())
 }
 
-fn add_condition_path_fact(
+pub(super) fn add_condition_path_fact(
     facts: &mut Vec<PathFact>,
     assumptions: &Assumptions,
     condition: ConditionTerm,
@@ -2504,7 +2540,7 @@ fn add_condition_path_fact(
     Some(())
 }
 
-fn add_pointer_offset_equality_path_facts(
+pub(super) fn add_pointer_offset_equality_path_facts(
     facts: &mut Vec<PathFact>,
     assumptions: &Assumptions,
     left: PointerOffsetTerm,
@@ -2533,7 +2569,7 @@ fn add_pointer_offset_equality_path_facts(
     Some(())
 }
 
-fn add_proof_obligation(
+pub(super) fn add_proof_obligation(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &Assumptions,
     proposition: Proposition,
@@ -2541,7 +2577,7 @@ fn add_proof_obligation(
     add_proof_obligation_with_context(obligations, assumptions, proposition, None)
 }
 
-fn add_proof_obligation_with_context(
+pub(super) fn add_proof_obligation_with_context(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &Assumptions,
     proposition: Proposition,
@@ -2567,7 +2603,7 @@ fn add_proof_obligation_with_context(
     Some(())
 }
 
-fn add_required_proof_obligation_with_context(
+pub(super) fn add_required_proof_obligation_with_context(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &Assumptions,
     proposition: Proposition,
@@ -2588,7 +2624,7 @@ fn add_required_proof_obligation_with_context(
     });
 }
 
-fn append_required_proof_obligations(
+pub(super) fn append_required_proof_obligations(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &Assumptions,
     new_obligations: &[ProofObligation],
@@ -2603,7 +2639,7 @@ fn append_required_proof_obligations(
     }
 }
 
-fn append_required_proof_obligations_under_path_context(
+pub(super) fn append_required_proof_obligations_under_path_context(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &Assumptions,
     new_obligations: &[ProofObligation],
@@ -2620,7 +2656,7 @@ fn append_required_proof_obligations_under_path_context(
     }
 }
 
-fn add_condition_obligation(
+pub(super) fn add_condition_obligation(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &Assumptions,
     condition: ConditionTerm,
@@ -2654,7 +2690,7 @@ fn add_condition_obligation(
     Some(())
 }
 
-fn merge_obligations(
+pub(super) fn merge_obligations(
     left: &[ProofObligation],
     right: &[ProofObligation],
     assumptions: &Assumptions,
@@ -2680,7 +2716,7 @@ fn merge_obligations(
     Some(obligations)
 }
 
-fn merge_facts(
+pub(super) fn merge_facts(
     left: &[PathFact],
     right: &[PathFact],
     assumptions: &Assumptions,
@@ -2697,7 +2733,7 @@ fn merge_facts(
     Some(facts)
 }
 
-fn merge_path_facts_and_obligations(
+pub(super) fn merge_path_facts_and_obligations(
     left_facts: &[PathFact],
     left_obligations: &[ProofObligation],
     right_facts: &[PathFact],
@@ -2709,7 +2745,7 @@ fn merge_path_facts_and_obligations(
     Some((facts, obligations))
 }
 
-fn decide_with_facts(
+pub(super) fn decide_with_facts(
     assumptions: &Assumptions,
     facts: &[PathFact],
     condition: &ConditionTerm,
@@ -2726,7 +2762,7 @@ fn decide_with_facts(
     })
 }
 
-fn assumptions_with_path_context(
+pub(super) fn assumptions_with_path_context(
     assumptions: &Assumptions,
     facts: &[PathFact],
     obligations: &[ProofObligation],
@@ -2743,7 +2779,7 @@ fn assumptions_with_path_context(
     assumptions
 }
 
-fn assumptions_with_propositions(
+pub(super) fn assumptions_with_propositions(
     assumptions: &Assumptions,
     propositions: &[Proposition],
 ) -> Assumptions {

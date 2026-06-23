@@ -1,4 +1,6 @@
-fn execute_c_function_paths(
+use super::prelude::*;
+
+pub(super) fn execute_c_function_paths(
     caller_state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
@@ -75,7 +77,7 @@ fn execute_c_function_paths(
     Ok(paths)
 }
 
-fn execute_c_function_verification_paths(
+pub(super) fn execute_c_function_verification_paths(
     caller_state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
@@ -154,7 +156,7 @@ fn execute_c_function_verification_paths(
     Ok(paths)
 }
 
-fn add_memory_store_obligation(
+pub(super) fn add_memory_store_obligation(
     memory: &CMemory,
     pointer: &Pointer,
     value: &CValue,
@@ -177,7 +179,7 @@ fn add_memory_store_obligation(
     Some(obligations)
 }
 
-fn evaluate_c_arguments_paths(
+pub(super) fn evaluate_c_arguments_paths(
     state: &CState,
     arguments: &[CExpression],
     assumptions: &Assumptions,
@@ -249,7 +251,7 @@ fn evaluate_c_arguments_paths(
     Ok(paths)
 }
 
-fn bind_c_function_arguments(
+pub(super) fn bind_c_function_arguments(
     caller_state: &CState,
     function: &CFunction,
     values: &[CValue],
@@ -268,7 +270,7 @@ fn bind_c_function_arguments(
     Some(callee_state)
 }
 
-fn function_outcome_from_body(
+pub(super) fn function_outcome_from_body(
     caller_state: &CState,
     function: &CFunction,
     outcome: CStatementOutcome,

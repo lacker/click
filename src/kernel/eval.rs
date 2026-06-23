@@ -1,4 +1,6 @@
-fn evaluate_c_expression(
+use super::prelude::*;
+
+pub(super) fn evaluate_c_expression(
     state: &CState,
     expression: &CExpression,
     assumptions: &Assumptions,
@@ -13,7 +15,7 @@ fn evaluate_c_expression(
     Some(path.outcome)
 }
 
-fn evaluate_c_expression_paths(
+pub(super) fn evaluate_c_expression_paths(
     state: &CState,
     expression: &CExpression,
     assumptions: &Assumptions,
@@ -140,7 +142,7 @@ fn evaluate_c_expression_paths(
     Ok(paths)
 }
 
-fn evaluate_c_lvalue_paths(
+pub(super) fn evaluate_c_lvalue_paths(
     state: &CState,
     expression: &CExpression,
     assumptions: &Assumptions,
@@ -232,7 +234,7 @@ fn evaluate_c_lvalue_paths(
     Ok(paths)
 }
 
-fn read_c_lvalue_expression_paths(
+pub(super) fn read_c_lvalue_expression_paths(
     state: &CState,
     expression: &CExpression,
     assumptions: &Assumptions,
@@ -252,7 +254,7 @@ fn read_c_lvalue_expression_paths(
     Ok(paths)
 }
 
-fn read_c_lvalue_paths(
+pub(super) fn read_c_lvalue_paths(
     state: &CState,
     outcome: CLValueOutcome,
     facts: Vec<PathFact>,
@@ -296,7 +298,7 @@ fn read_c_lvalue_paths(
     }
 }
 
-fn address_of_lvalue_paths(
+pub(super) fn address_of_lvalue_paths(
     state: &CState,
     target: &CExpression,
     assumptions: &Assumptions,
@@ -335,7 +337,7 @@ fn address_of_lvalue_paths(
     Ok(paths)
 }
 
-fn c_expression_pointee_type(state: &CState, expression: &CExpression) -> Option<CType> {
+pub(super) fn c_expression_pointee_type(state: &CState, expression: &CExpression) -> Option<CType> {
     match expression {
         CExpression::Variable(name) => match state.locals.binding(name) {
             Some(CLocalBinding::Object { c_type, .. }) => c_type.pointee_type(),
@@ -350,7 +352,7 @@ fn c_expression_pointee_type(state: &CState, expression: &CExpression) -> Option
     }
 }
 
-fn c_expression_lvalue_type(state: &CState, expression: &CExpression) -> Option<CType> {
+pub(super) fn c_expression_lvalue_type(state: &CState, expression: &CExpression) -> Option<CType> {
     match expression {
         CExpression::Variable(name) => state.locals.object_type(name),
         CExpression::Load(pointer) => c_expression_pointee_type(state, pointer),
@@ -359,11 +361,14 @@ fn c_expression_lvalue_type(state: &CState, expression: &CExpression) -> Option<
     }
 }
 
-fn c_expression_pointer_step_width(state: &CState, expression: &CExpression) -> Option<u32> {
+pub(super) fn c_expression_pointer_step_width(
+    state: &CState,
+    expression: &CExpression,
+) -> Option<u32> {
     c_expression_pointee_type(state, expression).map(CType::byte_width)
 }
 
-fn condition_as_c_int32_paths(
+pub(super) fn condition_as_c_int32_paths(
     condition: ConditionTerm,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
@@ -405,7 +410,7 @@ fn condition_as_c_int32_paths(
     }
 }
 
-fn condition_as_c_int32_not_paths(
+pub(super) fn condition_as_c_int32_not_paths(
     condition: ConditionTerm,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
@@ -448,13 +453,13 @@ fn condition_as_c_int32_not_paths(
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct CTruthinessPath {
-    is_true: bool,
-    facts: Vec<PathFact>,
-    obligations: Vec<ProofObligation>,
+pub(super) struct CTruthinessPath {
+    pub(super) is_true: bool,
+    pub(super) facts: Vec<PathFact>,
+    pub(super) obligations: Vec<ProofObligation>,
 }
 
-fn c_truthiness_paths(
+pub(super) fn c_truthiness_paths(
     value: CValue,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
@@ -513,7 +518,7 @@ fn c_truthiness_paths(
     }
 }
 
-fn c_truthiness_as_c_int32_paths(
+pub(super) fn c_truthiness_as_c_int32_paths(
     value: CValue,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
@@ -529,7 +534,7 @@ fn c_truthiness_as_c_int32_paths(
         .collect()
 }
 
-fn evaluate_c_memory_load_paths(
+pub(super) fn evaluate_c_memory_load_paths(
     memory: &CMemory,
     pointer: Pointer,
     value_type: CType,
@@ -642,7 +647,11 @@ fn evaluate_c_memory_load_paths(
     }]
 }
 
-fn symbolic_load_value(memory: &CMemory, pointer: &Pointer, value_type: CType) -> Option<CValue> {
+pub(super) fn symbolic_load_value(
+    memory: &CMemory,
+    pointer: &Pointer,
+    value_type: CType,
+) -> Option<CValue> {
     match value_type {
         CType::Int32 => Some(memory.symbolic_int32_load(pointer)),
         CType::UInt8 => Some(memory.symbolic_uint8_load(pointer)),
@@ -652,7 +661,7 @@ fn symbolic_load_value(memory: &CMemory, pointer: &Pointer, value_type: CType) -
     }
 }
 
-fn evaluate_c_add_paths(
+pub(super) fn evaluate_c_add_paths(
     state: &CState,
     left: &CExpression,
     right: &CExpression,
@@ -738,7 +747,7 @@ fn evaluate_c_add_paths(
     Ok(paths)
 }
 
-fn apply_c_add(
+pub(super) fn apply_c_add(
     left: CValue,
     right: CValue,
     left_step_width: Option<u32>,
@@ -779,7 +788,7 @@ fn apply_c_add(
     }
 }
 
-fn apply_c_int32_add(
+pub(super) fn apply_c_int32_add(
     left: Bitvector32Term,
     right: Bitvector32Term,
     facts: Vec<PathFact>,
@@ -825,7 +834,7 @@ fn apply_c_int32_add(
     }
 }
 
-fn apply_c_int32_subtract(
+pub(super) fn apply_c_int32_subtract(
     left: Bitvector32Term,
     right: Bitvector32Term,
     facts: Vec<PathFact>,
@@ -873,7 +882,7 @@ fn apply_c_int32_subtract(
     }
 }
 
-fn evaluate_c_equal_paths(
+pub(super) fn evaluate_c_equal_paths(
     state: &CState,
     left: &CExpression,
     right: &CExpression,
@@ -951,7 +960,7 @@ fn evaluate_c_equal_paths(
     Ok(paths)
 }
 
-fn apply_c_equal(
+pub(super) fn apply_c_equal(
     left: CValue,
     right: CValue,
     facts: Vec<PathFact>,
@@ -996,7 +1005,7 @@ fn apply_c_equal(
     }
 }
 
-fn evaluate_c_not_equal_paths(
+pub(super) fn evaluate_c_not_equal_paths(
     state: &CState,
     left: &CExpression,
     right: &CExpression,
@@ -1074,7 +1083,7 @@ fn evaluate_c_not_equal_paths(
     Ok(paths)
 }
 
-fn apply_c_not_equal(
+pub(super) fn apply_c_not_equal(
     left: CValue,
     right: CValue,
     facts: Vec<PathFact>,
@@ -1119,7 +1128,7 @@ fn apply_c_not_equal(
     }
 }
 
-fn evaluate_c_not_paths(
+pub(super) fn evaluate_c_not_paths(
     state: &CState,
     expression: &CExpression,
     assumptions: &Assumptions,
@@ -1162,7 +1171,7 @@ fn evaluate_c_not_paths(
     Ok(paths)
 }
 
-fn evaluate_c_logical_and_paths(
+pub(super) fn evaluate_c_logical_and_paths(
     state: &CState,
     left: &CExpression,
     right: &CExpression,
@@ -1253,7 +1262,7 @@ fn evaluate_c_logical_and_paths(
     Ok(paths)
 }
 
-fn evaluate_c_logical_or_paths(
+pub(super) fn evaluate_c_logical_or_paths(
     state: &CState,
     left: &CExpression,
     right: &CExpression,
@@ -1344,7 +1353,7 @@ fn evaluate_c_logical_or_paths(
     Ok(paths)
 }
 
-fn pointer_equality_condition(left: Pointer, right: Pointer) -> ConditionTerm {
+pub(super) fn pointer_equality_condition(left: Pointer, right: Pointer) -> ConditionTerm {
     if left.block != right.block {
         ConditionTerm::Constant(false)
     } else {
@@ -1352,7 +1361,7 @@ fn pointer_equality_condition(left: Pointer, right: Pointer) -> ConditionTerm {
     }
 }
 
-fn pointer_is_null_condition(pointer: Pointer) -> ConditionTerm {
+pub(super) fn pointer_is_null_condition(pointer: Pointer) -> ConditionTerm {
     pointer_equality_condition(
         pointer,
         Pointer {
@@ -1362,7 +1371,7 @@ fn pointer_is_null_condition(pointer: Pointer) -> ConditionTerm {
     )
 }
 
-fn evaluate_c_int32_binary_paths(
+pub(super) fn evaluate_c_int32_binary_paths(
     state: &CState,
     left: &CExpression,
     right: &CExpression,
@@ -1453,7 +1462,7 @@ fn evaluate_c_int32_binary_paths(
     Ok(paths)
 }
 
-fn execute_c_statement(
+pub(super) fn execute_c_statement(
     state: &CState,
     statement: &CStatement,
     assumptions: &Assumptions,
@@ -1474,7 +1483,7 @@ fn execute_c_statement(
     Some(path.outcome)
 }
 
-fn execute_c_lvalue_assignment_paths(
+pub(super) fn execute_c_lvalue_assignment_paths(
     state: &CState,
     target: &CExpression,
     value: &CExpression,
@@ -1550,7 +1559,7 @@ fn execute_c_lvalue_assignment_paths(
     Ok(paths)
 }
 
-fn write_c_lvalue_paths(
+pub(super) fn write_c_lvalue_paths(
     state: &CState,
     lvalue: CLValue,
     value: CValue,
@@ -1621,14 +1630,14 @@ fn write_c_lvalue_paths(
     }
 }
 
-fn local_name_from_pointer(pointer: &Pointer) -> Option<&str> {
+pub(super) fn local_name_from_pointer(pointer: &Pointer) -> Option<&str> {
     if pointer.offset != PointerOffsetTerm::Constant(0) {
         return None;
     }
     pointer.block.strip_prefix("local:")
 }
 
-fn execute_c_statement_paths(
+pub(super) fn execute_c_statement_paths(
     state: &CState,
     statement: &CStatement,
     assumptions: &Assumptions,
@@ -1794,7 +1803,7 @@ fn execute_c_statement_paths(
     Ok(paths)
 }
 
-fn execute_c_assert_paths(
+pub(super) fn execute_c_assert_paths(
     state: &CState,
     condition: &CExpression,
     label: Option<&str>,
@@ -1842,7 +1851,10 @@ fn execute_c_assert_paths(
     Ok(paths)
 }
 
-fn assertion_truthiness_obligation(value: &CValue, label: Option<&str>) -> ProofObligation {
+pub(super) fn assertion_truthiness_obligation(
+    value: &CValue,
+    label: Option<&str>,
+) -> ProofObligation {
     let obligation = ProofObligation::verification_condition(Proposition::Equal(
         Term::CValue(value.clone()),
         Term::CValue(int32(1)),
@@ -1853,7 +1865,7 @@ fn assertion_truthiness_obligation(value: &CValue, label: Option<&str>) -> Proof
     }
 }
 
-fn execute_c_while_paths(
+pub(super) fn execute_c_while_paths(
     state: &CState,
     condition: &CExpression,
     invariant: &[Proposition],
@@ -1930,7 +1942,7 @@ fn execute_c_while_paths(
     Ok(paths)
 }
 
-fn execute_c_while_body_paths(
+pub(super) fn execute_c_while_body_paths(
     state: &CState,
     condition: &CExpression,
     invariant: &[Proposition],
@@ -1996,7 +2008,7 @@ fn execute_c_while_body_paths(
     Ok(paths)
 }
 
-fn declare_local(state: &CState, name: &str, c_type: CType) -> CState {
+pub(super) fn declare_local(state: &CState, name: &str, c_type: CType) -> CState {
     let mut state = state.clone();
     let (initial_value, byte_width) = match c_type {
         CType::Int32 => (int32(0), 4),
@@ -2045,7 +2057,7 @@ fn declare_local(state: &CState, name: &str, c_type: CType) -> CState {
     state
 }
 
-fn sync_stack_local(state: &mut CState, name: &str, value: &CValue) {
+pub(super) fn sync_stack_local(state: &mut CState, name: &str, value: &CValue) {
     let pointer = CMemory::local_pointer(name);
     if state.memory.has_block(&pointer.block) {
         state.memory = state.memory.clone().store(pointer, value.clone());

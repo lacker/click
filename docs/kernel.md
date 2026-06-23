@@ -13,10 +13,10 @@ Click specs.
 - `src/lang/click.rs`: Click parser, validation, lowering, tactics, and proof
   orchestration.
 
-`src/kernel/mod.rs` currently uses `include!` to keep the kernel as one logical
-Rust module split across several physical files. This is intentional for now:
-it avoids a broad visibility redesign while making the implementation easier to
-navigate.
+`src/kernel/mod.rs` defines real Rust submodules and re-exports the public
+surface from `api.rs` and `primitives.rs`. Cross-module implementation helpers
+stay kernel-private with `pub(super)`, and the private `prelude` module keeps
+shared imports local to the kernel.
 
 Kernel files:
 
