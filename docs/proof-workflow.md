@@ -49,8 +49,10 @@ Current proof steps:
 - `frame(loop N);`: prove the effect summary for loop `N` and expose it for
   later postcondition reasoning.
 - `unfold(name);`: unfold matching predicate facts and goals.
-- `choose(k from requirement N);`: open a direct existential precondition from
-  the zero-based requirement index `N`, introducing proof-local int32 value `k`.
+- `choose(k from requirement name);`: open a named direct existential
+  precondition, introducing proof-local int32 value `k`.
+- `choose(k from requirement N);`: the same operation by zero-based requirement
+  index. Prefer labels for durable scripts.
 - `witness(k = expression);`: prove the current existential goal by substituting
   the given int32 expression for binder `k`.
 - `simp();`: request deterministic simplification during close.
@@ -72,15 +74,16 @@ ensures found: (0..n).any(|k| { k == result }) by {
 ```
 
 `choose` is existential elimination for facts that are already assumed. The
-current source form is intentionally narrow: `requirement N` means the Nth
-written `requires` clause, and that source must lower directly to an existential
+current source forms are intentionally narrow: `requirement name` means a
+`requires name: ...;` label, while `requirement N` means the Nth written
+`requires` clause. The selected source must lower directly to an existential
 proposition.
 
 ```click
-requires exists (int32 k) { k == x };
+requires has_k: exists (int32 k) { k == x };
 ensures again: exists (int32 j) { j == x } by {
     symbolic_execute();
-    choose(k from requirement 0);
+    choose(k from requirement has_k);
     witness(j = k);
     simp();
     close();

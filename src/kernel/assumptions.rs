@@ -342,6 +342,7 @@ impl Assumptions {
                 let right = right.as_ref().clone();
                 if self.bitvector_add_terms_proven_equal(&left, &right)
                     || self.count_fold_split_terms_proven_equal(&left, &right)
+                    || self.range_fold_terms_alpha_equivalent(&left, &right)
                 {
                     return Some(true);
                 }
@@ -1555,6 +1556,7 @@ impl Assumptions {
             || self.bitvector_if_terms_proven_equal(left, right)
             || self.bitvector_add_terms_proven_equal(left, right)
             || self.count_fold_split_terms_proven_equal(left, right)
+            || self.range_fold_terms_alpha_equivalent(left, right)
             || self.memory_loads_proven_equal(left, right)
     }
 
@@ -1628,6 +1630,7 @@ impl Assumptions {
     ) -> bool {
         left == right
             || self.bitvector_if_terms_proven_equal(left, right)
+            || self.range_fold_terms_alpha_equivalent(left, right)
             || self.bitvector_terms_equal_from_facts(left, right)
             || self.memory_loads_proven_equal(left, right)
     }
@@ -1638,6 +1641,14 @@ impl Assumptions {
         right: &Bitvector32Term,
     ) -> bool {
         count_fold_split_matches(left, right, self) || count_fold_split_matches(right, left, self)
+    }
+
+    pub(super) fn range_fold_terms_alpha_equivalent(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        range_fold_terms_alpha_equivalent(left, right, self)
     }
 
     pub(super) fn proves_without_prop_facts(&self, proposition: &Proposition) -> bool {

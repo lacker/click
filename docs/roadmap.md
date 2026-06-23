@@ -142,8 +142,7 @@ more reusable specifications and more predictable proof scripts.
 Likely additions:
 
 - Broader existential proof scripts:
-  named fact sources for `choose`, choices from unfolded facts, and better
-  diagnostics for failed witnesses.
+  choices from unfolded facts and better diagnostics for failed witnesses.
 - More complete range combinators:
   `.all`, `.any`, `.fold`, `.map`-like derived definitions, and standard lemmas.
 - Lemma declarations:
@@ -266,16 +265,15 @@ Done means:
 
 Good next tasks from the current state:
 
-1. Add named proof facts or labels so `choose` can target facts without relying
-   on zero-based requirement indexes.
-2. Generalize fold/range lemmas beyond the current count-shaped rules.
-3. Add string/byte-slice stdlib predicates over `uint8[]`.
-4. Add C multiplication and simple bitwise operators with overflow/definedness
+1. Add more fold/range lemmas beyond alpha-equivalent folds and the current
+   count-shaped split rules.
+2. Add string/byte-slice stdlib predicates over `uint8[]`.
+3. Add C multiplication and simple bitwise operators with overflow/definedness
    tests.
-5. Add structs and field loads/stores in the smallest form needed by a pilot.
-6. Model a tiny heap API or externally specified `malloc`/`free`.
-7. Improve failure output for missing loop invariants and alias/frame facts.
-8. Create a `third_party/` or `examples/real/` pilot area with a frozen
+4. Add structs and field loads/stores in the smallest form needed by a pilot.
+5. Model a tiny heap API or externally specified `malloc`/`free`.
+6. Improve failure output for missing loop invariants and alias/frame facts.
+7. Create a `third_party/` or `examples/real/` pilot area with a frozen
    json-c-shaped target function.
 
 Use the feature playbook for each item: start with a failing mdtest or pilot

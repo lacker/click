@@ -46,6 +46,7 @@ usable:
 - Empty folds simplify to the initial value.
 - One-step folds substitute the item and accumulator once.
 - Small concrete folds unroll.
+- Symbolic folds compare equal modulo accumulator/item binder names.
 - Count-shaped folds can be matched across a split range.
 - Count sums are compared modulo addend order.
 

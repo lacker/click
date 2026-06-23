@@ -640,6 +640,226 @@ pub(super) fn count_fold_split_parts_match(
         )) == Some(true)
 }
 
+pub(super) fn range_fold_terms_alpha_equivalent(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &Assumptions,
+) -> bool {
+    let (
+        Bitvector32Term::RangeFold {
+            start: left_start,
+            end: left_end,
+            initial: left_initial,
+            accumulator: left_accumulator,
+            item: left_item,
+            body: left_body,
+        },
+        Bitvector32Term::RangeFold {
+            start: right_start,
+            end: right_end,
+            initial: right_initial,
+            accumulator: right_accumulator,
+            item: right_item,
+            body: right_body,
+        },
+    ) = (left, right)
+    else {
+        return false;
+    };
+
+    assumptions.bitvector_terms_proven_equal(left_start, right_start)
+        && assumptions.bitvector_terms_proven_equal(left_end, right_end)
+        && assumptions.bitvector_terms_proven_equal(left_initial, right_initial)
+        && bitvector_terms_alpha_equivalent(
+            left_body,
+            right_body,
+            &[
+                (*left_accumulator, *right_accumulator),
+                (*left_item, *right_item),
+            ],
+        )
+}
+
+fn bitvector_terms_alpha_equivalent(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    variable_pairs: &[(Variable, Variable)],
+) -> bool {
+    match (left, right) {
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => left == right,
+        (Bitvector32Term::Variable(left), Bitvector32Term::Variable(right)) => {
+            variables_alpha_equivalent(*left, *right, variable_pairs)
+        }
+        (Bitvector32Term::Add(left_a, left_b), Bitvector32Term::Add(right_a, right_b))
+        | (
+            Bitvector32Term::Subtract(left_a, left_b),
+            Bitvector32Term::Subtract(right_a, right_b),
+        )
+        | (
+            Bitvector32Term::Multiply(left_a, left_b),
+            Bitvector32Term::Multiply(right_a, right_b),
+        ) => {
+            bitvector_terms_alpha_equivalent(left_a, right_a, variable_pairs)
+                && bitvector_terms_alpha_equivalent(left_b, right_b, variable_pairs)
+        }
+        (
+            Bitvector32Term::If {
+                condition: left_condition,
+                then_term: left_then,
+                else_term: left_else,
+            },
+            Bitvector32Term::If {
+                condition: right_condition,
+                then_term: right_then,
+                else_term: right_else,
+            },
+        ) => {
+            condition_terms_alpha_equivalent(left_condition, right_condition, variable_pairs)
+                && bitvector_terms_alpha_equivalent(left_then, right_then, variable_pairs)
+                && bitvector_terms_alpha_equivalent(left_else, right_else, variable_pairs)
+        }
+        (
+            Bitvector32Term::RangeFold {
+                start: left_start,
+                end: left_end,
+                initial: left_initial,
+                accumulator: left_accumulator,
+                item: left_item,
+                body: left_body,
+            },
+            Bitvector32Term::RangeFold {
+                start: right_start,
+                end: right_end,
+                initial: right_initial,
+                accumulator: right_accumulator,
+                item: right_item,
+                body: right_body,
+            },
+        ) => {
+            bitvector_terms_alpha_equivalent(left_start, right_start, variable_pairs)
+                && bitvector_terms_alpha_equivalent(left_end, right_end, variable_pairs)
+                && bitvector_terms_alpha_equivalent(left_initial, right_initial, variable_pairs)
+                && {
+                    let mut nested_pairs = variable_pairs.to_vec();
+                    nested_pairs.push((*left_accumulator, *right_accumulator));
+                    nested_pairs.push((*left_item, *right_item));
+                    bitvector_terms_alpha_equivalent(left_body, right_body, &nested_pairs)
+                }
+        }
+        (
+            Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+            Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+        ) => {
+            left_memory == right_memory
+                && pointers_alpha_equivalent(left_pointer, right_pointer, variable_pairs)
+        }
+        _ => false,
+    }
+}
+
+fn condition_terms_alpha_equivalent(
+    left: &ConditionTerm,
+    right: &ConditionTerm,
+    variable_pairs: &[(Variable, Variable)],
+) -> bool {
+    match (left, right) {
+        (ConditionTerm::Constant(left), ConditionTerm::Constant(right)) => left == right,
+        (ConditionTerm::Variable(left), ConditionTerm::Variable(right)) => {
+            variables_alpha_equivalent(*left, *right, variable_pairs)
+        }
+        (
+            ConditionTerm::Bitvector32SignedLessThan(left_a, left_b),
+            ConditionTerm::Bitvector32SignedLessThan(right_a, right_b),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedLessEqual(left_a, left_b),
+            ConditionTerm::Bitvector32SignedLessEqual(right_a, right_b),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedGreaterThan(left_a, left_b),
+            ConditionTerm::Bitvector32SignedGreaterThan(right_a, right_b),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedGreaterEqual(left_a, left_b),
+            ConditionTerm::Bitvector32SignedGreaterEqual(right_a, right_b),
+        )
+        | (
+            ConditionTerm::Bitvector32Equal(left_a, left_b),
+            ConditionTerm::Bitvector32Equal(right_a, right_b),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedAddOverflows(left_a, left_b),
+            ConditionTerm::Bitvector32SignedAddOverflows(right_a, right_b),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedSubtractOverflows(left_a, left_b),
+            ConditionTerm::Bitvector32SignedSubtractOverflows(right_a, right_b),
+        ) => {
+            bitvector_terms_alpha_equivalent(left_a, right_a, variable_pairs)
+                && bitvector_terms_alpha_equivalent(left_b, right_b, variable_pairs)
+        }
+        (
+            ConditionTerm::PointerOffsetEqual(left_a, left_b),
+            ConditionTerm::PointerOffsetEqual(right_a, right_b),
+        ) => {
+            pointer_offsets_alpha_equivalent(left_a, right_a, variable_pairs)
+                && pointer_offsets_alpha_equivalent(left_b, right_b, variable_pairs)
+        }
+        _ => false,
+    }
+}
+
+fn pointers_alpha_equivalent(
+    left: &Pointer,
+    right: &Pointer,
+    variable_pairs: &[(Variable, Variable)],
+) -> bool {
+    left.block == right.block
+        && pointer_offsets_alpha_equivalent(&left.offset, &right.offset, variable_pairs)
+}
+
+fn pointer_offsets_alpha_equivalent(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    variable_pairs: &[(Variable, Variable)],
+) -> bool {
+    match (left, right) {
+        (PointerOffsetTerm::Constant(left), PointerOffsetTerm::Constant(right)) => left == right,
+        (PointerOffsetTerm::Variable(left), PointerOffsetTerm::Variable(right)) => {
+            variables_alpha_equivalent(*left, *right, variable_pairs)
+        }
+        (PointerOffsetTerm::Add(left_a, left_b), PointerOffsetTerm::Add(right_a, right_b)) => {
+            pointer_offsets_alpha_equivalent(left_a, right_a, variable_pairs)
+                && pointer_offsets_alpha_equivalent(left_b, right_b, variable_pairs)
+        }
+        (
+            PointerOffsetTerm::Int32Scaled {
+                value: left_value,
+                byte_width: left_width,
+            },
+            PointerOffsetTerm::Int32Scaled {
+                value: right_value,
+                byte_width: right_width,
+            },
+        ) => {
+            left_width == right_width
+                && bitvector_terms_alpha_equivalent(left_value, right_value, variable_pairs)
+        }
+        _ => false,
+    }
+}
+
+fn variables_alpha_equivalent(
+    left: Variable,
+    right: Variable,
+    variable_pairs: &[(Variable, Variable)],
+) -> bool {
+    left == right
+        || variable_pairs
+            .iter()
+            .any(|(left_pair, right_pair)| left == *left_pair && right == *right_pair)
+}
+
 pub(super) fn bitvector_same_base_nonzero_const_offset(
     left: &Bitvector32Term,
     right: &Bitvector32Term,

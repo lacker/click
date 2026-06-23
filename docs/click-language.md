@@ -39,11 +39,16 @@ Requirements are shared by all guarantees for the function.
 Supported structural requirements:
 
 ```click
+requires input_nonnegative: n >= 0;
 requires valid_range(p, 12);
 requires valid_range(p[0..n]);
 requires valid_range((p + 1)[0..1]);
 requires disjoint(dst[0..n], src[0..n]);
 ```
+
+Requirement labels use the same `label:` spelling as `ensures` labels. Labels
+are optional, but they are the preferred way for proof-step scripts to refer to a
+specific precondition, for example `choose(k from requirement has_k);`.
 
 `valid_range(base[start..end])` and `disjoint(left[start..end],
 right[start..end])` use half-open `int32` element ranges. The byte count is

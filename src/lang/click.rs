@@ -76,6 +76,10 @@ pub struct FunctionParameter {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Requirement {
+    Labeled {
+        label: String,
+        requirement: Box<Requirement>,
+    },
     ValidRange {
         name: String,
         bytes: RangeBytes,
@@ -381,9 +385,10 @@ pub struct ProofChoice {
     source: ProofFactSource,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofFactSource {
     Requirement(usize),
+    RequirementLabel(String),
 }
 
 /// A `.click` tactic.
@@ -558,6 +563,29 @@ impl FunctionParameter {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+}
+
+impl Requirement {
+    pub fn label(&self) -> Option<&str> {
+        match self {
+            Self::Labeled { label, .. } => Some(label),
+            _ => None,
+        }
+    }
+
+    fn inner(&self) -> &Requirement {
+        match self {
+            Self::Labeled { requirement, .. } => requirement.inner(),
+            _ => self,
+        }
+    }
+
+    fn proposition(&self) -> Option<&ClickProposition> {
+        match self.inner() {
+            Self::Proposition(proposition) => Some(proposition),
+            _ => None,
+        }
     }
 }
 
@@ -1685,7 +1713,7 @@ fn prove_claim_from_steps_execution(
                 click_function_environment,
                 unfolded_predicates,
                 proof_steps,
-                function_block.requires().len(),
+                function_block.requires(),
                 use_simp,
             )?;
         } else {
@@ -3960,7 +3988,7 @@ fn requirement_propositions(
 ) -> Result<Vec<Proposition>, ClickError> {
     requires
         .iter()
-        .map(|requirement| match requirement {
+        .map(|requirement| match requirement.inner() {
             Requirement::ValidRange { .. } | Requirement::ValidRangeSegment { .. } => {
                 valid_range_requirement_prop(requirement, parameters, arguments, memory)
             }
@@ -3975,6 +4003,7 @@ fn requirement_propositions(
                 predicate_environment,
                 click_function_environment,
             ),
+            Requirement::Labeled { .. } => unreachable!("requirement.inner() removes labels"),
         })
         .collect()
 }
@@ -3994,9 +4023,10 @@ fn valid_range_requirement_prop(
 }
 
 fn requirement_valid_range_name(requirement: &Requirement) -> Option<&str> {
-    match requirement {
+    match requirement.inner() {
         Requirement::ValidRange { name, .. } => Some(name),
-        Requirement::ValidRangeSegment { .. }
+        Requirement::Labeled { .. }
+        | Requirement::ValidRangeSegment { .. }
         | Requirement::Disjoint { .. }
         | Requirement::Proposition(_) => None,
     }
@@ -4007,7 +4037,7 @@ fn concrete_valid_range_block(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> Result<Option<(String, (Pointer, u32))>, ClickError> {
-    match requirement {
+    match requirement.inner() {
         Requirement::ValidRange { name, bytes } => {
             let Some(bytes) = range_bytes_constant(bytes) else {
                 return Ok(None);
@@ -4047,7 +4077,9 @@ fn concrete_valid_range_block(
                 (segment.base, bytes),
             )))
         }
-        Requirement::Disjoint { .. } | Requirement::Proposition(_) => Ok(None),
+        Requirement::Labeled { .. }
+        | Requirement::Disjoint { .. }
+        | Requirement::Proposition(_) => Ok(None),
     }
 }
 
@@ -4058,7 +4090,7 @@ fn valid_range_base_and_bytes(
 ) -> Result<(Pointer, Bitvector32Term), ClickError> {
     let parameter_values = parameter_values(parameters, arguments)?;
 
-    match requirement {
+    match requirement.inner() {
         Requirement::ValidRange { name, bytes } => {
             let Some((_, argument)) = parameters
                 .iter()
@@ -4100,8 +4132,9 @@ fn valid_range_base_and_bytes(
                 bytes,
             ))
         }
-        Requirement::Proposition(_) => Err(ClickError::new("expected valid_range requirement")),
-        Requirement::Disjoint { .. } => Err(ClickError::new("expected valid_range requirement")),
+        Requirement::Labeled { .. }
+        | Requirement::Proposition(_)
+        | Requirement::Disjoint { .. } => Err(ClickError::new("expected valid_range requirement")),
     }
 }
 
@@ -5166,7 +5199,7 @@ fn check_function_claim_with_existence_steps(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
     proof_steps: &[ProofStep],
-    original_requirement_count: usize,
+    original_requirements: &[Requirement],
     use_simp: bool,
 ) -> Result<(), ClickError> {
     let FunctionClaimRef::Ensure(_, ensure_clause) = claim else {
@@ -5226,7 +5259,7 @@ fn check_function_claim_with_existence_steps(
                     step_index,
                     available_propositions,
                     &mut values,
-                    original_requirement_count,
+                    original_requirements,
                     &mut next_choice_variable,
                 )?;
                 *available_propositions = unfold_available_predicate_facts(
@@ -5321,7 +5354,7 @@ fn apply_choose_step(
     step_index: usize,
     available_propositions: &mut Vec<Proposition>,
     values: &mut BTreeMap<String, CValue>,
-    original_requirement_count: usize,
+    original_requirements: &[Requirement],
     next_choice_variable: &mut u64,
 ) -> Result<(), ClickError> {
     if choice.name == "result" || values.contains_key(&choice.name) {
@@ -5331,23 +5364,33 @@ fn apply_choose_step(
         )));
     }
 
-    let source = match choice.source {
+    let source_index = match &choice.source {
         ProofFactSource::Requirement(index) => {
-            if index >= original_requirement_count {
+            if *index >= original_requirements.len() {
                 return Err(ClickError::new(format!(
-                    "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: requirement {index} is out of range; function has {original_requirement_count} requirement(s)"
+                    "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: requirement {index} is out of range; function has {} requirement(s)",
+                    original_requirements.len()
                 )));
             }
-            available_propositions
-                .get(index)
-                .cloned()
-                .ok_or_else(|| {
-                    ClickError::new(format!(
-                        "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: requirement {index} was not available"
-                    ))
-                })?
+            *index
         }
+        ProofFactSource::RequirementLabel(label) => original_requirements
+            .iter()
+            .position(|requirement| requirement.label() == Some(label.as_str()))
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: unknown requirement label `{label}`"
+                ))
+            })?,
     };
+    let source = available_propositions
+        .get(source_index)
+        .cloned()
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: requirement {source_index} was not available"
+            ))
+        })?;
 
     let Proposition::Exists {
         var, sort, body, ..
@@ -9142,17 +9185,35 @@ impl Parser {
 
     fn parse_requirement(&mut self) -> Result<Requirement, ClickError> {
         self.expect_ident_spelling("requires")?;
+        let label = if matches!(self.peek(), Some(Token::Ident(_)))
+            && self.peek_next() == Some(&Token::Colon)
+        {
+            let label = self.expect_ident("requirement label")?;
+            self.expect(Token::Colon)?;
+            Some(label)
+        } else {
+            None
+        };
         let requirement = match (self.peek_ident(), self.peek_next()) {
             (Some("valid_range"), Some(Token::LParen)) => self.parse_valid_range_requirement()?,
             (Some("disjoint"), Some(Token::LParen)) => self.parse_disjoint_requirement()?,
             _ => {
                 let proposition = self.parse_proposition()?;
                 self.expect(Token::Semicolon)?;
-                return Ok(Requirement::Proposition(proposition));
+                Requirement::Proposition(proposition)
             }
         };
-        self.expect(Token::Semicolon)?;
-        Ok(requirement)
+        if !matches!(requirement, Requirement::Proposition(_)) {
+            self.expect(Token::Semicolon)?;
+        }
+        Ok(if let Some(label) = label {
+            Requirement::Labeled {
+                label,
+                requirement: Box::new(requirement),
+            }
+        } else {
+            requirement
+        })
     }
 
     fn parse_valid_range_requirement(&mut self) -> Result<Requirement, ClickError> {
@@ -9749,14 +9810,23 @@ impl Parser {
 
     fn parse_proof_fact_source(&mut self) -> Result<ProofFactSource, ClickError> {
         match self.next() {
-            Some(Token::Ident(kind)) if kind == "requirement" => Ok(ProofFactSource::Requirement(
-                self.expect_index("requirement index")?,
-            )),
+            Some(Token::Ident(kind)) if kind == "requirement" => match self.next() {
+                Some(Token::Number(index)) => {
+                    let index = usize::try_from(index)
+                        .map_err(|_| self.error("requirement index does not fit in usize"))?;
+                    Ok(ProofFactSource::Requirement(index))
+                }
+                Some(Token::Ident(label)) => Ok(ProofFactSource::RequirementLabel(label)),
+                Some(token) => Err(self.error(format!(
+                    "expected requirement index or label, got {token:?}"
+                ))),
+                None => Err(self.error("expected requirement index or label, got end of input")),
+            },
             Some(Token::Ident(kind)) => Err(self.error(format!(
-                "expected proof fact source `requirement N`, got `{kind}`"
+                "expected proof fact source `requirement N` or `requirement name`, got `{kind}`"
             ))),
             Some(token) => Err(self.error(format!(
-                "expected proof fact source `requirement N`, got {token:?}"
+                "expected proof fact source `requirement N` or `requirement name`, got {token:?}"
             ))),
             None => Err(self.error("expected proof fact source `requirement N`, got end of input")),
         }
@@ -10207,8 +10277,17 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
                 function.signature().name()
             )));
         }
+        let mut requirement_labels = BTreeSet::new();
         for requirement in function.requires() {
-            if let Requirement::Proposition(proposition) = requirement {
+            if let Some(label) = requirement.label() {
+                if !requirement_labels.insert(label.to_string()) {
+                    return Err(ClickError::new(format!(
+                        "duplicate requirement label `{label}` in `{}`",
+                        function.signature().name()
+                    )));
+                }
+            }
+            if let Some(proposition) = requirement.proposition() {
                 validate_predicate_calls_in_proposition(
                     proposition,
                     &predicates,
@@ -11194,7 +11273,7 @@ mod tests {
     fn parses_existential_proof_steps() {
         let source = FILL3_CLICK.replace(
             "by auto;",
-            "by { symbolic_execute(); choose(k from requirement 0); witness(j = k + 1); simp(); close(); }",
+            "by { symbolic_execute(); choose(k from requirement has_k); witness(j = k + 1); simp(); close(); }",
         );
         let file = parse(&source).expect("existential proof-step script should parse");
         let ensure = &file.function_blocks()[0].ensures()[0];
@@ -11206,7 +11285,7 @@ mod tests {
                     ProofStep::SymbolicExecute,
                     ProofStep::Choose(ProofChoice {
                         name: "k".to_string(),
-                        source: ProofFactSource::Requirement(0),
+                        source: ProofFactSource::RequirementLabel("has_k".to_string()),
                     }),
                     ProofStep::Witness(ProofWitness {
                         name: "j".to_string(),
@@ -11221,6 +11300,26 @@ mod tests {
                 .as_slice()
             )
         );
+    }
+
+    #[test]
+    fn parses_labeled_requirement() {
+        let source = r#"
+            verifying "id.c";
+
+            int32 id(int32 x) {
+                requires has_x: exists (int32 k) { k == x };
+                ensures result == x by auto;
+            }
+        "#;
+        let file = parse(source).expect("labeled requirement should parse");
+        let requirement = &file.function_blocks()[0].requires()[0];
+
+        assert_eq!(requirement.label(), Some("has_x"));
+        assert!(matches!(
+            requirement.inner(),
+            Requirement::Proposition(ClickProposition::Exists { .. })
+        ));
     }
 
     #[test]

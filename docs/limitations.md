@@ -64,14 +64,15 @@ with `choose(k from requirement N);`.
 
 The remaining limitations are automation and source selection: `auto` does not
 synthesize witnesses, and `choose` currently opens only direct existential
-`requires` clauses by zero-based requirement index. Concrete `.any` ranges still
-unroll to finite disjunctions.
+`requires` clauses by label or zero-based requirement index. Concrete `.any`
+ranges still unroll to finite disjunctions.
 
 ## Folds Are Partly Supported
 
-Pure `.fold` supports concrete unrolling and symbolic `RangeFold` terms. The
-kernel knows useful fold facts for current stdlib `count` proofs, but it is not
-a general induction engine for arbitrary folds.
+Pure `.fold` supports concrete unrolling and symbolic `RangeFold` terms.
+Symbolic folds compare equal modulo accumulator/item binder names. The kernel
+knows useful fold facts for current stdlib `count` proofs, but it is not a
+general induction engine for arbitrary folds.
 
 Loop invariants now elaborate through spec lowering, so unfolded pure Click
 functions can contain `if`, `let`, and `.fold` values over explicit current and
