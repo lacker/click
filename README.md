@@ -63,12 +63,14 @@ High-value entry points:
 - [docs/memory-model.md](docs/memory-model.md): pointers, ranges, aliasing, and
   frames.
 - [docs/standard-library.md](docs/standard-library.md): `stdlib/prelude.click`.
+- [docs/roadmap.md](docs/roadmap.md): milestone path toward real-library
+  verification.
 - [docs/kernel.md](docs/kernel.md): Rust kernel implementation map.
 - [docs/examples.md](docs/examples.md): canonical mdtests by proof pattern.
 - [docs/limitations.md](docs/limitations.md): current boundaries.
 - [docs/feature-playbook.md](docs/feature-playbook.md): how to extend Click.
 
-The strategic proof roadmap remains in
+The proof-capability matrix remains in
 [docs/proof-landscape.md](docs/proof-landscape.md).
 
 ## Verification

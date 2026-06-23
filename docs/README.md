@@ -18,10 +18,12 @@ If you are a fresh agent, read these in order:
 8. [examples.md](examples.md): canonical mdtests by proof pattern.
 9. [limitations.md](limitations.md): current boundaries and common traps.
 10. [feature-playbook.md](feature-playbook.md): how to extend Click safely.
-11. [kernel.md](kernel.md): kernel implementation map for Rust changes.
+11. [roadmap.md](roadmap.md): milestone path toward verifying a real C library.
+12. [kernel.md](kernel.md): kernel implementation map for Rust changes.
 
-[proof-landscape.md](proof-landscape.md) is the roadmap/design map. Read it
-after the operational docs when deciding what proof capability should come next.
+[proof-landscape.md](proof-landscape.md) is the proof-capability matrix. Read it
+after [roadmap.md](roadmap.md) when deciding what proof capability should come
+next.
 
 ## What Click Is Today
 
