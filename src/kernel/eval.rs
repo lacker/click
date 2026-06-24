@@ -134,6 +134,16 @@ pub(super) fn evaluate_c_expression_paths(
                 apply_c_int32_subtract(left, right, facts, obligations, assumptions)
             },
         )?,
+        CExpression::Multiply(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_multiply(left, right, facts, obligations, assumptions)
+            },
+        )?,
         CExpression::Load(_) | CExpression::Index(_, _) => {
             read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
         }
@@ -865,6 +875,54 @@ pub(super) fn apply_c_int32_subtract(
             vec![
                 CExpressionPath {
                     outcome: CExpressionOutcome::Value(int32(Bitvector32Term::subtract(
+                        left, right,
+                    ))),
+                    facts: normal_facts,
+                    obligations: obligations.clone(),
+                },
+                CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::SignedOverflow,
+                    ),
+                    facts: overflow_facts,
+                    obligations,
+                },
+            ]
+        }
+    }
+}
+
+pub(super) fn apply_c_int32_multiply(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    let overflow = ConditionTerm::signed_multiply_overflows(left.clone(), right.clone());
+    match decide_with_facts(assumptions, &facts, &overflow) {
+        Some(true) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
+            facts,
+            obligations,
+        }],
+        Some(false) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(Bitvector32Term::multiply(left, right))),
+            facts,
+            obligations,
+        }],
+        None => {
+            let mut normal_facts = facts.clone();
+            add_condition_path_fact(&mut normal_facts, assumptions, overflow.clone(), false)
+                .expect("unknown overflow fact should be consistent");
+
+            let mut overflow_facts = facts;
+            add_condition_path_fact(&mut overflow_facts, assumptions, overflow, true)
+                .expect("unknown overflow fact should be consistent");
+
+            vec![
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(Bitvector32Term::multiply(
                         left, right,
                     ))),
                     facts: normal_facts,

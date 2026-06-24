@@ -1087,6 +1087,7 @@ pub(super) fn collect_address_taken_in_expression(
         | CExpression::Or(left, right)
         | CExpression::Add(left, right)
         | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
         | CExpression::Index(left, right) => {
             collect_address_taken_in_expression(left, names);
             collect_address_taken_in_expression(right, names);
@@ -1113,6 +1114,7 @@ pub(super) fn collect_variable_names(expression: &CExpression, names: &mut BTree
         | CExpression::Or(left, right)
         | CExpression::Add(left, right)
         | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
         | CExpression::Index(left, right) => {
             collect_variable_names(left, names);
             collect_variable_names(right, names);

@@ -71,6 +71,7 @@ pub enum ConditionTerm {
     Bitvector32Equal(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector32SignedAddOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector32SignedSubtractOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32SignedMultiplyOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     PointerOffsetEqual(Box<PointerOffsetTerm>, Box<PointerOffsetTerm>),
 }
 
@@ -125,6 +126,7 @@ pub enum CExpression {
     Or(Box<CExpression>, Box<CExpression>),
     Add(Box<CExpression>, Box<CExpression>),
     Subtract(Box<CExpression>, Box<CExpression>),
+    Multiply(Box<CExpression>, Box<CExpression>),
     Load(Box<CExpression>),
     Index(Box<CExpression>, Box<CExpression>),
 }
@@ -151,6 +153,7 @@ pub enum SpecExpression {
     CExpression(CExpression),
     Add(Box<SpecExpression>, Box<SpecExpression>),
     Subtract(Box<SpecExpression>, Box<SpecExpression>),
+    Multiply(Box<SpecExpression>, Box<SpecExpression>),
     If {
         condition: Box<SpecProposition>,
         then_branch: Box<SpecExpression>,
@@ -738,6 +741,18 @@ impl Bitvector32Term {
         }
     }
 
+    pub(super) fn multiply(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => {
+                Self::Constant(left.wrapping_mul(*right))
+            }
+            (_, Self::Constant(1)) => left,
+            (Self::Constant(1), _) => right,
+            (_, Self::Constant(0)) | (Self::Constant(0), _) => Self::Constant(0),
+            _ => Self::Multiply(Box::new(left), Box::new(right)),
+        }
+    }
+
     pub fn if_then_else(condition: ConditionTerm, then_term: Self, else_term: Self) -> Self {
         match condition {
             ConditionTerm::Constant(true) => then_term,
@@ -889,6 +904,15 @@ impl ConditionTerm {
                 Self::Constant((left as i32).overflowing_sub(right as i32).1)
             }
             _ => Self::Bitvector32SignedSubtractOverflows(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(super) fn signed_multiply_overflows(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.as_const(), right.as_const()) {
+            (Some(left), Some(right)) => {
+                Self::Constant((left as i32).overflowing_mul(right as i32).1)
+            }
+            _ => Self::Bitvector32SignedMultiplyOverflows(Box::new(left), Box::new(right)),
         }
     }
 

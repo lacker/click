@@ -143,10 +143,10 @@ function count3(int32 p[], int32 x) -> int32 {
 }
 ```
 
-Supported expression features include parameters, literals, `+`, `-`, indexing,
-`let name = value; body`, `if proposition { then } else { else }`, range
-`.fold`, and calls to other non-recursive Click functions. Recursive Click
-functions are rejected.
+Supported expression features include parameters, literals, `+`, `-`, `*`,
+indexing, `let name = value; body`, `if proposition { then } else { else }`,
+range `.fold`, and calls to other non-recursive Click functions. Recursive
+Click functions are rejected.
 
 In pure Click function parameters, `int32 p[]` and `int32* p` are treated as
 array-ref parameters. `uint8 p[]` and `uint8* p` are also array-ref parameters,

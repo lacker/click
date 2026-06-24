@@ -360,6 +360,16 @@ pub(super) fn evaluate_spec_expression_paths(
                 apply_c_int32_subtract(left, right, facts, obligations, assumptions)
             },
         )?,
+        SpecExpression::Multiply(left, right) => evaluate_spec_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_multiply(left, right, facts, obligations, assumptions)
+            },
+        )?,
         SpecExpression::If {
             condition,
             then_branch,

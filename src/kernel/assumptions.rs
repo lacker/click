@@ -167,6 +167,12 @@ impl Assumptions {
                     self.simplify_bitvector_under_assumptions(right),
                 )
             }
+            ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
+                ConditionTerm::signed_multiply_overflows(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
             ConditionTerm::PointerOffsetEqual(left, right) => {
                 ConditionTerm::pointer_offset_equal(left.as_ref().clone(), right.as_ref().clone())
             }
@@ -1187,6 +1193,28 @@ impl Assumptions {
                     true,
                 ) || self.has_lower_bound_above(&left, &zero))
                 .then_some(false)
+            }
+            ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+                if right.as_ref() == &Bitvector32Term::Constant(0)
+                    || left.as_ref() == &Bitvector32Term::Constant(0)
+                    || right.as_ref() == &Bitvector32Term::Constant(1)
+                    || left.as_ref() == &Bitvector32Term::Constant(1) =>
+            {
+                Some(false)
+            }
+            ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+                if right.as_ref() == &Bitvector32Term::Constant((-1i32) as u32) =>
+            {
+                let int_min = Bitvector32Term::Constant(i32::MIN as u32);
+                let left = left.as_ref().clone();
+                self.decide(&ConditionTerm::equal(left, int_min))
+            }
+            ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+                if left.as_ref() == &Bitvector32Term::Constant((-1i32) as u32) =>
+            {
+                let int_min = Bitvector32Term::Constant(i32::MIN as u32);
+                let right = right.as_ref().clone();
+                self.decide(&ConditionTerm::equal(right, int_min))
             }
             ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
                 if left.as_ref().is_subtract_one()

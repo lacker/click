@@ -25,7 +25,7 @@ Supported C0 surface includes:
 
 - integer literals and variables
 - ASCII byte character literals such as `'x'`, `'\n'`, and `'\0'`
-- signed `+` and `-`
+- signed `+`, `-`, and `*`
 - signed comparisons and equality
 - assignment and sequencing
 - `if` / `else` using C scalar truthiness
@@ -91,8 +91,8 @@ These are not general C features yet:
 - structs, unions, enums
 - unsigned integers other than the narrow `uint8` byte type
 - integer widths other than `int32`
-- multiplication in ordinary C fragments
 - casts and promotions
+- division, remainder, bitwise operators, and shifts
 - pointer comparisons beyond the supported equality/range patterns
 - heap allocation
 - function pointers

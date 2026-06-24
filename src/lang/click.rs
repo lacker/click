@@ -206,6 +206,7 @@ pub enum ContractExpression {
     Old(Box<ContractExpression>),
     Add(Box<ContractExpression>, Box<ContractExpression>),
     Subtract(Box<ContractExpression>, Box<ContractExpression>),
+    Multiply(Box<ContractExpression>, Box<ContractExpression>),
     Index(Box<ContractExpression>, Box<ContractExpression>),
     If {
         condition: Box<ClickProposition>,
@@ -2712,6 +2713,10 @@ impl AnnotationLowerer<'_> {
                 Box::new(self.lower_contract_expression_to_spec(left, environment)?),
                 Box::new(self.lower_contract_expression_to_spec(right, environment)?),
             )),
+            ContractExpression::Multiply(left, right) => Ok(SpecExpression::Multiply(
+                Box::new(self.lower_contract_expression_to_spec(left, environment)?),
+                Box::new(self.lower_contract_expression_to_spec(right, environment)?),
+            )),
             ContractExpression::Index(base, index) => {
                 let array_ref = self.lower_array_ref_to_spec(base, environment)?;
                 let index = self.lower_contract_expression_to_spec(index, environment)?;
@@ -2816,6 +2821,10 @@ impl AnnotationLowerer<'_> {
                 Box::new(self.lower_c_fragment_to_spec(right, environment)?),
             )),
             CExpression::Subtract(left, right) => Ok(SpecExpression::Subtract(
+                Box::new(self.lower_c_fragment_to_spec(left, environment)?),
+                Box::new(self.lower_c_fragment_to_spec(right, environment)?),
+            )),
+            CExpression::Multiply(left, right) => Ok(SpecExpression::Multiply(
                 Box::new(self.lower_c_fragment_to_spec(left, environment)?),
                 Box::new(self.lower_c_fragment_to_spec(right, environment)?),
             )),
@@ -3057,6 +3066,10 @@ impl AnnotationLowerer<'_> {
                 Box::new(self.lower_current_invariant_c_expression(right)?),
             )),
             CExpression::Subtract(left, right) => Ok(CExpression::Subtract(
+                Box::new(self.lower_current_invariant_c_expression(left)?),
+                Box::new(self.lower_current_invariant_c_expression(right)?),
+            )),
+            CExpression::Multiply(left, right) => Ok(CExpression::Multiply(
                 Box::new(self.lower_current_invariant_c_expression(left)?),
                 Box::new(self.lower_current_invariant_c_expression(right)?),
             )),
@@ -3486,6 +3499,10 @@ fn substitute_contract_expression(
             Box::new(substitute_contract_expression(left, substitutions)?),
             Box::new(substitute_contract_expression(right, substitutions)?),
         )),
+        ContractExpression::Multiply(left, right) => Ok(ContractExpression::Multiply(
+            Box::new(substitute_contract_expression(left, substitutions)?),
+            Box::new(substitute_contract_expression(right, substitutions)?),
+        )),
         ContractExpression::Index(base, index) => Ok(ContractExpression::Index(
             Box::new(substitute_contract_expression(base, substitutions)?),
             Box::new(substitute_contract_expression(index, substitutions)?),
@@ -3553,6 +3570,10 @@ fn substitute_c_fragment_as_contract(
             Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
         )),
         CExpression::Subtract(left, right) => Ok(ContractExpression::Subtract(
+            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
+        )),
+        CExpression::Multiply(left, right) => Ok(ContractExpression::Multiply(
             Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
             Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
         )),
@@ -3630,6 +3651,10 @@ fn substitute_c_fragment(
             Box::new(substitute_c_fragment(left, substitutions)?),
             Box::new(substitute_c_fragment(right, substitutions)?),
         )),
+        CExpression::Multiply(left, right) => Ok(CExpression::Multiply(
+            Box::new(substitute_c_fragment(left, substitutions)?),
+            Box::new(substitute_c_fragment(right, substitutions)?),
+        )),
         CExpression::Load(body) => Ok(CExpression::Load(Box::new(substitute_c_fragment(
             body,
             substitutions,
@@ -3650,6 +3675,10 @@ fn contract_expression_as_c_fragment(expression: &ContractExpression) -> Option<
             Box::new(contract_expression_as_c_fragment(right)?),
         )),
         ContractExpression::Subtract(left, right) => Some(CExpression::Subtract(
+            Box::new(contract_expression_as_c_fragment(left)?),
+            Box::new(contract_expression_as_c_fragment(right)?),
+        )),
+        ContractExpression::Multiply(left, right) => Some(CExpression::Multiply(
             Box::new(contract_expression_as_c_fragment(left)?),
             Box::new(contract_expression_as_c_fragment(right)?),
         )),
@@ -3758,6 +3787,10 @@ fn contract_expression_to_c_fragment(expression: &ContractExpression) -> Option<
             Box::new(contract_expression_to_c_fragment(left)?),
             Box::new(contract_expression_to_c_fragment(right)?),
         )),
+        ContractExpression::Multiply(left, right) => Some(CExpression::Multiply(
+            Box::new(contract_expression_to_c_fragment(left)?),
+            Box::new(contract_expression_to_c_fragment(right)?),
+        )),
         ContractExpression::Index(base, index) => Some(CExpression::Index(
             Box::new(contract_expression_to_c_fragment(base)?),
             Box::new(contract_expression_to_c_fragment(index)?),
@@ -3861,6 +3894,7 @@ fn collect_c_expression_referenced_names(expression: &CExpression, names: &mut B
         | CExpression::Or(left, right)
         | CExpression::Add(left, right)
         | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
         | CExpression::Index(left, right) => {
             collect_c_expression_referenced_names(left, names);
             collect_c_expression_referenced_names(right, names);
@@ -4556,6 +4590,11 @@ impl KernelPropositionLowerer {
                 let right = self.lower_requirement_value(right)?;
                 lower_contract_subtract(left, right)
             }
+            ContractExpression::Multiply(left, right) => {
+                let left = self.lower_requirement_value(left)?;
+                let right = self.lower_requirement_value(right)?;
+                lower_contract_multiply(left, right)
+            }
             ContractExpression::Index(_, _) => Err(ClickError::new(
                 "memory reads are not supported in `requires` propositions yet",
             )),
@@ -4686,6 +4725,10 @@ impl KernelPropositionLowerer {
                 self.lower_requirement_c_expression(right)?,
             ),
             CExpression::Subtract(left, right) => lower_contract_subtract(
+                self.lower_requirement_c_expression(left)?,
+                self.lower_requirement_c_expression(right)?,
+            ),
+            CExpression::Multiply(left, right) => lower_contract_multiply(
                 self.lower_requirement_c_expression(left)?,
                 self.lower_requirement_c_expression(right)?,
             ),
@@ -4973,6 +5016,17 @@ fn lower_contract_subtract(left: CValue, right: CValue) -> Result<CValue, ClickE
         }
         (left, right) => Err(ClickError::new(format!(
             "cannot subtract `{right:?}` from `{left:?}` in proposition"
+        ))),
+    }
+}
+
+fn lower_contract_multiply(left: CValue, right: CValue) -> Result<CValue, ClickError> {
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right)) => {
+            Ok(CValue::Int32(bitvector32_multiply(left, right)))
+        }
+        (left, right) => Err(ClickError::new(format!(
+            "cannot multiply `{left:?}` and `{right:?}` in proposition"
         ))),
     }
 }
@@ -6375,6 +6429,29 @@ fn evaluate_predicate_contract_expression(
             )?;
             evaluate_postcondition_sub(left, right)
         }
+        ContractExpression::Multiply(left, right) => {
+            let left = evaluate_predicate_contract_expression(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                left,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_predicate_contract_expression(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                right,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            evaluate_postcondition_multiply(left, right)
+        }
         ContractExpression::Index(base, index) => {
             if contains_old_expression(base) {
                 return Err("`old(...)` is not available in predicate definitions".to_string());
@@ -6820,6 +6897,7 @@ fn simp_condition_without_assumptions(condition: &ConditionTerm) -> Option<bool>
         ConditionTerm::Variable(_)
         | ConditionTerm::Bitvector32SignedAddOverflows(_, _)
         | ConditionTerm::Bitvector32SignedSubtractOverflows(_, _)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(_, _)
         | ConditionTerm::PointerOffsetEqual(_, _) => None,
     }
 }
@@ -8029,6 +8107,33 @@ fn evaluate_contract_expression_with_environment(
             )?;
             evaluate_postcondition_sub(left, right)
         }
+        ContractExpression::Multiply(left, right) => {
+            let left = evaluate_contract_expression_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                left,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_contract_expression_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                right,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            evaluate_postcondition_multiply(left, right)
+        }
         ContractExpression::Index(base, index) => {
             let array_ref = evaluate_contract_array_ref_with_environment(
                 parameter_values,
@@ -8825,6 +8930,18 @@ fn evaluate_c_contract_expression(
             )?;
             evaluate_postcondition_sub(left, right)
         }
+        CExpression::Multiply(left, right) => {
+            let left =
+                evaluate_c_contract_expression(parameter_values, state, result, assumptions, left)?;
+            let right = evaluate_c_contract_expression(
+                parameter_values,
+                state,
+                result,
+                assumptions,
+                right,
+            )?;
+            evaluate_postcondition_multiply(left, right)
+        }
         CExpression::Index(base, index) => {
             let base =
                 evaluate_c_contract_expression(parameter_values, state, result, assumptions, base)?;
@@ -8927,6 +9044,15 @@ fn evaluate_postcondition_sub(left: CValue, right: CValue) -> Result<CValue, Str
             )))
         }
         (left, right) => Err(format!("cannot subtract `{right:?}` from `{left:?}`")),
+    }
+}
+
+fn evaluate_postcondition_multiply(left: CValue, right: CValue) -> Result<CValue, String> {
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right)) => {
+            Ok(CValue::Int32(bitvector32_multiply(left, right)))
+        }
+        (left, right) => Err(format!("cannot multiply `{left:?}` and `{right:?}`")),
     }
 }
 
@@ -9954,22 +10080,32 @@ impl Parser {
     }
 
     fn parse_contract_add(&mut self) -> Result<ContractExpression, ClickError> {
-        let mut expression = self.parse_contract_postfix()?;
+        let mut expression = self.parse_contract_multiply()?;
         loop {
             expression = match self.peek() {
                 Some(Token::Plus) => {
                     self.position += 1;
-                    let right = self.parse_contract_postfix()?;
+                    let right = self.parse_contract_multiply()?;
                     ContractExpression::Add(Box::new(expression), Box::new(right))
                 }
                 Some(Token::Minus) => {
                     self.position += 1;
-                    let right = self.parse_contract_postfix()?;
+                    let right = self.parse_contract_multiply()?;
                     ContractExpression::Subtract(Box::new(expression), Box::new(right))
                 }
                 _ => return Ok(expression),
             };
         }
+    }
+
+    fn parse_contract_multiply(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut expression = self.parse_contract_postfix()?;
+        while self.peek() == Some(&Token::Star) {
+            self.position += 1;
+            let right = self.parse_contract_postfix()?;
+            expression = ContractExpression::Multiply(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
     }
 
     fn parse_contract_postfix(&mut self) -> Result<ContractExpression, ClickError> {
@@ -10102,22 +10238,32 @@ impl Parser {
     }
 
     fn parse_ensure_add(&mut self) -> Result<C0Expression, ClickError> {
-        let mut expression = self.parse_ensure_postfix()?;
+        let mut expression = self.parse_ensure_multiply()?;
         loop {
             expression = match self.peek() {
                 Some(Token::Plus) => {
                     self.position += 1;
-                    let right = self.parse_ensure_postfix()?;
+                    let right = self.parse_ensure_multiply()?;
                     C0Expression::Add(Box::new(expression), Box::new(right))
                 }
                 Some(Token::Minus) => {
                     self.position += 1;
-                    let right = self.parse_ensure_postfix()?;
+                    let right = self.parse_ensure_multiply()?;
                     C0Expression::Subtract(Box::new(expression), Box::new(right))
                 }
                 _ => return Ok(expression),
             };
         }
+    }
+
+    fn parse_ensure_multiply(&mut self) -> Result<C0Expression, ClickError> {
+        let mut expression = self.parse_ensure_postfix()?;
+        while self.peek() == Some(&Token::Star) {
+            self.position += 1;
+            let right = self.parse_ensure_postfix()?;
+            expression = C0Expression::Multiply(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
     }
 
     fn parse_ensure_postfix(&mut self) -> Result<C0Expression, ClickError> {
@@ -10454,6 +10600,7 @@ fn validate_contract_expression_calls(
         }
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
         | ContractExpression::Index(left, right) => {
             validate_contract_expression_calls(left, click_functions, context)?;
             validate_contract_expression_calls(right, click_functions, context)
@@ -10546,6 +10693,7 @@ fn contains_old_expression(expression: &ContractExpression) -> bool {
         ContractExpression::CFragment(_) => false,
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
         | ContractExpression::Index(left, right) => {
             contains_old_expression(left) || contains_old_expression(right)
         }
@@ -10612,6 +10760,7 @@ fn collect_click_function_calls(expression: &ContractExpression, calls: &mut BTr
         ContractExpression::Old(body) => collect_click_function_calls(body, calls),
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
         | ContractExpression::Index(left, right) => {
             collect_click_function_calls(left, calls);
             collect_click_function_calls(right, calls);

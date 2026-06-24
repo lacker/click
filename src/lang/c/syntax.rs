@@ -73,6 +73,7 @@ pub enum C0Expression {
     Or(Box<C0Expression>, Box<C0Expression>),
     Add(Box<C0Expression>, Box<C0Expression>),
     Subtract(Box<C0Expression>, Box<C0Expression>),
+    Multiply(Box<C0Expression>, Box<C0Expression>),
     Load(Box<C0Expression>),
     Index(Box<C0Expression>, Box<C0Expression>),
 }
@@ -233,6 +234,9 @@ impl C0Expression {
             }
             Self::Subtract(left, right) => {
                 crate::kernel::c_subtract(left.to_kernel_expression(), right.to_kernel_expression())
+            }
+            Self::Multiply(left, right) => {
+                crate::kernel::c_multiply(left.to_kernel_expression(), right.to_kernel_expression())
             }
             Self::Load(pointer) => crate::kernel::c_load(pointer.to_kernel_expression()),
             Self::Index(base, index) => {
@@ -646,22 +650,32 @@ impl Parser {
     }
 
     fn parse_add(&mut self) -> Result<C0Expression, C0SyntaxError> {
-        let mut expression = self.parse_unary()?;
+        let mut expression = self.parse_multiply()?;
         loop {
             expression = match self.peek() {
                 Some(Token::Plus) => {
                     self.position += 1;
-                    let right = self.parse_unary()?;
+                    let right = self.parse_multiply()?;
                     C0Expression::Add(Box::new(expression), Box::new(right))
                 }
                 Some(Token::Minus) => {
                     self.position += 1;
-                    let right = self.parse_unary()?;
+                    let right = self.parse_multiply()?;
                     C0Expression::Subtract(Box::new(expression), Box::new(right))
                 }
                 _ => return Ok(expression),
             };
         }
+    }
+
+    fn parse_multiply(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let mut expression = self.parse_unary()?;
+        while self.peek() == Some(&Token::Star) {
+            self.position += 1;
+            let right = self.parse_unary()?;
+            expression = C0Expression::Multiply(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
     }
 
     fn parse_unary(&mut self) -> Result<C0Expression, C0SyntaxError> {

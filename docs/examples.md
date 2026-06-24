@@ -17,6 +17,8 @@ of inventing syntax from memory.
 - `mdtests/increment_requires_no_overflow.md`: requirement rules out overflow.
 - `mdtests/increment_without_requires.md`: missing requirement fails.
 - `mdtests/decrement_requires_no_underflow.md`: lower-bound arithmetic safety.
+- `mdtests/c_multiplication.md`: signed multiplication in C fragments, pure
+  Click expressions, precedence, and overflow behavior.
 
 ## Memory Safety And Postconditions
 

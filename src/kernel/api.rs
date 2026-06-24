@@ -72,6 +72,10 @@ pub fn c_subtract(left: CExpression, right: CExpression) -> CExpression {
     CExpression::Subtract(Box::new(left), Box::new(right))
 }
 
+pub fn c_multiply(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::Multiply(Box::new(left), Box::new(right))
+}
+
 pub fn c_load(pointer: CExpression) -> CExpression {
     CExpression::Load(Box::new(pointer))
 }

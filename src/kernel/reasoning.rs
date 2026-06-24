@@ -794,6 +794,10 @@ fn condition_terms_alpha_equivalent(
         | (
             ConditionTerm::Bitvector32SignedSubtractOverflows(left_a, left_b),
             ConditionTerm::Bitvector32SignedSubtractOverflows(right_a, right_b),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedMultiplyOverflows(left_a, left_b),
+            ConditionTerm::Bitvector32SignedMultiplyOverflows(right_a, right_b),
         ) => {
             bitvector_terms_alpha_equivalent(left_a, right_a, variable_pairs)
                 && bitvector_terms_alpha_equivalent(left_b, right_b, variable_pairs)
@@ -1074,6 +1078,7 @@ pub(super) fn collect_c_expression_bitvector_variables(
         | CExpression::Or(left, right)
         | CExpression::Add(left, right)
         | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
         | CExpression::Index(left, right) => {
             collect_c_expression_bitvector_variables(left, variables);
             collect_c_expression_bitvector_variables(right, variables);
@@ -1158,7 +1163,9 @@ pub(super) fn collect_spec_expression_bitvector_variables(
         SpecExpression::CExpression(expression) => {
             collect_c_expression_bitvector_variables(expression, variables);
         }
-        SpecExpression::Add(left, right) | SpecExpression::Subtract(left, right) => {
+        SpecExpression::Add(left, right)
+        | SpecExpression::Subtract(left, right)
+        | SpecExpression::Multiply(left, right) => {
             collect_spec_expression_bitvector_variables(left, variables);
             collect_spec_expression_bitvector_variables(right, variables);
         }
@@ -1349,7 +1356,8 @@ pub(super) fn collect_condition_bitvector_variables(
         | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
         | ConditionTerm::Bitvector32Equal(left, right)
         | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
             collect_bitvector_variables(left, variables);
             collect_bitvector_variables(right, variables);
         }
@@ -1791,6 +1799,14 @@ pub(super) fn substitute_bitvector_variable_in_c_expression(
                 right, from, to,
             )),
         ),
+        CExpression::Multiply(left, right) => CExpression::Multiply(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
         CExpression::Index(left, right) => CExpression::Index(
             Box::new(substitute_bitvector_variable_in_c_expression(
                 left, from, to,
@@ -1937,6 +1953,14 @@ pub(super) fn substitute_bitvector_variable_in_spec_expression(
             )),
         ),
         SpecExpression::Subtract(left, right) => SpecExpression::Subtract(
+            Box::new(substitute_bitvector_variable_in_spec_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_spec_expression(
+                right, from, to,
+            )),
+        ),
+        SpecExpression::Multiply(left, right) => SpecExpression::Multiply(
             Box::new(substitute_bitvector_variable_in_spec_expression(
                 left, from, to,
             )),
@@ -2294,6 +2318,12 @@ pub(super) fn substitute_bitvector_variable_in_condition(
         }
         ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
             ConditionTerm::signed_subtract_overflows(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
+        ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
+            ConditionTerm::signed_multiply_overflows(
                 substitute_bitvector_variable(left, from, to),
                 substitute_bitvector_variable(right, from, to),
             )
