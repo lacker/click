@@ -45,3 +45,21 @@ predicate bytes_all_not_eq(uint8 bytes[], int32 lo, int32 hi, uint8 value) {
         bytes[k] != value
     })
 }
+
+predicate cstr_prefix(uint8 bytes[], int32 len) {
+    bytes_all_not_eq(bytes, 0, len, '\0')
+}
+
+predicate cstr_len(uint8 bytes[], int32 len) {
+    0 <= len and cstr_prefix(bytes, len) and bytes_contains(bytes, len, len + 1, '\0')
+}
+
+predicate cstr(uint8 bytes[]) {
+    exists (int32 len) {
+        cstr_len(bytes, len)
+    }
+}
+
+predicate cstr_bounded(uint8 bytes[], int32 max) {
+    bytes_contains(bytes, 0, max, '\0')
+}

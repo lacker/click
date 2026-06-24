@@ -19,9 +19,9 @@ promotions, signedness conversions, or general unsigned arithmetic yet.
 Ordered comparisons are supported for `int32`. `uint8` currently has equality,
 inequality, truthiness, memory access, and return-value support.
 
-The prelude has initial byte-slice helpers over `uint8[]`, but there is still
-no full C string model. Null-terminated strings, casts/promotions, and byte
-ordering/bitwise arithmetic remain future work.
+The prelude has initial byte-slice and C-string predicates over `uint8[]`, but
+there is still no first-class Click string value and no full libc string model.
+Casts/promotions and byte ordering/bitwise arithmetic remain future work.
 
 ## Aliasing Is Default
 
@@ -33,6 +33,12 @@ depends on non-overlap.
 Direct memory reads in `requires` propositions are limited. Use a named
 predicate for memory-reading preconditions, and unfold it in proof scripts when
 the body is needed.
+
+Plain `cstr(p)` introduces a ghost exact length, but it does not by itself
+produce a structural `valid_range` fact. To use byte-level consequences from
+`cstr_len` or bounded string facts, the surrounding contract still needs enough
+memory-validity information, such as `valid_range(p[0..len + 1])` for an exact
+known ghost length or `valid_range(p[0..max])` for a bounded scan.
 
 ## Guarded Memory Reads Need Range Forms
 

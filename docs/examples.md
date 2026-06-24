@@ -100,6 +100,8 @@ of inventing syntax from memory.
   including byte counts, slice equality, range equality, and all-equal facts.
 - `mdtests/byte_slice_range_predicates.md`: byte contains/all-not-equal
   predicates and `choose` after explicit predicate unfolding.
+- `mdtests/cstr_stdlib.md`: first C-string predicates over `uint8[]`, including
+  exact ghost length, bounded terminator, and plain existential string facts.
 
 ## Sorting And Permutation
 

@@ -269,10 +269,11 @@ Good next tasks from the current state:
 
 1. Add more fold/range lemmas beyond alpha-equivalent folds and the current
    count-shaped split rules.
-2. Decide the null-terminated string abstraction, then add string predicates on
-   top of the byte-slice prelude. Open questions include whether the primary
-   predicate is exact-length, bounded-by-max, offset-based, or some combination,
-   and how explicit guarded propositions should lower partial C fragments.
+2. Extend the first C-string predicate layer toward a full string model. Open
+   questions include first-class Click string values, libc function summaries,
+   offset-based string slices, and whether/how higher-level predicates can
+   package structural memory validity instead of requiring separate
+   `valid_range` facts.
 3. Add C multiplication and simple bitwise operators with overflow/definedness
    tests.
 4. Add structs and field loads/stores in the smallest form needed by a pilot.

@@ -59,6 +59,24 @@ predicate bytes_all_not_eq(uint8 bytes[], int32 lo, int32 hi, uint8 value) {
         bytes[k] != value
     })
 }
+
+predicate cstr_prefix(uint8 bytes[], int32 len) {
+    bytes_all_not_eq(bytes, 0, len, '\0')
+}
+
+predicate cstr_len(uint8 bytes[], int32 len) {
+    0 <= len and cstr_prefix(bytes, len) and bytes_contains(bytes, len, len + 1, '\0')
+}
+
+predicate cstr(uint8 bytes[]) {
+    exists (int32 len) {
+        cstr_len(bytes, len)
+    }
+}
+
+predicate cstr_bounded(uint8 bytes[], int32 max) {
+    bytes_contains(bytes, 0, max, '\0')
+}
 ```
 
 `count` is a pure Click function over a range. `permutation` is a Click
@@ -81,6 +99,18 @@ explicit half-open ranges or offset+length slices:
   given value.
 - `bytes_all_not_eq(bytes, lo, hi, value)` says no byte in a range is equal to a
   given value.
+
+The C-string predicates are still facts over C memory, not first-class Click
+string values:
+
+- `cstr_prefix(bytes, len)` says the first `len` bytes contain no terminator.
+- `cstr_len(bytes, len)` says `len` is the exact ghost length: no terminator
+  before `len`, and a terminator at `len`.
+- `cstr(bytes)` says some exact ghost length exists. This matches a plain
+  `char*`/`uint8*` API shape, but byte-level consequences still need enough
+  memory-validity facts when unfolded.
+- `cstr_bounded(bytes, max)` says a terminator exists somewhere before `max`.
+  This matches bounded scanning APIs.
 
 These definitions are ordinary Click. They are not generic overloads and they
 are not special kernel names.
@@ -146,6 +176,9 @@ a separate eager old-state evaluator.
 `mdtests/byte_slice_range_predicates.md` checks `bytes_contains` and
 `bytes_all_not_eq`, including `choose` over an explicitly unfolded existential
 predicate requirement.
+
+`mdtests/cstr_stdlib.md` checks the first C-string predicate layer:
+`cstr_prefix`, `cstr_len`, `cstr`, and `cstr_bounded`.
 
 ## Adding A Library Function
 

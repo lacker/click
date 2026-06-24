@@ -161,8 +161,9 @@ pure helper over `uint8[]` can appear in an invariant or inside `old(...)`.
 
 The prelude currently provides byte-slice helpers over `uint8[]`: `byte_count`,
 `bytes_equal`, `bytes_equal_range`, `bytes_all_eq`, `bytes_contains`, and
-`bytes_all_not_eq`. They are ordinary Click functions and predicates, not
-built-in kernel concepts.
+`bytes_all_not_eq`. It also provides first-pass C-string predicates:
+`cstr_prefix`, `cstr_len`, `cstr`, and `cstr_bounded`. These are ordinary Click
+functions and predicates, not built-in kernel concepts.
 
 Concrete folds are unrolled. Symbolic folds remain `RangeFold` value terms in
 the kernel and can be reasoned about by supported fold laws.
