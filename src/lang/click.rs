@@ -5264,6 +5264,9 @@ fn check_function_claim_with_existence_steps(
                     &mut values,
                     original_requirements,
                     &mut next_choice_variable,
+                    predicate_environment,
+                    click_function_environment,
+                    unfolded_predicates,
                 )?;
                 *available_propositions = unfold_available_predicate_facts(
                     predicate_environment,
@@ -5359,6 +5362,9 @@ fn apply_choose_step(
     values: &mut BTreeMap<String, CValue>,
     original_requirements: &[Requirement],
     next_choice_variable: &mut u64,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
     if choice.name == "result" || values.contains_key(&choice.name) {
         return Err(ClickError::new(format!(
@@ -5386,7 +5392,7 @@ fn apply_choose_step(
                 ))
             })?,
     };
-    let source = available_propositions
+    let mut source = available_propositions
         .get(source_index)
         .cloned()
         .ok_or_else(|| {
@@ -5394,6 +5400,21 @@ fn apply_choose_step(
                 "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: requirement {source_index} was not available"
             ))
         })?;
+    if !matches!(source, Proposition::Exists { .. }) && !unfolded_predicates.is_empty() {
+        let assumptions = assumptions_from_propositions(available_propositions);
+        source = unfold_predicates_in_proposition(
+            predicate_environment,
+            click_function_environment,
+            unfolded_predicates,
+            &source,
+            &assumptions,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: {message}"
+            ))
+        })?;
+    }
 
     let Proposition::Exists {
         var, sort, body, ..

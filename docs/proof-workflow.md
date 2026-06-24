@@ -49,8 +49,8 @@ Current proof steps:
 - `frame(loop N);`: prove the effect summary for loop `N` and expose it for
   later postcondition reasoning.
 - `unfold(name);`: unfold matching predicate facts and goals.
-- `choose(k from requirement name);`: open a named direct existential
-  precondition, introducing proof-local int32 value `k`.
+- `choose(k from requirement name);`: open a named existential precondition,
+  introducing proof-local int32 value `k`.
 - `choose(k from requirement N);`: the same operation by zero-based requirement
   index. Prefer labels for durable scripts.
 - `witness(k = expression);`: prove the current existential goal by substituting
@@ -76,8 +76,8 @@ ensures found: (0..n).any(|k| { k == result }) by {
 `choose` is existential elimination for facts that are already assumed. The
 current source forms are intentionally narrow: `requirement name` means a
 `requires name: ...;` label, while `requirement N` means the Nth written
-`requires` clause. The selected source must lower directly to an existential
-proposition.
+`requires` clause. The selected source must lower to an existential
+proposition, either directly or after an explicit `unfold(predicate);` step.
 
 ```click
 requires has_k: exists (int32 k) { k == x };
@@ -85,6 +85,21 @@ ensures again: exists (int32 j) { j == x } by {
     symbolic_execute();
     choose(k from requirement has_k);
     witness(j = k);
+    simp();
+    close();
+}
+```
+
+For a predicate requirement that hides an existential, unfold the predicate
+first:
+
+```click
+requires has_x: bytes_contains(p, 0, n, 'x');
+ensures again: bytes_contains(p, 0, n, 'x') by {
+    symbolic_execute();
+    unfold(bytes_contains);
+    choose(found from requirement has_x);
+    witness(k = found);
     simp();
     close();
 }

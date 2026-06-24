@@ -143,7 +143,8 @@ more reusable specifications and more predictable proof scripts.
 Likely additions:
 
 - Broader existential proof scripts:
-  choices from unfolded facts and better diagnostics for failed witnesses.
+  more source forms beyond requirements and better diagnostics for failed
+  witnesses.
 - More complete range combinators:
   `.all`, `.any`, `.fold`, `.map`-like derived definitions, and standard lemmas.
 - Lemma declarations:
@@ -268,8 +269,10 @@ Good next tasks from the current state:
 
 1. Add more fold/range lemmas beyond alpha-equivalent folds and the current
    count-shaped split rules.
-2. Add null-terminated string predicates and more byte-slice lemmas over
-   `uint8[]`.
+2. Decide the null-terminated string abstraction, then add string predicates on
+   top of the byte-slice prelude. Open questions include whether the primary
+   predicate is exact-length, bounded-by-max, offset-based, or some combination,
+   and how explicit guarded propositions should lower partial C fragments.
 3. Add C multiplication and simple bitwise operators with overflow/definedness
    tests.
 4. Add structs and field loads/stores in the smallest form needed by a pilot.

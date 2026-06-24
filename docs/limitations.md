@@ -34,6 +34,17 @@ Direct memory reads in `requires` propositions are limited. Use a named
 predicate for memory-reading preconditions, and unfold it in proof scripts when
 the body is needed.
 
+## Guarded Memory Reads Need Range Forms
+
+Range `.all` and symbolic `.any` lower their bodies under the range-membership
+facts, so `p[k]` is memory-safe when the caller has a matching
+`valid_range(p[lo..hi])`.
+
+Plain logical conjunction does not currently act as a left-to-right guard for
+lowering. For example, prefer `(lo..hi).any(|k| { p[k] == x })` over an
+explicit `exists (int32 k) { lo <= k and k < hi and p[k] == x }` until the
+surface language has a designed guard story for partial C fragments.
+
 ## Predicates Are Opaque
 
 Predicate calls are not unfolded automatically. Exact predicate facts can be
@@ -68,12 +79,13 @@ lowering concept for parameters written as `int32 p[]`, `int32* p`,
 `exists (int32 k) { ... }` is supported, and symbolic `(lo..hi).any(...)`
 lowers to a bounded existential. Proof-step scripts can prove existential goals
 with `witness(k = expression);` and can open direct existential preconditions
-with `choose(k from requirement N);`.
+with `choose(k from requirement N);`. If an explicitly unfolded predicate
+requirement lowers to an existential, `choose` can open that requirement too.
 
 The remaining limitations are automation and source selection: `auto` does not
-synthesize witnesses, and `choose` currently opens only direct existential
-`requires` clauses by label or zero-based requirement index. Concrete `.any`
-ranges still unroll to finite disjunctions.
+synthesize witnesses, and `choose` currently selects only `requires` clauses by
+label or zero-based requirement index. Concrete `.any` ranges still unroll to
+finite disjunctions.
 
 ## Folds Are Partly Supported
 

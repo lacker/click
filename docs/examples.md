@@ -98,6 +98,8 @@ of inventing syntax from memory.
   pure Click functions and predicates.
 - `mdtests/byte_slice_stdlib.md`: stdlib byte-slice helpers over `uint8[]`,
   including byte counts, slice equality, range equality, and all-equal facts.
+- `mdtests/byte_slice_range_predicates.md`: byte contains/all-not-equal
+  predicates and `choose` after explicit predicate unfolding.
 
 ## Sorting And Permutation
 

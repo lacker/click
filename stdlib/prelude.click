@@ -33,3 +33,15 @@ predicate bytes_all_eq(uint8 bytes[], int32 lo, int32 hi, uint8 value) {
         bytes[k] == value
     })
 }
+
+predicate bytes_contains(uint8 bytes[], int32 lo, int32 hi, uint8 value) {
+    (lo..hi).any(|k| {
+        bytes[k] == value
+    })
+}
+
+predicate bytes_all_not_eq(uint8 bytes[], int32 lo, int32 hi, uint8 value) {
+    (lo..hi).all(|k| {
+        bytes[k] != value
+    })
+}

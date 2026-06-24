@@ -47,6 +47,18 @@ predicate bytes_all_eq(uint8 bytes[], int32 lo, int32 hi, uint8 value) {
         bytes[k] == value
     })
 }
+
+predicate bytes_contains(uint8 bytes[], int32 lo, int32 hi, uint8 value) {
+    (lo..hi).any(|k| {
+        bytes[k] == value
+    })
+}
+
+predicate bytes_all_not_eq(uint8 bytes[], int32 lo, int32 hi, uint8 value) {
+    (lo..hi).all(|k| {
+        bytes[k] != value
+    })
+}
 ```
 
 `count` is a pure Click function over a range. `permutation` is a Click
@@ -65,6 +77,10 @@ explicit half-open ranges or offset+length slices:
   `bytes_equal_range(p, old(p), 0, n)`.
 - `bytes_all_eq(bytes, lo, hi, value)` says every byte in a range is equal to a
   given `uint8` value.
+- `bytes_contains(bytes, lo, hi, value)` says some byte in a range is equal to a
+  given value.
+- `bytes_all_not_eq(bytes, lo, hi, value)` says no byte in a range is equal to a
+  given value.
 
 These definitions are ordinary Click. They are not generic overloads and they
 are not special kernel names.
@@ -126,6 +142,10 @@ a separate eager old-state evaluator.
 `mdtests/byte_slice_stdlib.md` checks the first byte-slice layer:
 `byte_count`, `bytes_equal`, `bytes_equal_range`, and `bytes_all_eq` over
 `uint8[]` arrays.
+
+`mdtests/byte_slice_range_predicates.md` checks `bytes_contains` and
+`bytes_all_not_eq`, including `choose` over an explicitly unfolded existential
+predicate requirement.
 
 ## Adding A Library Function
 
