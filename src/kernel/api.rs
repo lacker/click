@@ -76,6 +76,22 @@ pub fn c_multiply(left: CExpression, right: CExpression) -> CExpression {
     CExpression::Multiply(Box::new(left), Box::new(right))
 }
 
+pub fn c_bitwise_and(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::BitwiseAnd(Box::new(left), Box::new(right))
+}
+
+pub fn c_bitwise_or(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::BitwiseOr(Box::new(left), Box::new(right))
+}
+
+pub fn c_bitwise_xor(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::BitwiseXor(Box::new(left), Box::new(right))
+}
+
+pub fn c_bitwise_not(expression: CExpression) -> CExpression {
+    CExpression::BitwiseNot(Box::new(expression))
+}
+
 pub fn c_load(pointer: CExpression) -> CExpression {
     CExpression::Load(Box::new(pointer))
 }

@@ -370,6 +370,61 @@ pub(super) fn evaluate_spec_expression_paths(
                 apply_c_int32_multiply(left, right, facts, obligations, assumptions)
             },
         )?,
+        SpecExpression::BitwiseAnd(left, right) => evaluate_spec_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_total_binary(
+                    left,
+                    right,
+                    facts,
+                    obligations,
+                    Bitvector32Term::bitwise_and,
+                )
+            },
+        )?,
+        SpecExpression::BitwiseOr(left, right) => evaluate_spec_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_total_binary(
+                    left,
+                    right,
+                    facts,
+                    obligations,
+                    Bitvector32Term::bitwise_or,
+                )
+            },
+        )?,
+        SpecExpression::BitwiseXor(left, right) => evaluate_spec_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_total_binary(
+                    left,
+                    right,
+                    facts,
+                    obligations,
+                    Bitvector32Term::bitwise_xor,
+                )
+            },
+        )?,
+        SpecExpression::BitwiseNot(expression) => evaluate_spec_int32_unary_paths(
+            state,
+            expression,
+            assumptions,
+            budget,
+            Bitvector32Term::bitwise_not,
+        )?,
         SpecExpression::If {
             condition,
             then_branch,
@@ -613,6 +668,27 @@ pub(super) fn evaluate_spec_int32_binary_paths(
                     .filter_map(c_expression_path_value),
             );
         }
+    }
+    Ok(paths)
+}
+
+pub(super) fn evaluate_spec_int32_unary_paths(
+    state: &CState,
+    expression: &SpecExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+    apply: fn(Bitvector32Term) -> Bitvector32Term,
+) -> ExecutionResult<Vec<SpecExpressionPath>> {
+    let mut paths = Vec::new();
+    for path in evaluate_spec_expression_paths(state, expression, assumptions, budget)? {
+        let CValue::Int32(value) = path.value else {
+            continue;
+        };
+        paths.push(SpecExpressionPath {
+            value: int32(apply(value)),
+            facts: path.facts,
+            obligations: path.obligations,
+        });
     }
     Ok(paths)
 }

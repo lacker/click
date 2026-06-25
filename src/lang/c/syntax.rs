@@ -74,6 +74,10 @@ pub enum C0Expression {
     Add(Box<C0Expression>, Box<C0Expression>),
     Subtract(Box<C0Expression>, Box<C0Expression>),
     Multiply(Box<C0Expression>, Box<C0Expression>),
+    BitwiseAnd(Box<C0Expression>, Box<C0Expression>),
+    BitwiseOr(Box<C0Expression>, Box<C0Expression>),
+    BitwiseXor(Box<C0Expression>, Box<C0Expression>),
+    BitwiseNot(Box<C0Expression>),
     Load(Box<C0Expression>),
     Index(Box<C0Expression>, Box<C0Expression>),
 }
@@ -238,6 +242,21 @@ impl C0Expression {
             Self::Multiply(left, right) => {
                 crate::kernel::c_multiply(left.to_kernel_expression(), right.to_kernel_expression())
             }
+            Self::BitwiseAnd(left, right) => crate::kernel::c_bitwise_and(
+                left.to_kernel_expression(),
+                right.to_kernel_expression(),
+            ),
+            Self::BitwiseOr(left, right) => crate::kernel::c_bitwise_or(
+                left.to_kernel_expression(),
+                right.to_kernel_expression(),
+            ),
+            Self::BitwiseXor(left, right) => crate::kernel::c_bitwise_xor(
+                left.to_kernel_expression(),
+                right.to_kernel_expression(),
+            ),
+            Self::BitwiseNot(expression) => {
+                crate::kernel::c_bitwise_not(expression.to_kernel_expression())
+            }
             Self::Load(pointer) => crate::kernel::c_load(pointer.to_kernel_expression()),
             Self::Index(base, index) => {
                 crate::kernel::c_index(base.to_kernel_expression(), index.to_kernel_expression())
@@ -288,6 +307,9 @@ enum Token {
     PipePipe,
     Star,
     Amp,
+    Pipe,
+    Caret,
+    Tilde,
     Equal,
 }
 
@@ -536,6 +558,25 @@ impl Parser {
                     let body = Box::new(self.parse_block_statement()?);
                     Ok(C0Statement::While { condition, body })
                 }
+                Some("for") => {
+                    self.position += 1;
+                    self.expect(Token::LParen)?;
+                    let init = self.parse_for_assignment("for-loop initializer")?;
+                    self.expect(Token::Semicolon)?;
+                    let condition = self.parse_expression()?;
+                    self.expect(Token::Semicolon)?;
+                    let step = self.parse_for_assignment("for-loop step")?;
+                    self.expect(Token::RParen)?;
+                    let body = self.parse_block_statement()?;
+                    let body = C0Statement::Seq(Box::new(body), Box::new(step));
+                    Ok(C0Statement::Seq(
+                        Box::new(init),
+                        Box::new(C0Statement::While {
+                            condition,
+                            body: Box::new(body),
+                        }),
+                    ))
+                }
                 Some(other) => Err(C0SyntaxError::new(format!(
                     "expected statement, got identifier `{other}`"
                 ))),
@@ -546,6 +587,22 @@ impl Parser {
             ))),
             None => Err(C0SyntaxError::new("expected statement, got end of input")),
         }
+    }
+
+    fn parse_for_assignment(&mut self, context: &str) -> Result<C0Statement, C0SyntaxError> {
+        let Some(Token::Ident(name)) = self.next() else {
+            return Err(C0SyntaxError::new(format!(
+                "expected assignment target in {context}"
+            )));
+        };
+        if name == "int32" || name == "uint8" {
+            return Err(C0SyntaxError::new(format!(
+                "declarations are not supported in {context}"
+            )));
+        }
+        self.expect(Token::Equal)?;
+        let expression = self.parse_expression()?;
+        Ok(C0Statement::Assign { name, expression })
     }
 
     fn parse_expression(&mut self) -> Result<C0Expression, C0SyntaxError> {
@@ -597,17 +654,47 @@ impl Parser {
     }
 
     fn parse_logical_and(&mut self) -> Result<C0Expression, C0SyntaxError> {
-        let mut expression = self.parse_compare()?;
+        let mut expression = self.parse_bitwise_or()?;
         loop {
             expression = match self.peek() {
                 Some(Token::AmpAmp) => {
                     self.position += 1;
-                    let right = self.parse_compare()?;
+                    let right = self.parse_bitwise_or()?;
                     C0Expression::And(Box::new(expression), Box::new(right))
                 }
                 _ => return Ok(expression),
             };
         }
+    }
+
+    fn parse_bitwise_or(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let mut expression = self.parse_bitwise_xor()?;
+        while self.peek() == Some(&Token::Pipe) {
+            self.position += 1;
+            let right = self.parse_bitwise_xor()?;
+            expression = C0Expression::BitwiseOr(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_bitwise_xor(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let mut expression = self.parse_bitwise_and()?;
+        while self.peek() == Some(&Token::Caret) {
+            self.position += 1;
+            let right = self.parse_bitwise_and()?;
+            expression = C0Expression::BitwiseXor(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_bitwise_and(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let mut expression = self.parse_compare()?;
+        while self.peek() == Some(&Token::Amp) {
+            self.position += 1;
+            let right = self.parse_compare()?;
+            expression = C0Expression::BitwiseAnd(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
     }
 
     fn parse_compare(&mut self) -> Result<C0Expression, C0SyntaxError> {
@@ -692,6 +779,11 @@ impl Parser {
         if self.peek() == Some(&Token::Bang) {
             self.position += 1;
             return Ok(C0Expression::Not(Box::new(self.parse_unary()?)));
+        }
+
+        if self.peek() == Some(&Token::Tilde) {
+            self.position += 1;
+            return Ok(C0Expression::BitwiseNot(Box::new(self.parse_unary()?)));
         }
 
         self.parse_postfix()
@@ -893,6 +985,9 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
             '>' => Token::GreaterThan,
             '*' => Token::Star,
             '&' => Token::Amp,
+            '|' => Token::Pipe,
+            '^' => Token::Caret,
+            '~' => Token::Tilde,
             '!' => Token::Bang,
             '=' => Token::Equal,
             _ => {

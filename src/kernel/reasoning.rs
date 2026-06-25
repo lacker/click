@@ -698,9 +698,24 @@ fn bitvector_terms_alpha_equivalent(
         | (
             Bitvector32Term::Multiply(left_a, left_b),
             Bitvector32Term::Multiply(right_a, right_b),
+        )
+        | (
+            Bitvector32Term::BitwiseAnd(left_a, left_b),
+            Bitvector32Term::BitwiseAnd(right_a, right_b),
+        )
+        | (
+            Bitvector32Term::BitwiseOr(left_a, left_b),
+            Bitvector32Term::BitwiseOr(right_a, right_b),
+        )
+        | (
+            Bitvector32Term::BitwiseXor(left_a, left_b),
+            Bitvector32Term::BitwiseXor(right_a, right_b),
         ) => {
             bitvector_terms_alpha_equivalent(left_a, right_a, variable_pairs)
                 && bitvector_terms_alpha_equivalent(left_b, right_b, variable_pairs)
+        }
+        (Bitvector32Term::BitwiseNot(left), Bitvector32Term::BitwiseNot(right)) => {
+            bitvector_terms_alpha_equivalent(left, right, variable_pairs)
         }
         (
             Bitvector32Term::If {
@@ -1079,9 +1094,15 @@ pub(super) fn collect_c_expression_bitvector_variables(
         | CExpression::Add(left, right)
         | CExpression::Subtract(left, right)
         | CExpression::Multiply(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
         | CExpression::Index(left, right) => {
             collect_c_expression_bitvector_variables(left, variables);
             collect_c_expression_bitvector_variables(right, variables);
+        }
+        CExpression::BitwiseNot(expression) => {
+            collect_c_expression_bitvector_variables(expression, variables);
         }
     }
 }
@@ -1165,9 +1186,15 @@ pub(super) fn collect_spec_expression_bitvector_variables(
         }
         SpecExpression::Add(left, right)
         | SpecExpression::Subtract(left, right)
-        | SpecExpression::Multiply(left, right) => {
+        | SpecExpression::Multiply(left, right)
+        | SpecExpression::BitwiseAnd(left, right)
+        | SpecExpression::BitwiseOr(left, right)
+        | SpecExpression::BitwiseXor(left, right) => {
             collect_spec_expression_bitvector_variables(left, variables);
             collect_spec_expression_bitvector_variables(right, variables);
+        }
+        SpecExpression::BitwiseNot(expression) => {
+            collect_spec_expression_bitvector_variables(expression, variables);
         }
         SpecExpression::If {
             condition,
@@ -1379,9 +1406,15 @@ pub(super) fn collect_bitvector_variables(
         }
         Bitvector32Term::Add(left, right)
         | Bitvector32Term::Subtract(left, right)
-        | Bitvector32Term::Multiply(left, right) => {
+        | Bitvector32Term::Multiply(left, right)
+        | Bitvector32Term::BitwiseAnd(left, right)
+        | Bitvector32Term::BitwiseOr(left, right)
+        | Bitvector32Term::BitwiseXor(left, right) => {
             collect_bitvector_variables(left, variables);
             collect_bitvector_variables(right, variables);
+        }
+        Bitvector32Term::BitwiseNot(value) => {
+            collect_bitvector_variables(value, variables);
         }
         Bitvector32Term::If {
             condition,
@@ -1807,6 +1840,33 @@ pub(super) fn substitute_bitvector_variable_in_c_expression(
                 right, from, to,
             )),
         ),
+        CExpression::BitwiseAnd(left, right) => CExpression::BitwiseAnd(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+        CExpression::BitwiseOr(left, right) => CExpression::BitwiseOr(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+        CExpression::BitwiseXor(left, right) => CExpression::BitwiseXor(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+        CExpression::BitwiseNot(expression) => CExpression::BitwiseNot(Box::new(
+            substitute_bitvector_variable_in_c_expression(expression, from, to),
+        )),
         CExpression::Index(left, right) => CExpression::Index(
             Box::new(substitute_bitvector_variable_in_c_expression(
                 left, from, to,
@@ -1968,6 +2028,33 @@ pub(super) fn substitute_bitvector_variable_in_spec_expression(
                 right, from, to,
             )),
         ),
+        SpecExpression::BitwiseAnd(left, right) => SpecExpression::BitwiseAnd(
+            Box::new(substitute_bitvector_variable_in_spec_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_spec_expression(
+                right, from, to,
+            )),
+        ),
+        SpecExpression::BitwiseOr(left, right) => SpecExpression::BitwiseOr(
+            Box::new(substitute_bitvector_variable_in_spec_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_spec_expression(
+                right, from, to,
+            )),
+        ),
+        SpecExpression::BitwiseXor(left, right) => SpecExpression::BitwiseXor(
+            Box::new(substitute_bitvector_variable_in_spec_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_spec_expression(
+                right, from, to,
+            )),
+        ),
+        SpecExpression::BitwiseNot(expression) => SpecExpression::BitwiseNot(Box::new(
+            substitute_bitvector_variable_in_spec_expression(expression, from, to),
+        )),
         SpecExpression::If {
             condition,
             then_branch,
@@ -2352,10 +2439,25 @@ pub(super) fn substitute_bitvector_variable(
             substitute_bitvector_variable(left, from, to),
             substitute_bitvector_variable(right, from, to),
         ),
-        Bitvector32Term::Multiply(left, right) => Bitvector32Term::Multiply(
-            Box::new(substitute_bitvector_variable(left, from, to)),
-            Box::new(substitute_bitvector_variable(right, from, to)),
+        Bitvector32Term::Multiply(left, right) => Bitvector32Term::multiply(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
         ),
+        Bitvector32Term::BitwiseAnd(left, right) => Bitvector32Term::bitwise_and(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::BitwiseOr(left, right) => Bitvector32Term::bitwise_or(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::BitwiseXor(left, right) => Bitvector32Term::bitwise_xor(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::BitwiseNot(value) => {
+            Bitvector32Term::bitwise_not(substitute_bitvector_variable(value, from, to))
+        }
         Bitvector32Term::If {
             condition,
             then_term,

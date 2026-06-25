@@ -194,20 +194,24 @@ impl Assumptions {
                 self.simplify_bitvector_under_assumptions(left),
                 self.simplify_bitvector_under_assumptions(right),
             ),
-            Bitvector32Term::Multiply(left, right) => {
-                let left = self.simplify_bitvector_under_assumptions(left);
-                let right = self.simplify_bitvector_under_assumptions(right);
-                match (&left, &right) {
-                    (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
-                        Bitvector32Term::Constant(left.wrapping_mul(*right))
-                    }
-                    (_, Bitvector32Term::Constant(1)) => left,
-                    (Bitvector32Term::Constant(1), _) => right,
-                    (_, Bitvector32Term::Constant(0)) | (Bitvector32Term::Constant(0), _) => {
-                        Bitvector32Term::Constant(0)
-                    }
-                    _ => Bitvector32Term::Multiply(Box::new(left), Box::new(right)),
-                }
+            Bitvector32Term::Multiply(left, right) => Bitvector32Term::multiply(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::BitwiseAnd(left, right) => Bitvector32Term::bitwise_and(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::BitwiseOr(left, right) => Bitvector32Term::bitwise_or(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::BitwiseXor(left, right) => Bitvector32Term::bitwise_xor(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::BitwiseNot(value) => {
+                Bitvector32Term::bitwise_not(self.simplify_bitvector_under_assumptions(value))
             }
             Bitvector32Term::If {
                 condition,

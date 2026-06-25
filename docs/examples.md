@@ -19,6 +19,8 @@ of inventing syntax from memory.
 - `mdtests/decrement_requires_no_underflow.md`: lower-bound arithmetic safety.
 - `mdtests/c_multiplication.md`: signed multiplication in C fragments, pure
   Click expressions, precedence, and overflow behavior.
+- `mdtests/c_bitwise.md`: `int32` bitwise operators in C fragments and pure
+  Click expressions, plus the current `uint8` promotion boundary.
 
 ## Memory Safety And Postconditions
 
@@ -61,6 +63,10 @@ of inventing syntax from memory.
 ## Loops And Invariants
 
 - `mdtests/bounded_loop.md`: concrete bounded loop execution.
+- `mdtests/c_for_loop.md`: assignment-style `for` loops lowered to `while`,
+  including bounded execution and loop invariants.
+- `mdtests/c_for_loop_rejects_declaration.md`: unsupported declaration-style
+  `for` initializer.
 - `mdtests/count_to_three_loop_invariants.md`: loop invariants.
 - `mdtests/count_to_n_loop_invariant.md`: symbolic loop bound.
 - `mdtests/count_to_three_bad_invariant.md`: preservation failure.

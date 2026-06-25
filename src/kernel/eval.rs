@@ -144,6 +144,61 @@ pub(super) fn evaluate_c_expression_paths(
                 apply_c_int32_multiply(left, right, facts, obligations, assumptions)
             },
         )?,
+        CExpression::BitwiseAnd(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_total_binary(
+                    left,
+                    right,
+                    facts,
+                    obligations,
+                    Bitvector32Term::bitwise_and,
+                )
+            },
+        )?,
+        CExpression::BitwiseOr(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_total_binary(
+                    left,
+                    right,
+                    facts,
+                    obligations,
+                    Bitvector32Term::bitwise_or,
+                )
+            },
+        )?,
+        CExpression::BitwiseXor(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_total_binary(
+                    left,
+                    right,
+                    facts,
+                    obligations,
+                    Bitvector32Term::bitwise_xor,
+                )
+            },
+        )?,
+        CExpression::BitwiseNot(expression) => evaluate_c_int32_total_unary_paths(
+            state,
+            expression,
+            assumptions,
+            budget,
+            Bitvector32Term::bitwise_not,
+        )?,
         CExpression::Load(_) | CExpression::Index(_, _) => {
             read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
         }
@@ -1513,6 +1568,59 @@ pub(super) fn evaluate_c_int32_binary_paths(
                     obligations,
                 }),
             }
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+pub(super) fn apply_c_int32_total_binary(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    apply: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
+) -> Vec<CExpressionPath> {
+    vec![CExpressionPath {
+        outcome: CExpressionOutcome::Value(int32(apply(left, right))),
+        facts,
+        obligations,
+    }]
+}
+
+pub(super) fn evaluate_c_int32_total_unary_paths(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+    apply: fn(Bitvector32Term) -> Bitvector32Term,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
+        match path.outcome {
+            CExpressionOutcome::Value(CValue::Int32(value)) => paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::Value(int32(apply(value))),
+                facts: path.facts,
+                obligations: path.obligations,
+            }),
+            CExpressionOutcome::Value(_) => paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts: path.facts,
+                obligations: path.obligations,
+            }),
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: path.facts,
+                    obligations: path.obligations,
+                })
+            }
+            CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(error),
+                facts: path.facts,
+                obligations: path.obligations,
+            }),
         }
     }
 

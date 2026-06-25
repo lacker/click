@@ -1088,9 +1088,15 @@ pub(super) fn collect_address_taken_in_expression(
         | CExpression::Add(left, right)
         | CExpression::Subtract(left, right)
         | CExpression::Multiply(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
         | CExpression::Index(left, right) => {
             collect_address_taken_in_expression(left, names);
             collect_address_taken_in_expression(right, names);
+        }
+        CExpression::BitwiseNot(expression) => {
+            collect_address_taken_in_expression(expression, names);
         }
     }
 }
@@ -1115,9 +1121,15 @@ pub(super) fn collect_variable_names(expression: &CExpression, names: &mut BTree
         | CExpression::Add(left, right)
         | CExpression::Subtract(left, right)
         | CExpression::Multiply(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
         | CExpression::Index(left, right) => {
             collect_variable_names(left, names);
             collect_variable_names(right, names);
+        }
+        CExpression::BitwiseNot(expression) => {
+            collect_variable_names(expression, names);
         }
     }
 }

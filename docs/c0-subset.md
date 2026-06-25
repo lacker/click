@@ -26,10 +26,13 @@ Supported C0 surface includes:
 - integer literals and variables
 - ASCII byte character literals such as `'x'`, `'\n'`, and `'\0'`
 - signed `+`, `-`, and `*`
+- `int32` bitwise `&`, `|`, `^`, and unary `~` with fixed 32-bit
+  two's-complement bitvector semantics
 - signed comparisons and equality
 - assignment and sequencing
 - `if` / `else` using C scalar truthiness
 - `while`
+- assignment-style `for (init; condition; step)` loops lowered to `while`
 - `return`
 - address-of lvalues
 - pointer arithmetic for `int32*` and `uint8*`, scaled by the pointee width
@@ -40,8 +43,9 @@ Supported C0 surface includes:
   `uint8`
 
 Comparisons return C-style `int32` values: `0` or `1`. They are not Click
-propositions by themselves. Ordered comparisons are currently for `int32`;
-`uint8` supports equality, inequality, truthiness, loads, stores, and returns.
+propositions by themselves. Ordered comparisons and bitwise operators are
+currently for `int32`; `uint8` supports equality, inequality, truthiness,
+loads, stores, and returns.
 
 ## Undefined Behavior
 
@@ -81,6 +85,12 @@ bytes per element; `uint8` arrays allocate one byte per element.
 - bounded execution for small concrete loops
 - loop verification conditions using `loop N { invariant ... }` annotations
 
+The first `for` slice is sugar for existing `while` semantics:
+`for (i = init; condition; i = step) { body }` lowers to `i = init; while
+(condition) { body; i = step; }`. The initializer and step must be scalar
+assignments. Declarations inside the `for` initializer, omitted clauses, `++`,
+and `continue` are not supported yet.
+
 Symbolic pointer-writing loops should use invariants and explicit loop effects.
 Do not expect unconstrained symbolic loops to be unrolled automatically.
 
@@ -92,12 +102,14 @@ These are not general C features yet:
 - unsigned integers other than the narrow `uint8` byte type
 - integer widths other than `int32`
 - casts and promotions
-- division, remainder, bitwise operators, and shifts
+- division, remainder, and shifts
+- bitwise operators on `uint8` or promoted/mixed-width integer expressions
 - pointer comparisons beyond the supported equality/range patterns
 - heap allocation
 - function pointers
 - global variables
-- `for`, `do while`, `switch`, `break`, `continue`
+- `do while`, `switch`, `break`, `continue`
+- declarations or omitted clauses inside `for` loops
 - compound assignments, increments, decrements
 - arbitrary expressions in declarations
 

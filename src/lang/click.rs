@@ -207,6 +207,10 @@ pub enum ContractExpression {
     Add(Box<ContractExpression>, Box<ContractExpression>),
     Subtract(Box<ContractExpression>, Box<ContractExpression>),
     Multiply(Box<ContractExpression>, Box<ContractExpression>),
+    BitwiseAnd(Box<ContractExpression>, Box<ContractExpression>),
+    BitwiseOr(Box<ContractExpression>, Box<ContractExpression>),
+    BitwiseXor(Box<ContractExpression>, Box<ContractExpression>),
+    BitwiseNot(Box<ContractExpression>),
     Index(Box<ContractExpression>, Box<ContractExpression>),
     If {
         condition: Box<ClickProposition>,
@@ -2717,6 +2721,21 @@ impl AnnotationLowerer<'_> {
                 Box::new(self.lower_contract_expression_to_spec(left, environment)?),
                 Box::new(self.lower_contract_expression_to_spec(right, environment)?),
             )),
+            ContractExpression::BitwiseAnd(left, right) => Ok(SpecExpression::BitwiseAnd(
+                Box::new(self.lower_contract_expression_to_spec(left, environment)?),
+                Box::new(self.lower_contract_expression_to_spec(right, environment)?),
+            )),
+            ContractExpression::BitwiseOr(left, right) => Ok(SpecExpression::BitwiseOr(
+                Box::new(self.lower_contract_expression_to_spec(left, environment)?),
+                Box::new(self.lower_contract_expression_to_spec(right, environment)?),
+            )),
+            ContractExpression::BitwiseXor(left, right) => Ok(SpecExpression::BitwiseXor(
+                Box::new(self.lower_contract_expression_to_spec(left, environment)?),
+                Box::new(self.lower_contract_expression_to_spec(right, environment)?),
+            )),
+            ContractExpression::BitwiseNot(expression) => Ok(SpecExpression::BitwiseNot(Box::new(
+                self.lower_contract_expression_to_spec(expression, environment)?,
+            ))),
             ContractExpression::Index(base, index) => {
                 let array_ref = self.lower_array_ref_to_spec(base, environment)?;
                 let index = self.lower_contract_expression_to_spec(index, environment)?;
@@ -2828,6 +2847,21 @@ impl AnnotationLowerer<'_> {
                 Box::new(self.lower_c_fragment_to_spec(left, environment)?),
                 Box::new(self.lower_c_fragment_to_spec(right, environment)?),
             )),
+            CExpression::BitwiseAnd(left, right) => Ok(SpecExpression::BitwiseAnd(
+                Box::new(self.lower_c_fragment_to_spec(left, environment)?),
+                Box::new(self.lower_c_fragment_to_spec(right, environment)?),
+            )),
+            CExpression::BitwiseOr(left, right) => Ok(SpecExpression::BitwiseOr(
+                Box::new(self.lower_c_fragment_to_spec(left, environment)?),
+                Box::new(self.lower_c_fragment_to_spec(right, environment)?),
+            )),
+            CExpression::BitwiseXor(left, right) => Ok(SpecExpression::BitwiseXor(
+                Box::new(self.lower_c_fragment_to_spec(left, environment)?),
+                Box::new(self.lower_c_fragment_to_spec(right, environment)?),
+            )),
+            CExpression::BitwiseNot(expression) => Ok(SpecExpression::BitwiseNot(Box::new(
+                self.lower_c_fragment_to_spec(expression, environment)?,
+            ))),
             CExpression::Index(base, index) => {
                 let element_type = self
                     .c_expression_array_element_type(base, environment)
@@ -3073,6 +3107,21 @@ impl AnnotationLowerer<'_> {
                 Box::new(self.lower_current_invariant_c_expression(left)?),
                 Box::new(self.lower_current_invariant_c_expression(right)?),
             )),
+            CExpression::BitwiseAnd(left, right) => Ok(CExpression::BitwiseAnd(
+                Box::new(self.lower_current_invariant_c_expression(left)?),
+                Box::new(self.lower_current_invariant_c_expression(right)?),
+            )),
+            CExpression::BitwiseOr(left, right) => Ok(CExpression::BitwiseOr(
+                Box::new(self.lower_current_invariant_c_expression(left)?),
+                Box::new(self.lower_current_invariant_c_expression(right)?),
+            )),
+            CExpression::BitwiseXor(left, right) => Ok(CExpression::BitwiseXor(
+                Box::new(self.lower_current_invariant_c_expression(left)?),
+                Box::new(self.lower_current_invariant_c_expression(right)?),
+            )),
+            CExpression::BitwiseNot(expression) => Ok(CExpression::BitwiseNot(Box::new(
+                self.lower_current_invariant_c_expression(expression)?,
+            ))),
             CExpression::Index(base, index) => Ok(CExpression::Index(
                 Box::new(self.lower_current_invariant_c_expression(base)?),
                 Box::new(self.lower_current_invariant_c_expression(index)?),
@@ -3503,6 +3552,21 @@ fn substitute_contract_expression(
             Box::new(substitute_contract_expression(left, substitutions)?),
             Box::new(substitute_contract_expression(right, substitutions)?),
         )),
+        ContractExpression::BitwiseAnd(left, right) => Ok(ContractExpression::BitwiseAnd(
+            Box::new(substitute_contract_expression(left, substitutions)?),
+            Box::new(substitute_contract_expression(right, substitutions)?),
+        )),
+        ContractExpression::BitwiseOr(left, right) => Ok(ContractExpression::BitwiseOr(
+            Box::new(substitute_contract_expression(left, substitutions)?),
+            Box::new(substitute_contract_expression(right, substitutions)?),
+        )),
+        ContractExpression::BitwiseXor(left, right) => Ok(ContractExpression::BitwiseXor(
+            Box::new(substitute_contract_expression(left, substitutions)?),
+            Box::new(substitute_contract_expression(right, substitutions)?),
+        )),
+        ContractExpression::BitwiseNot(expression) => Ok(ContractExpression::BitwiseNot(Box::new(
+            substitute_contract_expression(expression, substitutions)?,
+        ))),
         ContractExpression::Index(base, index) => Ok(ContractExpression::Index(
             Box::new(substitute_contract_expression(base, substitutions)?),
             Box::new(substitute_contract_expression(index, substitutions)?),
@@ -3577,6 +3641,21 @@ fn substitute_c_fragment_as_contract(
             Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
             Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
         )),
+        CExpression::BitwiseAnd(left, right) => Ok(ContractExpression::BitwiseAnd(
+            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
+        )),
+        CExpression::BitwiseOr(left, right) => Ok(ContractExpression::BitwiseOr(
+            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
+        )),
+        CExpression::BitwiseXor(left, right) => Ok(ContractExpression::BitwiseXor(
+            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
+        )),
+        CExpression::BitwiseNot(expression) => Ok(ContractExpression::BitwiseNot(Box::new(
+            substitute_c_fragment_as_contract(expression, substitutions)?,
+        ))),
         CExpression::Index(base, index) => Ok(ContractExpression::Index(
             Box::new(substitute_c_fragment_as_contract(base, substitutions)?),
             Box::new(substitute_c_fragment_as_contract(index, substitutions)?),
@@ -3655,6 +3734,21 @@ fn substitute_c_fragment(
             Box::new(substitute_c_fragment(left, substitutions)?),
             Box::new(substitute_c_fragment(right, substitutions)?),
         )),
+        CExpression::BitwiseAnd(left, right) => Ok(CExpression::BitwiseAnd(
+            Box::new(substitute_c_fragment(left, substitutions)?),
+            Box::new(substitute_c_fragment(right, substitutions)?),
+        )),
+        CExpression::BitwiseOr(left, right) => Ok(CExpression::BitwiseOr(
+            Box::new(substitute_c_fragment(left, substitutions)?),
+            Box::new(substitute_c_fragment(right, substitutions)?),
+        )),
+        CExpression::BitwiseXor(left, right) => Ok(CExpression::BitwiseXor(
+            Box::new(substitute_c_fragment(left, substitutions)?),
+            Box::new(substitute_c_fragment(right, substitutions)?),
+        )),
+        CExpression::BitwiseNot(expression) => Ok(CExpression::BitwiseNot(Box::new(
+            substitute_c_fragment(expression, substitutions)?,
+        ))),
         CExpression::Load(body) => Ok(CExpression::Load(Box::new(substitute_c_fragment(
             body,
             substitutions,
@@ -3682,6 +3776,21 @@ fn contract_expression_as_c_fragment(expression: &ContractExpression) -> Option<
             Box::new(contract_expression_as_c_fragment(left)?),
             Box::new(contract_expression_as_c_fragment(right)?),
         )),
+        ContractExpression::BitwiseAnd(left, right) => Some(CExpression::BitwiseAnd(
+            Box::new(contract_expression_as_c_fragment(left)?),
+            Box::new(contract_expression_as_c_fragment(right)?),
+        )),
+        ContractExpression::BitwiseOr(left, right) => Some(CExpression::BitwiseOr(
+            Box::new(contract_expression_as_c_fragment(left)?),
+            Box::new(contract_expression_as_c_fragment(right)?),
+        )),
+        ContractExpression::BitwiseXor(left, right) => Some(CExpression::BitwiseXor(
+            Box::new(contract_expression_as_c_fragment(left)?),
+            Box::new(contract_expression_as_c_fragment(right)?),
+        )),
+        ContractExpression::BitwiseNot(expression) => Some(CExpression::BitwiseNot(Box::new(
+            contract_expression_as_c_fragment(expression)?,
+        ))),
         ContractExpression::Index(base, index) => Some(CExpression::Index(
             Box::new(contract_expression_as_c_fragment(base)?),
             Box::new(contract_expression_as_c_fragment(index)?),
@@ -3791,6 +3900,21 @@ fn contract_expression_to_c_fragment(expression: &ContractExpression) -> Option<
             Box::new(contract_expression_to_c_fragment(left)?),
             Box::new(contract_expression_to_c_fragment(right)?),
         )),
+        ContractExpression::BitwiseAnd(left, right) => Some(CExpression::BitwiseAnd(
+            Box::new(contract_expression_to_c_fragment(left)?),
+            Box::new(contract_expression_to_c_fragment(right)?),
+        )),
+        ContractExpression::BitwiseOr(left, right) => Some(CExpression::BitwiseOr(
+            Box::new(contract_expression_to_c_fragment(left)?),
+            Box::new(contract_expression_to_c_fragment(right)?),
+        )),
+        ContractExpression::BitwiseXor(left, right) => Some(CExpression::BitwiseXor(
+            Box::new(contract_expression_to_c_fragment(left)?),
+            Box::new(contract_expression_to_c_fragment(right)?),
+        )),
+        ContractExpression::BitwiseNot(expression) => Some(CExpression::BitwiseNot(Box::new(
+            contract_expression_to_c_fragment(expression)?,
+        ))),
         ContractExpression::Index(base, index) => Some(CExpression::Index(
             Box::new(contract_expression_to_c_fragment(base)?),
             Box::new(contract_expression_to_c_fragment(index)?),
@@ -3895,9 +4019,15 @@ fn collect_c_expression_referenced_names(expression: &CExpression, names: &mut B
         | CExpression::Add(left, right)
         | CExpression::Subtract(left, right)
         | CExpression::Multiply(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
         | CExpression::Index(left, right) => {
             collect_c_expression_referenced_names(left, names);
             collect_c_expression_referenced_names(right, names);
+        }
+        CExpression::BitwiseNot(expression) => {
+            collect_c_expression_referenced_names(expression, names);
         }
     }
 }
@@ -4595,6 +4725,25 @@ impl KernelPropositionLowerer {
                 let right = self.lower_requirement_value(right)?;
                 lower_contract_multiply(left, right)
             }
+            ContractExpression::BitwiseAnd(left, right) => {
+                let left = self.lower_requirement_value(left)?;
+                let right = self.lower_requirement_value(right)?;
+                lower_contract_bitwise_binary(left, right, "&", bitvector32_and)
+            }
+            ContractExpression::BitwiseOr(left, right) => {
+                let left = self.lower_requirement_value(left)?;
+                let right = self.lower_requirement_value(right)?;
+                lower_contract_bitwise_binary(left, right, "|", bitvector32_or)
+            }
+            ContractExpression::BitwiseXor(left, right) => {
+                let left = self.lower_requirement_value(left)?;
+                let right = self.lower_requirement_value(right)?;
+                lower_contract_bitwise_binary(left, right, "^", bitvector32_xor)
+            }
+            ContractExpression::BitwiseNot(expression) => {
+                let value = self.lower_requirement_value(expression)?;
+                lower_contract_bitwise_not(value)
+            }
             ContractExpression::Index(_, _) => Err(ClickError::new(
                 "memory reads are not supported in `requires` propositions yet",
             )),
@@ -4732,6 +4881,27 @@ impl KernelPropositionLowerer {
                 self.lower_requirement_c_expression(left)?,
                 self.lower_requirement_c_expression(right)?,
             ),
+            CExpression::BitwiseAnd(left, right) => lower_contract_bitwise_binary(
+                self.lower_requirement_c_expression(left)?,
+                self.lower_requirement_c_expression(right)?,
+                "&",
+                bitvector32_and,
+            ),
+            CExpression::BitwiseOr(left, right) => lower_contract_bitwise_binary(
+                self.lower_requirement_c_expression(left)?,
+                self.lower_requirement_c_expression(right)?,
+                "|",
+                bitvector32_or,
+            ),
+            CExpression::BitwiseXor(left, right) => lower_contract_bitwise_binary(
+                self.lower_requirement_c_expression(left)?,
+                self.lower_requirement_c_expression(right)?,
+                "^",
+                bitvector32_xor,
+            ),
+            CExpression::BitwiseNot(expression) => {
+                lower_contract_bitwise_not(self.lower_requirement_c_expression(expression)?)
+            }
             _ => Err(ClickError::new(format!(
                 "unsupported expression in `requires` proposition: `{expression:?}`"
             ))),
@@ -5031,6 +5201,29 @@ fn lower_contract_multiply(left: CValue, right: CValue) -> Result<CValue, ClickE
     }
 }
 
+fn lower_contract_bitwise_binary(
+    left: CValue,
+    right: CValue,
+    operator: &str,
+    apply: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
+) -> Result<CValue, ClickError> {
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right)) => Ok(CValue::Int32(apply(left, right))),
+        (left, right) => Err(ClickError::new(format!(
+            "cannot apply `{operator}` to `{left:?}` and `{right:?}` in proposition"
+        ))),
+    }
+}
+
+fn lower_contract_bitwise_not(value: CValue) -> Result<CValue, ClickError> {
+    match value {
+        CValue::Int32(value) => Ok(CValue::Int32(bitvector32_not(value))),
+        value => Err(ClickError::new(format!(
+            "cannot apply `~` to `{value:?}` in proposition"
+        ))),
+    }
+}
+
 fn bitvector32_add(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
     match (&left, &right) {
         (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
@@ -5110,6 +5303,56 @@ fn bitvector32_multiply(left: Bitvector32Term, right: Bitvector32Term) -> Bitvec
             Bitvector32Term::Constant(0)
         }
         _ => Bitvector32Term::Multiply(Box::new(left), Box::new(right)),
+    }
+}
+
+fn bitvector32_and(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
+    match (&left, &right) {
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            Bitvector32Term::Constant(*left & *right)
+        }
+        (_, Bitvector32Term::Constant(u32::MAX)) => left,
+        (Bitvector32Term::Constant(u32::MAX), _) => right,
+        (_, Bitvector32Term::Constant(0)) | (Bitvector32Term::Constant(0), _) => {
+            Bitvector32Term::Constant(0)
+        }
+        _ if left == right => left,
+        _ => Bitvector32Term::BitwiseAnd(Box::new(left), Box::new(right)),
+    }
+}
+
+fn bitvector32_or(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
+    match (&left, &right) {
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            Bitvector32Term::Constant(*left | *right)
+        }
+        (_, Bitvector32Term::Constant(0)) => left,
+        (Bitvector32Term::Constant(0), _) => right,
+        (_, Bitvector32Term::Constant(u32::MAX)) | (Bitvector32Term::Constant(u32::MAX), _) => {
+            Bitvector32Term::Constant(u32::MAX)
+        }
+        _ if left == right => left,
+        _ => Bitvector32Term::BitwiseOr(Box::new(left), Box::new(right)),
+    }
+}
+
+fn bitvector32_xor(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
+    match (&left, &right) {
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            Bitvector32Term::Constant(*left ^ *right)
+        }
+        (_, Bitvector32Term::Constant(0)) => left,
+        (Bitvector32Term::Constant(0), _) => right,
+        _ if left == right => Bitvector32Term::Constant(0),
+        _ => Bitvector32Term::BitwiseXor(Box::new(left), Box::new(right)),
+    }
+}
+
+fn bitvector32_not(value: Bitvector32Term) -> Bitvector32Term {
+    match value {
+        Bitvector32Term::Constant(value) => Bitvector32Term::Constant(!value),
+        Bitvector32Term::BitwiseNot(inner) => *inner,
+        value => Bitvector32Term::BitwiseNot(Box::new(value)),
     }
 }
 
@@ -6452,6 +6695,88 @@ fn evaluate_predicate_contract_expression(
             )?;
             evaluate_postcondition_multiply(left, right)
         }
+        ContractExpression::BitwiseAnd(left, right) => {
+            let left = evaluate_predicate_contract_expression(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                left,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_predicate_contract_expression(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                right,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            evaluate_postcondition_bitwise_binary(left, right, "&", bitvector32_and)
+        }
+        ContractExpression::BitwiseOr(left, right) => {
+            let left = evaluate_predicate_contract_expression(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                left,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_predicate_contract_expression(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                right,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            evaluate_postcondition_bitwise_binary(left, right, "|", bitvector32_or)
+        }
+        ContractExpression::BitwiseXor(left, right) => {
+            let left = evaluate_predicate_contract_expression(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                left,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_predicate_contract_expression(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                right,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            evaluate_postcondition_bitwise_binary(left, right, "^", bitvector32_xor)
+        }
+        ContractExpression::BitwiseNot(expression) => {
+            let value = evaluate_predicate_contract_expression(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                expression,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            evaluate_postcondition_bitwise_not(value)
+        }
         ContractExpression::Index(base, index) => {
             if contains_old_expression(base) {
                 return Err("`old(...)` is not available in predicate definitions".to_string());
@@ -6917,6 +7242,16 @@ fn simp_bitvector_const(term: &Bitvector32Term) -> Option<u32> {
         Bitvector32Term::Multiply(left, right) => {
             Some(simp_bitvector_const(left)?.wrapping_mul(simp_bitvector_const(right)?))
         }
+        Bitvector32Term::BitwiseAnd(left, right) => {
+            Some(simp_bitvector_const(left)? & simp_bitvector_const(right)?)
+        }
+        Bitvector32Term::BitwiseOr(left, right) => {
+            Some(simp_bitvector_const(left)? | simp_bitvector_const(right)?)
+        }
+        Bitvector32Term::BitwiseXor(left, right) => {
+            Some(simp_bitvector_const(left)? ^ simp_bitvector_const(right)?)
+        }
+        Bitvector32Term::BitwiseNot(value) => Some(!simp_bitvector_const(value)?),
         Bitvector32Term::If {
             condition,
             then_term,
@@ -6940,6 +7275,16 @@ fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32Term {
         Bitvector32Term::Multiply(left, right) => {
             bitvector32_multiply(simp_bitvector(left), simp_bitvector(right))
         }
+        Bitvector32Term::BitwiseAnd(left, right) => {
+            bitvector32_and(simp_bitvector(left), simp_bitvector(right))
+        }
+        Bitvector32Term::BitwiseOr(left, right) => {
+            bitvector32_or(simp_bitvector(left), simp_bitvector(right))
+        }
+        Bitvector32Term::BitwiseXor(left, right) => {
+            bitvector32_xor(simp_bitvector(left), simp_bitvector(right))
+        }
+        Bitvector32Term::BitwiseNot(value) => bitvector32_not(simp_bitvector(value)),
         Bitvector32Term::If {
             condition,
             then_term,
@@ -8134,6 +8479,102 @@ fn evaluate_contract_expression_with_environment(
             )?;
             evaluate_postcondition_multiply(left, right)
         }
+        ContractExpression::BitwiseAnd(left, right) => {
+            let left = evaluate_contract_expression_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                left,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_contract_expression_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                right,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            evaluate_postcondition_bitwise_binary(left, right, "&", bitvector32_and)
+        }
+        ContractExpression::BitwiseOr(left, right) => {
+            let left = evaluate_contract_expression_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                left,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_contract_expression_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                right,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            evaluate_postcondition_bitwise_binary(left, right, "|", bitvector32_or)
+        }
+        ContractExpression::BitwiseXor(left, right) => {
+            let left = evaluate_contract_expression_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                left,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_contract_expression_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                right,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            evaluate_postcondition_bitwise_binary(left, right, "^", bitvector32_xor)
+        }
+        ContractExpression::BitwiseNot(expression) => {
+            let value = evaluate_contract_expression_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                expression,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            evaluate_postcondition_bitwise_not(value)
+        }
         ContractExpression::Index(base, index) => {
             let array_ref = evaluate_contract_array_ref_with_environment(
                 parameter_values,
@@ -8942,6 +9383,52 @@ fn evaluate_c_contract_expression(
             )?;
             evaluate_postcondition_multiply(left, right)
         }
+        CExpression::BitwiseAnd(left, right) => {
+            let left =
+                evaluate_c_contract_expression(parameter_values, state, result, assumptions, left)?;
+            let right = evaluate_c_contract_expression(
+                parameter_values,
+                state,
+                result,
+                assumptions,
+                right,
+            )?;
+            evaluate_postcondition_bitwise_binary(left, right, "&", bitvector32_and)
+        }
+        CExpression::BitwiseOr(left, right) => {
+            let left =
+                evaluate_c_contract_expression(parameter_values, state, result, assumptions, left)?;
+            let right = evaluate_c_contract_expression(
+                parameter_values,
+                state,
+                result,
+                assumptions,
+                right,
+            )?;
+            evaluate_postcondition_bitwise_binary(left, right, "|", bitvector32_or)
+        }
+        CExpression::BitwiseXor(left, right) => {
+            let left =
+                evaluate_c_contract_expression(parameter_values, state, result, assumptions, left)?;
+            let right = evaluate_c_contract_expression(
+                parameter_values,
+                state,
+                result,
+                assumptions,
+                right,
+            )?;
+            evaluate_postcondition_bitwise_binary(left, right, "^", bitvector32_xor)
+        }
+        CExpression::BitwiseNot(expression) => {
+            let value = evaluate_c_contract_expression(
+                parameter_values,
+                state,
+                result,
+                assumptions,
+                expression,
+            )?;
+            evaluate_postcondition_bitwise_not(value)
+        }
         CExpression::Index(base, index) => {
             let base =
                 evaluate_c_contract_expression(parameter_values, state, result, assumptions, base)?;
@@ -9056,6 +9543,27 @@ fn evaluate_postcondition_multiply(left: CValue, right: CValue) -> Result<CValue
     }
 }
 
+fn evaluate_postcondition_bitwise_binary(
+    left: CValue,
+    right: CValue,
+    operator: &str,
+    apply: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
+) -> Result<CValue, String> {
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right)) => Ok(CValue::Int32(apply(left, right))),
+        (left, right) => Err(format!(
+            "cannot apply `{operator}` to `{left:?}` and `{right:?}`"
+        )),
+    }
+}
+
+fn evaluate_postcondition_bitwise_not(value: CValue) -> Result<CValue, String> {
+    match value {
+        CValue::Int32(value) => Ok(CValue::Int32(bitvector32_not(value))),
+        value => Err(format!("cannot apply `~` to `{value:?}`")),
+    }
+}
+
 fn evaluate_postcondition_pointer_add(left: CValue, right: CValue) -> Result<Pointer, String> {
     match evaluate_postcondition_add(left, right)? {
         CValue::Pointer(pointer) => Ok(pointer),
@@ -9138,6 +9646,9 @@ enum Token {
     Plus,
     Minus,
     Star,
+    Amp,
+    Caret,
+    Tilde,
     Pipe,
 }
 
@@ -9742,7 +10253,15 @@ impl Parser {
                         right,
                     });
                 }
-                Some(Token::Plus | Token::Minus | Token::LBracket) => {
+                Some(
+                    Token::Plus
+                    | Token::Minus
+                    | Token::Star
+                    | Token::Amp
+                    | Token::Pipe
+                    | Token::Caret
+                    | Token::LBracket,
+                ) => {
                     self.position = start;
                     return self.parse_proposition_comparison();
                 }
@@ -10045,11 +10564,11 @@ impl Parser {
     }
 
     fn parse_ensure_expression(&mut self) -> Result<C0Expression, ClickError> {
-        self.parse_ensure_add()
+        self.parse_ensure_bitwise_or()
     }
 
     fn parse_contract_expression(&mut self) -> Result<ContractExpression, ClickError> {
-        self.parse_contract_add()
+        self.parse_contract_bitwise_or()
     }
 
     fn parse_contract_segment(&mut self) -> Result<ContractSegment, ClickError> {
@@ -10079,6 +10598,36 @@ impl Parser {
         })
     }
 
+    fn parse_contract_bitwise_or(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut expression = self.parse_contract_bitwise_xor()?;
+        while self.peek() == Some(&Token::Pipe) {
+            self.position += 1;
+            let right = self.parse_contract_bitwise_xor()?;
+            expression = ContractExpression::BitwiseOr(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_contract_bitwise_xor(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut expression = self.parse_contract_bitwise_and()?;
+        while self.peek() == Some(&Token::Caret) {
+            self.position += 1;
+            let right = self.parse_contract_bitwise_and()?;
+            expression = ContractExpression::BitwiseXor(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_contract_bitwise_and(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut expression = self.parse_contract_add()?;
+        while self.peek() == Some(&Token::Amp) {
+            self.position += 1;
+            let right = self.parse_contract_add()?;
+            expression = ContractExpression::BitwiseAnd(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
     fn parse_contract_add(&mut self) -> Result<ContractExpression, ClickError> {
         let mut expression = self.parse_contract_multiply()?;
         loop {
@@ -10099,13 +10648,24 @@ impl Parser {
     }
 
     fn parse_contract_multiply(&mut self) -> Result<ContractExpression, ClickError> {
-        let mut expression = self.parse_contract_postfix()?;
+        let mut expression = self.parse_contract_unary()?;
         while self.peek() == Some(&Token::Star) {
             self.position += 1;
-            let right = self.parse_contract_postfix()?;
+            let right = self.parse_contract_unary()?;
             expression = ContractExpression::Multiply(Box::new(expression), Box::new(right));
         }
         Ok(expression)
+    }
+
+    fn parse_contract_unary(&mut self) -> Result<ContractExpression, ClickError> {
+        if self.peek() == Some(&Token::Tilde) {
+            self.position += 1;
+            return Ok(ContractExpression::BitwiseNot(Box::new(
+                self.parse_contract_unary()?,
+            )));
+        }
+
+        self.parse_contract_postfix()
     }
 
     fn parse_contract_postfix(&mut self) -> Result<ContractExpression, ClickError> {
@@ -10237,6 +10797,36 @@ impl Parser {
         })
     }
 
+    fn parse_ensure_bitwise_or(&mut self) -> Result<C0Expression, ClickError> {
+        let mut expression = self.parse_ensure_bitwise_xor()?;
+        while self.peek() == Some(&Token::Pipe) {
+            self.position += 1;
+            let right = self.parse_ensure_bitwise_xor()?;
+            expression = C0Expression::BitwiseOr(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_ensure_bitwise_xor(&mut self) -> Result<C0Expression, ClickError> {
+        let mut expression = self.parse_ensure_bitwise_and()?;
+        while self.peek() == Some(&Token::Caret) {
+            self.position += 1;
+            let right = self.parse_ensure_bitwise_and()?;
+            expression = C0Expression::BitwiseXor(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_ensure_bitwise_and(&mut self) -> Result<C0Expression, ClickError> {
+        let mut expression = self.parse_ensure_add()?;
+        while self.peek() == Some(&Token::Amp) {
+            self.position += 1;
+            let right = self.parse_ensure_add()?;
+            expression = C0Expression::BitwiseAnd(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
     fn parse_ensure_add(&mut self) -> Result<C0Expression, ClickError> {
         let mut expression = self.parse_ensure_multiply()?;
         loop {
@@ -10257,13 +10847,24 @@ impl Parser {
     }
 
     fn parse_ensure_multiply(&mut self) -> Result<C0Expression, ClickError> {
-        let mut expression = self.parse_ensure_postfix()?;
+        let mut expression = self.parse_ensure_unary()?;
         while self.peek() == Some(&Token::Star) {
             self.position += 1;
-            let right = self.parse_ensure_postfix()?;
+            let right = self.parse_ensure_unary()?;
             expression = C0Expression::Multiply(Box::new(expression), Box::new(right));
         }
         Ok(expression)
+    }
+
+    fn parse_ensure_unary(&mut self) -> Result<C0Expression, ClickError> {
+        if self.peek() == Some(&Token::Tilde) {
+            self.position += 1;
+            return Ok(C0Expression::BitwiseNot(Box::new(
+                self.parse_ensure_unary()?,
+            )));
+        }
+
+        self.parse_ensure_postfix()
     }
 
     fn parse_ensure_postfix(&mut self) -> Result<C0Expression, ClickError> {
@@ -10601,9 +11202,15 @@ fn validate_contract_expression_calls(
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
         | ContractExpression::Multiply(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right)
         | ContractExpression::Index(left, right) => {
             validate_contract_expression_calls(left, click_functions, context)?;
             validate_contract_expression_calls(right, click_functions, context)
+        }
+        ContractExpression::BitwiseNot(expression) => {
+            validate_contract_expression_calls(expression, click_functions, context)
         }
         ContractExpression::If {
             condition,
@@ -10694,9 +11301,13 @@ fn contains_old_expression(expression: &ContractExpression) -> bool {
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
         | ContractExpression::Multiply(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right)
         | ContractExpression::Index(left, right) => {
             contains_old_expression(left) || contains_old_expression(right)
         }
+        ContractExpression::BitwiseNot(expression) => contains_old_expression(expression),
         ContractExpression::If {
             condition,
             then_branch,
@@ -10761,9 +11372,15 @@ fn collect_click_function_calls(expression: &ContractExpression, calls: &mut BTr
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
         | ContractExpression::Multiply(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right)
         | ContractExpression::Index(left, right) => {
             collect_click_function_calls(left, calls);
             collect_click_function_calls(right, calls);
+        }
+        ContractExpression::BitwiseNot(expression) => {
+            collect_click_function_calls(expression, calls)
         }
         ContractExpression::If {
             condition,
@@ -10943,8 +11560,20 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
                 tokens.push(Token::Star);
                 index += 1;
             }
+            '&' => {
+                tokens.push(Token::Amp);
+                index += 1;
+            }
             '|' => {
                 tokens.push(Token::Pipe);
+                index += 1;
+            }
+            '^' => {
+                tokens.push(Token::Caret);
+                index += 1;
+            }
+            '~' => {
+                tokens.push(Token::Tilde);
                 index += 1;
             }
             '<' => {

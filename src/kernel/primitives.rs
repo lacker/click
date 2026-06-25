@@ -33,6 +33,10 @@ pub enum Bitvector32Term {
     Add(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Subtract(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Multiply(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    BitwiseAnd(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    BitwiseOr(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    BitwiseXor(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    BitwiseNot(Box<Bitvector32Term>),
     If {
         condition: Box<ConditionTerm>,
         then_term: Box<Bitvector32Term>,
@@ -127,6 +131,10 @@ pub enum CExpression {
     Add(Box<CExpression>, Box<CExpression>),
     Subtract(Box<CExpression>, Box<CExpression>),
     Multiply(Box<CExpression>, Box<CExpression>),
+    BitwiseAnd(Box<CExpression>, Box<CExpression>),
+    BitwiseOr(Box<CExpression>, Box<CExpression>),
+    BitwiseXor(Box<CExpression>, Box<CExpression>),
+    BitwiseNot(Box<CExpression>),
     Load(Box<CExpression>),
     Index(Box<CExpression>, Box<CExpression>),
 }
@@ -154,6 +162,10 @@ pub enum SpecExpression {
     Add(Box<SpecExpression>, Box<SpecExpression>),
     Subtract(Box<SpecExpression>, Box<SpecExpression>),
     Multiply(Box<SpecExpression>, Box<SpecExpression>),
+    BitwiseAnd(Box<SpecExpression>, Box<SpecExpression>),
+    BitwiseOr(Box<SpecExpression>, Box<SpecExpression>),
+    BitwiseXor(Box<SpecExpression>, Box<SpecExpression>),
+    BitwiseNot(Box<SpecExpression>),
     If {
         condition: Box<SpecProposition>,
         then_branch: Box<SpecExpression>,
@@ -618,6 +630,10 @@ impl Bitvector32Term {
             Self::Add(left, right) => Some(left.as_const()?.wrapping_add(right.as_const()?)),
             Self::Subtract(left, right) => Some(left.as_const()?.wrapping_sub(right.as_const()?)),
             Self::Multiply(left, right) => Some(left.as_const()?.wrapping_mul(right.as_const()?)),
+            Self::BitwiseAnd(left, right) => Some(left.as_const()? & right.as_const()?),
+            Self::BitwiseOr(left, right) => Some(left.as_const()? | right.as_const()?),
+            Self::BitwiseXor(left, right) => Some(left.as_const()? ^ right.as_const()?),
+            Self::BitwiseNot(value) => Some(!value.as_const()?),
             Self::If {
                 condition,
                 then_term,
@@ -750,6 +766,48 @@ impl Bitvector32Term {
             (Self::Constant(1), _) => right,
             (_, Self::Constant(0)) | (Self::Constant(0), _) => Self::Constant(0),
             _ => Self::Multiply(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(super) fn bitwise_and(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => Self::Constant(*left & *right),
+            (_, Self::Constant(u32::MAX)) => left,
+            (Self::Constant(u32::MAX), _) => right,
+            (_, Self::Constant(0)) | (Self::Constant(0), _) => Self::Constant(0),
+            _ if left == right => left,
+            _ => Self::BitwiseAnd(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(super) fn bitwise_or(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => Self::Constant(*left | *right),
+            (_, Self::Constant(0)) => left,
+            (Self::Constant(0), _) => right,
+            (_, Self::Constant(u32::MAX)) | (Self::Constant(u32::MAX), _) => {
+                Self::Constant(u32::MAX)
+            }
+            _ if left == right => left,
+            _ => Self::BitwiseOr(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(super) fn bitwise_xor(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => Self::Constant(*left ^ *right),
+            (_, Self::Constant(0)) => left,
+            (Self::Constant(0), _) => right,
+            _ if left == right => Self::Constant(0),
+            _ => Self::BitwiseXor(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(super) fn bitwise_not(value: Self) -> Self {
+        match value {
+            Self::Constant(value) => Self::Constant(!value),
+            Self::BitwiseNot(inner) => *inner,
+            value => Self::BitwiseNot(Box::new(value)),
         }
     }
 

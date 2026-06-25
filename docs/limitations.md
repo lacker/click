@@ -6,8 +6,7 @@ This page lists boundaries that agents should not silently assume away.
 
 Click does not parse general C. See [c0-subset.md](c0-subset.md). Missing
 features include structs, unsigned integers beyond the narrow `uint8` byte
-type, casts, globals, heap allocation, `for` loops, `switch`, and many
-operators.
+type, casts, globals, heap allocation, `switch`, and many operators.
 
 ## Type Support Is Still Narrow
 
@@ -16,15 +15,22 @@ The verifier supports `int32` and a byte-like `uint8` type, including `uint8*`,
 typed Click array refs. This is not a full C integer model: there are no casts,
 promotions, signedness conversions, or general unsigned arithmetic yet.
 Signed `int32` addition, subtraction, and multiplication are modeled with C
-undefined behavior on overflow.
+undefined behavior on overflow. `int32` bitwise `&`, `|`, `^`, and unary `~`
+are modeled as fixed 32-bit two's-complement bitvector operations.
 
-Ordered comparisons are supported for `int32`. `uint8` currently has equality,
-inequality, truthiness, memory access, and return-value support.
+Ordered comparisons and bitwise operators are supported for `int32`. `uint8`
+currently has equality, inequality, truthiness, memory access, and return-value
+support; byte bitwise expressions are rejected until promotions/casts are
+designed.
 
 The prelude has initial byte-slice and C-string predicates over `uint8[]`, but
 there is still no first-class Click string value and no full libc string model.
-Casts/promotions, division/remainder, shifts, and byte ordering/bitwise
-arithmetic remain future work.
+Casts/promotions, division/remainder, shifts, and byte ordering arithmetic
+remain future work.
+
+The first `for` support is assignment-style sugar over `while`. Declarations in
+the initializer, omitted clauses, `++`, `continue`, and general C expression
+side effects are still unsupported.
 
 ## Aliasing Is Default
 
