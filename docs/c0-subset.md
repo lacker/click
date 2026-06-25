@@ -30,6 +30,8 @@ Supported C0 surface includes:
   two's-complement bitvector semantics
 - signed comparisons and equality
 - assignment and sequencing
+- statement update sugar: `x++`, `x--`, `x += expr`, `x -= expr`, and
+  `x *= expr`
 - `if` / `else` using C scalar truthiness
 - `while`
 - assignment-style `for (init; condition; step)` loops lowered to `while`
@@ -86,10 +88,11 @@ bytes per element; `uint8` arrays allocate one byte per element.
 - loop verification conditions using `loop N { invariant ... }` annotations
 
 The first `for` slice is sugar for existing `while` semantics:
-`for (i = init; condition; i = step) { body }` lowers to `i = init; while
-(condition) { body; i = step; }`. The initializer and step must be scalar
-assignments. Declarations inside the `for` initializer, omitted clauses, `++`,
-and `continue` are not supported yet.
+`for (i = init; condition; step) { body }` lowers to `i = init; while
+(condition) { body; step; }`. The initializer must be a scalar assignment. The
+step may be a scalar assignment or one of the supported scalar update-statement
+forms. Declarations inside the `for` initializer, omitted clauses, and
+`continue` are not supported yet.
 
 Symbolic pointer-writing loops should use invariants and explicit loop effects.
 Do not expect unconstrained symbolic loops to be unrolled automatically.
@@ -110,7 +113,8 @@ These are not general C features yet:
 - global variables
 - `do while`, `switch`, `break`, `continue`
 - declarations or omitted clauses inside `for` loops
-- compound assignments, increments, decrements
+- update expressions inside larger expressions, such as `j = i++`
+- compound/update operations on non-scalar lvalues, such as `p[i]++`
 - arbitrary expressions in declarations
 
 If you need one of these, add the smallest mdtest that motivates it before

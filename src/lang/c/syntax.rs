@@ -295,7 +295,11 @@ enum Token {
     Comma,
     Semicolon,
     Plus,
+    PlusPlus,
+    PlusEqual,
     Minus,
+    MinusMinus,
+    MinusEqual,
     LessThan,
     LessEqual,
     GreaterThan,
@@ -306,11 +310,26 @@ enum Token {
     AmpAmp,
     PipePipe,
     Star,
+    StarEqual,
     Amp,
     Pipe,
     Caret,
     Tilde,
     Equal,
+}
+
+impl Token {
+    fn is_scalar_update(&self) -> bool {
+        matches!(
+            self,
+            Self::Equal
+                | Self::PlusPlus
+                | Self::MinusMinus
+                | Self::PlusEqual
+                | Self::MinusEqual
+                | Self::StarEqual
+        )
+    }
 }
 
 struct Parser {
@@ -503,24 +522,10 @@ impl Parser {
                 self.expect(Token::Semicolon)?;
                 Ok(C0Statement::Store { pointer, value })
             }
-            Some(Token::Ident(name)) if self.peek_next() == Some(&Token::Equal) => {
-                let name = name.clone();
-                self.position += 2;
-                if matches!(self.peek(), Some(Token::Ident(_)))
-                    && self.peek_next() == Some(&Token::LParen)
-                {
-                    let function_name = self.expect_ident("function name")?;
-                    let arguments = self.parse_call_arguments()?;
-                    self.expect(Token::Semicolon)?;
-                    return Ok(C0Statement::CallAssign {
-                        target: name,
-                        function_name,
-                        arguments,
-                    });
-                }
-                let expression = self.parse_expression()?;
+            Some(Token::Ident(_)) if self.peek_next().is_some_and(Token::is_scalar_update) => {
+                let statement = self.parse_scalar_update_statement("statement")?;
                 self.expect(Token::Semicolon)?;
-                Ok(C0Statement::Assign { name, expression })
+                Ok(statement)
             }
             Some(Token::Ident(name)) if name == "int32" || name == "uint8" => {
                 let c_type = self.parse_type()?;
@@ -561,11 +566,11 @@ impl Parser {
                 Some("for") => {
                     self.position += 1;
                     self.expect(Token::LParen)?;
-                    let init = self.parse_for_assignment("for-loop initializer")?;
+                    let init = self.parse_for_initializer()?;
                     self.expect(Token::Semicolon)?;
                     let condition = self.parse_expression()?;
                     self.expect(Token::Semicolon)?;
-                    let step = self.parse_for_assignment("for-loop step")?;
+                    let step = self.parse_scalar_update_statement("for-loop step")?;
                     self.expect(Token::RParen)?;
                     let body = self.parse_block_statement()?;
                     let body = C0Statement::Seq(Box::new(body), Box::new(step));
@@ -589,19 +594,90 @@ impl Parser {
         }
     }
 
-    fn parse_for_assignment(&mut self, context: &str) -> Result<C0Statement, C0SyntaxError> {
+    fn parse_for_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {
         let Some(Token::Ident(name)) = self.next() else {
             return Err(C0SyntaxError::new(format!(
-                "expected assignment target in {context}"
+                "expected assignment target in for-loop initializer"
             )));
         };
         if name == "int32" || name == "uint8" {
-            return Err(C0SyntaxError::new(format!(
-                "declarations are not supported in {context}"
-            )));
+            return Err(C0SyntaxError::new(
+                "declarations are not supported in for-loop initializer",
+            ));
         }
         self.expect(Token::Equal)?;
         let expression = self.parse_expression()?;
+        Ok(C0Statement::Assign { name, expression })
+    }
+
+    fn parse_scalar_update_statement(
+        &mut self,
+        context: &str,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        let name = match self.next() {
+            Some(Token::Ident(name)) if name != "int32" && name != "uint8" => name,
+            Some(Token::Ident(name)) => {
+                return Err(C0SyntaxError::new(format!(
+                    "expected scalar update target in {context}, got `{name}`"
+                )));
+            }
+            Some(token) => {
+                return Err(C0SyntaxError::new(format!(
+                    "expected scalar update target in {context}, got {token:?}"
+                )));
+            }
+            None => {
+                return Err(C0SyntaxError::new(format!(
+                    "expected scalar update target in {context}, got end of input"
+                )));
+            }
+        };
+        let operator = self.next().ok_or_else(|| {
+            C0SyntaxError::new(format!(
+                "expected scalar update operator in {context}, got end of input"
+            ))
+        })?;
+        let expression = match operator {
+            Token::Equal => {
+                if matches!(self.peek(), Some(Token::Ident(_)))
+                    && self.peek_next() == Some(&Token::LParen)
+                {
+                    let function_name = self.expect_ident("function name")?;
+                    let arguments = self.parse_call_arguments()?;
+                    return Ok(C0Statement::CallAssign {
+                        target: name,
+                        function_name,
+                        arguments,
+                    });
+                }
+                self.parse_expression()?
+            }
+            Token::PlusPlus => C0Expression::Add(
+                Box::new(C0Expression::Variable(name.clone())),
+                Box::new(C0Expression::Int32Literal(1)),
+            ),
+            Token::MinusMinus => C0Expression::Subtract(
+                Box::new(C0Expression::Variable(name.clone())),
+                Box::new(C0Expression::Int32Literal(1)),
+            ),
+            Token::PlusEqual => C0Expression::Add(
+                Box::new(C0Expression::Variable(name.clone())),
+                Box::new(self.parse_expression()?),
+            ),
+            Token::MinusEqual => C0Expression::Subtract(
+                Box::new(C0Expression::Variable(name.clone())),
+                Box::new(self.parse_expression()?),
+            ),
+            Token::StarEqual => C0Expression::Multiply(
+                Box::new(C0Expression::Variable(name.clone())),
+                Box::new(self.parse_expression()?),
+            ),
+            token => {
+                return Err(C0SyntaxError::new(format!(
+                    "expected scalar update operator in {context}, got {token:?}"
+                )));
+            }
+        };
         Ok(C0Statement::Assign { name, expression })
     }
 
@@ -961,6 +1037,11 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
                 ('|', '|') => Some(Token::PipePipe),
                 ('<', '=') => Some(Token::LessEqual),
                 ('>', '=') => Some(Token::GreaterEqual),
+                ('+', '+') => Some(Token::PlusPlus),
+                ('+', '=') => Some(Token::PlusEqual),
+                ('-', '-') => Some(Token::MinusMinus),
+                ('-', '=') => Some(Token::MinusEqual),
+                ('*', '=') => Some(Token::StarEqual),
                 _ => None,
             };
             if let Some(token) = token {

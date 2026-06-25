@@ -1,19 +1,19 @@
 # C for loops
 
 This checks the first C0 `for` slice. A loop of the form
-`for (i = init; condition; i = step) { body }` is parser sugar for:
+`for (i = init; condition; step) { body }` is parser sugar for:
 
 ```c
 i = init;
 while (condition) {
     body;
-    i = step;
+    step;
 }
 ```
 
 The first slice intentionally supports only scalar assignment in the initializer
-and step. Declarations, omitted clauses, `++`, and `continue` are not part of
-this sugar.
+and scalar assignment/update statements in the step. Declarations, omitted
+clauses, and `continue` are not part of this sugar.
 
 ```c filename=for_sum_concrete.c
 int32 for_sum_concrete() {

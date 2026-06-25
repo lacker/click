@@ -28,9 +28,11 @@ there is still no first-class Click string value and no full libc string model.
 Casts/promotions, division/remainder, shifts, and byte ordering arithmetic
 remain future work.
 
-The first `for` support is assignment-style sugar over `while`. Declarations in
-the initializer, omitted clauses, `++`, `continue`, and general C expression
-side effects are still unsupported.
+The first `for` support is assignment-style sugar over `while`, and its step
+can use scalar update-statement sugar such as `i++`. Declarations in the
+initializer, omitted clauses, `continue`, and general C expression side effects
+are still unsupported. `i++` is accepted as a standalone statement, but not as a
+value-producing expression inside `j = i++`.
 
 ## Aliasing Is Default
 

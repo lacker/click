@@ -21,6 +21,10 @@ of inventing syntax from memory.
   Click expressions, precedence, and overflow behavior.
 - `mdtests/c_bitwise.md`: `int32` bitwise operators in C fragments and pure
   Click expressions, plus the current `uint8` promotion boundary.
+- `mdtests/c_statement_update_sugar.md`: standalone `++`, `--`, `+=`, `-=`,
+  and `*=` statement sugar.
+- `mdtests/c_statement_update_rejects_expression.md`: update expressions remain
+  unsupported inside larger expressions.
 
 ## Memory Safety And Postconditions
 
