@@ -19,6 +19,10 @@ of inventing syntax from memory.
 - `mdtests/decrement_requires_no_underflow.md`: lower-bound arithmetic safety.
 - `mdtests/c_multiplication.md`: signed multiplication in C fragments, pure
   Click expressions, precedence, and overflow behavior.
+- `mdtests/c_division_remainder.md`: signed division and remainder in C
+  fragments and pure Click expressions.
+- `mdtests/c_division_by_zero.md`, `mdtests/c_remainder_by_zero.md`, and
+  `mdtests/c_division_overflow.md`: division/remainder undefined behavior.
 - `mdtests/c_bitwise.md`: `int32` bitwise operators in C fragments and pure
   Click expressions, plus the current `uint8` promotion boundary.
 - `mdtests/c_statement_update_sugar.md`: standalone `++`, `--`, `+=`, `-=`,

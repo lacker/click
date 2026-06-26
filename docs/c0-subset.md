@@ -25,7 +25,7 @@ Supported C0 surface includes:
 
 - integer literals and variables
 - ASCII byte character literals such as `'x'`, `'\n'`, and `'\0'`
-- signed `+`, `-`, and `*`
+- signed `+`, `-`, `*`, `/`, and `%`
 - `int32` bitwise `&`, `|`, `^`, and unary `~` with fixed 32-bit
   two's-complement bitvector semantics
 - signed comparisons and equality
@@ -51,8 +51,10 @@ loads, stores, and returns.
 
 ## Undefined Behavior
 
-Signed overflow is C undefined behavior. Proofs involving signed arithmetic
-usually need requirements such as:
+Signed overflow is C undefined behavior. Signed division and remainder also
+have C undefined behavior for a zero divisor, and for `INT_MIN / -1` or
+`INT_MIN % -1`. Proofs involving signed arithmetic usually need requirements
+such as:
 
 ```click
 requires x < 2147483647;
@@ -105,7 +107,7 @@ These are not general C features yet:
 - unsigned integers other than the narrow `uint8` byte type
 - integer widths other than `int32`
 - casts and promotions
-- division, remainder, and shifts
+- shifts
 - bitwise operators on `uint8` or promoted/mixed-width integer expressions
 - pointer comparisons beyond the supported equality/range patterns
 - heap allocation

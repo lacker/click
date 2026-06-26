@@ -173,6 +173,12 @@ impl Assumptions {
                     self.simplify_bitvector_under_assumptions(right),
                 )
             }
+            ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => {
+                ConditionTerm::signed_divide_overflows(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
             ConditionTerm::PointerOffsetEqual(left, right) => {
                 ConditionTerm::pointer_offset_equal(left.as_ref().clone(), right.as_ref().clone())
             }
@@ -195,6 +201,14 @@ impl Assumptions {
                 self.simplify_bitvector_under_assumptions(right),
             ),
             Bitvector32Term::Multiply(left, right) => Bitvector32Term::multiply(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::Divide(left, right) => Bitvector32Term::divide(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::Remainder(left, right) => Bitvector32Term::remainder(
                 self.simplify_bitvector_under_assumptions(left),
                 self.simplify_bitvector_under_assumptions(right),
             ),
@@ -1219,6 +1233,26 @@ impl Assumptions {
                 let int_min = Bitvector32Term::Constant(i32::MIN as u32);
                 let right = right.as_ref().clone();
                 self.decide(&ConditionTerm::equal(right, int_min))
+            }
+            ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+                if right.as_ref() == &Bitvector32Term::Constant((-1i32) as u32) =>
+            {
+                let int_min = Bitvector32Term::Constant(i32::MIN as u32);
+                let left = left.as_ref().clone();
+                self.decide(&ConditionTerm::equal(left, int_min))
+            }
+            ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+                if left.as_ref() == &Bitvector32Term::Constant(i32::MIN as u32) =>
+            {
+                let minus_one = Bitvector32Term::Constant((-1i32) as u32);
+                let right = right.as_ref().clone();
+                self.decide(&ConditionTerm::equal(right, minus_one))
+            }
+            ConditionTerm::Bitvector32SignedDivideOverflows(_, right) if matches!(right.as_ref(), Bitvector32Term::Constant(value) if *value != (-1i32) as u32) => {
+                Some(false)
+            }
+            ConditionTerm::Bitvector32SignedDivideOverflows(left, _) if matches!(left.as_ref(), Bitvector32Term::Constant(value) if *value != i32::MIN as u32) => {
+                Some(false)
             }
             ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
                 if left.as_ref().is_subtract_one()

@@ -67,9 +67,8 @@ to clone C all at once.
 Likely additions:
 
 - C operators needed by ordinary library code:
-  division/remainder, shifts, ternary expressions, value-producing update
-  expressions, and broader `for` forms beyond the current assignment/update
-  lowering.
+  shifts, ternary expressions, value-producing update expressions, and broader
+  `for` forms beyond the current assignment/update lowering.
 - More integer types:
   `int`, `size_t`, `ssize_t`-like signed sizes, `uint32`, `uint64`, and
   well-specified casts/promotions.

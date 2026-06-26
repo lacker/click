@@ -74,6 +74,8 @@ pub enum C0Expression {
     Add(Box<C0Expression>, Box<C0Expression>),
     Subtract(Box<C0Expression>, Box<C0Expression>),
     Multiply(Box<C0Expression>, Box<C0Expression>),
+    Divide(Box<C0Expression>, Box<C0Expression>),
+    Remainder(Box<C0Expression>, Box<C0Expression>),
     BitwiseAnd(Box<C0Expression>, Box<C0Expression>),
     BitwiseOr(Box<C0Expression>, Box<C0Expression>),
     BitwiseXor(Box<C0Expression>, Box<C0Expression>),
@@ -242,6 +244,13 @@ impl C0Expression {
             Self::Multiply(left, right) => {
                 crate::kernel::c_multiply(left.to_kernel_expression(), right.to_kernel_expression())
             }
+            Self::Divide(left, right) => {
+                crate::kernel::c_divide(left.to_kernel_expression(), right.to_kernel_expression())
+            }
+            Self::Remainder(left, right) => crate::kernel::c_remainder(
+                left.to_kernel_expression(),
+                right.to_kernel_expression(),
+            ),
             Self::BitwiseAnd(left, right) => crate::kernel::c_bitwise_and(
                 left.to_kernel_expression(),
                 right.to_kernel_expression(),
@@ -311,6 +320,8 @@ enum Token {
     PipePipe,
     Star,
     StarEqual,
+    Slash,
+    Percent,
     Amp,
     Pipe,
     Caret,
@@ -833,10 +844,19 @@ impl Parser {
 
     fn parse_multiply(&mut self) -> Result<C0Expression, C0SyntaxError> {
         let mut expression = self.parse_unary()?;
-        while self.peek() == Some(&Token::Star) {
+        loop {
+            let Some(operator) = self.peek() else {
+                break;
+            };
+            let constructor = match operator {
+                Token::Star => C0Expression::Multiply,
+                Token::Slash => C0Expression::Divide,
+                Token::Percent => C0Expression::Remainder,
+                _ => break,
+            };
             self.position += 1;
             let right = self.parse_unary()?;
-            expression = C0Expression::Multiply(Box::new(expression), Box::new(right));
+            expression = constructor(Box::new(expression), Box::new(right));
         }
         Ok(expression)
     }
@@ -1065,6 +1085,8 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
             '<' => Token::LessThan,
             '>' => Token::GreaterThan,
             '*' => Token::Star,
+            '/' => Token::Slash,
+            '%' => Token::Percent,
             '&' => Token::Amp,
             '|' => Token::Pipe,
             '^' => Token::Caret,

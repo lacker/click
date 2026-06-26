@@ -76,6 +76,14 @@ pub fn c_multiply(left: CExpression, right: CExpression) -> CExpression {
     CExpression::Multiply(Box::new(left), Box::new(right))
 }
 
+pub fn c_divide(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::Divide(Box::new(left), Box::new(right))
+}
+
+pub fn c_remainder(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::Remainder(Box::new(left), Box::new(right))
+}
+
 pub fn c_bitwise_and(left: CExpression, right: CExpression) -> CExpression {
     CExpression::BitwiseAnd(Box::new(left), Box::new(right))
 }

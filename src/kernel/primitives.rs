@@ -33,6 +33,8 @@ pub enum Bitvector32Term {
     Add(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Subtract(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Multiply(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Divide(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Remainder(Box<Bitvector32Term>, Box<Bitvector32Term>),
     BitwiseAnd(Box<Bitvector32Term>, Box<Bitvector32Term>),
     BitwiseOr(Box<Bitvector32Term>, Box<Bitvector32Term>),
     BitwiseXor(Box<Bitvector32Term>, Box<Bitvector32Term>),
@@ -76,6 +78,7 @@ pub enum ConditionTerm {
     Bitvector32SignedAddOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector32SignedSubtractOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector32SignedMultiplyOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32SignedDivideOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     PointerOffsetEqual(Box<PointerOffsetTerm>, Box<PointerOffsetTerm>),
 }
 
@@ -131,6 +134,8 @@ pub enum CExpression {
     Add(Box<CExpression>, Box<CExpression>),
     Subtract(Box<CExpression>, Box<CExpression>),
     Multiply(Box<CExpression>, Box<CExpression>),
+    Divide(Box<CExpression>, Box<CExpression>),
+    Remainder(Box<CExpression>, Box<CExpression>),
     BitwiseAnd(Box<CExpression>, Box<CExpression>),
     BitwiseOr(Box<CExpression>, Box<CExpression>),
     BitwiseXor(Box<CExpression>, Box<CExpression>),
@@ -162,6 +167,8 @@ pub enum SpecExpression {
     Add(Box<SpecExpression>, Box<SpecExpression>),
     Subtract(Box<SpecExpression>, Box<SpecExpression>),
     Multiply(Box<SpecExpression>, Box<SpecExpression>),
+    Divide(Box<SpecExpression>, Box<SpecExpression>),
+    Remainder(Box<SpecExpression>, Box<SpecExpression>),
     BitwiseAnd(Box<SpecExpression>, Box<SpecExpression>),
     BitwiseOr(Box<SpecExpression>, Box<SpecExpression>),
     BitwiseXor(Box<SpecExpression>, Box<SpecExpression>),
@@ -332,6 +339,7 @@ pub struct CFunctionEnvironment {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CUndefinedBehavior {
     SignedOverflow,
+    DivisionByZero,
     InvalidMemory,
 }
 
@@ -614,6 +622,26 @@ impl VerificationVariableGenerator {
     }
 }
 
+fn checked_signed_divide_const(left: u32, right: u32) -> Option<u32> {
+    let left = left as i32;
+    let right = right as i32;
+    if right == 0 || (left == i32::MIN && right == -1) {
+        None
+    } else {
+        Some((left / right) as u32)
+    }
+}
+
+fn checked_signed_remainder_const(left: u32, right: u32) -> Option<u32> {
+    let left = left as i32;
+    let right = right as i32;
+    if right == 0 || (left == i32::MIN && right == -1) {
+        None
+    } else {
+        Some((left % right) as u32)
+    }
+}
+
 impl Bitvector32Term {
     pub fn var(var: Variable) -> Self {
         Self::Variable(var)
@@ -630,6 +658,12 @@ impl Bitvector32Term {
             Self::Add(left, right) => Some(left.as_const()?.wrapping_add(right.as_const()?)),
             Self::Subtract(left, right) => Some(left.as_const()?.wrapping_sub(right.as_const()?)),
             Self::Multiply(left, right) => Some(left.as_const()?.wrapping_mul(right.as_const()?)),
+            Self::Divide(left, right) => {
+                checked_signed_divide_const(left.as_const()?, right.as_const()?)
+            }
+            Self::Remainder(left, right) => {
+                checked_signed_remainder_const(left.as_const()?, right.as_const()?)
+            }
             Self::BitwiseAnd(left, right) => Some(left.as_const()? & right.as_const()?),
             Self::BitwiseOr(left, right) => Some(left.as_const()? | right.as_const()?),
             Self::BitwiseXor(left, right) => Some(left.as_const()? ^ right.as_const()?),
@@ -766,6 +800,37 @@ impl Bitvector32Term {
             (Self::Constant(1), _) => right,
             (_, Self::Constant(0)) | (Self::Constant(0), _) => Self::Constant(0),
             _ => Self::Multiply(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(super) fn divide(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => {
+                match checked_signed_divide_const(*left, *right) {
+                    Some(value) => Self::Constant(value),
+                    None => Self::Divide(
+                        Box::new(Self::Constant(*left)),
+                        Box::new(Self::Constant(*right)),
+                    ),
+                }
+            }
+            (_, Self::Constant(1)) => left,
+            _ => Self::Divide(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(super) fn remainder(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => {
+                match checked_signed_remainder_const(*left, *right) {
+                    Some(value) => Self::Constant(value),
+                    None => Self::Remainder(
+                        Box::new(Self::Constant(*left)),
+                        Box::new(Self::Constant(*right)),
+                    ),
+                }
+            }
+            _ => Self::Remainder(Box::new(left), Box::new(right)),
         }
     }
 
@@ -971,6 +1036,15 @@ impl ConditionTerm {
                 Self::Constant((left as i32).overflowing_mul(right as i32).1)
             }
             _ => Self::Bitvector32SignedMultiplyOverflows(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(super) fn signed_divide_overflows(left: Bitvector32Term, right: Bitvector32Term) -> Self {
+        match (left.as_const(), right.as_const()) {
+            (Some(left), Some(right)) => {
+                Self::Constant(left == i32::MIN as u32 && right == (-1i32) as u32)
+            }
+            _ => Self::Bitvector32SignedDivideOverflows(Box::new(left), Box::new(right)),
         }
     }
 

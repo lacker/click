@@ -144,6 +144,26 @@ pub(super) fn evaluate_c_expression_paths(
                 apply_c_int32_multiply(left, right, facts, obligations, assumptions)
             },
         )?,
+        CExpression::Divide(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_divide(left, right, facts, obligations, assumptions)
+            },
+        )?,
+        CExpression::Remainder(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_remainder(left, right, facts, obligations, assumptions)
+            },
+        )?,
         CExpression::BitwiseAnd(left, right) => evaluate_c_int32_binary_paths(
             state,
             left,
@@ -980,6 +1000,147 @@ pub(super) fn apply_c_int32_multiply(
                     outcome: CExpressionOutcome::Value(int32(Bitvector32Term::multiply(
                         left, right,
                     ))),
+                    facts: normal_facts,
+                    obligations: obligations.clone(),
+                },
+                CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::SignedOverflow,
+                    ),
+                    facts: overflow_facts,
+                    obligations,
+                },
+            ]
+        }
+    }
+}
+
+pub(super) fn apply_c_int32_divide(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    apply_c_int32_division_like(
+        left,
+        right,
+        facts,
+        obligations,
+        assumptions,
+        Bitvector32Term::divide,
+    )
+}
+
+pub(super) fn apply_c_int32_remainder(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    apply_c_int32_division_like(
+        left,
+        right,
+        facts,
+        obligations,
+        assumptions,
+        Bitvector32Term::remainder,
+    )
+}
+
+fn apply_c_int32_division_like(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+    result: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
+) -> Vec<CExpressionPath> {
+    let zero = Bitvector32Term::Constant(0);
+    let divides_by_zero = ConditionTerm::equal(right.clone(), zero);
+    match decide_with_facts(assumptions, &facts, &divides_by_zero) {
+        Some(true) => {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::DivisionByZero),
+                facts,
+                obligations,
+            }];
+        }
+        Some(false) => {
+            return apply_c_int32_division_nonzero(
+                left,
+                right,
+                facts,
+                obligations,
+                assumptions,
+                result,
+            );
+        }
+        None => {}
+    }
+
+    let mut normal_facts = facts.clone();
+    add_condition_path_fact(
+        &mut normal_facts,
+        assumptions,
+        divides_by_zero.clone(),
+        false,
+    )
+    .expect("unknown zero-divisor fact should be consistent");
+
+    let mut zero_facts = facts;
+    add_condition_path_fact(&mut zero_facts, assumptions, divides_by_zero, true)
+        .expect("unknown zero-divisor fact should be consistent");
+
+    let mut paths = apply_c_int32_division_nonzero(
+        left,
+        right,
+        normal_facts,
+        obligations.clone(),
+        assumptions,
+        result,
+    );
+    paths.push(CExpressionPath {
+        outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::DivisionByZero),
+        facts: zero_facts,
+        obligations,
+    });
+    paths
+}
+
+fn apply_c_int32_division_nonzero(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+    result: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
+) -> Vec<CExpressionPath> {
+    let overflow = ConditionTerm::signed_divide_overflows(left.clone(), right.clone());
+    match decide_with_facts(assumptions, &facts, &overflow) {
+        Some(true) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
+            facts,
+            obligations,
+        }],
+        Some(false) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(result(left, right))),
+            facts,
+            obligations,
+        }],
+        None => {
+            let mut normal_facts = facts.clone();
+            add_condition_path_fact(&mut normal_facts, assumptions, overflow.clone(), false)
+                .expect("unknown divide-overflow fact should be consistent");
+
+            let mut overflow_facts = facts;
+            add_condition_path_fact(&mut overflow_facts, assumptions, overflow, true)
+                .expect("unknown divide-overflow fact should be consistent");
+
+            vec![
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(result(left, right))),
                     facts: normal_facts,
                     obligations: obligations.clone(),
                 },
