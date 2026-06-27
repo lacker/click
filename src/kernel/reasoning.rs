@@ -705,6 +705,14 @@ fn bitvector_terms_alpha_equivalent(
             Bitvector32Term::Remainder(right_a, right_b),
         )
         | (
+            Bitvector32Term::ShiftLeft(left_a, left_b),
+            Bitvector32Term::ShiftLeft(right_a, right_b),
+        )
+        | (
+            Bitvector32Term::ArithmeticShiftRight(left_a, left_b),
+            Bitvector32Term::ArithmeticShiftRight(right_a, right_b),
+        )
+        | (
             Bitvector32Term::BitwiseAnd(left_a, left_b),
             Bitvector32Term::BitwiseAnd(right_a, right_b),
         )
@@ -822,6 +830,10 @@ fn condition_terms_alpha_equivalent(
         | (
             ConditionTerm::Bitvector32SignedDivideOverflows(left_a, left_b),
             ConditionTerm::Bitvector32SignedDivideOverflows(right_a, right_b),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedShiftLeftOverflows(left_a, left_b),
+            ConditionTerm::Bitvector32SignedShiftLeftOverflows(right_a, right_b),
         ) => {
             bitvector_terms_alpha_equivalent(left_a, right_a, variable_pairs)
                 && bitvector_terms_alpha_equivalent(left_b, right_b, variable_pairs)
@@ -1105,6 +1117,8 @@ pub(super) fn collect_c_expression_bitvector_variables(
         | CExpression::Multiply(left, right)
         | CExpression::Divide(left, right)
         | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
         | CExpression::BitwiseAnd(left, right)
         | CExpression::BitwiseOr(left, right)
         | CExpression::BitwiseXor(left, right)
@@ -1200,6 +1214,8 @@ pub(super) fn collect_spec_expression_bitvector_variables(
         | SpecExpression::Multiply(left, right)
         | SpecExpression::Divide(left, right)
         | SpecExpression::Remainder(left, right)
+        | SpecExpression::ShiftLeft(left, right)
+        | SpecExpression::ShiftRight(left, right)
         | SpecExpression::BitwiseAnd(left, right)
         | SpecExpression::BitwiseOr(left, right)
         | SpecExpression::BitwiseXor(left, right) => {
@@ -1398,7 +1414,8 @@ pub(super) fn collect_condition_bitvector_variables(
         | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
         | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => {
+        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
             collect_bitvector_variables(left, variables);
             collect_bitvector_variables(right, variables);
         }
@@ -1423,6 +1440,8 @@ pub(super) fn collect_bitvector_variables(
         | Bitvector32Term::Multiply(left, right)
         | Bitvector32Term::Divide(left, right)
         | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::ShiftLeft(left, right)
+        | Bitvector32Term::ArithmeticShiftRight(left, right)
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
         | Bitvector32Term::BitwiseXor(left, right) => {
@@ -1872,6 +1891,22 @@ pub(super) fn substitute_bitvector_variable_in_c_expression(
                 right, from, to,
             )),
         ),
+        CExpression::ShiftLeft(left, right) => CExpression::ShiftLeft(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
+        CExpression::ShiftRight(left, right) => CExpression::ShiftRight(
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_c_expression(
+                right, from, to,
+            )),
+        ),
         CExpression::BitwiseAnd(left, right) => CExpression::BitwiseAnd(
             Box::new(substitute_bitvector_variable_in_c_expression(
                 left, from, to,
@@ -2069,6 +2104,22 @@ pub(super) fn substitute_bitvector_variable_in_spec_expression(
             )),
         ),
         SpecExpression::Remainder(left, right) => SpecExpression::Remainder(
+            Box::new(substitute_bitvector_variable_in_spec_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_spec_expression(
+                right, from, to,
+            )),
+        ),
+        SpecExpression::ShiftLeft(left, right) => SpecExpression::ShiftLeft(
+            Box::new(substitute_bitvector_variable_in_spec_expression(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_spec_expression(
+                right, from, to,
+            )),
+        ),
+        SpecExpression::ShiftRight(left, right) => SpecExpression::ShiftRight(
             Box::new(substitute_bitvector_variable_in_spec_expression(
                 left, from, to,
             )),
@@ -2469,6 +2520,12 @@ pub(super) fn substitute_bitvector_variable_in_condition(
                 substitute_bitvector_variable(right, from, to),
             )
         }
+        ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            ConditionTerm::signed_shift_left_overflows(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
         ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::pointer_offset_equal(
             substitute_bitvector_variable_in_pointer_offset(left, from, to),
             substitute_bitvector_variable_in_pointer_offset(right, from, to),
@@ -2505,6 +2562,16 @@ pub(super) fn substitute_bitvector_variable(
             substitute_bitvector_variable(left, from, to),
             substitute_bitvector_variable(right, from, to),
         ),
+        Bitvector32Term::ShiftLeft(left, right) => Bitvector32Term::shift_left(
+            substitute_bitvector_variable(left, from, to),
+            substitute_bitvector_variable(right, from, to),
+        ),
+        Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            Bitvector32Term::arithmetic_shift_right(
+                substitute_bitvector_variable(left, from, to),
+                substitute_bitvector_variable(right, from, to),
+            )
+        }
         Bitvector32Term::BitwiseAnd(left, right) => Bitvector32Term::bitwise_and(
             substitute_bitvector_variable(left, from, to),
             substitute_bitvector_variable(right, from, to),

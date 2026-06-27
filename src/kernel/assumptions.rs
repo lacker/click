@@ -179,6 +179,12 @@ impl Assumptions {
                     self.simplify_bitvector_under_assumptions(right),
                 )
             }
+            ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+                ConditionTerm::signed_shift_left_overflows(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
             ConditionTerm::PointerOffsetEqual(left, right) => {
                 ConditionTerm::pointer_offset_equal(left.as_ref().clone(), right.as_ref().clone())
             }
@@ -212,6 +218,16 @@ impl Assumptions {
                 self.simplify_bitvector_under_assumptions(left),
                 self.simplify_bitvector_under_assumptions(right),
             ),
+            Bitvector32Term::ShiftLeft(left, right) => Bitvector32Term::shift_left(
+                self.simplify_bitvector_under_assumptions(left),
+                self.simplify_bitvector_under_assumptions(right),
+            ),
+            Bitvector32Term::ArithmeticShiftRight(left, right) => {
+                Bitvector32Term::arithmetic_shift_right(
+                    self.simplify_bitvector_under_assumptions(left),
+                    self.simplify_bitvector_under_assumptions(right),
+                )
+            }
             Bitvector32Term::BitwiseAnd(left, right) => Bitvector32Term::bitwise_and(
                 self.simplify_bitvector_under_assumptions(left),
                 self.simplify_bitvector_under_assumptions(right),
@@ -1252,6 +1268,16 @@ impl Assumptions {
                 Some(false)
             }
             ConditionTerm::Bitvector32SignedDivideOverflows(left, _) if matches!(left.as_ref(), Bitvector32Term::Constant(value) if *value != i32::MIN as u32) => {
+                Some(false)
+            }
+            ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, _)
+                if left.as_ref() == &Bitvector32Term::Constant(0) =>
+            {
+                Some(false)
+            }
+            ConditionTerm::Bitvector32SignedShiftLeftOverflows(_, right)
+                if right.as_ref() == &Bitvector32Term::Constant(0) =>
+            {
                 Some(false)
             }
             ConditionTerm::Bitvector32SignedGreaterEqual(left, right)

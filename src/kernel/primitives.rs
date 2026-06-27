@@ -35,6 +35,8 @@ pub enum Bitvector32Term {
     Multiply(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Divide(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Remainder(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    ShiftLeft(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    ArithmeticShiftRight(Box<Bitvector32Term>, Box<Bitvector32Term>),
     BitwiseAnd(Box<Bitvector32Term>, Box<Bitvector32Term>),
     BitwiseOr(Box<Bitvector32Term>, Box<Bitvector32Term>),
     BitwiseXor(Box<Bitvector32Term>, Box<Bitvector32Term>),
@@ -79,6 +81,7 @@ pub enum ConditionTerm {
     Bitvector32SignedSubtractOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector32SignedMultiplyOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector32SignedDivideOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
+    Bitvector32SignedShiftLeftOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     PointerOffsetEqual(Box<PointerOffsetTerm>, Box<PointerOffsetTerm>),
 }
 
@@ -136,6 +139,8 @@ pub enum CExpression {
     Multiply(Box<CExpression>, Box<CExpression>),
     Divide(Box<CExpression>, Box<CExpression>),
     Remainder(Box<CExpression>, Box<CExpression>),
+    ShiftLeft(Box<CExpression>, Box<CExpression>),
+    ShiftRight(Box<CExpression>, Box<CExpression>),
     BitwiseAnd(Box<CExpression>, Box<CExpression>),
     BitwiseOr(Box<CExpression>, Box<CExpression>),
     BitwiseXor(Box<CExpression>, Box<CExpression>),
@@ -169,6 +174,8 @@ pub enum SpecExpression {
     Multiply(Box<SpecExpression>, Box<SpecExpression>),
     Divide(Box<SpecExpression>, Box<SpecExpression>),
     Remainder(Box<SpecExpression>, Box<SpecExpression>),
+    ShiftLeft(Box<SpecExpression>, Box<SpecExpression>),
+    ShiftRight(Box<SpecExpression>, Box<SpecExpression>),
     BitwiseAnd(Box<SpecExpression>, Box<SpecExpression>),
     BitwiseOr(Box<SpecExpression>, Box<SpecExpression>),
     BitwiseXor(Box<SpecExpression>, Box<SpecExpression>),
@@ -340,6 +347,7 @@ pub struct CFunctionEnvironment {
 pub enum CUndefinedBehavior {
     SignedOverflow,
     DivisionByZero,
+    InvalidShift,
     InvalidMemory,
 }
 
@@ -642,6 +650,35 @@ fn checked_signed_remainder_const(left: u32, right: u32) -> Option<u32> {
     }
 }
 
+fn checked_shift_count_const(count: u32) -> Option<u32> {
+    let count = count as i32;
+    (0..32).contains(&count).then_some(count as u32)
+}
+
+fn checked_signed_shift_left_const(left: u32, right: u32) -> Option<u32> {
+    let count = checked_shift_count_const(right)?;
+    let left = left as i32;
+    if left < 0 {
+        return None;
+    }
+    let shifted = (left as i64) << count;
+    (shifted <= i64::from(i32::MAX)).then_some((shifted as i32) as u32)
+}
+
+fn checked_arithmetic_shift_right_const(left: u32, right: u32) -> Option<u32> {
+    let count = checked_shift_count_const(right)?;
+    Some(((left as i32) >> count) as u32)
+}
+
+fn signed_shift_left_overflows_const(left: u32, right: u32) -> Option<bool> {
+    let count = checked_shift_count_const(right)?;
+    let left = left as i32;
+    if left < 0 {
+        return Some(false);
+    }
+    Some(((left as i64) << count) > i64::from(i32::MAX))
+}
+
 impl Bitvector32Term {
     pub fn var(var: Variable) -> Self {
         Self::Variable(var)
@@ -663,6 +700,12 @@ impl Bitvector32Term {
             }
             Self::Remainder(left, right) => {
                 checked_signed_remainder_const(left.as_const()?, right.as_const()?)
+            }
+            Self::ShiftLeft(left, right) => {
+                checked_signed_shift_left_const(left.as_const()?, right.as_const()?)
+            }
+            Self::ArithmeticShiftRight(left, right) => {
+                checked_arithmetic_shift_right_const(left.as_const()?, right.as_const()?)
             }
             Self::BitwiseAnd(left, right) => Some(left.as_const()? & right.as_const()?),
             Self::BitwiseOr(left, right) => Some(left.as_const()? | right.as_const()?),
@@ -831,6 +874,37 @@ impl Bitvector32Term {
                 }
             }
             _ => Self::Remainder(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(super) fn shift_left(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => {
+                match checked_signed_shift_left_const(*left, *right) {
+                    Some(value) => Self::Constant(value),
+                    None => Self::ShiftLeft(
+                        Box::new(Self::Constant(*left)),
+                        Box::new(Self::Constant(*right)),
+                    ),
+                }
+            }
+            _ => Self::ShiftLeft(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(super) fn arithmetic_shift_right(left: Self, right: Self) -> Self {
+        match (&left, &right) {
+            (Self::Constant(left), Self::Constant(right)) => {
+                match checked_arithmetic_shift_right_const(*left, *right) {
+                    Some(value) => Self::Constant(value),
+                    None => Self::ArithmeticShiftRight(
+                        Box::new(Self::Constant(*left)),
+                        Box::new(Self::Constant(*right)),
+                    ),
+                }
+            }
+            (_, Self::Constant(0)) => left,
+            _ => Self::ArithmeticShiftRight(Box::new(left), Box::new(right)),
         }
     }
 
@@ -1045,6 +1119,18 @@ impl ConditionTerm {
                 Self::Constant(left == i32::MIN as u32 && right == (-1i32) as u32)
             }
             _ => Self::Bitvector32SignedDivideOverflows(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub(super) fn signed_shift_left_overflows(
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+    ) -> Self {
+        match (left.as_const(), right.as_const()) {
+            (Some(left), Some(right)) => {
+                Self::Constant(signed_shift_left_overflows_const(left, right).unwrap_or(false))
+            }
+            _ => Self::Bitvector32SignedShiftLeftOverflows(Box::new(left), Box::new(right)),
         }
     }
 

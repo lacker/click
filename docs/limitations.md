@@ -17,17 +17,20 @@ promotions, signedness conversions, or general unsigned arithmetic yet.
 Signed `int32` addition, subtraction, multiplication, division, and remainder
 are modeled with C undefined behavior for their C undefined cases: overflow,
 zero divisors, and `INT_MIN / -1` or `INT_MIN % -1`. `int32` bitwise `&`, `|`,
-`^`, and unary `~` are modeled as fixed 32-bit two's-complement bitvector
-operations.
+`^`, unary `~`, `<<`, and `>>` are modeled as fixed 32-bit two's-complement
+bitvector operations. C0 models signed `int32 >>` as arithmetic right shift
+with sign extension, matching GCC, Clang, and MSVC. Shift counts outside
+`0..32`, negative signed left shifts, and unrepresentable signed left-shift
+results are undefined behavior.
 
-Ordered comparisons and bitwise operators are supported for `int32`. `uint8`
-currently has equality, inequality, truthiness, memory access, and return-value
-support; byte bitwise expressions are rejected until promotions/casts are
-designed.
+Ordered comparisons, shifts, and bitwise operators are supported for `int32`.
+`uint8` currently has equality, inequality, truthiness, memory access, and
+return-value support; byte shifts and byte bitwise expressions are rejected
+until promotions/casts are designed.
 
 The prelude has initial byte-slice and C-string predicates over `uint8[]`, but
 there is still no first-class Click string value and no full libc string model.
-Casts/promotions, shifts, and byte ordering arithmetic remain future work.
+Casts/promotions and byte ordering arithmetic remain future work.
 
 The first `for` support is assignment-style sugar over `while`, and its step
 can use scalar update-statement sugar such as `i++`. Declarations in the

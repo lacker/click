@@ -144,7 +144,7 @@ function count3(int32 p[], int32 x) -> int32 {
 ```
 
 Supported expression features include parameters, literals, `+`, `-`, `*`,
-`/`, `%`, `int32` bitwise `&`, `|`, `^`, unary `~`, indexing,
+`/`, `%`, `<<`, `>>`, `int32` bitwise `&`, `|`, `^`, unary `~`, indexing,
 `let name = value; body`, `if proposition { then } else { else }`, range
 `.fold`, and calls to other non-recursive Click functions. Recursive Click
 functions are rejected.

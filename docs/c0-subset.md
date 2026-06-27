@@ -26,6 +26,7 @@ Supported C0 surface includes:
 - integer literals and variables
 - ASCII byte character literals such as `'x'`, `'\n'`, and `'\0'`
 - signed `+`, `-`, `*`, `/`, and `%`
+- `int32` shifts `<<` and `>>`
 - `int32` bitwise `&`, `|`, `^`, and unary `~` with fixed 32-bit
   two's-complement bitvector semantics
 - signed comparisons and equality
@@ -45,16 +46,22 @@ Supported C0 surface includes:
   `uint8`
 
 Comparisons return C-style `int32` values: `0` or `1`. They are not Click
-propositions by themselves. Ordered comparisons and bitwise operators are
-currently for `int32`; `uint8` supports equality, inequality, truthiness,
+propositions by themselves. Ordered comparisons, shifts, and bitwise operators
+are currently for `int32`; `uint8` supports equality, inequality, truthiness,
 loads, stores, and returns.
+
+C0 follows the GCC/Clang/MSVC consensus for signed right shift: `int32 >> k`
+is arithmetic right shift with sign extension. This is implementation-defined
+in ISO C for negative signed values, but it is the behavior of the mainstream
+compilers Click is targeting.
 
 ## Undefined Behavior
 
 Signed overflow is C undefined behavior. Signed division and remainder also
 have C undefined behavior for a zero divisor, and for `INT_MIN / -1` or
-`INT_MIN % -1`. Proofs involving signed arithmetic usually need requirements
-such as:
+`INT_MIN % -1`. Shift counts must be in `0..32`. Signed left shift is undefined
+for a negative left operand or an unrepresentable `int32` result. Proofs
+involving signed arithmetic usually need requirements such as:
 
 ```click
 requires x < 2147483647;
@@ -107,8 +114,8 @@ These are not general C features yet:
 - unsigned integers other than the narrow `uint8` byte type
 - integer widths other than `int32`
 - casts and promotions
-- shifts
-- bitwise operators on `uint8` or promoted/mixed-width integer expressions
+- shifts and bitwise operators on `uint8` or promoted/mixed-width integer
+  expressions
 - pointer comparisons beyond the supported equality/range patterns
 - heap allocation
 - function pointers

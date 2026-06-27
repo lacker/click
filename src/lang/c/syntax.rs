@@ -76,6 +76,8 @@ pub enum C0Expression {
     Multiply(Box<C0Expression>, Box<C0Expression>),
     Divide(Box<C0Expression>, Box<C0Expression>),
     Remainder(Box<C0Expression>, Box<C0Expression>),
+    ShiftLeft(Box<C0Expression>, Box<C0Expression>),
+    ShiftRight(Box<C0Expression>, Box<C0Expression>),
     BitwiseAnd(Box<C0Expression>, Box<C0Expression>),
     BitwiseOr(Box<C0Expression>, Box<C0Expression>),
     BitwiseXor(Box<C0Expression>, Box<C0Expression>),
@@ -251,6 +253,14 @@ impl C0Expression {
                 left.to_kernel_expression(),
                 right.to_kernel_expression(),
             ),
+            Self::ShiftLeft(left, right) => crate::kernel::c_shift_left(
+                left.to_kernel_expression(),
+                right.to_kernel_expression(),
+            ),
+            Self::ShiftRight(left, right) => crate::kernel::c_shift_right(
+                left.to_kernel_expression(),
+                right.to_kernel_expression(),
+            ),
             Self::BitwiseAnd(left, right) => crate::kernel::c_bitwise_and(
                 left.to_kernel_expression(),
                 right.to_kernel_expression(),
@@ -311,8 +321,10 @@ enum Token {
     MinusEqual,
     LessThan,
     LessEqual,
+    ShiftLeft,
     GreaterThan,
     GreaterEqual,
+    ShiftRight,
     EqualEqual,
     BangEqual,
     Bang,
@@ -785,38 +797,57 @@ impl Parser {
     }
 
     fn parse_compare(&mut self) -> Result<C0Expression, C0SyntaxError> {
-        let mut expression = self.parse_add()?;
+        let mut expression = self.parse_shift()?;
         loop {
             expression = match self.peek() {
                 Some(Token::LessThan) => {
                     self.position += 1;
-                    let right = self.parse_add()?;
+                    let right = self.parse_shift()?;
                     C0Expression::LessThan(Box::new(expression), Box::new(right))
                 }
                 Some(Token::LessEqual) => {
                     self.position += 1;
-                    let right = self.parse_add()?;
+                    let right = self.parse_shift()?;
                     C0Expression::LessEqual(Box::new(expression), Box::new(right))
                 }
                 Some(Token::GreaterThan) => {
                     self.position += 1;
-                    let right = self.parse_add()?;
+                    let right = self.parse_shift()?;
                     C0Expression::GreaterThan(Box::new(expression), Box::new(right))
                 }
                 Some(Token::GreaterEqual) => {
                     self.position += 1;
-                    let right = self.parse_add()?;
+                    let right = self.parse_shift()?;
                     C0Expression::GreaterEqual(Box::new(expression), Box::new(right))
                 }
                 Some(Token::EqualEqual) => {
                     self.position += 1;
-                    let right = self.parse_add()?;
+                    let right = self.parse_shift()?;
                     C0Expression::Equal(Box::new(expression), Box::new(right))
                 }
                 Some(Token::BangEqual) => {
                     self.position += 1;
-                    let right = self.parse_add()?;
+                    let right = self.parse_shift()?;
                     C0Expression::NotEqual(Box::new(expression), Box::new(right))
+                }
+                _ => return Ok(expression),
+            };
+        }
+    }
+
+    fn parse_shift(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let mut expression = self.parse_add()?;
+        loop {
+            expression = match self.peek() {
+                Some(Token::ShiftLeft) => {
+                    self.position += 1;
+                    let right = self.parse_add()?;
+                    C0Expression::ShiftLeft(Box::new(expression), Box::new(right))
+                }
+                Some(Token::ShiftRight) => {
+                    self.position += 1;
+                    let right = self.parse_add()?;
+                    C0Expression::ShiftRight(Box::new(expression), Box::new(right))
                 }
                 _ => return Ok(expression),
             };
@@ -1055,6 +1086,8 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
                 ('!', '=') => Some(Token::BangEqual),
                 ('&', '&') => Some(Token::AmpAmp),
                 ('|', '|') => Some(Token::PipePipe),
+                ('<', '<') => Some(Token::ShiftLeft),
+                ('>', '>') => Some(Token::ShiftRight),
                 ('<', '=') => Some(Token::LessEqual),
                 ('>', '=') => Some(Token::GreaterEqual),
                 ('+', '+') => Some(Token::PlusPlus),

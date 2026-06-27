@@ -84,6 +84,14 @@ pub fn c_remainder(left: CExpression, right: CExpression) -> CExpression {
     CExpression::Remainder(Box::new(left), Box::new(right))
 }
 
+pub fn c_shift_left(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::ShiftLeft(Box::new(left), Box::new(right))
+}
+
+pub fn c_shift_right(left: CExpression, right: CExpression) -> CExpression {
+    CExpression::ShiftRight(Box::new(left), Box::new(right))
+}
+
 pub fn c_bitwise_and(left: CExpression, right: CExpression) -> CExpression {
     CExpression::BitwiseAnd(Box::new(left), Box::new(right))
 }

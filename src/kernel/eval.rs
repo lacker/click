@@ -164,6 +164,26 @@ pub(super) fn evaluate_c_expression_paths(
                 apply_c_int32_remainder(left, right, facts, obligations, assumptions)
             },
         )?,
+        CExpression::ShiftLeft(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_shift_left(left, right, facts, obligations, assumptions)
+            },
+        )?,
+        CExpression::ShiftRight(left, right) => evaluate_c_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_shift_right(left, right, facts, obligations, assumptions)
+            },
+        )?,
         CExpression::BitwiseAnd(left, right) => evaluate_c_int32_binary_paths(
             state,
             left,
@@ -1141,6 +1161,262 @@ fn apply_c_int32_division_nonzero(
             vec![
                 CExpressionPath {
                     outcome: CExpressionOutcome::Value(int32(result(left, right))),
+                    facts: normal_facts,
+                    obligations: obligations.clone(),
+                },
+                CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::SignedOverflow,
+                    ),
+                    facts: overflow_facts,
+                    obligations,
+                },
+            ]
+        }
+    }
+}
+
+pub(super) fn apply_c_int32_shift_left(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    apply_c_int32_with_valid_shift_count(
+        left,
+        right,
+        facts,
+        obligations,
+        assumptions,
+        apply_c_int32_shift_left_valid_count,
+    )
+}
+
+pub(super) fn apply_c_int32_shift_right(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    apply_c_int32_with_valid_shift_count(
+        left,
+        right,
+        facts,
+        obligations,
+        assumptions,
+        |left, right, facts, obligations, _| {
+            vec![CExpressionPath {
+                outcome: CExpressionOutcome::Value(int32(Bitvector32Term::arithmetic_shift_right(
+                    left, right,
+                ))),
+                facts,
+                obligations,
+            }]
+        },
+    )
+}
+
+fn apply_c_int32_with_valid_shift_count(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+    apply_valid_count: fn(
+        Bitvector32Term,
+        Bitvector32Term,
+        Vec<PathFact>,
+        Vec<ProofObligation>,
+        &Assumptions,
+    ) -> Vec<CExpressionPath>,
+) -> Vec<CExpressionPath> {
+    let negative_count =
+        ConditionTerm::signed_less_than(right.clone(), Bitvector32Term::Constant(0));
+    match decide_with_facts(assumptions, &facts, &negative_count) {
+        Some(true) => {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidShift),
+                facts,
+                obligations,
+            }];
+        }
+        Some(false) => {
+            return apply_c_int32_with_nonnegative_shift_count(
+                left,
+                right,
+                facts,
+                obligations,
+                assumptions,
+                apply_valid_count,
+            );
+        }
+        None => {}
+    }
+
+    let mut normal_facts = facts.clone();
+    add_condition_path_fact(
+        &mut normal_facts,
+        assumptions,
+        negative_count.clone(),
+        false,
+    )
+    .expect("unknown negative shift-count fact should be consistent");
+
+    let mut invalid_facts = facts;
+    add_condition_path_fact(&mut invalid_facts, assumptions, negative_count, true)
+        .expect("unknown negative shift-count fact should be consistent");
+
+    let mut paths = apply_c_int32_with_nonnegative_shift_count(
+        left,
+        right,
+        normal_facts,
+        obligations.clone(),
+        assumptions,
+        apply_valid_count,
+    );
+    paths.push(CExpressionPath {
+        outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidShift),
+        facts: invalid_facts,
+        obligations,
+    });
+    paths
+}
+
+fn apply_c_int32_with_nonnegative_shift_count(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+    apply_valid_count: fn(
+        Bitvector32Term,
+        Bitvector32Term,
+        Vec<PathFact>,
+        Vec<ProofObligation>,
+        &Assumptions,
+    ) -> Vec<CExpressionPath>,
+) -> Vec<CExpressionPath> {
+    let too_large_count =
+        ConditionTerm::signed_greater_equal(right.clone(), Bitvector32Term::Constant(32));
+    match decide_with_facts(assumptions, &facts, &too_large_count) {
+        Some(true) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidShift),
+            facts,
+            obligations,
+        }],
+        Some(false) => apply_valid_count(left, right, facts, obligations, assumptions),
+        None => {
+            let mut normal_facts = facts.clone();
+            add_condition_path_fact(
+                &mut normal_facts,
+                assumptions,
+                too_large_count.clone(),
+                false,
+            )
+            .expect("unknown large shift-count fact should be consistent");
+
+            let mut invalid_facts = facts;
+            add_condition_path_fact(&mut invalid_facts, assumptions, too_large_count, true)
+                .expect("unknown large shift-count fact should be consistent");
+
+            let mut paths =
+                apply_valid_count(left, right, normal_facts, obligations.clone(), assumptions);
+            paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidShift),
+                facts: invalid_facts,
+                obligations,
+            });
+            paths
+        }
+    }
+}
+
+fn apply_c_int32_shift_left_valid_count(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    let negative_left = ConditionTerm::signed_less_than(left.clone(), Bitvector32Term::Constant(0));
+    match decide_with_facts(assumptions, &facts, &negative_left) {
+        Some(true) => {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidShift),
+                facts,
+                obligations,
+            }];
+        }
+        Some(false) => {
+            return apply_c_int32_shift_left_nonnegative(
+                left,
+                right,
+                facts,
+                obligations,
+                assumptions,
+            );
+        }
+        None => {}
+    }
+
+    let mut normal_facts = facts.clone();
+    add_condition_path_fact(&mut normal_facts, assumptions, negative_left.clone(), false)
+        .expect("unknown negative left-shift operand fact should be consistent");
+
+    let mut invalid_facts = facts;
+    add_condition_path_fact(&mut invalid_facts, assumptions, negative_left, true)
+        .expect("unknown negative left-shift operand fact should be consistent");
+
+    let mut paths = apply_c_int32_shift_left_nonnegative(
+        left,
+        right,
+        normal_facts,
+        obligations.clone(),
+        assumptions,
+    );
+    paths.push(CExpressionPath {
+        outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidShift),
+        facts: invalid_facts,
+        obligations,
+    });
+    paths
+}
+
+fn apply_c_int32_shift_left_nonnegative(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CExpressionPath> {
+    let overflow = ConditionTerm::signed_shift_left_overflows(left.clone(), right.clone());
+    match decide_with_facts(assumptions, &facts, &overflow) {
+        Some(true) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
+            facts,
+            obligations,
+        }],
+        Some(false) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(Bitvector32Term::shift_left(left, right))),
+            facts,
+            obligations,
+        }],
+        None => {
+            let mut normal_facts = facts.clone();
+            add_condition_path_fact(&mut normal_facts, assumptions, overflow.clone(), false)
+                .expect("unknown left-shift overflow fact should be consistent");
+
+            let mut overflow_facts = facts;
+            add_condition_path_fact(&mut overflow_facts, assumptions, overflow, true)
+                .expect("unknown left-shift overflow fact should be consistent");
+
+            vec![
+                CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(Bitvector32Term::shift_left(
+                        left, right,
+                    ))),
                     facts: normal_facts,
                     obligations: obligations.clone(),
                 },

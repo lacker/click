@@ -390,6 +390,26 @@ pub(super) fn evaluate_spec_expression_paths(
                 apply_c_int32_remainder(left, right, facts, obligations, assumptions)
             },
         )?,
+        SpecExpression::ShiftLeft(left, right) => evaluate_spec_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_shift_left(left, right, facts, obligations, assumptions)
+            },
+        )?,
+        SpecExpression::ShiftRight(left, right) => evaluate_spec_int32_binary_paths(
+            state,
+            left,
+            right,
+            assumptions,
+            budget,
+            |left, right, facts, obligations| {
+                apply_c_int32_shift_right(left, right, facts, obligations, assumptions)
+            },
+        )?,
         SpecExpression::BitwiseAnd(left, right) => evaluate_spec_int32_binary_paths(
             state,
             left,

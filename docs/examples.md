@@ -25,6 +25,12 @@ of inventing syntax from memory.
   `mdtests/c_division_overflow.md`: division/remainder undefined behavior.
 - `mdtests/c_bitwise.md`: `int32` bitwise operators in C fragments and pure
   Click expressions, plus the current `uint8` promotion boundary.
+- `mdtests/c_shifts.md`: signed `int32` shifts in C fragments and pure Click
+  expressions, including arithmetic right shift.
+- `mdtests/c_shift_negative_count.md`, `mdtests/c_shift_large_count.md`,
+  `mdtests/c_shift_negative_left.md`, `mdtests/c_shift_left_overflow.md`, and
+  `mdtests/c_shift_uint8_rejected.md`: shift undefined behavior and promotion
+  boundaries.
 - `mdtests/c_statement_update_sugar.md`: standalone `++`, `--`, `+=`, `-=`,
   and `*=` statement sugar.
 - `mdtests/c_statement_update_rejects_expression.md`: update expressions remain

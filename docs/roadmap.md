@@ -67,8 +67,8 @@ to clone C all at once.
 Likely additions:
 
 - C operators needed by ordinary library code:
-  shifts, ternary expressions, value-producing update expressions, and broader
-  `for` forms beyond the current assignment/update lowering.
+  ternary expressions, value-producing update expressions, and broader `for`
+  forms beyond the current assignment/update lowering.
 - More integer types:
   `int`, `size_t`, `ssize_t`-like signed sizes, `uint32`, `uint64`, and
   well-specified casts/promotions.
@@ -274,10 +274,9 @@ Good next tasks from the current state:
    offset-based string slices, and whether/how higher-level predicates can
    package structural memory validity instead of requiring separate
    `valid_range` facts.
-3. Decide and implement the first shift/integer-conversion slice. The open
-   design question is how much of C's integer promotion and signed-shift
-   behavior Click should model now versus reject in C0 until the integer story
-   is broader.
+3. Decide and implement the first integer-promotion/conversion slice. The open
+   design question is how much of C's usual arithmetic conversions Click should
+   model now versus reject in C0 until the integer story is broader.
 4. Add structs and field loads/stores in the smallest form needed by a pilot.
 5. Model a tiny heap API or externally specified `malloc`/`free`.
 6. Improve failure output for missing loop invariants and alias/frame facts.
