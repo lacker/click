@@ -3000,7 +3000,13 @@ pub(super) fn add_path_fact_with_visibility(
     public: bool,
 ) -> Option<()> {
     if let Proposition::ConditionIs(condition, value) = proposition {
-        return add_condition_path_fact(facts, assumptions, condition, value);
+        return add_condition_path_fact_with_visibility(
+            facts,
+            assumptions,
+            condition,
+            value,
+            public,
+        );
     }
 
     if assumptions.proves(&proposition) || facts.iter().any(|fact| fact.proposition == proposition)
@@ -3022,6 +3028,25 @@ pub(super) fn add_condition_path_fact(
     condition: ConditionTerm,
     value: bool,
 ) -> Option<()> {
+    add_condition_path_fact_with_visibility(facts, assumptions, condition, value, true)
+}
+
+pub(super) fn add_internal_condition_path_fact(
+    facts: &mut Vec<PathFact>,
+    assumptions: &Assumptions,
+    condition: ConditionTerm,
+    value: bool,
+) -> Option<()> {
+    add_condition_path_fact_with_visibility(facts, assumptions, condition, value, false)
+}
+
+fn add_condition_path_fact_with_visibility(
+    facts: &mut Vec<PathFact>,
+    assumptions: &Assumptions,
+    condition: ConditionTerm,
+    value: bool,
+    public: bool,
+) -> Option<()> {
     if let Some(known) = assumptions.decide(&condition) {
         return (known == value).then_some(());
     }
@@ -3041,7 +3066,12 @@ pub(super) fn add_condition_path_fact(
         return (existing == value).then_some(());
     }
 
-    facts.push(PathFact::condition(condition, value));
+    let proposition = Proposition::ConditionIs(condition, value);
+    facts.push(if public {
+        PathFact::new(proposition)
+    } else {
+        PathFact::internal(proposition)
+    });
     Some(())
 }
 
@@ -3255,16 +3285,26 @@ pub(super) fn decide_with_facts(
     facts: &[PathFact],
     condition: &ConditionTerm,
 ) -> Option<bool> {
-    assumptions.decide(condition).or_else(|| {
-        facts.iter().find_map(|fact| match fact.proposition() {
-            Proposition::ConditionIs(existing_condition, value)
-                if existing_condition == condition =>
-            {
-                Some(*value)
-            }
-            _ => None,
+    assumptions
+        .decide(condition)
+        .or_else(|| {
+            facts.iter().find_map(|fact| match fact.proposition() {
+                Proposition::ConditionIs(existing_condition, value)
+                    if existing_condition == condition =>
+                {
+                    Some(*value)
+                }
+                _ => None,
+            })
         })
-    })
+        .or_else(|| {
+            facts
+                .iter()
+                .fold(assumptions.clone(), |assumptions, fact| {
+                    assumptions.assume_proposition(fact.proposition().clone())
+                })
+                .decide(condition)
+        })
 }
 
 pub(super) fn assumptions_with_path_context(

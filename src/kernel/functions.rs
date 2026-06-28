@@ -64,9 +64,18 @@ pub(super) fn execute_c_function_paths(
             ) else {
                 continue;
             };
+            let return_assumptions =
+                assumptions_with_path_context(assumptions, &facts, &obligations);
+            let (outcome, obligations) = function_outcome_from_body(
+                caller_state,
+                function,
+                body_path.outcome,
+                obligations,
+                &return_assumptions,
+            );
 
             paths.push(CFunctionPath {
-                outcome: function_outcome_from_body(caller_state, function, body_path.outcome),
+                outcome,
                 facts,
                 obligations,
             });
@@ -143,9 +152,18 @@ pub(super) fn execute_c_function_verification_paths(
             ) else {
                 continue;
             };
+            let return_assumptions =
+                assumptions_with_path_context(assumptions, &facts, &obligations);
+            let (outcome, obligations) = function_outcome_from_body(
+                caller_state,
+                function,
+                body_path.outcome,
+                obligations,
+                &return_assumptions,
+            );
 
             paths.push(CFunctionPath {
-                outcome: function_outcome_from_body(caller_state, function, body_path.outcome),
+                outcome,
                 facts,
                 obligations,
             });
@@ -274,27 +292,44 @@ pub(super) fn function_outcome_from_body(
     caller_state: &CState,
     function: &CFunction,
     outcome: CStatementOutcome,
-) -> CFunctionOutcome {
+    mut obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> (CFunctionOutcome, Vec<ProofObligation>) {
     match outcome {
         CStatementOutcome::Return { value, state } => {
-            if !function.return_type().accepts(&value) {
-                return CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch);
-            }
+            let Some(value) = coerce_c_value_to_type(
+                value,
+                function.return_type(),
+                &mut obligations,
+                assumptions,
+            ) else {
+                return (
+                    CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    obligations,
+                );
+            };
 
             let mut caller_state = caller_state.clone();
             caller_state.memory = state.memory;
-            CFunctionOutcome::Return {
-                value,
-                state: caller_state,
-            }
+            (
+                CFunctionOutcome::Return {
+                    value,
+                    state: caller_state,
+                },
+                obligations,
+            )
         }
-        CStatementOutcome::Normal(_) => {
-            CFunctionOutcome::RuntimeError(CRuntimeError::MissingReturn)
+        CStatementOutcome::Normal(_) => (
+            CFunctionOutcome::RuntimeError(CRuntimeError::MissingReturn),
+            obligations,
+        ),
+        CStatementOutcome::UndefinedBehavior(undefined_behavior) => (
+            CFunctionOutcome::UndefinedBehavior(undefined_behavior),
+            obligations,
+        ),
+        CStatementOutcome::RuntimeError(error) => {
+            (CFunctionOutcome::RuntimeError(error), obligations)
         }
-        CStatementOutcome::UndefinedBehavior(undefined_behavior) => {
-            CFunctionOutcome::UndefinedBehavior(undefined_behavior)
-        }
-        CStatementOutcome::RuntimeError(error) => CFunctionOutcome::RuntimeError(error),
     }
 }
 

@@ -683,23 +683,27 @@ pub(super) fn evaluate_spec_int32_binary_paths(
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
     for left_path in evaluate_spec_expression_paths(state, left, assumptions, budget)? {
-        let CValue::Int32(left) = left_path.value else {
+        let mut left_facts = left_path.facts;
+        let Some(left) = promote_c_int32_path_value(left_path.value, &mut left_facts, assumptions)
+        else {
             continue;
         };
         let right_assumptions =
-            assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
+            assumptions_with_path_context(assumptions, &left_facts, &left_path.obligations);
         for right_path in evaluate_spec_expression_paths(state, right, &right_assumptions, budget)?
         {
-            let CValue::Int32(right) = right_path.value else {
-                continue;
-            };
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
-                &left_path.facts,
+                &left_facts,
                 &left_path.obligations,
                 &right_path.facts,
                 &right_path.obligations,
                 assumptions,
             ) else {
+                continue;
+            };
+            let mut facts = facts;
+            let Some(right) = promote_c_int32_path_value(right_path.value, &mut facts, assumptions)
+            else {
                 continue;
             };
             paths.extend(
@@ -721,12 +725,13 @@ pub(super) fn evaluate_spec_int32_unary_paths(
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
     for path in evaluate_spec_expression_paths(state, expression, assumptions, budget)? {
-        let CValue::Int32(value) = path.value else {
+        let mut facts = path.facts;
+        let Some(value) = promote_c_int32_path_value(path.value, &mut facts, assumptions) else {
             continue;
         };
         paths.push(SpecExpressionPath {
             value: int32(apply(value)),
-            facts: path.facts,
+            facts,
             obligations: path.obligations,
         });
     }
@@ -1092,45 +1097,24 @@ pub(super) fn c_value_comparison_proposition(
     operator: CComparisonOperator,
     right: &CValue,
 ) -> Option<Proposition> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => {
-            let (condition, value) = match operator {
-                CComparisonOperator::Equal => {
-                    (ConditionTerm::equal(left.clone(), right.clone()), true)
-                }
-                CComparisonOperator::NotEqual => {
-                    (ConditionTerm::equal(left.clone(), right.clone()), false)
-                }
-                CComparisonOperator::LessThan => (
-                    ConditionTerm::signed_less_than(left.clone(), right.clone()),
-                    true,
-                ),
-                CComparisonOperator::LessEqual => (
-                    ConditionTerm::signed_less_equal(left.clone(), right.clone()),
-                    true,
-                ),
-                CComparisonOperator::GreaterThan => (
-                    ConditionTerm::signed_greater_than(left.clone(), right.clone()),
-                    true,
-                ),
-                CComparisonOperator::GreaterEqual => (
-                    ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
-                    true,
-                ),
-            };
-            Some(Proposition::ConditionIs(condition, value))
+    let left = c_value_int32_term(left)?;
+    let right = c_value_int32_term(right)?;
+    let (condition, value) = match operator {
+        CComparisonOperator::Equal => (ConditionTerm::equal(left, right), true),
+        CComparisonOperator::NotEqual => (ConditionTerm::equal(left, right), false),
+        CComparisonOperator::LessThan => (ConditionTerm::signed_less_than(left, right), true),
+        CComparisonOperator::LessEqual => (ConditionTerm::signed_less_equal(left, right), true),
+        CComparisonOperator::GreaterThan => (ConditionTerm::signed_greater_than(left, right), true),
+        CComparisonOperator::GreaterEqual => {
+            (ConditionTerm::signed_greater_equal(left, right), true)
         }
-        (CValue::UInt8(left), CValue::UInt8(right)) => {
-            let condition = ConditionTerm::equal(left.clone(), right.clone());
-            match operator {
-                CComparisonOperator::Equal => Some(Proposition::ConditionIs(condition, true)),
-                CComparisonOperator::NotEqual => Some(Proposition::ConditionIs(condition, false)),
-                CComparisonOperator::LessThan
-                | CComparisonOperator::LessEqual
-                | CComparisonOperator::GreaterThan
-                | CComparisonOperator::GreaterEqual => None,
-            }
-        }
-        _ => None,
+    };
+    Some(Proposition::ConditionIs(condition, value))
+}
+
+fn c_value_int32_term(value: &CValue) -> Option<Bitvector32Term> {
+    match value {
+        CValue::Int32(value) | CValue::UInt8(value) => Some(value.clone()),
+        CValue::Pointer(_) => None,
     }
 }

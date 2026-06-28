@@ -63,6 +63,13 @@ In `src/kernel/`:
   execution.
 - `Theorem`: abstract proven proposition.
 
+The current integer conversion slice is deliberately small. `eval.rs` promotes
+`uint8` rvalues to `int32` terms for arithmetic, ordered comparisons, shifts,
+and bitwise operators, adding internal byte-range facts for the promoted term.
+Stores and function returns use checked `int32`-to-`uint8` narrowing; the
+coercion adds proof obligations for `0 <= value <= 255` unless the current path
+already proves them.
+
 ## Symbolic Execution
 
 The symbolic executor produces execution paths. Each path includes:

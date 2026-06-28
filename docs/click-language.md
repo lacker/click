@@ -29,6 +29,11 @@ Click signatures currently understand `int32`, `uint8`, `int32*`, `uint8*`,
 and array-parameter spellings such as `int32 p[]` and `uint8 bytes[]`.
 Character literals such as `'x'`, `'\n'`, and `'\0'` are `uint8` values.
 
+Inside C fragments and pure Click expressions over C values, `uint8` rvalues
+promote to `int32` for arithmetic, ordered comparisons, shifts, and bitwise
+operators. Assigning or returning an `int32` into `uint8` is checked narrowing:
+the current requirements/path facts must prove `0 <= value <= 255`.
+
 Each `ensures` clause is a separate guarantee. A guarantee may be labeled with
 `label:`. Omitting a proof clause uses the default prover, currently `auto`.
 

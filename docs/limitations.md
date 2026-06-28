@@ -11,9 +11,10 @@ type, casts, globals, heap allocation, `switch`, and many operators.
 ## Type Support Is Still Narrow
 
 The verifier supports `int32` and a byte-like `uint8` type, including `uint8*`,
-`uint8[]`, ASCII character literals, byte loads/stores, byte equality, and
-typed Click array refs. This is not a full C integer model: there are no casts,
-promotions, signedness conversions, or general unsigned arithmetic yet.
+`uint8[]`, ASCII character literals, byte loads/stores, byte promotion through
+integer operators, and typed Click array refs. This is not a full C integer
+model: there are no casts beyond checked `int32`-to-`uint8` narrowing, no broad
+usual-arithmetic-conversion lattice, and no general unsigned arithmetic yet.
 Signed `int32` addition, subtraction, multiplication, division, and remainder
 are modeled with C undefined behavior for their C undefined cases: overflow,
 zero divisors, and `INT_MIN / -1` or `INT_MIN % -1`. `int32` bitwise `&`, `|`,
@@ -23,14 +24,15 @@ with sign extension, matching GCC, Clang, and MSVC. Shift counts outside
 `0..32`, negative signed left shifts, and unrepresentable signed left-shift
 results are undefined behavior.
 
-Ordered comparisons, shifts, and bitwise operators are supported for `int32`.
-`uint8` currently has equality, inequality, truthiness, memory access, and
-return-value support; byte shifts and byte bitwise expressions are rejected
-until promotions/casts are designed.
+`uint8` rvalues promote to `int32` for arithmetic, ordered comparisons, shifts,
+and bitwise operators. Assigning or returning an `int32` into `uint8` is a
+checked narrowing conversion: the current requirements/path facts must prove
+`0 <= value <= 255`.
 
 The prelude has initial byte-slice and C-string predicates over `uint8[]`, but
 there is still no first-class Click string value and no full libc string model.
-Casts/promotions and byte ordering arithmetic remain future work.
+Broader casts, additional integer widths, and the full usual arithmetic
+conversion story remain future work.
 
 The first `for` support is assignment-style sugar over `while`, and its step
 can use scalar update-statement sugar such as `i++`. Declarations in the

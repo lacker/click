@@ -15,6 +15,90 @@ pub(super) fn evaluate_c_expression(
     Some(path.outcome)
 }
 
+pub(super) fn add_uint8_range_path_facts(
+    facts: &mut Vec<PathFact>,
+    assumptions: &Assumptions,
+    value: &Bitvector32Term,
+) -> Option<()> {
+    add_internal_condition_path_fact(
+        facts,
+        assumptions,
+        ConditionTerm::signed_greater_equal(value.clone(), Bitvector32Term::Constant(0)),
+        true,
+    )?;
+    add_internal_condition_path_fact(
+        facts,
+        assumptions,
+        ConditionTerm::signed_less_equal(value.clone(), Bitvector32Term::Constant(255)),
+        true,
+    )
+}
+
+pub(super) fn promote_c_int32_path_value(
+    value: CValue,
+    facts: &mut Vec<PathFact>,
+    assumptions: &Assumptions,
+) -> Option<Bitvector32Term> {
+    match value {
+        CValue::Int32(value) => Some(value),
+        CValue::UInt8(value) => {
+            add_uint8_range_path_facts(facts, assumptions, &value)?;
+            Some(value)
+        }
+        CValue::Pointer(_) => None,
+    }
+}
+
+pub(super) fn coerce_c_value_to_type(
+    value: CValue,
+    target_type: CType,
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Option<CValue> {
+    if target_type.accepts(&value) {
+        return Some(value);
+    }
+
+    match (target_type, value) {
+        (CType::UInt8, CValue::Int32(value)) => {
+            add_proof_obligation_with_context(
+                obligations,
+                assumptions,
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(
+                        value.clone(),
+                        Bitvector32Term::Constant(0),
+                    ),
+                    true,
+                ),
+                Some("uint8 narrowing lower bound"),
+            )?;
+            add_proof_obligation_with_context(
+                obligations,
+                assumptions,
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(value.clone(), Bitvector32Term::Constant(255)),
+                    true,
+                ),
+                Some("uint8 narrowing upper bound"),
+            )?;
+            Some(CValue::UInt8(value))
+        }
+        _ => None,
+    }
+}
+
+fn c_type_mismatch_expression_path(
+    facts: Vec<PathFact>,
+    obligations: Vec<ProofObligation>,
+) -> CExpressionPath {
+    CExpressionPath {
+        outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+        facts,
+        obligations,
+    }
+}
+
 pub(super) fn evaluate_c_expression_paths(
     state: &CState,
     expression: &CExpression,
@@ -862,10 +946,24 @@ pub(super) fn apply_c_add(
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
     match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => {
+        (
+            left @ (CValue::Int32(_) | CValue::UInt8(_)),
+            right @ (CValue::Int32(_) | CValue::UInt8(_)),
+        ) => {
+            let mut facts = facts;
+            let Some(left) = promote_c_int32_path_value(left, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            let Some(right) = promote_c_int32_path_value(right, &mut facts, assumptions) else {
+                return Vec::new();
+            };
             apply_c_int32_add(left, right, facts, obligations, assumptions)
         }
-        (CValue::Pointer(pointer), CValue::Int32(offset)) => {
+        (CValue::Pointer(pointer), offset @ (CValue::Int32(_) | CValue::UInt8(_))) => {
+            let mut facts = facts;
+            let Some(offset) = promote_c_int32_path_value(offset, &mut facts, assumptions) else {
+                return Vec::new();
+            };
             let byte_width = left_step_width.unwrap_or(4);
             vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(CValue::Pointer(
@@ -875,7 +973,11 @@ pub(super) fn apply_c_add(
                 obligations,
             }]
         }
-        (CValue::Int32(offset), CValue::Pointer(pointer)) => {
+        (offset @ (CValue::Int32(_) | CValue::UInt8(_)), CValue::Pointer(pointer)) => {
+            let mut facts = facts;
+            let Some(offset) = promote_c_int32_path_value(offset, &mut facts, assumptions) else {
+                return Vec::new();
+            };
             let byte_width = right_step_width.unwrap_or(4);
             vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(CValue::Pointer(
@@ -885,11 +987,7 @@ pub(super) fn apply_c_add(
                 obligations,
             }]
         }
-        _ => vec![CExpressionPath {
-            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-            facts,
-            obligations,
-        }],
+        _ => vec![c_type_mismatch_expression_path(facts, obligations)],
     }
 }
 
@@ -1518,18 +1616,6 @@ pub(super) fn apply_c_equal(
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
     match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => condition_as_c_int32_paths(
-            ConditionTerm::equal(left, right),
-            facts,
-            obligations,
-            assumptions,
-        ),
-        (CValue::UInt8(left), CValue::UInt8(right)) => condition_as_c_int32_paths(
-            ConditionTerm::equal(left, right),
-            facts,
-            obligations,
-            assumptions,
-        ),
         (CValue::Pointer(left), CValue::Pointer(right)) => condition_as_c_int32_paths(
             pointer_equality_condition(left, right),
             facts,
@@ -1547,11 +1633,25 @@ pub(super) fn apply_c_equal(
                 assumptions,
             )
         }
-        _ => vec![CExpressionPath {
-            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-            facts,
-            obligations,
-        }],
+        (
+            left @ (CValue::Int32(_) | CValue::UInt8(_)),
+            right @ (CValue::Int32(_) | CValue::UInt8(_)),
+        ) => {
+            let mut facts = facts;
+            let Some(left) = promote_c_int32_path_value(left, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            let Some(right) = promote_c_int32_path_value(right, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            condition_as_c_int32_paths(
+                ConditionTerm::equal(left, right),
+                facts,
+                obligations,
+                assumptions,
+            )
+        }
+        _ => vec![c_type_mismatch_expression_path(facts, obligations)],
     }
 }
 
@@ -1641,18 +1741,6 @@ pub(super) fn apply_c_not_equal(
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
     match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => condition_as_c_int32_not_paths(
-            ConditionTerm::equal(left, right),
-            facts,
-            obligations,
-            assumptions,
-        ),
-        (CValue::UInt8(left), CValue::UInt8(right)) => condition_as_c_int32_not_paths(
-            ConditionTerm::equal(left, right),
-            facts,
-            obligations,
-            assumptions,
-        ),
         (CValue::Pointer(left), CValue::Pointer(right)) => condition_as_c_int32_not_paths(
             pointer_equality_condition(left, right),
             facts,
@@ -1670,11 +1758,25 @@ pub(super) fn apply_c_not_equal(
                 assumptions,
             )
         }
-        _ => vec![CExpressionPath {
-            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-            facts,
-            obligations,
-        }],
+        (
+            left @ (CValue::Int32(_) | CValue::UInt8(_)),
+            right @ (CValue::Int32(_) | CValue::UInt8(_)),
+        ) => {
+            let mut facts = facts;
+            let Some(left) = promote_c_int32_path_value(left, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            let Some(right) = promote_c_int32_path_value(right, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            condition_as_c_int32_not_paths(
+                ConditionTerm::equal(left, right),
+                facts,
+                obligations,
+                assumptions,
+            )
+        }
+        _ => vec![c_type_mismatch_expression_path(facts, obligations)],
     }
 }
 
@@ -1942,15 +2044,18 @@ pub(super) fn evaluate_c_int32_binary_paths(
             obligations: left_obligations,
         } = left_path;
 
+        let mut left_facts = left_facts;
         let left = match left_outcome {
-            CExpressionOutcome::Value(CValue::Int32(left)) => left,
-            CExpressionOutcome::Value(_) => {
-                paths.push(CExpressionPath {
-                    outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                    facts: left_facts,
-                    obligations: left_obligations,
-                });
-                continue;
+            CExpressionOutcome::Value(left) => {
+                let Some(left) = promote_c_int32_path_value(left, &mut left_facts, assumptions)
+                else {
+                    paths.push(c_type_mismatch_expression_path(
+                        left_facts,
+                        left_obligations,
+                    ));
+                    continue;
+                };
+                left
             }
             CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
                 paths.push(CExpressionPath {
@@ -1984,14 +2089,15 @@ pub(super) fn evaluate_c_int32_binary_paths(
             };
 
             match right_path.outcome {
-                CExpressionOutcome::Value(CValue::Int32(right)) => {
+                CExpressionOutcome::Value(right) => {
+                    let mut facts = facts;
+                    let Some(right) = promote_c_int32_path_value(right, &mut facts, assumptions)
+                    else {
+                        paths.push(c_type_mismatch_expression_path(facts, obligations));
+                        continue;
+                    };
                     paths.extend(apply(left.clone(), right, facts, obligations));
                 }
-                CExpressionOutcome::Value(_) => paths.push(CExpressionPath {
-                    outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                    facts,
-                    obligations,
-                }),
                 CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
                     paths.push(CExpressionPath {
                         outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
@@ -2036,16 +2142,18 @@ pub(super) fn evaluate_c_int32_total_unary_paths(
     let mut paths = Vec::new();
     for path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
         match path.outcome {
-            CExpressionOutcome::Value(CValue::Int32(value)) => paths.push(CExpressionPath {
-                outcome: CExpressionOutcome::Value(int32(apply(value))),
-                facts: path.facts,
-                obligations: path.obligations,
-            }),
-            CExpressionOutcome::Value(_) => paths.push(CExpressionPath {
-                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                facts: path.facts,
-                obligations: path.obligations,
-            }),
+            CExpressionOutcome::Value(value) => {
+                let mut facts = path.facts;
+                let Some(value) = promote_c_int32_path_value(value, &mut facts, assumptions) else {
+                    paths.push(c_type_mismatch_expression_path(facts, path.obligations));
+                    continue;
+                };
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::Value(int32(apply(value))),
+                    facts,
+                    obligations: path.obligations,
+                });
+            }
             CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
                 paths.push(CExpressionPath {
                     outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
@@ -2170,13 +2278,20 @@ pub(super) fn write_c_lvalue_paths(
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CStatementExecutionPath> {
-    if !lvalue.value_type.accepts(&value) {
+    let mut obligations = obligations;
+    let effective_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
+    let Some(value) = coerce_c_value_to_type(
+        value,
+        lvalue.value_type,
+        &mut obligations,
+        &effective_assumptions,
+    ) else {
         return vec![CStatementExecutionPath {
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts,
             obligations,
         }];
-    }
+    };
 
     match lvalue.storage {
         CLValueStorage::Local { name } => {

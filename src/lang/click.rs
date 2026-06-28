@@ -5086,32 +5086,17 @@ fn comparison_proposition(
     operator: ComparisonOperator,
     right: CValue,
 ) -> Result<Proposition, ClickError> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => {
-            let Some((condition, value)) = comparison_condition(left, operator, right) else {
-                return Err(ClickError::new("unsupported proposition comparison"));
-            };
-            Ok(Proposition::ConditionIs(condition, value))
-        }
-        (CValue::UInt8(left), CValue::UInt8(right)) => match operator {
-            ComparisonOperator::Equal => Ok(Proposition::ConditionIs(
-                bitvector32_equal(left, right),
-                true,
-            )),
-            ComparisonOperator::NotEqual => Ok(Proposition::ConditionIs(
-                bitvector32_equal(left, right),
-                false,
-            )),
-            ComparisonOperator::LessThan
-            | ComparisonOperator::LessEqual
-            | ComparisonOperator::GreaterThan
-            | ComparisonOperator::GreaterEqual => Err(ClickError::new(
-                "ordered byte comparisons are not supported yet",
-            )),
-        },
-        (left, right) => Err(ClickError::new(format!(
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        let Some((condition, value)) = comparison_condition(left_term, operator, right_term) else {
+            return Err(ClickError::new("unsupported proposition comparison"));
+        };
+        Ok(Proposition::ConditionIs(condition, value))
+    } else {
+        Err(ClickError::new(format!(
             "cannot compare `{left:?}` and `{right:?}` in proposition"
-        ))),
+        )))
     }
 }
 
@@ -5274,6 +5259,13 @@ fn int32_term_value(value: CValue, label: &str) -> Result<Bitvector32Term, Strin
     Ok(simp_bitvector(&bits))
 }
 
+fn promoted_int32_term(value: &CValue) -> Option<Bitvector32Term> {
+    match value {
+        CValue::Int32(bits) | CValue::UInt8(bits) => Some(simp_bitvector(bits)),
+        CValue::Pointer(_) => None,
+    }
+}
+
 fn concrete_fold_range(start: i32, end: i32) -> Result<std::ops::Range<i32>, String> {
     let length = i64::from(end) - i64::from(start);
     if length <= 0 {
@@ -5331,14 +5323,27 @@ fn symbolic_range_fold_value(
 }
 
 fn lower_contract_add(left: CValue, right: CValue) -> Result<CValue, ClickError> {
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        return Ok(CValue::Int32(bitvector32_add(left_term, right_term)));
+    }
+
     match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => {
-            Ok(CValue::Int32(bitvector32_add(left, right)))
-        }
-        (CValue::Pointer(pointer), CValue::Int32(index))
-        | (CValue::Int32(index), CValue::Pointer(pointer)) => Ok(CValue::Pointer(
-            offset_pointer_by_int32_elements(pointer, index),
-        )),
+        (CValue::Pointer(pointer), offset) => promoted_int32_term(&offset)
+            .map(|index| CValue::Pointer(offset_pointer_by_int32_elements(pointer, index)))
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "cannot add pointer and `{offset:?}` in proposition"
+                ))
+            }),
+        (offset, CValue::Pointer(pointer)) => promoted_int32_term(&offset)
+            .map(|index| CValue::Pointer(offset_pointer_by_int32_elements(pointer, index)))
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "cannot add `{offset:?}` and pointer in proposition"
+                ))
+            }),
         (left, right) => Err(ClickError::new(format!(
             "cannot add `{left:?}` and `{right:?}` in proposition"
         ))),
@@ -5346,11 +5351,19 @@ fn lower_contract_add(left: CValue, right: CValue) -> Result<CValue, ClickError>
 }
 
 fn lower_contract_subtract(left: CValue, right: CValue) -> Result<CValue, ClickError> {
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        return Ok(CValue::Int32(bitvector32_subtract(left_term, right_term)));
+    }
+
     match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => {
-            Ok(CValue::Int32(bitvector32_subtract(left, right)))
-        }
-        (CValue::Pointer(pointer), CValue::Int32(index)) => {
+        (CValue::Pointer(pointer), offset) => {
+            let Some(index) = promoted_int32_term(&offset) else {
+                return Err(ClickError::new(format!(
+                    "cannot subtract `{offset:?}` from pointer in proposition"
+                )));
+            };
             Ok(CValue::Pointer(offset_pointer_by_int32_elements(
                 pointer,
                 bitvector32_subtract(Bitvector32Term::Constant(0), index),
@@ -5363,57 +5376,70 @@ fn lower_contract_subtract(left: CValue, right: CValue) -> Result<CValue, ClickE
 }
 
 fn lower_contract_multiply(left: CValue, right: CValue) -> Result<CValue, ClickError> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => {
-            Ok(CValue::Int32(bitvector32_multiply(left, right)))
-        }
-        (left, right) => Err(ClickError::new(format!(
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        Ok(CValue::Int32(bitvector32_multiply(left_term, right_term)))
+    } else {
+        Err(ClickError::new(format!(
             "cannot multiply `{left:?}` and `{right:?}` in proposition"
-        ))),
+        )))
     }
 }
 
 fn lower_contract_divide(left: CValue, right: CValue) -> Result<CValue, ClickError> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => bitvector32_divide(left, right)
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        bitvector32_divide(left_term, right_term)
             .map(CValue::Int32)
-            .map_err(ClickError::new),
-        (left, right) => Err(ClickError::new(format!(
+            .map_err(ClickError::new)
+    } else {
+        Err(ClickError::new(format!(
             "cannot divide `{left:?}` by `{right:?}` in proposition"
-        ))),
+        )))
     }
 }
 
 fn lower_contract_remainder(left: CValue, right: CValue) -> Result<CValue, ClickError> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => bitvector32_remainder(left, right)
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        bitvector32_remainder(left_term, right_term)
             .map(CValue::Int32)
-            .map_err(ClickError::new),
-        (left, right) => Err(ClickError::new(format!(
+            .map_err(ClickError::new)
+    } else {
+        Err(ClickError::new(format!(
             "cannot compute `{left:?}` % `{right:?}` in proposition"
-        ))),
+        )))
     }
 }
 
 fn lower_contract_shift_left(left: CValue, right: CValue) -> Result<CValue, ClickError> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => bitvector32_shift_left(left, right)
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        bitvector32_shift_left(left_term, right_term)
             .map(CValue::Int32)
-            .map_err(ClickError::new),
-        (left, right) => Err(ClickError::new(format!(
+            .map_err(ClickError::new)
+    } else {
+        Err(ClickError::new(format!(
             "cannot apply `<<` to `{left:?}` and `{right:?}` in proposition"
-        ))),
+        )))
     }
 }
 
 fn lower_contract_shift_right(left: CValue, right: CValue) -> Result<CValue, ClickError> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => bitvector32_shift_right(left, right)
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        bitvector32_shift_right(left_term, right_term)
             .map(CValue::Int32)
-            .map_err(ClickError::new),
-        (left, right) => Err(ClickError::new(format!(
+            .map_err(ClickError::new)
+    } else {
+        Err(ClickError::new(format!(
             "cannot apply `>>` to `{left:?}` and `{right:?}` in proposition"
-        ))),
+        )))
     }
 }
 
@@ -5423,20 +5449,24 @@ fn lower_contract_bitwise_binary(
     operator: &str,
     apply: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
 ) -> Result<CValue, ClickError> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => Ok(CValue::Int32(apply(left, right))),
-        (left, right) => Err(ClickError::new(format!(
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        Ok(CValue::Int32(apply(left_term, right_term)))
+    } else {
+        Err(ClickError::new(format!(
             "cannot apply `{operator}` to `{left:?}` and `{right:?}` in proposition"
-        ))),
+        )))
     }
 }
 
 fn lower_contract_bitwise_not(value: CValue) -> Result<CValue, ClickError> {
-    match value {
-        CValue::Int32(value) => Ok(CValue::Int32(bitvector32_not(value))),
-        value => Err(ClickError::new(format!(
+    if let Some(term) = promoted_int32_term(&value) {
+        Ok(CValue::Int32(bitvector32_not(term)))
+    } else {
+        Err(ClickError::new(format!(
             "cannot apply `~` to `{value:?}` in proposition"
-        ))),
+        )))
     }
 }
 
@@ -10120,24 +10150,35 @@ fn symbolic_contract_memory_load(
 }
 
 fn evaluate_postcondition_add(left: CValue, right: CValue) -> Result<CValue, String> {
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        return Ok(CValue::Int32(bitvector32_add(left_term, right_term)));
+    }
+
     match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => {
-            Ok(CValue::Int32(bitvector32_add(left, right)))
-        }
-        (CValue::Pointer(pointer), CValue::Int32(index))
-        | (CValue::Int32(index), CValue::Pointer(pointer)) => Ok(CValue::Pointer(
-            offset_pointer_by_int32_elements(pointer, index),
-        )),
+        (CValue::Pointer(pointer), offset) => promoted_int32_term(&offset)
+            .map(|index| CValue::Pointer(offset_pointer_by_int32_elements(pointer, index)))
+            .ok_or_else(|| format!("cannot add pointer and `{offset:?}`")),
+        (offset, CValue::Pointer(pointer)) => promoted_int32_term(&offset)
+            .map(|index| CValue::Pointer(offset_pointer_by_int32_elements(pointer, index)))
+            .ok_or_else(|| format!("cannot add `{offset:?}` and pointer")),
         (left, right) => Err(format!("cannot add `{left:?}` and `{right:?}`")),
     }
 }
 
 fn evaluate_postcondition_sub(left: CValue, right: CValue) -> Result<CValue, String> {
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        return Ok(CValue::Int32(bitvector32_subtract(left_term, right_term)));
+    }
+
     match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => {
-            Ok(CValue::Int32(bitvector32_subtract(left, right)))
-        }
-        (CValue::Pointer(pointer), CValue::Int32(index)) => {
+        (CValue::Pointer(pointer), offset) => {
+            let Some(index) = promoted_int32_term(&offset) else {
+                return Err(format!("cannot subtract `{offset:?}` from pointer"));
+            };
             Ok(CValue::Pointer(offset_pointer_by_int32_elements(
                 pointer,
                 bitvector32_subtract(Bitvector32Term::Constant(0), index),
@@ -10148,47 +10189,52 @@ fn evaluate_postcondition_sub(left: CValue, right: CValue) -> Result<CValue, Str
 }
 
 fn evaluate_postcondition_multiply(left: CValue, right: CValue) -> Result<CValue, String> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => {
-            Ok(CValue::Int32(bitvector32_multiply(left, right)))
-        }
-        (left, right) => Err(format!("cannot multiply `{left:?}` and `{right:?}`")),
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        Ok(CValue::Int32(bitvector32_multiply(left_term, right_term)))
+    } else {
+        Err(format!("cannot multiply `{left:?}` and `{right:?}`"))
     }
 }
 
 fn evaluate_postcondition_divide(left: CValue, right: CValue) -> Result<CValue, String> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => {
-            bitvector32_divide(left, right).map(CValue::Int32)
-        }
-        (left, right) => Err(format!("cannot divide `{left:?}` by `{right:?}`")),
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        bitvector32_divide(left_term, right_term).map(CValue::Int32)
+    } else {
+        Err(format!("cannot divide `{left:?}` by `{right:?}`"))
     }
 }
 
 fn evaluate_postcondition_remainder(left: CValue, right: CValue) -> Result<CValue, String> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => {
-            bitvector32_remainder(left, right).map(CValue::Int32)
-        }
-        (left, right) => Err(format!("cannot compute `{left:?}` % `{right:?}`")),
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        bitvector32_remainder(left_term, right_term).map(CValue::Int32)
+    } else {
+        Err(format!("cannot compute `{left:?}` % `{right:?}`"))
     }
 }
 
 fn evaluate_postcondition_shift_left(left: CValue, right: CValue) -> Result<CValue, String> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => {
-            bitvector32_shift_left(left, right).map(CValue::Int32)
-        }
-        (left, right) => Err(format!("cannot apply `<<` to `{left:?}` and `{right:?}`")),
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        bitvector32_shift_left(left_term, right_term).map(CValue::Int32)
+    } else {
+        Err(format!("cannot apply `<<` to `{left:?}` and `{right:?}`"))
     }
 }
 
 fn evaluate_postcondition_shift_right(left: CValue, right: CValue) -> Result<CValue, String> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => {
-            bitvector32_shift_right(left, right).map(CValue::Int32)
-        }
-        (left, right) => Err(format!("cannot apply `>>` to `{left:?}` and `{right:?}`")),
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        bitvector32_shift_right(left_term, right_term).map(CValue::Int32)
+    } else {
+        Err(format!("cannot apply `>>` to `{left:?}` and `{right:?}`"))
     }
 }
 
@@ -10198,18 +10244,22 @@ fn evaluate_postcondition_bitwise_binary(
     operator: &str,
     apply: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
 ) -> Result<CValue, String> {
-    match (left, right) {
-        (CValue::Int32(left), CValue::Int32(right)) => Ok(CValue::Int32(apply(left, right))),
-        (left, right) => Err(format!(
+    if let (Some(left_term), Some(right_term)) =
+        (promoted_int32_term(&left), promoted_int32_term(&right))
+    {
+        Ok(CValue::Int32(apply(left_term, right_term)))
+    } else {
+        Err(format!(
             "cannot apply `{operator}` to `{left:?}` and `{right:?}`"
-        )),
+        ))
     }
 }
 
 fn evaluate_postcondition_bitwise_not(value: CValue) -> Result<CValue, String> {
-    match value {
-        CValue::Int32(value) => Ok(CValue::Int32(bitvector32_not(value))),
-        value => Err(format!("cannot apply `~` to `{value:?}`")),
+    if let Some(term) = promoted_int32_term(&value) {
+        Ok(CValue::Int32(bitvector32_not(term)))
+    } else {
+        Err(format!("cannot apply `~` to `{value:?}`"))
     }
 }
 

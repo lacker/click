@@ -274,9 +274,10 @@ Good next tasks from the current state:
    offset-based string slices, and whether/how higher-level predicates can
    package structural memory validity instead of requiring separate
    `valid_range` facts.
-3. Decide and implement the first integer-promotion/conversion slice. The open
+3. Extend the integer-promotion/conversion slice beyond the current `uint8`
+   rvalue promotion and checked `int32`-to-`uint8` narrowing rules. The open
    design question is how much of C's usual arithmetic conversions Click should
-   model now versus reject in C0 until the integer story is broader.
+   model next versus reject in C0 until the integer story is broader.
 4. Add structs and field loads/stores in the smallest form needed by a pilot.
 5. Model a tiny heap API or externally specified `malloc`/`free`.
 6. Improve failure output for missing loop invariants and alias/frame facts.

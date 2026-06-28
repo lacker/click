@@ -46,9 +46,9 @@ Supported C0 surface includes:
   `uint8`
 
 Comparisons return C-style `int32` values: `0` or `1`. They are not Click
-propositions by themselves. Ordered comparisons, shifts, and bitwise operators
-are currently for `int32`; `uint8` supports equality, inequality, truthiness,
-loads, stores, and returns.
+propositions by themselves. `uint8` rvalues promote to `int32` for arithmetic,
+ordered comparisons, shifts, and bitwise operators. Assigning or returning an
+`int32` into `uint8` requires Click to prove `0 <= value <= 255`.
 
 C0 follows the GCC/Clang/MSVC consensus for signed right shift: `int32 >> k`
 is arithmetic right shift with sign extension. This is implementation-defined
@@ -113,9 +113,8 @@ These are not general C features yet:
 - structs, unions, enums
 - unsigned integers other than the narrow `uint8` byte type
 - integer widths other than `int32`
-- casts and promotions
-- shifts and bitwise operators on `uint8` or promoted/mixed-width integer
-  expressions
+- casts beyond the current checked `int32`-to-`uint8` narrowing conversion
+- mixed-width integer conversions beyond `uint8` promotion to `int32`
 - pointer comparisons beyond the supported equality/range patterns
 - heap allocation
 - function pointers

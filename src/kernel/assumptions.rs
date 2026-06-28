@@ -818,6 +818,34 @@ impl Assumptions {
             })
     }
 
+    pub(super) fn has_upper_bound_at_or_below(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        self.condition_facts
+            .iter()
+            .any(|(fact, value)| match (fact, value) {
+                (ConditionTerm::Bitvector32SignedLessEqual(fact_left, upper), true)
+                    if fact_left.as_ref() == left =>
+                {
+                    self.decide(&ConditionTerm::signed_less_equal(
+                        upper.as_ref().clone(),
+                        right.clone(),
+                    )) == Some(true)
+                }
+                (ConditionTerm::Bitvector32SignedGreaterEqual(upper, fact_left), true)
+                    if fact_left.as_ref() == left =>
+                {
+                    self.decide(&ConditionTerm::signed_less_equal(
+                        upper.as_ref().clone(),
+                        right.clone(),
+                    )) == Some(true)
+                }
+                _ => false,
+            })
+    }
+
     pub(super) fn has_successor_upper_bound_below(
         &self,
         left: &Bitvector32Term,
@@ -1279,6 +1307,27 @@ impl Assumptions {
                 if right.as_ref() == &Bitvector32Term::Constant(0) =>
             {
                 Some(false)
+            }
+            ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+                let count = right.as_ref().as_const()? as i32;
+                if !(0..32).contains(&count) {
+                    return None;
+                }
+
+                let left = left.as_ref().clone();
+                let zero = Bitvector32Term::Constant(0);
+                let max_safe_left = Bitvector32Term::Constant((i32::MAX >> count) as u32);
+                ((self.decide(&ConditionTerm::signed_greater_equal(
+                    left.clone(),
+                    zero.clone(),
+                )) == Some(true)
+                    || self.has_lower_bound_at_or_above(&left, &zero))
+                    && (self.decide(&ConditionTerm::signed_less_equal(
+                        left.clone(),
+                        max_safe_left.clone(),
+                    )) == Some(true)
+                        || self.has_upper_bound_at_or_below(&left, &max_safe_left)))
+                .then_some(false)
             }
             ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
                 if left.as_ref().is_subtract_one()

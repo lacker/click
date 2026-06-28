@@ -24,13 +24,13 @@ of inventing syntax from memory.
 - `mdtests/c_division_by_zero.md`, `mdtests/c_remainder_by_zero.md`, and
   `mdtests/c_division_overflow.md`: division/remainder undefined behavior.
 - `mdtests/c_bitwise.md`: `int32` bitwise operators in C fragments and pure
-  Click expressions, plus the current `uint8` promotion boundary.
+  Click expressions, plus `uint8` promotion through bitwise expressions.
 - `mdtests/c_shifts.md`: signed `int32` shifts in C fragments and pure Click
   expressions, including arithmetic right shift.
 - `mdtests/c_shift_negative_count.md`, `mdtests/c_shift_large_count.md`,
-  `mdtests/c_shift_negative_left.md`, `mdtests/c_shift_left_overflow.md`, and
-  `mdtests/c_shift_uint8_rejected.md`: shift undefined behavior and promotion
-  boundaries.
+  `mdtests/c_shift_negative_left.md`, and `mdtests/c_shift_left_overflow.md`:
+  shift undefined behavior.
+- `mdtests/c_shift_uint8_promoted.md`: `uint8` promotion through shifts.
 - `mdtests/c_statement_update_sugar.md`: standalone `++`, `--`, `+=`, `-=`,
   and `*=` statement sugar.
 - `mdtests/c_statement_update_rejects_expression.md`: update expressions remain
@@ -71,6 +71,10 @@ of inventing syntax from memory.
 - `mdtests/uint8_buffer_read.md`: `uint8[]` parameter indexing with
   byte-sized `valid_range`.
 - `mdtests/uint8_local_array.md`: local byte arrays and byte stores/loads.
+- `mdtests/uint8_narrowing.md`: checked `int32`-to-`uint8` narrowing with
+  range requirements.
+- `mdtests/uint8_narrowing_requires_range.md`: missing byte-range proof for
+  narrowing fails.
 - `mdtests/uint8_loop_invariant_pure_function.md`: `uint8[]` pure function
   calls inside loop invariants and `old(...)`.
 

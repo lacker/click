@@ -1,9 +1,8 @@
 # C bitwise operators
 
-This checks the first C0 bitwise slice: `int32` `&`, `|`, `^`, unary `~`,
-Surface Click postconditions using the same operators, C-style precedence, and
-the current rejection of `uint8` bitwise expressions until promotions/casts are
-designed.
+This checks C0 bitwise operators on `int32` values, Surface Click
+postconditions using the same operators, C-style precedence, and `uint8`
+integer promotion through bitwise expressions.
 
 ```c filename=bitwise_mask.c
 int32 bitwise_mask(int32 x) {
@@ -35,9 +34,21 @@ int32 bitwise_not_zero() {
 }
 ```
 
-```c filename=bitwise_uint8_rejected.c
-uint8 bitwise_uint8_rejected(uint8 x) {
+```c filename=bitwise_uint8_promoted.c
+int32 bitwise_uint8_promoted(uint8 x) {
     return x & 15;
+}
+```
+
+```c filename=bitwise_uint8_not.c
+int32 bitwise_uint8_not(uint8 x) {
+    return ~x;
+}
+```
+
+```c filename=bitwise_uint8_narrow_constant.c
+uint8 bitwise_uint8_narrow_constant() {
+    return 42 & 15;
 }
 ```
 
@@ -47,14 +58,24 @@ verifying "bitwise_precedence.c";
 verifying "bitwise_constant.c";
 verifying "bitwise_xor_or.c";
 verifying "bitwise_not.c";
-verifying "bitwise_uint8_rejected.c";
+verifying "bitwise_uint8_promoted.c";
+verifying "bitwise_uint8_not.c";
+verifying "bitwise_uint8_narrow_constant.c";
 
 function low_nibble(int32 x) -> int32 {
     x & 15
 }
 
+function byte_low_nibble(uint8 x) -> int32 {
+    x & 15
+}
+
 function all_bits() -> int32 {
     ~0
+}
+
+function byte_not(uint8 x) -> int32 {
+    ~x
 }
 
 int32 bitwise_mask(int32 x) {
@@ -79,11 +100,19 @@ int32 bitwise_not_zero() {
     ensures concrete_not: result == 4294967295 by auto;
 }
 
-uint8 bitwise_uint8_rejected(uint8 x) {
-    ensures no_promotions_yet: result == 15 by auto;
+int32 bitwise_uint8_promoted(uint8 x) {
+    ensures promoted_byte_mask: result == byte_low_nibble(x) by auto;
+}
+
+int32 bitwise_uint8_not(uint8 x) {
+    ensures promoted_byte_not: result == byte_not(x) by auto;
+}
+
+uint8 bitwise_uint8_narrow_constant() {
+    ensures narrowed_constant: result == 10 by auto;
 }
 ```
 
 ```expect
-fail: RuntimeError(TypeMismatch)
+pass
 ```
