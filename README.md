@@ -54,6 +54,16 @@ Technical documentation for agents and implementers lives in [docs/](docs/).
 Start with [docs/README.md](docs/README.md), which gives the recommended reading
 order for a fresh agent.
 
+The docs are also an mdBook. Install the `mdbook` CLI with
+`cargo install mdbook`; do not use `cargo add`, which would add mdBook as a
+library dependency of Click. Once installed, build the local HTML site with:
+
+```sh
+mdbook build
+```
+
+The generated site is written to `target/click-book/`.
+
 High-value entry points:
 
 - [docs/quickstart.md](docs/quickstart.md): run the project and add mdtests.

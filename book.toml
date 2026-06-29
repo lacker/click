@@ -1,0 +1,17 @@
+[book]
+authors = ["Click contributors"]
+language = "en"
+src = "docs"
+title = "The Click Book"
+
+[build]
+build-dir = "target/click-book"
+create-missing = false
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/lacker/click"
+
+[output.html.search]
+enable = true

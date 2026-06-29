@@ -1,10 +1,12 @@
-# Agent Documentation Index
+# Click Book
 
-This directory is the technical source of truth for agents working on Click.
-The root `README.md` contains the human-facing manifesto and should not become
-the full reference manual.
+Click is an experimental verifier for a small C subset. A `.click` sidecar
+names one or more C sources, gives C functions contracts, and asks the kernel to
+prove each guarantee.
 
-If you are a fresh agent, read these in order:
+This book is the linear technical introduction to the system. Read the learning
+chapters in order if you want to understand the current design before changing
+it:
 
 1. [quickstart.md](quickstart.md): how to run the project and add an mdtest.
 2. [c0-subset.md](c0-subset.md): the C subset and C fragments Click
@@ -58,6 +60,15 @@ Use these names consistently:
 cargo check
 cargo test
 cargo test --test mdtests
+```
+
+Install the `mdbook` CLI with `cargo install mdbook`; do not use `cargo add`,
+which would add mdBook as a library dependency of Click. Once installed, build
+or preview this book with:
+
+```sh
+mdbook build
+mdbook serve
 ```
 
 Use `rg` to find examples before inventing syntax:
