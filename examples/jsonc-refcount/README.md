@@ -1,9 +1,9 @@
 # json-c Refcount Pilot
 
-This directory is the first frozen library-shaped pilot target. The matching
-mdtests are `mdtests/jsonc_refcount_getter.md`,
-`mdtests/jsonc_refcount_setter.md`, and
-`mdtests/jsonc_refcount_increment.md`.
+This directory is the first frozen library-shaped example project. Each C file
+has a matching `.click` sidecar in this directory. Focused self-contained
+regressions for the same features live in `mdtests/jsonc_refcount_getter.md`,
+`mdtests/jsonc_refcount_setter.md`, and `mdtests/jsonc_refcount_increment.md`.
 
 The fixture starts with three json-c-shaped operations:
 
@@ -28,4 +28,4 @@ The current support is intentionally narrow:
 Keep this pilot narrow. Add the smallest C0, memory-model, and proof features
 needed by this fixture before broadening to heap allocation or ownership
 transfer. The ownership-specific design fixture lives in
-`examples/refcount-ownership-design/`.
+`docs/design/refcount-ownership/`.

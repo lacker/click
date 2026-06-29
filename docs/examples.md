@@ -1,10 +1,12 @@
 # Examples
 
-End-to-end examples live in `mdtests/`. Prefer copying a nearby mdtest instead
-of inventing syntax from memory.
+Focused regression examples live in `mdtests/`. Each mdtest should be small and
+self-contained, with inline C and `.click` blocks. Prefer copying a nearby
+mdtest instead of inventing syntax from memory.
 
-Larger source fixtures live directly under `examples/`; see
-`examples/README.md` for naming conventions.
+Larger example projects live directly under `examples/`. They contain ordinary
+`.c` files and `.click` sidecars, and are verified by `tests/examples.rs`.
+Design sketches that are not expected to verify live under `docs/design/`.
 
 ## Basic Function Contracts
 
@@ -152,16 +154,22 @@ Larger source fixtures live directly under `examples/`; see
   invariant, exercising `old(...)` as entry-context spec elaboration.
 - `mdtests/bubble_sort3_two_pass_sorted.md`: loop VCs for sortedness.
 
-## Source Fixtures
+## Example Projects
 
-- Verified source fixtures have matching mdtests.
-- Design fixtures for syntax or semantic choices that Click cannot express yet
-  use a `-design` suffix.
+- `examples/jsonc-refcount/`: first library-shaped example project. It has
+  ordinary C files and sidecar specs for a getter, setter, and increment helper
+  over a one-field json-c-shaped object.
+
+## Design Fixtures
+
+- `docs/design/refcount-ownership/`: design fixture for deciding how Click
+  should represent state-indexed ownership facts.
+
+## Library-Shaped Mdtests
+
 - `mdtests/jsonc_refcount_getter.md`: first json-c-shaped pilot proof,
   using the initial single-field struct slice for a reference-count getter.
 - `mdtests/jsonc_refcount_setter.md`: pilot single-field struct write
   with a field-validity precondition and field-level mutable footprint.
 - `mdtests/jsonc_refcount_increment.md`: pilot field read/modify/write
   proof with `old(obj->field)` postconditions and a no-overflow requirement.
-- `examples/refcount-ownership-design/`: design fixture for deciding how Click
-  should represent state-indexed ownership facts.

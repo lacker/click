@@ -267,7 +267,7 @@ Done means:
 
 Good next tasks from the current state:
 
-1. Use `examples/refcount-ownership-design/` to choose the ghost ownership
+1. Use `docs/design/refcount-ownership/` to choose the ghost ownership
    model before adding allocation, final release, or double-release checks.
 2. Document and then broaden the struct/field memory model beyond the current
    single-`int32`-field load/store, `valid_field(obj->field)`, and
