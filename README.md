@@ -56,13 +56,14 @@ order for a fresh agent.
 
 The docs are also an mdBook. Install the `mdbook` CLI with
 `cargo install mdbook`; do not use `cargo add`, which would add mdBook as a
-library dependency of Click. Once installed, build the local HTML site with:
+library dependency of Click. Once installed, serve the local HTML site with:
 
 ```sh
-mdbook build
+mdbook serve
 ```
 
-The generated site is written to `target/click-book/`.
+This builds the book, serves it at `http://localhost:3000`, and rebuilds on
+changes. Static output is written to `target/click-book/`.
 
 High-value entry points:
 

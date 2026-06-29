@@ -63,13 +63,16 @@ cargo test --test mdtests
 ```
 
 Install the `mdbook` CLI with `cargo install mdbook`; do not use `cargo add`,
-which would add mdBook as a library dependency of Click. Once installed, build
-or preview this book with:
+which would add mdBook as a library dependency of Click. Once installed, serve
+this book with:
 
 ```sh
-mdbook build
 mdbook serve
 ```
+
+This builds the book, serves it at `http://localhost:3000`, and rebuilds on
+changes. Use `mdbook build` only when you want static HTML output without a
+local server.
 
 Use `rg` to find examples before inventing syntax:
 
