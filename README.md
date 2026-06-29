@@ -69,8 +69,8 @@ High-value entry points:
 
 - [docs/basic/what-click-is.md](docs/basic/what-click-is.md): the beginner
   starting point.
-- [docs/intermediate/ghost-state.md](docs/intermediate/ghost-state.md): current
-  ghost-state design position.
+- [docs/intermediate/spec-state.md](docs/intermediate/spec-state.md): current
+  spec-state design position.
 - [docs/advanced/testing-click.md](docs/advanced/testing-click.md): test
   commands and mdtest shape.
 - [docs/feature-playbook.md](docs/feature-playbook.md): how to extend Click.

@@ -5,6 +5,7 @@ A Click contract describes a C function from the outside.
 The main clauses are:
 
 ```click
+let name [: type] = expression;
 requires ...
 ensures ... by ...
 immutable ...
@@ -13,6 +14,22 @@ mutable ...
 
 Beginner proofs mostly use `requires` and `ensures`. Memory proofs later add
 `immutable` and `mutable`.
+
+## Local Names
+
+A contract can define immutable local names:
+
+```click
+let max: int32 = 2147483647;
+let expected = x + 1;
+
+requires x < max;
+ensures result == expected by auto;
+```
+
+These `let` bindings are Click-side abbreviations. They do not add runtime C
+variables and they are not mutable proof state. A type annotation is optional
+when Click can infer the intended value shape from use.
 
 ## Requirements
 

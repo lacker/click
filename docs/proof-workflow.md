@@ -128,7 +128,7 @@ loop 0 {
 `statement N` names the Nth source statement in structural order. `loop N`
 names the Nth `while` loop.
 
-`assert` is a one-shot ghost check at the target statement. It currently accepts
+`assert` is a one-shot spec check at the target statement. It currently accepts
 the executable proposition fragment over current-state C fragments.
 
 `invariant` generates loop-entry, preservation, and exit obligations. Invariant

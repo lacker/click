@@ -14,6 +14,21 @@ function count(int32 p[], int32 lo, int32 hi, int32 x) -> int32 {
 
 This function counts occurrences in a range of an array-ref parameter.
 
+Pure Click functions can use immutable `let` bindings:
+
+```click
+function inc_with_let(int32 x) -> int32 {
+    let next: int32 = x + 1;
+    next
+}
+```
+
+The annotation is optional when the value's type is already clear:
+
+```click
+let next = x + 1;
+```
+
 ## Functions Versus Predicates
 
 A pure Click function returns a value:

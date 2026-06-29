@@ -88,5 +88,5 @@ Ask:
 6. Is the proof automated, simplified, framed, or scripted?
 
 That is enough to understand simple Click code. Intermediate Click adds memory
-validity, aliasing, loops, predicates, pure functions, and eventually ghost
-state.
+validity, aliasing, loops, predicates, pure functions, and eventually spec or
+model state.

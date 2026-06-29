@@ -21,7 +21,7 @@
 - [Loops And Invariants](intermediate/loops-and-invariants.md)
 - [Predicates](intermediate/predicates.md)
 - [Pure Click Functions](intermediate/pure-click-functions.md)
-- [Ghost State](intermediate/ghost-state.md)
+- [Spec State](intermediate/spec-state.md)
 - [Larger Example Projects](intermediate/larger-example-projects.md)
 
 # Advanced Click

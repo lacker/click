@@ -11,7 +11,7 @@ This book is organized by reader need:
   understand simple Click code.
 - **Intermediate Click** explains the concepts needed for larger verification:
   C fragments, undefined behavior, memory validity, aliasing, frames, loops,
-  predicates, pure Click functions, ghost state, and example projects.
+  predicates, pure Click functions, spec state, and example projects.
 - **Advanced Click** is for people changing Click itself: testing, feature
   development, proof capabilities, roadmap, and kernel internals.
 - **Reference** keeps the exhaustive technical pages. These pages are less

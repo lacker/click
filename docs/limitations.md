@@ -57,11 +57,11 @@ Direct memory reads in `requires` propositions are limited. Use a named
 predicate for memory-reading preconditions, and unfold it in proof scripts when
 the body is needed.
 
-Plain `cstr(p)` introduces a ghost exact length, but it does not by itself
+Plain `cstr(p)` introduces an exact spec length, but it does not by itself
 produce a structural `valid_range` fact. To use byte-level consequences from
 `cstr_len` or bounded string facts, the surrounding contract still needs enough
 memory-validity information, such as `valid_range(p[0..len + 1])` for an exact
-known ghost length or `valid_range(p[0..max])` for a bounded scan.
+known spec length or `valid_range(p[0..max])` for a bounded scan.
 
 ## Guarded Memory Reads Need Range Forms
 

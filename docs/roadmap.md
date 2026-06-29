@@ -98,7 +98,7 @@ Done means:
 - mdtests cover each new C feature with both a successful proof and at least
   one representative failure.
 
-## Milestone 2: Ghost State, Permissions, Heap, And Real Frames
+## Milestone 2: Spec State, Permissions, Heap, And Real Frames
 
 json-c-shaped code allocates, stores pointers inside objects, shares objects,
 and releases them. Click needs a disciplined memory story before that is
@@ -106,11 +106,11 @@ comfortable.
 
 Likely additions:
 
-- First-class ghost variables and ghost state:
-  spec-only values that can be mentioned across pre/post states before any
+- First-class spec/model state:
+  proof-only state that can be mentioned across program points before any
   permission accounting is added.
 - Permission logic:
-  read/write/free authority over memory locations or ranges, backed by ghost
+  read/write/free authority over memory locations or ranges, backed by spec
   state and designed before ownership/refcounting.
 - Heap allocation and deallocation in the C semantics.
 - Allocation predicates:
@@ -131,7 +131,7 @@ Design notes:
 
 - Do not make ownership a magic json-c concept. Build general memory predicates
   and then define json-c-specific predicates in a library spec.
-- Do not design refcount ownership before ghost state and basic permissions are
+- Do not design refcount ownership before spec state and basic permissions are
   settled. Refcounting is a pressure test for those layers, not the starting
   point.
 - Treat `malloc`, `free`, `memcpy`, `memcmp`, `strlen`, and friends as either
@@ -250,7 +250,7 @@ Candidate target properties:
 - Correct behavior for selected getters/setters.
 - String or byte-buffer invariants for selected parsing/printing helpers.
 - Reference-count or ownership invariants for a small object lifecycle, after
-  ghost state and permission logic are available.
+  spec state and permission logic are available.
 - Frame properties: a setter changes the intended field and preserves the rest.
 
 Suggested order:
@@ -259,7 +259,7 @@ Suggested order:
 2. Select 3-5 small functions that exercise pointers, structs, strings, and
    helper calls.
 3. Write sidecar specs with explicit preconditions and frame predicates. Add
-   ownership predicates only after ghost state and permission logic are in place.
+   ownership predicates only after spec state and permission logic are in place.
 4. Add the smallest missing C0/frontend and proof features needed by those
    functions.
 5. Verify memory safety first.
@@ -278,7 +278,7 @@ Done means:
 
 Good next tasks from the current state:
 
-1. Choose the first ghost variable/state model before adding permission logic,
+1. Choose the first spec/model-state design before adding permission logic,
    allocation, final release, or double-release checks.
 2. Document and then broaden the struct/field memory model beyond the current
    single-`int32`-field load/store, `valid_field(obj->field)`, and

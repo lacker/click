@@ -142,7 +142,7 @@ function eq_as_int(int32 x, int32 y) -> int32 {
 }
 
 function count3(int32 p[], int32 x) -> int32 {
-    let initial = 0;
+    let initial: int32 = 0;
     (0..3).fold(initial, |acc, k| {
         acc + if p[k] == x { 1 } else { 0 }
     })
@@ -151,9 +151,27 @@ function count3(int32 p[], int32 x) -> int32 {
 
 Supported expression features include parameters, literals, `+`, `-`, `*`,
 `/`, `%`, `<<`, `>>`, `int32` bitwise `&`, `|`, `^`, unary `~`, indexing,
-`let name = value; body`, `if proposition { then } else { else }`, range
-`.fold`, and calls to other non-recursive Click functions. Recursive Click
-functions are rejected.
+`let name [: type] = value; body`, `if proposition { then } else { else }`,
+range `.fold`, and calls to other non-recursive Click functions. Recursive
+Click functions are rejected.
+
+Function contracts may also use contract-level `let` bindings:
+
+```click
+int32 bounded_increment(int32 x) {
+    let max: int32 = 2147483647;
+    let expected = x + 1;
+
+    requires x < max;
+    ensures result == expected by auto;
+}
+```
+
+Contract-level lets are immutable lexical abbreviations. They are visible to
+later clauses in the same function block, including `requires`, `ensures`,
+`mutable`, and structural proof blocks. A contract-level let cannot reuse a C
+parameter name or an earlier contract-level let name. Explicit type annotations
+are checked when the binding is evaluated.
 
 In pure Click function parameters, `int32 p[]` and `int32* p` are treated as
 array-ref parameters. `uint8 p[]` and `uint8* p` are also array-ref parameters,

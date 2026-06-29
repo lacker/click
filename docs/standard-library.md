@@ -104,9 +104,9 @@ The C-string predicates are still facts over C memory, not first-class Click
 string values:
 
 - `cstr_prefix(bytes, len)` says the first `len` bytes contain no terminator.
-- `cstr_len(bytes, len)` says `len` is the exact ghost length: no terminator
+- `cstr_len(bytes, len)` says `len` is the exact spec length: no terminator
   before `len`, and a terminator at `len`.
-- `cstr(bytes)` says some exact ghost length exists. This matches a plain
+- `cstr(bytes)` says some exact spec length exists. This matches a plain
   `char*`/`uint8*` API shape, but byte-level consequences still need enough
   memory-validity facts when unfolded.
 - `cstr_bounded(bytes, max)` says a terminator exists somewhere before `max`.

@@ -126,12 +126,16 @@ Larger example projects live directly under `examples/`. They contain ordinary
   `.any`, stdlib `count`, and `permutation`.
 - `mdtests/click_array_refs.md`: array refs carrying current and old memory into
   pure Click functions and predicates.
+- `mdtests/contract_let_bindings.md`: Rust-style `let name [: type] = value;`
+  bindings in pure Click functions and function contracts.
+- `mdtests/contract_let_type_mismatch.md`: explicit `let` type annotation
+  mismatch diagnostic.
 - `mdtests/byte_slice_stdlib.md`: stdlib byte-slice helpers over `uint8[]`,
   including byte counts, slice equality, range equality, and all-equal facts.
 - `mdtests/byte_slice_range_predicates.md`: byte contains/all-not-equal
   predicates and `choose` after explicit predicate unfolding.
 - `mdtests/cstr_stdlib.md`: first C-string predicates over `uint8[]`, including
-  exact ghost length, bounded terminator, and plain existential string facts.
+  exact spec length, bounded terminator, and plain existential string facts.
 
 ## Sorting And Permutation
 

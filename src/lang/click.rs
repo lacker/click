@@ -231,6 +231,7 @@ pub enum ContractExpression {
     },
     Let {
         name: String,
+        c_type: Option<C0Type>,
         value: Box<ContractExpression>,
         body: Box<ContractExpression>,
     },
@@ -2814,7 +2815,9 @@ impl AnnotationLowerer<'_> {
                     ),
                 })
             }
-            ContractExpression::Let { name, value, body } => {
+            ContractExpression::Let {
+                name, value, body, ..
+            } => {
                 let value = self.lower_contract_expression_to_spec(value, environment)?;
                 let mut body_environment = environment.clone();
                 body_environment.values.insert(
@@ -3577,6 +3580,439 @@ fn substitute_click_proposition(
     }
 }
 
+fn apply_contract_lets_to_requirement(
+    requirement: Requirement,
+    bindings: &[ContractLetBinding],
+) -> Result<Requirement, String> {
+    match requirement {
+        Requirement::Labeled { label, requirement } => Ok(Requirement::Labeled {
+            label,
+            requirement: Box::new(apply_contract_lets_to_requirement(*requirement, bindings)?),
+        }),
+        Requirement::ValidRange { name, bytes } => Ok(Requirement::ValidRange {
+            name,
+            bytes: apply_contract_lets_to_range_bytes(bytes, bindings)?,
+        }),
+        Requirement::ValidRangeSegment { segment } => Ok(Requirement::ValidRangeSegment {
+            segment: apply_contract_lets_to_segment(segment, bindings)?,
+        }),
+        Requirement::Disjoint { left, right } => Ok(Requirement::Disjoint {
+            left: apply_contract_lets_to_segment(left, bindings)?,
+            right: apply_contract_lets_to_segment(right, bindings)?,
+        }),
+        Requirement::Proposition(proposition) => Ok(Requirement::Proposition(
+            apply_contract_lets_to_proposition(proposition, bindings)?,
+        )),
+    }
+}
+
+fn apply_contract_lets_to_ensure_clause(
+    clause: EnsureClause,
+    bindings: &[ContractLetBinding],
+) -> Result<EnsureClause, String> {
+    let EnsureClause {
+        name,
+        ensure,
+        proof,
+    } = clause;
+    let ensure = match ensure {
+        Ensure::Proposition(proposition) => {
+            Ensure::Proposition(apply_contract_lets_to_proposition(proposition, bindings)?)
+        }
+    };
+    Ok(EnsureClause {
+        name,
+        ensure,
+        proof,
+    })
+}
+
+fn apply_contract_lets_to_effect_clause(
+    clause: EffectClause,
+    bindings: &[ContractLetBinding],
+) -> Result<EffectClause, String> {
+    let EffectClause { effect, proof } = clause;
+    Ok(EffectClause {
+        effect: apply_contract_lets_to_effect(effect, bindings)?,
+        proof,
+    })
+}
+
+fn apply_contract_lets_to_structural_clause(
+    clause: StructuralClause,
+    bindings: &[ContractLetBinding],
+) -> Result<StructuralClause, String> {
+    let StructuralClause { target, items } = clause;
+    let items = items
+        .into_iter()
+        .map(|item| apply_contract_lets_to_structural_item(item, bindings))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(StructuralClause { target, items })
+}
+
+fn apply_contract_lets_to_structural_item(
+    item: StructuralItem,
+    bindings: &[ContractLetBinding],
+) -> Result<StructuralItem, String> {
+    let StructuralItem { kind, claim, proof } = item;
+    let claim = match claim {
+        StructuralItemClaim::Proposition(proposition) => StructuralItemClaim::Proposition(
+            apply_contract_lets_to_proposition(proposition, bindings)?,
+        ),
+        StructuralItemClaim::Effect(effect) => {
+            StructuralItemClaim::Effect(apply_contract_lets_to_effect(effect, bindings)?)
+        }
+    };
+    Ok(StructuralItem { kind, claim, proof })
+}
+
+fn apply_contract_lets_to_effect(
+    effect: Effect,
+    bindings: &[ContractLetBinding],
+) -> Result<Effect, String> {
+    match effect {
+        Effect::Immutable => Ok(Effect::Immutable),
+        Effect::Mutable(segments) => Ok(Effect::Mutable(
+            segments
+                .into_iter()
+                .map(|segment| apply_contract_lets_to_segment(segment, bindings))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+    }
+}
+
+fn apply_contract_lets_to_segment(
+    segment: ContractSegment,
+    bindings: &[ContractLetBinding],
+) -> Result<ContractSegment, String> {
+    let substitutions = contract_let_substitutions(bindings);
+    Ok(ContractSegment {
+        state: segment.state,
+        base: substitute_c_fragment(&segment.base, &substitutions)?,
+        start: substitute_c_fragment(&segment.start, &substitutions)?,
+        end: substitute_c_fragment(&segment.end, &substitutions)?,
+    })
+}
+
+fn apply_contract_lets_to_range_bytes(
+    bytes: RangeBytes,
+    bindings: &[ContractLetBinding],
+) -> Result<RangeBytes, String> {
+    match bytes {
+        RangeBytes::Constant(_) => Ok(bytes),
+        RangeBytes::Parameter(name) => {
+            let substitutions = contract_let_substitutions(bindings);
+            let Some(value) = substitutions.get(&name) else {
+                return Ok(RangeBytes::Parameter(name));
+            };
+            let c_fragment = contract_expression_as_c_fragment(value).ok_or_else(|| {
+                format!(
+                    "contract `let` `{name}` cannot be used in a valid_range byte expression because it is not a C fragment"
+                )
+            })?;
+            range_bytes_from_c_expression(&c_fragment).ok_or_else(|| {
+                format!("contract `let` `{name}` cannot be used in a valid_range byte expression")
+            })
+        }
+        RangeBytes::Add(left, right) => Ok(RangeBytes::Add(
+            Box::new(apply_contract_lets_to_range_bytes(*left, bindings)?),
+            Box::new(apply_contract_lets_to_range_bytes(*right, bindings)?),
+        )),
+        RangeBytes::Subtract(left, right) => Ok(RangeBytes::Subtract(
+            Box::new(apply_contract_lets_to_range_bytes(*left, bindings)?),
+            Box::new(apply_contract_lets_to_range_bytes(*right, bindings)?),
+        )),
+        RangeBytes::Multiply(left, right) => Ok(RangeBytes::Multiply(
+            Box::new(apply_contract_lets_to_range_bytes(*left, bindings)?),
+            Box::new(apply_contract_lets_to_range_bytes(*right, bindings)?),
+        )),
+    }
+}
+
+fn range_bytes_from_c_expression(expression: &CExpression) -> Option<RangeBytes> {
+    match expression {
+        CExpression::Value(CValue::Int32(Bitvector32Term::Constant(value))) => {
+            Some(RangeBytes::Constant(*value))
+        }
+        CExpression::Variable(name) => Some(RangeBytes::Parameter(name.clone())),
+        CExpression::Add(left, right) => Some(RangeBytes::Add(
+            Box::new(range_bytes_from_c_expression(left)?),
+            Box::new(range_bytes_from_c_expression(right)?),
+        )),
+        CExpression::Subtract(left, right) => Some(RangeBytes::Subtract(
+            Box::new(range_bytes_from_c_expression(left)?),
+            Box::new(range_bytes_from_c_expression(right)?),
+        )),
+        CExpression::Multiply(left, right) => Some(RangeBytes::Multiply(
+            Box::new(range_bytes_from_c_expression(left)?),
+            Box::new(range_bytes_from_c_expression(right)?),
+        )),
+        _ => None,
+    }
+}
+
+fn apply_contract_lets_to_proposition(
+    proposition: ClickProposition,
+    bindings: &[ContractLetBinding],
+) -> Result<ClickProposition, String> {
+    match proposition {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => Ok(ClickProposition::Comparison {
+            left: apply_contract_lets_to_expression(left, bindings)?,
+            operator,
+            right: apply_contract_lets_to_expression(right, bindings)?,
+        }),
+        ClickProposition::And(left, right) => Ok(ClickProposition::And(
+            Box::new(apply_contract_lets_to_proposition(*left, bindings)?),
+            Box::new(apply_contract_lets_to_proposition(*right, bindings)?),
+        )),
+        ClickProposition::Or(left, right) => Ok(ClickProposition::Or(
+            Box::new(apply_contract_lets_to_proposition(*left, bindings)?),
+            Box::new(apply_contract_lets_to_proposition(*right, bindings)?),
+        )),
+        ClickProposition::Not(body) => Ok(ClickProposition::Not(Box::new(
+            apply_contract_lets_to_proposition(*body, bindings)?,
+        ))),
+        ClickProposition::Implies(left, right) => Ok(ClickProposition::Implies(
+            Box::new(apply_contract_lets_to_proposition(*left, bindings)?),
+            Box::new(apply_contract_lets_to_proposition(*right, bindings)?),
+        )),
+        ClickProposition::ForAll { c_type, name, body } => {
+            let scoped = contract_lets_without_name(bindings, &name);
+            Ok(ClickProposition::ForAll {
+                c_type,
+                name,
+                body: Box::new(apply_contract_lets_to_proposition(*body, &scoped)?),
+            })
+        }
+        ClickProposition::Exists { c_type, name, body } => {
+            let scoped = contract_lets_without_name(bindings, &name);
+            Ok(ClickProposition::Exists {
+                c_type,
+                name,
+                body: Box::new(apply_contract_lets_to_proposition(*body, &scoped)?),
+            })
+        }
+        ClickProposition::RangeAll {
+            start,
+            end,
+            item,
+            body,
+        } => {
+            let scoped = contract_lets_without_name(bindings, &item);
+            Ok(ClickProposition::RangeAll {
+                start: apply_contract_lets_to_expression(start, bindings)?,
+                end: apply_contract_lets_to_expression(end, bindings)?,
+                item,
+                body: Box::new(apply_contract_lets_to_proposition(*body, &scoped)?),
+            })
+        }
+        ClickProposition::RangeAny {
+            start,
+            end,
+            item,
+            body,
+        } => {
+            let scoped = contract_lets_without_name(bindings, &item);
+            Ok(ClickProposition::RangeAny {
+                start: apply_contract_lets_to_expression(start, bindings)?,
+                end: apply_contract_lets_to_expression(end, bindings)?,
+                item,
+                body: Box::new(apply_contract_lets_to_proposition(*body, &scoped)?),
+            })
+        }
+        ClickProposition::PredicateCall { name, arguments } => {
+            Ok(ClickProposition::PredicateCall {
+                name,
+                arguments: arguments
+                    .into_iter()
+                    .map(|argument| apply_contract_lets_to_expression(argument, bindings))
+                    .collect::<Result<Vec<_>, _>>()?,
+            })
+        }
+    }
+}
+
+fn apply_contract_lets_to_expression(
+    expression: ContractExpression,
+    bindings: &[ContractLetBinding],
+) -> Result<ContractExpression, String> {
+    let referenced_names = contract_expression_referenced_names(&expression);
+    let referenced_bindings = bindings
+        .iter()
+        .filter(|binding| referenced_names.contains(&binding.name))
+        .cloned()
+        .collect::<Vec<_>>();
+    let substitutions = contract_let_substitutions(bindings);
+    let expression = substitute_contract_expression(&expression, &substitutions)?;
+    Ok(wrap_contract_lets_expression(
+        expression,
+        &referenced_bindings,
+    ))
+}
+
+fn wrap_contract_lets_expression(
+    mut expression: ContractExpression,
+    bindings: &[ContractLetBinding],
+) -> ContractExpression {
+    for binding in bindings.iter().rev() {
+        expression = ContractExpression::Let {
+            name: binding.name.clone(),
+            c_type: binding.c_type,
+            value: Box::new(binding.value.clone()),
+            body: Box::new(expression),
+        };
+    }
+    expression
+}
+
+fn contract_lets_without_name(
+    bindings: &[ContractLetBinding],
+    name: &str,
+) -> Vec<ContractLetBinding> {
+    bindings
+        .iter()
+        .filter(|binding| binding.name != name)
+        .cloned()
+        .collect()
+}
+
+fn contract_expression_referenced_names(expression: &ContractExpression) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    collect_contract_expression_referenced_names(expression, &mut names);
+    names
+}
+
+fn collect_contract_expression_referenced_names(
+    expression: &ContractExpression,
+    names: &mut BTreeSet<String>,
+) {
+    match expression {
+        ContractExpression::CFragment(expression) => {
+            collect_c_expression_referenced_names(expression, names);
+        }
+        ContractExpression::Old(expression) | ContractExpression::BitwiseNot(expression) => {
+            collect_contract_expression_referenced_names(expression, names);
+        }
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
+        | ContractExpression::Divide(left, right)
+        | ContractExpression::Remainder(left, right)
+        | ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right)
+        | ContractExpression::Index(left, right) => {
+            collect_contract_expression_referenced_names(left, names);
+            collect_contract_expression_referenced_names(right, names);
+        }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_click_proposition_referenced_names(condition, names);
+            collect_contract_expression_referenced_names(then_branch, names);
+            collect_contract_expression_referenced_names(else_branch, names);
+        }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            collect_contract_expression_referenced_names(start, names);
+            collect_contract_expression_referenced_names(end, names);
+            collect_contract_expression_referenced_names(initial, names);
+            let mut body_names = BTreeSet::new();
+            collect_contract_expression_referenced_names(body, &mut body_names);
+            body_names.remove(accumulator);
+            body_names.remove(item);
+            names.extend(body_names);
+        }
+        ContractExpression::Let {
+            name, value, body, ..
+        } => {
+            collect_contract_expression_referenced_names(value, names);
+            let mut body_names = BTreeSet::new();
+            collect_contract_expression_referenced_names(body, &mut body_names);
+            body_names.remove(name);
+            names.extend(body_names);
+        }
+        ContractExpression::Call { arguments, .. } => {
+            for argument in arguments {
+                collect_contract_expression_referenced_names(argument, names);
+            }
+        }
+    }
+}
+
+fn collect_click_proposition_referenced_names(
+    proposition: &ClickProposition,
+    names: &mut BTreeSet<String>,
+) {
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            collect_contract_expression_referenced_names(left, names);
+            collect_contract_expression_referenced_names(right, names);
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            collect_click_proposition_referenced_names(left, names);
+            collect_click_proposition_referenced_names(right, names);
+        }
+        ClickProposition::Not(body) => collect_click_proposition_referenced_names(body, names),
+        ClickProposition::ForAll { name, body, .. }
+        | ClickProposition::Exists { name, body, .. } => {
+            let mut body_names = BTreeSet::new();
+            collect_click_proposition_referenced_names(body, &mut body_names);
+            body_names.remove(name);
+            names.extend(body_names);
+        }
+        ClickProposition::RangeAll {
+            start,
+            end,
+            item,
+            body,
+        }
+        | ClickProposition::RangeAny {
+            start,
+            end,
+            item,
+            body,
+        } => {
+            collect_contract_expression_referenced_names(start, names);
+            collect_contract_expression_referenced_names(end, names);
+            let mut body_names = BTreeSet::new();
+            collect_click_proposition_referenced_names(body, &mut body_names);
+            body_names.remove(item);
+            names.extend(body_names);
+        }
+        ClickProposition::PredicateCall { arguments, .. } => {
+            for argument in arguments {
+                collect_contract_expression_referenced_names(argument, names);
+            }
+        }
+    }
+}
+
+fn contract_let_substitutions(
+    bindings: &[ContractLetBinding],
+) -> BTreeMap<String, ContractExpression> {
+    bindings
+        .iter()
+        .map(|binding| (binding.name.clone(), binding.value.clone()))
+        .collect()
+}
+
 fn substitute_contract_expression(
     expression: &ContractExpression,
     substitutions: &BTreeMap<String, ContractExpression>,
@@ -3668,11 +4104,17 @@ fn substitute_contract_expression(
                 body: Box::new(substitute_contract_expression(body, &scoped)?),
             })
         }
-        ContractExpression::Let { name, value, body } => {
+        ContractExpression::Let {
+            name,
+            c_type,
+            value,
+            body,
+        } => {
             let mut scoped = substitutions.clone();
             scoped.remove(name);
             Ok(ContractExpression::Let {
                 name: name.clone(),
+                c_type: *c_type,
                 value: Box::new(substitute_contract_expression(value, substitutions)?),
                 body: Box::new(substitute_contract_expression(body, &scoped)?),
             })
@@ -4986,8 +5428,15 @@ impl KernelPropositionLowerer {
                     }
                 }
             }
-            ContractExpression::Let { name, value, body } => {
+            ContractExpression::Let {
+                name,
+                c_type,
+                value,
+                body,
+            } => {
                 let value = self.lower_requirement_value(value)?;
+                let value =
+                    checked_contract_let_value(value, *c_type, name).map_err(ClickError::new)?;
                 let outer_values = self.values.clone();
                 self.values.insert(name.clone(), value);
                 let body_value = self.lower_requirement_value(body);
@@ -7419,7 +7868,12 @@ fn evaluate_predicate_contract_expression(
                 }
             }
         }
-        ContractExpression::Let { name, value, body } => {
+        ContractExpression::Let {
+            name,
+            c_type,
+            value,
+            body,
+        } => {
             let value = evaluate_predicate_contract_expression(
                 values,
                 array_refs,
@@ -7430,6 +7884,7 @@ fn evaluate_predicate_contract_expression(
                 click_function_environment,
                 active_functions,
             )?;
+            let value = checked_contract_let_value(value, *c_type, name)?;
             let mut let_values = values.clone();
             let_values.insert(name.clone(), value);
             evaluate_predicate_contract_expression(
@@ -9404,7 +9859,12 @@ fn evaluate_contract_expression_with_environment(
                 }
             }
         }
-        ContractExpression::Let { name, value, body } => {
+        ContractExpression::Let {
+            name,
+            c_type,
+            value,
+            body,
+        } => {
             let value = evaluate_contract_expression_with_environment(
                 parameter_values,
                 array_refs,
@@ -9417,6 +9877,7 @@ fn evaluate_contract_expression_with_environment(
                 click_function_environment,
                 active_functions,
             )?;
+            let value = checked_contract_let_value(value, *c_type, name)?;
             let mut let_values = parameter_values.clone();
             let_values.insert(name.clone(), value);
             evaluate_contract_expression_with_environment(
@@ -9939,6 +10400,23 @@ fn c_value_matches_click_type(value: &CValue, c_type: C0Type) -> bool {
     )
 }
 
+fn checked_contract_let_value(
+    value: CValue,
+    c_type: Option<C0Type>,
+    name: &str,
+) -> Result<CValue, String> {
+    let Some(c_type) = c_type else {
+        return Ok(value);
+    };
+    if c_value_matches_click_type(&value, c_type) {
+        Ok(value)
+    } else {
+        Err(format!(
+            "let binding `{name}` evaluated to {value:?}, which does not match {c_type:?}"
+        ))
+    }
+}
+
 fn evaluate_c_contract_expression(
     parameter_values: &BTreeMap<String, CValue>,
     state: &CState,
@@ -10386,6 +10864,13 @@ struct Parser {
     position: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ContractLetBinding {
+    name: String,
+    c_type: Option<C0Type>,
+    value: ContractExpression,
+}
+
 impl Parser {
     fn new(source: &str) -> Result<Self, ClickError> {
         Ok(Self {
@@ -10473,29 +10958,77 @@ impl Parser {
         let signature = self.parse_function_signature()?;
         self.expect(Token::LBrace)?;
 
+        let parameter_names = signature
+            .parameters()
+            .iter()
+            .map(|parameter| parameter.name().to_string())
+            .collect::<BTreeSet<_>>();
+        let mut contract_lets = Vec::new();
+        let mut contract_let_names = BTreeSet::new();
         let mut requires = Vec::new();
         let mut structural_clauses = Vec::new();
         let mut effects = Vec::new();
         let mut ensures = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
-                Some("requires") => requires.push(self.parse_requirement()?),
+                Some("let") => {
+                    let binding = self.parse_contract_let_binding()?;
+                    if parameter_names.contains(binding.name.as_str()) {
+                        return Err(self.error(format!(
+                            "contract `let` `{}` conflicts with a C parameter in `{}`",
+                            binding.name,
+                            signature.name()
+                        )));
+                    }
+                    if !contract_let_names.insert(binding.name.clone()) {
+                        return Err(self.error(format!(
+                            "duplicate contract `let` `{}` in `{}`",
+                            binding.name,
+                            signature.name()
+                        )));
+                    }
+                    let substitutions = contract_let_substitutions(&contract_lets);
+                    let value = substitute_contract_expression(&binding.value, &substitutions)
+                        .map_err(|message| self.error(message))?;
+                    contract_lets.push(ContractLetBinding { value, ..binding });
+                }
+                Some("requires") => {
+                    let requirement = self.parse_requirement()?;
+                    requires.push(
+                        apply_contract_lets_to_requirement(requirement, &contract_lets)
+                            .map_err(|message| self.error(message))?,
+                    );
+                }
                 Some("loop" | "statement") => {
-                    structural_clauses.push(self.parse_structural_clause()?)
+                    let clause = self.parse_structural_clause()?;
+                    structural_clauses.push(
+                        apply_contract_lets_to_structural_clause(clause, &contract_lets)
+                            .map_err(|message| self.error(message))?,
+                    );
                 }
                 Some("immutable" | "mutable" | "mutable_field") => {
-                    effects.push(self.parse_effect_clause()?)
+                    let effect = self.parse_effect_clause()?;
+                    effects.push(
+                        apply_contract_lets_to_effect_clause(effect, &contract_lets)
+                            .map_err(|message| self.error(message))?,
+                    );
                 }
-                Some("ensures") => ensures.push(self.parse_ensure_clause()?),
+                Some("ensures") => {
+                    let ensure = self.parse_ensure_clause()?;
+                    ensures.push(
+                        apply_contract_lets_to_ensure_clause(ensure, &contract_lets)
+                            .map_err(|message| self.error(message))?,
+                    );
+                }
                 Some(keyword) => {
                     return Err(self.error(format!(
-                        "expected `requires`, `immutable`, `mutable`, `mutable_field`, `loop`, `statement`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        "expected `let`, `requires`, `immutable`, `mutable`, `mutable_field`, `loop`, `statement`, `ensures`, or `}}` in `{}`, got `{keyword}`",
                         signature.name()
                     )));
                 }
                 None => {
                     return Err(self.error(format!(
-                        "expected `requires`, `immutable`, `mutable`, `mutable_field`, `loop`, `statement`, `ensures`, or `}}` in `{}`",
+                        "expected `let`, `requires`, `immutable`, `mutable`, `mutable_field`, `loop`, `statement`, `ensures`, or `}}` in `{}`",
                         signature.name()
                     )));
                 }
@@ -10516,6 +11049,25 @@ impl Parser {
             structural_clauses,
             effects,
             ensures,
+        })
+    }
+
+    fn parse_contract_let_binding(&mut self) -> Result<ContractLetBinding, ClickError> {
+        self.expect_ident_spelling("let")?;
+        let name = self.expect_ident("let binding name")?;
+        let c_type = if self.peek() == Some(&Token::Colon) {
+            self.position += 1;
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        self.expect(Token::Equal)?;
+        let value = self.parse_contract_expression()?;
+        self.expect(Token::Semicolon)?;
+        Ok(ContractLetBinding {
+            name,
+            c_type,
+            value,
         })
     }
 
@@ -11530,15 +12082,12 @@ impl Parser {
 
     fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
         if self.peek_ident() == Some("let") {
-            self.position += 1;
-            let name = self.expect_ident("let binding name")?;
-            self.expect(Token::Equal)?;
-            let value = self.parse_contract_expression()?;
-            self.expect(Token::Semicolon)?;
+            let binding = self.parse_contract_let_binding()?;
             let body = self.parse_contract_expression()?;
             return Ok(ContractExpression::Let {
-                name,
-                value: Box::new(value),
+                name: binding.name,
+                c_type: binding.c_type,
+                value: Box::new(binding.value),
                 body: Box::new(body),
             });
         }
@@ -13317,6 +13866,74 @@ mod tests {
             Effect::Mutable(segments) => assert_eq!(segments.len(), 2),
             effect => panic!("expected mutable effect, got {effect:?}"),
         }
+    }
+
+    #[test]
+    fn parses_rust_style_let_annotations() {
+        let source = r#"
+            function inc_with_let(int32 x) -> int32 {
+                let next: int32 = x + 1;
+                next
+            }
+        "#;
+        let file = parse(source).expect("Rust-style let annotation should parse");
+        let body = file.click_function_definitions()[0].body();
+
+        assert!(matches!(
+            body,
+            ContractExpression::Let {
+                name,
+                c_type: Some(C0Type::Int32),
+                ..
+            } if name == "next"
+        ));
+    }
+
+    #[test]
+    fn parses_contract_level_let_bindings() {
+        let source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                let expected: int32 = x;
+
+                ensures result_value: result == expected by auto;
+            }
+        "#;
+        let file = parse(source).expect("contract-level let should parse");
+        let ensure = &file.function_blocks()[0].ensures()[0];
+
+        assert!(matches!(
+            ensure.ensure(),
+            Ensure::Proposition(ClickProposition::Comparison {
+                right: ContractExpression::Let {
+                    name,
+                    c_type: Some(C0Type::Int32),
+                    ..
+                },
+                ..
+            }) if name == "expected"
+        ));
+    }
+
+    #[test]
+    fn rejects_contract_let_parameter_name_conflict() {
+        let source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                let x = 0;
+
+                ensures result_value: result == x by auto;
+            }
+        "#;
+        let error = parse(source).expect_err("contract let should not reuse parameter name");
+
+        assert!(
+            error
+                .message()
+                .contains("contract `let` `x` conflicts with a C parameter")
+        );
     }
 
     #[test]
