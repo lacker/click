@@ -51,8 +51,8 @@ about char*, float64, or malloc into the kernel.
 ## Technical Documentation
 
 Technical documentation for agents and implementers lives in [docs/](docs/).
-Start with [docs/README.md](docs/README.md), which gives the recommended reading
-order for a fresh agent.
+Start with [docs/README.md](docs/README.md), which introduces the beginner,
+intermediate, advanced, and reference sections.
 
 The docs are also an mdBook. Install the `mdbook` CLI with
 `cargo install mdbook`; do not use `cargo add`, which would add mdBook as a
@@ -67,22 +67,16 @@ changes. Static output is written to `target/click-book/`.
 
 High-value entry points:
 
-- [docs/quickstart.md](docs/quickstart.md): run the project and add mdtests.
-- [docs/click-language.md](docs/click-language.md): `.click` syntax.
-- [docs/c0-subset.md](docs/c0-subset.md): supported C0 syntax.
-- [docs/proof-workflow.md](docs/proof-workflow.md): tactics and proof scripts.
-- [docs/memory-model.md](docs/memory-model.md): pointers, ranges, aliasing, and
-  frames.
-- [docs/standard-library.md](docs/standard-library.md): `stdlib/prelude.click`.
-- [docs/roadmap.md](docs/roadmap.md): milestone path toward real-library
-  verification.
-- [docs/kernel.md](docs/kernel.md): Rust kernel implementation map.
-- [docs/examples.md](docs/examples.md): canonical mdtests by proof pattern.
-- [docs/limitations.md](docs/limitations.md): current boundaries.
+- [docs/basic/what-click-is.md](docs/basic/what-click-is.md): the beginner
+  starting point.
+- [docs/intermediate/ghost-state.md](docs/intermediate/ghost-state.md): current
+  ghost-state design position.
+- [docs/advanced/testing-click.md](docs/advanced/testing-click.md): test
+  commands and mdtest shape.
 - [docs/feature-playbook.md](docs/feature-playbook.md): how to extend Click.
-
-The proof-capability matrix remains in
-[docs/proof-landscape.md](docs/proof-landscape.md).
+- [docs/click-language.md](docs/click-language.md): complete `.click` syntax
+  reference.
+- [docs/kernel.md](docs/kernel.md): Rust kernel implementation map.
 
 ## Verification
 

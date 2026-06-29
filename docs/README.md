@@ -4,28 +4,21 @@ Click is an experimental verifier for a small C subset. A `.click` sidecar
 names one or more C sources, gives C functions contracts, and asks the kernel to
 prove each guarantee.
 
-This book is the linear technical introduction to the system. Read the learning
-chapters in order if you want to understand the current design before changing
-it:
+This book is organized by reader need:
 
-1. [quickstart.md](quickstart.md): how to run the project and add an mdtest.
-2. [c0-subset.md](c0-subset.md): the C subset and C fragments Click
-   understands today.
-3. [click-language.md](click-language.md): `.click` syntax and semantics.
-4. [click-core.md](click-core.md): how C values elaborate into pure Click
-   values such as array refs.
-5. [proof-workflow.md](proof-workflow.md): tactics, proof steps, and debugging.
-6. [memory-model.md](memory-model.md): pointers, ranges, aliasing, and frames.
-7. [standard-library.md](standard-library.md): `stdlib/prelude.click`.
-8. [examples.md](examples.md): canonical mdtests by proof pattern.
-9. [limitations.md](limitations.md): current boundaries and common traps.
-10. [feature-playbook.md](feature-playbook.md): how to extend Click safely.
-11. [roadmap.md](roadmap.md): milestone path toward verifying a real C library.
-12. [kernel.md](kernel.md): kernel implementation map for Rust changes.
+- **Basic Click** teaches the shape of Click: C files, sidecar specs,
+  contracts, propositions, and proof scripts. Read this first if you want to
+  understand simple Click code.
+- **Intermediate Click** explains the concepts needed for larger verification:
+  C fragments, undefined behavior, memory validity, aliasing, frames, loops,
+  predicates, pure Click functions, ghost state, and example projects.
+- **Advanced Click** is for people changing Click itself: testing, feature
+  development, proof capabilities, roadmap, and kernel internals.
+- **Reference** keeps the exhaustive technical pages. These pages are less
+  tutorial-shaped and more precise.
 
-[proof-landscape.md](proof-landscape.md) is the proof-capability matrix. Read it
-after [roadmap.md](roadmap.md) when deciding what proof capability should come
-next.
+The beginner chapters are intentionally a narrative spine. The reference pages
+remain the source of detailed syntax and implementation truth.
 
 ## What Click Is Today
 

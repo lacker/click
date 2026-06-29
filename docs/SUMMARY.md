@@ -2,21 +2,45 @@
 
 [Introduction](README.md)
 
-# Learning Click
+# Basic Click
 
-- [Quickstart](quickstart.md)
-- [C0 Subset](c0-subset.md)
-- [Click Language](click-language.md)
-- [Core Representation](click-core.md)
-- [Proof Workflow](proof-workflow.md)
-- [Memory Model](memory-model.md)
-- [Standard Library](standard-library.md)
-- [Examples](examples.md)
+- [What Click Is](basic/what-click-is.md)
+- [Files And Sidecars](basic/files-and-sidecars.md)
+- [Your First Proof](basic/first-proof.md)
+- [Contracts](basic/contracts.md)
+- [Propositions](basic/propositions.md)
+- [Proofs And Proof Scripts](basic/proofs-and-proof-scripts.md)
+- [Reading A Basic Click File](basic/reading-basic-click.md)
 
-# Project Reference
+# Intermediate Click
 
-- [Current Limitations](limitations.md)
+- [C0 And C Fragments](intermediate/c0-and-c-fragments.md)
+- [Undefined Behavior](intermediate/undefined-behavior.md)
+- [Memory Validity](intermediate/memory-validity.md)
+- [Aliasing And Frames](intermediate/aliasing-and-frames.md)
+- [Loops And Invariants](intermediate/loops-and-invariants.md)
+- [Predicates](intermediate/predicates.md)
+- [Pure Click Functions](intermediate/pure-click-functions.md)
+- [Ghost State](intermediate/ghost-state.md)
+- [Larger Example Projects](intermediate/larger-example-projects.md)
+
+# Advanced Click
+
+- [Testing Click](advanced/testing-click.md)
+- [Contributing To Click](advanced/contributing.md)
+- [Maintainer Quickstart](quickstart.md)
+- [Feature Playbook](feature-playbook.md)
 - [Proof Landscape](proof-landscape.md)
 - [Roadmap](roadmap.md)
-- [Feature Playbook](feature-playbook.md)
 - [Kernel Internals](kernel.md)
+
+# Reference
+
+- [Click Language Reference](click-language.md)
+- [C0 Subset Reference](c0-subset.md)
+- [Core Representation Reference](click-core.md)
+- [Proof Workflow Reference](proof-workflow.md)
+- [Memory Model Reference](memory-model.md)
+- [Standard Library Reference](standard-library.md)
+- [Examples Catalog](examples.md)
+- [Current Limitations](limitations.md)
