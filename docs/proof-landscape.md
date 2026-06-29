@@ -46,43 +46,42 @@ new proof workflow concepts too early.
 
 | Capability | Common source | Click axiom family | Click tactic surface | Current mdtest |
 | --- | --- | --- | --- | --- |
-| Scalar execution | symbolic evaluators, SMT-backed automation | C-fragment/statement execution | `auto`, later `symbolic_execute` | `mdtests/scalar.md`, `mdtests/argument_result.md`, `mdtests/max_symbolic.md` |
-| C undefined behavior | CBMC, Frama-C/WP, UBSan-style checks | undefined behavior-aware C execution | `auto`, later `check_undefined_behavior` or verification-condition output | `mdtests/overflow.md`, `mdtests/increment_requires_no_overflow.md`, `mdtests/increment_without_requires.md`, `mdtests/c_division_by_zero.md`, `mdtests/c_division_overflow.md`, `mdtests/c_shift_large_count.md`, `mdtests/c_shift_left_overflow.md` |
-| Pointer range safety | C verifiers, separation logic | memory-validity and range axioms | `auto`, later `bounds` or `frame` | `mdtests/pointer_range.md`, `mdtests/pointer_range_missing_requires.md`, `mdtests/fill_n_symbolic_pointer_loop.md` |
-| Memory postconditions | ACSL/Dafny/F* function contracts | final-state memory evaluation | `auto`, later `frame` | `mdtests/fill3_memory_postconditions.md`, `mdtests/fill3_bad_memory_postcondition.md`, `mdtests/copy3_array_demo.md` |
-| Bounded loops | bounded model checking, symbolic execution | budgeted loop execution | `auto`, later `bounded_check` | `mdtests/bounded_loop.md`, `mdtests/fill3.md`, `mdtests/fill3_array_loop.md` |
-| Function calls | modular verification, inlining, call summaries | function environment and specification satisfaction | `auto`, later `use specification` | `mdtests/function_call.md` |
-| Loop invariants | Dafny/F*/Why3/Frama-C | loop verification-condition generation for scalar locals, pointer safety, and first write-footprint frames | `loop N { invariant ... by auto; }` | `mdtests/count_to_three_loop_invariants.md`, `mdtests/count_to_n_loop_invariant.md`, `mdtests/fill_n_symbolic_pointer_loop.md`, `mdtests/fill_tail_keeps_first.md`, `mdtests/count_to_three_bad_invariant.md`, `mdtests/count_to_three_bad_invariant_initialization.md` |
+| Scalar execution | symbolic evaluators, SMT-backed automation | C-fragment/statement execution | `auto`, `symbolic_execute()` | `mdtests/scalar.md`, `mdtests/argument_result.md`, `mdtests/max_symbolic.md` |
+| C undefined behavior | CBMC, Frama-C/WP, UBSan-style checks | undefined behavior-aware C execution | `auto`, `symbolic_execute()` diagnostics | `mdtests/overflow.md`, `mdtests/increment_requires_no_overflow.md`, `mdtests/increment_without_requires.md`, `mdtests/c_division_by_zero.md`, `mdtests/c_division_overflow.md`, `mdtests/c_shift_large_count.md`, `mdtests/c_shift_left_overflow.md` |
+| Pointer range safety | C verifiers, separation logic | memory-validity and range axioms | `auto`, `symbolic_execute()` | `mdtests/pointer_range.md`, `mdtests/pointer_range_missing_requires.md`, `mdtests/fill_n_symbolic_pointer_loop.md` |
+| Memory postconditions | ACSL/Dafny/F* function contracts | final-state memory evaluation | `auto`, `simp()` | `mdtests/fill3_memory_postconditions.md`, `mdtests/fill3_bad_memory_postcondition.md`, `mdtests/copy3_array_demo.md` |
+| Bounded loops | bounded model checking, symbolic execution | budgeted loop execution | `auto`, `bounded_execute()` | `mdtests/bounded_loop.md`, `mdtests/fill3.md`, `mdtests/fill3_array_loop.md` |
+| Function calls | modular verification, inlining, call summaries | function environment and specification satisfaction | `auto`, `symbolic_execute()` | `mdtests/function_call.md` |
+| Loop invariants | Dafny/F*/Why3/Frama-C | loop verification-condition generation for scalar locals, pointer safety, memory-changing invariants, and loop frames | `loop N { invariant ... }`, `loop_vc(loop N)` | `mdtests/count_to_three_loop_invariants.md`, `mdtests/count_to_n_loop_invariant.md`, `mdtests/fill_n_symbolic_pointer_loop.md`, `mdtests/fill_n_segment_invariant.md`, `mdtests/copy_n_segment_invariant.md`, `mdtests/loop_stdlib_permutation_invariant.md` |
 | Assertions and facts | Lean/Dafny/F* proof scripts | ghost assertion checking | `statement N { assert ... by auto; }`, later `have`, `exact` | `mdtests/count_to_three_loop_invariants.md`, `mdtests/count_to_three_bad_assert.md` |
 | Proposition syntax | Lean/Isabelle/Dafny/F* specifications | kernel `And`, `Or`, `Not`, `Implies`, `ForAll`, `Exists` propositions | `and`, `or`, `not`, `implies`, `forall`, `exists` | `mdtests/click_proposition_logic.md`, `mdtests/forall_array_segment.md`, `mdtests/forall_array_segment_rejects_overwritten_cell.md`, `mdtests/exists_and_symbolic_any.md` |
 | Existential proof | Lean `exists`/`cases`, Coq `exists`/`destruct`, Dafny witnesses | proof-local existential introduction and elimination | `witness(k = expr)`, `choose(k from requirement N)` | `mdtests/witness_and_choose.md` |
 | Rewriting and simplification | Lean `simp`, Isabelle simplifier | rewrite theorem application | `simp`, later `rewrite`, `calc` | `mdtests/simp_postconditions.md`, `mdtests/pure_click_functions.md` |
-| Bitvector arithmetic | SMT, CBMC, hardware-oriented provers | bitvector32 solver/normalizer | later `bitvector` | partially through `auto` |
-| Frame reasoning | separation logic, C verifiers | pre/post memory evaluation with symbolic initial cells and loop write footprints | `auto`, `frame` | `mdtests/write_second_old_keeps_first.md`, `mdtests/write_second_old_rejects_overwritten_cell.md`, `mdtests/fill_tail_keeps_first.md` |
-| C array surface syntax | C frontends, C verifiers | parameter-array lowering to pointer parameters | ordinary C/Click signatures | `mdtests/fill3_array_loop.md`, `mdtests/copy3_array_demo.md` |
+| Bitvector arithmetic | SMT, CBMC, hardware-oriented provers | bitvector32 solver/normalizer | `auto`, `simp()` | `mdtests/c_bitwise.md`, `mdtests/c_shifts.md`, `mdtests/c_shift_uint8_promoted.md` |
+| Frame reasoning | separation logic, C verifiers | pre/post memory evaluation with symbolic initial cells and loop write footprints | `auto`, `frame`, `frame(loop N)` | `mdtests/write_second_old_keeps_first.md`, `mdtests/write_second_old_rejects_overwritten_cell.md`, `mdtests/fill_tail_keeps_first.md`, `mdtests/loop_frame_segment_shapes.md`, `mdtests/shifted_loop_effect_preserves_prefix.md` |
+| C array surface syntax | C frontends, C verifiers | parameter-array lowering to pointer parameters and local stack blocks | ordinary C/Click signatures | `mdtests/fill3_array_loop.md`, `mdtests/copy3_array_demo.md`, `mdtests/local_array.md`, `mdtests/local_array_loop.md` |
+| Byte buffers | C string/memory libraries | `uint8` values, byte-width loads/stores, typed array refs | `auto`, `simp()`, `unfold` | `mdtests/uint8_literals.md`, `mdtests/uint8_buffer_read.md`, `mdtests/uint8_narrowing.md`, `mdtests/byte_slice_stdlib.md`, `mdtests/cstr_stdlib.md` |
+| Stdlib folds and permutation | functional array specs, multiset proofs | `RangeFold`, finite forall/range facts, count-shaped fold reasoning | `unfold`, `simp`, `loop_vc(loop N)` | `mdtests/compare_swap2_permutation.md`, `mdtests/sort3_permutation.md`, `mdtests/bubble_sort3_loop_permutation.md`, `mdtests/loop_stdlib_permutation_invariant.md` |
 
 ## Current C0 Boundary
 
 The current C0 subset is enough to make the first several categories
-executable: scalar code, signed-overflow undefined behavior, pointer range
-checks, bounded loops, known function calls, memory postconditions,
-first-frame postconditions with `old(...)`, C-style array-parameter syntax, and
-Click proposition syntax with `and`, `or`, `not`, `implies`, `forall`, and
-`exists`.
-`auto` can prove simple quantified array-segment postconditions, including
-unchanged-memory cases and frame facts outside a loop write footprint.
-Structural-label ghost checks support executable `assert` propositions and
-proposition-level `invariant` clauses, including simple quantified current-state
-array facts. Invariant failures are reported as loop-entry or preservation
-obligations. Annotated scalar and pointer-safety loops can now be summarized
-without unrolling: Click checks invariant initialization, one-step preservation,
-exit facts from the invariant plus the false loop condition, and a first
-write-footprint frame fact for loads provably outside the symbolic loop writes.
+executable: scalar code, signed undefined behavior, bitwise and shift
+operations, pointer range checks, bounded loops, known function calls, memory
+postconditions, old-memory postconditions, C-style array-parameter syntax, local
+arrays, byte buffers, and Click proposition syntax with `and`, `or`, `not`,
+`implies`, `forall`, `exists`, `.all`, and `.any`.
+`auto` can prove quantified array-segment postconditions, unchanged-memory
+cases, frame facts outside loop write footprints, and several stdlib
+fold/permutation facts. Structural proof blocks support executable `assert`
+propositions and loop `invariant` clauses, including memory-changing invariants
+and invariants that unfold stdlib definitions such as `permutation`.
 
-It is not yet enough for the full launch-shaped proof story. The main missing
-pieces are full memory-changing loop invariants, richer intermediate fact
-management, richer C integer operations and casts, local arrays, richer memory
-predicates, and general frame conditions.
+It is not yet enough for the full real-library proof story. The main missing
+pieces are structs, heap allocation and ownership, broader integer
+types/conversions, reusable lemma declarations, richer intermediate fact
+management, module/import support, and a real-C or pilot-driven frontend
+strategy.
 
 That is intentional. The mdtests should make the next missing piece obvious:
 when a proof pattern needs a new C0 feature, add the feature because the proof

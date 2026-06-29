@@ -42,11 +42,16 @@ The current stance on automation:
 
 C0 currently supports a useful C-like subset:
 
-- `int32`
-- pointers and array parameters/local arrays
-- array indexing and pointer arithmetic
-- local variables, assignment, stores, conditionals, loops, function calls
-- signed overflow as undefined behavior
+- `int32` and byte-like `uint8`
+- pointers, array parameters, and local fixed-size arrays
+- array indexing, pointer arithmetic, pointer loads/stores, and local
+  address-of
+- local variables, assignment/update statement sugar, stores, conditionals,
+  `while`, assignment-style `for` loops, and function calls
+- signed arithmetic undefined behavior for overflow, division/remainder edge
+  cases, and invalid shifts
+- `uint8` promotion through arithmetic/comparison/shift/bitwise operations and
+  checked `int32`-to-`uint8` narrowing
 - memory safety obligations via `valid_range(...)`
 - explicit aliasing/non-overlap facts via `disjoint(...)`
 
@@ -59,10 +64,12 @@ Click sidecar concepts currently include:
 - loop `invariant`
 - effect clauses `mutable ...` and `immutable`
 - loop `step { mutable ... }` for iteration-relative effects
+- pure Click `function` definitions with `let`, `if`, `.fold`, and calls
 - named predicates
 - explicit `unfold(predicate_name)`
 - proof steps including `symbolic_execute()`, `bounded_execute()`,
-  `loop_vc(loop N)`, `frame(loop N)`, `simp()`, and `close()`
+  `loop_vc(loop N)`, `frame()`, `frame(loop N)`, `choose(...)`,
+  `witness(...)`, `simp()`, and `close()`
 
 Important syntax/design points:
 
@@ -99,6 +106,10 @@ Current useful demos include:
 - Quantified memory invariants, including old-memory invariants.
 - Loop/function effect summaries with `mutable`, `immutable`, and `disjoint`.
 - Copy-loop facts such as `copy_n_segment_invariant`.
+- `uint8` byte buffers, checked narrowing, and byte-slice stdlib predicates.
+- C-string predicate experiments: `cstr_prefix`, `cstr_len`, `cstr`, and
+  `cstr_bounded`.
+- Existential proof steps via `witness` and `choose`.
 - Sorting demos:
   - `compare_swap2_sorted`
   - `compare_swap2_permutation`
@@ -107,11 +118,23 @@ Current useful demos include:
   - `bubble_pass3_max_suffix`
   - `bubble_sort3_two_pass_sorted`
   - `sort3_permutation_predicate`
+  - `bubble_sort3_loop_permutation`
+  - `loop_stdlib_permutation_invariant`
 
 ## Recent Kernel/Prover Capabilities
 
 Recent work added or exercised:
 
+- a split `src/kernel/` implementation with `src/megakernel.rs` kept only as a
+  compatibility facade
+- `uint8` values, byte-width memory accesses, byte local arrays, and typed Click
+  array refs
+- signed multiplication, division/remainder, bitwise operations, shifts, and
+  C0 update/for-loop sugar
+- pure Click byte-slice and C-string predicates in `stdlib/prelude.click`
+- old-state pure function lowering through loop invariants, including
+  `old(count(...))`
+- stdlib `permutation` proofs through loops using count-shaped fold support
 - finite `forall` instantiation for bounded integer ranges
 - bounded finite context splitting for small symbolic integer ranges
 - finite quantified order facts participating in transitive order reasoning
@@ -133,79 +156,55 @@ These were necessary to prove facts such as:
 
 ## Current Design Boundary
 
-The next non-obvious design decision is permutation through loops.
+The old permutation-through-loops blocker is no longer the main boundary.
+`stdlib/prelude.click` now defines `count` and `permutation`, and the kernel has
+general `RangeFold`/count-shaped proof support that lets stdlib permutation
+proofs work for straight-line sorting examples, bounded loop-shaped examples,
+and a direct loop invariant example.
 
-What works:
-
-- Straight-line three-cell permutation can be proved as an explicit six-way
-  disjunction.
-- The same six-way claim can be packaged as a `permutation3(...)` predicate and
-  unfolded at the proof site.
-- Fixed-size bubble-sort sortedness can be proved from loop VCs and quantified
-  invariants.
-
-What does not scale:
-
-- Carrying `permutation3(...)` as a loop invariant through `bubble_sort3` causes
-  a case-splitting blowup. Raw disjunction is the wrong shape for scalable loop
-  permutation proofs.
-
-Likely design options:
-
-1. Add specialized swap/permutation facts.
-   - Example: a compare-swap of adjacent cells preserves a permutation
-     predicate.
-   - Good for C sorting proofs quickly.
-   - More ad hoc.
-
-2. Introduce a finite multiset/count-style predicate.
-   - Example: `count_in_range(p, lo, hi, x)` or a bag equality predicate.
-   - Better general story for arrays and sorting.
-   - Requires designing enough arithmetic/equality support for counts.
-
-3. Keep fixed finite permutation predicates for now, but add proof procedures
-   that reason about them without expanding to all disjunctive cases.
-   - Pragmatic bridge.
-   - Could become a dead end if not generalized.
-
-My recommendation: do not push raw six-way disjunction further through loop
-invariants. The next serious sorting step should introduce either a
-swap-preserves-permutation axiom/tactic or a real bag/count-based permutation
-predicate.
+The next design pressure should come from a small real-library pilot rather
+than another toy proof. Click still lacks the C and memory features needed for a
+json-c-shaped slice: structs, field access, heap allocation/free, broader
+integer conversions, named constants/globals/string literals, and module-scale
+spec organization. Choose a tiny frozen target first, then add the smallest
+feature that lets that target verify.
 
 ## Near-Term Roadmap
 
-1. Decide how to represent permutation for loop proofs.
-   - This is the current blocking design point.
+1. Create a `third_party/` or `examples/real/` pilot area with one frozen
+   json-c-shaped target function.
 
-2. After that decision, prove full three-cell bubble-sort correctness:
-   - sortedness via existing loop VCs/invariants
-   - permutation via the new representation
+2. Add the smallest missing C0/frontend and memory features required by that
+   pilot, likely structs/fields, a tiny heap API or specified `malloc`/`free`,
+   or broader integer conversions.
 
-3. Make invariant proof blocks more expressive.
+3. Extend the C-string and byte-slice stdlib only where the pilot needs it.
+
+4. Add more fold/range lemmas when an mdtest or pilot proof exposes a reusable
+   pattern.
+
+5. Make invariant proof blocks more expressive.
    - Current invariant proof blocks are still limited, mostly `by auto;` or
      unfold-only scripts.
    - Larger proofs likely want explicit entry/preservation subproofs.
 
-4. Improve deterministic proof-step coverage.
+6. Improve deterministic proof-step coverage.
    - Keep moving successful `auto` behavior into replayable proof steps.
    - Especially for loop VCs, frame/effect reasoning, and predicate unfolding.
 
-5. Continue C0 growth only where proof pressure demands it.
-   - Unsigned integers, casts, more widths, and real C parsing all matter, but
-     the sorting/permutation proof model should be settled before broadening too
-     much.
-
-6. Split `src/megakernel.rs` once the current proof direction stabilizes.
-   - It is large, but splitting before the proof model settles risks churn.
+7. Improve diagnostics for missing loop invariants, failed witnesses, and
+   alias/frame facts.
 
 ## Important Files
 
-- `README.md`: project direction, current syntax, roadmap, and demos.
-- `src/megakernel.rs`: C semantic objects, assumptions solver, theorem/proof
-  procedures, and many unit tests.
+- `README.md`: human-facing manifesto plus links into `docs/`.
+- `docs/README.md`: current technical source-of-truth index.
+- `src/kernel/`: C semantic objects, assumptions solver, theorem/proof
+  procedures, and unit tests.
+- `src/megakernel.rs`: compatibility facade that re-exports `src/kernel/`.
 - `src/lang/click.rs`: Click sidecar parser/lowering/proof replay.
 - `src/lang/c.rs`: C0 parser/lowering.
+- `stdlib/prelude.click`: ordinary Click standard-library definitions.
 - `tests/mdtests.rs`: markdown test harness.
 - `mdtests/`: end-to-end examples and regression tests.
 
@@ -218,4 +217,3 @@ predicate.
   task.
 - Avoid adding broad heuristics to deterministic tactics. `auto` can be
   heuristic; named proof steps should be predictable.
-

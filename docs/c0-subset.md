@@ -30,6 +30,7 @@ Supported C0 surface includes:
 - `int32` bitwise `&`, `|`, `^`, and unary `~` with fixed 32-bit
   two's-complement bitvector semantics
 - signed comparisons and equality
+- C logical `&&`, `||`, and unary `!` with short-circuit C scalar truthiness
 - assignment and sequencing
 - statement update sugar: `x++`, `x--`, `x += expr`, `x -= expr`, and
   `x *= expr`

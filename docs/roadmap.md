@@ -267,22 +267,25 @@ Done means:
 
 Good next tasks from the current state:
 
-1. Add more fold/range lemmas beyond alpha-equivalent folds and the current
-   count-shaped split rules.
-2. Extend the first C-string predicate layer toward a full string model. Open
+1. Create a `third_party/` or `examples/real/` pilot area with a frozen
+   json-c-shaped target function. Use that target to decide which C0/frontend,
+   memory, and proof features actually come next.
+2. Add more fold/range lemmas beyond alpha-equivalent folds and the current
+   count-shaped split rules, especially when the pilot or sorting/string tests
+   expose a reusable proof pattern.
+3. Extend the first C-string predicate layer toward a full string model. Open
    questions include first-class Click string values, libc function summaries,
    offset-based string slices, and whether/how higher-level predicates can
    package structural memory validity instead of requiring separate
    `valid_range` facts.
-3. Extend the integer-promotion/conversion slice beyond the current `uint8`
+4. Extend the integer-promotion/conversion slice beyond the current `uint8`
    rvalue promotion and checked `int32`-to-`uint8` narrowing rules. The open
    design question is how much of C's usual arithmetic conversions Click should
    model next versus reject in C0 until the integer story is broader.
-4. Add structs and field loads/stores in the smallest form needed by a pilot.
-5. Model a tiny heap API or externally specified `malloc`/`free`.
-6. Improve failure output for missing loop invariants and alias/frame facts.
-7. Create a `third_party/` or `examples/real/` pilot area with a frozen
-   json-c-shaped target function.
+5. Add structs and field loads/stores in the smallest form needed by the pilot.
+6. Model a tiny heap API or externally specified `malloc`/`free` when the pilot
+   needs allocation or ownership transfer.
+7. Improve failure output for missing loop invariants and alias/frame facts.
 
 Use the feature playbook for each item: start with a failing mdtest or pilot
 test, make the minimal design change, update docs, then run the full suite.
