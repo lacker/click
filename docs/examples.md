@@ -155,3 +155,5 @@ of inventing syntax from memory.
   using the initial single-field struct slice for a reference-count getter.
 - `mdtests/jsonc_mini_ref_count_setter.md`: pilot single-field struct write
   with a field-validity precondition and field-level mutable footprint.
+- `mdtests/jsonc_mini_ref_count_increment.md`: pilot field read/modify/write
+  proof with `old(obj->field)` postconditions and a no-overflow requirement.

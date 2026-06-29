@@ -5074,6 +5074,19 @@ impl KernelPropositionLowerer {
             CExpression::BitwiseNot(expression) => {
                 lower_contract_bitwise_not(self.lower_requirement_c_expression(expression)?)
             }
+            CExpression::Load(pointer) => {
+                let pointer = self.lower_requirement_c_expression(pointer)?;
+                let CValue::Pointer(pointer) = pointer else {
+                    return Err(ClickError::new("field load base is not a pointer"));
+                };
+                evaluate_contract_memory_load_from_memory(
+                    &self.memory,
+                    pointer,
+                    CType::Int32,
+                    &Assumptions::new(),
+                )
+                .map_err(ClickError::new)
+            }
             _ => Err(ClickError::new(format!(
                 "unsupported expression in `requires` proposition: `{expression:?}`"
             ))),

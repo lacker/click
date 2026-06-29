@@ -1,17 +1,21 @@
 # jsonc-mini Pilot
 
 This directory is the first frozen real-library-shaped pilot target. The
-matching mdtests are `mdtests/jsonc_mini_ref_count_getter.md` and
-`mdtests/jsonc_mini_ref_count_setter.md`.
+matching mdtests are `mdtests/jsonc_mini_ref_count_getter.md`,
+`mdtests/jsonc_mini_ref_count_setter.md`, and
+`mdtests/jsonc_mini_ref_count_increment.md`.
 
-The fixture starts with two json-c-shaped operations:
+The fixture starts with three json-c-shaped operations:
 
 - `json_object_get_ref_count`: read a reference-count field from a small object.
 - `json_object_set_ref_count`: write and return the reference-count field.
+- `json_object_inc_ref_count`: increment and return the reference-count field.
 
 The first proved properties are simple: under a valid-object precondition, the
 getter returns the object's `ref_count` field without mutating externally
-visible memory, and the setter writes only that field-sized footprint.
+visible memory, the setter writes only that field-sized footprint, and the
+increment helper proves the expected old-to-new count relation under a
+no-overflow precondition.
 
 The current support is intentionally narrow:
 

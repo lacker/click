@@ -270,8 +270,8 @@ Good next tasks from the current state:
 1. Document and then broaden the struct/field memory model beyond the current
    single-`int32`-field load/store, `valid_field(obj->field)`, and
    `mutable_field(obj->field)` lowering.
-2. Add the next json-c-shaped function that needs either checked ref-count
-   arithmetic or object ownership transfer.
+2. Decide whether the next json-c-shaped function should introduce object
+   ownership/null-pointer behavior or stay on non-owning ref-count helpers.
 3. Add more fold/range lemmas beyond alpha-equivalent folds and the current
    count-shaped split rules, especially when the pilot or sorting/string tests
    expose a reusable proof pattern.
