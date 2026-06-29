@@ -267,25 +267,28 @@ Done means:
 
 Good next tasks from the current state:
 
-1. Create a `third_party/` or `examples/real/` pilot area with a frozen
-   json-c-shaped target function. Use that target to decide which C0/frontend,
-   memory, and proof features actually come next.
-2. Add more fold/range lemmas beyond alpha-equivalent folds and the current
+1. Turn `mdtests/jsonc_mini_struct_field_unsupported.md` into the first passing
+   pilot proof by adding the smallest C0 struct declarations,
+   pointer-to-struct parameters, and `->` field-load support needed by
+   `examples/real/jsonc-mini/json_object_ref_count.c`.
+2. Add field-level memory validity and frame facts for that pilot getter, then
+   document the struct/field memory model.
+3. Add more fold/range lemmas beyond alpha-equivalent folds and the current
    count-shaped split rules, especially when the pilot or sorting/string tests
    expose a reusable proof pattern.
-3. Extend the first C-string predicate layer toward a full string model. Open
+4. Extend the first C-string predicate layer toward a full string model. Open
    questions include first-class Click string values, libc function summaries,
    offset-based string slices, and whether/how higher-level predicates can
    package structural memory validity instead of requiring separate
    `valid_range` facts.
-4. Extend the integer-promotion/conversion slice beyond the current `uint8`
+5. Extend the integer-promotion/conversion slice beyond the current `uint8`
    rvalue promotion and checked `int32`-to-`uint8` narrowing rules. The open
    design question is how much of C's usual arithmetic conversions Click should
    model next versus reject in C0 until the integer story is broader.
-5. Add structs and field loads/stores in the smallest form needed by the pilot.
-6. Model a tiny heap API or externally specified `malloc`/`free` when the pilot
+6. Add field stores in the smallest form needed by the next pilot function.
+7. Model a tiny heap API or externally specified `malloc`/`free` when the pilot
    needs allocation or ownership transfer.
-7. Improve failure output for missing loop invariants and alias/frame facts.
+8. Improve failure output for missing loop invariants and alias/frame facts.
 
 Use the feature playbook for each item: start with a failing mdtest or pilot
 test, make the minimal design change, update docs, then run the full suite.

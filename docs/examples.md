@@ -148,3 +148,9 @@ of inventing syntax from memory.
 - `mdtests/loop_old_count_invariant.md`: old-state stdlib `count` inside a loop
   invariant, exercising `old(...)` as entry-context spec elaboration.
 - `mdtests/bubble_sort3_two_pass_sorted.md`: loop VCs for sortedness.
+
+## Real-Library Pilot
+
+- `mdtests/jsonc_mini_struct_field_unsupported.md`: first json-c-shaped pilot
+  blocker, covering currently unsupported struct declarations,
+  pointer-to-struct parameters, and `->` field loads.
