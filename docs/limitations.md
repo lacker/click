@@ -9,8 +9,10 @@ features include full structs, unsigned integers beyond the narrow `uint8` byte
 type, casts, globals, heap allocation, `switch`, and many operators.
 
 There is one pilot struct slice for the first real-library fixture: a
-single-`int32`-field `struct`, `struct name*` parameters, and `p->field` loads.
-This is not yet a general layout or field-frame model.
+single-`int32`-field `struct`, `struct name*` parameters, and `p->field`
+loads/stores. Click accepts `valid_field(p->field)` as a field-validity
+precondition and `mutable_field(p->field)` as a field-write footprint for that
+slice, but this is not yet a general layout or field-frame model.
 
 ## Type Support Is Still Narrow
 

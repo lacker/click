@@ -267,11 +267,11 @@ Done means:
 
 Good next tasks from the current state:
 
-1. Replace the pilot getter's byte-level `valid_range(obj, 4)` with a
-   field/object-level validity predicate, then document the struct/field memory
-   model.
-2. Add field stores in the smallest form needed by the next pilot function,
-   such as a reference-count setter or increment helper.
+1. Document and then broaden the struct/field memory model beyond the current
+   single-`int32`-field load/store, `valid_field(obj->field)`, and
+   `mutable_field(obj->field)` lowering.
+2. Add the next json-c-shaped function that needs either checked ref-count
+   arithmetic or object ownership transfer.
 3. Add more fold/range lemmas beyond alpha-equivalent folds and the current
    count-shaped split rules, especially when the pilot or sorting/string tests
    expose a reusable proof pattern.

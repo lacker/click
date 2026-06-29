@@ -10470,17 +10470,19 @@ impl Parser {
                 Some("loop" | "statement") => {
                     structural_clauses.push(self.parse_structural_clause()?)
                 }
-                Some("immutable" | "mutable") => effects.push(self.parse_effect_clause()?),
+                Some("immutable" | "mutable" | "mutable_field") => {
+                    effects.push(self.parse_effect_clause()?)
+                }
                 Some("ensures") => ensures.push(self.parse_ensure_clause()?),
                 Some(keyword) => {
                     return Err(self.error(format!(
-                        "expected `requires`, `immutable`, `mutable`, `loop`, `statement`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        "expected `requires`, `immutable`, `mutable`, `mutable_field`, `loop`, `statement`, `ensures`, or `}}` in `{}`, got `{keyword}`",
                         signature.name()
                     )));
                 }
                 None => {
                     return Err(self.error(format!(
-                        "expected `requires`, `immutable`, `mutable`, `loop`, `statement`, `ensures`, or `}}` in `{}`",
+                        "expected `requires`, `immutable`, `mutable`, `mutable_field`, `loop`, `statement`, `ensures`, or `}}` in `{}`",
                         signature.name()
                     )));
                 }
@@ -10490,7 +10492,7 @@ impl Parser {
 
         if ensures.is_empty() && effects.is_empty() {
             return Err(self.error(format!(
-                "`{}` must contain at least one `ensures`, `immutable`, or `mutable` clause",
+                "`{}` must contain at least one `ensures`, `immutable`, `mutable`, or `mutable_field` clause",
                 signature.name()
             )));
         }
@@ -10606,6 +10608,7 @@ impl Parser {
         };
         let requirement = match (self.peek_ident(), self.peek_next()) {
             (Some("valid_range"), Some(Token::LParen)) => self.parse_valid_range_requirement()?,
+            (Some("valid_field"), Some(Token::LParen)) => self.parse_valid_field_requirement()?,
             (Some("disjoint"), Some(Token::LParen)) => self.parse_disjoint_requirement()?,
             _ => {
                 let proposition = self.parse_proposition()?;
@@ -10642,6 +10645,25 @@ impl Parser {
         };
         self.expect(Token::RParen)?;
         Ok(requirement)
+    }
+
+    fn parse_valid_field_requirement(&mut self) -> Result<Requirement, ClickError> {
+        self.expect_ident_spelling("valid_field")?;
+        self.expect(Token::LParen)?;
+        let field = self.parse_ensure_expression()?;
+        self.expect(Token::RParen)?;
+
+        let C0Expression::Load(base) = field else {
+            return Err(self.error("`valid_field` expects a field access like `obj->field`"));
+        };
+        let C0Expression::Variable(name) = *base else {
+            return Err(self.error("`valid_field` currently supports pointer parameters only"));
+        };
+
+        Ok(Requirement::ValidRange {
+            name,
+            bytes: RangeBytes::Constant(4),
+        })
     }
 
     fn parse_disjoint_requirement(&mut self) -> Result<Requirement, ClickError> {
@@ -10751,7 +10773,9 @@ impl Parser {
                     proof,
                 }])
             }
-            Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" => {
+            Some(Token::Ident(kind))
+                if kind == "immutable" || kind == "mutable" || kind == "mutable_field" =>
+            {
                 let effect = self.parse_effect_after_keyword(kind)?;
                 let proof = self.parse_proof_clause_or_default()?;
                 Ok(vec![StructuralItem {
@@ -10765,9 +10789,12 @@ impl Parser {
                 let mut items = Vec::new();
                 while self.peek() != Some(&Token::RBrace) {
                     let effect_kind = self.expect_ident("step effect")?;
-                    if effect_kind != "immutable" && effect_kind != "mutable" {
+                    if effect_kind != "immutable"
+                        && effect_kind != "mutable"
+                        && effect_kind != "mutable_field"
+                    {
                         return Err(self.error(format!(
-                            "expected `immutable` or `mutable` inside `step`, got `{effect_kind}`"
+                            "expected `immutable`, `mutable`, or `mutable_field` inside `step`, got `{effect_kind}`"
                         )));
                     }
                     let effect = self.parse_effect_after_keyword(effect_kind)?;
@@ -10785,30 +10812,38 @@ impl Parser {
                 Ok(items)
             }
             Some(Token::Ident(kind)) => Err(self.error(format!(
-                "expected `invariant`, `assert`, `immutable`, `mutable`, or `step`, got `{kind}`"
+                "expected `invariant`, `assert`, `immutable`, `mutable`, `mutable_field`, or `step`, got `{kind}`"
             ))),
             Some(token) => Err(self.error(format!(
-                "expected `invariant`, `assert`, `immutable`, `mutable`, or `step`, got {token:?}"
+                "expected `invariant`, `assert`, `immutable`, `mutable`, `mutable_field`, or `step`, got {token:?}"
             ))),
             None => Err(self.error(
-                "expected `invariant`, `assert`, `immutable`, `mutable`, or `step`, got end of input",
+                "expected `invariant`, `assert`, `immutable`, `mutable`, `mutable_field`, or `step`, got end of input",
             )),
         }
     }
 
     fn parse_effect_clause(&mut self) -> Result<EffectClause, ClickError> {
         let effect = match self.next() {
-            Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" => {
+            Some(Token::Ident(kind))
+                if kind == "immutable" || kind == "mutable" || kind == "mutable_field" =>
+            {
                 self.parse_effect_after_keyword(kind)?
             }
             Some(Token::Ident(kind)) => {
-                return Err(self.error(format!("expected `immutable` or `mutable`, got `{kind}`")));
+                return Err(self.error(format!(
+                    "expected `immutable`, `mutable`, or `mutable_field`, got `{kind}`"
+                )));
             }
             Some(token) => {
-                return Err(self.error(format!("expected `immutable` or `mutable`, got {token:?}")));
+                return Err(self.error(format!(
+                    "expected `immutable`, `mutable`, or `mutable_field`, got {token:?}"
+                )));
             }
             None => {
-                return Err(self.error("expected `immutable` or `mutable`, got end of input"));
+                return Err(self.error(
+                    "expected `immutable`, `mutable`, or `mutable_field`, got end of input",
+                ));
             }
         };
         let proof = self.parse_proof_clause_or_default()?;
@@ -10820,12 +10855,42 @@ impl Parser {
             return Ok(Effect::Immutable);
         }
 
+        if kind == "mutable_field" {
+            return self.parse_mutable_field_effect();
+        }
+
         let mut segments = vec![self.parse_contract_segment()?];
         while self.peek() == Some(&Token::Comma) {
             self.position += 1;
             segments.push(self.parse_contract_segment()?);
         }
         Ok(Effect::Mutable(segments))
+    }
+
+    fn parse_mutable_field_effect(&mut self) -> Result<Effect, ClickError> {
+        let mut segments = vec![self.parse_current_field_segment()?];
+        while self.peek() == Some(&Token::Comma) {
+            self.position += 1;
+            segments.push(self.parse_current_field_segment()?);
+        }
+        Ok(Effect::Mutable(segments))
+    }
+
+    fn parse_current_field_segment(&mut self) -> Result<ContractSegment, ClickError> {
+        self.expect(Token::LParen)?;
+        let field = self.parse_ensure_expression()?;
+        self.expect(Token::RParen)?;
+
+        let C0Expression::Load(base) = field else {
+            return Err(self.error("`mutable_field` expects a field access like `obj->field`"));
+        };
+
+        Ok(ContractSegment {
+            state: ContractSegmentState::Current,
+            base: base.to_kernel_expression(),
+            start: C0Expression::Int32Literal(0).to_kernel_expression(),
+            end: C0Expression::Int32Literal(1).to_kernel_expression(),
+        })
     }
 
     fn parse_ensure_clause(&mut self) -> Result<EnsureClause, ClickError> {
@@ -11439,12 +11504,11 @@ impl Parser {
                     self.position += 1;
                     let _field_name = self.expect_ident("field name")?;
                     let Some(base) = contract_expression_as_c_fragment(&expression) else {
-                        return Err(self.error(
-                            "field access is only supported on current C fragments",
-                        ));
+                        return Err(
+                            self.error("field access is only supported on current C fragments")
+                        );
                     };
-                    expression =
-                        ContractExpression::CFragment(CExpression::Load(Box::new(base)));
+                    expression = ContractExpression::CFragment(CExpression::Load(Box::new(base)));
                 }
                 _ => return Ok(expression),
             }
@@ -12815,7 +12879,7 @@ mod tests {
             verifying "json_object_ref_count.c";
 
             int32 json_object_get_ref_count(struct json_object* obj) {
-                requires valid_range(obj, 4);
+                requires valid_field(obj->ref_count);
                 ensures returns_ref_count: result == obj->ref_count by auto;
                 immutable by frame;
             }
@@ -12831,13 +12895,45 @@ mod tests {
                 name: "obj".to_string(),
             }]
         );
+        assert_eq!(
+            function.requires(),
+            &[Requirement::ValidRange {
+                name: "obj".to_string(),
+                bytes: RangeBytes::Constant(4),
+            }]
+        );
         assert!(matches!(
             function.ensures()[0].ensure(),
             Ensure::Proposition(ClickProposition::Comparison { right, .. })
                 if right == &ContractExpression::CFragment(
                     CExpression::Load(Box::new(CExpression::Variable("obj".to_string())))
-                )
+            )
         ));
+    }
+
+    #[test]
+    fn parses_pilot_struct_field_mutable_effect() {
+        let source = r#"
+            verifying "json_object_set_ref_count.c";
+
+            int32 json_object_set_ref_count(struct json_object* obj, int32 count) {
+                requires valid_field(obj->ref_count);
+                mutable_field(obj->ref_count) by frame;
+                ensures returns_count: result == count by auto;
+            }
+        "#;
+        let file = parse(source).expect("pilot struct field effect should parse");
+        let function = &file.function_blocks()[0];
+
+        assert_eq!(
+            function.effects()[0].effect(),
+            &Effect::Mutable(vec![ContractSegment {
+                state: ContractSegmentState::Current,
+                base: CExpression::Variable("obj".to_string()),
+                start: CExpression::Value(int32(0)),
+                end: CExpression::Value(int32(1)),
+            }])
+        );
     }
 
     #[test]

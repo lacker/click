@@ -43,7 +43,7 @@ Supported C0 surface includes:
 - pointer loads and stores
 - `p[i]` indexing for `int32*` and `uint8*`
 - a pilot struct slice: `struct name { int32 field; };`,
-  `struct name*` parameters, and `p->field` loads for that single field
+  `struct name*` parameters, and `p->field` loads/stores for that single field
 - known function calls through the current function environment
 - local scalar, pointer, and fixed-size array declarations for `int32` and
   `uint8`
@@ -73,7 +73,8 @@ requires x > -2147483648;
 
 Out-of-bounds memory accesses become proof obligations or undefined behavior
 depending on the symbolic execution path. Prove access safety with
-`valid_range(...)`, index bounds, and loop invariants.
+`valid_range(...)`, the pilot `valid_field(...)` requirement, index bounds, and
+loop invariants.
 
 ## Local Arrays
 
@@ -107,10 +108,12 @@ int32 json_object_get_ref_count(struct json_object* obj) {
 ```
 
 This is intentionally not a full C struct model yet. `struct name*` is accepted
-for parameters, and `p->field` is lowered as an `int32` field load from the
-start of the object. Field stores, multiple fields, nested structs, struct
-values, layout/alignment rules, and field-address expressions are still future
-work.
+for parameters, and `p->field` is lowered as an `int32` field load or store at
+the start of the object. In Click contracts, `valid_field(p->field)` is
+accepted for this pilot field and currently lowers to the same four-byte memory
+validity obligation as `valid_range(p, 4)`. Multiple fields, nested structs,
+struct values, layout/alignment rules, and field-address expressions are still
+future work.
 
 ## Loops
 

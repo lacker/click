@@ -595,6 +595,13 @@ impl Parser {
                 self.expect(Token::Semicolon)?;
                 Ok(C0Statement::Store { pointer, value })
             }
+            Some(Token::Ident(_)) if self.peek_next() == Some(&Token::Arrow) => {
+                let pointer = self.parse_field_lvalue_pointer()?;
+                self.expect(Token::Equal)?;
+                let value = self.parse_expression()?;
+                self.expect(Token::Semicolon)?;
+                Ok(C0Statement::Store { pointer, value })
+            }
             Some(Token::Ident(_)) if self.peek_next().is_some_and(Token::is_scalar_update) => {
                 let statement = self.parse_scalar_update_statement("statement")?;
                 self.expect(Token::Semicolon)?;
@@ -997,6 +1004,13 @@ impl Parser {
             }
             base = C0Expression::Index(Box::new(base), Box::new(index));
         }
+    }
+
+    fn parse_field_lvalue_pointer(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let base = self.parse_primary()?;
+        self.expect(Token::Arrow)?;
+        let _field_name = self.expect_ident("field name")?;
+        Ok(base)
     }
 
     fn parse_primary(&mut self) -> Result<C0Expression, C0SyntaxError> {

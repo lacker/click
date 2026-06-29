@@ -153,3 +153,5 @@ of inventing syntax from memory.
 
 - `mdtests/jsonc_mini_ref_count_getter.md`: first json-c-shaped pilot proof,
   using the initial single-field struct slice for a reference-count getter.
+- `mdtests/jsonc_mini_ref_count_setter.md`: pilot single-field struct write
+  with a field-validity precondition and field-level mutable footprint.

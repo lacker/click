@@ -173,8 +173,12 @@ The prelude currently provides byte-slice helpers over `uint8[]`: `byte_count`,
 functions and predicates, not built-in kernel concepts.
 
 The first pilot struct slice accepts `obj->field` as a current-state C fragment
-for a single-`int32`-field struct. It is not yet a general struct expression or
-layout model.
+for a single-`int32`-field struct, and C0 can write that field. `requires
+valid_field(obj->field);` is the matching field-validity precondition and
+currently lowers to four bytes at the start of the object. `mutable_field`
+accepts the same field-access shape for field writes and lowers to the
+one-element mutable segment at the start of the object. This is not yet a
+general struct expression, layout, or field-frame model.
 
 Concrete folds are unrolled. Symbolic folds remain `RangeFold` value terms in
 the kernel and can be reasoned about by supported fold laws.
