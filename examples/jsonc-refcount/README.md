@@ -27,5 +27,5 @@ The current support is intentionally narrow:
 
 Keep this pilot narrow. Add the smallest C0, memory-model, and proof features
 needed by this fixture before broadening to heap allocation or ownership
-transfer. The ownership-specific design fixture lives in
-`docs/design/refcount-ownership/`.
+transfer. Ghost state should be designed before permission logic and ownership
+predicates.

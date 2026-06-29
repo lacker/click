@@ -9,5 +9,4 @@ Each example project should contain ordinary `.c` files and one or more
 sidecar against the C files in the same directory.
 
 Most fixtures should stay small. Keep everything directly under `examples/`
-unless there is a concrete reason to add hierarchy. Design sketches that are
-not expected to verify belong under `docs/design/`, not here.
+unless there is a concrete reason to add hierarchy.

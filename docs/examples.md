@@ -6,7 +6,6 @@ mdtest instead of inventing syntax from memory.
 
 Larger example projects live directly under `examples/`. They contain ordinary
 `.c` files and `.click` sidecars, and are verified by `tests/examples.rs`.
-Design sketches that are not expected to verify live under `docs/design/`.
 
 ## Basic Function Contracts
 
@@ -159,11 +158,6 @@ Design sketches that are not expected to verify live under `docs/design/`.
 - `examples/jsonc-refcount/`: first library-shaped example project. It has
   ordinary C files and sidecar specs for a getter, setter, and increment helper
   over a one-field json-c-shaped object.
-
-## Design Fixtures
-
-- `docs/design/refcount-ownership/`: design fixture for deciding how Click
-  should represent state-indexed ownership facts.
 
 ## Library-Shaped Mdtests
 

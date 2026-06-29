@@ -98,7 +98,7 @@ Done means:
 - mdtests cover each new C feature with both a successful proof and at least
   one representative failure.
 
-## Milestone 2: Heap, Ownership, And Real Frames
+## Milestone 2: Ghost State, Permissions, Heap, And Real Frames
 
 json-c-shaped code allocates, stores pointers inside objects, shares objects,
 and releases them. Click needs a disciplined memory story before that is
@@ -106,10 +106,16 @@ comfortable.
 
 Likely additions:
 
+- First-class ghost variables and ghost state:
+  spec-only values that can be mentioned across pre/post states before any
+  permission accounting is added.
+- Permission logic:
+  read/write/free authority over memory locations or ranges, backed by ghost
+  state and designed before ownership/refcounting.
 - Heap allocation and deallocation in the C semantics.
 - Allocation predicates:
-  valid object, valid byte range, initialized range, nullness, ownership, and
-  maybe borrowed/shared access.
+  valid object, valid byte range, initialized range, nullness, and
+  borrowed/shared/owned access built on the permission layer.
 - Free/lifetime obligations:
   no use-after-free, no double-free, and no leaks for functions whose contracts
   promise ownership transfer.
@@ -125,6 +131,9 @@ Design notes:
 
 - Do not make ownership a magic json-c concept. Build general memory predicates
   and then define json-c-specific predicates in a library spec.
+- Do not design refcount ownership before ghost state and basic permissions are
+  settled. Refcounting is a pressure test for those layers, not the starting
+  point.
 - Treat `malloc`, `free`, `memcpy`, `memcmp`, `strlen`, and friends as either
   modeled builtins or externally specified functions, not as parser hacks.
 
@@ -154,7 +163,8 @@ Likely additions:
 - Predicate/function namespaces that scale with modules.
 - A richer standard library:
   integer ranges, more byte-slice predicates, null-terminated strings,
-  permutations, sortedness, ownership predicates, and frame predicates.
+  permutations, sortedness, permission/ownership predicates, and frame
+  predicates.
 - A clearer split between:
   executable C behavior, pure Click functions, predicates, lemmas, and proof
   tactics.
@@ -239,7 +249,8 @@ Candidate target properties:
 - Memory safety for selected constructors/destructors.
 - Correct behavior for selected getters/setters.
 - String or byte-buffer invariants for selected parsing/printing helpers.
-- Reference-count or ownership invariants for a small object lifecycle.
+- Reference-count or ownership invariants for a small object lifecycle, after
+  ghost state and permission logic are available.
 - Frame properties: a setter changes the intended field and preserves the rest.
 
 Suggested order:
@@ -247,8 +258,8 @@ Suggested order:
 1. Vendor or point at a frozen target snapshot.
 2. Select 3-5 small functions that exercise pointers, structs, strings, and
    helper calls.
-3. Write sidecar specs with explicit preconditions and ownership/frame
-   predicates.
+3. Write sidecar specs with explicit preconditions and frame predicates. Add
+   ownership predicates only after ghost state and permission logic are in place.
 4. Add the smallest missing C0/frontend and proof features needed by those
    functions.
 5. Verify memory safety first.
@@ -267,8 +278,8 @@ Done means:
 
 Good next tasks from the current state:
 
-1. Use `docs/design/refcount-ownership/` to choose the ghost ownership
-   model before adding allocation, final release, or double-release checks.
+1. Choose the first ghost variable/state model before adding permission logic,
+   allocation, final release, or double-release checks.
 2. Document and then broaden the struct/field memory model beyond the current
    single-`int32`-field load/store, `valid_field(obj->field)`, and
    `mutable_field(obj->field)` lowering.
