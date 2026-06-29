@@ -6,6 +6,7 @@ The main clauses are:
 
 ```click
 let name [: type] = expression;
+let name: type where proposition;
 requires ...
 ensures ... by ...
 immutable ...
@@ -30,6 +31,23 @@ ensures result == expected by auto;
 These `let` bindings are Click-side abbreviations. They do not add runtime C
 variables and they are not mutable proof state. A type annotation is optional
 when Click can infer the intended value shape from use.
+
+A contract can also bind an immutable witness with `let ... where`:
+
+```click
+let k: int32 where k == x;
+
+ensures result == k by {
+    symbolic_execute();
+    witness(k = x);
+    simp();
+    close();
+}
+```
+
+This is proposition-level sugar for an existential witness. The `where`
+condition and the later proposition are proved together. The witness type is
+required explicitly.
 
 ## Requirements
 

@@ -3686,19 +3686,30 @@ fn apply_contract_lets_to_segment(
     bindings: &[ContractLetBinding],
 ) -> Result<ContractSegment, String> {
     let substitutions = contract_let_substitutions(bindings);
-    Ok(ContractSegment {
+    let segment = ContractSegment {
         state: segment.state,
         base: substitute_c_fragment(&segment.base, &substitutions)?,
         start: substitute_c_fragment(&segment.start, &substitutions)?,
         end: substitute_c_fragment(&segment.end, &substitutions)?,
-    })
+    };
+    reject_contract_where_let_references(
+        &contract_segment_referenced_names(&segment),
+        bindings,
+        "memory segment expressions",
+    )?;
+    Ok(segment)
 }
 
 fn apply_contract_lets_to_range_bytes(
     bytes: RangeBytes,
     bindings: &[ContractLetBinding],
 ) -> Result<RangeBytes, String> {
-    match bytes {
+    reject_contract_where_let_references(
+        &range_bytes_referenced_names(&bytes),
+        bindings,
+        "valid_range byte expressions",
+    )?;
+    let bytes = match bytes {
         RangeBytes::Constant(_) => Ok(bytes),
         RangeBytes::Parameter(name) => {
             let substitutions = contract_let_substitutions(bindings);
@@ -3726,6 +3737,49 @@ fn apply_contract_lets_to_range_bytes(
             Box::new(apply_contract_lets_to_range_bytes(*left, bindings)?),
             Box::new(apply_contract_lets_to_range_bytes(*right, bindings)?),
         )),
+    }?;
+    reject_contract_where_let_references(
+        &range_bytes_referenced_names(&bytes),
+        bindings,
+        "valid_range byte expressions",
+    )?;
+    Ok(bytes)
+}
+
+fn reject_contract_where_let_references(
+    referenced_names: &BTreeSet<String>,
+    bindings: &[ContractLetBinding],
+    context: &str,
+) -> Result<(), String> {
+    if let Some(binding) = bindings.iter().find(|binding| {
+        binding.where_condition().is_some() && referenced_names.contains(&binding.name)
+    }) {
+        return Err(format!(
+            "`let ... where` `{}` cannot be used in {context} yet",
+            binding.name
+        ));
+    }
+    Ok(())
+}
+
+fn range_bytes_referenced_names(bytes: &RangeBytes) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    collect_range_bytes_referenced_names(bytes, &mut names);
+    names
+}
+
+fn collect_range_bytes_referenced_names(bytes: &RangeBytes, names: &mut BTreeSet<String>) {
+    match bytes {
+        RangeBytes::Constant(_) => {}
+        RangeBytes::Parameter(name) => {
+            names.insert(name.clone());
+        }
+        RangeBytes::Add(left, right)
+        | RangeBytes::Subtract(left, right)
+        | RangeBytes::Multiply(left, right) => {
+            collect_range_bytes_referenced_names(left, names);
+            collect_range_bytes_referenced_names(right, names);
+        }
     }
 }
 
@@ -3755,6 +3809,14 @@ fn apply_contract_lets_to_proposition(
     proposition: ClickProposition,
     bindings: &[ContractLetBinding],
 ) -> Result<ClickProposition, String> {
+    let proposition = apply_contract_let_expressions_to_proposition(proposition, bindings)?;
+    wrap_contract_where_lets_proposition(proposition, bindings)
+}
+
+fn apply_contract_let_expressions_to_proposition(
+    proposition: ClickProposition,
+    bindings: &[ContractLetBinding],
+) -> Result<ClickProposition, String> {
     match proposition {
         ClickProposition::Comparison {
             left,
@@ -3766,26 +3828,40 @@ fn apply_contract_lets_to_proposition(
             right: apply_contract_lets_to_expression(right, bindings)?,
         }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
-            Box::new(apply_contract_lets_to_proposition(*left, bindings)?),
-            Box::new(apply_contract_lets_to_proposition(*right, bindings)?),
+            Box::new(apply_contract_let_expressions_to_proposition(
+                *left, bindings,
+            )?),
+            Box::new(apply_contract_let_expressions_to_proposition(
+                *right, bindings,
+            )?),
         )),
         ClickProposition::Or(left, right) => Ok(ClickProposition::Or(
-            Box::new(apply_contract_lets_to_proposition(*left, bindings)?),
-            Box::new(apply_contract_lets_to_proposition(*right, bindings)?),
+            Box::new(apply_contract_let_expressions_to_proposition(
+                *left, bindings,
+            )?),
+            Box::new(apply_contract_let_expressions_to_proposition(
+                *right, bindings,
+            )?),
         )),
         ClickProposition::Not(body) => Ok(ClickProposition::Not(Box::new(
-            apply_contract_lets_to_proposition(*body, bindings)?,
+            apply_contract_let_expressions_to_proposition(*body, bindings)?,
         ))),
         ClickProposition::Implies(left, right) => Ok(ClickProposition::Implies(
-            Box::new(apply_contract_lets_to_proposition(*left, bindings)?),
-            Box::new(apply_contract_lets_to_proposition(*right, bindings)?),
+            Box::new(apply_contract_let_expressions_to_proposition(
+                *left, bindings,
+            )?),
+            Box::new(apply_contract_let_expressions_to_proposition(
+                *right, bindings,
+            )?),
         )),
         ClickProposition::ForAll { c_type, name, body } => {
             let scoped = contract_lets_without_name(bindings, &name);
             Ok(ClickProposition::ForAll {
                 c_type,
                 name,
-                body: Box::new(apply_contract_lets_to_proposition(*body, &scoped)?),
+                body: Box::new(apply_contract_let_expressions_to_proposition(
+                    *body, &scoped,
+                )?),
             })
         }
         ClickProposition::Exists { c_type, name, body } => {
@@ -3793,7 +3869,9 @@ fn apply_contract_lets_to_proposition(
             Ok(ClickProposition::Exists {
                 c_type,
                 name,
-                body: Box::new(apply_contract_lets_to_proposition(*body, &scoped)?),
+                body: Box::new(apply_contract_let_expressions_to_proposition(
+                    *body, &scoped,
+                )?),
             })
         }
         ClickProposition::RangeAll {
@@ -3807,7 +3885,9 @@ fn apply_contract_lets_to_proposition(
                 start: apply_contract_lets_to_expression(start, bindings)?,
                 end: apply_contract_lets_to_expression(end, bindings)?,
                 item,
-                body: Box::new(apply_contract_lets_to_proposition(*body, &scoped)?),
+                body: Box::new(apply_contract_let_expressions_to_proposition(
+                    *body, &scoped,
+                )?),
             })
         }
         ClickProposition::RangeAny {
@@ -3821,7 +3901,9 @@ fn apply_contract_lets_to_proposition(
                 start: apply_contract_lets_to_expression(start, bindings)?,
                 end: apply_contract_lets_to_expression(end, bindings)?,
                 item,
-                body: Box::new(apply_contract_lets_to_proposition(*body, &scoped)?),
+                body: Box::new(apply_contract_let_expressions_to_proposition(
+                    *body, &scoped,
+                )?),
             })
         }
         ClickProposition::PredicateCall { name, arguments } => {
@@ -3836,6 +3918,34 @@ fn apply_contract_lets_to_proposition(
     }
 }
 
+fn wrap_contract_where_lets_proposition(
+    mut proposition: ClickProposition,
+    bindings: &[ContractLetBinding],
+) -> Result<ClickProposition, String> {
+    for (index, binding) in bindings.iter().enumerate().rev() {
+        let Some(condition) = binding.where_condition() else {
+            continue;
+        };
+        let condition =
+            apply_contract_let_expressions_to_proposition(condition.clone(), &bindings[..index])?;
+        let Some(c_type) = binding.c_type else {
+            return Err(format!(
+                "`let ... where` `{}` requires an explicit type annotation",
+                binding.name
+            ));
+        };
+        proposition = ClickProposition::Exists {
+            c_type,
+            name: binding.name.clone(),
+            body: Box::new(ClickProposition::And(
+                Box::new(condition),
+                Box::new(proposition),
+            )),
+        };
+    }
+    Ok(proposition)
+}
+
 fn apply_contract_lets_to_expression(
     expression: ContractExpression,
     bindings: &[ContractLetBinding],
@@ -3843,7 +3953,7 @@ fn apply_contract_lets_to_expression(
     let referenced_names = contract_expression_referenced_names(&expression);
     let referenced_bindings = bindings
         .iter()
-        .filter(|binding| referenced_names.contains(&binding.name))
+        .filter(|binding| binding.value().is_some() && referenced_names.contains(&binding.name))
         .cloned()
         .collect::<Vec<_>>();
     let substitutions = contract_let_substitutions(bindings);
@@ -3859,10 +3969,13 @@ fn wrap_contract_lets_expression(
     bindings: &[ContractLetBinding],
 ) -> ContractExpression {
     for binding in bindings.iter().rev() {
+        let Some(value) = binding.value() else {
+            continue;
+        };
         expression = ContractExpression::Let {
             name: binding.name.clone(),
             c_type: binding.c_type,
-            value: Box::new(binding.value.clone()),
+            value: Box::new(value.clone()),
             body: Box::new(expression),
         };
     }
@@ -4009,7 +4122,11 @@ fn contract_let_substitutions(
 ) -> BTreeMap<String, ContractExpression> {
     bindings
         .iter()
-        .map(|binding| (binding.name.clone(), binding.value.clone()))
+        .filter_map(|binding| {
+            binding
+                .value()
+                .map(|value| (binding.name.clone(), value.clone()))
+        })
         .collect()
 }
 
@@ -10868,7 +10985,29 @@ struct Parser {
 struct ContractLetBinding {
     name: String,
     c_type: Option<C0Type>,
-    value: ContractExpression,
+    kind: ContractLetBindingKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ContractLetBindingKind {
+    Value(ContractExpression),
+    Where(ClickProposition),
+}
+
+impl ContractLetBinding {
+    fn value(&self) -> Option<&ContractExpression> {
+        match &self.kind {
+            ContractLetBindingKind::Value(value) => Some(value),
+            ContractLetBindingKind::Where(_) => None,
+        }
+    }
+
+    fn where_condition(&self) -> Option<&ClickProposition> {
+        match &self.kind {
+            ContractLetBindingKind::Value(_) => None,
+            ContractLetBindingKind::Where(condition) => Some(condition),
+        }
+    }
 }
 
 impl Parser {
@@ -10988,9 +11127,16 @@ impl Parser {
                         )));
                     }
                     let substitutions = contract_let_substitutions(&contract_lets);
-                    let value = substitute_contract_expression(&binding.value, &substitutions)
-                        .map_err(|message| self.error(message))?;
-                    contract_lets.push(ContractLetBinding { value, ..binding });
+                    let kind = match binding.kind {
+                        ContractLetBindingKind::Value(value) => ContractLetBindingKind::Value(
+                            substitute_contract_expression(&value, &substitutions)
+                                .map_err(|message| self.error(message))?,
+                        ),
+                        ContractLetBindingKind::Where(condition) => {
+                            ContractLetBindingKind::Where(condition)
+                        }
+                    };
+                    contract_lets.push(ContractLetBinding { kind, ..binding });
                 }
                 Some("requires") => {
                     let requirement = self.parse_requirement()?;
@@ -11061,14 +11207,20 @@ impl Parser {
         } else {
             None
         };
-        self.expect(Token::Equal)?;
-        let value = self.parse_contract_expression()?;
+        let kind = if self.peek() == Some(&Token::Equal) {
+            self.position += 1;
+            ContractLetBindingKind::Value(self.parse_contract_expression()?)
+        } else if self.peek_ident() == Some("where") {
+            self.position += 1;
+            if c_type.is_none() {
+                return Err(self.error("`let ... where` requires an explicit type annotation"));
+            }
+            ContractLetBindingKind::Where(self.parse_proposition()?)
+        } else {
+            return Err(self.error("expected `=` or `where` in `let` binding"));
+        };
         self.expect(Token::Semicolon)?;
-        Ok(ContractLetBinding {
-            name,
-            c_type,
-            value,
-        })
+        Ok(ContractLetBinding { name, c_type, kind })
     }
 
     fn parse_function_signature(&mut self) -> Result<FunctionSignature, ClickError> {
@@ -11530,6 +11682,24 @@ impl Parser {
     }
 
     fn parse_proposition_atom(&mut self) -> Result<ClickProposition, ClickError> {
+        if self.peek_ident() == Some("let") {
+            let start = self.position;
+            let binding = self.parse_contract_let_binding()?;
+            let ContractLetBindingKind::Where(condition) = binding.kind else {
+                self.position = start;
+                return self.parse_proposition_comparison();
+            };
+            let Some(c_type) = binding.c_type else {
+                unreachable!("`let ... where` parser requires an explicit type")
+            };
+            let body = self.parse_proposition()?;
+            return Ok(ClickProposition::Exists {
+                c_type,
+                name: binding.name,
+                body: Box::new(ClickProposition::And(Box::new(condition), Box::new(body))),
+            });
+        }
+
         if self.peek_ident() == Some("forall") {
             self.position += 1;
             self.expect(Token::LParen)?;
@@ -12083,11 +12253,16 @@ impl Parser {
     fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
         if self.peek_ident() == Some("let") {
             let binding = self.parse_contract_let_binding()?;
+            let ContractLetBindingKind::Value(value) = binding.kind else {
+                return Err(
+                    self.error("`let ... where` is a proposition binding, not an expression")
+                );
+            };
             let body = self.parse_contract_expression()?;
             return Ok(ContractExpression::Let {
                 name: binding.name,
                 c_type: binding.c_type,
-                value: Box::new(binding.value),
+                value: Box::new(value),
                 body: Box::new(body),
             });
         }
@@ -13913,6 +14088,56 @@ mod tests {
                 },
                 ..
             }) if name == "expected"
+        ));
+    }
+
+    #[test]
+    fn parses_contract_level_let_where_bindings() {
+        let source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                let k: int32 where k == x;
+
+                ensures result_value: result == k by auto;
+            }
+        "#;
+        let file = parse(source).expect("contract-level let-where should parse");
+        let ensure = &file.function_blocks()[0].ensures()[0];
+
+        assert!(matches!(
+            ensure.ensure(),
+            Ensure::Proposition(ClickProposition::Exists {
+                c_type: C0Type::Int32,
+                name,
+                body,
+            }) if name == "k"
+                && matches!(body.as_ref(), ClickProposition::And(_, _))
+        ));
+    }
+
+    #[test]
+    fn parses_proposition_let_where_bindings() {
+        let source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures result_value:
+                    let k: int32 where k == x;
+                    result == k
+                    by auto;
+            }
+        "#;
+        let file = parse(source).expect("proposition let-where should parse");
+        let ensure = &file.function_blocks()[0].ensures()[0];
+
+        assert!(matches!(
+            ensure.ensure(),
+            Ensure::Proposition(ClickProposition::Exists {
+                c_type: C0Type::Int32,
+                name,
+                ..
+            }) if name == "k"
         ));
     }
 

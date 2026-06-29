@@ -128,6 +128,8 @@ Larger example projects live directly under `examples/`. They contain ordinary
   pure Click functions and predicates.
 - `mdtests/contract_let_bindings.md`: Rust-style `let name [: type] = value;`
   bindings in pure Click functions and function contracts.
+- `mdtests/contract_let_where.md`: `let name: type where proposition;`
+  witness bindings in function contracts.
 - `mdtests/contract_let_type_mismatch.md`: explicit `let` type annotation
   mismatch diagnostic.
 - `mdtests/byte_slice_stdlib.md`: stdlib byte-slice helpers over `uint8[]`,

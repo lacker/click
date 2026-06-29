@@ -173,6 +173,26 @@ later clauses in the same function block, including `requires`, `ensures`,
 parameter name or an earlier contract-level let name. Explicit type annotations
 are checked when the binding is evaluated.
 
+Proposition clauses may also use witness lets:
+
+```click
+let k: int32 where k == x;
+
+ensures result == k by {
+    symbolic_execute();
+    witness(k = x);
+    simp();
+    close();
+}
+```
+
+`let name: type where proposition; body` means `exists (type name) {
+proposition and body }`. Contract-level `let ... where` applies that shape to
+each later proposition clause. The type annotation is required. The current
+implementation supports this in proposition clauses; it is intentionally
+rejected in `valid_range`, `mutable`, and other memory-segment expressions
+until Click has a contract-wide witness environment.
+
 In pure Click function parameters, `int32 p[]` and `int32* p` are treated as
 array-ref parameters. `uint8 p[]` and `uint8* p` are also array-ref parameters,
 with one-byte indexing and `uint8` loads. Indexing `p[k]` loads from the memory

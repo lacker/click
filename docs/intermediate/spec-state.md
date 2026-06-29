@@ -46,6 +46,7 @@ Click already has a few spec-only mechanisms:
 - `old(...)` lets specs refer to function-entry state.
 - labels give names to requirements and guarantees.
 - predicates package abstract facts.
+- `let ... where` introduces immutable witnesses in proposition clauses.
 - `choose` introduces proof-local names from existential requirements.
 - `witness` supplies proof-local values for existential goals.
 
