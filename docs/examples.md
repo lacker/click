@@ -3,6 +3,9 @@
 End-to-end examples live in `mdtests/`. Prefer copying a nearby mdtest instead
 of inventing syntax from memory.
 
+Larger source fixtures live directly under `examples/`; see
+`examples/README.md` for naming conventions.
+
 ## Basic Function Contracts
 
 - `mdtests/scalar.md`: simplest scalar postcondition.
@@ -149,11 +152,16 @@ of inventing syntax from memory.
   invariant, exercising `old(...)` as entry-context spec elaboration.
 - `mdtests/bubble_sort3_two_pass_sorted.md`: loop VCs for sortedness.
 
-## Real-Library Pilot
+## Source Fixtures
 
-- `mdtests/jsonc_mini_ref_count_getter.md`: first json-c-shaped pilot proof,
+- Verified source fixtures have matching mdtests.
+- Design fixtures for syntax or semantic choices that Click cannot express yet
+  use a `-design` suffix.
+- `mdtests/jsonc_refcount_getter.md`: first json-c-shaped pilot proof,
   using the initial single-field struct slice for a reference-count getter.
-- `mdtests/jsonc_mini_ref_count_setter.md`: pilot single-field struct write
+- `mdtests/jsonc_refcount_setter.md`: pilot single-field struct write
   with a field-validity precondition and field-level mutable footprint.
-- `mdtests/jsonc_mini_ref_count_increment.md`: pilot field read/modify/write
+- `mdtests/jsonc_refcount_increment.md`: pilot field read/modify/write
   proof with `old(obj->field)` postconditions and a no-overflow requirement.
+- `examples/refcount-ownership-design/`: design fixture for deciding how Click
+  should represent state-indexed ownership facts.

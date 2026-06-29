@@ -1,4 +1,4 @@
-# jsonc-mini ref-count increment
+# json-c refcount increment
 
 This pilot keeps the json-c-shaped reference-count slice on the non-ownership
 side of the design boundary. It proves a field increment under an ordinary

@@ -1,4 +1,4 @@
-# jsonc-mini ref-count setter
+# json-c refcount setter
 
 This pilot extends the json-c-shaped struct slice from field reads to a single
 field write. The C0 lowering still treats the struct as one `int32` field at

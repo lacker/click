@@ -1,7 +1,7 @@
-# jsonc-mini ref-count getter
+# json-c refcount getter
 
-This is the first real-library-shaped pilot proof. The fixture in
-`examples/real/jsonc-mini/json_object_ref_count.c` uses a tiny json-c-shaped
+This is the first library-shaped pilot proof. The fixture in
+`examples/jsonc-refcount/json_object_ref_count.c` uses a tiny json-c-shaped
 object with a reference-count field. The current struct slice supports a
 single `int32` field and lowers `obj->ref_count` to a field load.
 
