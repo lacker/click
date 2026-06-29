@@ -317,6 +317,7 @@ enum Token {
     PlusPlus,
     PlusEqual,
     Minus,
+    Arrow,
     MinusMinus,
     MinusEqual,
     LessThan,
@@ -369,6 +370,7 @@ impl Parser {
     }
 
     fn parse_function(mut self) -> Result<C0Function, C0SyntaxError> {
+        self.parse_struct_declarations()?;
         let return_type = self.parse_type()?;
         let name = self.expect_ident("function name")?;
         self.expect(Token::LParen)?;
@@ -383,6 +385,43 @@ impl Parser {
             parameters,
             body,
         })
+    }
+
+    fn parse_struct_declarations(&mut self) -> Result<(), C0SyntaxError> {
+        while self.peek_ident() == Some("struct") && self.peek_n(2) == Some(&Token::LBrace) {
+            self.expect_ident_spelling("struct")?;
+            let _name = self.expect_ident("struct name")?;
+            self.expect(Token::LBrace)?;
+
+            let mut field_count = 0;
+            while self.peek() != Some(&Token::RBrace) {
+                if self.peek().is_none() {
+                    return Err(C0SyntaxError::new(
+                        "expected struct field or `}`, got end of input",
+                    ));
+                }
+                let field_type = self.parse_type()?;
+                if field_type != C0Type::Int32 {
+                    return Err(C0SyntaxError::new(
+                        "only single-int32-field structs are supported",
+                    ));
+                }
+                let _field_name = self.expect_ident("struct field name")?;
+                self.expect(Token::Semicolon)?;
+                field_count += 1;
+            }
+
+            self.expect(Token::RBrace)?;
+            self.expect(Token::Semicolon)?;
+
+            if field_count != 1 {
+                return Err(C0SyntaxError::new(
+                    "only single-int32-field structs are supported",
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     fn parse_parameters(&mut self) -> Result<Vec<C0Parameter>, C0SyntaxError> {
@@ -406,6 +445,17 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<C0Type, C0SyntaxError> {
         match self.next() {
+            Some(Token::Ident(name)) if name == "struct" => {
+                let _struct_name = self.expect_ident("struct name")?;
+                if self.peek() == Some(&Token::Star) {
+                    self.position += 1;
+                    Ok(C0Type::Int32Pointer)
+                } else {
+                    Err(C0SyntaxError::new(
+                        "only pointer-to-struct types are supported",
+                    ))
+                }
+            }
             Some(Token::Ident(name)) if name == "int32" || name == "uint8" => {
                 let scalar_type = if name == "int32" {
                     C0Type::Int32
@@ -918,13 +968,22 @@ impl Parser {
 
     fn parse_postfix(&mut self) -> Result<C0Expression, C0SyntaxError> {
         let mut expression = self.parse_primary()?;
-        while self.peek() == Some(&Token::LBracket) {
-            self.position += 1;
-            let index = self.parse_expression()?;
-            self.expect(Token::RBracket)?;
-            expression = C0Expression::Index(Box::new(expression), Box::new(index));
+        loop {
+            match self.peek() {
+                Some(Token::LBracket) => {
+                    self.position += 1;
+                    let index = self.parse_expression()?;
+                    self.expect(Token::RBracket)?;
+                    expression = C0Expression::Index(Box::new(expression), Box::new(index));
+                }
+                Some(Token::Arrow) => {
+                    self.position += 1;
+                    let _field_name = self.expect_ident("field name")?;
+                    expression = C0Expression::Load(Box::new(expression));
+                }
+                _ => return Ok(expression),
+            }
         }
-        Ok(expression)
     }
 
     fn parse_indexed_lvalue_pointer(&mut self) -> Result<C0Expression, C0SyntaxError> {
@@ -1025,6 +1084,10 @@ impl Parser {
         self.tokens.get(self.position + 1)
     }
 
+    fn peek_n(&self, offset: usize) -> Option<&Token> {
+        self.tokens.get(self.position + offset)
+    }
+
     fn peek_ident(&self) -> Option<&str> {
         match self.peek() {
             Some(Token::Ident(name)) => Some(name),
@@ -1090,6 +1153,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
                 ('>', '>') => Some(Token::ShiftRight),
                 ('<', '=') => Some(Token::LessEqual),
                 ('>', '=') => Some(Token::GreaterEqual),
+                ('-', '>') => Some(Token::Arrow),
                 ('+', '+') => Some(Token::PlusPlus),
                 ('+', '=') => Some(Token::PlusEqual),
                 ('-', '-') => Some(Token::MinusMinus),

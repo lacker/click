@@ -59,7 +59,7 @@ new proof workflow concepts too early.
 | Rewriting and simplification | Lean `simp`, Isabelle simplifier | rewrite theorem application | `simp`, later `rewrite`, `calc` | `mdtests/simp_postconditions.md`, `mdtests/pure_click_functions.md` |
 | Bitvector arithmetic | SMT, CBMC, hardware-oriented provers | bitvector32 solver/normalizer | `auto`, `simp()` | `mdtests/c_bitwise.md`, `mdtests/c_shifts.md`, `mdtests/c_shift_uint8_promoted.md` |
 | Frame reasoning | separation logic, C verifiers | pre/post memory evaluation with symbolic initial cells and loop write footprints | `auto`, `frame`, `frame(loop N)` | `mdtests/write_second_old_keeps_first.md`, `mdtests/write_second_old_rejects_overwritten_cell.md`, `mdtests/fill_tail_keeps_first.md`, `mdtests/loop_frame_segment_shapes.md`, `mdtests/shifted_loop_effect_preserves_prefix.md` |
-| C array surface syntax | C frontends, C verifiers | parameter-array lowering to pointer parameters and local stack blocks | ordinary C/Click signatures | `mdtests/fill3_array_loop.md`, `mdtests/copy3_array_demo.md`, `mdtests/local_array.md`, `mdtests/local_array_loop.md` |
+| C array and pilot struct surface syntax | C frontends, C verifiers | parameter-array lowering, local stack blocks, and first-field struct getter lowering | ordinary C/Click signatures | `mdtests/fill3_array_loop.md`, `mdtests/copy3_array_demo.md`, `mdtests/local_array.md`, `mdtests/local_array_loop.md`, `mdtests/jsonc_mini_ref_count_getter.md` |
 | Byte buffers | C string/memory libraries | `uint8` values, byte-width loads/stores, typed array refs | `auto`, `simp()`, `unfold` | `mdtests/uint8_literals.md`, `mdtests/uint8_buffer_read.md`, `mdtests/uint8_narrowing.md`, `mdtests/byte_slice_stdlib.md`, `mdtests/cstr_stdlib.md` |
 | Stdlib folds and permutation | functional array specs, multiset proofs | `RangeFold`, finite forall/range facts, count-shaped fold reasoning | `unfold`, `simp`, `loop_vc(loop N)` | `mdtests/compare_swap2_permutation.md`, `mdtests/sort3_permutation.md`, `mdtests/bubble_sort3_loop_permutation.md`, `mdtests/loop_stdlib_permutation_invariant.md` |
 
@@ -78,7 +78,7 @@ propositions and loop `invariant` clauses, including memory-changing invariants
 and invariants that unfold stdlib definitions such as `permutation`.
 
 It is not yet enough for the full real-library proof story. The main missing
-pieces are structs, heap allocation and ownership, broader integer
+pieces are full structs/layout, heap allocation and ownership, broader integer
 types/conversions, reusable lemma declarations, richer intermediate fact
 management, module/import support, and a real-C or pilot-driven frontend
 strategy.

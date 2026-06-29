@@ -10072,6 +10072,19 @@ fn evaluate_c_contract_expression(
             )?;
             evaluate_postcondition_bitwise_not(value)
         }
+        CExpression::Load(pointer) => {
+            let pointer = evaluate_c_contract_expression(
+                parameter_values,
+                state,
+                result,
+                assumptions,
+                pointer,
+            )?;
+            let CValue::Pointer(pointer) = pointer else {
+                return Err("field load base is not a pointer".to_string());
+            };
+            evaluate_contract_memory_load(state, pointer, CType::Int32, assumptions)
+        }
         CExpression::Index(base, index) => {
             let base =
                 evaluate_c_contract_expression(parameter_values, state, result, assumptions, base)?;
@@ -10532,6 +10545,15 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<C0Type, ClickError> {
         let spelling = self.expect_ident("type")?;
+        if spelling == "struct" {
+            let _struct_name = self.expect_ident("struct name")?;
+            if self.peek() == Some(&Token::Star) {
+                self.position += 1;
+                return Ok(C0Type::Int32Pointer);
+            }
+            return Err(self.error("only pointer-to-struct types are supported"));
+        }
+
         let scalar_type = match spelling.as_str() {
             "int32" => C0Type::Int32,
             "uint8" => C0Type::UInt8,
@@ -11405,13 +11427,28 @@ impl Parser {
 
     fn parse_contract_postfix(&mut self) -> Result<ContractExpression, ClickError> {
         let mut expression = self.parse_contract_primary()?;
-        while self.peek() == Some(&Token::LBracket) {
-            self.position += 1;
-            let index = self.parse_contract_expression()?;
-            self.expect(Token::RBracket)?;
-            expression = ContractExpression::Index(Box::new(expression), Box::new(index));
+        loop {
+            match self.peek() {
+                Some(Token::LBracket) => {
+                    self.position += 1;
+                    let index = self.parse_contract_expression()?;
+                    self.expect(Token::RBracket)?;
+                    expression = ContractExpression::Index(Box::new(expression), Box::new(index));
+                }
+                Some(Token::Arrow) => {
+                    self.position += 1;
+                    let _field_name = self.expect_ident("field name")?;
+                    let Some(base) = contract_expression_as_c_fragment(&expression) else {
+                        return Err(self.error(
+                            "field access is only supported on current C fragments",
+                        ));
+                    };
+                    expression =
+                        ContractExpression::CFragment(CExpression::Load(Box::new(base)));
+                }
+                _ => return Ok(expression),
+            }
         }
-        Ok(expression)
     }
 
     fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
@@ -11632,13 +11669,22 @@ impl Parser {
 
     fn parse_ensure_postfix(&mut self) -> Result<C0Expression, ClickError> {
         let mut expression = self.parse_ensure_primary()?;
-        while self.peek() == Some(&Token::LBracket) {
-            self.position += 1;
-            let index = self.parse_ensure_expression()?;
-            self.expect(Token::RBracket)?;
-            expression = C0Expression::Index(Box::new(expression), Box::new(index));
+        loop {
+            match self.peek() {
+                Some(Token::LBracket) => {
+                    self.position += 1;
+                    let index = self.parse_ensure_expression()?;
+                    self.expect(Token::RBracket)?;
+                    expression = C0Expression::Index(Box::new(expression), Box::new(index));
+                }
+                Some(Token::Arrow) => {
+                    self.position += 1;
+                    let _field_name = self.expect_ident("field name")?;
+                    expression = C0Expression::Load(Box::new(expression));
+                }
+                _ => return Ok(expression),
+            }
         }
-        Ok(expression)
     }
 
     fn parse_ensure_primary(&mut self) -> Result<C0Expression, ClickError> {
@@ -12761,6 +12807,37 @@ mod tests {
                 name: "p".to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn parses_pilot_struct_pointer_signature_and_field_load() {
+        let source = r#"
+            verifying "json_object_ref_count.c";
+
+            int32 json_object_get_ref_count(struct json_object* obj) {
+                requires valid_range(obj, 4);
+                ensures returns_ref_count: result == obj->ref_count by auto;
+                immutable by frame;
+            }
+        "#;
+        let file = parse(source).expect("pilot struct pointer signature should parse");
+        let function = &file.function_blocks()[0];
+
+        assert_eq!(function.signature().return_type(), C0Type::Int32);
+        assert_eq!(
+            function.signature().parameters(),
+            &[FunctionParameter {
+                c_type: C0Type::Int32Pointer,
+                name: "obj".to_string(),
+            }]
+        );
+        assert!(matches!(
+            function.ensures()[0].ensure(),
+            Ensure::Proposition(ClickProposition::Comparison { right, .. })
+                if right == &ContractExpression::CFragment(
+                    CExpression::Load(Box::new(CExpression::Variable("obj".to_string())))
+                )
+        ));
     }
 
     #[test]

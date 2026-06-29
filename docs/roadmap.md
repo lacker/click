@@ -267,12 +267,11 @@ Done means:
 
 Good next tasks from the current state:
 
-1. Turn `mdtests/jsonc_mini_struct_field_unsupported.md` into the first passing
-   pilot proof by adding the smallest C0 struct declarations,
-   pointer-to-struct parameters, and `->` field-load support needed by
-   `examples/real/jsonc-mini/json_object_ref_count.c`.
-2. Add field-level memory validity and frame facts for that pilot getter, then
-   document the struct/field memory model.
+1. Replace the pilot getter's byte-level `valid_range(obj, 4)` with a
+   field/object-level validity predicate, then document the struct/field memory
+   model.
+2. Add field stores in the smallest form needed by the next pilot function,
+   such as a reference-count setter or increment helper.
 3. Add more fold/range lemmas beyond alpha-equivalent folds and the current
    count-shaped split rules, especially when the pilot or sorting/string tests
    expose a reusable proof pattern.
@@ -285,10 +284,9 @@ Good next tasks from the current state:
    rvalue promotion and checked `int32`-to-`uint8` narrowing rules. The open
    design question is how much of C's usual arithmetic conversions Click should
    model next versus reject in C0 until the integer story is broader.
-6. Add field stores in the smallest form needed by the next pilot function.
-7. Model a tiny heap API or externally specified `malloc`/`free` when the pilot
+6. Model a tiny heap API or externally specified `malloc`/`free` when the pilot
    needs allocation or ownership transfer.
-8. Improve failure output for missing loop invariants and alias/frame facts.
+7. Improve failure output for missing loop invariants and alias/frame facts.
 
 Use the feature playbook for each item: start with a failing mdtest or pilot
 test, make the minimal design change, update docs, then run the full suite.

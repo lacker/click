@@ -5,8 +5,12 @@ This page lists boundaries that agents should not silently assume away.
 ## C0 Is Small
 
 Click does not parse general C. See [c0-subset.md](c0-subset.md). Missing
-features include structs, unsigned integers beyond the narrow `uint8` byte
+features include full structs, unsigned integers beyond the narrow `uint8` byte
 type, casts, globals, heap allocation, `switch`, and many operators.
+
+There is one pilot struct slice for the first real-library fixture: a
+single-`int32`-field `struct`, `struct name*` parameters, and `p->field` loads.
+This is not yet a general layout or field-frame model.
 
 ## Type Support Is Still Narrow
 

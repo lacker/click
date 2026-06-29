@@ -42,6 +42,8 @@ Supported C0 surface includes:
 - pointer arithmetic for `int32*` and `uint8*`, scaled by the pointee width
 - pointer loads and stores
 - `p[i]` indexing for `int32*` and `uint8*`
+- a pilot struct slice: `struct name { int32 field; };`,
+  `struct name*` parameters, and `p->field` loads for that single field
 - known function calls through the current function environment
 - local scalar, pointer, and fixed-size array declarations for `int32` and
   `uint8`
@@ -90,6 +92,26 @@ An array name decays to a pointer rvalue for indexing and function arguments.
 Direct assignment to an array object is rejected. `int32` arrays allocate four
 bytes per element; `uint8` arrays allocate one byte per element.
 
+## Pilot Struct Slice
+
+The first real-library pilot supports only a single-field struct shape:
+
+```c
+struct json_object {
+    int32 ref_count;
+};
+
+int32 json_object_get_ref_count(struct json_object* obj) {
+    return obj->ref_count;
+}
+```
+
+This is intentionally not a full C struct model yet. `struct name*` is accepted
+for parameters, and `p->field` is lowered as an `int32` field load from the
+start of the object. Field stores, multiple fields, nested structs, struct
+values, layout/alignment rules, and field-address expressions are still future
+work.
+
 ## Loops
 
 `while` loops can be handled in two ways:
@@ -111,7 +133,7 @@ Do not expect unconstrained symbolic loops to be unrolled automatically.
 
 These are not general C features yet:
 
-- structs, unions, enums
+- full structs, unions, enums
 - unsigned integers other than the narrow `uint8` byte type
 - integer widths other than `int32`
 - casts beyond the current checked `int32`-to-`uint8` narrowing conversion

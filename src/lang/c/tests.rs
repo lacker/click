@@ -238,6 +238,57 @@ fn c0_syntax_targets_kernel_store_and_load() {
 }
 
 #[test]
+fn c0_syntax_targets_kernel_struct_field_load() {
+    let function = syntax::parse_function(
+        r#"
+        struct json_object {
+            int32 ref_count;
+        };
+
+        int32 json_object_get_ref_count(struct json_object* obj) {
+            return obj->ref_count;
+        }
+        "#,
+    )
+    .expect("pilot struct getter should parse");
+
+    assert_eq!(
+        function.parameters()[0].c_type(),
+        syntax::C0Type::Int32Pointer
+    );
+
+    let pointer = crate::kernel::Pointer {
+        block: "object".to_string(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let statement = function.body_kernel_statement();
+    let memory = crate::kernel::CMemory::new()
+        .with_block("object", 4)
+        .store(pointer.clone(), crate::kernel::int32(3));
+    let initial = crate::kernel::CState::new()
+        .with_local("obj", crate::kernel::CValue::Pointer(pointer))
+        .with_memory(memory);
+    let theorem = crate::kernel::prove_symbolic_c_execution(
+        initial.clone(),
+        statement.clone(),
+        Default::default(),
+    )
+    .expect("parsed struct getter should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CStatementExecutes {
+            state: initial.clone(),
+            statement,
+            outcome: crate::kernel::CStatementOutcome::Return {
+                value: crate::kernel::int32(3),
+                state: initial,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_syntax_targets_kernel_store_and_load_function_call() {
     let function = syntax::parse_function(
         r#"

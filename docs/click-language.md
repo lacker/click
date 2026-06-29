@@ -26,7 +26,8 @@ int32 function_name(int32 p[], int32 n) {
 signatures in the `.click` file are checked against the parsed C0 source.
 
 Click signatures currently understand `int32`, `uint8`, `int32*`, `uint8*`,
-and array-parameter spellings such as `int32 p[]` and `uint8 bytes[]`.
+pilot `struct name*` parameters, and array-parameter spellings such as
+`int32 p[]` and `uint8 bytes[]`.
 Character literals such as `'x'`, `'\n'`, and `'\0'` are `uint8` values.
 
 Inside C fragments and pure Click expressions over C values, `uint8` rvalues
@@ -170,6 +171,10 @@ The prelude currently provides byte-slice helpers over `uint8[]`: `byte_count`,
 `bytes_all_not_eq`. It also provides first-pass C-string predicates:
 `cstr_prefix`, `cstr_len`, `cstr`, and `cstr_bounded`. These are ordinary Click
 functions and predicates, not built-in kernel concepts.
+
+The first pilot struct slice accepts `obj->field` as a current-state C fragment
+for a single-`int32`-field struct. It is not yet a general struct expression or
+layout model.
 
 Concrete folds are unrolled. Symbolic folds remain `RangeFold` value terms in
 the kernel and can be reasoned about by supported fold laws.

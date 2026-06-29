@@ -151,6 +151,5 @@ of inventing syntax from memory.
 
 ## Real-Library Pilot
 
-- `mdtests/jsonc_mini_struct_field_unsupported.md`: first json-c-shaped pilot
-  blocker, covering currently unsupported struct declarations,
-  pointer-to-struct parameters, and `->` field loads.
+- `mdtests/jsonc_mini_ref_count_getter.md`: first json-c-shaped pilot proof,
+  using the initial single-field struct slice for a reference-count getter.
