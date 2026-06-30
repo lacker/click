@@ -94,6 +94,8 @@ A callee must declare `requires write(...)` to receive a resource and
 `ensures write(...)` to return it to the caller. A call can pass a covered
 subrange, such as passing `write(p[0..1])` from a caller that has
 `write(p[0..2])`; Click keeps the residue and rejoins adjacent returned ranges.
+The same applies to symbolic ranges when the current facts prove the subrange
+is covered.
 
 This is intentionally not the full permission system. There are no read
 fractions, ownership predicates, `free` permissions, explicit resource algebra

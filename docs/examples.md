@@ -120,6 +120,8 @@ Larger example projects live directly under `examples/`. They contain ordinary
   write resource unless its summary returns it.
 - `mdtests/resource_summary_splits_write_range.md`: helper call receives a
   subrange while the caller keeps and rejoins the residue.
+- `mdtests/resource_summary_splits_symbolic_write_range.md`: helper call
+  receives and returns a symbolic write subrange.
 
 ## Predicates And Pure Click Functions
 
