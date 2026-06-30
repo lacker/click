@@ -50,6 +50,7 @@ int32 fill_prefix(int32 p[], int32 n) {
     requires n >= 0;
     requires n <= 2147483647;
     requires valid_range(p[0..n]);
+    requires write(p[0..n]);
     for loop(0) {
         invariant i >= 0 by auto;
         invariant i <= n by auto;
@@ -64,6 +65,7 @@ int32 fill_tail(int32 p[], int32 n) {
     requires n >= 1;
     requires n <= 2147483647;
     requires valid_range(p[0..n]);
+    requires write(p[0..n]);
     for loop(0) {
         invariant i >= 1 by auto;
         invariant i <= n by auto;
@@ -77,6 +79,8 @@ int32 fill_two(int32 p[], int32 q[], int32 n) {
     requires n <= 2147483647;
     requires valid_range(p[0..n]);
     requires valid_range(q[0..n]);
+    requires write(p[0..n]);
+    requires write(q[0..n]);
     for loop(0) {
         invariant i >= 0 by auto;
         invariant i <= n by auto;

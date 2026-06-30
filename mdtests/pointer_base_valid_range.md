@@ -16,6 +16,7 @@ verifying "pointer_base_valid_range.c";
 
 int32 pointer_base_valid_range(int32* p) {
     requires valid_range((p + 1)[0..1]);
+    requires write((p + 1)[0..1]);
     mutable (p + 1)[0..1] by frame;
     ensures returns_written: result == 9 by auto;
 }

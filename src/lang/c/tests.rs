@@ -1,5 +1,33 @@
 use super::*;
 
+fn memory_range(
+    base: crate::kernel::Pointer,
+    start: impl Into<crate::kernel::Bitvector32Term>,
+    end: impl Into<crate::kernel::Bitvector32Term>,
+) -> crate::kernel::CMemoryRange {
+    crate::kernel::CMemoryRange::new(base, start.into(), end.into())
+}
+
+fn read_context(
+    base: crate::kernel::Pointer,
+    start: impl Into<crate::kernel::Bitvector32Term>,
+    end: impl Into<crate::kernel::Bitvector32Term>,
+) -> crate::kernel::ResourceContext {
+    crate::kernel::ResourceContext::new().with_resource(crate::kernel::CResource::Read(
+        memory_range(base, start, end),
+    ))
+}
+
+fn write_context(
+    base: crate::kernel::Pointer,
+    start: impl Into<crate::kernel::Bitvector32Term>,
+    end: impl Into<crate::kernel::Bitvector32Term>,
+) -> crate::kernel::ResourceContext {
+    crate::kernel::ResourceContext::new().with_resource(crate::kernel::CResource::Write(
+        memory_range(base, start, end),
+    ))
+}
+
 #[test]
 fn c0_array_parameter_syntax_lowers_to_pointer_parameter() {
     let function = syntax::parse_function(
@@ -204,11 +232,14 @@ fn c0_syntax_targets_kernel_store_and_load() {
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let statement = function.body_kernel_statement();
+    let resources = write_context(pointer.clone(), 0, 1);
     let initial = crate::kernel::CState::new()
-        .with_local("p", crate::kernel::CValue::Pointer(pointer.clone()));
+        .with_local("p", crate::kernel::CValue::Pointer(pointer.clone()))
+        .with_resource_context(resources.clone());
     let final_state = crate::kernel::CState::new()
         .with_local("p", crate::kernel::CValue::Pointer(pointer.clone()))
-        .with_memory(crate::kernel::CMemory::new().store(pointer.clone(), crate::kernel::int32(9)));
+        .with_memory(crate::kernel::CMemory::new().store(pointer.clone(), crate::kernel::int32(9)))
+        .with_resource_context(resources);
     let store_obligation = crate::kernel::Proposition::CMemoryCanStore {
         memory: crate::kernel::CMemory::new(),
         pointer,
@@ -266,8 +297,9 @@ fn c0_syntax_targets_kernel_struct_field_load() {
         .with_block("object", 4)
         .store(pointer.clone(), crate::kernel::int32(3));
     let initial = crate::kernel::CState::new()
-        .with_local("obj", crate::kernel::CValue::Pointer(pointer))
-        .with_memory(memory);
+        .with_local("obj", crate::kernel::CValue::Pointer(pointer.clone()))
+        .with_memory(memory)
+        .with_resource_context(read_context(pointer, 0, 1));
     let theorem = crate::kernel::prove_symbolic_c_execution(
         initial.clone(),
         statement.clone(),
@@ -309,17 +341,21 @@ fn c0_syntax_targets_kernel_struct_field_store() {
         block: "object".to_string(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
+    let resources = write_context(pointer.clone(), 0, 1);
     let state = crate::kernel::CState::new()
-        .with_memory(crate::kernel::CMemory::new().with_block("object", 4));
+        .with_memory(crate::kernel::CMemory::new().with_block("object", 4))
+        .with_resource_context(resources.clone());
     let arguments = vec![
         crate::kernel::c_pointer_value(pointer.clone()),
         crate::kernel::c_int32_literal(5),
     ];
-    let final_state = crate::kernel::CState::new().with_memory(
-        crate::kernel::CMemory::new()
-            .with_block("object", 4)
-            .store(pointer, crate::kernel::int32(5)),
-    );
+    let final_state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("object", 4)
+                .store(pointer, crate::kernel::int32(5)),
+        )
+        .with_resource_context(resources);
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
@@ -359,11 +395,15 @@ fn c0_syntax_targets_kernel_store_and_load_function_call() {
         block: "block".to_string(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let state = crate::kernel::CState::new().with_local("caller", crate::kernel::int32(7));
+    let resources = write_context(pointer.clone(), 0, 1);
+    let state = crate::kernel::CState::new()
+        .with_local("caller", crate::kernel::int32(7))
+        .with_resource_context(resources.clone());
     let arguments = vec![crate::kernel::c_pointer_value(pointer.clone())];
     let final_state = crate::kernel::CState::new()
         .with_local("caller", crate::kernel::int32(7))
-        .with_memory(crate::kernel::CMemory::new().store(pointer.clone(), crate::kernel::int32(9)));
+        .with_memory(crate::kernel::CMemory::new().store(pointer.clone(), crate::kernel::int32(9)))
+        .with_resource_context(resources);
     let store_obligation = crate::kernel::Proposition::CMemoryCanStore {
         memory: crate::kernel::CMemory::new(),
         pointer,
@@ -416,8 +456,11 @@ fn c0_syntax_targets_kernel_pointer_addition_load() {
     };
     let memory = crate::kernel::CMemory::new()
         .with_block("block", 16)
-        .store(second, crate::kernel::int32(23));
-    let state = crate::kernel::CState::new().with_memory(memory.clone());
+        .store(second.clone(), crate::kernel::int32(23));
+    let resources = read_context(base.clone(), 1, 2);
+    let state = crate::kernel::CState::new()
+        .with_memory(memory.clone())
+        .with_resource_context(resources);
     let arguments = vec![crate::kernel::c_pointer_value(base)];
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
@@ -463,8 +506,11 @@ fn c0_syntax_targets_kernel_array_index_load() {
     };
     let memory = crate::kernel::CMemory::new()
         .with_block("block", 16)
-        .store(second, crate::kernel::int32(23));
-    let state = crate::kernel::CState::new().with_memory(memory.clone());
+        .store(second.clone(), crate::kernel::int32(23));
+    let resources = read_context(base.clone(), 1, 2);
+    let state = crate::kernel::CState::new()
+        .with_memory(memory.clone())
+        .with_resource_context(resources);
     let arguments = vec![crate::kernel::c_pointer_value(base)];
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
@@ -510,12 +556,17 @@ fn c0_syntax_targets_kernel_array_index_store() {
         offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
     let memory = crate::kernel::CMemory::new().with_block("block", 16);
-    let state = crate::kernel::CState::new().with_memory(memory);
-    let final_state = crate::kernel::CState::new().with_memory(
-        crate::kernel::CMemory::new()
-            .with_block("block", 16)
-            .store(second, crate::kernel::int32(7)),
-    );
+    let resources = write_context(base.clone(), 1, 2);
+    let state = crate::kernel::CState::new()
+        .with_memory(memory)
+        .with_resource_context(resources.clone());
+    let final_state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("block", 16)
+                .store(second, crate::kernel::int32(7)),
+        )
+        .with_resource_context(resources);
     let arguments = vec![crate::kernel::c_pointer_value(base)];
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
@@ -568,14 +619,19 @@ fn c0_syntax_targets_kernel_address_of_array_index() {
     let memory = crate::kernel::CMemory::new()
         .with_block("block", 16)
         .store(second.clone(), crate::kernel::int32(23));
-    let state = crate::kernel::CState::new().with_memory(memory);
-    let final_state = crate::kernel::CState::new().with_memory(
-        crate::kernel::CMemory::new()
-            .with_block("block", 16)
-            .with_block("local:q", 8)
-            .store(second.clone(), crate::kernel::int32(23))
-            .store(local_q, crate::kernel::CValue::Pointer(second.clone())),
-    );
+    let resources = read_context(base.clone(), 1, 2);
+    let state = crate::kernel::CState::new()
+        .with_memory(memory)
+        .with_resource_context(resources.clone());
+    let final_state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("block", 16)
+                .with_block("local:q", 8)
+                .store(second.clone(), crate::kernel::int32(23))
+                .store(local_q, crate::kernel::CValue::Pointer(second.clone())),
+        )
+        .with_resource_context(resources);
     let arguments = vec![crate::kernel::c_pointer_value(base)];
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
@@ -674,21 +730,25 @@ fn c0_syntax_targets_kernel_logical_short_circuiting() {
             crate::kernel::int32(1),
         ),
         (
-            crate::kernel::CState::new().with_memory(
-                crate::kernel::CMemory::new()
-                    .with_block("block", 4)
-                    .store(pointer.clone(), crate::kernel::int32(3)),
-            ),
+            crate::kernel::CState::new()
+                .with_memory(
+                    crate::kernel::CMemory::new()
+                        .with_block("block", 4)
+                        .store(pointer.clone(), crate::kernel::int32(3)),
+                )
+                .with_resource_context(read_context(pointer.clone(), 0, 1)),
             vec![crate::kernel::c_pointer_value(pointer.clone())],
             crate::kernel::int32(1),
         ),
         (
-            crate::kernel::CState::new().with_memory(
-                crate::kernel::CMemory::new()
-                    .with_block("block", 4)
-                    .store(pointer.clone(), crate::kernel::int32(4)),
-            ),
-            vec![crate::kernel::c_pointer_value(pointer)],
+            crate::kernel::CState::new()
+                .with_memory(
+                    crate::kernel::CMemory::new()
+                        .with_block("block", 4)
+                        .store(pointer.clone(), crate::kernel::int32(4)),
+                )
+                .with_resource_context(read_context(pointer.clone(), 0, 1)),
+            vec![crate::kernel::c_pointer_value(pointer.clone())],
             crate::kernel::int32(0),
         ),
     ];
@@ -1299,7 +1359,10 @@ fn c0_memory_safety_demo_fill_three_ints() {
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let initial_memory = crate::kernel::CMemory::new().with_block("buf", 12);
-    let state = crate::kernel::CState::new().with_memory(initial_memory);
+    let resources = write_context(base.clone(), 0, 3);
+    let state = crate::kernel::CState::new()
+        .with_memory(initial_memory)
+        .with_resource_context(resources.clone());
     let final_memory = crate::kernel::CMemory::new()
         .with_block("buf", 12)
         .with_block("local:i", 4)
@@ -1324,7 +1387,9 @@ fn c0_memory_safety_demo_fill_three_ints() {
             arguments,
             outcome: crate::kernel::CFunctionOutcome::Return {
                 value: crate::kernel::int32(2),
-                state: crate::kernel::CState::new().with_memory(final_memory),
+                state: crate::kernel::CState::new()
+                    .with_memory(final_memory)
+                    .with_resource_context(resources),
             },
         }
     );

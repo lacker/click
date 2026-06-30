@@ -20,6 +20,7 @@ verifying "fill3_array_loop.c";
 
 int32 fill3_array_loop(int32 p[3]) {
     requires valid_range(p, 12);
+    requires write(p[0..3]);
 
     for loop(0) {
         invariant i >= 0 by auto;

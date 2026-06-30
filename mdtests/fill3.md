@@ -1,7 +1,7 @@
 # fill3 verifies a three-element store loop
 
-This checks that `valid_range(p, 12)` is enough to prove three `int32`
-array-index stores and a final array-index load.
+This checks a three-cell write permission plus `valid_range(p, 12)` for three
+`int32` array-index stores and a final array-index load.
 
 ```c filename=fill3.c
 int32 fill3(int32* p) {
@@ -20,6 +20,7 @@ verifying "fill3.c";
 
 int32 fill3(int32* p) {
     requires valid_range(p, 12);
+    requires write(p[0..3]);
     ensures returns_second: result == 2 by auto;
 }
 ```

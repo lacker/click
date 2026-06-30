@@ -7,6 +7,178 @@ struct CFunctionResourceTransfer {
 }
 
 pub(super) fn execute_c_function_paths(
+    state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    assumptions: &Assumptions,
+    environment: &CFunctionEnvironment,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CFunctionPath>> {
+    budget.consume_function_call()?;
+    if arguments.len() != function.parameters.len() {
+        return Ok(vec![CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::WrongArity {
+                expected: function.parameters.len(),
+                actual: arguments.len(),
+            }),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }]);
+    }
+
+    let mut paths = Vec::new();
+    for arguments_path in evaluate_c_arguments_paths(state, arguments, assumptions, budget)? {
+        if let Some(outcome) = arguments_path.outcome {
+            paths.push(CFunctionPath {
+                outcome,
+                facts: arguments_path.facts,
+                obligations: arguments_path.obligations,
+            });
+            continue;
+        }
+
+        let Some(callee_state) = bind_c_function_arguments(state, function, &arguments_path.values)
+        else {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts: arguments_path.facts,
+                obligations: arguments_path.obligations,
+            });
+            continue;
+        };
+
+        let body_assumptions = assumptions_with_path_context(
+            assumptions,
+            &arguments_path.facts,
+            &arguments_path.obligations,
+        );
+        for body_path in execute_c_statement_paths(
+            &callee_state,
+            function.body(),
+            &body_assumptions,
+            environment,
+            budget,
+        )? {
+            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &arguments_path.facts,
+                &arguments_path.obligations,
+                &body_path.facts,
+                &body_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+            let return_assumptions =
+                assumptions_with_path_context(assumptions, &facts, &obligations);
+            let (outcome, obligations) = function_outcome_from_body(
+                state,
+                function,
+                body_path.outcome,
+                obligations,
+                &return_assumptions,
+                None,
+            );
+
+            paths.push(CFunctionPath {
+                outcome,
+                facts,
+                obligations,
+            });
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+pub(super) fn execute_c_function_verification_paths(
+    state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    assumptions: &Assumptions,
+    environment: &CFunctionEnvironment,
+    budget: &mut ExecutionBudget,
+    variables: &mut VerificationVariableGenerator,
+) -> ExecutionResult<Vec<CFunctionPath>> {
+    budget.consume_function_call()?;
+    if arguments.len() != function.parameters.len() {
+        return Ok(vec![CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::WrongArity {
+                expected: function.parameters.len(),
+                actual: arguments.len(),
+            }),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }]);
+    }
+
+    let mut paths = Vec::new();
+    for arguments_path in evaluate_c_arguments_paths(state, arguments, assumptions, budget)? {
+        if let Some(outcome) = arguments_path.outcome {
+            paths.push(CFunctionPath {
+                outcome,
+                facts: arguments_path.facts,
+                obligations: arguments_path.obligations,
+            });
+            continue;
+        }
+
+        let Some(callee_state) = bind_c_function_arguments(state, function, &arguments_path.values)
+        else {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts: arguments_path.facts,
+                obligations: arguments_path.obligations,
+            });
+            continue;
+        };
+
+        let body_assumptions = assumptions_with_path_context(
+            assumptions,
+            &arguments_path.facts,
+            &arguments_path.obligations,
+        );
+        for body_path in execute_c_statement_verification_paths(
+            &callee_state,
+            function.body(),
+            &body_assumptions,
+            environment,
+            budget,
+            variables,
+        )? {
+            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                &arguments_path.facts,
+                &arguments_path.obligations,
+                &body_path.facts,
+                &body_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+            let return_assumptions =
+                assumptions_with_path_context(assumptions, &facts, &obligations);
+            let (outcome, obligations) = function_outcome_from_body(
+                state,
+                function,
+                body_path.outcome,
+                obligations,
+                &return_assumptions,
+                None,
+            );
+
+            paths.push(CFunctionPath {
+                outcome,
+                facts,
+                obligations,
+            });
+        }
+    }
+
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+pub(super) fn execute_c_function_call_paths(
     caller_state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
@@ -71,12 +243,8 @@ pub(super) fn execute_c_function_paths(
                 continue;
             }
         };
-        let callee_state = match &resource_transfer {
-            Some(resource_transfer) => {
-                callee_state.with_resource_context(resource_transfer.callee_resources.clone())
-            }
-            None => callee_state,
-        };
+        let callee_state =
+            callee_state.with_resource_context(resource_transfer.callee_resources.clone());
         for body_path in execute_c_statement_paths(
             &callee_state,
             function.body(),
@@ -101,123 +269,7 @@ pub(super) fn execute_c_function_paths(
                 body_path.outcome,
                 obligations,
                 &return_assumptions,
-                resource_transfer
-                    .as_ref()
-                    .map(|resource_transfer| &resource_transfer.return_resources),
-            );
-
-            paths.push(CFunctionPath {
-                outcome,
-                facts,
-                obligations,
-            });
-        }
-    }
-
-    budget.consume_paths(paths.len())?;
-    Ok(paths)
-}
-
-pub(super) fn execute_c_function_verification_paths(
-    caller_state: &CState,
-    function: &CFunction,
-    arguments: &[CExpression],
-    assumptions: &Assumptions,
-    environment: &CFunctionEnvironment,
-    budget: &mut ExecutionBudget,
-    variables: &mut VerificationVariableGenerator,
-) -> ExecutionResult<Vec<CFunctionPath>> {
-    budget.consume_function_call()?;
-    if arguments.len() != function.parameters.len() {
-        return Ok(vec![CFunctionPath {
-            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::WrongArity {
-                expected: function.parameters.len(),
-                actual: arguments.len(),
-            }),
-            facts: Vec::new(),
-            obligations: Vec::new(),
-        }]);
-    }
-
-    let mut paths = Vec::new();
-    for arguments_path in evaluate_c_arguments_paths(caller_state, arguments, assumptions, budget)?
-    {
-        if let Some(outcome) = arguments_path.outcome {
-            paths.push(CFunctionPath {
-                outcome,
-                facts: arguments_path.facts,
-                obligations: arguments_path.obligations,
-            });
-            continue;
-        }
-
-        let Some(callee_state) =
-            bind_c_function_arguments(caller_state, function, &arguments_path.values)
-        else {
-            paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                facts: arguments_path.facts,
-                obligations: arguments_path.obligations,
-            });
-            continue;
-        };
-
-        let body_assumptions = assumptions_with_path_context(
-            assumptions,
-            &arguments_path.facts,
-            &arguments_path.obligations,
-        );
-        let resource_transfer = match prepare_function_resource_transfer(
-            caller_state,
-            &callee_state,
-            function,
-            &body_assumptions,
-            budget,
-        )? {
-            Ok(resource_transfer) => resource_transfer,
-            Err(error) => {
-                paths.push(CFunctionPath {
-                    outcome: CFunctionOutcome::RuntimeError(error),
-                    facts: arguments_path.facts,
-                    obligations: arguments_path.obligations,
-                });
-                continue;
-            }
-        };
-        let callee_state = match &resource_transfer {
-            Some(resource_transfer) => {
-                callee_state.with_resource_context(resource_transfer.callee_resources.clone())
-            }
-            None => callee_state,
-        };
-        for body_path in execute_c_statement_verification_paths(
-            &callee_state,
-            function.body(),
-            &body_assumptions,
-            environment,
-            budget,
-            variables,
-        )? {
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
-                &arguments_path.facts,
-                &arguments_path.obligations,
-                &body_path.facts,
-                &body_path.obligations,
-                assumptions,
-            ) else {
-                continue;
-            };
-            let return_assumptions =
-                assumptions_with_path_context(assumptions, &facts, &obligations);
-            let (outcome, obligations) = function_outcome_from_body(
-                caller_state,
-                function,
-                body_path.outcome,
-                obligations,
-                &return_assumptions,
-                resource_transfer
-                    .as_ref()
-                    .map(|resource_transfer| &resource_transfer.return_resources),
+                Some(&resource_transfer.return_resources),
             );
 
             paths.push(CFunctionPath {
@@ -354,11 +406,7 @@ fn prepare_function_resource_transfer(
     function: &CFunction,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Result<Option<CFunctionResourceTransfer>, CRuntimeError>> {
-    if !function.has_resource_summary() {
-        return Ok(Ok(None));
-    }
-
+) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
     let required_resources = match evaluate_function_resource_context(
         callee_state,
         function.resource_requires(),
@@ -390,10 +438,10 @@ fn prepare_function_resource_transfer(
     return_resources = return_resources
         .with_resources_normalized(ensured_resources.resources().iter().cloned(), assumptions);
 
-    Ok(Ok(Some(CFunctionResourceTransfer {
+    Ok(Ok(CFunctionResourceTransfer {
         callee_resources: required_resources,
         return_resources,
-    })))
+    }))
 }
 
 fn evaluate_function_resource_context(

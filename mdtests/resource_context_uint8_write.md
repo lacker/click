@@ -1,0 +1,26 @@
+# uint8 write resources
+
+This checks that `write(...)` permissions use byte-width indexing for `uint8[]`
+stores.
+
+```c filename=write_second_byte.c
+uint8 write_second_byte(uint8 p[]) {
+    p[1] = 'x';
+    return p[1];
+}
+```
+
+```click
+verifying "write_second_byte.c";
+
+uint8 write_second_byte(uint8 p[]) {
+    requires valid_range(p[0..2]);
+    requires write(p[1..2]);
+
+    ensures write(p[1..2]) by auto;
+}
+```
+
+```expect
+pass
+```

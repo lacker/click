@@ -468,8 +468,7 @@ pub(super) fn read_c_lvalue_paths(
             CLValueStorage::Memory { pointer } => {
                 let effective_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
-                if !state.resources().is_empty()
-                    && is_external_memory_pointer(pointer)
+                if is_external_memory_pointer(pointer)
                     && !resource_context_has_read(
                         state.resources(),
                         pointer,
@@ -2330,8 +2329,7 @@ pub(super) fn write_c_lvalue_paths(
             }]
         }
         CLValueStorage::Memory { pointer } => {
-            if !state.resources().is_empty()
-                && is_external_memory_pointer(&pointer)
+            if is_external_memory_pointer(&pointer)
                 && !resource_context_has_write(
                     state.resources(),
                     &pointer,

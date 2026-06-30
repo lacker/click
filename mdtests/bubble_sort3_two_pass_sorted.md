@@ -56,6 +56,7 @@ predicate all_le_range(int32 p[], int32 lo, int32 hi, int32 x) {
 
 int32 bubble_sort3_two_pass(int32 p[3]) {
     requires valid_range(p[0..3]);
+    requires write(p[0..3]);
     for loop(0) {
         invariant j >= 0 and j <= 2 by auto;
         invariant all_le_range(p, 0, j, p[j]) by {

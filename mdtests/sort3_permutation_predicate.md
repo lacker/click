@@ -50,6 +50,7 @@ predicate permutation3(int32 p[], int32 a, int32 b, int32 c) {
 
 int32 sort3_permutation_predicate(int32 p[3]) {
     requires valid_range(p[0..3]);
+    requires write(p[0..3]);
     ensures permutation: permutation3(p, old(p[0]), old(p[1]), old(p[2])) by {
         symbolic_execute();
         unfold(permutation3);

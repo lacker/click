@@ -2520,6 +2520,7 @@ fn annotated_function(
         next_quantifier_variable: 3_000_000,
     };
     let body = lowerer.lower_statement(parsed_function.body())?;
+    let (resource_requires, resource_ensures) = function_resource_summary(function_block);
     Ok(c_function(
         parsed_function.return_type().to_kernel_type(),
         parsed_function.name().to_string(),
@@ -2529,7 +2530,8 @@ fn annotated_function(
             .map(syntax::C0Parameter::to_kernel_parameter)
             .collect(),
         body,
-    ))
+    )
+    .with_resource_summary(resource_requires, resource_ensures))
 }
 
 struct AnnotationLowerer<'a> {
@@ -14112,6 +14114,7 @@ mod tests {
 
         int32 fill3(int32* p) {
             requires valid_range(p, 12);
+            requires write(p[0..3]);
             ensures returns_second: result == 2 by auto;
         }
     "#;
@@ -14166,10 +14169,18 @@ mod tests {
         );
         assert_eq!(
             function.requires(),
-            &[Requirement::ValidRange {
-                name: "p".to_string(),
-                bytes: RangeBytes::Constant(12)
-            }]
+            &[
+                Requirement::ValidRange {
+                    name: "p".to_string(),
+                    bytes: RangeBytes::Constant(12)
+                },
+                Requirement::Resource(ResourceClause::Write(ContractSegment {
+                    state: ContractSegmentState::Current,
+                    base: CExpression::Variable("p".to_string()),
+                    start: CExpression::Value(int32(0)),
+                    end: CExpression::Value(int32(3)),
+                }))
+            ]
         );
         assert_eq!(function.ensures().len(), 1);
         let ensure = &function.ensures()[0];
@@ -15058,6 +15069,7 @@ mod tests {
 
             int32 compare_swap2(int32* p) {
                 requires valid_range(p, 8);
+                requires write(p[0..2]);
                 ensures sorted: sorted_pair(p) by {
                     symbolic_execute();
                     unfold(sorted_pair);
@@ -15219,6 +15231,7 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
+                requires write(p[1..2]);
                 mutable p[1..2] by {
                     bounded_execute();
                     frame();
@@ -15289,6 +15302,7 @@ mod tests {
 
             int32 fill3_array_loop(int32 p[3]) {
                 requires valid_range(p, 12);
+                requires write(p[0..3]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= 3 by auto;
@@ -15314,6 +15328,7 @@ mod tests {
 
             int32 fill3_array_loop(int32 p[3]) {
                 requires valid_range(p, 12);
+                requires write(p[0..3]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= 3 by auto;
@@ -15460,6 +15475,7 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
+                requires write(p[1..2]);
                 ensures writes_second: p[1] == 9 by auto;
                 ensures keeps_first: p[0] == old(p[0]) by auto;
             }
@@ -15492,6 +15508,7 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
+                requires write(p[1..2]);
                 ensures keeps_first_cell: forall (int32 k) {
                     0 <= k and k < 1 implies p[k] == old(p[k])
                 } by auto;
@@ -15523,6 +15540,8 @@ mod tests {
                 requires j >= 0;
                 requires j < n;
                 requires valid_range(p[0..n]);
+                requires write(p[i..i + 1]);
+                requires read(p[j..j + 1]);
                 requires disjoint(p[i..i + 1], p[j..j + 1]);
                 mutable p[i..i + 1] by frame;
                 ensures keeps_j: result == old(p[j]) by auto;
@@ -15548,6 +15567,7 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
+                requires write(p[1..2]);
                 ensures keeps_second_cell: forall (int32 k) {
                     1 <= k and k < 2 implies p[k] == old(p[k])
                 } by auto;
@@ -15577,6 +15597,7 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
+                requires write(p[1..2]);
                 mutable p[1..2] by frame;
                 mutable p[0..2] by frame;
                 ensures returns_written: result == 9 by auto;
@@ -15608,6 +15629,7 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range((p + 1)[0..1]);
+                requires write((p + 1)[0..1]);
                 mutable (p + 1)[0..1] by frame;
                 ensures returns_written: result == 9 by auto;
             }
@@ -15661,6 +15683,7 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
+                requires write(p[1..2]);
                 mutable p[0..1] by auto;
                 ensures returns_written: result == 9 by auto;
             }
@@ -15694,6 +15717,7 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
+                requires write(p[1..2]);
                 immutable by auto;
                 ensures returns_written: result == 9 by auto;
             }
@@ -15753,6 +15777,7 @@ mod tests {
 
             int32 write_second(int32* p) {
                 requires valid_range(p, 8);
+                requires write(p[1..2]);
                 ensures keeps_second: p[1] == old(p[1]) by auto;
             }
         "#;
@@ -15824,6 +15849,7 @@ mod tests {
             int32 fill_tail(int32 p[], int32 n) {
                 requires n >= 1 and n <= 2147483647;
                 requires valid_range(p, n * 4);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 1 and i <= n by auto;
                     invariant p[0] == old(p[0]) by auto;
@@ -15857,6 +15883,7 @@ mod tests {
             int32 fill_tail(int32 p[], int32 n) {
                 requires n >= 1 and n <= 2147483647;
                 requires valid_range(p[0..n]);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 1 and i <= n by auto;
                     invariant forall (int32 k) {
@@ -15896,6 +15923,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -15931,6 +15959,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -15967,6 +15996,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -16003,6 +16033,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -16041,6 +16072,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -16082,6 +16114,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -16120,6 +16153,7 @@ mod tests {
                 requires n >= 1;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 1 by auto;
                     invariant i <= n by auto;
@@ -16158,6 +16192,8 @@ mod tests {
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
                 requires valid_range(q[0..n]);
+                requires write(p[0..n]);
+                requires write(q[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -16196,6 +16232,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -16255,6 +16292,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -16368,6 +16406,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -16406,6 +16445,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -16451,6 +16491,7 @@ mod tests {
                 requires n >= 1;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 1 by auto;
                     invariant i <= n by auto;
@@ -16489,6 +16530,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
+                requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -16622,6 +16664,8 @@ mod tests {
                 requires n <= 2147483647;
                 requires valid_range(dst[0..n]);
                 requires valid_range(src[0..n]);
+                requires write(dst[0..n]);
+                requires read(src[0..n]);
                 requires disjoint(dst[0..n], src[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -16675,6 +16719,8 @@ mod tests {
                 requires n <= 2147483647;
                 requires valid_range(dst[0..n]);
                 requires valid_range(src[0..n]);
+                requires write(dst[0..n]);
+                requires read(src[0..n]);
                 requires disjoint(dst[0..n], src[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -16723,6 +16769,8 @@ mod tests {
                 requires n <= 2147483647;
                 requires valid_range(dst[0..n]);
                 requires valid_range(src[0..n]);
+                requires write(dst[0..n]);
+                requires read(src[0..n]);
                 requires disjoint(dst[0..n], src[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -16898,6 +16946,12 @@ mod tests {
             CMemory::new(),
             &std::collections::BTreeMap::from([("p".to_string(), (base.clone(), 12))]),
         );
+        let initial_resources =
+            ResourceContext::new().with_resource(CResource::Write(CMemoryRange::new(
+                base.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(3),
+            )));
         let final_memory = initial_memory
             .clone()
             .with_block("local:i", 4)
@@ -16908,14 +16962,18 @@ mod tests {
 
         assert_eq!(
             verified.specification.state(),
-            &CState::new().with_memory(initial_memory)
+            &CState::new()
+                .with_memory(initial_memory)
+                .with_resource_context(initial_resources.clone())
         );
         assert_eq!(verified.specification.arguments(), &[c_pointer_value(base)]);
         assert_eq!(
             verified.specification.outcome(),
             &CFunctionOutcome::Return {
                 value: int32(2),
-                state: CState::new().with_memory(final_memory),
+                state: CState::new()
+                    .with_memory(final_memory)
+                    .with_resource_context(initial_resources),
             }
         );
         assert_eq!(
@@ -16923,7 +16981,15 @@ mod tests {
             &Proposition::CFunctionSatisfiesSpecification {
                 function: syntax::parse_function(FILL3_C)
                     .expect("fill3 should parse")
-                    .to_kernel_function(),
+                    .to_kernel_function()
+                    .with_resource_summary(
+                        vec![CResourceSpec::Write(CMemorySegment::new(
+                            CExpression::Variable("p".to_string()),
+                            CExpression::Value(int32(0)),
+                            CExpression::Value(int32(3)),
+                        ))],
+                        Vec::new(),
+                    ),
                 specification: verified.specification.clone(),
             }
         );

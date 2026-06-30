@@ -1361,10 +1361,6 @@ impl CFunction {
     pub fn resource_ensures(&self) -> &[CResourceSpec] {
         &self.resource_ensures
     }
-
-    pub fn has_resource_summary(&self) -> bool {
-        !self.resource_requires.is_empty() || !self.resource_ensures.is_empty()
-    }
 }
 
 impl CLoopInvariantCheck {

@@ -25,6 +25,8 @@ int32 shifted_copy_effect_uses_covering_disjoint(int32 dst[], int32 src[], int32
     requires n <= 2147483647;
     requires valid_range(dst[0..n]);
     requires valid_range(src[0..n]);
+    requires write(dst[0..n]);
+    requires read(src[0..n]);
     requires disjoint(dst[0..n], src[0..n]);
     for loop(0) {
         invariant i >= 1;

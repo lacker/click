@@ -122,6 +122,12 @@ Larger example projects live directly under `examples/`. They contain ordinary
   permit stores.
 - `mdtests/resource_context_write_implies_read.md`: write permission permits
   reads and satisfies read guarantees.
+- `mdtests/resource_context_uint8_read.md`: read permission over `uint8[]`
+  byte indexes.
+- `mdtests/resource_context_uint8_write.md`: write permission over `uint8[]`
+  byte indexes.
+- `mdtests/resource_context_uint8_rejects_missing_read.md`: byte permission for
+  one `uint8[]` element does not cover another.
 - `mdtests/resource_summary_requires_returned_write.md`: helper call consumes a
   write resource unless its summary returns it.
 - `mdtests/resource_summary_read_does_not_consume_write.md`: helper read

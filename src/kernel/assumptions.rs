@@ -500,6 +500,7 @@ impl Assumptions {
                     )
                     || self.has_upper_bound_below(&left, &right)
                     || self.has_successor_upper_bound_below(&left, &right)
+                    || self.has_add_const_upper_bound_below(&left, &right)
                     || self.has_lower_bound_above(&right, &left)
                     || self.has_add_const_lower_bound_above(&right, &left)
                     || self.positive_offset_is_proven_above(&left, &right)
@@ -536,6 +537,7 @@ impl Assumptions {
                                 true,
                             ) || self.has_lower_bound_above(&base, &zero))
                     })
+                    || self.has_add_const_upper_bound_at_or_below(&left, &right)
                     || self.has_condition_fact(
                         ConditionTerm::signed_less_than(left.clone(), right.clone()),
                         true,
@@ -867,6 +869,72 @@ impl Assumptions {
                     )
                 }
                 _ => false,
+            })
+    }
+
+    pub(super) fn has_add_const_upper_bound_below(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        let Some((base, addend)) = left.add_const_parts() else {
+            return false;
+        };
+        if self.decide(&ConditionTerm::signed_add_overflows(
+            base.clone(),
+            Bitvector32Term::Constant(addend),
+        )) != Some(false)
+        {
+            return false;
+        }
+
+        self.condition_facts
+            .iter()
+            .filter_map(|(condition, value)| condition_as_order_fact(condition, *value))
+            .any(|(fact_left, upper, strict)| {
+                if fact_left != base {
+                    return false;
+                }
+                let Some(upper) = signed_const_add(&upper, addend) else {
+                    return false;
+                };
+                if strict {
+                    self.decide(&ConditionTerm::signed_less_equal(upper, right.clone()))
+                        == Some(true)
+                } else {
+                    self.decide(&ConditionTerm::signed_less_than(upper, right.clone()))
+                        == Some(true)
+                }
+            })
+    }
+
+    pub(super) fn has_add_const_upper_bound_at_or_below(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        let Some((base, addend)) = left.add_const_parts() else {
+            return false;
+        };
+        if self.decide(&ConditionTerm::signed_add_overflows(
+            base.clone(),
+            Bitvector32Term::Constant(addend),
+        )) != Some(false)
+        {
+            return false;
+        }
+
+        self.condition_facts
+            .iter()
+            .filter_map(|(condition, value)| condition_as_order_fact(condition, *value))
+            .any(|(fact_left, upper, _strict)| {
+                if fact_left != base {
+                    return false;
+                }
+                let Some(upper) = signed_const_add(&upper, addend) else {
+                    return false;
+                };
+                self.decide(&ConditionTerm::signed_less_equal(upper, right.clone())) == Some(true)
             })
     }
 
@@ -2099,6 +2167,29 @@ impl Assumptions {
         end: &Bitvector32Term,
     ) -> bool {
         let Some(index) = pointer.element_index_from_base(base) else {
+            return false;
+        };
+        self.decide(&ConditionTerm::signed_less_equal(
+            start.clone(),
+            index.clone(),
+        )) == Some(true)
+            && self.decide(&ConditionTerm::signed_less_than(index, end.clone())) == Some(true)
+    }
+
+    pub(super) fn pointer_access_in_range(
+        &self,
+        pointer: &Pointer,
+        byte_width: u32,
+        base: &Pointer,
+        start: &Bitvector32Term,
+        end: &Bitvector32Term,
+    ) -> bool {
+        let index = match byte_width {
+            1 => pointer_byte_offset_from_base(pointer, base),
+            4 => pointer.element_index_from_base(base),
+            _ => None,
+        };
+        let Some(index) = index else {
             return false;
         };
         self.decide(&ConditionTerm::signed_less_equal(

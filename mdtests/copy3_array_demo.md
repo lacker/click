@@ -23,6 +23,8 @@ verifying "copy3.c";
 int32 copy3(int32 dst[3], int32 src[3]) {
     requires valid_range(dst, 12);
     requires valid_range(src, 12);
+    requires write(dst[0..3]);
+    requires read(src[0..3]);
     requires disjoint(dst[0..3], src[0..3]);
 
     for loop(0) {

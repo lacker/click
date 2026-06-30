@@ -1,5 +1,45 @@
 use super::prelude::*;
 
+fn memory_range(
+    base: Pointer,
+    start: impl Into<Bitvector32Term>,
+    end: impl Into<Bitvector32Term>,
+) -> CMemoryRange {
+    CMemoryRange::new(base, start.into(), end.into())
+}
+
+fn read_resource(
+    base: Pointer,
+    start: impl Into<Bitvector32Term>,
+    end: impl Into<Bitvector32Term>,
+) -> CResource {
+    CResource::Read(memory_range(base, start, end))
+}
+
+fn write_resource(
+    base: Pointer,
+    start: impl Into<Bitvector32Term>,
+    end: impl Into<Bitvector32Term>,
+) -> CResource {
+    CResource::Write(memory_range(base, start, end))
+}
+
+fn read_context(
+    base: Pointer,
+    start: impl Into<Bitvector32Term>,
+    end: impl Into<Bitvector32Term>,
+) -> ResourceContext {
+    ResourceContext::new().with_resource(read_resource(base, start, end))
+}
+
+fn write_context(
+    base: Pointer,
+    start: impl Into<Bitvector32Term>,
+    end: impl Into<Bitvector32Term>,
+) -> ResourceContext {
+    ResourceContext::new().with_resource(write_resource(base, start, end))
+}
+
 #[test]
 fn concrete_max_executes_without_list_encoding() {
     let state = c_max_state(int32(0), int32(1));
@@ -122,7 +162,10 @@ fn function_call_threads_memory_but_discards_callee_locals() {
         block: "block".to_string(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let state = CState::new().with_local("caller", int32(42));
+    let resources = write_context(pointer.clone(), 0, 1);
+    let state = CState::new()
+        .with_local("caller", int32(42))
+        .with_resource_context(resources.clone());
     let function = c_function(
         CType::Int32,
         "store_and_load",
@@ -135,7 +178,8 @@ fn function_call_threads_memory_but_discards_callee_locals() {
     let arguments = vec![c_pointer_value(pointer.clone())];
     let final_state = CState::new()
         .with_local("caller", int32(42))
-        .with_memory(CMemory::new().store(pointer.clone(), int32(9)));
+        .with_memory(CMemory::new().store(pointer.clone(), int32(9)))
+        .with_resource_context(resources);
     let store_obligation = Proposition::CMemoryCanStore {
         memory: CMemory::new(),
         pointer,
@@ -163,6 +207,52 @@ fn function_call_threads_memory_but_discards_callee_locals() {
                 },
             }),
         )
+    );
+}
+
+#[test]
+fn function_call_does_not_inherit_undeclared_resources() {
+    let pointer = Pointer {
+        block: "block".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let resources = write_context(pointer.clone(), 0, 1);
+    let state = CState::new().with_resource_context(resources);
+    let helper = c_function(
+        CType::Int32,
+        "store_and_load",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_seq(
+            c_store(c_variable("p"), c_int32_literal(9)),
+            c_return(c_load(c_variable("p"))),
+        ),
+    );
+    let caller = c_function(
+        CType::Int32,
+        "caller",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_call_assign("result", "store_and_load", vec![c_variable("p")]),
+    );
+    let arguments = vec![c_pointer_value(pointer.clone())];
+    let theorem = prove_symbolic_c_function_execution_with_environment(
+        state.clone(),
+        caller.clone(),
+        arguments.clone(),
+        Assumptions::new(),
+        CFunctionEnvironment::new().with_function(helper),
+    )
+    .expect("call should report missing callee permission");
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CFunctionExecutes {
+            state,
+            function: caller,
+            arguments,
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::MissingResource {
+                resource: write_resource(pointer, 0, 1),
+            }),
+        }
     );
 }
 
@@ -1318,7 +1408,14 @@ fn logical_and_or_short_circuit_right_operand() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let invalid_load = c_load(c_pointer_value(invalid_pointer));
-    let state = CState::new();
+    let state = CState::new().with_resource_context(read_context(
+        Pointer {
+            block: "missing".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        0,
+        1,
+    ));
     let examples = [
         (c_and(c_int32_literal(0), invalid_load.clone()), int32(0)),
         (c_or(c_int32_literal(1), invalid_load.clone()), int32(1)),
@@ -1481,12 +1578,15 @@ fn store_then_load_threads_native_memory() {
         block: "block".to_string(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let state = CState::new();
+    let resources = write_context(pointer.clone(), 0, 1);
+    let state = CState::new().with_resource_context(resources.clone());
     let statement = c_seq(
         c_store(c_pointer_value(pointer.clone()), c_int32_literal(9)),
         c_return(c_load(c_pointer_value(pointer.clone()))),
     );
-    let final_state = CState::new().with_memory(CMemory::new().store(pointer.clone(), int32(9)));
+    let final_state = CState::new()
+        .with_memory(CMemory::new().store(pointer.clone(), int32(9)))
+        .with_resource_context(resources);
     let store_obligation = Proposition::CMemoryCanStore {
         memory: CMemory::new(),
         pointer,
@@ -1517,7 +1617,9 @@ fn symbolic_load_from_incomplete_memory_reports_validity_obligation() {
         block: "block".to_string(),
         offset: PointerOffsetTerm::Constant(4),
     };
-    let state = CState::new().with_local("p", CValue::Pointer(pointer.clone()));
+    let state = CState::new()
+        .with_local("p", CValue::Pointer(pointer.clone()))
+        .with_resource_context(read_context(pointer.clone(), 0, 1));
     let statement = c_return(c_load(c_variable("p")));
     let execution =
         prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
@@ -1560,12 +1662,17 @@ fn block_backed_store_then_load_needs_no_memory_obligation() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let memory = CMemory::new().with_block("block", 16);
-    let state = CState::new().with_memory(memory.clone());
+    let resources = write_context(pointer.clone(), 0, 1);
+    let state = CState::new()
+        .with_memory(memory.clone())
+        .with_resource_context(resources.clone());
     let statement = c_seq(
         c_store(c_pointer_value(pointer.clone()), c_int32_literal(9)),
         c_return(c_load(c_pointer_value(pointer.clone()))),
     );
-    let final_state = CState::new().with_memory(memory.store(pointer, int32(9)));
+    let final_state = CState::new()
+        .with_memory(memory.store(pointer, int32(9)))
+        .with_resource_context(resources);
     let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
         .expect("in-range block store/load should execute");
 
@@ -1591,7 +1698,8 @@ fn block_backed_missing_load_returns_symbolic_value_without_obligation() {
     let memory = CMemory::new().with_block("block", 16);
     let state = CState::new()
         .with_local("p", CValue::Pointer(pointer.clone()))
-        .with_memory(memory.clone());
+        .with_memory(memory.clone())
+        .with_resource_context(read_context(pointer.clone(), 0, 1));
     let statement = c_return(c_load(c_variable("p")));
     let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
         .expect("in-range missing load should produce symbolic value");
@@ -1624,10 +1732,12 @@ fn pointer_addition_scales_int32_offsets_for_loads() {
     };
     let memory = CMemory::new()
         .with_block("block", 16)
-        .store(second, int32(23));
+        .store(second.clone(), int32(23));
+    let resources = read_context(base.clone(), 1, 2);
     let state = CState::new()
-        .with_local("p", CValue::Pointer(base))
-        .with_memory(memory);
+        .with_local("p", CValue::Pointer(base.clone()))
+        .with_memory(memory)
+        .with_resource_context(resources.clone());
     let statement = c_return(c_load(c_add(c_variable("p"), c_int32_literal(1))));
     let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
         .expect("pointer arithmetic load should execute");
@@ -1647,13 +1757,12 @@ fn pointer_addition_scales_int32_offsets_for_loads() {
                             offset: PointerOffsetTerm::Constant(0),
                         }),
                     )
-                    .with_memory(CMemory::new().with_block("block", 16).store(
-                        Pointer {
-                            block: "block".to_string(),
-                            offset: PointerOffsetTerm::Constant(4),
-                        },
-                        int32(23),
-                    ),),
+                    .with_memory(
+                        CMemory::new()
+                            .with_block("block", 16)
+                            .store(second, int32(23),),
+                    )
+                    .with_resource_context(resources),
             },
         }
     );
@@ -1671,8 +1780,9 @@ fn pointer_addition_out_of_range_load_reports_validity_obligation() {
     };
     let memory = CMemory::new().with_block("block", 4);
     let state = CState::new()
-        .with_local("p", CValue::Pointer(base))
-        .with_memory(memory.clone());
+        .with_local("p", CValue::Pointer(base.clone()))
+        .with_memory(memory.clone())
+        .with_resource_context(read_context(base, 1, 2));
     let statement = c_return(c_load(c_add(c_variable("p"), c_int32_literal(1))));
     let execution =
         prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
@@ -1715,10 +1825,12 @@ fn fixed_bound_store_loop_touches_only_valid_pointer_range() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let memory = CMemory::new().with_block("block", 12);
+    let resources = write_context(base.clone(), 0, 3);
     let state = CState::new()
-        .with_local("p", CValue::Pointer(base))
+        .with_local("p", CValue::Pointer(base.clone()))
         .with_local("i", int32(0))
-        .with_memory(memory.clone());
+        .with_memory(memory.clone())
+        .with_resource_context(resources.clone());
     let loop_statement = c_while(
         c_less_than(c_variable("i"), c_int32_literal(3)),
         Vec::new(),
@@ -1759,7 +1871,8 @@ fn fixed_bound_store_loop_touches_only_valid_pointer_range() {
             }),
         )
         .with_local("i", int32(3))
-        .with_memory(final_memory);
+        .with_memory(final_memory)
+        .with_resource_context(resources);
     let execution =
         prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
 
@@ -1795,7 +1908,8 @@ fn symbolic_valid_range_discharges_pointer_access_obligation() {
     let state = CState::new()
         .with_local("p", CValue::Pointer(base.clone()))
         .with_local("i", int32(i_bits.clone()))
-        .with_memory(memory.clone());
+        .with_memory(memory.clone())
+        .with_resource_context(write_context(base.clone(), 0, n_bits.clone()));
     let statement = c_store(c_add(c_variable("p"), c_variable("i")), c_int32_literal(7));
     let assumptions = Assumptions::new()
         .assume_proposition(Proposition::CMemoryValidRange {
@@ -1912,6 +2026,42 @@ fn interval_arithmetic_uses_lower_bound_for_incremented_values() {
         ConditionTerm::signed_greater_than(incremented, Bitvector32Term::Constant(0)),
         true,
     )));
+}
+
+#[test]
+fn additive_upper_bound_covers_incremented_pointer_access() {
+    let j = Variable(74);
+    let j_bits = Bitvector32Term::Variable(j);
+    let incremented = Bitvector32Term::add(j_bits.clone(), Bitvector32Term::Constant(1));
+    let base = Pointer {
+        block: "p".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let pointer = base.offset_by_int32_elements(incremented.clone());
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(j_bits.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(j_bits, Bitvector32Term::Constant(2)),
+            true,
+        );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_less_than(
+            incremented,
+            Bitvector32Term::Constant(3),
+        )),
+        Some(true)
+    );
+    assert!(assumptions.pointer_access_in_range(
+        &pointer,
+        4,
+        &base,
+        &Bitvector32Term::Constant(0),
+        &Bitvector32Term::Constant(3),
+    ));
 }
 
 #[test]

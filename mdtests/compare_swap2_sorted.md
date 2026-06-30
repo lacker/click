@@ -22,6 +22,7 @@ verifying "compare_swap2.c";
 
 int32 compare_swap2(int32 p[2]) {
     requires valid_range(p[0..2]);
+    requires write(p[0..2]);
     ensures sorted: p[0] <= p[1] by auto;
 }
 ```

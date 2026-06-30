@@ -13,6 +13,7 @@ int32 read_second(int32* p) {
 verifying "pointer_range_missing_requires.c";
 
 int32 read_second(int32* p) {
+    requires read(p[1..2]);
     ensures reads_second_cell: result == p[1] by auto;
 }
 ```

@@ -48,6 +48,7 @@ predicate sorted_range(int32 p[], int32 lo, int32 hi) {
 
 int32 sort3(int32 p[3]) {
     requires valid_range(p[0..3]);
+    requires write(p[0..3]);
     ensures sorted: sorted(p, 3) by {
         symbolic_execute();
         unfold(sorted);

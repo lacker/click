@@ -1454,14 +1454,14 @@ pub(super) fn resource_context_has_read(
     byte_width: u32,
     assumptions: &Assumptions,
 ) -> bool {
-    if byte_width != 4 {
-        return false;
-    }
-
     resources.resources().iter().any(|resource| match resource {
-        CResource::Read(range) | CResource::Write(range) => {
-            assumptions.pointer_in_range(pointer, range.base(), range.start(), range.end())
-        }
+        CResource::Read(range) | CResource::Write(range) => assumptions.pointer_access_in_range(
+            pointer,
+            byte_width,
+            range.base(),
+            range.start(),
+            range.end(),
+        ),
     })
 }
 
@@ -1471,15 +1471,15 @@ pub(super) fn resource_context_has_write(
     byte_width: u32,
     assumptions: &Assumptions,
 ) -> bool {
-    if byte_width != 4 {
-        return false;
-    }
-
     resources.resources().iter().any(|resource| match resource {
         CResource::Read(_) => false,
-        CResource::Write(range) => {
-            assumptions.pointer_in_range(pointer, range.base(), range.start(), range.end())
-        }
+        CResource::Write(range) => assumptions.pointer_access_in_range(
+            pointer,
+            byte_width,
+            range.base(),
+            range.start(),
+            range.end(),
+        ),
     })
 }
 

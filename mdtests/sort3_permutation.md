@@ -36,6 +36,7 @@ verifying "sort3_permutation.c";
 
 int32 sort3_permutation(int32 p[3]) {
     requires valid_range(p[0..3]);
+    requires write(p[0..3]);
     ensures permutation: permutation(p, old(p), 0, 3) by {
         symbolic_execute();
         unfold(permutation);

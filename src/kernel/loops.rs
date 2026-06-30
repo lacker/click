@@ -19,42 +19,46 @@ pub(super) fn execute_c_call_assign_paths(
         }]);
     };
 
-    let paths =
-        execute_c_function_paths(state, function, arguments, assumptions, environment, budget)?
-            .into_iter()
-            .map(|path| {
-                let outcome = match path.outcome {
-                    CFunctionOutcome::Return { value, mut state } => {
-                        if state.locals.is_array_object(target) {
-                            return CStatementExecutionPath {
-                                outcome: CStatementOutcome::RuntimeError(
-                                    CRuntimeError::TypeMismatch,
-                                ),
-                                facts: path.facts,
-                                obligations: path.obligations,
-                            };
-                        }
-                        sync_stack_local(&mut state, target, &value);
-                        let c_type = state
-                            .locals
-                            .object_type(target)
-                            .unwrap_or_else(|| value.c_type());
-                        state.locals.set_typed(target.to_string(), value, c_type);
-                        CStatementOutcome::Normal(state)
-                    }
-                    CFunctionOutcome::UndefinedBehavior(undefined_behavior) => {
-                        CStatementOutcome::UndefinedBehavior(undefined_behavior)
-                    }
-                    CFunctionOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
-                };
-
-                CStatementExecutionPath {
-                    outcome,
-                    facts: path.facts,
-                    obligations: path.obligations,
+    let paths = execute_c_function_call_paths(
+        state,
+        function,
+        arguments,
+        assumptions,
+        environment,
+        budget,
+    )?
+    .into_iter()
+    .map(|path| {
+        let outcome = match path.outcome {
+            CFunctionOutcome::Return { value, mut state } => {
+                if state.locals.is_array_object(target) {
+                    return CStatementExecutionPath {
+                        outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts: path.facts,
+                        obligations: path.obligations,
+                    };
                 }
-            })
-            .collect::<Vec<_>>();
+                sync_stack_local(&mut state, target, &value);
+                let c_type = state
+                    .locals
+                    .object_type(target)
+                    .unwrap_or_else(|| value.c_type());
+                state.locals.set_typed(target.to_string(), value, c_type);
+                CStatementOutcome::Normal(state)
+            }
+            CFunctionOutcome::UndefinedBehavior(undefined_behavior) => {
+                CStatementOutcome::UndefinedBehavior(undefined_behavior)
+            }
+            CFunctionOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
+        };
+
+        CStatementExecutionPath {
+            outcome,
+            facts: path.facts,
+            obligations: path.obligations,
+        }
+    })
+    .collect::<Vec<_>>();
     budget.consume_paths(paths.len())?;
     Ok(paths)
 }

@@ -1,7 +1,7 @@
 # read resources reject stores
 
-This checks that `read(...)` does not grant write permission. With resource
-checking active, external stores still require a covering `write(...)`.
+This checks that `read(...)` does not grant write permission. External stores
+require a covering `write(...)`.
 
 ```c filename=write_with_read_only.c
 int32 write_with_read_only(int32 p[]) {

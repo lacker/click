@@ -85,11 +85,12 @@ int32 write_next(int32 p[], int32 x) {
 }
 ```
 
-Permission checking is opt-in. When a function has no resource context,
-external loads and stores use the older memory-safety rules. When the current
-resource context is non-empty, external `int32` memory loads require covering
-`read(...)` or `write(...)`, and external `int32` memory stores require covering
-`write(...)`. Local stack accesses do not require resources.
+Permission checking is mandatory for external memory. External loads require
+covering `read(...)` or `write(...)`, and external stores require covering
+`write(...)`. Resource ranges use the element width of the pointer expression,
+so `int32 p[]` ranges count four-byte cells and `uint8 bytes[]` ranges count
+bytes. Local stack accesses do not require resources. A function with no
+resource context has no permission to access external memory.
 In practice, top-level verification gets a resource context from
 `requires read(...)` and `requires write(...)` clauses, while function calls use
 the callee's resource summary.
@@ -105,14 +106,16 @@ A call can pass a covered subrange, such as passing `write(p[0..1])` from a
 caller that has `write(p[0..2])`; Click keeps the residue and rejoins adjacent
 returned ranges. The same applies to symbolic ranges when the current facts
 prove the subrange is covered. In this first slice, `write(...)` also seeds the
-matching symbolic memory cells for concrete ranges, so simple one-cell writes do
-not need a separate `valid_range(...)` requirement. `read(...)` does not seed
-memory cells; validity remains separate from permission.
+matching symbolic memory cells for concrete `int32[]` ranges, so simple
+one-cell int32 writes do not need a separate `valid_range(...)` requirement.
+`read(...)` does not seed memory cells; validity remains separate from
+permission.
 
 This is intentionally not the full permission system. There are no fractions,
 ownership predicates, `free` permissions, explicit resource algebra proof steps,
-or heap allocation yet. Existing `valid_range`, `mutable`, and `immutable`
-examples continue to work without opting into resource clauses.
+or heap allocation yet. `valid_range`, `mutable`, and `immutable` remain
+separate from permission: validity proves an access is in bounds, while
+resources authorize the access.
 
 ## Propositions
 

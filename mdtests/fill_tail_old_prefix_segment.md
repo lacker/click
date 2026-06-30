@@ -22,6 +22,7 @@ verifying "fill_tail_old_prefix_segment.c";
 int32 fill_tail_old_prefix_segment(int32 p[], int32 n) {
     requires n >= 1 and n <= 2147483647;
     requires valid_range(p[0..n]);
+    requires write(p[0..n]);
     for loop(0) {
         invariant i >= 1 and i <= n by auto;
         invariant forall (int32 k) {
