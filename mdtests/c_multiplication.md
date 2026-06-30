@@ -43,5 +43,5 @@ int32 multiply_overflow() {
 ```
 
 ```expect
-fail: outcome was UndefinedBehavior(SignedOverflow)
+fail: undefined behavior: signed overflow
 ```

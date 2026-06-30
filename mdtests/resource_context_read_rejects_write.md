@@ -22,5 +22,5 @@ int32 write_with_read_only(int32 p[]) {
 ```
 
 ```expect
-fail: MissingResource
+fail: missing resource `write(p[0..1])`
 ```

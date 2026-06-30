@@ -156,6 +156,11 @@ sequence:
   a helper summary.
 - `mdtests/permission_free_split_rejoin.md`: free permission supports subrange
   split and rejoin.
+- `mdtests/free_statement.md`: executable `free(p);` consumes free permission.
+- `mdtests/free_statement_no_write_required.md`: `free(p);` does not require
+  write permission.
+- `mdtests/free_statement_write_after.md`: writing after `free(p);` fails.
+- `mdtests/free_statement_double_free.md`: a second `free(p);` fails.
 
 ## Predicates And Pure Click Functions
 

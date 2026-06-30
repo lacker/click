@@ -95,7 +95,7 @@ permission:
 This lets a contract say that code may write a field without being allowed to
 release the whole object.
 
-Free resources are linear across function calls. If a callee requires
+Free resources are linear. If a callee requires
 `free(p[0..1])` and does not return it, the caller loses that free resource.
 Consuming a free resource also removes overlapping `read(...)` and `write(...)`
 resources from the caller context. That models the permission consequence of
@@ -103,8 +103,10 @@ deallocation: after handing off authority to release a range, the caller cannot
 continue accessing that same range unless the callee explicitly returns the
 needed resources.
 
-This is still a resource-level model. Click does not yet have C heap allocation
-or an executable `free(p)` statement in the C0 semantics.
+The executable C0 statement `free(p);` consumes `free(p[0..1])` and removes
+overlapping access resources in the same way. This is still a narrow
+resource-level model: Click does not yet have C heap allocation, allocation-size
+tracking, or block invalidation.
 
 ## Function Calls
 
@@ -168,12 +170,13 @@ Implemented today:
 - copyable read transfer,
 - linear write transfer through function summaries,
 - linear free transfer that removes overlapping access resources when consumed,
+- executable `free(p);` as a one-cell free-resource consumer,
 - covered subrange splitting and adjacent range rejoining.
 
 Not implemented yet:
 
 - fractional permissions,
-- C heap allocation or executable `free(p)` semantics,
+- C heap allocation or allocation-sized deallocation semantics,
 - abstract resource predicates,
 - ownership predicates,
 - explicit resource algebra proof steps,

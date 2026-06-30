@@ -21,5 +21,5 @@ int32 write_second_bad_old(int32* p) {
 ```
 
 ```expect
-fail: left side evaluated to Int32(Constant(9))
+fail: left side evaluated to 9, right side evaluated to load(p[1])
 ```

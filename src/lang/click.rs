@@ -2375,6 +2375,715 @@ fn describe_obligations(obligations: &[ProofObligation]) -> String {
     format!("[{}]", entries.join(", "))
 }
 
+fn describe_function_outcome(
+    outcome: &CFunctionOutcome,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    match outcome {
+        CFunctionOutcome::Return { value, .. } => {
+            format!(
+                "returned {}",
+                describe_c_value(value, parameters, arguments)
+            )
+        }
+        CFunctionOutcome::UndefinedBehavior(kind) => match kind {
+            crate::kernel::CUndefinedBehavior::SignedOverflow => {
+                "undefined behavior: signed overflow".to_string()
+            }
+            crate::kernel::CUndefinedBehavior::DivisionByZero => {
+                "undefined behavior: division by zero".to_string()
+            }
+            crate::kernel::CUndefinedBehavior::InvalidShift => {
+                "undefined behavior: invalid shift".to_string()
+            }
+            crate::kernel::CUndefinedBehavior::InvalidMemory => {
+                "undefined behavior: invalid memory access".to_string()
+            }
+        },
+        CFunctionOutcome::RuntimeError(error) => {
+            format!(
+                "runtime error: {}",
+                describe_runtime_error(error, parameters, arguments)
+            )
+        }
+    }
+}
+
+fn describe_runtime_error(
+    error: &crate::kernel::CRuntimeError,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    match error {
+        crate::kernel::CRuntimeError::UnboundVariable(name) => {
+            format!("unbound variable `{name}`")
+        }
+        crate::kernel::CRuntimeError::UnknownFunction(name) => {
+            format!("unknown function `{name}`")
+        }
+        crate::kernel::CRuntimeError::TypeMismatch => "type mismatch".to_string(),
+        crate::kernel::CRuntimeError::WrongArity { expected, actual } => {
+            format!("wrong argument count: expected {expected}, got {actual}")
+        }
+        crate::kernel::CRuntimeError::MissingReturn => "missing return".to_string(),
+        crate::kernel::CRuntimeError::MissingResource { resource } => format!(
+            "missing resource `{}`",
+            describe_resource(resource, parameters, arguments)
+        ),
+    }
+}
+
+fn describe_resources(
+    resources: &[CResource],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    if resources.is_empty() {
+        return "[]".to_string();
+    }
+    let entries = resources
+        .iter()
+        .map(|resource| describe_resource(resource, parameters, arguments))
+        .collect::<Vec<_>>();
+    format!("[{}]", entries.join(", "))
+}
+
+fn describe_resource(
+    resource: &CResource,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let (name, range) = match resource {
+        CResource::Read(range) => ("read", range),
+        CResource::Write(range) => ("write", range),
+        CResource::Free(range) => ("free", range),
+    };
+    format!(
+        "{name}({})",
+        describe_memory_range(range, parameters, arguments)
+    )
+}
+
+fn describe_memory_range(
+    range: &CMemoryRange,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    if let Some(description) = describe_parameter_relative_range(range, parameters, arguments) {
+        return description;
+    }
+    format!(
+        "{}[{}..{}]",
+        describe_pointer(range.base(), parameters, arguments),
+        describe_bitvector(range.start()),
+        describe_bitvector(range.end())
+    )
+}
+
+fn describe_parameter_relative_range(
+    range: &CMemoryRange,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    for (parameter, argument) in parameters.iter().zip(arguments) {
+        let CExpression::Value(CValue::Pointer(base)) = argument else {
+            continue;
+        };
+        let Some(base_index) = diagnostic_pointer_element_index_from_base(
+            range.base(),
+            base,
+            diagnostic_parameter_element_width(parameter),
+        ) else {
+            continue;
+        };
+        let start = bitvector32_add(base_index.clone(), range.start().clone());
+        let end = bitvector32_add(base_index, range.end().clone());
+        return Some(format!(
+            "{}[{}..{}]",
+            parameter.name(),
+            describe_bitvector(&start),
+            describe_bitvector(&end)
+        ));
+    }
+    None
+}
+
+fn describe_pointer(
+    pointer: &Pointer,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    for (parameter, argument) in parameters.iter().zip(arguments) {
+        let CExpression::Value(CValue::Pointer(base)) = argument else {
+            continue;
+        };
+        if let Some(index) = diagnostic_pointer_element_index_from_base(
+            pointer,
+            base,
+            diagnostic_parameter_element_width(parameter),
+        ) {
+            if index == Bitvector32Term::Constant(0) {
+                return parameter.name().to_string();
+            }
+            return format!("{}[{}]", parameter.name(), describe_bitvector(&index));
+        }
+    }
+    format!(
+        "{}@{}",
+        pointer.block,
+        describe_pointer_offset(&pointer.offset)
+    )
+}
+
+fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter) -> i64 {
+    match parameter.c_type() {
+        C0Type::UInt8Pointer | C0Type::UInt8Array(_) => 1,
+        C0Type::Int32 | C0Type::UInt8 | C0Type::Int32Pointer | C0Type::Int32Array(_) => 4,
+    }
+}
+
+fn diagnostic_pointer_element_index_from_base(
+    pointer: &Pointer,
+    base: &Pointer,
+    byte_width: i64,
+) -> Option<Bitvector32Term> {
+    if pointer.block != base.block {
+        return None;
+    }
+
+    if pointer.offset == base.offset {
+        return Some(Bitvector32Term::Constant(0));
+    }
+
+    if base.offset == PointerOffsetTerm::Constant(0) {
+        return diagnostic_element_index_from_pointer_offset(&pointer.offset, byte_width);
+    }
+
+    match &pointer.offset {
+        PointerOffsetTerm::Add(left, right) if left.as_ref() == &base.offset => {
+            diagnostic_element_index_from_pointer_offset(right, byte_width)
+        }
+        PointerOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
+            diagnostic_element_index_from_pointer_offset(left, byte_width)
+        }
+        _ => {
+            if let (Some(pointer_index), Some(base_index)) = (
+                diagnostic_element_index_from_pointer_offset(&pointer.offset, byte_width),
+                diagnostic_element_index_from_pointer_offset(&base.offset, byte_width),
+            ) {
+                Some(bitvector32_subtract(pointer_index, base_index))
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn diagnostic_element_index_from_pointer_offset(
+    offset: &PointerOffsetTerm,
+    byte_width: i64,
+) -> Option<Bitvector32Term> {
+    match offset {
+        PointerOffsetTerm::Constant(offset) if offset % byte_width == 0 => {
+            let index = offset / byte_width;
+            (i32::MIN as i64..=i32::MAX as i64)
+                .contains(&index)
+                .then_some(Bitvector32Term::Constant((index as i32) as u32))
+        }
+        PointerOffsetTerm::Int32Scaled {
+            value,
+            byte_width: actual_width,
+        } if *actual_width == byte_width => Some(value.as_ref().clone()),
+        PointerOffsetTerm::Add(left, right) if left.as_ref() == &PointerOffsetTerm::Constant(0) => {
+            diagnostic_element_index_from_pointer_offset(right, byte_width)
+        }
+        PointerOffsetTerm::Add(left, right)
+            if right.as_ref() == &PointerOffsetTerm::Constant(0) =>
+        {
+            diagnostic_element_index_from_pointer_offset(left, byte_width)
+        }
+        PointerOffsetTerm::Add(left, right) => Some(bitvector32_add(
+            diagnostic_element_index_from_pointer_offset(left, byte_width)?,
+            diagnostic_element_index_from_pointer_offset(right, byte_width)?,
+        )),
+        _ => None,
+    }
+}
+
+fn describe_c_value(
+    value: &CValue,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    match value {
+        CValue::Int32(value) => describe_bitvector_with_context(value, parameters, arguments),
+        CValue::UInt8(value) => {
+            format!(
+                "{}u8",
+                describe_bitvector_with_context(value, parameters, arguments)
+            )
+        }
+        CValue::Pointer(pointer) => describe_pointer(pointer, parameters, arguments),
+    }
+}
+
+fn describe_contract_segment(segment: &ContractSegment) -> String {
+    let prefix = match segment.state {
+        ContractSegmentState::Current => "",
+        ContractSegmentState::Old => "old ",
+    };
+    format!(
+        "{}{}[{}..{}]",
+        prefix,
+        describe_c_expression(&segment.base),
+        describe_c_expression(&segment.start),
+        describe_c_expression(&segment.end)
+    )
+}
+
+fn describe_evaluated_segments(segments: &[EvaluatedContractSegment]) -> String {
+    if segments.is_empty() {
+        return "[]".to_string();
+    }
+    let entries = segments
+        .iter()
+        .map(|segment| {
+            format!(
+                "{} => {}[{}..{}]",
+                describe_contract_segment(&segment.source),
+                describe_pointer(&segment.base, &[], &[]),
+                describe_bitvector(&segment.start),
+                describe_bitvector(&segment.end)
+            )
+        })
+        .collect::<Vec<_>>();
+    format!("[{}]", entries.join(", "))
+}
+
+fn describe_contract_segments(segments: &[EvaluatedContractSegment]) -> String {
+    if segments.is_empty() {
+        return "[]".to_string();
+    }
+    let entries = segments
+        .iter()
+        .map(|segment| describe_contract_segment(&segment.source))
+        .collect::<Vec<_>>();
+    format!("[{}]", entries.join(", "))
+}
+
+fn describe_c_expression(expression: &CExpression) -> String {
+    match expression {
+        CExpression::Value(value) => describe_c_value(value, &[], &[]),
+        CExpression::Variable(name) => name.clone(),
+        CExpression::AddressOf(target) => format!("&{}", describe_c_expression(target)),
+        CExpression::LessThan(left, right) => describe_binary_c_expression(left, "<", right),
+        CExpression::LessEqual(left, right) => describe_binary_c_expression(left, "<=", right),
+        CExpression::GreaterThan(left, right) => describe_binary_c_expression(left, ">", right),
+        CExpression::GreaterEqual(left, right) => describe_binary_c_expression(left, ">=", right),
+        CExpression::Equal(left, right) => describe_binary_c_expression(left, "==", right),
+        CExpression::NotEqual(left, right) => describe_binary_c_expression(left, "!=", right),
+        CExpression::Not(expression) => format!("!{}", describe_c_expression(expression)),
+        CExpression::And(left, right) => describe_binary_c_expression(left, "&&", right),
+        CExpression::Or(left, right) => describe_binary_c_expression(left, "||", right),
+        CExpression::Add(left, right) => describe_binary_c_expression(left, "+", right),
+        CExpression::Subtract(left, right) => describe_binary_c_expression(left, "-", right),
+        CExpression::Multiply(left, right) => describe_binary_c_expression(left, "*", right),
+        CExpression::Divide(left, right) => describe_binary_c_expression(left, "/", right),
+        CExpression::Remainder(left, right) => describe_binary_c_expression(left, "%", right),
+        CExpression::ShiftLeft(left, right) => describe_binary_c_expression(left, "<<", right),
+        CExpression::ShiftRight(left, right) => describe_binary_c_expression(left, ">>", right),
+        CExpression::BitwiseAnd(left, right) => describe_binary_c_expression(left, "&", right),
+        CExpression::BitwiseOr(left, right) => describe_binary_c_expression(left, "|", right),
+        CExpression::BitwiseXor(left, right) => describe_binary_c_expression(left, "^", right),
+        CExpression::BitwiseNot(expression) => format!("~{}", describe_c_expression(expression)),
+        CExpression::Load(pointer) => format!("*{}", describe_c_expression(pointer)),
+        CExpression::Index(base, index) => {
+            format!(
+                "{}[{}]",
+                describe_c_expression(base),
+                describe_c_expression(index)
+            )
+        }
+    }
+}
+
+fn describe_binary_c_expression(left: &CExpression, operator: &str, right: &CExpression) -> String {
+    format!(
+        "({} {operator} {})",
+        describe_c_expression(left),
+        describe_c_expression(right)
+    )
+}
+
+fn describe_contract_expression(expression: &ContractExpression) -> String {
+    match expression {
+        ContractExpression::CFragment(expression) => describe_c_expression(expression),
+        ContractExpression::Old(expression) => {
+            format!("old({})", describe_contract_expression(expression))
+        }
+        ContractExpression::At {
+            selector,
+            expression,
+        } => format!(
+            "at({}, {})",
+            describe_visit_selector(selector),
+            describe_contract_expression(expression)
+        ),
+        ContractExpression::Add(left, right) => {
+            describe_binary_contract_expression(left, "+", right)
+        }
+        ContractExpression::Subtract(left, right) => {
+            describe_binary_contract_expression(left, "-", right)
+        }
+        ContractExpression::Multiply(left, right) => {
+            describe_binary_contract_expression(left, "*", right)
+        }
+        ContractExpression::Divide(left, right) => {
+            describe_binary_contract_expression(left, "/", right)
+        }
+        ContractExpression::Remainder(left, right) => {
+            describe_binary_contract_expression(left, "%", right)
+        }
+        ContractExpression::ShiftLeft(left, right) => {
+            describe_binary_contract_expression(left, "<<", right)
+        }
+        ContractExpression::ShiftRight(left, right) => {
+            describe_binary_contract_expression(left, ">>", right)
+        }
+        ContractExpression::BitwiseAnd(left, right) => {
+            describe_binary_contract_expression(left, "&", right)
+        }
+        ContractExpression::BitwiseOr(left, right) => {
+            describe_binary_contract_expression(left, "|", right)
+        }
+        ContractExpression::BitwiseXor(left, right) => {
+            describe_binary_contract_expression(left, "^", right)
+        }
+        ContractExpression::BitwiseNot(expression) => {
+            format!("~{}", describe_contract_expression(expression))
+        }
+        ContractExpression::Index(base, index) => format!(
+            "{}[{}]",
+            describe_contract_expression(base),
+            describe_contract_expression(index)
+        ),
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => format!(
+            "if {} then {} else {}",
+            describe_click_proposition(condition),
+            describe_contract_expression(then_branch),
+            describe_contract_expression(else_branch)
+        ),
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => format!(
+            "fold({}..{}, {}, ({accumulator}, {item}) => {})",
+            describe_contract_expression(start),
+            describe_contract_expression(end),
+            describe_contract_expression(initial),
+            describe_contract_expression(body)
+        ),
+        ContractExpression::Let {
+            name, value, body, ..
+        } => format!(
+            "let {name} = {}; {}",
+            describe_contract_expression(value),
+            describe_contract_expression(body)
+        ),
+        ContractExpression::Call { name, arguments } => format!(
+            "{name}({})",
+            arguments
+                .iter()
+                .map(describe_contract_expression)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+fn describe_binary_contract_expression(
+    left: &ContractExpression,
+    operator: &str,
+    right: &ContractExpression,
+) -> String {
+    format!(
+        "({} {operator} {})",
+        describe_contract_expression(left),
+        describe_contract_expression(right)
+    )
+}
+
+fn describe_click_proposition(proposition: &ClickProposition) -> String {
+    match proposition {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => format!(
+            "{} {operator} {}",
+            describe_contract_expression(left),
+            describe_contract_expression(right)
+        ),
+        ClickProposition::And(left, right) => describe_binary_click_proposition(left, "&&", right),
+        ClickProposition::Or(left, right) => describe_binary_click_proposition(left, "||", right),
+        ClickProposition::Not(proposition) => {
+            format!("!{}", describe_click_proposition(proposition))
+        }
+        ClickProposition::Implies(left, right) => {
+            describe_binary_click_proposition(left, "=>", right)
+        }
+        ClickProposition::ForAll { c_type, name, body } => format!(
+            "forall ({c_type:?} {name}) {{ {} }}",
+            describe_click_proposition(body)
+        ),
+        ClickProposition::Exists { c_type, name, body } => format!(
+            "exists ({c_type:?} {name}) {{ {} }}",
+            describe_click_proposition(body)
+        ),
+        ClickProposition::RangeAll {
+            start,
+            end,
+            item,
+            body,
+        } => format!(
+            "({}..{}).all({item} => {})",
+            describe_contract_expression(start),
+            describe_contract_expression(end),
+            describe_click_proposition(body)
+        ),
+        ClickProposition::RangeAny {
+            start,
+            end,
+            item,
+            body,
+        } => format!(
+            "({}..{}).any({item} => {})",
+            describe_contract_expression(start),
+            describe_contract_expression(end),
+            describe_click_proposition(body)
+        ),
+        ClickProposition::PredicateCall { name, arguments } => format!(
+            "{name}({})",
+            arguments
+                .iter()
+                .map(describe_contract_expression)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+fn describe_binary_click_proposition(
+    left: &ClickProposition,
+    operator: &str,
+    right: &ClickProposition,
+) -> String {
+    format!(
+        "({} {operator} {})",
+        describe_click_proposition(left),
+        describe_click_proposition(right)
+    )
+}
+
+fn describe_visit_selector(selector: &VisitSelector) -> String {
+    match selector {
+        VisitSelector::ProgramPoint(point) => describe_program_point_ref(point),
+    }
+}
+
+fn describe_program_point_ref(point: &ProgramPointRef) -> String {
+    let kind = match point.kind {
+        ProgramPointKind::Entry => "entry",
+    };
+    format!("{}.{}", describe_code_region_ref(&point.region), kind)
+}
+
+fn describe_code_region_ref(region: &CodeRegionRef) -> String {
+    match region {
+        CodeRegionRef::Function => "function".to_string(),
+        CodeRegionRef::Loop(index) => format!("loop({index})"),
+        CodeRegionRef::Statement(index) => format!("statement({index})"),
+        CodeRegionRef::Label(name) => name.clone(),
+    }
+}
+
+fn describe_bitvector(term: &Bitvector32Term) -> String {
+    describe_bitvector_with_context(term, &[], &[])
+}
+
+fn describe_bitvector_with_context(
+    term: &Bitvector32Term,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    match term {
+        Bitvector32Term::Constant(value) => format!("{}", *value as i32),
+        Bitvector32Term::Variable(variable) => format!("v{}", variable.0),
+        Bitvector32Term::Add(left, right) => {
+            describe_binary_bitvector_with_context(left, "+", right, parameters, arguments)
+        }
+        Bitvector32Term::Subtract(left, right) => {
+            describe_binary_bitvector_with_context(left, "-", right, parameters, arguments)
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            describe_binary_bitvector_with_context(left, "*", right, parameters, arguments)
+        }
+        Bitvector32Term::Divide(left, right) => {
+            describe_binary_bitvector_with_context(left, "/", right, parameters, arguments)
+        }
+        Bitvector32Term::Remainder(left, right) => {
+            describe_binary_bitvector_with_context(left, "%", right, parameters, arguments)
+        }
+        Bitvector32Term::ShiftLeft(left, right) => {
+            describe_binary_bitvector_with_context(left, "<<", right, parameters, arguments)
+        }
+        Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            describe_binary_bitvector_with_context(left, ">>", right, parameters, arguments)
+        }
+        Bitvector32Term::BitwiseAnd(left, right) => {
+            describe_binary_bitvector_with_context(left, "&", right, parameters, arguments)
+        }
+        Bitvector32Term::BitwiseOr(left, right) => {
+            describe_binary_bitvector_with_context(left, "|", right, parameters, arguments)
+        }
+        Bitvector32Term::BitwiseXor(left, right) => {
+            describe_binary_bitvector_with_context(left, "^", right, parameters, arguments)
+        }
+        Bitvector32Term::BitwiseNot(value) => {
+            format!(
+                "~{}",
+                describe_bitvector_with_context(value, parameters, arguments)
+            )
+        }
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => format!(
+            "if {} then {} else {}",
+            describe_condition(condition),
+            describe_bitvector_with_context(then_term, parameters, arguments),
+            describe_bitvector_with_context(else_term, parameters, arguments)
+        ),
+        Bitvector32Term::RangeFold { .. } => format!("{term:?}"),
+        Bitvector32Term::MemoryLoad(_, pointer) => {
+            format!("load({})", describe_pointer(pointer, parameters, arguments))
+        }
+    }
+}
+
+fn describe_binary_bitvector_with_context(
+    left: &Bitvector32Term,
+    operator: &str,
+    right: &Bitvector32Term,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    format!(
+        "({} {operator} {})",
+        describe_bitvector_with_context(left, parameters, arguments),
+        describe_bitvector_with_context(right, parameters, arguments)
+    )
+}
+
+fn describe_pointer_offset(offset: &PointerOffsetTerm) -> String {
+    match offset {
+        PointerOffsetTerm::Constant(value) => value.to_string(),
+        PointerOffsetTerm::Variable(variable) => format!("off{}", variable.0),
+        PointerOffsetTerm::Add(left, right) => format!(
+            "({} + {})",
+            describe_pointer_offset(left),
+            describe_pointer_offset(right)
+        ),
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+            format!("{} * {byte_width}", describe_bitvector(value))
+        }
+    }
+}
+
+fn describe_condition(condition: &ConditionTerm) -> String {
+    match condition {
+        ConditionTerm::Constant(value) => value.to_string(),
+        ConditionTerm::Variable(variable) => format!("cond{}", variable.0),
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            describe_binary_condition(left, "<", right)
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            describe_binary_condition(left, "<=", right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            describe_binary_condition(left, ">", right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            describe_binary_condition(left, ">=", right)
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            describe_binary_condition(left, "==", right)
+        }
+        ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+            format!(
+                "overflow({} + {})",
+                describe_bitvector(left),
+                describe_bitvector(right)
+            )
+        }
+        ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+            format!(
+                "overflow({} - {})",
+                describe_bitvector(left),
+                describe_bitvector(right)
+            )
+        }
+        ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
+            format!(
+                "overflow({} * {})",
+                describe_bitvector(left),
+                describe_bitvector(right)
+            )
+        }
+        ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => {
+            format!(
+                "overflow({} / {})",
+                describe_bitvector(left),
+                describe_bitvector(right)
+            )
+        }
+        ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            format!(
+                "overflow({} << {})",
+                describe_bitvector(left),
+                describe_bitvector(right)
+            )
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => format!(
+            "{} == {}",
+            describe_pointer_offset(left),
+            describe_pointer_offset(right)
+        ),
+    }
+}
+
+fn describe_binary_condition(
+    left: &Bitvector32Term,
+    operator: &str,
+    right: &Bitvector32Term,
+) -> String {
+    format!(
+        "{} {operator} {}",
+        describe_bitvector(left),
+        describe_bitvector(right)
+    )
+}
+
 fn check_signature(
     signature: &FunctionSignature,
     parsed_function: &syntax::C0Function,
@@ -4964,7 +5673,8 @@ fn collect_c0_loop_modified_locals(statement: &syntax::C0Statement, names: &mut 
     match statement {
         syntax::C0Statement::Declare { .. }
         | syntax::C0Statement::Return(_)
-        | syntax::C0Statement::Store { .. } => {}
+        | syntax::C0Statement::Store { .. }
+        | syntax::C0Statement::Free { .. } => {}
         syntax::C0Statement::Assign { name, .. } => {
             names.insert(name.clone());
         }
@@ -6867,7 +7577,8 @@ fn prove_ensure_resource(
     } = outcome
     else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` failed on path {path_index}: outcome was {outcome:?}\n  path facts: {}",
+            "`{claim_label}` failed on path {path_index}: {}\n  path facts: {}",
+            describe_function_outcome(outcome, parameters, arguments),
             describe_facts(path_facts)
         )));
     };
@@ -6877,8 +7588,9 @@ fn prove_ensure_resource(
         return Ok(());
     }
     Err(ClickError::new(format!(
-        "`{claim_label}` failed on path {path_index}: missing resource {expected:?}\n  final resources: {:?}\n  path facts: {}",
-        post_state.resources().resources(),
+        "`{claim_label}` failed on path {path_index}: missing resource `{}`\n  final resources: {}\n  path facts: {}",
+        describe_resource(&expected, parameters, arguments),
+        describe_resources(post_state.resources().resources(), parameters, arguments),
         describe_facts(path_facts)
     )))
 }
@@ -6916,7 +7628,8 @@ fn check_function_claim_with_existence_steps(
     } = outcome
     else {
         return Err(ClickError::new(format!(
-            "`witness`/`choose` failed for `{claim_label}` path {path_index}: outcome was {outcome:?}\n  path facts: {}",
+            "`witness`/`choose` failed for `{claim_label}` path {path_index}: {}\n  path facts: {}",
+            describe_function_outcome(outcome, parameters, arguments),
             describe_facts(path_facts)
         )));
     };
@@ -7232,7 +7945,8 @@ fn prove_ensure_proposition_by_simp(
 ) -> Result<(), ClickError> {
     let CFunctionOutcome::Return { value, state } = outcome else {
         return Err(ClickError::new(format!(
-            "`simp` failed for `{ensure_label}` path {path_index}: outcome was {outcome:?}\n  path facts: {}",
+            "`simp` failed for `{ensure_label}` path {path_index}: {}\n  path facts: {}",
+            describe_function_outcome(outcome, parameters, arguments),
             describe_facts(path_facts)
         )));
     };
@@ -8898,7 +9612,8 @@ fn prove_effect_clause(
 ) -> Result<(), ClickError> {
     let CFunctionOutcome::Return { value: _, state } = outcome else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` failed on path {path_index}: outcome was {outcome:?}\n  path facts: {}",
+            "`{claim_label}` failed on path {path_index}: {}\n  path facts: {}",
+            describe_function_outcome(outcome, parameters, arguments),
             describe_facts(path_facts)
         )));
     };
@@ -8934,60 +9649,70 @@ fn prove_ensure_proposition(
             left,
             operator,
             right,
-        } => match outcome {
-            CFunctionOutcome::Return { value, state } => {
-                let left_value = evaluate_contract_expression(
-                    parameters,
-                    arguments,
-                    pre_state,
-                    state,
-                    value,
-                    available_propositions,
-                    left,
-                    predicate_environment,
-                    click_function_environment,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: could not evaluate left side: {message}"
-                    ))
-                })?;
-                let right_value = evaluate_contract_expression(
-                    parameters,
-                    arguments,
-                    pre_state,
-                    state,
-                    value,
-                    available_propositions,
-                    right,
-                    predicate_environment,
-                    click_function_environment,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: could not evaluate right side: {message}"
-                    ))
-                })?;
-                prove_value_comparison(
-                    &left_value,
-                    *operator,
-                    &right_value,
-                    available_propositions,
-                )
-                .ok_or_else(|| {
-                    ClickError::new(format!(
-                        "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: left side evaluated to {left_value:?}, right side evaluated to {right_value:?}\n  path facts: {}",
+        } => {
+            let comparison = format!(
+                "{} {operator} {}",
+                describe_contract_expression(left),
+                describe_contract_expression(right)
+            );
+            match outcome {
+                CFunctionOutcome::Return { value, state } => {
+                    let left_value = evaluate_contract_expression(
+                        parameters,
+                        arguments,
+                        pre_state,
+                        state,
+                        value,
+                        available_propositions,
+                        left,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: could not evaluate left side: {message}"
+                        ))
+                    })?;
+                    let right_value = evaluate_contract_expression(
+                        parameters,
+                        arguments,
+                        pre_state,
+                        state,
+                        value,
+                        available_propositions,
+                        right,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: could not evaluate right side: {message}"
+                        ))
+                    })?;
+                    prove_value_comparison(
+                        &left_value,
+                        *operator,
+                        &right_value,
+                        available_propositions,
+                    )
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: left side evaluated to {}, right side evaluated to {}\n  path facts: {}",
+                            describe_c_value(&left_value, parameters, arguments),
+                            describe_c_value(&right_value, parameters, arguments),
+                            describe_facts(path_facts)
+                        ))
+                    })?;
+                }
+                other => {
+                    return Err(ClickError::new(format!(
+                        "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: {}\n  path facts: {}",
+                        describe_function_outcome(other, parameters, arguments),
                         describe_facts(path_facts)
-                    ))
-                })?;
+                    )));
+                }
             }
-            other => {
-                return Err(ClickError::new(format!(
-                    "`ensures {left:?} {operator} {right:?}` failed for `{ensure_label}` path {path_index}: outcome was {other:?}\n  path facts: {}",
-                    describe_facts(path_facts)
-                )));
-            }
-        },
+        }
         ClickProposition::And(left, right) => {
             prove_ensure_proposition(
                 ensure_label,
@@ -9019,9 +9744,11 @@ fn prove_ensure_proposition(
             )?;
         }
         _ => {
+            let surface_proposition = describe_click_proposition(proposition);
             let CFunctionOutcome::Return { value, state } = outcome else {
                 return Err(ClickError::new(format!(
-                    "`ensures {proposition:?}` failed for `{ensure_label}` path {path_index}: outcome was {outcome:?}\n  path facts: {}",
+                    "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: {}\n  path facts: {}",
+                    describe_function_outcome(outcome, parameters, arguments),
                     describe_facts(path_facts)
                 )));
             };
@@ -9038,7 +9765,7 @@ fn prove_ensure_proposition(
             )
             .map_err(|message| {
                 ClickError::new(format!(
-                    "`ensures {proposition:?}` failed for `{ensure_label}` path {path_index}: could not lower proposition: {message}"
+                    "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: could not lower proposition: {message}"
                 ))
             })?;
             let assumptions = assumptions_from_propositions(available_propositions);
@@ -9051,12 +9778,12 @@ fn prove_ensure_proposition(
             )
             .map_err(|message| {
                 ClickError::new(format!(
-                    "`ensures {proposition:?}` failed for `{ensure_label}` path {path_index}: {message}"
+                    "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: {message}"
                 ))
             })?;
             if !assumptions.proves(&proposition) {
                 return Err(ClickError::new(format!(
-                    "`ensures {proposition:?}` failed for `{ensure_label}` path {path_index}: proposition was not provable\n  path facts: {}",
+                    "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: proposition was not provable\n  path facts: {}",
                     describe_facts(path_facts)
                 )));
             }
@@ -9095,7 +9822,8 @@ fn prove_mutation_footprint(
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` failed on path {path_index}: could not evaluate mutable segment {segment:?}: {message}"
+                        "`{claim_label}` failed on path {path_index}: could not evaluate mutable segment `{}`: {message}",
+                        describe_contract_segment(segment)
                     ))
                 })
             })
@@ -9126,11 +9854,10 @@ fn prove_mutation_footprint(
             .any(|segment| segment_contains_pointer(segment, pointer, &assumptions))
         {
             return Err(ClickError::new(format!(
-                "`{claim_label}` failed on path {path_index}: write to {pointer:?} is outside the mutable footprint\n  mutable segments: {:?}\n  evaluated segments: {segments:?}\n  path facts: {}",
-                segments
-                    .iter()
-                    .map(|segment| &segment.source)
-                    .collect::<Vec<_>>(),
+                "`{claim_label}` failed on path {path_index}: write to `{}` is outside the mutable footprint\n  mutable segments: {}\n  evaluated segments: {}\n  path facts: {}",
+                describe_pointer(pointer, parameters, arguments),
+                describe_contract_segments(&segments),
+                describe_evaluated_segments(&segments),
                 describe_facts(path_facts)
             )));
         }
@@ -9153,11 +9880,10 @@ fn prove_mutation_footprint(
             .any(|segment| segment_contains_range(segment, range, &assumptions))
         {
             return Err(ClickError::new(format!(
-                "`{claim_label}` failed on path {path_index}: effect summary range {range:?} is outside the mutable footprint\n  mutable segments: {:?}\n  evaluated segments: {segments:?}\n  path facts: {}",
-                segments
-                    .iter()
-                    .map(|segment| &segment.source)
-                    .collect::<Vec<_>>(),
+                "`{claim_label}` failed on path {path_index}: effect summary range `{}` is outside the mutable footprint\n  mutable segments: {}\n  evaluated segments: {}\n  path facts: {}",
+                describe_memory_range(range, parameters, arguments),
+                describe_contract_segments(&segments),
+                describe_evaluated_segments(&segments),
                 describe_facts(path_facts)
             )));
         }
@@ -15712,6 +16438,16 @@ mod tests {
             error.message()
         );
         assert!(
+            error.message().contains("write to `p[1]`"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            error.message().contains("mutable segments: [p[0..1]]"),
+            "{}",
+            error.message()
+        );
+        assert!(
             error.message().contains("evaluated segments"),
             "{}",
             error.message()
@@ -15802,7 +16538,7 @@ mod tests {
         assert!(
             error
                 .message()
-                .contains("left side evaluated to Int32(Constant(9))"),
+                .contains("left side evaluated to 9, right side evaluated to load(p[1])"),
             "{}",
             error.message()
         );
@@ -17031,7 +17767,7 @@ mod tests {
         assert!(
             error
                 .message()
-                .contains("left side evaluated to Int32(Constant(2))"),
+                .contains("left side evaluated to 2, right side evaluated to 3"),
             "{}",
             error.message()
         );
@@ -17049,7 +17785,7 @@ mod tests {
         assert!(
             error
                 .message()
-                .contains("left side evaluated to Int32(Constant(2))"),
+                .contains("left side evaluated to 2, right side evaluated to 3"),
             "{}",
             error.message()
         );

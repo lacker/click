@@ -26,10 +26,11 @@ The current proof scope is intentionally narrow:
 - pointer-to-struct parameters,
 - `->` field loads and stores for that first field,
 - `valid_field(obj->ref_count)` for field validity,
+- `read(obj[0..1])` or `write(obj[0..1])` for access permission,
 - `mutable_field(obj->ref_count)` for field writes.
 
 This gives Click a realistic shape to verify without pretending it already has
-heap allocation, ownership transfer, or permission logic.
+heap allocation or ownership transfer.
 
 ## How To Read An Example Project
 

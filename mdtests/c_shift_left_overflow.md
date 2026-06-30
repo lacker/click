@@ -18,5 +18,5 @@ int32 shift_left_overflow() {
 ```
 
 ```expect
-fail: outcome was UndefinedBehavior(SignedOverflow)
+fail: undefined behavior: signed overflow
 ```

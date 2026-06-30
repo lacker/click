@@ -972,7 +972,8 @@ pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
         CStatement::Declare { .. }
         | CStatement::Assign { .. }
         | CStatement::Assert { .. }
-        | CStatement::Return(_) => false,
+        | CStatement::Return(_)
+        | CStatement::Free { .. } => false,
         CStatement::CallAssign { .. } | CStatement::Store { .. } => true,
         CStatement::Seq(first, second) => {
             statement_may_write_memory(first) || statement_may_write_memory(second)
@@ -991,7 +992,8 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
         CStatement::Declare { .. }
         | CStatement::Assert { .. }
         | CStatement::Return(_)
-        | CStatement::Store { .. } => {}
+        | CStatement::Store { .. }
+        | CStatement::Free { .. } => {}
         CStatement::Assign { name, .. } => {
             names.insert(name.clone());
         }
@@ -1062,6 +1064,7 @@ pub(super) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
             collect_address_taken_in_expression(pointer, names);
             collect_address_taken_in_expression(value, names);
         }
+        CStatement::Free { pointer } => collect_address_taken_in_expression(pointer, names),
         CStatement::Seq(first, second) => {
             collect_address_taken_locals(first, names);
             collect_address_taken_locals(second, names);

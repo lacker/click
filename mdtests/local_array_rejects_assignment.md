@@ -21,5 +21,5 @@ int32 local_array_rejects_assignment(int32* p) {
 ```
 
 ```expect
-fail: RuntimeError(TypeMismatch)
+fail: runtime error: type mismatch
 ```

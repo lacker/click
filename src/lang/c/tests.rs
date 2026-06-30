@@ -175,6 +175,27 @@ fn c0_syntax_targets_kernel_assignment_and_sequence() {
 }
 
 #[test]
+fn c0_syntax_targets_kernel_free_statement() {
+    let function = syntax::parse_function(
+        r#"
+        int32 release(int32 p[]) {
+            free(p);
+            return 0;
+        }
+        "#,
+    )
+    .expect("free statement should parse");
+
+    assert_eq!(
+        function.body_kernel_statement(),
+        crate::kernel::c_seq(
+            crate::kernel::c_free(crate::kernel::c_variable("p")),
+            crate::kernel::c_return(crate::kernel::c_int32_literal(0)),
+        )
+    );
+}
+
+#[test]
 fn c0_syntax_targets_kernel_assignment_function_call() {
     let function = syntax::parse_function(
         r#"

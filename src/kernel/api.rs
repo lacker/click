@@ -168,6 +168,10 @@ pub fn c_store(pointer: CExpression, value: CExpression) -> CStatement {
     CStatement::Store { pointer, value }
 }
 
+pub fn c_free(pointer: CExpression) -> CStatement {
+    CStatement::Free { pointer }
+}
+
 pub fn c_if(
     condition: CExpression,
     then_branch: CStatement,

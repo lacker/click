@@ -104,6 +104,10 @@ permission and `ensures write(...)` to return it. `free(...)` is also linear,
 does not grant read or write access, and consuming it removes overlapping access
 resources from the caller context.
 
+The C0 statement `free(p);` consumes `free(p[0..1])`. It does not require write
+permission, and after it runs the caller no longer has overlapping read, write,
+or free permissions unless another contract explicitly returns them.
+
 A call can pass a covered subrange, such as passing `write(p[0..1])` from a
 caller that has `write(p[0..2])`; Click keeps the residue and rejoins adjacent
 returned ranges. The same applies to symbolic ranges when the current facts
@@ -115,7 +119,7 @@ permission.
 
 This is intentionally not the full permission system. There are no fractions,
 ownership predicates, explicit resource algebra proof steps, C heap allocation,
-or executable `free(p)` semantics yet. `valid_range`, `mutable`, and
+or allocation-sized deallocation semantics yet. `valid_range`, `mutable`, and
 `immutable` remain separate from permission: validity proves an access is in
 bounds, while resources authorize the access.
 
@@ -285,8 +289,10 @@ for a single-`int32`-field struct, and C0 can write that field. `requires
 valid_field(obj->field);` is the matching field-validity precondition and
 currently lowers to four bytes at the start of the object. `mutable_field`
 accepts the same field-access shape for field writes and lowers to the
-one-element mutable segment at the start of the object. This is not yet a
-general struct expression, layout, or field-frame model.
+one-element mutable segment at the start of the object. Field reads and writes
+still need the ordinary resource context: use `read(obj[0..1])` or
+`write(obj[0..1])` for the one-field pilot object. This is not yet a general
+struct expression, layout, or field-frame model.
 
 Concrete folds are unrolled. Symbolic folds remain `RangeFold` value terms in
 the kernel and can be reasoned about by supported fold laws.

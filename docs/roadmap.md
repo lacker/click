@@ -109,9 +109,10 @@ Likely additions:
 - Permission logic:
   read/write/free authority over memory locations or ranges. A first mandatory
   `read(...)`/`write(...)`/`free(...)` resource context exists for memory
-  ranges, including covered subrange transfer for function calls. Fractions,
-  executable heap deallocation, and abstract resource predicates are still
-  future work.
+  ranges, including covered subrange transfer for function calls and a narrow
+  `free(p);` statement that consumes `free(p[0..1])`. Fractions, full heap
+  deallocation semantics, and abstract resource predicates are still future
+  work.
 - First-class spec/model state:
   proof-only state that can be mentioned across program points if examples need
   arbitrary model variables beyond resources.
@@ -298,8 +299,8 @@ Good next tasks from the current state:
    rvalue promotion and checked `int32`-to-`uint8` narrowing rules. The open
    design question is how much of C's usual arithmetic conversions Click should
    model next versus reject in C0 until the integer story is broader.
-6. Model a tiny heap API or externally specified `malloc`/`free` when the pilot
-   needs allocation or ownership transfer.
+6. Model a tiny heap API or externally specified `malloc`/allocation-sized
+   `free` when the pilot needs allocation or ownership transfer.
 7. Improve failure output for missing loop invariants and alias/frame facts.
 
 Use the feature playbook for each item: start with a failing mdtest or pilot

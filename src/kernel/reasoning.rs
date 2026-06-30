@@ -1140,6 +1140,9 @@ pub(super) fn collect_c_statement_bitvector_variables(
         CStatement::Declare { .. } => {}
         CStatement::Assign { expression, .. }
         | CStatement::Return(expression)
+        | CStatement::Free {
+            pointer: expression,
+        }
         | CStatement::Assert {
             condition: expression,
             ..
@@ -2080,6 +2083,9 @@ pub(super) fn substitute_bitvector_variable_in_c_statement(
         CStatement::Store { pointer, value } => CStatement::Store {
             pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
             value: substitute_bitvector_variable_in_c_expression(value, from, to),
+        },
+        CStatement::Free { pointer } => CStatement::Free {
+            pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
         },
         CStatement::If {
             condition,

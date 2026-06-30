@@ -17,5 +17,5 @@ int32 divide_overflow() {
 ```
 
 ```expect
-fail: outcome was UndefinedBehavior(SignedOverflow)
+fail: undefined behavior: signed overflow
 ```

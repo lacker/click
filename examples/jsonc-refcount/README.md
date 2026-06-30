@@ -23,9 +23,9 @@ The current support is intentionally narrow:
 - pointer-to-struct parameters
 - `->` field loads and stores for that first field
 - `valid_field(obj->ref_count)` as the field-validity precondition
+- `read(obj[0..1])` or `write(obj[0..1])` as the access permission
 - `mutable_field(obj->ref_count)` for field writes
 
 Keep this pilot narrow. Add the smallest C0, memory-model, and proof features
 needed by this fixture before broadening to heap allocation or ownership
-transfer. Ghost state should be designed before permission logic and ownership
-predicates.
+transfer.

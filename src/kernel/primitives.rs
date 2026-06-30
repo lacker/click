@@ -264,6 +264,9 @@ pub enum CStatement {
         pointer: CExpression,
         value: CExpression,
     },
+    Free {
+        pointer: CExpression,
+    },
     If {
         condition: CExpression,
         then_branch: Box<CStatement>,

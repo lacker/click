@@ -330,6 +330,36 @@ fn function_call_consumes_free_and_overlapping_write_resources() {
 }
 
 #[test]
+fn free_statement_consumes_free_and_overlapping_write_resources() {
+    let pointer = Pointer {
+        block: "block".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("p", CValue::Pointer(pointer.clone()))
+        .with_resource_context(write_free_context(pointer, 0, 1));
+    let statement = c_free(c_variable("p"));
+    let expected_state = CState::new().with_local(
+        "p",
+        CValue::Pointer(Pointer {
+            block: "block".to_string(),
+            offset: PointerOffsetTerm::Constant(0),
+        }),
+    );
+    let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
+        .expect("free should consume deallocation authority");
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CStatementExecutes {
+            state,
+            statement,
+            outcome: CStatementOutcome::Normal(expected_state),
+        }
+    );
+}
+
+#[test]
 fn concrete_function_specification_is_native_theorem() {
     let function = c_max_function();
     let specification = c_function_specification(

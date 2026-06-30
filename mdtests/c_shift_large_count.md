@@ -18,5 +18,5 @@ int32 shift_large_count() {
 ```
 
 ```expect
-fail: outcome was UndefinedBehavior(InvalidShift)
+fail: undefined behavior: invalid shift
 ```

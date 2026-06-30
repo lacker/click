@@ -18,5 +18,5 @@ int32 shift_negative_left() {
 ```
 
 ```expect
-fail: outcome was UndefinedBehavior(InvalidShift)
+fail: undefined behavior: invalid shift
 ```

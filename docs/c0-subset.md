@@ -41,6 +41,7 @@ Supported C0 surface includes:
 - address-of lvalues
 - pointer arithmetic for `int32*` and `uint8*`, scaled by the pointee width
 - pointer loads and stores
+- `free(p);` as a narrow one-cell resource operation requiring `free(p[0..1])`
 - `p[i]` indexing for `int32*` and `uint8*`
 - a pilot struct slice: `struct name { int32 field; };`,
   `struct name*` parameters, and `p->field` loads/stores for that single field

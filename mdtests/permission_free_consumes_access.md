@@ -38,5 +38,5 @@ int32 write_after_release(int32 p[]) {
 ```
 
 ```expect
-fail: MissingResource
+fail: missing resource `write(p[0..1])`
 ```

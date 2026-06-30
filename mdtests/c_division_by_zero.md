@@ -18,5 +18,5 @@ int32 divide_by_zero() {
 ```
 
 ```expect
-fail: outcome was UndefinedBehavior(DivisionByZero)
+fail: undefined behavior: division by zero
 ```

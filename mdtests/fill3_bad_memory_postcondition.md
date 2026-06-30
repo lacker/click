@@ -26,5 +26,5 @@ int32 fill3_bad_memory(int32* p) {
 ```
 
 ```expect
-fail: left side evaluated to Int32(Constant(2))
+fail: left side evaluated to 2, right side evaluated to 3
 ```

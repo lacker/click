@@ -12,7 +12,9 @@ There is one pilot struct slice for the first real-library fixture: a
 single-`int32`-field `struct`, `struct name*` parameters, and `p->field`
 loads/stores. Click accepts `valid_field(p->field)` as a field-validity
 precondition and `mutable_field(p->field)` as a field-write footprint for that
-slice, but this is not yet a general layout or field-frame model.
+slice. Field accesses still require the ordinary resource context, such as
+`read(p[0..1])` or `write(p[0..1])`, and this is not yet a general layout or
+field-frame model.
 
 ## Type Support Is Still Narrow
 
