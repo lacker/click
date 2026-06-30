@@ -20,7 +20,7 @@ verifying "loop_quantified_memory_invariant_rejects_false.c";
 int32 loop_quantified_memory_invariant_rejects_false(int32 p[], int32 n) {
     requires n >= 1 and n <= 2147483647;
     requires valid_range(p, n * 4);
-    loop 0 {
+    for loop(0) {
         invariant i >= 0 and i <= n by auto;
         invariant forall (int32 k) {
             0 <= k and k < 1 implies p[k] == p[k] + 1

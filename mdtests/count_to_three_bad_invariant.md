@@ -17,7 +17,7 @@ int32 count_to_three_bad_invariant() {
 verifying "count_to_three_bad_invariant.c";
 
 int32 count_to_three_bad_invariant() {
-    loop 0 {
+    for loop(0) {
         invariant i < 3 by auto;
     }
 

@@ -21,7 +21,7 @@ verifying "loop_stdlib_permutation_invariant.c";
 
 int32 loop_stdlib_permutation_invariant(int32 p[3]) {
     requires valid_range(p[0..3]);
-    loop 0 {
+    for loop(0) {
         invariant i >= 0 and i <= 3 by auto;
         invariant permutation(p, old(p), 0, 3) by {
             unfold(permutation);
@@ -30,8 +30,8 @@ int32 loop_stdlib_permutation_invariant(int32 p[3]) {
     }
     ensures permutation_after_loop: permutation(p, old(p), 0, 3) by {
         symbolic_execute();
-        loop_vc(loop 0);
-        frame(loop 0);
+        loop_vc(loop(0));
+        frame(loop(0));
         unfold(permutation);
         simp();
         close();

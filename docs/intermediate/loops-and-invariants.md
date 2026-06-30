@@ -24,7 +24,7 @@ int32 count_to(int32 n) {
 the proof needs bounds on `i`:
 
 ```click
-loop 0 {
+for loop(0) {
     invariant i >= 0 by auto;
     invariant i <= n by auto;
 }
@@ -45,7 +45,7 @@ to combine:
 Pointer-writing loops often need both arithmetic invariants and memory facts:
 
 ```click
-loop 0 {
+for loop(0) {
     invariant i >= 0 by auto;
     invariant i <= n by auto;
     mutable p[0..n] by frame;
@@ -65,15 +65,16 @@ Some loop proofs call loop-specific steps:
 
 ```click
 by {
-    loop_vc(loop 0);
+    loop_vc(loop(0));
     close();
 }
 ```
 
-`loop_vc(loop N)` checks the generated verification conditions for loop `N`.
+`loop_vc(loop(N))` checks the generated verification conditions for loop code
+region `N`.
 
-`frame(loop N)` proves a loop effect summary and exposes it for later proof
-steps.
+`frame(loop(N))` proves a loop effect summary and exposes it for later proof
+steps. Labeled code regions can be used in the same positions.
 
 Most beginner code avoids these details. Intermediate Click needs them whenever
 the loop summary is the central part of the proof.

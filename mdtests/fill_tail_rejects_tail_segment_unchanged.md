@@ -21,7 +21,7 @@ verifying "fill_tail_rejects_tail_segment_unchanged.c";
 int32 fill_tail_rejects_tail_segment_unchanged(int32 p[], int32 n) {
     requires n >= 2 and n <= 2147483647;
     requires valid_range(p, n * 4);
-    loop 0 {
+    for loop(0) {
         invariant i >= 1 and i <= n by auto;
     }
     ensures tail_unchanged: forall (int32 k) {

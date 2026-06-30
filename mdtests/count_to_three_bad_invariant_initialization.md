@@ -18,7 +18,7 @@ int32 count_to_three_bad_invariant_initialization() {
 verifying "count_to_three_bad_invariant_initialization.c";
 
 int32 count_to_three_bad_invariant_initialization() {
-    loop 0 {
+    for loop(0) {
         invariant i == 1 by auto;
     }
 

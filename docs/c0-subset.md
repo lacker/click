@@ -120,7 +120,8 @@ future work.
 `while` loops can be handled in two ways:
 
 - bounded execution for small concrete loops
-- loop verification conditions using `loop N { invariant ... }` annotations
+- loop verification conditions using `for loop(N) { invariant ... }`
+  annotations
 
 The first `for` slice is sugar for existing `while` semantics:
 `for (i = init; condition; step) { body }` lowers to `i = init; while

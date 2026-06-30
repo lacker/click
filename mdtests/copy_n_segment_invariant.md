@@ -27,7 +27,7 @@ int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
     requires valid_range(dst[0..n]);
     requires valid_range(src[0..n]);
     requires disjoint(dst[0..n], src[0..n]);
-    loop 0 {
+    for loop(0) {
         invariant i >= 0 by auto;
         invariant i <= n by auto;
         invariant forall (int32 k) {

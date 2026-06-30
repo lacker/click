@@ -24,7 +24,7 @@ int32 shifted_loop_effect_subset(int32 p[], int32 n) {
     requires n >= 1;
     requires n <= 2147483647;
     requires valid_range(p[0..n]);
-    loop 0 {
+    for loop(0) {
         invariant i >= 1;
         invariant i <= n;
         mutable (p + 1)[0..n - 1] by frame;

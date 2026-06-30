@@ -44,10 +44,11 @@ Current proof steps:
 - `symbolic_execute();`: build symbolic verification paths for the C0 function.
 - `bounded_execute();`: use deterministic bounded execution for concrete-loop
   fallback proofs.
-- `loop_vc(loop N);`: check the generated verification conditions for loop `N`.
+- `loop_vc(loop(N));`: check the generated verification conditions for loop
+  code region `N`.
 - `frame();`: prove the current function-level effect claim.
-- `frame(loop N);`: prove the effect summary for loop `N` and expose it for
-  later postcondition reasoning.
+- `frame(loop(N));`: prove the effect summary for loop code region `N` and
+  expose it for later postcondition reasoning.
 - `unfold(name);`: unfold matching predicate facts and goals.
 - `choose(k from requirement name);`: open a named existential precondition,
   introducing proof-local int32 value `k`.
@@ -107,14 +108,14 @@ ensures again: bytes_contains(p, 0, n, 'x') by {
 
 ## Structural Blocks
 
-Structural proof blocks name source locations:
+Structural proof blocks attach facts to code regions:
 
 ```click
-statement 2 {
+for statement(2) {
     assert i == 0 by auto;
 }
 
-loop 0 {
+for loop(0) {
     invariant i >= 0 by auto;
     invariant i <= n by auto;
     mutable p[0..n] by frame;
@@ -125,11 +126,17 @@ loop 0 {
 }
 ```
 
-`statement N` names the Nth source statement in structural order. `loop N`
-names the Nth `while` loop.
+`statement(N)` selects the Nth source statement code region in structural
+order. `loop(N)` selects the Nth `while` loop code region. A code region may
+also be labeled with `as name` and used in proof steps such as `frame(name)`.
 
-`assert` is a one-shot spec check at the target statement. It currently accepts
-the executable proposition fragment over current-state C fragments.
+A code region is a static source construct with extent, such as a loop or
+statement. A code point is a proof-relevant boundary associated with a code
+region, such as a future `loop_name.entry` snapshot point for `at(...)`.
+
+`assert` is a one-shot spec check at the selected statement code region. It
+currently accepts the executable proposition fragment over current-state C
+fragments.
 
 `invariant` generates loop-entry, preservation, and exit obligations. Invariant
 proof blocks can use `by auto;` or an unfold-only script such as:
@@ -149,7 +156,7 @@ surface proof blocks yet.
 Whole-loop effects:
 
 ```click
-loop 0 {
+for loop(0) {
     mutable p[0..n] by frame;
 }
 ```
@@ -157,7 +164,7 @@ loop 0 {
 Step-relative effects:
 
 ```click
-loop 0 {
+for loop(0) {
     step {
         mutable p[i..i + 1] by frame;
     }

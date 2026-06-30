@@ -39,7 +39,7 @@ predicate all_le_range(int32 p[], int32 lo, int32 hi, int32 x) {
 int32 loop_sorted_range_invariant(int32 p[3]) {
     requires valid_range(p[0..3]);
     requires sorted(p, 3);
-    loop 0 {
+    for loop(0) as carry_sorted {
         invariant i >= 0 and i <= 3 by auto;
         invariant sorted(p, 3) by {
             unfold(sorted);
@@ -49,8 +49,8 @@ int32 loop_sorted_range_invariant(int32 p[3]) {
     }
     ensures still_sorted: sorted(p, 3) by {
         symbolic_execute();
-        loop_vc(loop 0);
-        frame(loop 0);
+        loop_vc(carry_sorted);
+        frame(carry_sorted);
         unfold(sorted);
         unfold(sorted_range);
         simp();

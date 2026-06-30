@@ -25,7 +25,7 @@ int32 copy3(int32 dst[3], int32 src[3]) {
     requires valid_range(src, 12);
     requires disjoint(dst[0..3], src[0..3]);
 
-    loop 0 {
+    for loop(0) {
         invariant i >= 0 by auto;
         invariant i <= 3 by auto;
     }

@@ -1,7 +1,7 @@
 # count_to_three checks structural loop invariants
 
-This checks the first `.click` structural proof block form: `loop 0` attaches
-ghost checks to the first `while` loop head.
+This checks `.click` structural proof blocks: `for loop(0)` attaches spec
+checks to the first `while` loop code region.
 
 ```c filename=count_to_three.c
 int32 count_to_three() {
@@ -18,11 +18,11 @@ int32 count_to_three() {
 verifying "count_to_three.c";
 
 int32 count_to_three() {
-    statement 2 {
+    for statement(2) {
         assert i == 0 by auto;
     }
 
-    loop 0 {
+    for loop(0) {
         invariant i >= 0 by auto;
         invariant i <= 3 by auto;
     }

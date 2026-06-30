@@ -119,6 +119,7 @@ pub struct EffectClause {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StructuralClause {
     target: StructuralTarget,
+    label: Option<String>,
     items: Vec<StructuralItem>,
 }
 
@@ -367,7 +368,7 @@ pub enum Proof {
 pub enum ProofStep {
     SymbolicExecute,
     BoundedExecute,
-    LoopVc(usize),
+    LoopVc(ProofStepTarget),
     Frame(Option<ProofStepTarget>),
     Unfold(String),
     Witness(ProofWitness),
@@ -376,11 +377,12 @@ pub enum ProofStep {
     Close,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ProofStepTarget {
     Function,
     Loop(usize),
     Statement(usize),
+    Label(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -641,6 +643,10 @@ impl EffectClause {
 impl StructuralClause {
     pub fn target(&self) -> &StructuralTarget {
         &self.target
+    }
+
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
 
     pub fn items(&self) -> &[StructuralItem] {
@@ -1343,29 +1349,42 @@ fn prove_claim_by_steps(
                     ),
                 )?;
             }
-            ProofStep::LoopVc(loop_index) => {
+            ProofStep::LoopVc(target) => {
                 require_step_execution(&replay, claim_label, step_index, "loop_vc")?;
                 require_verification_execution(&replay, claim_label, step_index, "loop_vc")?;
-                validate_loop_step_target(parsed_function, *loop_index, claim_label, step_index)?;
+                let resolved_target =
+                    resolve_proof_step_target(function_block, target, claim_label, step_index)?;
+                let ProofStepTarget::Loop(loop_index) = resolved_target else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `loop_vc` expects a loop code region"
+                    )));
+                };
+                validate_loop_step_target(parsed_function, loop_index, claim_label, step_index)?;
                 validate_loop_vc_step(
                     replay.execution.as_ref().expect("execution should exist"),
-                    *loop_index,
+                    loop_index,
                     claim_label,
                     step_index,
                 )?;
-                replay.loop_vcs.insert(*loop_index);
+                replay.loop_vcs.insert(loop_index);
             }
             ProofStep::Frame(target) => {
                 require_step_execution(&replay, claim_label, step_index, "frame")?;
+                let resolved_target = target
+                    .as_ref()
+                    .map(|target| {
+                        resolve_proof_step_target(function_block, target, claim_label, step_index)
+                    })
+                    .transpose()?;
                 validate_frame_step_target(
                     function_block,
                     parsed_function,
-                    *target,
+                    resolved_target.clone(),
                     claim,
                     claim_label,
                     step_index,
                 )?;
-                match target {
+                match resolved_target {
                     None | Some(ProofStepTarget::Function) => {
                         validate_function_frame_step(
                             replay.execution.as_ref().expect("execution should exist"),
@@ -1382,8 +1401,11 @@ fn prove_claim_by_steps(
                         require_verification_execution(&replay, claim_label, step_index, "frame")?;
                     }
                     Some(ProofStepTarget::Statement(_)) => {}
+                    Some(ProofStepTarget::Label(_)) => {
+                        unreachable!("proof-step labels are resolved before validation")
+                    }
                 }
-                replay.frames.insert(*target);
+                replay.frames.insert(target.clone());
             }
             ProofStep::Unfold(name) => {
                 if predicate_environment.get(name).is_none() {
@@ -1497,6 +1519,33 @@ fn require_verification_execution(
     Ok(())
 }
 
+fn resolve_proof_step_target(
+    function_block: &FunctionBlock,
+    target: &ProofStepTarget,
+    claim_label: &str,
+    step_index: usize,
+) -> Result<ProofStepTarget, ClickError> {
+    let ProofStepTarget::Label(label) = target else {
+        return Ok(target.clone());
+    };
+
+    let structural_target = function_block
+        .structural_clauses()
+        .iter()
+        .find(|clause| clause.label() == Some(label.as_str()))
+        .map(StructuralClause::target)
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: unknown code region label `{label}`"
+            ))
+        })?;
+
+    Ok(match structural_target {
+        StructuralTarget::Loop(index) => ProofStepTarget::Loop(*index),
+        StructuralTarget::Statement(index) => ProofStepTarget::Statement(*index),
+    })
+}
+
 fn validate_loop_step_target(
     parsed_function: &syntax::C0Function,
     loop_index: usize,
@@ -1506,7 +1555,7 @@ fn validate_loop_step_target(
     let loop_count = count_loops(parsed_function.body());
     if loop_index >= loop_count {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: function has no `loop {loop_index}` target; it contains {loop_count} loop(s)"
+            "`{claim_label}` proof step {step_index}: function has no `loop({loop_index})` code region; it contains {loop_count} loop(s)"
         )));
     }
     Ok(())
@@ -1532,7 +1581,7 @@ fn validate_loop_vc_step(
         .collect::<Vec<_>>();
     if !obligations.is_empty() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `loop_vc(loop {loop_index})` left obligations: {}",
+            "`{claim_label}` proof step {step_index}: `loop_vc(loop({loop_index}))` left obligations: {}",
             describe_obligations(&obligations)
         )));
     }
@@ -1551,7 +1600,7 @@ fn validate_frame_step_target(
         None | Some(ProofStepTarget::Function) => {
             if matches!(claim, FunctionClaimRef::Ensure(_, _)) {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `frame()` proves function-level effect claims; use `frame(loop N)` to use loop effect summaries in an `ensures` proof"
+                    "`{claim_label}` proof step {step_index}: `frame()` proves function-level effect claims; use `frame(loop(N))` or a code region label to use loop effect summaries in an `ensures` proof"
                 )));
             }
             Ok(())
@@ -1563,7 +1612,7 @@ fn validate_frame_step_target(
                     && clause.items().iter().any(StructuralItem::is_effect_kind)
             }) {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `frame(loop {loop_index})` needs a loop effect clause such as `mutable` or `immutable`"
+                    "`{claim_label}` proof step {step_index}: `frame(loop({loop_index}))` needs a loop effect clause such as `mutable` or `immutable`"
                 )));
             }
             Ok(())
@@ -1572,12 +1621,15 @@ fn validate_frame_step_target(
             let statement_count = count_statements(parsed_function.body());
             if statement_index >= statement_count {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: function has no `statement {statement_index}` target; it contains {statement_count} statement(s)"
+                    "`{claim_label}` proof step {step_index}: function has no `statement({statement_index})` code region; it contains {statement_count} statement(s)"
                 )));
             }
             Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `frame(statement {statement_index})` is not supported yet"
+                "`{claim_label}` proof step {step_index}: `frame(statement({statement_index}))` is not supported yet"
             )))
+        }
+        Some(ProofStepTarget::Label(_)) => {
+            unreachable!("proof-step labels are resolved before frame target validation")
         }
     }
 }
@@ -1930,7 +1982,7 @@ fn auto_loop_verification_proof_step_candidates(
     base.extend(
         loop_step_targets(function_block)
             .into_iter()
-            .map(ProofStep::LoopVc),
+            .map(|loop_index| ProofStep::LoopVc(ProofStepTarget::Loop(loop_index))),
     );
     base.extend(
         loop_effect_summary_targets(function_block)
@@ -2292,13 +2344,13 @@ fn validate_structural_clauses(
         match structural_clause.target() {
             StructuralTarget::Loop(index) if *index >= loop_count => {
                 return Err(ClickError::new(format!(
-                    "`{}` has no `loop {index}` target; it contains {loop_count} loop(s)",
+                    "`{}` has no `loop({index})` code region; it contains {loop_count} loop(s)",
                     function_block.signature().name()
                 )));
             }
             StructuralTarget::Statement(index) if *index >= statement_count => {
                 return Err(ClickError::new(format!(
-                    "`{}` has no `statement {index}` target; it contains {statement_count} statement(s)",
+                    "`{}` has no `statement({index})` code region; it contains {statement_count} statement(s)",
                     function_block.signature().name()
                 )));
             }
@@ -2306,12 +2358,12 @@ fn validate_structural_clauses(
                 for item in structural_clause.items() {
                     if item.kind() == StructuralItemKind::Invariant {
                         return Err(ClickError::new(
-                            "`invariant` is only supported at `loop` targets",
+                            "`invariant` is only supported at loop code regions",
                         ));
                     }
                     if item.is_effect_kind() {
                         return Err(ClickError::new(
-                            "`immutable` and `mutable` are only supported at `loop` targets inside structural proof blocks",
+                            "`immutable` and `mutable` are only supported at loop code regions inside structural proof blocks",
                         ));
                     }
                 }
@@ -3642,12 +3694,20 @@ fn apply_contract_lets_to_structural_clause(
     clause: StructuralClause,
     bindings: &[ContractLetBinding],
 ) -> Result<StructuralClause, String> {
-    let StructuralClause { target, items } = clause;
+    let StructuralClause {
+        target,
+        label,
+        items,
+    } = clause;
     let items = items
         .into_iter()
         .map(|item| apply_contract_lets_to_structural_item(item, bindings))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(StructuralClause { target, items })
+    Ok(StructuralClause {
+        target,
+        label,
+        items,
+    })
 }
 
 fn apply_contract_lets_to_structural_item(
@@ -11106,6 +11166,7 @@ impl Parser {
         let mut contract_let_names = BTreeSet::new();
         let mut requires = Vec::new();
         let mut structural_clauses = Vec::new();
+        let mut structural_labels = BTreeSet::new();
         let mut effects = Vec::new();
         let mut ensures = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
@@ -11145,8 +11206,21 @@ impl Parser {
                             .map_err(|message| self.error(message))?,
                     );
                 }
-                Some("loop" | "statement") => {
+                Some("for") => {
                     let clause = self.parse_structural_clause()?;
+                    if let Some(label) = clause.label() {
+                        if matches!(label, "function" | "loop" | "statement") {
+                            return Err(self.error(format!(
+                                "`{label}` is reserved and cannot be used as a code region label"
+                            )));
+                        }
+                        if !structural_labels.insert(label.to_string()) {
+                            return Err(self.error(format!(
+                                "duplicate code region label `{label}` in `{}`",
+                                signature.name()
+                            )));
+                        }
+                    }
                     structural_clauses.push(
                         apply_contract_lets_to_structural_clause(clause, &contract_lets)
                             .map_err(|message| self.error(message))?,
@@ -11168,13 +11242,13 @@ impl Parser {
                 }
                 Some(keyword) => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `immutable`, `mutable`, `mutable_field`, `loop`, `statement`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        "expected `let`, `requires`, `immutable`, `mutable`, `mutable_field`, `for`, `ensures`, or `}}` in `{}`, got `{keyword}`",
                         signature.name()
                     )));
                 }
                 None => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `immutable`, `mutable`, `mutable_field`, `loop`, `statement`, `ensures`, or `}}` in `{}`",
+                        "expected `let`, `requires`, `immutable`, `mutable`, `mutable_field`, `for`, `ensures`, or `}}` in `{}`",
                         signature.name()
                     )));
                 }
@@ -11443,7 +11517,14 @@ impl Parser {
     }
 
     fn parse_structural_clause(&mut self) -> Result<StructuralClause, ClickError> {
+        self.expect_ident_spelling("for")?;
         let target = self.parse_structural_target()?;
+        let label = if self.peek_ident() == Some("as") {
+            self.position += 1;
+            Some(self.expect_ident("code region label")?)
+        } else {
+            None
+        };
         self.expect(Token::LBrace)?;
         let mut items = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
@@ -11453,24 +11534,34 @@ impl Parser {
         if items.is_empty() {
             return Err(self.error("structural proof block must contain at least one item"));
         }
-        Ok(StructuralClause { target, items })
+        Ok(StructuralClause {
+            target,
+            label,
+            items,
+        })
     }
 
     fn parse_structural_target(&mut self) -> Result<StructuralTarget, ClickError> {
         match self.next() {
             Some(Token::Ident(kind)) if kind == "loop" => {
-                Ok(StructuralTarget::Loop(self.expect_index("loop index")?))
+                self.expect(Token::LParen)?;
+                let index = self.expect_index("loop index")?;
+                self.expect(Token::RParen)?;
+                Ok(StructuralTarget::Loop(index))
             }
-            Some(Token::Ident(kind)) if kind == "statement" => Ok(StructuralTarget::Statement(
-                self.expect_index("statement index")?,
-            )),
-            Some(Token::Ident(kind)) => {
-                Err(self.error(format!("expected `loop` or `statement`, got `{kind}`")))
+            Some(Token::Ident(kind)) if kind == "statement" => {
+                self.expect(Token::LParen)?;
+                let index = self.expect_index("statement index")?;
+                self.expect(Token::RParen)?;
+                Ok(StructuralTarget::Statement(index))
             }
-            Some(token) => {
-                Err(self.error(format!("expected `loop` or `statement`, got {token:?}")))
-            }
-            None => Err(self.error("expected `loop` or `statement`, got end of input")),
+            Some(Token::Ident(kind)) => Err(self.error(format!(
+                "expected `loop(N)` or `statement(N)`, got `{kind}`"
+            ))),
+            Some(token) => Err(self.error(format!(
+                "expected `loop(N)` or `statement(N)`, got {token:?}"
+            ))),
+            None => Err(self.error("expected `loop(N)` or `statement(N)`, got end of input")),
         }
     }
 
@@ -11964,12 +12055,7 @@ impl Parser {
                 self.expect(Token::LParen)?;
                 let target = self.parse_proof_step_target()?;
                 self.expect(Token::RParen)?;
-                match target {
-                    ProofStepTarget::Loop(index) => ProofStep::LoopVc(index),
-                    _ => {
-                        return Err(self.error("`loop_vc` expects a `loop N` target"));
-                    }
-                }
+                ProofStep::LoopVc(target)
             }
             "frame" => {
                 self.expect(Token::LParen)?;
@@ -12058,19 +12144,23 @@ impl Parser {
         match self.next() {
             Some(Token::Ident(kind)) if kind == "function" => Ok(ProofStepTarget::Function),
             Some(Token::Ident(kind)) if kind == "loop" => {
-                Ok(ProofStepTarget::Loop(self.expect_index("loop index")?))
+                self.expect(Token::LParen)?;
+                let index = self.expect_index("loop index")?;
+                self.expect(Token::RParen)?;
+                Ok(ProofStepTarget::Loop(index))
             }
-            Some(Token::Ident(kind)) if kind == "statement" => Ok(ProofStepTarget::Statement(
-                self.expect_index("statement index")?,
-            )),
-            Some(Token::Ident(kind)) => Err(self.error(format!(
-                "expected proof target `function`, `loop N`, or `statement N`, got `{kind}`"
-            ))),
+            Some(Token::Ident(kind)) if kind == "statement" => {
+                self.expect(Token::LParen)?;
+                let index = self.expect_index("statement index")?;
+                self.expect(Token::RParen)?;
+                Ok(ProofStepTarget::Statement(index))
+            }
+            Some(Token::Ident(label)) => Ok(ProofStepTarget::Label(label)),
             Some(token) => Err(self.error(format!(
-                "expected proof target `function`, `loop N`, or `statement N`, got {token:?}"
+                "expected code region `function`, `loop(N)`, `statement(N)`, or label, got {token:?}"
             ))),
             None => Err(self.error(
-                "expected proof target `function`, `loop N`, or `statement N`, got end of input",
+                "expected code region `function`, `loop(N)`, `statement(N)`, or label, got end of input",
             )),
         }
     }
@@ -13714,7 +13804,7 @@ mod tests {
             verifying "count.c";
 
             int32 count() {
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0;
                     mutable p[0..n];
                     step {
@@ -13739,7 +13829,7 @@ mod tests {
     fn parses_proof_step_script() {
         let source = FILL3_CLICK.replace(
             "by auto;",
-            "by { symbolic_execute(); loop_vc(loop 0); frame(loop 0); simp(); close(); }",
+            "by { symbolic_execute(); loop_vc(loop(0)); frame(loop(0)); simp(); close(); }",
         );
         let file = parse(&source).expect("proof-step script should parse");
         let ensure = &file.function_blocks()[0].ensures()[0];
@@ -13749,7 +13839,7 @@ mod tests {
             Some(
                 [
                     ProofStep::SymbolicExecute,
-                    ProofStep::LoopVc(0),
+                    ProofStep::LoopVc(ProofStepTarget::Loop(0)),
                     ProofStep::Frame(Some(ProofStepTarget::Loop(0))),
                     ProofStep::Simp,
                     ProofStep::Close,
@@ -13929,11 +14019,11 @@ mod tests {
             verifying "count.c";
 
             int32 count() {
-                statement 2 {
+                for statement(2) as initialized {
                     assert i == 0 by auto;
                 }
 
-                loop 0 {
+                for loop(0) as count_loop {
                     invariant i >= 0 by auto;
                     invariant i <= 3 by auto;
                     mutable p[0..n] by auto;
@@ -13954,6 +14044,10 @@ mod tests {
             &StructuralTarget::Statement(2)
         );
         assert_eq!(
+            function.structural_clauses()[0].label(),
+            Some("initialized")
+        );
+        assert_eq!(
             function.structural_clauses()[0].items()[0].kind(),
             StructuralItemKind::Assert
         );
@@ -13961,6 +14055,7 @@ mod tests {
             function.structural_clauses()[1].target(),
             &StructuralTarget::Loop(0)
         );
+        assert_eq!(function.structural_clauses()[1].label(), Some("count_loop"));
         assert_eq!(function.structural_clauses()[1].items().len(), 4);
         assert_eq!(
             function.structural_clauses()[1].items()[0].kind(),
@@ -13981,6 +14076,43 @@ mod tests {
         assert_eq!(
             function.structural_clauses()[1].items()[3].kind(),
             StructuralItemKind::StepEffect
+        );
+    }
+
+    #[test]
+    fn rejects_legacy_structural_region_syntax() {
+        let source = r#"
+            verifying "count.c";
+
+            int32 count() {
+                loop 0 {
+                    invariant i >= 0 by auto;
+                }
+
+                ensures result == 3 by auto;
+            }
+        "#;
+        let error = parse(source).expect_err("legacy loop block syntax should fail");
+
+        assert!(
+            error.message().contains("expected `let`, `requires`"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
+    fn rejects_legacy_proof_step_region_syntax() {
+        let source = FILL3_CLICK.replace(
+            "by auto;",
+            "by { symbolic_execute(); loop_vc(loop 0); close(); }",
+        );
+        let error = parse(&source).expect_err("legacy proof-step region syntax should fail");
+
+        assert!(
+            error.message().contains("expected LParen"),
+            "{}",
+            error.message()
         );
     }
 
@@ -14530,7 +14662,7 @@ mod tests {
 
             int32 fill3_array_loop(int32 p[3]) {
                 requires valid_range(p, 12);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= 3 by auto;
                 }
@@ -14555,7 +14687,7 @@ mod tests {
 
             int32 fill3_array_loop(int32 p[3]) {
                 requires valid_range(p, 12);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= 3 by auto;
                 }
@@ -15026,11 +15158,11 @@ mod tests {
             verifying "count_to_three.c";
 
             int32 count_to_three() {
-                statement 2 {
+                for statement(2) {
                     assert i == 0 by auto;
                 }
 
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= 3 by auto;
                 }
@@ -15065,7 +15197,7 @@ mod tests {
             int32 fill_tail(int32 p[], int32 n) {
                 requires n >= 1 and n <= 2147483647;
                 requires valid_range(p, n * 4);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 1 and i <= n by auto;
                     invariant p[0] == old(p[0]) by auto;
                 }
@@ -15098,7 +15230,7 @@ mod tests {
             int32 fill_tail(int32 p[], int32 n) {
                 requires n >= 1 and n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 1 and i <= n by auto;
                     invariant forall (int32 k) {
                         0 <= k and k < 1 implies p[k] == old(p[k])
@@ -15137,7 +15269,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                 }
@@ -15172,7 +15304,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                 }
@@ -15208,7 +15340,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     mutable p[0..n] by auto;
@@ -15244,7 +15376,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     step {
@@ -15282,7 +15414,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     mutable p[i..i + 1] by frame;
@@ -15323,7 +15455,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     step {
@@ -15361,7 +15493,7 @@ mod tests {
                 requires n >= 1;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 1 by auto;
                     invariant i <= n by auto;
                     mutable p[1..n] by frame;
@@ -15399,7 +15531,7 @@ mod tests {
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
                 requires valid_range(q[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     step {
@@ -15437,7 +15569,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     mutable p[0..0] by auto;
@@ -15496,7 +15628,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     immutable by auto;
@@ -15536,7 +15668,7 @@ mod tests {
             verifying "count_to_three.c";
 
             int32 count_to_three() {
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= 3 by auto;
                     immutable by frame;
@@ -15571,7 +15703,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     mutable p[0..n] by frame;
@@ -15609,7 +15741,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     mutable p[0..n] by frame;
@@ -15647,7 +15779,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     mutable p[0..n] by frame;
@@ -15692,7 +15824,7 @@ mod tests {
                 requires n >= 1;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 1 by auto;
                     invariant i <= n by auto;
                     mutable (p + 1)[0..n - 1] by frame;
@@ -15730,7 +15862,7 @@ mod tests {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires valid_range(p[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     mutable p[0..n] by frame;
@@ -15766,7 +15898,7 @@ mod tests {
             verifying "count_to_three.c";
 
             int32 count_to_three() {
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by frame;
                 }
                 ensures returns_three: result == 3 by auto;
@@ -15815,7 +15947,7 @@ mod tests {
             int32 loop_sorted_range_invariant(int32 p[3]) {
                 requires valid_range(p[0..3]);
                 requires sorted(p, 3);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 and i <= 3 by auto;
                     invariant sorted(p, 3) by {
                         unfold(sorted);
@@ -15825,8 +15957,8 @@ mod tests {
                 }
                 ensures still_sorted: sorted(p, 3) by {
                     symbolic_execute();
-                    loop_vc(loop 0);
-                    frame(loop 0);
+                    loop_vc(loop(0));
+                    frame(loop(0));
                     unfold(sorted);
                     unfold(sorted_range);
                     simp();
@@ -15864,7 +15996,7 @@ mod tests {
                 requires valid_range(dst[0..n]);
                 requires valid_range(src[0..n]);
                 requires disjoint(dst[0..n], src[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     invariant forall (int32 k) {
@@ -15877,8 +16009,8 @@ mod tests {
                     0 <= k and k < n implies src[k] == old(src[k])
                 } by {
                     symbolic_execute();
-                    loop_vc(loop 0);
-                    frame(loop 0);
+                    loop_vc(loop(0));
+                    frame(loop(0));
                     simp();
                     close();
                 }
@@ -15917,7 +16049,7 @@ mod tests {
                 requires valid_range(dst[0..n]);
                 requires valid_range(src[0..n]);
                 requires disjoint(dst[0..n], src[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     invariant forall (int32 k) {
@@ -15944,7 +16076,7 @@ mod tests {
             .expect("source_unchanged theorem should be present");
         let expected_steps = [
             ProofStep::SymbolicExecute,
-            ProofStep::LoopVc(0),
+            ProofStep::LoopVc(ProofStepTarget::Loop(0)),
             ProofStep::Frame(Some(ProofStepTarget::Loop(0))),
             ProofStep::Simp,
             ProofStep::Close,
@@ -15965,7 +16097,7 @@ mod tests {
                 requires valid_range(dst[0..n]);
                 requires valid_range(src[0..n]);
                 requires disjoint(dst[0..n], src[0..n]);
-                loop 0 {
+                for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
                     invariant forall (int32 k) {
@@ -15977,8 +16109,8 @@ mod tests {
                     0 <= k and k < n implies src[k] == old(src[k])
                 } by {
                     symbolic_execute();
-                    loop_vc(loop 0);
-                    frame(loop 0);
+                    loop_vc(loop(0));
+                    frame(loop(0));
                     simp();
                     close();
                 }
@@ -16012,7 +16144,7 @@ mod tests {
             verifying "count_to_three.c";
 
             int32 count_to_three() {
-                loop 0 {
+                for loop(0) {
                     invariant i < 3 by auto;
                 }
 
@@ -16046,7 +16178,7 @@ mod tests {
             verifying "count_to_three.c";
 
             int32 count_to_three() {
-                loop 0 {
+                for loop(0) {
                     invariant i == 1 by auto;
                 }
 

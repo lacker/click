@@ -69,7 +69,7 @@ copying every old value into a separate variable.
 Loops need their own frame reasoning. A loop can have a whole-loop effect:
 
 ```click
-loop 0 {
+for loop(0) {
     mutable p[0..n] by frame;
 }
 ```
@@ -77,7 +77,7 @@ loop 0 {
 or a step-relative effect:
 
 ```click
-loop 0 {
+for loop(0) {
     step {
         mutable p[i..i + 1] by frame;
     }

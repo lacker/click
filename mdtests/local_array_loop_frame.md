@@ -20,7 +20,7 @@ int32 local_array_loop_frame() {
 verifying "local_array_loop_frame.c";
 
 int32 local_array_loop_frame() {
-    loop 0 {
+    for loop(0) {
         invariant i >= 0 by auto;
         invariant i <= 3 by auto;
         step {

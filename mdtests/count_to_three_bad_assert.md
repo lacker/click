@@ -1,6 +1,6 @@
 # count_to_three rejects a false statement assertion
 
-This checks `statement N` for a one-shot proof obligation.
+This checks `for statement(N)` for a one-shot proof obligation.
 
 ```c filename=count_to_three_bad_assert.c
 int32 count_to_three_bad_assert() {
@@ -14,7 +14,7 @@ int32 count_to_three_bad_assert() {
 verifying "count_to_three_bad_assert.c";
 
 int32 count_to_three_bad_assert() {
-    statement 2 {
+    for statement(2) {
         assert i == 1 by auto;
     }
 

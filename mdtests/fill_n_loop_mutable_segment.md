@@ -25,7 +25,7 @@ int32 fill_n_loop_mutable_segment(int32 p[], int32 n) {
     requires n >= 0;
     requires n <= 2147483647;
     requires valid_range(p[0..n]);
-    loop 0 {
+    for loop(0) {
         invariant i >= 0 by auto;
         invariant i <= n by auto;
         step {

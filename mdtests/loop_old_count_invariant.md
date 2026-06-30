@@ -20,7 +20,7 @@ verifying "loop_old_count_invariant.c";
 
 int32 loop_old_count_invariant(int32 p[3]) {
     requires valid_range(p[0..3]);
-    loop 0 {
+    for loop(0) {
         invariant i >= 0 and i <= 3 by auto;
         invariant old(count(p, 0, 3, p[0])) == old(count(p, 0, 3, p[0])) by auto;
         immutable by frame;
