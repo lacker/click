@@ -282,6 +282,7 @@ pub(super) fn execute_c_while_verification_paths(
 
     let entry_obligations = collect_invariant_check_obligations(
         state,
+        state,
         invariant_checks,
         InvariantPhase::Entry,
         assumptions,
@@ -297,6 +298,7 @@ pub(super) fn execute_c_while_verification_paths(
         budget,
     )?;
     let preservation_summary = collect_loop_preservation_summary(
+        state,
         &top_state,
         condition,
         invariant_checks,
@@ -319,6 +321,7 @@ pub(super) fn execute_c_while_verification_paths(
     let mut paths = Vec::new();
     for (invariant_facts, invariant_obligations) in assume_invariant_checks(
         &top_state,
+        state,
         invariant_checks,
         assumptions,
         &[],
@@ -384,6 +387,7 @@ pub(super) fn invariant_context(
 
 pub(super) fn collect_invariant_check_obligations(
     state: &CState,
+    loop_entry_state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
     phase: InvariantPhase,
     assumptions: &Assumptions,
@@ -396,9 +400,10 @@ pub(super) fn collect_invariant_check_obligations(
         for (facts, obligations) in contexts {
             let effective_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
-            for path in lower_spec_proposition_at_state(
+            for path in lower_spec_proposition_at_state_with_loop_entry(
                 state,
                 check.proposition(),
+                Some(loop_entry_state),
                 &effective_assumptions,
                 budget,
             )? {
@@ -436,6 +441,7 @@ pub(super) struct LoopPreservationSummary {
 }
 
 pub(super) fn collect_loop_preservation_summary(
+    loop_entry_state: &CState,
     top_state: &CState,
     condition: &CExpression,
     invariant_checks: &[CLoopInvariantCheck],
@@ -448,9 +454,15 @@ pub(super) fn collect_loop_preservation_summary(
     variables: &mut VerificationVariableGenerator,
 ) -> ExecutionResult<LoopPreservationSummary> {
     let mut obligations = Vec::new();
-    for (mut invariant_facts, invariant_obligations) in
-        assume_invariant_checks(top_state, invariant_checks, assumptions, &[], &[], budget)?
-    {
+    for (mut invariant_facts, invariant_obligations) in assume_invariant_checks(
+        top_state,
+        loop_entry_state,
+        invariant_checks,
+        assumptions,
+        &[],
+        &[],
+        budget,
+    )? {
         for summary in whole_loop_effect_summaries {
             let _ = add_path_fact(&mut invariant_facts, assumptions, summary.clone());
         }
@@ -486,6 +498,7 @@ pub(super) fn collect_loop_preservation_summary(
                         )?;
                         let path_obligations = collect_invariant_check_obligations(
                             &next_state,
+                            loop_entry_state,
                             invariant_checks,
                             InvariantPhase::Preservation,
                             &assumptions_with_path_context(
@@ -821,6 +834,7 @@ pub(super) fn false_equals_true_proposition() -> Proposition {
 
 pub(super) fn assume_invariant_checks(
     state: &CState,
+    loop_entry_state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
     assumptions: &Assumptions,
     prefix_facts: &[PathFact],
@@ -833,9 +847,10 @@ pub(super) fn assume_invariant_checks(
         for (facts, obligations) in contexts {
             let effective_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
-            for path in lower_spec_proposition_at_state(
+            for path in lower_spec_proposition_at_state_with_loop_entry(
                 state,
                 check.proposition(),
+                Some(loop_entry_state),
                 &effective_assumptions,
                 budget,
             )? {

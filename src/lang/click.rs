@@ -206,6 +206,10 @@ pub enum ContractExpression {
     /// A C0 expression fragment appearing inside Surface Click.
     CFragment(CExpression),
     Old(Box<ContractExpression>),
+    At {
+        selector: VisitSelector,
+        expression: Box<ContractExpression>,
+    },
     Add(Box<ContractExpression>, Box<ContractExpression>),
     Subtract(Box<ContractExpression>, Box<ContractExpression>),
     Multiply(Box<ContractExpression>, Box<ContractExpression>),
@@ -264,6 +268,7 @@ struct SpecElaborationContext {
     values: BTreeMap<String, SpecExpression>,
     array_refs: BTreeMap<String, SpecArrayRef>,
     current_memory: SpecMemory,
+    current_loop_entry: Option<usize>,
 }
 
 impl Default for SpecElaborationContext {
@@ -272,6 +277,7 @@ impl Default for SpecElaborationContext {
             values: BTreeMap::new(),
             array_refs: BTreeMap::new(),
             current_memory: SpecMemory::Current,
+            current_loop_entry: None,
         }
     }
 }
@@ -280,6 +286,13 @@ impl SpecElaborationContext {
     fn with_current_memory(current_memory: SpecMemory) -> Self {
         Self {
             current_memory,
+            ..Self::default()
+        }
+    }
+
+    fn for_loop_invariant(loop_index: usize) -> Self {
+        Self {
+            current_loop_entry: Some(loop_index),
             ..Self::default()
         }
     }
@@ -307,6 +320,7 @@ impl SpecElaborationContext {
             values,
             array_refs: BTreeMap::new(),
             current_memory: SpecMemory::Fixed(entry_memory.clone()),
+            current_loop_entry: None,
         })
     }
 }
@@ -384,6 +398,22 @@ pub enum CodeRegionRef {
     Loop(usize),
     Statement(usize),
     Label(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum VisitSelector {
+    ProgramPoint(ProgramPointRef),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ProgramPointRef {
+    region: CodeRegionRef,
+    kind: ProgramPointKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum ProgramPointKind {
+    Entry,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2462,6 +2492,12 @@ struct LabeledCheck {
     label: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ResolvedProgramPoint {
+    FunctionEntry,
+    LoopEntry(usize),
+}
+
 impl AnnotationLowerer<'_> {
     fn lower_statement(
         &mut self,
@@ -2560,7 +2596,7 @@ impl AnnotationLowerer<'_> {
                 Ok(CLoopInvariantCheck::new(
                     self.click_proposition_to_spec_proposition(
                         &proposition,
-                        &SpecElaborationContext::default(),
+                        &SpecElaborationContext::for_loop_invariant(loop_index),
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
@@ -2762,6 +2798,10 @@ impl AnnotationLowerer<'_> {
                     environment.old_state(&self.entry_values, self.entry_state.memory())?;
                 self.lower_contract_expression_to_spec(expression, &old_environment)
             }
+            ContractExpression::At {
+                selector,
+                expression,
+            } => self.lower_at_expression_to_spec(selector, expression, environment),
             ContractExpression::Add(left, right) => Ok(SpecExpression::Add(
                 Box::new(self.lower_contract_expression_to_spec(left, environment)?),
                 Box::new(self.lower_contract_expression_to_spec(right, environment)?),
@@ -2883,6 +2923,74 @@ impl AnnotationLowerer<'_> {
             ContractExpression::Call { name, arguments } => {
                 self.lower_click_function_call_to_spec(name, arguments, environment)
             }
+        }
+    }
+
+    fn lower_at_expression_to_spec(
+        &mut self,
+        selector: &VisitSelector,
+        expression: &ContractExpression,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecExpression, String> {
+        match self.resolve_visit_selector(selector)? {
+            ResolvedProgramPoint::FunctionEntry => {
+                let old_environment =
+                    environment.old_state(&self.entry_values, self.entry_state.memory())?;
+                self.lower_contract_expression_to_spec(expression, &old_environment)
+            }
+            ResolvedProgramPoint::LoopEntry(loop_index) => {
+                if environment.current_loop_entry != Some(loop_index) {
+                    return Err(format!(
+                        "`at(loop({loop_index}).entry, ...)` is currently supported only inside that loop's invariant"
+                    ));
+                }
+                Ok(SpecExpression::LoopEntrySnapshot(Box::new(
+                    self.lower_contract_expression_to_spec(expression, environment)?,
+                )))
+            }
+        }
+    }
+
+    fn resolve_visit_selector(
+        &self,
+        selector: &VisitSelector,
+    ) -> Result<ResolvedProgramPoint, String> {
+        match selector {
+            VisitSelector::ProgramPoint(program_point) => {
+                self.resolve_program_point_ref(program_point)
+            }
+        }
+    }
+
+    fn resolve_program_point_ref(
+        &self,
+        program_point: &ProgramPointRef,
+    ) -> Result<ResolvedProgramPoint, String> {
+        let region = self.resolve_code_region_ref(&program_point.region)?;
+        match (region, program_point.kind) {
+            (CodeRegion::Function, ProgramPointKind::Entry) => {
+                Ok(ResolvedProgramPoint::FunctionEntry)
+            }
+            (CodeRegion::Loop(index), ProgramPointKind::Entry) => {
+                Ok(ResolvedProgramPoint::LoopEntry(index))
+            }
+            (CodeRegion::Statement(index), ProgramPointKind::Entry) => Err(format!(
+                "`at(statement({index}).entry, ...)` is not supported yet"
+            )),
+        }
+    }
+
+    fn resolve_code_region_ref(&self, region_ref: &CodeRegionRef) -> Result<CodeRegion, String> {
+        match region_ref {
+            CodeRegionRef::Function => Ok(CodeRegion::Function),
+            CodeRegionRef::Loop(index) => Ok(CodeRegion::Loop(*index)),
+            CodeRegionRef::Statement(index) => Ok(CodeRegion::Statement(*index)),
+            CodeRegionRef::Label(label) => self
+                .structural_clauses
+                .iter()
+                .find(|clause| clause.label() == Some(label.as_str()))
+                .map(|clause| *clause.region())
+                .ok_or_else(|| format!("unknown code region label `{label}`")),
         }
     }
 
@@ -3034,6 +3142,10 @@ impl AnnotationLowerer<'_> {
                     environment.old_state(&self.entry_values, self.entry_state.memory())?;
                 self.lower_array_ref_to_spec(expression, &old_environment)
             }
+            ContractExpression::At {
+                selector,
+                expression,
+            } => self.lower_at_array_ref_to_spec(selector, expression, environment),
             ContractExpression::CFragment(CExpression::Variable(name)) => {
                 if let Some(array_ref) = environment.array_refs.get(name) {
                     return Ok(array_ref.clone());
@@ -3114,6 +3226,42 @@ impl AnnotationLowerer<'_> {
         }
     }
 
+    fn lower_at_array_ref_to_spec(
+        &mut self,
+        selector: &VisitSelector,
+        expression: &ContractExpression,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecArrayRef, String> {
+        match self.resolve_visit_selector(selector)? {
+            ResolvedProgramPoint::FunctionEntry => {
+                let old_environment =
+                    environment.old_state(&self.entry_values, self.entry_state.memory())?;
+                self.lower_array_ref_to_spec(expression, &old_environment)
+            }
+            ResolvedProgramPoint::LoopEntry(loop_index) => {
+                if environment.current_loop_entry != Some(loop_index) {
+                    return Err(format!(
+                        "`at(loop({loop_index}).entry, ...)` is currently supported only inside that loop's invariant"
+                    ));
+                }
+                let SpecArrayRef {
+                    memory,
+                    pointer,
+                    element_type,
+                } = self.lower_array_ref_to_spec(expression, environment)?;
+                let memory = match memory {
+                    SpecMemory::Current => SpecMemory::LoopEntry,
+                    memory => memory,
+                };
+                Ok(SpecArrayRef {
+                    memory,
+                    pointer: SpecExpression::LoopEntrySnapshot(Box::new(pointer)),
+                    element_type,
+                })
+            }
+        }
+    }
+
     fn array_ref_element_type_for_name(&self, name: &str) -> CType {
         self.parameter_array_element_types
             .get(name)
@@ -3132,6 +3280,9 @@ impl AnnotationLowerer<'_> {
                 .get(name)
                 .map(|array_ref| array_ref.element_type)
                 .unwrap_or_else(|| self.array_ref_element_type_for_name(name)),
+            ContractExpression::At { expression, .. } => {
+                self.contract_array_element_type(expression, environment)
+            }
             ContractExpression::Old(expression) => {
                 self.contract_array_element_type(expression, environment)
             }
@@ -4066,6 +4217,9 @@ fn collect_contract_expression_referenced_names(
         ContractExpression::Old(expression) | ContractExpression::BitwiseNot(expression) => {
             collect_contract_expression_referenced_names(expression, names);
         }
+        ContractExpression::At { expression, .. } => {
+            collect_contract_expression_referenced_names(expression, names);
+        }
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
         | ContractExpression::Multiply(left, right)
@@ -4201,6 +4355,13 @@ fn substitute_contract_expression(
         ContractExpression::Old(expression) => Ok(ContractExpression::Old(Box::new(
             substitute_contract_expression(expression, substitutions)?,
         ))),
+        ContractExpression::At {
+            selector,
+            expression,
+        } => Ok(ContractExpression::At {
+            selector: selector.clone(),
+            expression: Box::new(substitute_contract_expression(expression, substitutions)?),
+        }),
         ContractExpression::Add(left, right) => Ok(ContractExpression::Add(
             Box::new(substitute_contract_expression(left, substitutions)?),
             Box::new(substitute_contract_expression(right, substitutions)?),
@@ -4479,6 +4640,7 @@ fn contract_expression_as_c_fragment(expression: &ContractExpression) -> Option<
     match expression {
         ContractExpression::CFragment(expression) => Some(expression.clone()),
         ContractExpression::Old(_) => None,
+        ContractExpression::At { .. } => None,
         ContractExpression::Add(left, right) => Some(CExpression::Add(
             Box::new(contract_expression_as_c_fragment(left)?),
             Box::new(contract_expression_as_c_fragment(right)?),
@@ -4619,6 +4781,7 @@ fn contract_expression_to_c_fragment(expression: &ContractExpression) -> Option<
     match expression {
         ContractExpression::CFragment(expression) => Some(expression.clone()),
         ContractExpression::Old(_) => None,
+        ContractExpression::At { .. } => None,
         ContractExpression::Add(left, right) => Some(CExpression::Add(
             Box::new(contract_expression_to_c_fragment(left)?),
             Box::new(contract_expression_to_c_fragment(right)?),
@@ -5460,6 +5623,9 @@ impl KernelPropositionLowerer {
             }
             ContractExpression::Old(_) => Err(ClickError::new(
                 "`old(...)` is not available in `requires` clauses",
+            )),
+            ContractExpression::At { .. } => Err(ClickError::new(
+                "`at(...)` is not available in `requires` clauses",
             )),
             ContractExpression::Add(left, right) => {
                 let left = self.lower_requirement_value(left)?;
@@ -7596,6 +7762,9 @@ fn evaluate_predicate_contract_expression(
         ContractExpression::Old(_) => {
             Err("`old(...)` is not available in predicate definitions".to_string())
         }
+        ContractExpression::At { .. } => {
+            Err("`at(...)` is not available in predicate definitions".to_string())
+        }
         ContractExpression::Add(left, right) => {
             let left = evaluate_predicate_contract_expression(
                 values,
@@ -7842,6 +8011,9 @@ fn evaluate_predicate_contract_expression(
         ContractExpression::Index(base, index) => {
             if contains_old_expression(base) {
                 return Err("`old(...)` is not available in predicate definitions".to_string());
+            }
+            if contains_at_expression(base) {
+                return Err("`at(...)` is not available in predicate definitions".to_string());
             }
             let array_ref = evaluate_contract_array_ref_with_environment(
                 values,
@@ -9526,6 +9698,27 @@ fn evaluate_contract_expression_with_environment(
             click_function_environment,
             active_functions,
         ),
+        ContractExpression::At {
+            selector,
+            expression,
+        } if visit_selector_is_function_entry(selector) => {
+            evaluate_contract_expression_with_environment(
+                parameter_values,
+                &array_refs_with_memory(array_refs, pre_state.memory()),
+                pre_state,
+                pre_state,
+                None,
+                assumptions,
+                expression,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )
+        }
+        ContractExpression::At { .. } => Err(
+            "`at(...)` is currently supported in concrete evaluation only for `function.entry`"
+                .to_string(),
+        ),
         ContractExpression::Add(left, right) => {
             let left = evaluate_contract_expression_with_environment(
                 parameter_values,
@@ -10098,6 +10291,16 @@ fn array_refs_with_memory(array_refs: &ClickArrayRefs, memory: &CMemory) -> Clic
         .collect()
 }
 
+fn visit_selector_is_function_entry(selector: &VisitSelector) -> bool {
+    matches!(
+        selector,
+        VisitSelector::ProgramPoint(ProgramPointRef {
+            region: CodeRegionRef::Function,
+            kind: ProgramPointKind::Entry,
+        })
+    )
+}
+
 fn evaluate_click_function_call(
     click_function_environment: &ClickFunctionEnvironment,
     name: &str,
@@ -10244,6 +10447,39 @@ fn evaluate_contract_array_ref_with_environment(
                 element_type,
             })
         }
+        ContractExpression::At {
+            selector,
+            expression,
+        } if visit_selector_is_function_entry(selector) => {
+            let pointer_value = evaluate_contract_expression_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                pre_state,
+                None,
+                assumptions,
+                expression,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let CValue::Pointer(pointer) = pointer_value else {
+                return Err(format!(
+                    "array reference expression inside `at(function.entry, ...)` did not evaluate to a pointer: `{pointer_value:?}`"
+                ));
+            };
+            let element_type =
+                contract_array_ref_element_type(array_refs, expression).unwrap_or(CType::Int32);
+            Ok(ClickArrayRef {
+                memory: pre_state.memory().clone(),
+                pointer,
+                element_type,
+            })
+        }
+        ContractExpression::At { .. } => Err(
+            "`at(...)` is currently supported in concrete array references only for `function.entry`"
+                .to_string(),
+        ),
         ContractExpression::CFragment(CExpression::Variable(name)) => {
             if let Some(array_ref) = array_refs.get(name) {
                 return Ok(array_ref.clone());
@@ -10443,6 +10679,9 @@ fn contract_array_ref_element_type(
             array_refs.get(name).map(|array_ref| array_ref.element_type)
         }
         ContractExpression::Old(expression) => {
+            contract_array_ref_element_type(array_refs, expression)
+        }
+        ContractExpression::At { expression, .. } => {
             contract_array_ref_element_type(array_refs, expression)
         }
         ContractExpression::Add(left, right) => contract_array_ref_element_type(array_refs, left)
@@ -11844,6 +12083,7 @@ impl Parser {
 
         if matches!(self.peek(), Some(Token::Ident(_)))
             && self.peek_ident() != Some("old")
+            && self.peek_ident() != Some("at")
             && self.peek_next() == Some(&Token::LParen)
         {
             let start = self.position;
@@ -12380,6 +12620,18 @@ impl Parser {
             return Ok(ContractExpression::Old(Box::new(expression)));
         }
 
+        if self.peek_ident() == Some("at") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 2;
+            let selector = self.parse_visit_selector()?;
+            self.expect(Token::Comma)?;
+            let expression = self.parse_contract_expression()?;
+            self.expect(Token::RParen)?;
+            return Ok(ContractExpression::At {
+                selector,
+                expression: Box::new(expression),
+            });
+        }
+
         if matches!(self.peek(), Some(Token::Ident(_))) && self.peek_next() == Some(&Token::LParen)
         {
             let (name, arguments) = self.parse_call_arguments("function name")?;
@@ -12413,6 +12665,24 @@ impl Parser {
             Some(token) => Err(self.error(format!("expected contract expression, got {token:?}"))),
             None => Err(self.error("expected contract expression, got end of input")),
         }
+    }
+
+    fn parse_visit_selector(&mut self) -> Result<VisitSelector, ClickError> {
+        Ok(VisitSelector::ProgramPoint(self.parse_program_point_ref()?))
+    }
+
+    fn parse_program_point_ref(&mut self) -> Result<ProgramPointRef, ClickError> {
+        let region = self.parse_code_region_ref()?;
+        self.expect(Token::Dot)?;
+        let kind = match self.expect_ident("program point kind")?.as_str() {
+            "entry" => ProgramPointKind::Entry,
+            kind => {
+                return Err(
+                    self.error(format!("expected program point kind `entry`, got `{kind}`"))
+                );
+            }
+        };
+        Ok(ProgramPointRef { region, kind })
     }
 
     fn parse_range_fold(
@@ -12882,6 +13152,11 @@ fn validate_click_function_expression(
             "`old(...)` is not available inside {context}"
         )));
     }
+    if contains_at_expression(expression) {
+        return Err(ClickError::new(format!(
+            "`at(...)` is not available inside {context}"
+        )));
+    }
     validate_contract_expression_calls(expression, click_functions, context)
 }
 
@@ -12894,6 +13169,9 @@ fn validate_contract_expression_calls(
         ContractExpression::CFragment(_) => Ok(()),
         ContractExpression::Old(body) => {
             validate_contract_expression_calls(body, click_functions, context)
+        }
+        ContractExpression::At { expression, .. } => {
+            validate_contract_expression_calls(expression, click_functions, context)
         }
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
@@ -12998,6 +13276,7 @@ fn contains_old_expression(expression: &ContractExpression) -> bool {
     match expression {
         ContractExpression::Old(_) => true,
         ContractExpression::CFragment(_) => false,
+        ContractExpression::At { expression, .. } => contains_old_expression(expression),
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
         | ContractExpression::Multiply(left, right)
@@ -13069,10 +13348,90 @@ fn proposition_contains_old_expression(proposition: &ClickProposition) -> bool {
     }
 }
 
+fn contains_at_expression(expression: &ContractExpression) -> bool {
+    match expression {
+        ContractExpression::At { .. } => true,
+        ContractExpression::CFragment(_) => false,
+        ContractExpression::Old(expression) | ContractExpression::BitwiseNot(expression) => {
+            contains_at_expression(expression)
+        }
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
+        | ContractExpression::Divide(left, right)
+        | ContractExpression::Remainder(left, right)
+        | ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right)
+        | ContractExpression::Index(left, right) => {
+            contains_at_expression(left) || contains_at_expression(right)
+        }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            proposition_contains_at_expression(condition)
+                || contains_at_expression(then_branch)
+                || contains_at_expression(else_branch)
+        }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            contains_at_expression(start)
+                || contains_at_expression(end)
+                || contains_at_expression(initial)
+                || contains_at_expression(body)
+        }
+        ContractExpression::Let { value, body, .. } => {
+            contains_at_expression(value) || contains_at_expression(body)
+        }
+        ContractExpression::Call { arguments, .. } => arguments.iter().any(contains_at_expression),
+    }
+}
+
+fn proposition_contains_at_expression(proposition: &ClickProposition) -> bool {
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            contains_at_expression(left) || contains_at_expression(right)
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            proposition_contains_at_expression(left) || proposition_contains_at_expression(right)
+        }
+        ClickProposition::Not(body)
+        | ClickProposition::ForAll { body, .. }
+        | ClickProposition::Exists { body, .. } => proposition_contains_at_expression(body),
+        ClickProposition::RangeAll {
+            start, end, body, ..
+        }
+        | ClickProposition::RangeAny {
+            start, end, body, ..
+        } => {
+            contains_at_expression(start)
+                || contains_at_expression(end)
+                || proposition_contains_at_expression(body)
+        }
+        ClickProposition::PredicateCall { arguments, .. } => {
+            arguments.iter().any(contains_at_expression)
+        }
+    }
+}
+
 fn collect_click_function_calls(expression: &ContractExpression, calls: &mut BTreeSet<String>) {
     match expression {
         ContractExpression::CFragment(_) => {}
         ContractExpression::Old(body) => collect_click_function_calls(body, calls),
+        ContractExpression::At { expression, .. } => {
+            collect_click_function_calls(expression, calls)
+        }
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
         | ContractExpression::Multiply(left, right)

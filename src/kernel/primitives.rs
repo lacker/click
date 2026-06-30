@@ -162,6 +162,7 @@ pub enum CComparisonOperator {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecMemory {
     Current,
+    LoopEntry,
     Fixed(CMemory),
 }
 
@@ -198,6 +199,7 @@ pub enum SpecExpression {
         value: Box<SpecExpression>,
         body: Box<SpecExpression>,
     },
+    LoopEntrySnapshot(Box<SpecExpression>),
     PointerOffset {
         pointer: Box<SpecExpression>,
         elements: Box<SpecExpression>,

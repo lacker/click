@@ -127,6 +127,23 @@ predicate, it becomes an entry-state Click array ref. For example,
 `permutation(p, old(p), 0, 2)` compares post-state `p` to entry-state `p`.
 See [click-core.md](click-core.md).
 
+## `at(...)`
+
+`at(selector, expression)` evaluates a contract expression at a selected visit
+to a program point. The initial supported selectors are deliberately narrow:
+
+```click
+at(function.entry, x)
+at(loop_label.entry, x)
+```
+
+`at(function.entry, expression)` is equivalent to `old(expression)`.
+
+`at(loop_label.entry, expression)` is currently supported inside invariants for
+that same labeled loop code region. It evaluates `expression` at the visit just
+before the loop region starts, then reuses that snapshot for invariant entry and
+preservation checks.
+
 ## Pure Click Functions
 
 Click functions are specification-level value definitions, not executable C

@@ -132,10 +132,19 @@ also be labeled with `as name` and used in proof steps such as `frame(name)`.
 
 A code region is a static source construct with extent, such as a function,
 loop, statement, or block. A program point is a proof-relevant boundary or
-position in the program, often associated with a code region, such as a future
-`loop_name.entry` snapshot point for `at(...)`. A visit is one runtime arrival
-at a program point. Visits are useful semantic language, but they are not
-currently Click syntax.
+position in the program, often associated with a code region, such as
+`loop_name.entry`. A visit is one runtime arrival at a program point. Visits
+are useful semantic language, but they are not currently Click syntax.
+
+Snapshot expressions use visit selectors:
+
+```click
+at(function.entry, x)
+at(loop_name.entry, x)
+```
+
+The initial `loop_name.entry` support is limited to invariants on that same
+labeled loop code region.
 
 `assert` is a one-shot spec check at the selected statement code region. It
 currently accepts the executable proposition fragment over current-state C

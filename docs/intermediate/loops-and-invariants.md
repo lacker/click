@@ -13,6 +13,16 @@ In Click terms, `loop(N)` names a loop code region. The invariant is checked at
 program points associated with that region. Since a loop head can be reached
 more than once, those program points can have many runtime visits.
 
+A labeled loop can also expose its entry visit to the invariant:
+
+```click
+for loop(0) as drain {
+    invariant at(drain.entry, n) >= 0 by auto;
+}
+```
+
+This means the value of `n` at the visit just before the loop region starts.
+
 For a simple counter loop:
 
 ```c

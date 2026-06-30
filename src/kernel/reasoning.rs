@@ -1196,6 +1196,7 @@ pub(super) fn collect_spec_memory_bitvector_variables(
 ) {
     match memory {
         SpecMemory::Current => {}
+        SpecMemory::LoopEntry => {}
         SpecMemory::Fixed(memory) => collect_memory_bitvector_variables(memory, variables),
     }
 }
@@ -1254,6 +1255,9 @@ pub(super) fn collect_spec_expression_bitvector_variables(
         } => {
             collect_spec_expression_bitvector_variables(value, variables);
             collect_spec_expression_bitvector_variables(body, variables);
+        }
+        SpecExpression::LoopEntrySnapshot(expression) => {
+            collect_spec_expression_bitvector_variables(expression, variables);
         }
         SpecExpression::PointerOffset {
             pointer,
@@ -2053,6 +2057,7 @@ pub(super) fn substitute_bitvector_variable_in_spec_memory(
 ) -> SpecMemory {
     match memory {
         SpecMemory::Current => SpecMemory::Current,
+        SpecMemory::LoopEntry => SpecMemory::LoopEntry,
         SpecMemory::Fixed(memory) => {
             SpecMemory::Fixed(substitute_bitvector_variable_in_memory(memory, from, to))
         }
@@ -2205,6 +2210,11 @@ pub(super) fn substitute_bitvector_variable_in_spec_expression(
                 body, from, to,
             )),
         },
+        SpecExpression::LoopEntrySnapshot(expression) => {
+            SpecExpression::LoopEntrySnapshot(Box::new(
+                substitute_bitvector_variable_in_spec_expression(expression, from, to),
+            ))
+        }
         SpecExpression::PointerOffset {
             pointer,
             elements,

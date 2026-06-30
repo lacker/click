@@ -14,9 +14,10 @@ pub(super) struct SpecExpressionPath {
     pub(super) obligations: Vec<ProofObligation>,
 }
 
-pub(super) fn lower_spec_proposition_at_state(
+pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
     state: &CState,
     proposition: &SpecProposition,
+    loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
@@ -30,20 +31,31 @@ pub(super) fn lower_spec_proposition_at_state(
             left,
             *operator,
             right,
+            loop_entry_state,
             assumptions,
             budget,
         ),
         SpecProposition::And(left, right) => {
             let mut paths = Vec::new();
-            for left_path in lower_spec_proposition_at_state(state, left, assumptions, budget)? {
+            for left_path in lower_spec_proposition_at_state_with_loop_entry(
+                state,
+                left,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )? {
                 let right_assumptions = assumptions_with_path_context(
                     assumptions,
                     &left_path.facts,
                     &left_path.obligations,
                 );
-                for right_path in
-                    lower_spec_proposition_at_state(state, right, &right_assumptions, budget)?
-                {
+                for right_path in lower_spec_proposition_at_state_with_loop_entry(
+                    state,
+                    right,
+                    loop_entry_state,
+                    &right_assumptions,
+                    budget,
+                )? {
                     if let Some((facts, obligations)) = merge_path_facts_and_obligations(
                         &left_path.facts,
                         &left_path.obligations,
@@ -68,34 +80,47 @@ pub(super) fn lower_spec_proposition_at_state(
             state,
             left,
             right,
+            loop_entry_state,
             assumptions,
             budget,
             |left, right| Proposition::Or(Box::new(left), Box::new(right)),
         ),
-        SpecProposition::Not(body) => {
-            Ok(
-                lower_spec_proposition_at_state(state, body, assumptions, budget)?
-                    .into_iter()
-                    .map(|path| SpecPropositionPath {
-                        proposition: Proposition::Not(Box::new(path.proposition)),
-                        facts: path.facts,
-                        obligations: path.obligations,
-                    })
-                    .collect(),
-            )
-        }
+        SpecProposition::Not(body) => Ok(lower_spec_proposition_at_state_with_loop_entry(
+            state,
+            body,
+            loop_entry_state,
+            assumptions,
+            budget,
+        )?
+        .into_iter()
+        .map(|path| SpecPropositionPath {
+            proposition: Proposition::Not(Box::new(path.proposition)),
+            facts: path.facts,
+            obligations: path.obligations,
+        })
+        .collect()),
         SpecProposition::Implies(left, right) => {
             let mut paths = Vec::new();
-            for left_path in lower_spec_proposition_at_state(state, left, assumptions, budget)? {
+            for left_path in lower_spec_proposition_at_state_with_loop_entry(
+                state,
+                left,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )? {
                 let right_assumptions = assumptions_with_path_context(
                     assumptions,
                     &left_path.facts,
                     &left_path.obligations,
                 )
                 .assume_proposition(left_path.proposition.clone());
-                for right_path in
-                    lower_spec_proposition_at_state(state, right, &right_assumptions, budget)?
-                {
+                for right_path in lower_spec_proposition_at_state_with_loop_entry(
+                    state,
+                    right,
+                    loop_entry_state,
+                    &right_assumptions,
+                    budget,
+                )? {
                     let guarded_right_obligations = right_path
                         .obligations
                         .iter()
@@ -136,30 +161,34 @@ pub(super) fn lower_spec_proposition_at_state(
             state
                 .locals
                 .set(name.clone(), int32(Bitvector32Term::Variable(*variable)));
-            Ok(
-                lower_spec_proposition_at_state(&state, body, assumptions, budget)?
+            Ok(lower_spec_proposition_at_state_with_loop_entry(
+                &state,
+                body,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )?
+            .into_iter()
+            .map(|path| SpecPropositionPath {
+                proposition: Proposition::ForAll {
+                    var: *variable,
+                    sort: Sort::CInt32,
+                    body: Box::new(path.proposition),
+                },
+                facts: path.facts,
+                obligations: path
+                    .obligations
                     .into_iter()
-                    .map(|path| SpecPropositionPath {
-                        proposition: Proposition::ForAll {
+                    .map(|obligation| {
+                        obligation.map_proposition(|proposition| Proposition::ForAll {
                             var: *variable,
                             sort: Sort::CInt32,
-                            body: Box::new(path.proposition),
-                        },
-                        facts: path.facts,
-                        obligations: path
-                            .obligations
-                            .into_iter()
-                            .map(|obligation| {
-                                obligation.map_proposition(|proposition| Proposition::ForAll {
-                                    var: *variable,
-                                    sort: Sort::CInt32,
-                                    body: Box::new(proposition),
-                                })
-                            })
-                            .collect(),
+                            body: Box::new(proposition),
+                        })
                     })
                     .collect(),
-            )
+            })
+            .collect())
         }
         SpecProposition::ExistsInt32 {
             name,
@@ -170,35 +199,46 @@ pub(super) fn lower_spec_proposition_at_state(
             state
                 .locals
                 .set(name.clone(), int32(Bitvector32Term::Variable(*variable)));
-            Ok(
-                lower_spec_proposition_at_state(&state, body, assumptions, budget)?
+            Ok(lower_spec_proposition_at_state_with_loop_entry(
+                &state,
+                body,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )?
+            .into_iter()
+            .map(|path| SpecPropositionPath {
+                proposition: Proposition::Exists {
+                    name: name.clone(),
+                    var: *variable,
+                    sort: Sort::CInt32,
+                    body: Box::new(path.proposition),
+                },
+                facts: path.facts,
+                obligations: path
+                    .obligations
                     .into_iter()
-                    .map(|path| SpecPropositionPath {
-                        proposition: Proposition::Exists {
+                    .map(|obligation| {
+                        obligation.map_proposition(|proposition| Proposition::Exists {
                             name: name.clone(),
                             var: *variable,
                             sort: Sort::CInt32,
-                            body: Box::new(path.proposition),
-                        },
-                        facts: path.facts,
-                        obligations: path
-                            .obligations
-                            .into_iter()
-                            .map(|obligation| {
-                                obligation.map_proposition(|proposition| Proposition::Exists {
-                                    name: name.clone(),
-                                    var: *variable,
-                                    sort: Sort::CInt32,
-                                    body: Box::new(proposition),
-                                })
-                            })
-                            .collect(),
+                            body: Box::new(proposition),
+                        })
                     })
                     .collect(),
-            )
+            })
+            .collect())
         }
         SpecProposition::Predicate { name, arguments } => {
-            lower_spec_predicate_proposition_at_state(state, name, arguments, assumptions, budget)
+            lower_spec_predicate_proposition_at_state(
+                state,
+                name,
+                arguments,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )
         }
     }
 }
@@ -207,16 +247,28 @@ pub(super) fn lower_spec_binary_proposition_at_state(
     state: &CState,
     left: &SpecProposition,
     right: &SpecProposition,
+    loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
     combine: impl Fn(Proposition, Proposition) -> Proposition,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
     let mut paths = Vec::new();
-    for left_path in lower_spec_proposition_at_state(state, left, assumptions, budget)? {
+    for left_path in lower_spec_proposition_at_state_with_loop_entry(
+        state,
+        left,
+        loop_entry_state,
+        assumptions,
+        budget,
+    )? {
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
-        for right_path in lower_spec_proposition_at_state(state, right, &right_assumptions, budget)?
-        {
+        for right_path in lower_spec_proposition_at_state_with_loop_entry(
+            state,
+            right,
+            loop_entry_state,
+            &right_assumptions,
+            budget,
+        )? {
             if let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &left_path.facts,
                 &left_path.obligations,
@@ -240,15 +292,27 @@ pub(super) fn lower_spec_comparison_proposition_at_state(
     left: &SpecExpression,
     operator: CComparisonOperator,
     right: &SpecExpression,
+    loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
     let mut paths = Vec::new();
-    for left_path in evaluate_spec_expression_paths(state, left, assumptions, budget)? {
+    for left_path in evaluate_spec_expression_paths_with_loop_entry(
+        state,
+        left,
+        loop_entry_state,
+        assumptions,
+        budget,
+    )? {
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
-        for right_path in evaluate_spec_expression_paths(state, right, &right_assumptions, budget)?
-        {
+        for right_path in evaluate_spec_expression_paths_with_loop_entry(
+            state,
+            right,
+            loop_entry_state,
+            &right_assumptions,
+            budget,
+        )? {
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &left_path.facts,
                 &left_path.obligations,
@@ -276,6 +340,7 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
     state: &CState,
     name: &str,
     arguments: &[SpecExpression],
+    loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
@@ -289,7 +354,13 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
     }];
 
     for argument in arguments {
-        let argument_paths = evaluate_spec_expression_paths(state, argument, assumptions, budget)?;
+        let argument_paths = evaluate_spec_expression_paths_with_loop_entry(
+            state,
+            argument,
+            loop_entry_state,
+            assumptions,
+            budget,
+        )?;
         let mut next_paths = Vec::new();
         for prefix_path in paths {
             let path_assumptions = assumptions_with_path_context(
@@ -328,9 +399,10 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
     Ok(paths)
 }
 
-pub(super) fn evaluate_spec_expression_paths(
+pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
     state: &CState,
     expression: &SpecExpression,
+    loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
@@ -348,12 +420,13 @@ pub(super) fn evaluate_spec_expression_paths(
                 .collect()
         }
         SpecExpression::Add(left, right) => {
-            evaluate_spec_add_paths(state, left, right, assumptions, budget)?
+            evaluate_spec_add_paths(state, left, right, loop_entry_state, assumptions, budget)?
         }
         SpecExpression::Subtract(left, right) => evaluate_spec_int32_binary_paths(
             state,
             left,
             right,
+            loop_entry_state,
             assumptions,
             budget,
             |left, right, facts, obligations| {
@@ -364,6 +437,7 @@ pub(super) fn evaluate_spec_expression_paths(
             state,
             left,
             right,
+            loop_entry_state,
             assumptions,
             budget,
             |left, right, facts, obligations| {
@@ -374,6 +448,7 @@ pub(super) fn evaluate_spec_expression_paths(
             state,
             left,
             right,
+            loop_entry_state,
             assumptions,
             budget,
             |left, right, facts, obligations| {
@@ -384,6 +459,7 @@ pub(super) fn evaluate_spec_expression_paths(
             state,
             left,
             right,
+            loop_entry_state,
             assumptions,
             budget,
             |left, right, facts, obligations| {
@@ -394,6 +470,7 @@ pub(super) fn evaluate_spec_expression_paths(
             state,
             left,
             right,
+            loop_entry_state,
             assumptions,
             budget,
             |left, right, facts, obligations| {
@@ -404,6 +481,7 @@ pub(super) fn evaluate_spec_expression_paths(
             state,
             left,
             right,
+            loop_entry_state,
             assumptions,
             budget,
             |left, right, facts, obligations| {
@@ -414,6 +492,7 @@ pub(super) fn evaluate_spec_expression_paths(
             state,
             left,
             right,
+            loop_entry_state,
             assumptions,
             budget,
             |left, right, facts, obligations| {
@@ -430,6 +509,7 @@ pub(super) fn evaluate_spec_expression_paths(
             state,
             left,
             right,
+            loop_entry_state,
             assumptions,
             budget,
             |left, right, facts, obligations| {
@@ -446,6 +526,7 @@ pub(super) fn evaluate_spec_expression_paths(
             state,
             left,
             right,
+            loop_entry_state,
             assumptions,
             budget,
             |left, right, facts, obligations| {
@@ -461,6 +542,7 @@ pub(super) fn evaluate_spec_expression_paths(
         SpecExpression::BitwiseNot(expression) => evaluate_spec_int32_unary_paths(
             state,
             expression,
+            loop_entry_state,
             assumptions,
             budget,
             Bitvector32Term::bitwise_not,
@@ -474,6 +556,7 @@ pub(super) fn evaluate_spec_expression_paths(
             condition,
             then_branch,
             else_branch,
+            loop_entry_state,
             assumptions,
             budget,
         )?,
@@ -492,12 +575,19 @@ pub(super) fn evaluate_spec_expression_paths(
             accumulator,
             item,
             body,
+            loop_entry_state,
             assumptions,
             budget,
         )?,
         SpecExpression::Let { name, value, body } => {
             let mut paths = Vec::new();
-            for value_path in evaluate_spec_expression_paths(state, value, assumptions, budget)? {
+            for value_path in evaluate_spec_expression_paths_with_loop_entry(
+                state,
+                value,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )? {
                 let mut body_state = state.clone();
                 body_state
                     .locals
@@ -507,9 +597,13 @@ pub(super) fn evaluate_spec_expression_paths(
                     &value_path.facts,
                     &value_path.obligations,
                 );
-                for body_path in
-                    evaluate_spec_expression_paths(&body_state, body, &body_assumptions, budget)?
-                {
+                for body_path in evaluate_spec_expression_paths_with_loop_entry(
+                    &body_state,
+                    body,
+                    loop_entry_state,
+                    &body_assumptions,
+                    budget,
+                )? {
                     if let Some((facts, obligations)) = merge_path_facts_and_obligations(
                         &value_path.facts,
                         &value_path.obligations,
@@ -527,6 +621,19 @@ pub(super) fn evaluate_spec_expression_paths(
             }
             paths
         }
+        SpecExpression::LoopEntrySnapshot(expression) => {
+            if let Some(loop_entry_state) = loop_entry_state {
+                evaluate_spec_expression_paths_with_loop_entry(
+                    loop_entry_state,
+                    expression,
+                    Some(loop_entry_state),
+                    assumptions,
+                    budget,
+                )?
+            } else {
+                Vec::new()
+            }
+        }
         SpecExpression::PointerOffset {
             pointer,
             elements,
@@ -536,6 +643,7 @@ pub(super) fn evaluate_spec_expression_paths(
             pointer,
             elements,
             *byte_width,
+            loop_entry_state,
             assumptions,
             budget,
         )?,
@@ -545,13 +653,22 @@ pub(super) fn evaluate_spec_expression_paths(
             value_type,
         } => {
             let mut paths = Vec::new();
-            for pointer_path in evaluate_spec_expression_paths(state, pointer, assumptions, budget)?
-            {
+            for pointer_path in evaluate_spec_expression_paths_with_loop_entry(
+                state,
+                pointer,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )? {
                 let CValue::Pointer(pointer) = pointer_path.value else {
                     continue;
                 };
                 let memory = match memory {
                     SpecMemory::Current => state.memory(),
+                    SpecMemory::LoopEntry => match loop_entry_state {
+                        Some(loop_entry_state) => loop_entry_state.memory(),
+                        None => continue,
+                    },
                     SpecMemory::Fixed(memory) => memory,
                 };
                 paths.extend(
@@ -579,11 +696,18 @@ pub(super) fn evaluate_spec_pointer_offset_paths(
     pointer: &SpecExpression,
     elements: &SpecExpression,
     byte_width: u32,
+    loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
-    for pointer_path in evaluate_spec_expression_paths(state, pointer, assumptions, budget)? {
+    for pointer_path in evaluate_spec_expression_paths_with_loop_entry(
+        state,
+        pointer,
+        loop_entry_state,
+        assumptions,
+        budget,
+    )? {
         let CValue::Pointer(pointer) = pointer_path.value else {
             continue;
         };
@@ -592,9 +716,13 @@ pub(super) fn evaluate_spec_pointer_offset_paths(
             &pointer_path.facts,
             &pointer_path.obligations,
         );
-        for element_path in
-            evaluate_spec_expression_paths(state, elements, &element_assumptions, budget)?
-        {
+        for element_path in evaluate_spec_expression_paths_with_loop_entry(
+            state,
+            elements,
+            loop_entry_state,
+            &element_assumptions,
+            budget,
+        )? {
             let CValue::Int32(elements) = element_path.value else {
                 continue;
             };
@@ -632,15 +760,27 @@ pub(super) fn evaluate_spec_add_paths(
     state: &CState,
     left: &SpecExpression,
     right: &SpecExpression,
+    loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
-    for left_path in evaluate_spec_expression_paths(state, left, assumptions, budget)? {
+    for left_path in evaluate_spec_expression_paths_with_loop_entry(
+        state,
+        left,
+        loop_entry_state,
+        assumptions,
+        budget,
+    )? {
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
-        for right_path in evaluate_spec_expression_paths(state, right, &right_assumptions, budget)?
-        {
+        for right_path in evaluate_spec_expression_paths_with_loop_entry(
+            state,
+            right,
+            loop_entry_state,
+            &right_assumptions,
+            budget,
+        )? {
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &left_path.facts,
                 &left_path.obligations,
@@ -672,6 +812,7 @@ pub(super) fn evaluate_spec_int32_binary_paths(
     state: &CState,
     left: &SpecExpression,
     right: &SpecExpression,
+    loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
     apply: impl Fn(
@@ -682,7 +823,13 @@ pub(super) fn evaluate_spec_int32_binary_paths(
     ) -> Vec<CExpressionPath>,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
-    for left_path in evaluate_spec_expression_paths(state, left, assumptions, budget)? {
+    for left_path in evaluate_spec_expression_paths_with_loop_entry(
+        state,
+        left,
+        loop_entry_state,
+        assumptions,
+        budget,
+    )? {
         let mut left_facts = left_path.facts;
         let Some(left) = promote_c_int32_path_value(left_path.value, &mut left_facts, assumptions)
         else {
@@ -690,8 +837,13 @@ pub(super) fn evaluate_spec_int32_binary_paths(
         };
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_facts, &left_path.obligations);
-        for right_path in evaluate_spec_expression_paths(state, right, &right_assumptions, budget)?
-        {
+        for right_path in evaluate_spec_expression_paths_with_loop_entry(
+            state,
+            right,
+            loop_entry_state,
+            &right_assumptions,
+            budget,
+        )? {
             let Some((facts, obligations)) = merge_path_facts_and_obligations(
                 &left_facts,
                 &left_path.obligations,
@@ -719,12 +871,19 @@ pub(super) fn evaluate_spec_int32_binary_paths(
 pub(super) fn evaluate_spec_int32_unary_paths(
     state: &CState,
     expression: &SpecExpression,
+    loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
     apply: fn(Bitvector32Term) -> Bitvector32Term,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
-    for path in evaluate_spec_expression_paths(state, expression, assumptions, budget)? {
+    for path in evaluate_spec_expression_paths_with_loop_entry(
+        state,
+        expression,
+        loop_entry_state,
+        assumptions,
+        budget,
+    )? {
         let mut facts = path.facts;
         let Some(value) = promote_c_int32_path_value(path.value, &mut facts, assumptions) else {
             continue;
@@ -743,11 +902,18 @@ pub(super) fn evaluate_spec_if_paths(
     condition: &SpecProposition,
     then_branch: &SpecExpression,
     else_branch: &SpecExpression,
+    loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
-    for condition_path in lower_spec_proposition_at_state(state, condition, assumptions, budget)? {
+    for condition_path in lower_spec_proposition_at_state_with_loop_entry(
+        state,
+        condition,
+        loop_entry_state,
+        assumptions,
+        budget,
+    )? {
         let branch_assumptions = assumptions_with_path_context(
             assumptions,
             &condition_path.facts,
@@ -765,22 +931,32 @@ pub(super) fn evaluate_spec_if_paths(
         };
 
         let branch_paths = match condition_truth {
-            Some(true) => {
-                evaluate_spec_expression_paths(state, then_branch, &branch_assumptions, budget)?
-            }
-            Some(false) => {
-                evaluate_spec_expression_paths(state, else_branch, &branch_assumptions, budget)?
-            }
+            Some(true) => evaluate_spec_expression_paths_with_loop_entry(
+                state,
+                then_branch,
+                loop_entry_state,
+                &branch_assumptions,
+                budget,
+            )?,
+            Some(false) => evaluate_spec_expression_paths_with_loop_entry(
+                state,
+                else_branch,
+                loop_entry_state,
+                &branch_assumptions,
+                budget,
+            )?,
             None => {
-                let then_paths = evaluate_spec_expression_paths(
+                let then_paths = evaluate_spec_expression_paths_with_loop_entry(
                     state,
                     then_branch,
+                    loop_entry_state,
                     &branch_assumptions,
                     budget,
                 )?;
-                let else_paths = evaluate_spec_expression_paths(
+                let else_paths = evaluate_spec_expression_paths_with_loop_entry(
                     state,
                     else_branch,
+                    loop_entry_state,
                     &branch_assumptions,
                     budget,
                 )?;
@@ -841,17 +1017,30 @@ pub(super) fn evaluate_spec_range_fold_paths(
     accumulator: &str,
     item: &str,
     body: &SpecExpression,
+    loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
-    for start_path in evaluate_spec_expression_paths(state, start, assumptions, budget)? {
+    for start_path in evaluate_spec_expression_paths_with_loop_entry(
+        state,
+        start,
+        loop_entry_state,
+        assumptions,
+        budget,
+    )? {
         let CValue::Int32(start) = start_path.value else {
             continue;
         };
         let start_assumptions =
             assumptions_with_path_context(assumptions, &start_path.facts, &start_path.obligations);
-        for end_path in evaluate_spec_expression_paths(state, end, &start_assumptions, budget)? {
+        for end_path in evaluate_spec_expression_paths_with_loop_entry(
+            state,
+            end,
+            loop_entry_state,
+            &start_assumptions,
+            budget,
+        )? {
             let CValue::Int32(end) = end_path.value else {
                 continue;
             };
@@ -866,9 +1055,13 @@ pub(super) fn evaluate_spec_range_fold_paths(
             };
             let bound_assumptions =
                 assumptions_with_path_context(assumptions, &bound_facts, &bound_obligations);
-            for initial_path in
-                evaluate_spec_expression_paths(state, initial, &bound_assumptions, budget)?
-            {
+            for initial_path in evaluate_spec_expression_paths_with_loop_entry(
+                state,
+                initial,
+                loop_entry_state,
+                &bound_assumptions,
+                budget,
+            )? {
                 let Some((facts, obligations)) = merge_path_facts_and_obligations(
                     &bound_facts,
                     &bound_obligations,
@@ -888,6 +1081,7 @@ pub(super) fn evaluate_spec_range_fold_paths(
                     body,
                     facts,
                     obligations,
+                    loop_entry_state,
                     assumptions,
                     budget,
                 )?
@@ -911,6 +1105,7 @@ pub(super) fn evaluate_spec_range_fold_body_path(
     body: &SpecExpression,
     facts: Vec<PathFact>,
     obligations: Vec<ProofObligation>,
+    loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Option<SpecExpressionPath>> {
@@ -925,8 +1120,13 @@ pub(super) fn evaluate_spec_range_fold_body_path(
                 body_state.locals.set(item.to_string(), int32(index as u32));
                 let body_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
-                let mut body_paths =
-                    evaluate_spec_expression_paths(&body_state, body, &body_assumptions, budget)?;
+                let mut body_paths = evaluate_spec_expression_paths_with_loop_entry(
+                    &body_state,
+                    body,
+                    loop_entry_state,
+                    &body_assumptions,
+                    budget,
+                )?;
                 let Some(body_path) = body_paths.pop() else {
                     return Ok(None);
                 };
@@ -966,8 +1166,13 @@ pub(super) fn evaluate_spec_range_fold_body_path(
                 int32(Bitvector32Term::Variable(spec_fold_bound_variable(item, 1))),
             );
             let body_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
-            let mut body_paths =
-                evaluate_spec_expression_paths(&body_state, body, &body_assumptions, budget)?;
+            let mut body_paths = evaluate_spec_expression_paths_with_loop_entry(
+                &body_state,
+                body,
+                loop_entry_state,
+                &body_assumptions,
+                budget,
+            )?;
             let Some(body_path) = body_paths.pop() else {
                 return Ok(None);
             };
