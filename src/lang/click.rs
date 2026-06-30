@@ -160,6 +160,7 @@ pub enum Ensure {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceClause {
+    Read(ContractSegment),
     Write(ContractSegment),
 }
 
@@ -2293,6 +2294,11 @@ fn function_resource_summary(
 
 fn resource_clause_to_resource_spec(resource: &ResourceClause) -> CResourceSpec {
     match resource {
+        ResourceClause::Read(segment) => CResourceSpec::Read(CMemorySegment::new(
+            segment.base.clone(),
+            segment.start.clone(),
+            segment.end.clone(),
+        )),
         ResourceClause::Write(segment) => CResourceSpec::Write(CMemorySegment::new(
             segment.base.clone(),
             segment.start.clone(),
@@ -3890,6 +3896,9 @@ fn apply_contract_lets_to_resource_clause(
     bindings: &[ContractLetBinding],
 ) -> Result<ResourceClause, String> {
     match resource {
+        ResourceClause::Read(segment) => Ok(ResourceClause::Read(apply_contract_lets_to_segment(
+            segment, bindings,
+        )?)),
         ResourceClause::Write(segment) => Ok(ResourceClause::Write(
             apply_contract_lets_to_segment(segment, bindings)?,
         )),
@@ -5193,28 +5202,42 @@ fn lower_resource_clause(
     memory: &CMemory,
 ) -> Result<CResource, ClickError> {
     match resource {
+        ResourceClause::Read(segment) => {
+            let range = lower_resource_segment("read", segment, parameters, arguments, memory)?;
+            Ok(CResource::Read(range))
+        }
         ResourceClause::Write(segment) => {
-            let state = CState::new().with_memory(memory.clone());
-            let segment = evaluate_requirement_segment(parameters, arguments, &state, segment)
-                .map_err(|message| {
-                    ClickError::new(format!("could not lower `write` resource: {message}"))
-                })?;
-            if let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
-                (&segment.start, &segment.end)
-            {
-                if end < start {
-                    return Err(ClickError::new(format!(
-                        "`write` segment has an end before its start: {start}..{end}"
-                    )));
-                }
-            }
-            Ok(CResource::Write(CMemoryRange::new(
-                segment.base,
-                segment.start,
-                segment.end,
-            )))
+            let range = lower_resource_segment("write", segment, parameters, arguments, memory)?;
+            Ok(CResource::Write(range))
         }
     }
+}
+
+fn lower_resource_segment(
+    resource_name: &str,
+    segment: &ContractSegment,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    memory: &CMemory,
+) -> Result<CMemoryRange, ClickError> {
+    let state = CState::new().with_memory(memory.clone());
+    let segment = evaluate_requirement_segment(parameters, arguments, &state, segment).map_err(
+        |message| {
+            ClickError::new(format!(
+                "could not lower `{resource_name}` resource: {message}"
+            ))
+        },
+    )?;
+    if let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
+        (&segment.start, &segment.end)
+    {
+        if end < start {
+            return Err(ClickError::new(format!(
+                "`{resource_name}` segment has an end before its start: {start}..{end}"
+            )));
+        }
+    }
+    Ok(CMemoryRange::new(segment.base, segment.start, segment.end))
 }
 
 fn valid_range_requirement_prop(
@@ -5299,7 +5322,9 @@ fn concrete_write_resource_block(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> Result<Option<(String, (Pointer, u32))>, ClickError> {
-    let ResourceClause::Write(segment) = resource;
+    let ResourceClause::Write(segment) = resource else {
+        return Ok(None);
+    };
     let state = CState::new();
     let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment) else {
         return Ok(None);
@@ -6739,6 +6764,7 @@ fn check_function_claim(
                 claim_label,
                 path_index,
                 path_facts,
+                available_propositions,
                 resource,
                 parameters,
                 arguments,
@@ -6796,6 +6822,7 @@ fn check_function_claim_by_simp(
                 claim_label,
                 path_index,
                 path_facts,
+                available_propositions,
                 resource,
                 parameters,
                 arguments,
@@ -6813,6 +6840,7 @@ fn prove_ensure_resource(
     claim_label: &str,
     path_index: usize,
     path_facts: &[crate::kernel::PathFact],
+    available_propositions: &[Proposition],
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -6829,7 +6857,8 @@ fn prove_ensure_resource(
         )));
     };
     let expected = lower_resource_clause(resource, parameters, arguments, pre_state.memory())?;
-    if post_state.resources().resources().contains(&expected) {
+    let assumptions = assumptions_from_propositions(available_propositions);
+    if post_state.resources().satisfies(&expected, &assumptions) {
         return Ok(());
     }
     Err(ClickError::new(format!(
@@ -11858,8 +11887,8 @@ impl Parser {
             (Some("valid_range"), Some(Token::LParen)) => self.parse_valid_range_requirement()?,
             (Some("valid_field"), Some(Token::LParen)) => self.parse_valid_field_requirement()?,
             (Some("disjoint"), Some(Token::LParen)) => self.parse_disjoint_requirement()?,
-            (Some("write"), Some(Token::LParen)) => {
-                Requirement::Resource(self.parse_write_resource_clause()?)
+            (Some("read") | Some("write"), Some(Token::LParen)) => {
+                Requirement::Resource(self.parse_resource_clause()?)
             }
             _ => {
                 let proposition = self.parse_proposition()?;
@@ -11927,12 +11956,16 @@ impl Parser {
         Ok(Requirement::Disjoint { left, right })
     }
 
-    fn parse_write_resource_clause(&mut self) -> Result<ResourceClause, ClickError> {
-        self.expect_ident_spelling("write")?;
+    fn parse_resource_clause(&mut self) -> Result<ResourceClause, ClickError> {
+        let name = self.expect_ident("resource name")?;
         self.expect(Token::LParen)?;
         let segment = self.parse_current_contract_segment()?;
         self.expect(Token::RParen)?;
-        Ok(ResourceClause::Write(segment))
+        match name.as_str() {
+            "read" => Ok(ResourceClause::Read(segment)),
+            "write" => Ok(ResourceClause::Write(segment)),
+            _ => Err(self.error(format!("unknown resource `{name}`"))),
+        }
     }
 
     fn parse_range_bytes(&mut self) -> Result<RangeBytes, ClickError> {
@@ -12191,8 +12224,10 @@ impl Parser {
     }
 
     fn parse_ensure_condition(&mut self) -> Result<Ensure, ClickError> {
-        if self.peek_ident() == Some("write") && self.peek_next() == Some(&Token::LParen) {
-            return Ok(Ensure::Resource(self.parse_write_resource_clause()?));
+        if matches!(self.peek_ident(), Some("read" | "write"))
+            && self.peek_next() == Some(&Token::LParen)
+        {
+            return Ok(Ensure::Resource(self.parse_resource_clause()?));
         }
         Ok(Ensure::Proposition(self.parse_proposition()?))
     }

@@ -1389,6 +1389,7 @@ pub(super) fn collect_resource_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match resource {
+        CResource::Read(range) => collect_c_memory_range_bitvector_variables(range, variables),
         CResource::Write(range) => collect_c_memory_range_bitvector_variables(range, variables),
     }
 }
@@ -1411,6 +1412,11 @@ pub(super) fn collect_resource_spec_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match resource {
+        CResourceSpec::Read(segment) => {
+            collect_c_expression_bitvector_variables(&segment.base, variables);
+            collect_c_expression_bitvector_variables(&segment.start, variables);
+            collect_c_expression_bitvector_variables(&segment.end, variables);
+        }
         CResourceSpec::Write(segment) => {
             collect_c_expression_bitvector_variables(&segment.base, variables);
             collect_c_expression_bitvector_variables(&segment.start, variables);
@@ -1442,6 +1448,23 @@ pub(super) fn collect_c_memory_range_bitvector_variables(
     collect_bitvector_variables(&range.end, variables);
 }
 
+pub(super) fn resource_context_has_read(
+    resources: &ResourceContext,
+    pointer: &Pointer,
+    byte_width: u32,
+    assumptions: &Assumptions,
+) -> bool {
+    if byte_width != 4 {
+        return false;
+    }
+
+    resources.resources().iter().any(|resource| match resource {
+        CResource::Read(range) | CResource::Write(range) => {
+            assumptions.pointer_in_range(pointer, range.base(), range.start(), range.end())
+        }
+    })
+}
+
 pub(super) fn resource_context_has_write(
     resources: &ResourceContext,
     pointer: &Pointer,
@@ -1453,6 +1476,7 @@ pub(super) fn resource_context_has_write(
     }
 
     resources.resources().iter().any(|resource| match resource {
+        CResource::Read(_) => false,
         CResource::Write(range) => {
             assumptions.pointer_in_range(pointer, range.base(), range.start(), range.end())
         }
@@ -2500,6 +2524,9 @@ pub(super) fn substitute_bitvector_variable_in_resource(
     to: &Bitvector32Term,
 ) -> CResource {
     match resource {
+        CResource::Read(range) => CResource::Read(substitute_bitvector_variable_in_c_memory_range(
+            range, from, to,
+        )),
         CResource::Write(range) => CResource::Write(
             substitute_bitvector_variable_in_c_memory_range(range, from, to),
         ),
@@ -2535,6 +2562,11 @@ pub(super) fn substitute_bitvector_variable_in_resource_spec(
     to: &Bitvector32Term,
 ) -> CResourceSpec {
     match resource {
+        CResourceSpec::Read(segment) => CResourceSpec::Read(CMemorySegment {
+            base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
+            start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
+            end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+        }),
         CResourceSpec::Write(segment) => CResourceSpec::Write(CMemorySegment {
             base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
             start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),

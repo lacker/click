@@ -421,6 +421,17 @@ fn evaluate_function_resource_spec(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CResource, CRuntimeError>> {
     match resource {
+        CResourceSpec::Read(segment) => {
+            let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
+                Ok(segment) => segment,
+                Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
+            };
+            Ok(Ok(CResource::Read(CMemoryRange::new(
+                segment.base,
+                segment.start,
+                segment.end,
+            ))))
+        }
         CResourceSpec::Write(segment) => {
             let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
                 Ok(segment) => segment,

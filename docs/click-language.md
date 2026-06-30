@@ -50,6 +50,7 @@ requires valid_range(p, 12);
 requires valid_range(p[0..n]);
 requires valid_range((p + 1)[0..1]);
 requires disjoint(dst[0..n], src[0..n]);
+requires read(p[0..1]);
 requires write(p[0..1]);
 ```
 
@@ -67,11 +68,12 @@ fragment syntax.
 requirements are intentionally limited. If a precondition needs memory reads,
 package it as a named predicate and unfold it at proof sites when needed.
 
-## Write Resources
+## Read And Write Resources
 
-`write(base[start..end])` is the first resource-context slice. It is not a
-classical predicate: it is carried in the verifier's resource context rather
-than copied as an ordinary proof fact.
+`read(base[start..end])` and `write(base[start..end])` are the first
+resource-context permissions. They are not classical predicates: they are
+carried in the verifier's resource context rather than copied as ordinary proof
+facts.
 
 ```click
 int32 write_next(int32 p[], int32 x) {
@@ -83,24 +85,34 @@ int32 write_next(int32 p[], int32 x) {
 }
 ```
 
-When a function has a non-empty resource context, external `int32` memory stores
-require a covering `write(...)` resource. Local stack writes do not require one.
-In this first slice, `write(...)` also seeds the matching symbolic memory cells
-for concrete ranges, so simple one-cell writes do not need a separate
-`valid_range(...)` requirement.
+Permission checking is opt-in. When a function has no resource context,
+external loads and stores use the older memory-safety rules. When the current
+resource context is non-empty, external `int32` memory loads require covering
+`read(...)` or `write(...)`, and external `int32` memory stores require covering
+`write(...)`. Local stack accesses do not require resources.
+In practice, top-level verification gets a resource context from
+`requires read(...)` and `requires write(...)` clauses, while function calls use
+the callee's resource summary.
 
-Function calls transfer write resources through the callee's resource summary.
-A callee must declare `requires write(...)` to receive a resource and
-`ensures write(...)` to return it to the caller. A call can pass a covered
-subrange, such as passing `write(p[0..1])` from a caller that has
-`write(p[0..2])`; Click keeps the residue and rejoins adjacent returned ranges.
-The same applies to symbolic ranges when the current facts prove the subrange
-is covered.
+`write(...)` implies `read(...)`: a write resource permits both loads and
+stores, and can satisfy an `ensures read(...)` guarantee. `read(...)` is
+copyable across calls. A callee can declare `requires read(...)` without
+consuming the caller's read or write permission. `write(...)` is transferred
+linearly: a callee must declare `requires write(...)` to receive write
+permission and `ensures write(...)` to return it.
 
-This is intentionally not the full permission system. There are no read
-fractions, ownership predicates, `free` permissions, explicit resource algebra
-proof steps, or heap allocation yet. Existing `valid_range`, `mutable`, and
-`immutable` examples continue to work without opting into `write(...)`.
+A call can pass a covered subrange, such as passing `write(p[0..1])` from a
+caller that has `write(p[0..2])`; Click keeps the residue and rejoins adjacent
+returned ranges. The same applies to symbolic ranges when the current facts
+prove the subrange is covered. In this first slice, `write(...)` also seeds the
+matching symbolic memory cells for concrete ranges, so simple one-cell writes do
+not need a separate `valid_range(...)` requirement. `read(...)` does not seed
+memory cells; validity remains separate from permission.
+
+This is intentionally not the full permission system. There are no fractions,
+ownership predicates, `free` permissions, explicit resource algebra proof steps,
+or heap allocation yet. Existing `valid_range`, `mutable`, and `immutable`
+examples continue to work without opting into resource clauses.
 
 ## Propositions
 

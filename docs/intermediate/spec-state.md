@@ -50,16 +50,16 @@ Click already has a few spec-only mechanisms:
 - `let ... where` introduces immutable witnesses in proposition clauses.
 - `choose` introduces proof-local names from existential requirements.
 - `witness` supplies proof-local values for existential goals.
-- `write(p[lo..hi])` introduces a first resource-context permission for
-  external memory writes.
+- `read(p[lo..hi])` and `write(p[lo..hi])` introduce first resource-context
+  permissions for external memory accesses.
 
 These are useful, but they are not the same as first-class mutable spec state.
 
-Across a function call, `write(...)` resources follow the callee's contract:
-`requires write(...)` receives the permission and `ensures write(...)` returns
-it. Click can split a covered subrange out of a larger write range and rejoin
-adjacent returned ranges. More general abstract permission predicates remain
-future work.
+Across a function call, `read(...)` resources are copyable and `write(...)`
+resources follow the callee's contract: `requires write(...)` receives the
+permission and `ensures write(...)` returns it. Click can split a covered
+subrange out of a larger write range and rejoin adjacent returned ranges. More
+general abstract permission predicates remain future work.
 
 ## The Design Constraint
 
@@ -69,9 +69,9 @@ different mental model.
 
 This matters for permission logic. A permission may say that the current proof
 state has read, write, or free authority over some memory. Unlike ordinary
-propositions, permissions must not be copied freely. Click's first `write(...)`
-slice therefore lives in a resource context rather than as a classical
-predicate fact.
+propositions, some permissions must not be copied freely. Click's first
+`read(...)` and `write(...)` slices therefore live in a resource context rather
+than as classical predicate facts.
 
 ## Relationship To Permission Logic
 

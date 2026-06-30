@@ -465,14 +465,39 @@ pub(super) fn read_c_lvalue_paths(
                 facts,
                 obligations,
             }],
-            CLValueStorage::Memory { pointer } => evaluate_c_memory_load_paths(
-                &state.memory,
-                pointer.clone(),
-                lvalue.value_type,
-                facts,
-                obligations,
-                assumptions,
-            ),
+            CLValueStorage::Memory { pointer } => {
+                let effective_assumptions =
+                    assumptions_with_path_context(assumptions, &facts, &obligations);
+                if !state.resources().is_empty()
+                    && is_external_memory_pointer(pointer)
+                    && !resource_context_has_read(
+                        state.resources(),
+                        pointer,
+                        lvalue.value_type.byte_width(),
+                        &effective_assumptions,
+                    )
+                {
+                    return vec![CExpressionPath {
+                        outcome: CExpressionOutcome::RuntimeError(CRuntimeError::MissingResource {
+                            resource: CResource::Read(CMemoryRange::new(
+                                pointer.clone(),
+                                Bitvector32Term::Constant(0),
+                                Bitvector32Term::Constant(1),
+                            )),
+                        }),
+                        facts,
+                        obligations,
+                    }];
+                }
+                evaluate_c_memory_load_paths(
+                    &state.memory,
+                    pointer.clone(),
+                    lvalue.value_type,
+                    facts,
+                    obligations,
+                    assumptions,
+                )
+            }
         },
         CLValueOutcome::UndefinedBehavior(undefined_behavior) => vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),

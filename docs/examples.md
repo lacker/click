@@ -116,8 +116,16 @@ Larger example projects live directly under `examples/`. They contain ordinary
   example threaded through helper calls.
 - `mdtests/resource_context_write_rejects_missing.md`: missing write resource
   diagnostic.
+- `mdtests/resource_context_read.md`: first `read(...)` resource-context
+  example.
+- `mdtests/resource_context_read_rejects_write.md`: read permission does not
+  permit stores.
+- `mdtests/resource_context_write_implies_read.md`: write permission permits
+  reads and satisfies read guarantees.
 - `mdtests/resource_summary_requires_returned_write.md`: helper call consumes a
   write resource unless its summary returns it.
+- `mdtests/resource_summary_read_does_not_consume_write.md`: helper read
+  requirement does not consume caller write permission.
 - `mdtests/resource_summary_splits_write_range.md`: helper call receives a
   subrange while the caller keeps and rejoins the residue.
 - `mdtests/resource_summary_splits_symbolic_write_range.md`: helper call

@@ -67,11 +67,13 @@ Requirements are also where simple C safety facts often live. For example,
 Some requirements provide resources rather than ordinary facts:
 
 ```click
+requires read(p[0..1]);
 requires write(p[0..1]);
 ```
 
-This gives the verifier permission to check writes to that external memory
-range. `write(...)` is carried separately from ordinary propositions.
+These give the verifier permission to check external memory accesses.
+`read(...)` permits loads; `write(...)` permits both loads and stores.
+Resources are carried separately from ordinary propositions.
 
 Requirements can be labeled:
 

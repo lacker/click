@@ -448,11 +448,13 @@ pub struct ResourceContext {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResource {
+    Read(CMemoryRange),
     Write(CMemoryRange),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResourceSpec {
+    Read(CMemorySegment),
     Write(CMemorySegment),
 }
 
@@ -1810,6 +1812,12 @@ impl ResourceContext {
         &self.resources
     }
 
+    pub fn satisfies(&self, resource: &CResource, assumptions: &Assumptions) -> bool {
+        self.resources
+            .iter()
+            .any(|available| resource_covers(available, resource, assumptions))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.resources.is_empty()
     }
@@ -1820,16 +1828,29 @@ impl ResourceContext {
         assumptions: &Assumptions,
     ) -> Option<Self> {
         match resource {
+            CResource::Read(required) => self
+                .resources
+                .iter()
+                .any(|candidate| match candidate {
+                    CResource::Read(available) | CResource::Write(available) => {
+                        memory_range_covers(available, required, assumptions)
+                    }
+                })
+                .then(|| self.normalized(assumptions)),
             CResource::Write(required) => {
                 let index = self
                     .resources
                     .iter()
                     .position(|candidate| match candidate {
+                        CResource::Read(_) => false,
                         CResource::Write(available) => {
-                            write_range_covers(available, required, assumptions)
+                            memory_range_covers(available, required, assumptions)
                         }
                     })?;
-                let CResource::Write(available) = self.resources.remove(index);
+                let available = match self.resources.remove(index) {
+                    CResource::Write(available) => available,
+                    CResource::Read(_) => unreachable!("write resource lookup ignored reads"),
+                };
                 self.resources.extend(
                     split_write_range(&available, required, assumptions)?
                         .into_iter()
@@ -1871,7 +1892,18 @@ impl ResourceContext {
     }
 }
 
-fn write_range_covers(
+fn resource_covers(available: &CResource, required: &CResource, assumptions: &Assumptions) -> bool {
+    match (available, required) {
+        (CResource::Read(available), CResource::Read(required))
+        | (CResource::Write(available), CResource::Read(required))
+        | (CResource::Write(available), CResource::Write(required)) => {
+            memory_range_covers(available, required, assumptions)
+        }
+        (CResource::Read(_), CResource::Write(_)) => false,
+    }
+}
+
+fn memory_range_covers(
     available: &CMemoryRange,
     required: &CMemoryRange,
     assumptions: &Assumptions,
@@ -1916,13 +1948,21 @@ fn merge_resources(
     assumptions: &Assumptions,
 ) -> Option<CResource> {
     match (left, right) {
+        _ if resource_covers(left, right, assumptions) => Some(left.clone()),
+        _ if resource_covers(right, left, assumptions) => Some(right.clone()),
+        (CResource::Read(left), CResource::Read(right)) => {
+            merge_memory_ranges(left, right, assumptions).map(CResource::Read)
+        }
         (CResource::Write(left), CResource::Write(right)) => {
-            merge_write_ranges(left, right, assumptions).map(CResource::Write)
+            merge_memory_ranges(left, right, assumptions).map(CResource::Write)
+        }
+        (CResource::Read(_), CResource::Write(_)) | (CResource::Write(_), CResource::Read(_)) => {
+            None
         }
     }
 }
 
-fn merge_write_ranges(
+fn merge_memory_ranges(
     left: &CMemoryRange,
     right: &CMemoryRange,
     assumptions: &Assumptions,
