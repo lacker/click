@@ -274,7 +274,9 @@ pub(super) fn bind_c_function_arguments(
     function: &CFunction,
     values: &[CValue],
 ) -> Option<CState> {
-    let mut callee_state = CState::new().with_memory(caller_state.memory.clone());
+    let mut callee_state = CState::new()
+        .with_memory(caller_state.memory.clone())
+        .with_resource_context(caller_state.resources.clone());
     for (parameter, value) in function.parameters().iter().zip(values) {
         if !parameter.c_type().accepts(value) {
             return None;
@@ -311,6 +313,7 @@ pub(super) fn function_outcome_from_body(
 
             let mut caller_state = caller_state.clone();
             caller_state.memory = state.memory;
+            caller_state.resources = state.resources;
             (
                 CFunctionOutcome::Return {
                     value,

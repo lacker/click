@@ -360,6 +360,7 @@ pub enum CRuntimeError {
     TypeMismatch,
     WrongArity { expected: usize, actual: usize },
     MissingReturn,
+    MissingResource { resource: CResource },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -435,6 +436,17 @@ pub struct CBlock {
 pub struct CState {
     pub(super) locals: CLocalEnvironment,
     pub(super) memory: CMemory,
+    pub(super) resources: ResourceContext,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct ResourceContext {
+    pub(super) resources: Vec<CResource>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CResource {
+    Write(CMemoryRange),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1722,12 +1734,40 @@ impl CState {
         self
     }
 
+    pub fn with_resource_context(mut self, resources: ResourceContext) -> Self {
+        self.resources = resources;
+        self
+    }
+
     pub fn locals(&self) -> &CLocalEnvironment {
         &self.locals
     }
 
     pub fn memory(&self) -> &CMemory {
         &self.memory
+    }
+
+    pub fn resources(&self) -> &ResourceContext {
+        &self.resources
+    }
+}
+
+impl ResourceContext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_resource(mut self, resource: CResource) -> Self {
+        self.resources.push(resource);
+        self
+    }
+
+    pub fn resources(&self) -> &[CResource] {
+        &self.resources
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.resources.is_empty()
     }
 }
 

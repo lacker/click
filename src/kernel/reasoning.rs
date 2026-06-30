@@ -1372,6 +1372,25 @@ pub(super) fn collect_c_state_bitvector_variables(
         }
     }
     collect_memory_bitvector_variables(&state.memory, variables);
+    collect_resource_context_bitvector_variables(&state.resources, variables);
+}
+
+pub(super) fn collect_resource_context_bitvector_variables(
+    resources: &ResourceContext,
+    variables: &mut BTreeSet<Variable>,
+) {
+    for resource in resources.resources() {
+        collect_resource_bitvector_variables(resource, variables);
+    }
+}
+
+pub(super) fn collect_resource_bitvector_variables(
+    resource: &CResource,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match resource {
+        CResource::Write(range) => collect_c_memory_range_bitvector_variables(range, variables),
+    }
 }
 
 pub(super) fn collect_c_function_bitvector_variables(
@@ -1402,6 +1421,23 @@ pub(super) fn collect_c_memory_range_bitvector_variables(
     collect_pointer_bitvector_variables(&range.base, variables);
     collect_bitvector_variables(&range.start, variables);
     collect_bitvector_variables(&range.end, variables);
+}
+
+pub(super) fn resource_context_has_write(
+    resources: &ResourceContext,
+    pointer: &Pointer,
+    byte_width: u32,
+    assumptions: &Assumptions,
+) -> bool {
+    if byte_width != 4 {
+        return false;
+    }
+
+    resources.resources().iter().any(|resource| match resource {
+        CResource::Write(range) => {
+            assumptions.pointer_in_range(pointer, range.base(), range.start(), range.end())
+        }
+    })
 }
 
 pub(super) fn collect_condition_bitvector_variables(
@@ -2421,6 +2457,33 @@ pub(super) fn substitute_bitvector_variable_in_c_state(
     CState {
         locals: CLocalEnvironment { bindings },
         memory: substitute_bitvector_variable_in_memory(&state.memory, from, to),
+        resources: substitute_bitvector_variable_in_resource_context(&state.resources, from, to),
+    }
+}
+
+pub(super) fn substitute_bitvector_variable_in_resource_context(
+    resources: &ResourceContext,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> ResourceContext {
+    ResourceContext {
+        resources: resources
+            .resources()
+            .iter()
+            .map(|resource| substitute_bitvector_variable_in_resource(resource, from, to))
+            .collect(),
+    }
+}
+
+pub(super) fn substitute_bitvector_variable_in_resource(
+    resource: &CResource,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CResource {
+    match resource {
+        CResource::Write(range) => CResource::Write(
+            substitute_bitvector_variable_in_c_memory_range(range, from, to),
+        ),
     }
 }
 

@@ -50,6 +50,7 @@ requires valid_range(p, 12);
 requires valid_range(p[0..n]);
 requires valid_range((p + 1)[0..1]);
 requires disjoint(dst[0..n], src[0..n]);
+requires write(p[0..1]);
 ```
 
 Requirement labels use the same `label:` spelling as `ensures` labels. Labels
@@ -65,6 +66,33 @@ fragment syntax.
 `requires` can also use Click propositions, but direct memory reads in
 requirements are intentionally limited. If a precondition needs memory reads,
 package it as a named predicate and unfold it at proof sites when needed.
+
+## Write Resources
+
+`write(base[start..end])` is the first resource-context slice. It is not a
+classical predicate: it is carried in the verifier's resource context rather
+than copied as an ordinary proof fact.
+
+```click
+int32 write_next(int32 p[], int32 x) {
+    requires write(p[0..1]);
+    requires x < 2147483647;
+
+    ensures p[0] == x + 1 by auto;
+    ensures write(p[0..1]) by auto;
+}
+```
+
+When a function has a non-empty resource context, external `int32` memory stores
+require a covering `write(...)` resource. Local stack writes do not require one.
+In this first slice, `write(...)` also seeds the matching symbolic memory cells
+for concrete ranges, so simple one-cell writes do not need a separate
+`valid_range(...)` requirement.
+
+This is intentionally not the full permission system. There are no read
+fractions, ownership predicates, `free` permissions, resource splitting proof
+steps, or heap allocation yet. Existing `valid_range`, `mutable`, and
+`immutable` examples continue to work without opting into `write(...)`.
 
 ## Propositions
 

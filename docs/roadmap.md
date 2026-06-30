@@ -106,12 +106,13 @@ comfortable.
 
 Likely additions:
 
-- First-class spec/model state:
-  proof-only state that can be mentioned across program points before any
-  permission accounting is added.
 - Permission logic:
-  read/write/free authority over memory locations or ranges, backed by spec
-  state and designed before ownership/refcounting.
+  read/write/free authority over memory locations or ranges. A first opt-in
+  `write(...)` resource context exists, but splitting, fractions, read/free
+  permissions, and abstract resource predicates are still future work.
+- First-class spec/model state:
+  proof-only state that can be mentioned across program points if examples need
+  arbitrary model variables beyond resources.
 - Heap allocation and deallocation in the C semantics.
 - Allocation predicates:
   valid object, valid byte range, initialized range, nullness, and

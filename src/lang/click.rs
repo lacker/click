@@ -10,11 +10,11 @@ use std::fmt;
 use crate::kernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CExpression, CFunction,
     CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
-    CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CState,
+    CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CResource, CState,
     CStatement, CType, CValue, ConditionTerm, PathFact, Pointer, PointerOffsetTerm,
-    ProofObligation, Proposition, Sort, SpecExpression, SpecMemory, SpecProposition, Term, Theorem,
-    Variable, c_function, c_function_specification, c_labeled_assert, c_pointer_value, c_seq,
-    c_while_with_invariant_and_effect_checks,
+    ProofObligation, Proposition, ResourceContext, Sort, SpecExpression, SpecMemory,
+    SpecProposition, Term, Theorem, Variable, c_function, c_function_specification,
+    c_labeled_assert, c_pointer_value, c_seq, c_while_with_invariant_and_effect_checks,
     prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
@@ -91,6 +91,7 @@ pub enum Requirement {
         left: ContractSegment,
         right: ContractSegment,
     },
+    Resource(ResourceClause),
     Proposition(ClickProposition),
 }
 
@@ -154,6 +155,12 @@ pub enum StructuralItemKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Ensure {
     Proposition(ClickProposition),
+    Resource(ResourceClause),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceClause {
+    Write(ContractSegment),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3799,6 +3806,9 @@ fn apply_contract_lets_to_requirement(
             left: apply_contract_lets_to_segment(left, bindings)?,
             right: apply_contract_lets_to_segment(right, bindings)?,
         }),
+        Requirement::Resource(resource) => Ok(Requirement::Resource(
+            apply_contract_lets_to_resource_clause(resource, bindings)?,
+        )),
         Requirement::Proposition(proposition) => Ok(Requirement::Proposition(
             apply_contract_lets_to_proposition(proposition, bindings)?,
         )),
@@ -3818,12 +3828,26 @@ fn apply_contract_lets_to_ensure_clause(
         Ensure::Proposition(proposition) => {
             Ensure::Proposition(apply_contract_lets_to_proposition(proposition, bindings)?)
         }
+        Ensure::Resource(resource) => {
+            Ensure::Resource(apply_contract_lets_to_resource_clause(resource, bindings)?)
+        }
     };
     Ok(EnsureClause {
         name,
         ensure,
         proof,
     })
+}
+
+fn apply_contract_lets_to_resource_clause(
+    resource: ResourceClause,
+    bindings: &[ContractLetBinding],
+) -> Result<ResourceClause, String> {
+    match resource {
+        ResourceClause::Write(segment) => Ok(ResourceClause::Write(
+            apply_contract_lets_to_segment(segment, bindings)?,
+        )),
+    }
 }
 
 fn apply_contract_lets_to_effect_clause(
@@ -5005,6 +5029,13 @@ fn initial_call(
         {
             valid_ranges.insert(name, bytes);
         }
+        if let Requirement::Resource(resource) = requirement.inner() {
+            if let Some((name, bytes)) =
+                concrete_write_resource_block(resource, parameters, &arguments)?
+            {
+                valid_ranges.insert(name, bytes);
+            }
+        }
     }
 
     for name in requires.iter().filter_map(requirement_valid_range_name) {
@@ -5018,6 +5049,7 @@ fn initial_call(
 
     let mut memory = CMemory::new();
     memory = memory_with_symbolic_valid_range_cells(memory, &valid_ranges);
+    let resources = resource_context_from_requirements(requires, parameters, &arguments, &memory)?;
     let requirement_propositions = requirement_propositions(
         requires,
         parameters,
@@ -5027,7 +5059,9 @@ fn initial_call(
         click_function_environment,
     )?;
     Ok((
-        CState::new().with_memory(memory),
+        CState::new()
+            .with_memory(memory)
+            .with_resource_context(resources),
         arguments,
         requirement_propositions,
     ))
@@ -5064,14 +5098,14 @@ fn requirement_propositions(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<Proposition>, ClickError> {
-    requires
-        .iter()
-        .map(|requirement| match requirement.inner() {
+    let mut propositions = Vec::new();
+    for requirement in requires {
+        let proposition = match requirement.inner() {
             Requirement::ValidRange { .. } | Requirement::ValidRangeSegment { .. } => {
-                valid_range_requirement_prop(requirement, parameters, arguments, memory)
+                valid_range_requirement_prop(requirement, parameters, arguments, memory)?
             }
             Requirement::Disjoint { left, right } => {
-                disjoint_requirement_prop(parameters, arguments, memory, left, right)
+                disjoint_requirement_prop(parameters, arguments, memory, left, right)?
             }
             Requirement::Proposition(proposition) => requirement_proposition_prop(
                 parameters,
@@ -5080,10 +5114,61 @@ fn requirement_propositions(
                 proposition,
                 predicate_environment,
                 click_function_environment,
-            ),
+            )?,
+            Requirement::Resource(_) => continue,
             Requirement::Labeled { .. } => unreachable!("requirement.inner() removes labels"),
-        })
-        .collect()
+        };
+        propositions.push(proposition);
+    }
+    Ok(propositions)
+}
+
+fn resource_context_from_requirements(
+    requires: &[Requirement],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    memory: &CMemory,
+) -> Result<ResourceContext, ClickError> {
+    let mut context = ResourceContext::new();
+    for requirement in requires {
+        if let Requirement::Resource(resource) = requirement.inner() {
+            context = context.with_resource(lower_resource_clause(
+                resource, parameters, arguments, memory,
+            )?);
+        }
+    }
+    Ok(context)
+}
+
+fn lower_resource_clause(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    memory: &CMemory,
+) -> Result<CResource, ClickError> {
+    match resource {
+        ResourceClause::Write(segment) => {
+            let state = CState::new().with_memory(memory.clone());
+            let segment = evaluate_requirement_segment(parameters, arguments, &state, segment)
+                .map_err(|message| {
+                    ClickError::new(format!("could not lower `write` resource: {message}"))
+                })?;
+            if let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
+                (&segment.start, &segment.end)
+            {
+                if end < start {
+                    return Err(ClickError::new(format!(
+                        "`write` segment has an end before its start: {start}..{end}"
+                    )));
+                }
+            }
+            Ok(CResource::Write(CMemoryRange::new(
+                segment.base,
+                segment.start,
+                segment.end,
+            )))
+        }
+    }
 }
 
 fn valid_range_requirement_prop(
@@ -5106,6 +5191,7 @@ fn requirement_valid_range_name(requirement: &Requirement) -> Option<&str> {
         Requirement::Labeled { .. }
         | Requirement::ValidRangeSegment { .. }
         | Requirement::Disjoint { .. }
+        | Requirement::Resource(_)
         | Requirement::Proposition(_) => None,
     }
 }
@@ -5156,9 +5242,44 @@ fn concrete_valid_range_block(
             )))
         }
         Requirement::Labeled { .. }
+        | Requirement::Resource(_)
         | Requirement::Disjoint { .. }
         | Requirement::Proposition(_) => Ok(None),
     }
+}
+
+fn concrete_write_resource_block(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Result<Option<(String, (Pointer, u32))>, ClickError> {
+    let ResourceClause::Write(segment) = resource;
+    let state = CState::new();
+    let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment) else {
+        return Ok(None);
+    };
+    let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
+        (&segment.start, &segment.end)
+    else {
+        return Ok(None);
+    };
+    if end < start {
+        return Err(ClickError::new(format!(
+            "`write` segment has an end before its start: {start}..{end}"
+        )));
+    }
+    let element_width = contract_segment_element_width(parameters, &segment.source);
+    let element_count = end - start;
+    let bytes = element_count
+        .checked_mul(element_width)
+        .ok_or_else(|| ClickError::new("`write` segment overflows byte count"))?;
+    Ok(Some((
+        format!("{:?}", segment.source),
+        (
+            offset_pointer_by_elements(segment.base, segment.start, element_width),
+            bytes,
+        ),
+    )))
 }
 
 fn valid_range_base_and_bytes(
@@ -5212,6 +5333,7 @@ fn valid_range_base_and_bytes(
         }
         Requirement::Labeled { .. }
         | Requirement::Proposition(_)
+        | Requirement::Resource(_)
         | Requirement::Disjoint { .. } => Err(ClickError::new("expected valid_range requirement")),
     }
 }
@@ -6567,6 +6689,16 @@ fn check_function_claim(
                 click_function_environment,
                 unfolded_predicates,
             )?,
+            Ensure::Resource(resource) => prove_ensure_resource(
+                claim_label,
+                path_index,
+                path_facts,
+                resource,
+                parameters,
+                arguments,
+                pre_state,
+                outcome,
+            )?,
         },
         FunctionClaimRef::Effect(_, effect_clause) => prove_effect_clause(
             claim_label,
@@ -6614,11 +6746,51 @@ fn check_function_claim_by_simp(
                 click_function_environment,
                 unfolded_predicates,
             ),
+            Ensure::Resource(resource) => prove_ensure_resource(
+                claim_label,
+                path_index,
+                path_facts,
+                resource,
+                parameters,
+                arguments,
+                pre_state,
+                outcome,
+            ),
         },
         FunctionClaimRef::Effect(_, _) => Err(ClickError::new(format!(
             "`simp` does not prove effect clauses for `{claim_label}`; use `by frame;` or `by auto;`"
         ))),
     }
+}
+
+fn prove_ensure_resource(
+    claim_label: &str,
+    path_index: usize,
+    path_facts: &[crate::kernel::PathFact],
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    outcome: &CFunctionOutcome,
+) -> Result<(), ClickError> {
+    let CFunctionOutcome::Return {
+        state: post_state, ..
+    } = outcome
+    else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` failed on path {path_index}: outcome was {outcome:?}\n  path facts: {}",
+            describe_facts(path_facts)
+        )));
+    };
+    let expected = lower_resource_clause(resource, parameters, arguments, pre_state.memory())?;
+    if post_state.resources().resources().contains(&expected) {
+        return Ok(());
+    }
+    Err(ClickError::new(format!(
+        "`{claim_label}` failed on path {path_index}: missing resource {expected:?}\n  final resources: {:?}\n  path facts: {}",
+        post_state.resources().resources(),
+        describe_facts(path_facts)
+    )))
 }
 
 fn check_function_claim_with_existence_steps(
@@ -6643,7 +6815,11 @@ fn check_function_claim_with_existence_steps(
             "`witness` and `choose` proof steps currently prove proposition `ensures` clauses for `{claim_label}`; use `frame` for effect clauses"
         )));
     };
-    let Ensure::Proposition(surface_goal) = ensure_clause.ensure();
+    let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
+        return Err(ClickError::new(format!(
+            "`witness` and `choose` proof steps currently prove proposition `ensures` clauses for `{claim_label}`; resource `ensures` are checked directly"
+        )));
+    };
     let CFunctionOutcome::Return {
         value: result,
         state: post_state,
@@ -11636,6 +11812,9 @@ impl Parser {
             (Some("valid_range"), Some(Token::LParen)) => self.parse_valid_range_requirement()?,
             (Some("valid_field"), Some(Token::LParen)) => self.parse_valid_field_requirement()?,
             (Some("disjoint"), Some(Token::LParen)) => self.parse_disjoint_requirement()?,
+            (Some("write"), Some(Token::LParen)) => {
+                Requirement::Resource(self.parse_write_resource_clause()?)
+            }
             _ => {
                 let proposition = self.parse_proposition()?;
                 self.expect(Token::Semicolon)?;
@@ -11700,6 +11879,14 @@ impl Parser {
         let right = self.parse_current_contract_segment()?;
         self.expect(Token::RParen)?;
         Ok(Requirement::Disjoint { left, right })
+    }
+
+    fn parse_write_resource_clause(&mut self) -> Result<ResourceClause, ClickError> {
+        self.expect_ident_spelling("write")?;
+        self.expect(Token::LParen)?;
+        let segment = self.parse_current_contract_segment()?;
+        self.expect(Token::RParen)?;
+        Ok(ResourceClause::Write(segment))
     }
 
     fn parse_range_bytes(&mut self) -> Result<RangeBytes, ClickError> {
@@ -11958,6 +12145,9 @@ impl Parser {
     }
 
     fn parse_ensure_condition(&mut self) -> Result<Ensure, ClickError> {
+        if self.peek_ident() == Some("write") && self.peek_next() == Some(&Token::LParen) {
+            return Ok(Ensure::Resource(self.parse_write_resource_clause()?));
+        }
         Ok(Ensure::Proposition(self.parse_proposition()?))
     }
 
@@ -13083,6 +13273,7 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
                     &click_functions,
                     &format!("ensures clause in `{}`", function.signature().name()),
                 )?,
+                Ensure::Resource(_) => {}
             }
         }
     }

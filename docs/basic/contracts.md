@@ -64,6 +64,15 @@ for satisfying them.
 Requirements are also where simple C safety facts often live. For example,
 `requires x < 2147483647;` makes `x + 1` safe from signed overflow.
 
+Some requirements provide resources rather than ordinary facts:
+
+```click
+requires write(p[0..1]);
+```
+
+This gives the verifier permission to check writes to that external memory
+range. `write(...)` is carried separately from ordinary propositions.
+
 Requirements can be labeled:
 
 ```click

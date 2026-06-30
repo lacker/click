@@ -112,6 +112,10 @@ Larger example projects live directly under `examples/`. They contain ordinary
   effect.
 - `mdtests/shifted_loop_effect_preserves_prefix.md`: effect summary preserves
   prefix.
+- `mdtests/resource_context_write.md`: first `write(...)` resource-context
+  example threaded through helper calls.
+- `mdtests/resource_context_write_rejects_missing.md`: missing write resource
+  diagnostic.
 
 ## Predicates And Pure Click Functions
 

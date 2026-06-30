@@ -2305,6 +2305,27 @@ pub(super) fn write_c_lvalue_paths(
             }]
         }
         CLValueStorage::Memory { pointer } => {
+            if !state.resources().is_empty()
+                && is_external_memory_pointer(&pointer)
+                && !resource_context_has_write(
+                    state.resources(),
+                    &pointer,
+                    value.byte_width(),
+                    &effective_assumptions,
+                )
+            {
+                return vec![CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
+                        resource: CResource::Write(CMemoryRange::new(
+                            pointer.clone(),
+                            Bitvector32Term::Constant(0),
+                            Bitvector32Term::Constant(1),
+                        )),
+                    }),
+                    facts,
+                    obligations,
+                }];
+            }
             let Some(obligations) = add_memory_store_obligation(
                 &state.memory,
                 &pointer,
@@ -2346,6 +2367,10 @@ pub(super) fn write_c_lvalue_paths(
             }]
         }
     }
+}
+
+fn is_external_memory_pointer(pointer: &Pointer) -> bool {
+    !pointer.block.starts_with("local:") && !pointer.block.starts_with("havoc:")
 }
 
 pub(super) fn local_name_from_pointer(pointer: &Pointer) -> Option<&str> {

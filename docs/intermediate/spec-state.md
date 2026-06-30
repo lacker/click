@@ -10,9 +10,10 @@ is not the important distinction. The useful distinction is whether a Click
 name is a simple immutable abbreviation or extra proof/model state across
 program points.
 
-Click does not yet have first-class mutable spec state. This page records the
-intended place of that feature so future permission and ownership work has a
-clean target.
+Click does not yet have general first-class mutable spec state. It does have a
+small opt-in resource context for `write(...)` memory resources. This page
+records the intended place of the broader feature so future permission and
+ownership work has a clean target.
 
 ## Why Spec State Matters
 
@@ -49,6 +50,8 @@ Click already has a few spec-only mechanisms:
 - `let ... where` introduces immutable witnesses in proposition clauses.
 - `choose` introduces proof-local names from existential requirements.
 - `witness` supplies proof-local values for existential goals.
+- `write(p[lo..hi])` introduces a first resource-context permission for
+  external memory writes.
 
 These are useful, but they are not the same as first-class mutable spec state.
 
@@ -58,21 +61,25 @@ Spec state should feel like ordinary Click facts. A user should be able to
 state, carry, unfold, and prove model facts without switching to a completely
 different mental model.
 
-This matters for future permission logic. A permission fact may say that a
-proof has read, write, or free authority over some memory. That fact should be
-represented as a proposition in the proof system, even if the proof rules for
-using it are special.
+This matters for permission logic. A permission may say that the current proof
+state has read, write, or free authority over some memory. Unlike ordinary
+propositions, permissions must not be copied freely. Click's first `write(...)`
+slice therefore lives in a resource context rather than as a classical
+predicate fact.
 
 ## Relationship To Permission Logic
 
-Permission logic should come after basic spec/model state, not before it.
+The current implementation starts with a narrow resource context before general
+model variables. That lets Click pressure-test the permission machinery on the
+central memory problem without committing to arbitrary global model state.
 
 The intended layering is:
 
-1. first-class mutable spec/model state,
-2. permission facts over memory locations or ranges,
-3. ownership predicates defined in libraries,
-4. refcount and allocation examples that pressure-test those abstractions.
+1. a small resource context for memory permissions,
+2. broader permission facts over memory locations, ranges, capabilities, and IO,
+3. first-class model variables if examples need arbitrary spec state,
+4. ownership predicates defined in libraries,
+5. refcount and allocation examples that pressure-test those abstractions.
 
 This keeps Click flexible. The kernel should not bake in json-c ownership as a
 primitive concept. It should provide enough general spec-state and permission
