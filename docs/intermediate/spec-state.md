@@ -11,9 +11,10 @@ name is a simple immutable abbreviation or extra proof/model state across
 program points.
 
 Click does not yet have general first-class mutable spec state. It does have a
-small resource context for `read(...)` and `write(...)` memory resources. This page
-records the intended place of the broader feature so future permission and
-ownership work has a clean target.
+small resource context for `read(...)` and `write(...)` memory resources,
+described in [Permissions](permissions.md). This page records the intended
+place of the broader feature so future permission and ownership work has a
+clean target.
 
 ## Why Spec State Matters
 

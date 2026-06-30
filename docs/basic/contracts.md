@@ -73,7 +73,9 @@ requires write(p[0..1]);
 
 These give the verifier permission to check external memory accesses.
 `read(...)` permits loads; `write(...)` permits both loads and stores.
-Resources are carried separately from ordinary propositions.
+Resources are carried separately from ordinary propositions. The intermediate
+[Permissions](../intermediate/permissions.md) chapter covers transfer through
+function calls and the distinction between validity and authority.
 
 Requirements can be labeled:
 

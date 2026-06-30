@@ -17,6 +17,7 @@
 - [C0 And C Fragments](intermediate/c0-and-c-fragments.md)
 - [Undefined Behavior](intermediate/undefined-behavior.md)
 - [Memory Validity](intermediate/memory-validity.md)
+- [Permissions](intermediate/permissions.md)
 - [Aliasing And Frames](intermediate/aliasing-and-frames.md)
 - [Loops And Invariants](intermediate/loops-and-invariants.md)
 - [Predicates](intermediate/predicates.md)

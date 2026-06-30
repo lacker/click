@@ -1,8 +1,7 @@
 # read resources
 
 This checks the first `read(...)` permission slice. `read(...)` permits
-external loads when resource checking is active, but it does not seed memory
-cells or grant write permission.
+external loads, but it does not seed memory cells or grant write permission.
 
 ```c filename=read_first.c
 int32 read_first(int32 p[]) {

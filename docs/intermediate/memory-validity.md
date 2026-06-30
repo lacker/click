@@ -1,7 +1,8 @@
 # Memory Validity
 
 Pointer proofs start with validity. Before Click can prove what a memory access
-returns, it must first know that the access is allowed.
+returns, it must know that the access is in bounds. For external memory, Click
+also needs permission to access the range; see [Permissions](permissions.md).
 
 For an array parameter:
 
@@ -16,6 +17,7 @@ the contract needs:
 ```click
 int32 first(int32 p[]) {
     requires valid_range(p[0..1]);
+    requires read(p[0..1]);
     ensures result == p[0] by auto;
 }
 ```
@@ -46,6 +48,7 @@ to know the index is inside the range:
 requires 0 <= k;
 requires k < n;
 requires valid_range(p[0..n]);
+requires read(p[0..n]);
 ensures result == p[k] by auto;
 ```
 
@@ -61,7 +64,7 @@ ensures p[0] == old(p[0]) by auto;
 
 This is how postconditions talk about preservation or change. The expression
 inside `old(...)` still needs to be meaningful in the entry state, so memory
-validity requirements still matter.
+validity and permission requirements still matter.
 
 ## Field Validity
 

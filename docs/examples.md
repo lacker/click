@@ -137,6 +137,18 @@ Larger example projects live directly under `examples/`. They contain ordinary
 - `mdtests/resource_summary_splits_symbolic_write_range.md`: helper call
   receives and returns a symbolic write subrange.
 
+The `permission_call_*` tests tell the same call-transfer story in a compact
+sequence:
+
+- `mdtests/permission_call_borrow_read.md`: a helper borrows read permission
+  from a caller that keeps write permission.
+- `mdtests/permission_call_consumes_write_without_return.md`: a helper consumes
+  write permission when it does not return it.
+- `mdtests/permission_call_returns_write.md`: a helper returns write permission
+  to its caller.
+- `mdtests/permission_call_split_rejoin.md`: a caller splits a write range for
+  a helper call and rejoins it afterward.
+
 ## Predicates And Pure Click Functions
 
 - `mdtests/sorted_predicate.md`: named predicate and `unfold`.
