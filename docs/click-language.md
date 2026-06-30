@@ -89,6 +89,12 @@ In this first slice, `write(...)` also seeds the matching symbolic memory cells
 for concrete ranges, so simple one-cell writes do not need a separate
 `valid_range(...)` requirement.
 
+Function calls transfer write resources through the callee's resource summary.
+A callee must declare `requires write(...)` to receive a resource and
+`ensures write(...)` to return it to the caller. The first implementation uses
+exact resource transfer; splitting a larger range into a smaller passed range is
+future work.
+
 This is intentionally not the full permission system. There are no read
 fractions, ownership predicates, `free` permissions, resource splitting proof
 steps, or heap allocation yet. Existing `valid_range`, `mutable`, and

@@ -330,6 +330,8 @@ pub struct CFunction {
     pub(super) name: String,
     pub(super) parameters: Vec<CParameter>,
     pub(super) body: CStatement,
+    pub(super) resource_requires: Vec<CResourceSpec>,
+    pub(super) resource_ensures: Vec<CResourceSpec>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -447,6 +449,11 @@ pub struct ResourceContext {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResource {
     Write(CMemoryRange),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CResourceSpec {
+    Write(CMemorySegment),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1314,7 +1321,19 @@ impl CFunction {
             name: name.into(),
             parameters,
             body,
+            resource_requires: Vec::new(),
+            resource_ensures: Vec::new(),
         }
+    }
+
+    pub fn with_resource_summary(
+        mut self,
+        requires: Vec<CResourceSpec>,
+        ensures: Vec<CResourceSpec>,
+    ) -> Self {
+        self.resource_requires = requires;
+        self.resource_ensures = ensures;
+        self
     }
 
     pub fn return_type(&self) -> CType {
@@ -1331,6 +1350,18 @@ impl CFunction {
 
     pub fn body(&self) -> &CStatement {
         &self.body
+    }
+
+    pub fn resource_requires(&self) -> &[CResourceSpec] {
+        &self.resource_requires
+    }
+
+    pub fn resource_ensures(&self) -> &[CResourceSpec] {
+        &self.resource_ensures
+    }
+
+    pub fn has_resource_summary(&self) -> bool {
+        !self.resource_requires.is_empty() || !self.resource_ensures.is_empty()
     }
 }
 
@@ -1762,12 +1793,30 @@ impl ResourceContext {
         self
     }
 
+    pub fn with_resources(mut self, resources: impl IntoIterator<Item = CResource>) -> Self {
+        self.resources.extend(resources);
+        self
+    }
+
     pub fn resources(&self) -> &[CResource] {
         &self.resources
     }
 
     pub fn is_empty(&self) -> bool {
         self.resources.is_empty()
+    }
+
+    pub fn contains(&self, resource: &CResource) -> bool {
+        self.resources.contains(resource)
+    }
+
+    pub fn without_exact_resource(mut self, resource: &CResource) -> Option<Self> {
+        let index = self
+            .resources
+            .iter()
+            .position(|candidate| candidate == resource)?;
+        self.resources.remove(index);
+        Some(self)
     }
 }
 

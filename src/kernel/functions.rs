@@ -1,5 +1,11 @@
 use super::prelude::*;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CFunctionResourceTransfer {
+    callee_resources: ResourceContext,
+    return_resources: ResourceContext,
+}
+
 pub(super) fn execute_c_function_paths(
     caller_state: &CState,
     function: &CFunction,
@@ -48,6 +54,29 @@ pub(super) fn execute_c_function_paths(
             &arguments_path.facts,
             &arguments_path.obligations,
         );
+        let resource_transfer = match prepare_function_resource_transfer(
+            caller_state,
+            &callee_state,
+            function,
+            &body_assumptions,
+            budget,
+        )? {
+            Ok(resource_transfer) => resource_transfer,
+            Err(error) => {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(error),
+                    facts: arguments_path.facts,
+                    obligations: arguments_path.obligations,
+                });
+                continue;
+            }
+        };
+        let callee_state = match &resource_transfer {
+            Some(resource_transfer) => {
+                callee_state.with_resource_context(resource_transfer.callee_resources.clone())
+            }
+            None => callee_state,
+        };
         for body_path in execute_c_statement_paths(
             &callee_state,
             function.body(),
@@ -72,6 +101,9 @@ pub(super) fn execute_c_function_paths(
                 body_path.outcome,
                 obligations,
                 &return_assumptions,
+                resource_transfer
+                    .as_ref()
+                    .map(|resource_transfer| &resource_transfer.return_resources),
             );
 
             paths.push(CFunctionPath {
@@ -135,6 +167,29 @@ pub(super) fn execute_c_function_verification_paths(
             &arguments_path.facts,
             &arguments_path.obligations,
         );
+        let resource_transfer = match prepare_function_resource_transfer(
+            caller_state,
+            &callee_state,
+            function,
+            &body_assumptions,
+            budget,
+        )? {
+            Ok(resource_transfer) => resource_transfer,
+            Err(error) => {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(error),
+                    facts: arguments_path.facts,
+                    obligations: arguments_path.obligations,
+                });
+                continue;
+            }
+        };
+        let callee_state = match &resource_transfer {
+            Some(resource_transfer) => {
+                callee_state.with_resource_context(resource_transfer.callee_resources.clone())
+            }
+            None => callee_state,
+        };
         for body_path in execute_c_statement_verification_paths(
             &callee_state,
             function.body(),
@@ -160,6 +215,9 @@ pub(super) fn execute_c_function_verification_paths(
                 body_path.outcome,
                 obligations,
                 &return_assumptions,
+                resource_transfer
+                    .as_ref()
+                    .map(|resource_transfer| &resource_transfer.return_resources),
             );
 
             paths.push(CFunctionPath {
@@ -290,12 +348,102 @@ pub(super) fn bind_c_function_arguments(
     Some(callee_state)
 }
 
+fn prepare_function_resource_transfer(
+    caller_state: &CState,
+    callee_state: &CState,
+    function: &CFunction,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<Option<CFunctionResourceTransfer>, CRuntimeError>> {
+    if !function.has_resource_summary() {
+        return Ok(Ok(None));
+    }
+
+    let required_resources = match evaluate_function_resource_context(
+        callee_state,
+        function.resource_requires(),
+        assumptions,
+        budget,
+    )? {
+        Ok(resources) => resources,
+        Err(error) => return Ok(Err(error)),
+    };
+    let ensured_resources = match evaluate_function_resource_context(
+        callee_state,
+        function.resource_ensures(),
+        assumptions,
+        budget,
+    )? {
+        Ok(resources) => resources,
+        Err(error) => return Ok(Err(error)),
+    };
+
+    let mut return_resources = caller_state.resources().clone();
+    for resource in required_resources.resources() {
+        if !return_resources.contains(resource) {
+            return Ok(Err(CRuntimeError::MissingResource {
+                resource: resource.clone(),
+            }));
+        }
+        return_resources = return_resources
+            .without_exact_resource(resource)
+            .expect("resource was checked before removal");
+    }
+    return_resources =
+        return_resources.with_resources(ensured_resources.resources().iter().cloned());
+
+    Ok(Ok(Some(CFunctionResourceTransfer {
+        callee_resources: required_resources,
+        return_resources,
+    })))
+}
+
+fn evaluate_function_resource_context(
+    state: &CState,
+    resources: &[CResourceSpec],
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
+    let mut context = ResourceContext::new();
+    for resource in resources {
+        let resource = match evaluate_function_resource_spec(state, resource, assumptions, budget)?
+        {
+            Ok(resource) => resource,
+            Err(error) => return Ok(Err(error)),
+        };
+        context = context.with_resource(resource);
+    }
+    Ok(Ok(context))
+}
+
+fn evaluate_function_resource_spec(
+    state: &CState,
+    resource: &CResourceSpec,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<CResource, CRuntimeError>> {
+    match resource {
+        CResourceSpec::Write(segment) => {
+            let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
+                Ok(segment) => segment,
+                Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
+            };
+            Ok(Ok(CResource::Write(CMemoryRange::new(
+                segment.base,
+                segment.start,
+                segment.end,
+            ))))
+        }
+    }
+}
+
 pub(super) fn function_outcome_from_body(
     caller_state: &CState,
     function: &CFunction,
     outcome: CStatementOutcome,
     mut obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
+    return_resources: Option<&ResourceContext>,
 ) -> (CFunctionOutcome, Vec<ProofObligation>) {
     match outcome {
         CStatementOutcome::Return { value, state } => {
@@ -313,7 +461,7 @@ pub(super) fn function_outcome_from_body(
 
             let mut caller_state = caller_state.clone();
             caller_state.memory = state.memory;
-            caller_state.resources = state.resources;
+            caller_state.resources = return_resources.cloned().unwrap_or(state.resources);
             (
                 CFunctionOutcome::Return {
                     value,

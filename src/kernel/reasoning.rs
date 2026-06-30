@@ -1397,7 +1397,26 @@ pub(super) fn collect_c_function_bitvector_variables(
     function: &CFunction,
     variables: &mut BTreeSet<Variable>,
 ) {
+    for resource in function.resource_requires() {
+        collect_resource_spec_bitvector_variables(resource, variables);
+    }
+    for resource in function.resource_ensures() {
+        collect_resource_spec_bitvector_variables(resource, variables);
+    }
     collect_c_statement_bitvector_variables(function.body(), variables);
+}
+
+pub(super) fn collect_resource_spec_bitvector_variables(
+    resource: &CResourceSpec,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match resource {
+        CResourceSpec::Write(segment) => {
+            collect_c_expression_bitvector_variables(&segment.base, variables);
+            collect_c_expression_bitvector_variables(&segment.start, variables);
+            collect_c_expression_bitvector_variables(&segment.end, variables);
+        }
+    }
 }
 
 pub(super) fn collect_c_function_specification_bitvector_variables(
@@ -2497,6 +2516,30 @@ pub(super) fn substitute_bitvector_variable_in_c_function(
         name: function.name.clone(),
         parameters: function.parameters.clone(),
         body: substitute_bitvector_variable_in_c_statement(function.body(), from, to),
+        resource_requires: function
+            .resource_requires()
+            .iter()
+            .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
+            .collect(),
+        resource_ensures: function
+            .resource_ensures()
+            .iter()
+            .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
+            .collect(),
+    }
+}
+
+pub(super) fn substitute_bitvector_variable_in_resource_spec(
+    resource: &CResourceSpec,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CResourceSpec {
+    match resource {
+        CResourceSpec::Write(segment) => CResourceSpec::Write(CMemorySegment {
+            base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
+            start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
+            end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+        }),
     }
 }
 

@@ -55,6 +55,11 @@ Click already has a few spec-only mechanisms:
 
 These are useful, but they are not the same as first-class mutable spec state.
 
+Across a function call, `write(...)` resources follow the callee's contract:
+`requires write(...)` receives the permission and `ensures write(...)` returns
+it. The initial transfer rule is exact and intentionally narrow; general
+splitting, joining, and abstract permission predicates remain future work.
+
 ## The Design Constraint
 
 Spec state should feel like ordinary Click facts. A user should be able to

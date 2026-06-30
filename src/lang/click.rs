@@ -10,10 +10,10 @@ use std::fmt;
 use crate::kernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CExpression, CFunction,
     CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
-    CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CResource, CState,
-    CStatement, CType, CValue, ConditionTerm, PathFact, Pointer, PointerOffsetTerm,
-    ProofObligation, Proposition, ResourceContext, Sort, SpecExpression, SpecMemory,
-    SpecProposition, Term, Theorem, Variable, c_function, c_function_specification,
+    CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CResource,
+    CResourceSpec, CState, CStatement, CType, CValue, ConditionTerm, PathFact, Pointer,
+    PointerOffsetTerm, ProofObligation, Proposition, ResourceContext, Sort, SpecExpression,
+    SpecMemory, SpecProposition, Term, Theorem, Variable, c_function, c_function_specification,
     c_labeled_assert, c_pointer_value, c_seq, c_while_with_invariant_and_effect_checks,
     prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
@@ -820,7 +820,7 @@ pub fn verify_c0_sources(
     let file = parse(click_source)?;
     let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
     let parsed_sources = parse_verified_sources(&file, &c_sources)?;
-    let function_environment = build_function_environment(&parsed_sources);
+    let function_environment = build_function_environment(&parsed_sources, file.function_blocks());
     let predicate_definitions = combined_predicate_definitions(&file)?;
     let click_function_definitions = combined_click_function_definitions(&file)?;
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
@@ -2247,12 +2247,58 @@ fn parse_verified_sources<'a>(
 
 fn build_function_environment(
     parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
+    function_blocks: &[FunctionBlock],
 ) -> CFunctionEnvironment {
     parsed_sources
         .values()
         .fold(CFunctionEnvironment::new(), |environment, (_, function)| {
-            environment.with_function(function.to_kernel_function())
+            let function = match function_blocks
+                .iter()
+                .find(|block| block.signature().name() == function.name())
+            {
+                Some(function_block) => {
+                    let (resource_requires, resource_ensures) =
+                        function_resource_summary(function_block);
+                    function
+                        .to_kernel_function()
+                        .with_resource_summary(resource_requires, resource_ensures)
+                }
+                None => function.to_kernel_function(),
+            };
+            environment.with_function(function)
         })
+}
+
+fn function_resource_summary(
+    function_block: &FunctionBlock,
+) -> (Vec<CResourceSpec>, Vec<CResourceSpec>) {
+    let requires = function_block
+        .requires()
+        .iter()
+        .filter_map(|requirement| match requirement.inner() {
+            Requirement::Resource(resource) => Some(resource_clause_to_resource_spec(resource)),
+            _ => None,
+        })
+        .collect();
+    let ensures = function_block
+        .ensures()
+        .iter()
+        .filter_map(|ensure| match ensure.ensure() {
+            Ensure::Resource(resource) => Some(resource_clause_to_resource_spec(resource)),
+            _ => None,
+        })
+        .collect();
+    (requires, ensures)
+}
+
+fn resource_clause_to_resource_spec(resource: &ResourceClause) -> CResourceSpec {
+    match resource {
+        ResourceClause::Write(segment) => CResourceSpec::Write(CMemorySegment::new(
+            segment.base.clone(),
+            segment.start.clone(),
+            segment.end.clone(),
+        )),
+    }
 }
 
 fn function_claim_label(function_name: &str, claim: &FunctionClaimRef<'_>) -> String {

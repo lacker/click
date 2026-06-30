@@ -116,6 +116,8 @@ Larger example projects live directly under `examples/`. They contain ordinary
   example threaded through helper calls.
 - `mdtests/resource_context_write_rejects_missing.md`: missing write resource
   diagnostic.
+- `mdtests/resource_summary_requires_returned_write.md`: helper call consumes a
+  write resource unless its summary returns it.
 
 ## Predicates And Pure Click Functions
 
