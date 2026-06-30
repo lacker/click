@@ -69,13 +69,15 @@ Some requirements provide resources rather than ordinary facts:
 ```click
 requires read(p[0..1]);
 requires write(p[0..1]);
+requires free(p[0..1]);
 ```
 
 These give the verifier permission to check external memory accesses.
-`read(...)` permits loads; `write(...)` permits both loads and stores.
-Resources are carried separately from ordinary propositions. The intermediate
+`read(...)` permits loads; `write(...)` permits both loads and stores;
+`free(...)` grants release authority without granting access. Resources are
+carried separately from ordinary propositions. The intermediate
 [Permissions](../intermediate/permissions.md) chapter covers transfer through
-function calls and the distinction between validity and authority.
+function calls and the distinction between validity, authority, and release.
 
 Requirements can be labeled:
 

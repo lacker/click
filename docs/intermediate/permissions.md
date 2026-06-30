@@ -8,6 +8,7 @@ Click currently has two memory permissions:
 ```click
 requires read(p[0..1]);
 requires write(p[0..1]);
+requires free(p[0..1]);
 ```
 
 These clauses create resources in the verifier's resource context. External C
@@ -82,6 +83,29 @@ it with `ensures write(...)`, the caller cannot use or prove it afterward.
 This is the main difference between a permission and an ordinary proposition.
 Ordinary facts can be used repeatedly. A write resource can be transferred.
 
+## Free Permission
+
+`free(...)` represents authority to release a range. It is separate from access
+permission:
+
+- `free(...)` does not permit loads,
+- `free(...)` does not permit stores,
+- `write(...)` does not imply `free(...)`.
+
+This lets a contract say that code may write a field without being allowed to
+release the whole object.
+
+Free resources are linear across function calls. If a callee requires
+`free(p[0..1])` and does not return it, the caller loses that free resource.
+Consuming a free resource also removes overlapping `read(...)` and `write(...)`
+resources from the caller context. That models the permission consequence of
+deallocation: after handing off authority to release a range, the caller cannot
+continue accessing that same range unless the callee explicitly returns the
+needed resources.
+
+This is still a resource-level model. Click does not yet have C heap allocation
+or an executable `free(p)` statement in the C0 semantics.
+
 ## Function Calls
 
 Function calls use the callee's resource summary:
@@ -139,16 +163,17 @@ cover `p[1]`.
 Implemented today:
 
 - mandatory permission checks for external loads and stores,
-- `read(...)` and `write(...)` over `int32[]` and `uint8[]`,
+- `read(...)`, `write(...)`, and `free(...)` over memory ranges,
 - `write(...)` implying read authority,
 - copyable read transfer,
 - linear write transfer through function summaries,
+- linear free transfer that removes overlapping access resources when consumed,
 - covered subrange splitting and adjacent range rejoining.
 
 Not implemented yet:
 
 - fractional permissions,
-- allocation or `free` permissions,
+- C heap allocation or executable `free(p)` semantics,
 - abstract resource predicates,
 - ownership predicates,
 - explicit resource algebra proof steps,

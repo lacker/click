@@ -1391,6 +1391,7 @@ pub(super) fn collect_resource_bitvector_variables(
     match resource {
         CResource::Read(range) => collect_c_memory_range_bitvector_variables(range, variables),
         CResource::Write(range) => collect_c_memory_range_bitvector_variables(range, variables),
+        CResource::Free(range) => collect_c_memory_range_bitvector_variables(range, variables),
     }
 }
 
@@ -1418,6 +1419,11 @@ pub(super) fn collect_resource_spec_bitvector_variables(
             collect_c_expression_bitvector_variables(&segment.end, variables);
         }
         CResourceSpec::Write(segment) => {
+            collect_c_expression_bitvector_variables(&segment.base, variables);
+            collect_c_expression_bitvector_variables(&segment.start, variables);
+            collect_c_expression_bitvector_variables(&segment.end, variables);
+        }
+        CResourceSpec::Free(segment) => {
             collect_c_expression_bitvector_variables(&segment.base, variables);
             collect_c_expression_bitvector_variables(&segment.start, variables);
             collect_c_expression_bitvector_variables(&segment.end, variables);
@@ -1462,6 +1468,7 @@ pub(super) fn resource_context_has_read(
             range.start(),
             range.end(),
         ),
+        CResource::Free(_) => false,
     })
 }
 
@@ -1480,6 +1487,7 @@ pub(super) fn resource_context_has_write(
             range.start(),
             range.end(),
         ),
+        CResource::Free(_) => false,
     })
 }
 
@@ -2530,6 +2538,9 @@ pub(super) fn substitute_bitvector_variable_in_resource(
         CResource::Write(range) => CResource::Write(
             substitute_bitvector_variable_in_c_memory_range(range, from, to),
         ),
+        CResource::Free(range) => CResource::Free(substitute_bitvector_variable_in_c_memory_range(
+            range, from, to,
+        )),
     }
 }
 
@@ -2568,6 +2579,11 @@ pub(super) fn substitute_bitvector_variable_in_resource_spec(
             end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
         }),
         CResourceSpec::Write(segment) => CResourceSpec::Write(CMemorySegment {
+            base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
+            start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
+            end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+        }),
+        CResourceSpec::Free(segment) => CResourceSpec::Free(CMemorySegment {
             base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
             start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
             end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),

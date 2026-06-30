@@ -148,6 +148,14 @@ sequence:
   to its caller.
 - `mdtests/permission_call_split_rejoin.md`: a caller splits a write range for
   a helper call and rejoins it afterward.
+- `mdtests/permission_free_not_write.md`: free permission does not grant write
+  access.
+- `mdtests/permission_free_consumes_access.md`: consuming free permission
+  removes overlapping access permissions.
+- `mdtests/permission_free_returns.md`: free permission can be returned through
+  a helper summary.
+- `mdtests/permission_free_split_rejoin.md`: free permission supports subrange
+  split and rejoin.
 
 ## Predicates And Pure Click Functions
 

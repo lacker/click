@@ -11,10 +11,10 @@ name is a simple immutable abbreviation or extra proof/model state across
 program points.
 
 Click does not yet have general first-class mutable spec state. It does have a
-small resource context for `read(...)` and `write(...)` memory resources,
-described in [Permissions](permissions.md). This page records the intended
-place of the broader feature so future permission and ownership work has a
-clean target.
+small resource context for `read(...)`, `write(...)`, and `free(...)` memory
+resources, described in [Permissions](permissions.md). This page records the
+intended place of the broader feature so future permission and ownership work
+has a clean target.
 
 ## Why Spec State Matters
 
@@ -51,16 +51,18 @@ Click already has a few spec-only mechanisms:
 - `let ... where` introduces immutable witnesses in proposition clauses.
 - `choose` introduces proof-local names from existential requirements.
 - `witness` supplies proof-local values for existential goals.
-- `read(p[lo..hi])` and `write(p[lo..hi])` introduce first resource-context
-  permissions for external memory accesses.
+- `read(p[lo..hi])`, `write(p[lo..hi])`, and `free(p[lo..hi])` introduce first
+  resource-context permissions for external memory accesses and release
+  authority.
 
 These are useful, but they are not the same as first-class mutable spec state.
 
-Across a function call, `read(...)` resources are copyable and `write(...)`
-resources follow the callee's contract: `requires write(...)` receives the
-permission and `ensures write(...)` returns it. Click can split a covered
-subrange out of a larger write range and rejoin adjacent returned ranges. More
-general abstract permission predicates remain future work.
+Across a function call, `read(...)` resources are copyable and `write(...)` and
+`free(...)` resources follow the callee's contract: `requires write(...)` or
+`requires free(...)` receives the permission, and a matching `ensures` returns
+it. Click can split a covered subrange out of a larger linear range and rejoin
+adjacent returned ranges. More general abstract permission predicates remain
+future work.
 
 ## The Design Constraint
 
@@ -71,8 +73,8 @@ different mental model.
 This matters for permission logic. A permission may say that the current proof
 state has read, write, or free authority over some memory. Unlike ordinary
 propositions, some permissions must not be copied freely. Click's first
-`read(...)` and `write(...)` slices therefore live in a resource context rather
-than as classical predicate facts.
+`read(...)`, `write(...)`, and `free(...)` slices therefore live in a resource
+context rather than as classical predicate facts.
 
 ## Relationship To Permission Logic
 

@@ -426,8 +426,11 @@ fn prepare_function_resource_transfer(
         Err(error) => return Ok(Err(error)),
     };
 
+    let mut required_resource_list = required_resources.resources().to_vec();
+    required_resource_list.sort_by_key(resource_transfer_priority);
+
     let mut return_resources = caller_state.resources().clone();
-    for resource in required_resources.resources() {
+    for resource in &required_resource_list {
         let Some(resources) = return_resources.without_resource(resource, assumptions) else {
             return Ok(Err(CRuntimeError::MissingResource {
                 resource: resource.clone(),
@@ -491,6 +494,25 @@ fn evaluate_function_resource_spec(
                 segment.end,
             ))))
         }
+        CResourceSpec::Free(segment) => {
+            let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
+                Ok(segment) => segment,
+                Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
+            };
+            Ok(Ok(CResource::Free(CMemoryRange::new(
+                segment.base,
+                segment.start,
+                segment.end,
+            ))))
+        }
+    }
+}
+
+fn resource_transfer_priority(resource: &CResource) -> u8 {
+    match resource {
+        CResource::Read(_) => 0,
+        CResource::Write(_) => 1,
+        CResource::Free(_) => 2,
     }
 }
 

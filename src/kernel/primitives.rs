@@ -450,12 +450,14 @@ pub struct ResourceContext {
 pub enum CResource {
     Read(CMemoryRange),
     Write(CMemoryRange),
+    Free(CMemoryRange),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResourceSpec {
     Read(CMemorySegment),
     Write(CMemorySegment),
+    Free(CMemorySegment),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1831,6 +1833,7 @@ impl ResourceContext {
                     CResource::Read(available) | CResource::Write(available) => {
                         memory_range_covers(available, required, assumptions)
                     }
+                    CResource::Free(_) => false,
                 })
                 .then(|| self.normalized(assumptions)),
             CResource::Write(required) => {
@@ -1842,19 +1845,57 @@ impl ResourceContext {
                         CResource::Write(available) => {
                             memory_range_covers(available, required, assumptions)
                         }
+                        CResource::Free(_) => false,
                     })?;
                 let available = match self.resources.remove(index) {
                     CResource::Write(available) => available,
-                    CResource::Read(_) => unreachable!("write resource lookup ignored reads"),
+                    CResource::Read(_) | CResource::Free(_) => {
+                        unreachable!("write resource lookup ignored non-writes")
+                    }
                 };
                 self.resources.extend(
-                    split_write_range(&available, required, assumptions)?
+                    split_memory_range(&available, required, assumptions)?
                         .into_iter()
                         .map(CResource::Write),
                 );
                 Some(self.normalized(assumptions))
             }
+            CResource::Free(required) => self.without_free_resource(required, assumptions),
         }
+    }
+
+    fn without_free_resource(
+        mut self,
+        required: &CMemoryRange,
+        assumptions: &Assumptions,
+    ) -> Option<Self> {
+        if !self.resources.iter().any(|candidate| match candidate {
+            CResource::Free(available) => memory_range_covers(available, required, assumptions),
+            CResource::Read(_) | CResource::Write(_) => false,
+        }) {
+            return None;
+        }
+
+        let mut resources = Vec::new();
+        for resource in self.resources {
+            let range = resource.range();
+            if memory_range_covers(range, required, assumptions) {
+                resources.extend(
+                    split_memory_range(range, required, assumptions)?
+                        .into_iter()
+                        .map(|range| resource.with_range(range)),
+                );
+            } else if memory_range_covers(required, range, assumptions) {
+                continue;
+            } else if memory_ranges_proven_disjoint(range, required, assumptions) {
+                resources.push(resource);
+            } else {
+                return None;
+            }
+        }
+
+        self.resources = resources;
+        Some(self.normalized(assumptions))
     }
 
     pub(super) fn normalized(mut self, assumptions: &Assumptions) -> Self {
@@ -1892,10 +1933,15 @@ fn resource_covers(available: &CResource, required: &CResource, assumptions: &As
     match (available, required) {
         (CResource::Read(available), CResource::Read(required))
         | (CResource::Write(available), CResource::Read(required))
-        | (CResource::Write(available), CResource::Write(required)) => {
+        | (CResource::Write(available), CResource::Write(required))
+        | (CResource::Free(available), CResource::Free(required)) => {
             memory_range_covers(available, required, assumptions)
         }
-        (CResource::Read(_), CResource::Write(_)) => false,
+        (CResource::Read(_), CResource::Write(_))
+        | (CResource::Read(_), CResource::Free(_))
+        | (CResource::Write(_), CResource::Free(_))
+        | (CResource::Free(_), CResource::Read(_))
+        | (CResource::Free(_), CResource::Write(_)) => false,
     }
 }
 
@@ -1912,7 +1958,7 @@ fn memory_range_covers(
     )
 }
 
-fn split_write_range(
+fn split_memory_range(
     available: &CMemoryRange,
     required: &CMemoryRange,
     assumptions: &Assumptions,
@@ -1938,6 +1984,47 @@ fn split_write_range(
     Some(residues)
 }
 
+fn memory_ranges_proven_disjoint(
+    left: &CMemoryRange,
+    right: &CMemoryRange,
+    assumptions: &Assumptions,
+) -> bool {
+    if left.base().block != right.base().block {
+        return true;
+    }
+
+    let Some(base_delta) = right.base().element_index_from_base(left.base()) else {
+        return false;
+    };
+    let right_start = Bitvector32Term::add(base_delta.clone(), right.start().clone());
+    let right_end = Bitvector32Term::add(base_delta, right.end().clone());
+
+    assumptions.decide(&ConditionTerm::signed_less_equal(
+        left.end().clone(),
+        right_start,
+    )) == Some(true)
+        || assumptions.decide(&ConditionTerm::signed_less_equal(
+            right_end,
+            left.start().clone(),
+        )) == Some(true)
+}
+
+impl CResource {
+    fn range(&self) -> &CMemoryRange {
+        match self {
+            Self::Read(range) | Self::Write(range) | Self::Free(range) => range,
+        }
+    }
+
+    fn with_range(&self, range: CMemoryRange) -> Self {
+        match self {
+            Self::Read(_) => Self::Read(range),
+            Self::Write(_) => Self::Write(range),
+            Self::Free(_) => Self::Free(range),
+        }
+    }
+}
+
 fn merge_resources(
     left: &CResource,
     right: &CResource,
@@ -1952,9 +2039,15 @@ fn merge_resources(
         (CResource::Write(left), CResource::Write(right)) => {
             merge_memory_ranges(left, right, assumptions).map(CResource::Write)
         }
-        (CResource::Read(_), CResource::Write(_)) | (CResource::Write(_), CResource::Read(_)) => {
-            None
+        (CResource::Free(left), CResource::Free(right)) => {
+            merge_memory_ranges(left, right, assumptions).map(CResource::Free)
         }
+        (CResource::Read(_), CResource::Write(_))
+        | (CResource::Read(_), CResource::Free(_))
+        | (CResource::Write(_), CResource::Read(_))
+        | (CResource::Write(_), CResource::Free(_))
+        | (CResource::Free(_), CResource::Read(_))
+        | (CResource::Free(_), CResource::Write(_)) => None,
     }
 }
 

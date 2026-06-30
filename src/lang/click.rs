@@ -162,6 +162,7 @@ pub enum Ensure {
 pub enum ResourceClause {
     Read(ContractSegment),
     Write(ContractSegment),
+    Free(ContractSegment),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2304,6 +2305,11 @@ fn resource_clause_to_resource_spec(resource: &ResourceClause) -> CResourceSpec 
             segment.start.clone(),
             segment.end.clone(),
         )),
+        ResourceClause::Free(segment) => CResourceSpec::Free(CMemorySegment::new(
+            segment.base.clone(),
+            segment.start.clone(),
+            segment.end.clone(),
+        )),
     }
 }
 
@@ -3904,6 +3910,9 @@ fn apply_contract_lets_to_resource_clause(
         ResourceClause::Write(segment) => Ok(ResourceClause::Write(
             apply_contract_lets_to_segment(segment, bindings)?,
         )),
+        ResourceClause::Free(segment) => Ok(ResourceClause::Free(apply_contract_lets_to_segment(
+            segment, bindings,
+        )?)),
     }
 }
 
@@ -5211,6 +5220,10 @@ fn lower_resource_clause(
         ResourceClause::Write(segment) => {
             let range = lower_resource_segment("write", segment, parameters, arguments, memory)?;
             Ok(CResource::Write(range))
+        }
+        ResourceClause::Free(segment) => {
+            let range = lower_resource_segment("free", segment, parameters, arguments, memory)?;
+            Ok(CResource::Free(range))
         }
     }
 }
@@ -11889,7 +11902,7 @@ impl Parser {
             (Some("valid_range"), Some(Token::LParen)) => self.parse_valid_range_requirement()?,
             (Some("valid_field"), Some(Token::LParen)) => self.parse_valid_field_requirement()?,
             (Some("disjoint"), Some(Token::LParen)) => self.parse_disjoint_requirement()?,
-            (Some("read") | Some("write"), Some(Token::LParen)) => {
+            (Some("read") | Some("write") | Some("free"), Some(Token::LParen)) => {
                 Requirement::Resource(self.parse_resource_clause()?)
             }
             _ => {
@@ -11966,6 +11979,7 @@ impl Parser {
         match name.as_str() {
             "read" => Ok(ResourceClause::Read(segment)),
             "write" => Ok(ResourceClause::Write(segment)),
+            "free" => Ok(ResourceClause::Free(segment)),
             _ => Err(self.error(format!("unknown resource `{name}`"))),
         }
     }
@@ -12226,7 +12240,7 @@ impl Parser {
     }
 
     fn parse_ensure_condition(&mut self) -> Result<Ensure, ClickError> {
-        if matches!(self.peek_ident(), Some("read" | "write"))
+        if matches!(self.peek_ident(), Some("read" | "write" | "free"))
             && self.peek_next() == Some(&Token::LParen)
         {
             return Ok(Ensure::Resource(self.parse_resource_clause()?));

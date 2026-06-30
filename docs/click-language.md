@@ -68,12 +68,12 @@ fragment syntax.
 requirements are intentionally limited. If a precondition needs memory reads,
 package it as a named predicate and unfold it at proof sites when needed.
 
-## Read And Write Resources
+## Read, Write, And Free Resources
 
-`read(base[start..end])` and `write(base[start..end])` are the first
-resource-context permissions. They are not classical predicates: they are
-carried in the verifier's resource context rather than copied as ordinary proof
-facts.
+`read(base[start..end])`, `write(base[start..end])`, and
+`free(base[start..end])` are the first resource-context permissions. They are
+not classical predicates: they are carried in the verifier's resource context
+rather than copied as ordinary proof facts.
 
 ```click
 int32 write_next(int32 p[], int32 x) {
@@ -92,15 +92,17 @@ so `int32 p[]` ranges count four-byte cells and `uint8 bytes[]` ranges count
 bytes. Local stack accesses do not require resources. A function with no
 resource context has no permission to access external memory.
 In practice, top-level verification gets a resource context from
-`requires read(...)` and `requires write(...)` clauses, while function calls use
-the callee's resource summary.
+`requires read(...)`, `requires write(...)`, and `requires free(...)` clauses,
+while function calls use the callee's resource summary.
 
 `write(...)` implies `read(...)`: a write resource permits both loads and
 stores, and can satisfy an `ensures read(...)` guarantee. `read(...)` is
 copyable across calls. A callee can declare `requires read(...)` without
 consuming the caller's read or write permission. `write(...)` is transferred
 linearly: a callee must declare `requires write(...)` to receive write
-permission and `ensures write(...)` to return it.
+permission and `ensures write(...)` to return it. `free(...)` is also linear,
+does not grant read or write access, and consuming it removes overlapping access
+resources from the caller context.
 
 A call can pass a covered subrange, such as passing `write(p[0..1])` from a
 caller that has `write(p[0..2])`; Click keeps the residue and rejoins adjacent
@@ -112,10 +114,10 @@ one-cell int32 writes do not need a separate `valid_range(...)` requirement.
 permission.
 
 This is intentionally not the full permission system. There are no fractions,
-ownership predicates, `free` permissions, explicit resource algebra proof steps,
-or heap allocation yet. `valid_range`, `mutable`, and `immutable` remain
-separate from permission: validity proves an access is in bounds, while
-resources authorize the access.
+ownership predicates, explicit resource algebra proof steps, C heap allocation,
+or executable `free(p)` semantics yet. `valid_range`, `mutable`, and
+`immutable` remain separate from permission: validity proves an access is in
+bounds, while resources authorize the access.
 
 ## Propositions
 
