@@ -118,13 +118,14 @@ pub struct EffectClause {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StructuralClause {
-    target: StructuralTarget,
+    region: CodeRegion,
     label: Option<String>,
     items: Vec<StructuralItem>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub enum StructuralTarget {
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum CodeRegion {
+    Function,
     Loop(usize),
     Statement(usize),
 }
@@ -368,8 +369,8 @@ pub enum Proof {
 pub enum ProofStep {
     SymbolicExecute,
     BoundedExecute,
-    LoopVc(ProofStepTarget),
-    Frame(Option<ProofStepTarget>),
+    LoopVc(CodeRegionRef),
+    Frame(Option<CodeRegionRef>),
     Unfold(String),
     Witness(ProofWitness),
     Choose(ProofChoice),
@@ -378,7 +379,7 @@ pub enum ProofStep {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub enum ProofStepTarget {
+pub enum CodeRegionRef {
     Function,
     Loop(usize),
     Statement(usize),
@@ -641,8 +642,8 @@ impl EffectClause {
 }
 
 impl StructuralClause {
-    pub fn target(&self) -> &StructuralTarget {
-        &self.target
+    pub fn region(&self) -> &CodeRegion {
+        &self.region
     }
 
     pub fn label(&self) -> Option<&str> {
@@ -1261,7 +1262,7 @@ struct ProofStepReplayState {
     execution: Option<crate::kernel::SymbolicCExecution>,
     execution_mode: Option<ProofStepExecutionMode>,
     loop_vcs: BTreeSet<usize>,
-    frames: BTreeSet<Option<ProofStepTarget>>,
+    frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
     simp: bool,
     closed: bool,
@@ -1349,17 +1350,17 @@ fn prove_claim_by_steps(
                     ),
                 )?;
             }
-            ProofStep::LoopVc(target) => {
+            ProofStep::LoopVc(region_ref) => {
                 require_step_execution(&replay, claim_label, step_index, "loop_vc")?;
                 require_verification_execution(&replay, claim_label, step_index, "loop_vc")?;
-                let resolved_target =
-                    resolve_proof_step_target(function_block, target, claim_label, step_index)?;
-                let ProofStepTarget::Loop(loop_index) = resolved_target else {
+                let code_region =
+                    resolve_code_region_ref(function_block, region_ref, claim_label, step_index)?;
+                let CodeRegion::Loop(loop_index) = code_region else {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` proof step {step_index}: `loop_vc` expects a loop code region"
                     )));
                 };
-                validate_loop_step_target(parsed_function, loop_index, claim_label, step_index)?;
+                validate_loop_code_region(parsed_function, loop_index, claim_label, step_index)?;
                 validate_loop_vc_step(
                     replay.execution.as_ref().expect("execution should exist"),
                     loop_index,
@@ -1368,24 +1369,24 @@ fn prove_claim_by_steps(
                 )?;
                 replay.loop_vcs.insert(loop_index);
             }
-            ProofStep::Frame(target) => {
+            ProofStep::Frame(region_ref) => {
                 require_step_execution(&replay, claim_label, step_index, "frame")?;
-                let resolved_target = target
+                let code_region = region_ref
                     .as_ref()
-                    .map(|target| {
-                        resolve_proof_step_target(function_block, target, claim_label, step_index)
+                    .map(|region_ref| {
+                        resolve_code_region_ref(function_block, region_ref, claim_label, step_index)
                     })
                     .transpose()?;
-                validate_frame_step_target(
+                validate_frame_code_region(
                     function_block,
                     parsed_function,
-                    resolved_target.clone(),
+                    code_region,
                     claim,
                     claim_label,
                     step_index,
                 )?;
-                match resolved_target {
-                    None | Some(ProofStepTarget::Function) => {
+                match code_region {
+                    None | Some(CodeRegion::Function) => {
                         validate_function_frame_step(
                             replay.execution.as_ref().expect("execution should exist"),
                             claim,
@@ -1397,15 +1398,12 @@ fn prove_claim_by_steps(
                             &requirement_propositions,
                         )?;
                     }
-                    Some(ProofStepTarget::Loop(_)) => {
+                    Some(CodeRegion::Loop(_)) => {
                         require_verification_execution(&replay, claim_label, step_index, "frame")?;
                     }
-                    Some(ProofStepTarget::Statement(_)) => {}
-                    Some(ProofStepTarget::Label(_)) => {
-                        unreachable!("proof-step labels are resolved before validation")
-                    }
+                    Some(CodeRegion::Statement(_)) => {}
                 }
-                replay.frames.insert(target.clone());
+                replay.frames.insert(region_ref.clone());
             }
             ProofStep::Unfold(name) => {
                 if predicate_environment.get(name).is_none() {
@@ -1519,34 +1517,30 @@ fn require_verification_execution(
     Ok(())
 }
 
-fn resolve_proof_step_target(
+fn resolve_code_region_ref(
     function_block: &FunctionBlock,
-    target: &ProofStepTarget,
+    region_ref: &CodeRegionRef,
     claim_label: &str,
     step_index: usize,
-) -> Result<ProofStepTarget, ClickError> {
-    let ProofStepTarget::Label(label) = target else {
-        return Ok(target.clone());
-    };
-
-    let structural_target = function_block
-        .structural_clauses()
-        .iter()
-        .find(|clause| clause.label() == Some(label.as_str()))
-        .map(StructuralClause::target)
-        .ok_or_else(|| {
-            ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: unknown code region label `{label}`"
-            ))
-        })?;
-
-    Ok(match structural_target {
-        StructuralTarget::Loop(index) => ProofStepTarget::Loop(*index),
-        StructuralTarget::Statement(index) => ProofStepTarget::Statement(*index),
+) -> Result<CodeRegion, ClickError> {
+    Ok(match region_ref {
+        CodeRegionRef::Function => CodeRegion::Function,
+        CodeRegionRef::Loop(index) => CodeRegion::Loop(*index),
+        CodeRegionRef::Statement(index) => CodeRegion::Statement(*index),
+        CodeRegionRef::Label(label) => *function_block
+            .structural_clauses()
+            .iter()
+            .find(|clause| clause.label() == Some(label.as_str()))
+            .map(StructuralClause::region)
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: unknown code region label `{label}`"
+                ))
+            })?,
     })
 }
 
-fn validate_loop_step_target(
+fn validate_loop_code_region(
     parsed_function: &syntax::C0Function,
     loop_index: usize,
     claim_label: &str,
@@ -1588,16 +1582,16 @@ fn validate_loop_vc_step(
     Ok(())
 }
 
-fn validate_frame_step_target(
+fn validate_frame_code_region(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
-    target: Option<ProofStepTarget>,
+    code_region: Option<CodeRegion>,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
     step_index: usize,
 ) -> Result<(), ClickError> {
-    match target {
-        None | Some(ProofStepTarget::Function) => {
+    match code_region {
+        None | Some(CodeRegion::Function) => {
             if matches!(claim, FunctionClaimRef::Ensure(_, _)) {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` proof step {step_index}: `frame()` proves function-level effect claims; use `frame(loop(N))` or a code region label to use loop effect summaries in an `ensures` proof"
@@ -1605,10 +1599,10 @@ fn validate_frame_step_target(
             }
             Ok(())
         }
-        Some(ProofStepTarget::Loop(loop_index)) => {
-            validate_loop_step_target(parsed_function, loop_index, claim_label, step_index)?;
+        Some(CodeRegion::Loop(loop_index)) => {
+            validate_loop_code_region(parsed_function, loop_index, claim_label, step_index)?;
             if !function_block.structural_clauses().iter().any(|clause| {
-                clause.target() == &StructuralTarget::Loop(loop_index)
+                clause.region() == &CodeRegion::Loop(loop_index)
                     && clause.items().iter().any(StructuralItem::is_effect_kind)
             }) {
                 return Err(ClickError::new(format!(
@@ -1617,7 +1611,7 @@ fn validate_frame_step_target(
             }
             Ok(())
         }
-        Some(ProofStepTarget::Statement(statement_index)) => {
+        Some(CodeRegion::Statement(statement_index)) => {
             let statement_count = count_statements(parsed_function.body());
             if statement_index >= statement_count {
                 return Err(ClickError::new(format!(
@@ -1627,9 +1621,6 @@ fn validate_frame_step_target(
             Err(ClickError::new(format!(
                 "`{claim_label}` proof step {step_index}: `frame(statement({statement_index}))` is not supported yet"
             )))
-        }
-        Some(ProofStepTarget::Label(_)) => {
-            unreachable!("proof-step labels are resolved before frame target validation")
         }
     }
 }
@@ -1980,14 +1971,14 @@ fn auto_loop_verification_proof_step_candidates(
 ) -> Vec<Vec<ProofStep>> {
     let mut base = vec![ProofStep::SymbolicExecute];
     base.extend(
-        loop_step_targets(function_block)
+        loop_step_regions(function_block)
             .into_iter()
-            .map(|loop_index| ProofStep::LoopVc(ProofStepTarget::Loop(loop_index))),
+            .map(|loop_index| ProofStep::LoopVc(CodeRegionRef::Loop(loop_index))),
     );
     base.extend(
-        loop_effect_summary_targets(function_block)
+        loop_effect_summary_regions(function_block)
             .into_iter()
-            .map(|loop_index| ProofStep::Frame(Some(ProofStepTarget::Loop(loop_index)))),
+            .map(|loop_index| ProofStep::Frame(Some(CodeRegionRef::Loop(loop_index)))),
     );
 
     match claim {
@@ -2012,23 +2003,23 @@ fn auto_loop_verification_proof_step_candidates(
     }
 }
 
-fn loop_step_targets(function_block: &FunctionBlock) -> BTreeSet<usize> {
+fn loop_step_regions(function_block: &FunctionBlock) -> BTreeSet<usize> {
     function_block
         .structural_clauses()
         .iter()
-        .filter_map(|clause| match clause.target() {
-            StructuralTarget::Loop(index) => Some(*index),
-            StructuralTarget::Statement(_) => None,
+        .filter_map(|clause| match clause.region() {
+            CodeRegion::Loop(index) => Some(*index),
+            CodeRegion::Function | CodeRegion::Statement(_) => None,
         })
         .collect()
 }
 
-fn loop_effect_summary_targets(function_block: &FunctionBlock) -> BTreeSet<usize> {
+fn loop_effect_summary_regions(function_block: &FunctionBlock) -> BTreeSet<usize> {
     function_block
         .structural_clauses()
         .iter()
-        .filter_map(|clause| match clause.target() {
-            StructuralTarget::Loop(index)
+        .filter_map(|clause| match clause.region() {
+            CodeRegion::Loop(index)
                 if clause.items().iter().any(StructuralItem::is_effect_kind) =>
             {
                 Some(*index)
@@ -2341,20 +2332,25 @@ fn validate_structural_clauses(
     let loop_count = count_loops(parsed_function.body());
     let statement_count = count_statements(parsed_function.body());
     for structural_clause in function_block.structural_clauses() {
-        match structural_clause.target() {
-            StructuralTarget::Loop(index) if *index >= loop_count => {
+        match structural_clause.region() {
+            CodeRegion::Function => {
+                return Err(ClickError::new(
+                    "`for function` structural proof blocks are not supported",
+                ));
+            }
+            CodeRegion::Loop(index) if *index >= loop_count => {
                 return Err(ClickError::new(format!(
                     "`{}` has no `loop({index})` code region; it contains {loop_count} loop(s)",
                     function_block.signature().name()
                 )));
             }
-            StructuralTarget::Statement(index) if *index >= statement_count => {
+            CodeRegion::Statement(index) if *index >= statement_count => {
                 return Err(ClickError::new(format!(
                     "`{}` has no `statement({index})` code region; it contains {statement_count} statement(s)",
                     function_block.signature().name()
                 )));
             }
-            StructuralTarget::Statement(_) => {
+            CodeRegion::Statement(_) => {
                 for item in structural_clause.items() {
                     if item.kind() == StructuralItemKind::Invariant {
                         return Err(ClickError::new(
@@ -2368,7 +2364,7 @@ fn validate_structural_clauses(
                     }
                 }
             }
-            StructuralTarget::Loop(_) => {}
+            CodeRegion::Loop(_) => {}
         }
 
         for item in structural_clause.items() {
@@ -2520,7 +2516,7 @@ impl AnnotationLowerer<'_> {
         let checks = self
             .structural_clauses
             .iter()
-            .filter(|clause| clause.target() == &StructuralTarget::Statement(statement_index))
+            .filter(|clause| clause.region() == &CodeRegion::Statement(statement_index))
             .flat_map(StructuralClause::items)
             .filter(|item| item.kind() == StructuralItemKind::Assert)
             .enumerate()
@@ -2545,7 +2541,7 @@ impl AnnotationLowerer<'_> {
     ) -> Result<Vec<CLoopInvariantCheck>, ClickError> {
         self.structural_clauses
             .iter()
-            .filter(|clause| clause.target() == &StructuralTarget::Loop(loop_index))
+            .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
             .flat_map(StructuralClause::items)
             .filter(|item| item.kind() == StructuralItemKind::Invariant)
             .enumerate()
@@ -3242,7 +3238,7 @@ impl AnnotationLowerer<'_> {
     fn loop_assert_checks(&self, loop_index: usize) -> Vec<LabeledCheck> {
         self.structural_clauses
             .iter()
-            .filter(|clause| clause.target() == &StructuralTarget::Loop(loop_index))
+            .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
             .flat_map(StructuralClause::items)
             .filter(|item| item.kind() == StructuralItemKind::Assert)
             .enumerate()
@@ -3265,7 +3261,7 @@ impl AnnotationLowerer<'_> {
         let modified_locals = c0_loop_modified_locals(body);
         self.structural_clauses
             .iter()
-            .filter(|clause| clause.target() == &StructuralTarget::Loop(loop_index))
+            .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
             .flat_map(StructuralClause::items)
             .filter(|item| item.is_effect_kind())
             .enumerate()
@@ -3695,7 +3691,7 @@ fn apply_contract_lets_to_structural_clause(
     bindings: &[ContractLetBinding],
 ) -> Result<StructuralClause, String> {
     let StructuralClause {
-        target,
+        region,
         label,
         items,
     } = clause;
@@ -3704,7 +3700,7 @@ fn apply_contract_lets_to_structural_clause(
         .map(|item| apply_contract_lets_to_structural_item(item, bindings))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(StructuralClause {
-        target,
+        region,
         label,
         items,
     })
@@ -11518,7 +11514,7 @@ impl Parser {
 
     fn parse_structural_clause(&mut self) -> Result<StructuralClause, ClickError> {
         self.expect_ident_spelling("for")?;
-        let target = self.parse_structural_target()?;
+        let region = self.parse_structural_code_region()?;
         let label = if self.peek_ident() == Some("as") {
             self.position += 1;
             Some(self.expect_ident("code region label")?)
@@ -11535,25 +11531,25 @@ impl Parser {
             return Err(self.error("structural proof block must contain at least one item"));
         }
         Ok(StructuralClause {
-            target,
+            region,
             label,
             items,
         })
     }
 
-    fn parse_structural_target(&mut self) -> Result<StructuralTarget, ClickError> {
+    fn parse_structural_code_region(&mut self) -> Result<CodeRegion, ClickError> {
         match self.next() {
             Some(Token::Ident(kind)) if kind == "loop" => {
                 self.expect(Token::LParen)?;
                 let index = self.expect_index("loop index")?;
                 self.expect(Token::RParen)?;
-                Ok(StructuralTarget::Loop(index))
+                Ok(CodeRegion::Loop(index))
             }
             Some(Token::Ident(kind)) if kind == "statement" => {
                 self.expect(Token::LParen)?;
                 let index = self.expect_index("statement index")?;
                 self.expect(Token::RParen)?;
-                Ok(StructuralTarget::Statement(index))
+                Ok(CodeRegion::Statement(index))
             }
             Some(Token::Ident(kind)) => Err(self.error(format!(
                 "expected `loop(N)` or `statement(N)`, got `{kind}`"
@@ -12053,19 +12049,19 @@ impl Parser {
             }
             "loop_vc" => {
                 self.expect(Token::LParen)?;
-                let target = self.parse_proof_step_target()?;
+                let region_ref = self.parse_code_region_ref()?;
                 self.expect(Token::RParen)?;
-                ProofStep::LoopVc(target)
+                ProofStep::LoopVc(region_ref)
             }
             "frame" => {
                 self.expect(Token::LParen)?;
-                let target = if self.peek() == Some(&Token::RParen) {
+                let region_ref = if self.peek() == Some(&Token::RParen) {
                     None
                 } else {
-                    Some(self.parse_proof_step_target()?)
+                    Some(self.parse_code_region_ref()?)
                 };
                 self.expect(Token::RParen)?;
-                ProofStep::Frame(target)
+                ProofStep::Frame(region_ref)
             }
             "unfold" => {
                 self.expect(Token::LParen)?;
@@ -12140,22 +12136,22 @@ impl Parser {
         }
     }
 
-    fn parse_proof_step_target(&mut self) -> Result<ProofStepTarget, ClickError> {
+    fn parse_code_region_ref(&mut self) -> Result<CodeRegionRef, ClickError> {
         match self.next() {
-            Some(Token::Ident(kind)) if kind == "function" => Ok(ProofStepTarget::Function),
+            Some(Token::Ident(kind)) if kind == "function" => Ok(CodeRegionRef::Function),
             Some(Token::Ident(kind)) if kind == "loop" => {
                 self.expect(Token::LParen)?;
                 let index = self.expect_index("loop index")?;
                 self.expect(Token::RParen)?;
-                Ok(ProofStepTarget::Loop(index))
+                Ok(CodeRegionRef::Loop(index))
             }
             Some(Token::Ident(kind)) if kind == "statement" => {
                 self.expect(Token::LParen)?;
                 let index = self.expect_index("statement index")?;
                 self.expect(Token::RParen)?;
-                Ok(ProofStepTarget::Statement(index))
+                Ok(CodeRegionRef::Statement(index))
             }
-            Some(Token::Ident(label)) => Ok(ProofStepTarget::Label(label)),
+            Some(Token::Ident(label)) => Ok(CodeRegionRef::Label(label)),
             Some(token) => Err(self.error(format!(
                 "expected code region `function`, `loop(N)`, `statement(N)`, or label, got {token:?}"
             ))),
@@ -13169,7 +13165,7 @@ fn collect_click_function_calls_in_proposition(
 fn reject_recursive_click_functions(
     function_calls: &BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(), ClickError> {
-    fn visit(
+    fn check_call_dag(
         name: &str,
         function_calls: &BTreeMap<String, BTreeSet<String>>,
         visiting: &mut BTreeSet<String>,
@@ -13185,7 +13181,7 @@ fn reject_recursive_click_functions(
         }
         if let Some(calls) = function_calls.get(name) {
             for callee in calls {
-                visit(callee, function_calls, visiting, visited)?;
+                check_call_dag(callee, function_calls, visiting, visited)?;
             }
         }
         visiting.remove(name);
@@ -13195,7 +13191,7 @@ fn reject_recursive_click_functions(
 
     let mut visited = BTreeSet::new();
     for name in function_calls.keys() {
-        visit(name, function_calls, &mut BTreeSet::new(), &mut visited)?;
+        check_call_dag(name, function_calls, &mut BTreeSet::new(), &mut visited)?;
     }
     Ok(())
 }
@@ -13839,8 +13835,8 @@ mod tests {
             Some(
                 [
                     ProofStep::SymbolicExecute,
-                    ProofStep::LoopVc(ProofStepTarget::Loop(0)),
-                    ProofStep::Frame(Some(ProofStepTarget::Loop(0))),
+                    ProofStep::LoopVc(CodeRegionRef::Loop(0)),
+                    ProofStep::Frame(Some(CodeRegionRef::Loop(0))),
                     ProofStep::Simp,
                     ProofStep::Close,
                 ]
@@ -14040,8 +14036,8 @@ mod tests {
 
         assert_eq!(function.structural_clauses().len(), 2);
         assert_eq!(
-            function.structural_clauses()[0].target(),
-            &StructuralTarget::Statement(2)
+            function.structural_clauses()[0].region(),
+            &CodeRegion::Statement(2)
         );
         assert_eq!(
             function.structural_clauses()[0].label(),
@@ -14052,8 +14048,8 @@ mod tests {
             StructuralItemKind::Assert
         );
         assert_eq!(
-            function.structural_clauses()[1].target(),
-            &StructuralTarget::Loop(0)
+            function.structural_clauses()[1].region(),
+            &CodeRegion::Loop(0)
         );
         assert_eq!(function.structural_clauses()[1].label(), Some("count_loop"));
         assert_eq!(function.structural_clauses()[1].items().len(), 4);
@@ -16076,8 +16072,8 @@ mod tests {
             .expect("source_unchanged theorem should be present");
         let expected_steps = [
             ProofStep::SymbolicExecute,
-            ProofStep::LoopVc(ProofStepTarget::Loop(0)),
-            ProofStep::Frame(Some(ProofStepTarget::Loop(0))),
+            ProofStep::LoopVc(CodeRegionRef::Loop(0)),
+            ProofStep::Frame(Some(CodeRegionRef::Loop(0))),
             ProofStep::Simp,
             ProofStep::Close,
         ];

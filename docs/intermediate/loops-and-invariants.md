@@ -9,6 +9,10 @@ A loop invariant is a fact that must hold:
 - at the start of every iteration,
 - and after one iteration preserves it.
 
+In Click terms, `loop(N)` names a loop code region. The invariant is checked at
+program points associated with that region. Since a loop head can be reached
+more than once, those program points can have many runtime visits.
+
 For a simple counter loop:
 
 ```c

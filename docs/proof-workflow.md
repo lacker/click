@@ -130,16 +130,21 @@ for loop(0) {
 order. `loop(N)` selects the Nth `while` loop code region. A code region may
 also be labeled with `as name` and used in proof steps such as `frame(name)`.
 
-A code region is a static source construct with extent, such as a loop or
-statement. A code point is a proof-relevant boundary associated with a code
-region, such as a future `loop_name.entry` snapshot point for `at(...)`.
+A code region is a static source construct with extent, such as a function,
+loop, statement, or block. A program point is a proof-relevant boundary or
+position in the program, often associated with a code region, such as a future
+`loop_name.entry` snapshot point for `at(...)`. A visit is one runtime arrival
+at a program point. Visits are useful semantic language, but they are not
+currently Click syntax.
 
 `assert` is a one-shot spec check at the selected statement code region. It
 currently accepts the executable proposition fragment over current-state C
 fragments.
 
-`invariant` generates loop-entry, preservation, and exit obligations. Invariant
-proof blocks can use `by auto;` or an unfold-only script such as:
+`invariant` generates obligations at loop program points: before the first
+visit to the loop body, when one body visit preserves the invariant, and at loop
+exit. Invariant proof blocks can use `by auto;` or an unfold-only script such
+as:
 
 ```click
 by {
