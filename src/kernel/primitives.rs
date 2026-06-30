@@ -1798,6 +1798,14 @@ impl ResourceContext {
         self
     }
 
+    pub(super) fn with_resources_normalized(
+        self,
+        resources: impl IntoIterator<Item = CResource>,
+        assumptions: &Assumptions,
+    ) -> Self {
+        self.with_resources(resources).normalized(assumptions)
+    }
+
     pub fn resources(&self) -> &[CResource] {
         &self.resources
     }
@@ -1806,18 +1814,147 @@ impl ResourceContext {
         self.resources.is_empty()
     }
 
-    pub fn contains(&self, resource: &CResource) -> bool {
-        self.resources.contains(resource)
+    pub(super) fn without_resource(
+        mut self,
+        resource: &CResource,
+        assumptions: &Assumptions,
+    ) -> Option<Self> {
+        match resource {
+            CResource::Write(required) => {
+                let index = self
+                    .resources
+                    .iter()
+                    .position(|candidate| match candidate {
+                        CResource::Write(available) => {
+                            write_range_covers(available, required, assumptions)
+                        }
+                    })?;
+                let CResource::Write(available) = self.resources.remove(index);
+                self.resources.extend(
+                    split_write_range(&available, required, assumptions)?
+                        .into_iter()
+                        .map(CResource::Write),
+                );
+                Some(self.normalized(assumptions))
+            }
+        }
     }
 
-    pub fn without_exact_resource(mut self, resource: &CResource) -> Option<Self> {
-        let index = self
-            .resources
-            .iter()
-            .position(|candidate| candidate == resource)?;
-        self.resources.remove(index);
-        Some(self)
+    pub(super) fn normalized(mut self, assumptions: &Assumptions) -> Self {
+        let mut i = 0;
+        while i < self.resources.len() {
+            let mut changed = false;
+            let mut j = i + 1;
+            while j < self.resources.len() {
+                if self.resources[i] == self.resources[j] {
+                    self.resources.remove(j);
+                    changed = true;
+                    break;
+                }
+                if let Some(merged) =
+                    merge_resources(&self.resources[i], &self.resources[j], assumptions)
+                {
+                    self.resources[i] = merged;
+                    self.resources.remove(j);
+                    changed = true;
+                    break;
+                }
+                j += 1;
+            }
+            if changed {
+                i = 0;
+            } else {
+                i += 1;
+            }
+        }
+        self
     }
+}
+
+fn write_range_covers(
+    available: &CMemoryRange,
+    required: &CMemoryRange,
+    assumptions: &Assumptions,
+) -> bool {
+    assumptions.range_covered_by_fact_range(
+        required,
+        available.base(),
+        available.start(),
+        available.end(),
+    )
+}
+
+fn split_write_range(
+    available: &CMemoryRange,
+    required: &CMemoryRange,
+    assumptions: &Assumptions,
+) -> Option<Vec<CMemoryRange>> {
+    let base_delta = required.base().element_index_from_base(available.base())?;
+    let required_start = Bitvector32Term::add(base_delta.clone(), required.start().clone());
+    let required_end = Bitvector32Term::add(base_delta, required.end().clone());
+    let mut residues = Vec::new();
+    if !bitvector_terms_proven_equal(available.start(), &required_start, assumptions) {
+        residues.push(CMemoryRange::new(
+            available.base().clone(),
+            available.start().clone(),
+            required_start.clone(),
+        ));
+    }
+    if !bitvector_terms_proven_equal(&required_end, available.end(), assumptions) {
+        residues.push(CMemoryRange::new(
+            available.base().clone(),
+            required_end,
+            available.end().clone(),
+        ));
+    }
+    Some(residues)
+}
+
+fn merge_resources(
+    left: &CResource,
+    right: &CResource,
+    assumptions: &Assumptions,
+) -> Option<CResource> {
+    match (left, right) {
+        (CResource::Write(left), CResource::Write(right)) => {
+            merge_write_ranges(left, right, assumptions).map(CResource::Write)
+        }
+    }
+}
+
+fn merge_write_ranges(
+    left: &CMemoryRange,
+    right: &CMemoryRange,
+    assumptions: &Assumptions,
+) -> Option<CMemoryRange> {
+    if left.base() != right.base() {
+        return None;
+    }
+    if bitvector_terms_proven_equal(left.end(), right.start(), assumptions) {
+        return Some(CMemoryRange::new(
+            left.base().clone(),
+            left.start().clone(),
+            right.end().clone(),
+        ));
+    }
+    if bitvector_terms_proven_equal(right.end(), left.start(), assumptions) {
+        return Some(CMemoryRange::new(
+            left.base().clone(),
+            right.start().clone(),
+            left.end().clone(),
+        ));
+    }
+    None
+}
+
+fn bitvector_terms_proven_equal(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &Assumptions,
+) -> bool {
+    left == right
+        || assumptions.decide(&ConditionTerm::equal(left.clone(), right.clone())) == Some(true)
+        || assumptions.bitvector_terms_equal_from_facts(left, right)
 }
 
 impl Theorem {

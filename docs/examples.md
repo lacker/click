@@ -118,6 +118,8 @@ Larger example projects live directly under `examples/`. They contain ordinary
   diagnostic.
 - `mdtests/resource_summary_requires_returned_write.md`: helper call consumes a
   write resource unless its summary returns it.
+- `mdtests/resource_summary_splits_write_range.md`: helper call receives a
+  subrange while the caller keeps and rejoins the residue.
 
 ## Predicates And Pure Click Functions
 

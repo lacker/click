@@ -380,17 +380,15 @@ fn prepare_function_resource_transfer(
 
     let mut return_resources = caller_state.resources().clone();
     for resource in required_resources.resources() {
-        if !return_resources.contains(resource) {
+        let Some(resources) = return_resources.without_resource(resource, assumptions) else {
             return Ok(Err(CRuntimeError::MissingResource {
                 resource: resource.clone(),
             }));
-        }
-        return_resources = return_resources
-            .without_exact_resource(resource)
-            .expect("resource was checked before removal");
+        };
+        return_resources = resources;
     }
-    return_resources =
-        return_resources.with_resources(ensured_resources.resources().iter().cloned());
+    return_resources = return_resources
+        .with_resources_normalized(ensured_resources.resources().iter().cloned(), assumptions);
 
     Ok(Ok(Some(CFunctionResourceTransfer {
         callee_resources: required_resources,

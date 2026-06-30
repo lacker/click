@@ -91,13 +91,13 @@ for concrete ranges, so simple one-cell writes do not need a separate
 
 Function calls transfer write resources through the callee's resource summary.
 A callee must declare `requires write(...)` to receive a resource and
-`ensures write(...)` to return it to the caller. The first implementation uses
-exact resource transfer; splitting a larger range into a smaller passed range is
-future work.
+`ensures write(...)` to return it to the caller. A call can pass a covered
+subrange, such as passing `write(p[0..1])` from a caller that has
+`write(p[0..2])`; Click keeps the residue and rejoins adjacent returned ranges.
 
 This is intentionally not the full permission system. There are no read
-fractions, ownership predicates, `free` permissions, resource splitting proof
-steps, or heap allocation yet. Existing `valid_range`, `mutable`, and
+fractions, ownership predicates, `free` permissions, explicit resource algebra
+proof steps, or heap allocation yet. Existing `valid_range`, `mutable`, and
 `immutable` examples continue to work without opting into `write(...)`.
 
 ## Propositions
