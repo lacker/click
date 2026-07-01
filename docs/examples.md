@@ -183,6 +183,13 @@ sequence:
   token while returning another.
 - `mdtests/callback_resource_pipe_rejects_spent_token.md`: the caller cannot
   reuse the callback token spent by the helper.
+- `mdtests/represented_resource_once_flag.md`: explicit `open(resource)` and
+  `close(resource)` steps verify an affine token represented by memory
+  permission plus an invariant.
+- `mdtests/represented_resource_rejects_bad_origin.md`: closing a represented
+  resource fails when its invariant has not been established.
+- `mdtests/represented_resource_rejects_double_call.md`: a represented affine
+  token is still consumed linearly through a call summary.
 
 ## Predicates And Pure Click Functions
 

@@ -1876,11 +1876,7 @@ impl ResourceContext {
         })
     }
 
-    pub(super) fn without_resource(
-        self,
-        resource: &CResource,
-        assumptions: &Assumptions,
-    ) -> Option<Self> {
+    pub fn without_resource(self, resource: &CResource, assumptions: &Assumptions) -> Option<Self> {
         consume_resource(self, resource, assumptions)
     }
 

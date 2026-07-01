@@ -199,6 +199,41 @@ That spec contributes a call summary. Calling `complete(cb)` consumes
 `can_complete(cb)`, so a second call on the same path fails unless some other
 contract returns the resource.
 
+## Represented Resources
+
+An affine named resource can also wrap concrete resources and invariant facts:
+
+```click
+affine resource uncalled(flag: int32*) {
+    contains write(flag[0..1]);
+    invariant flag[0] == 0;
+}
+```
+
+At function boundaries, `uncalled(flag)` is still an abstract affine token.
+Inside an explicit proof script, the token can be opened:
+
+```click
+ensures result == 1 by {
+    open(uncalled(flag));
+    symbolic_execute();
+    close(called(flag));
+    simp();
+    close();
+}
+```
+
+`open(uncalled(flag))` consumes the abstract token and adds the represented
+`write(flag[0..1])` resource plus the invariant fact `flag[0] == 0`.
+`close(called(flag))` goes the other direction: it proves the representation's
+invariant in the current state, consumes the represented resources, and adds
+the abstract `called(flag)` token. `close()` with no argument is still the
+final proof-step command that closes the overall claim.
+
+This first slice supports built-in `read(...)`, `write(...)`, and `free(...)`
+clauses inside `contains`. Resource opening is explicit; `auto` does not yet
+choose open/close steps on its own.
+
 ## Split And Rejoin
 
 A caller can pass a subrange of a larger write resource:
@@ -240,6 +275,8 @@ Implemented today:
 - an internal memory resource family boundary for entailment, consumption,
   access authorization, splitting, and joining,
 - exact-match affine named resources declared with `affine resource name(...)`,
+- represented affine named resources with explicit `open(resource)` and
+  `close(resource)` proof steps,
 - `write(...)` implying read authority,
 - copyable read transfer,
 - linear write transfer through function summaries,
@@ -252,6 +289,7 @@ Not implemented yet:
 - fractional permissions,
 - C heap allocation or allocation-sized deallocation semantics,
 - custom resource-family algebra,
+- implicit resource open/close search in `auto`,
 - persistent named resources,
 - ownership predicates,
 - explicit resource algebra proof steps,

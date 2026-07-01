@@ -112,6 +112,20 @@ requires a named affine resource consumes it unless the callee also returns it
 with a matching resource `ensures`. Named resource arguments are type checked,
 and duplicate identical affine tokens in one resource context are rejected.
 
+Named resources can have a representation:
+
+```click
+affine resource uncalled(flag: int32*) {
+    contains write(flag[0..1]);
+    invariant flag[0] == 0;
+}
+```
+
+In an explicit proof script, `open(uncalled(flag));` consumes the abstract token
+and exposes its represented resources and invariant facts. `close(uncalled(flag));`
+proves the invariant, consumes the represented resources, and returns the
+abstract token. The final proof step is still `close();`.
+
 A function block may be resource-only when it consumes a resource:
 
 ```click

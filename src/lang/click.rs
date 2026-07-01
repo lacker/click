@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::kernel::{
-    Assumptions, Bitvector32Term, CComparisonOperator, CExpression, CFunction,
+    Assumptions, Bitvector32Term, CComparisonOperator, CExpression, CExpressionOutcome, CFunction,
     CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
     CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CResource,
     CResourceSpec, CState, CStatement, CType, CValue, ConditionTerm, PathFact, Pointer,
@@ -58,6 +58,13 @@ pub struct ResourceDefinition {
     name: String,
     parameters: Vec<FunctionParameter>,
     kind: ResourceKind,
+    representation: Option<ResourceRepresentation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceRepresentation {
+    contains: Vec<ResourceClause>,
+    invariants: Vec<ClickProposition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -419,6 +426,8 @@ pub enum ProofStep {
     LoopVc(CodeRegionRef),
     Frame(Option<CodeRegionRef>),
     Unfold(String),
+    OpenResource(ResourceClause),
+    CloseResource(ResourceClause),
     Witness(ProofWitness),
     Choose(ProofChoice),
     Simp,
@@ -511,6 +520,26 @@ impl ClickFunctionEnvironment {
     }
 
     fn get(&self, name: &str) -> Option<&ClickFunctionDefinition> {
+        self.definitions.get(name)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ResourceEnvironment {
+    definitions: BTreeMap<String, ResourceDefinition>,
+}
+
+impl ResourceEnvironment {
+    fn new(definitions: &[ResourceDefinition]) -> Self {
+        Self {
+            definitions: definitions
+                .iter()
+                .map(|definition| (definition.name().to_string(), definition.clone()))
+                .collect(),
+        }
+    }
+
+    fn get(&self, name: &str) -> Option<&ResourceDefinition> {
         self.definitions.get(name)
     }
 }
@@ -611,6 +640,20 @@ impl ResourceDefinition {
 
     pub fn kind(&self) -> ResourceKind {
         self.kind
+    }
+
+    pub fn representation(&self) -> Option<&ResourceRepresentation> {
+        self.representation.as_ref()
+    }
+}
+
+impl ResourceRepresentation {
+    pub fn contains(&self) -> &[ResourceClause] {
+        &self.contains
+    }
+
+    pub fn invariants(&self) -> &[ClickProposition] {
+        &self.invariants
     }
 }
 
@@ -871,8 +914,10 @@ pub fn verify_c0_sources(
     let function_environment = build_function_environment(&parsed_sources, file.function_blocks())?;
     let predicate_definitions = combined_predicate_definitions(&file)?;
     let click_function_definitions = combined_click_function_definitions(&file)?;
+    let resource_definitions = combined_resource_definitions(&file)?;
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
     let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
+    let resource_environment = ResourceEnvironment::new(&resource_definitions);
     let mut verified = Vec::new();
 
     for function_block in file.function_blocks {
@@ -899,6 +944,7 @@ pub fn verify_c0_sources(
                         &function_environment,
                         &predicate_environment,
                         &click_function_environment,
+                        &resource_environment,
                     )?;
                     verified.extend(theorems);
                 }
@@ -912,6 +958,7 @@ pub fn verify_c0_sources(
                         &function_environment,
                         &predicate_environment,
                         &click_function_environment,
+                        &resource_environment,
                     )?;
                     verified.extend(theorems);
                 }
@@ -925,6 +972,7 @@ pub fn verify_c0_sources(
                         &function_environment,
                         &predicate_environment,
                         &click_function_environment,
+                        &resource_environment,
                     )?;
                     verified.extend(theorems);
                 }
@@ -938,6 +986,7 @@ pub fn verify_c0_sources(
                         &function_environment,
                         &predicate_environment,
                         &click_function_environment,
+                        &resource_environment,
                         steps,
                     )?;
                     verified.extend(theorems);
@@ -1002,6 +1051,7 @@ fn prove_claim_by_auto(
     function_environment: &CFunctionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let (state, arguments, requirement_propositions) = initial_call(
         function_block.signature.name(),
@@ -1063,6 +1113,7 @@ fn prove_claim_by_auto(
                 function_environment,
                 predicate_environment,
                 click_function_environment,
+                resource_environment,
                 auto_loop_verification_proof_step_candidates(function_block, claim),
             );
             return Ok(with_proof_steps(theorems, proof_steps));
@@ -1110,6 +1161,7 @@ fn prove_claim_by_auto(
         function_environment,
         predicate_environment,
         click_function_environment,
+        resource_environment,
         bounded_execution_proof_step_candidates(claim),
     );
     Ok(with_proof_steps(theorems, proof_steps))
@@ -1124,6 +1176,7 @@ fn prove_claim_by_frame(
     function_environment: &CFunctionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if matches!(claim, FunctionClaimRef::Ensure(_, _)) {
         return Err(ClickError::new(format!(
@@ -1194,6 +1247,7 @@ fn prove_claim_by_frame(
         function_environment,
         predicate_environment,
         click_function_environment,
+        resource_environment,
         frame_proof_step_candidates(),
     );
     Ok(with_proof_steps(theorems, proof_steps))
@@ -1208,6 +1262,7 @@ fn prove_claim_by_simp(
     function_environment: &CFunctionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if count_loops(parsed_function.body()) != 0 {
         return Err(ClickError::new(format!(
@@ -1246,6 +1301,7 @@ fn prove_claim_by_simp(
         function_environment,
         predicate_environment,
         click_function_environment,
+        resource_environment,
         vec![vec![
             ProofStep::SymbolicExecute,
             ProofStep::Simp,
@@ -1349,6 +1405,7 @@ struct ProofStepReplayState {
     loop_vcs: BTreeSet<usize>,
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
+    resource_closes: Vec<ResourceClause>,
     simp: bool,
     closed: bool,
 }
@@ -1368,6 +1425,7 @@ fn prove_claim_by_steps(
     function_environment: &CFunctionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
     steps: &[ProofStep],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if steps.is_empty() {
@@ -1376,14 +1434,14 @@ fn prove_claim_by_steps(
         )));
     }
 
-    let (state, arguments, requirement_propositions) = initial_call(
+    let (mut state, arguments, mut requirement_propositions) = initial_call(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
         predicate_environment,
         click_function_environment,
     )?;
-    let requirement_propositions = requirements_with_structural_unfolds(
+    requirement_propositions = requirements_with_structural_unfolds(
         predicate_environment,
         click_function_environment,
         function_block,
@@ -1398,11 +1456,31 @@ fn prove_claim_by_steps(
         predicate_environment,
         click_function_environment,
     )?;
-    let assumptions = assumptions_from_propositions(&requirement_propositions);
+    let mut assumptions = assumptions_from_propositions(&requirement_propositions);
     let mut replay = ProofStepReplayState::default();
 
     for (step_index, step) in steps.iter().enumerate() {
         match step {
+            ProofStep::OpenResource(resource) => {
+                if replay.execution.is_some() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `open` must run before `symbolic_execute()` or `bounded_execute()`"
+                    )));
+                }
+                state = open_represented_resource(
+                    resource_environment,
+                    resource,
+                    parsed_function.parameters(),
+                    &arguments,
+                    state,
+                    &mut requirement_propositions,
+                    predicate_environment,
+                    click_function_environment,
+                    claim_label,
+                    step_index,
+                )?;
+                assumptions = assumptions_from_propositions(&requirement_propositions);
+            }
             ProofStep::SymbolicExecute => {
                 set_replay_execution(
                     &mut replay,
@@ -1500,6 +1578,10 @@ fn prove_claim_by_steps(
                     replay.unfolded_predicates.push(name.clone());
                 }
             }
+            ProofStep::CloseResource(resource) => {
+                require_step_execution(&replay, claim_label, step_index, "close")?;
+                replay.resource_closes.push(resource.clone());
+            }
             ProofStep::Witness(_) => {
                 require_step_execution(&replay, claim_label, step_index, "witness")?;
             }
@@ -1534,12 +1616,14 @@ fn prove_claim_by_steps(
                     function_environment,
                     predicate_environment,
                     click_function_environment,
+                    resource_environment,
                     parsed_function.parameters(),
                     &function,
                     &state,
                     &arguments,
                     &requirement_propositions,
                     &replay.unfolded_predicates,
+                    &replay.resource_closes,
                     replay.simp,
                     steps,
                 );
@@ -1600,6 +1684,378 @@ fn require_verification_execution(
         )));
     }
     Ok(())
+}
+
+fn open_represented_resource(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    mut state: CState,
+    available_propositions: &mut Vec<Proposition>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+    step_index: usize,
+) -> Result<CState, ClickError> {
+    let definition = represented_resource_definition(
+        resource_environment,
+        resource,
+        "open",
+        claim_label,
+        step_index,
+    )?;
+    let representation = definition
+        .representation()
+        .expect("represented_resource_definition should require a representation");
+    let substitutions =
+        resource_argument_substitutions(definition, resource, claim_label, step_index)?;
+    let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
+    let assumptions = assumptions_from_propositions(available_propositions);
+    let resources = state
+        .resources()
+        .clone()
+        .without_resource(&abstract_resource, &assumptions)
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `open({})` is missing resource `{}`\n  available resources: {}",
+                describe_resource_clause(resource),
+                describe_resource(&abstract_resource, parameters, arguments),
+                describe_resources(state.resources().resources(), parameters, arguments)
+            ))
+        })?;
+    state = state.with_resource_context(resources);
+
+    for contained in representation.contains() {
+        let contained = instantiate_resource_clause(contained, &substitutions).map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: could not instantiate `open({})`: {message}",
+                describe_resource_clause(resource)
+            ))
+        })?;
+        let lowered = lower_resource_clause(&contained, parameters, arguments, state.memory())?;
+        let memory = materialize_represented_resource_cells(
+            state.memory().clone(),
+            &contained,
+            &lowered,
+            parameters,
+        );
+        let resources = state.resources().clone().with_resource(lowered);
+        state = state.with_memory(memory).with_resource_context(resources);
+    }
+    if let Some(duplicate) = state.resources().duplicate_named_resource() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `open({})` produced duplicate affine resource `{}`",
+            describe_resource_clause(resource),
+            describe_resource(duplicate, parameters, arguments)
+        )));
+    }
+
+    for invariant in representation.invariants() {
+        let invariant =
+            substitute_click_proposition(invariant, &substitutions).map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: could not instantiate `open({})` invariant: {message}",
+                    describe_resource_clause(resource)
+                ))
+            })?;
+        let fact = lower_outcome_proposition(
+            parameters,
+            arguments,
+            &state,
+            &state,
+            &CValue::Int32(Bitvector32Term::Constant(0)),
+            available_propositions,
+            &invariant,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: could not lower `open({})` invariant: {message}",
+                describe_resource_clause(resource)
+            ))
+        })?;
+        available_propositions.push(fact);
+    }
+
+    Ok(state)
+}
+
+fn close_represented_resources_on_outcome(
+    resource_environment: &ResourceEnvironment,
+    resource_closes: &[ResourceClause],
+    claim_label: &str,
+    path_index: usize,
+    path_facts: &[PathFact],
+    available_propositions: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    mut outcome: CFunctionOutcome,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+) -> Result<CFunctionOutcome, ClickError> {
+    for resource in resource_closes {
+        let definition = represented_resource_definition(
+            resource_environment,
+            resource,
+            "close",
+            claim_label,
+            path_index,
+        )?;
+        let representation = definition
+            .representation()
+            .expect("represented_resource_definition should require a representation");
+        let substitutions =
+            resource_argument_substitutions(definition, resource, claim_label, path_index)?;
+
+        for invariant in representation.invariants() {
+            let invariant =
+                substitute_click_proposition(invariant, &substitutions).map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` path {path_index}: could not instantiate `close({})` invariant: {message}",
+                        describe_resource_clause(resource)
+                    ))
+                })?;
+            prove_ensure_proposition_by_simp(
+                claim_label,
+                path_index,
+                path_facts,
+                available_propositions,
+                &invariant,
+                parameters,
+                arguments,
+                pre_state,
+                &outcome,
+                predicate_environment,
+                click_function_environment,
+                unfolded_predicates,
+            )
+            .map_err(|error| {
+                ClickError::new(format!(
+                    "`{claim_label}` path {path_index}: `close({})` invariant failed: {}",
+                    describe_resource_clause(resource),
+                    error.message()
+                ))
+            })?;
+        }
+
+        let CFunctionOutcome::Return { value, state } = outcome else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` path {path_index}: `close({})` requires a return outcome, got {}\n  path facts: {}",
+                describe_resource_clause(resource),
+                describe_function_outcome(&outcome, parameters, arguments),
+                describe_facts(path_facts)
+            )));
+        };
+        let mut post_state = state;
+        let assumptions = assumptions_from_propositions(available_propositions);
+        for contained in representation.contains() {
+            let contained =
+                instantiate_resource_clause(contained, &substitutions).map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` path {path_index}: could not instantiate `close({})`: {message}",
+                        describe_resource_clause(resource)
+                    ))
+                })?;
+            let lowered =
+                lower_resource_clause(&contained, parameters, arguments, post_state.memory())?;
+            let resources = post_state
+                .resources()
+                .clone()
+                .without_resource(&lowered, &assumptions)
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{claim_label}` path {path_index}: `close({})` is missing contained resource `{}`\n  final resources: {}\n  path facts: {}",
+                        describe_resource_clause(resource),
+                        describe_resource(&lowered, parameters, arguments),
+                        describe_resources(post_state.resources().resources(), parameters, arguments),
+                        describe_facts(path_facts)
+                    ))
+                })?;
+            post_state = post_state.with_resource_context(resources);
+        }
+
+        let abstract_resource =
+            lower_resource_clause(resource, parameters, arguments, post_state.memory())?;
+        let resources = post_state
+            .resources()
+            .clone()
+            .with_resource(abstract_resource.clone());
+        post_state = post_state.with_resource_context(resources);
+        if let Some(duplicate) = post_state.resources().duplicate_named_resource() {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` path {path_index}: `close({})` produced duplicate affine resource `{}`",
+                describe_resource_clause(resource),
+                describe_resource(duplicate, parameters, arguments)
+            )));
+        }
+        outcome = CFunctionOutcome::Return {
+            value,
+            state: post_state,
+        };
+    }
+
+    Ok(outcome)
+}
+
+fn represented_resource_definition<'a>(
+    resource_environment: &'a ResourceEnvironment,
+    resource: &ResourceClause,
+    action: &str,
+    claim_label: &str,
+    step_index: usize,
+) -> Result<&'a ResourceDefinition, ClickError> {
+    let ResourceClause::Named { name, .. } = resource else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{action}` expects a named represented resource"
+        )));
+    };
+    let definition = resource_environment.get(name).ok_or_else(|| {
+        ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: unknown resource `{name}`"
+        ))
+    })?;
+    if definition.representation().is_none() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{action}` expects represented resource `{name}` to have a body"
+        )));
+    }
+    Ok(definition)
+}
+
+fn resource_argument_substitutions(
+    definition: &ResourceDefinition,
+    resource: &ResourceClause,
+    claim_label: &str,
+    step_index: usize,
+) -> Result<BTreeMap<String, ContractExpression>, ClickError> {
+    let ResourceClause::Named {
+        name,
+        arguments,
+        parameter_types,
+    } = resource
+    else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: expected named resource"
+        )));
+    };
+    if definition.name() != name {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: resource definition mismatch for `{name}`"
+        )));
+    }
+    if definition.parameters().len() != arguments.len() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: resource `{name}` expects {} argument(s), got {}",
+            definition.parameters().len(),
+            arguments.len()
+        )));
+    }
+    let expected_types = definition
+        .parameters()
+        .iter()
+        .map(FunctionParameter::c_type)
+        .collect::<Vec<_>>();
+    if parameter_types != &expected_types {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: resource `{name}` has malformed argument type metadata"
+        )));
+    }
+    Ok(definition
+        .parameters()
+        .iter()
+        .zip(arguments)
+        .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
+        .collect())
+}
+
+fn instantiate_resource_clause(
+    resource: &ResourceClause,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<ResourceClause, String> {
+    match resource {
+        ResourceClause::Read(segment) => Ok(ResourceClause::Read(instantiate_contract_segment(
+            segment,
+            substitutions,
+        )?)),
+        ResourceClause::Write(segment) => Ok(ResourceClause::Write(instantiate_contract_segment(
+            segment,
+            substitutions,
+        )?)),
+        ResourceClause::Free(segment) => Ok(ResourceClause::Free(instantiate_contract_segment(
+            segment,
+            substitutions,
+        )?)),
+        ResourceClause::Named {
+            name,
+            arguments,
+            parameter_types,
+        } => Ok(ResourceClause::Named {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_contract_expression(argument, substitutions))
+                .collect::<Result<Vec<_>, _>>()?,
+            parameter_types: parameter_types.clone(),
+        }),
+    }
+}
+
+fn instantiate_contract_segment(
+    segment: &ContractSegment,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<ContractSegment, String> {
+    Ok(ContractSegment {
+        state: segment.state,
+        base: substitute_c_fragment(&segment.base, substitutions)?,
+        start: substitute_c_fragment(&segment.start, substitutions)?,
+        end: substitute_c_fragment(&segment.end, substitutions)?,
+    })
+}
+
+fn materialize_represented_resource_cells(
+    mut memory: CMemory,
+    resource_clause: &ResourceClause,
+    lowered: &CResource,
+    parameters: &[syntax::C0Parameter],
+) -> CMemory {
+    let (segment, range) = match (resource_clause, lowered) {
+        (ResourceClause::Read(segment), CResource::Read(range))
+        | (ResourceClause::Write(segment), CResource::Write(range)) => (segment, range),
+        _ => return memory,
+    };
+    let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
+        (range.start(), range.end())
+    else {
+        return memory;
+    };
+    if end < start {
+        return memory;
+    }
+
+    let element_width = contract_segment_element_width(parameters, segment);
+    let base_memory = memory.clone();
+    for index in *start..*end {
+        let pointer = offset_pointer_by_elements(
+            range.base().clone(),
+            Bitvector32Term::Constant(index),
+            element_width,
+        );
+        if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
+            continue;
+        }
+        let load =
+            Bitvector32Term::MemoryLoad(Box::new(base_memory.clone()), Box::new(pointer.clone()));
+        let value = match element_width {
+            1 => CValue::UInt8(load),
+            _ => CValue::Int32(load),
+        };
+        memory = memory.store(pointer, value);
+    }
+    memory
 }
 
 fn resolve_code_region_ref(
@@ -1778,12 +2234,14 @@ fn prove_claim_from_steps_execution(
     function_environment: &CFunctionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
     parameters: &[syntax::C0Parameter],
     function: &CFunction,
     state: &CState,
     arguments: &[CExpression],
     requirement_propositions: &[Proposition],
     unfolded_predicates: &[String],
+    resource_closes: &[ResourceClause],
     use_simp: bool,
     proof_steps: &[ProofStep],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
@@ -1808,7 +2266,7 @@ fn prove_claim_from_steps_execution(
                 describe_facts(path.facts())
             )));
         }
-        let outcome = match implication_body(path.theorem().proposition()) {
+        let mut outcome = match implication_body(path.theorem().proposition()) {
             Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
             proposition => {
                 return Err(ClickError::new(format!(
@@ -1832,6 +2290,21 @@ fn prove_claim_from_steps_execution(
                 "`proof steps` failed for `{claim_label}` path {path_index}: {message}"
             ))
         })?;
+        outcome = close_represented_resources_on_outcome(
+            resource_environment,
+            resource_closes,
+            claim_label,
+            path_index,
+            path.facts(),
+            &path_requirements,
+            parameters,
+            arguments,
+            state,
+            outcome,
+            predicate_environment,
+            click_function_environment,
+            unfolded_predicates,
+        )?;
         let mut checking_requirements = path_requirements.clone();
         let has_existence_steps = proof_steps
             .iter()
@@ -2010,6 +2483,7 @@ fn certified_proof_steps(
     function_environment: &CFunctionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
     candidates: Vec<Vec<ProofStep>>,
 ) -> Option<Vec<ProofStep>> {
     candidates.into_iter().find(|steps| {
@@ -2022,6 +2496,7 @@ fn certified_proof_steps(
             function_environment,
             predicate_environment,
             click_function_environment,
+            resource_environment,
             steps,
         )
         .is_ok()
@@ -12618,11 +13093,63 @@ impl Parser {
         self.expect(Token::LParen)?;
         let parameters = self.parse_resource_parameters()?;
         self.expect(Token::RParen)?;
-        self.expect(Token::Semicolon)?;
+        let representation = match self.peek() {
+            Some(Token::Semicolon) => {
+                self.position += 1;
+                None
+            }
+            Some(Token::LBrace) => Some(self.parse_resource_representation()?),
+            Some(token) => {
+                return Err(self.error(format!(
+                    "expected `;` or resource representation body, got {token:?}"
+                )));
+            }
+            None => {
+                return Err(
+                    self.error("expected `;` or resource representation body, got end of input")
+                );
+            }
+        };
         Ok(ResourceDefinition {
             name,
             parameters,
             kind: ResourceKind::Affine,
+            representation,
+        })
+    }
+
+    fn parse_resource_representation(&mut self) -> Result<ResourceRepresentation, ClickError> {
+        self.expect(Token::LBrace)?;
+        let mut contains = Vec::new();
+        let mut invariants = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            match self.peek_ident() {
+                Some("contains") => {
+                    self.position += 1;
+                    contains.push(self.parse_resource_clause()?);
+                    self.expect(Token::Semicolon)?;
+                }
+                Some("invariant") => {
+                    self.position += 1;
+                    invariants.push(self.parse_proposition()?);
+                    self.expect(Token::Semicolon)?;
+                }
+                Some(name) => {
+                    return Err(self.error(format!(
+                        "expected `contains` or `invariant` in resource body, got `{name}`"
+                    )));
+                }
+                None => {
+                    return Err(self.error(
+                        "expected `contains` or `invariant` in resource body, got end of input",
+                    ));
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+        Ok(ResourceRepresentation {
+            contains,
+            invariants,
         })
     }
 
@@ -13587,6 +14114,12 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 ProofStep::Unfold(predicate)
             }
+            "open" => {
+                self.expect(Token::LParen)?;
+                let resource = self.parse_named_resource_call()?;
+                self.expect(Token::RParen)?;
+                ProofStep::OpenResource(resource)
+            }
             "witness" => {
                 self.expect(Token::LParen)?;
                 let name = self.expect_ident("witness variable name")?;
@@ -13608,8 +14141,15 @@ impl Parser {
                 ProofStep::Simp
             }
             "close" => {
-                self.expect_empty_step_args(&name)?;
-                ProofStep::Close
+                self.expect(Token::LParen)?;
+                if self.peek() == Some(&Token::RParen) {
+                    self.position += 1;
+                    ProofStep::Close
+                } else {
+                    let resource = self.parse_named_resource_call()?;
+                    self.expect(Token::RParen)?;
+                    ProofStep::CloseResource(resource)
+                }
             }
             _ if is_tactic_name(&name) => {
                 return Err(self.error(format!(
@@ -13620,6 +14160,15 @@ impl Parser {
         };
         self.expect(Token::Semicolon)?;
         Ok(step)
+    }
+
+    fn parse_named_resource_call(&mut self) -> Result<ResourceClause, ClickError> {
+        let (name, arguments) = self.parse_call_arguments("resource name")?;
+        Ok(ResourceClause::Named {
+            name,
+            arguments,
+            parameter_types: Vec::new(),
+        })
     }
 
     fn expect_empty_step_args(&mut self, name: &str) -> Result<(), ClickError> {
@@ -14272,6 +14821,16 @@ fn expand_declared_resource_clauses(mut file: ClickFile) -> Result<ClickFile, Cl
             .drain(..)
             .map(|clause| expand_declared_resource_ensure_clause(clause, &resource_parameters))
             .collect::<Result<Vec<_>, _>>()?;
+        function.effects = function
+            .effects
+            .drain(..)
+            .map(|clause| expand_declared_resource_effect_clause(clause, &resource_parameters))
+            .collect::<Result<Vec<_>, _>>()?;
+        function.structural_clauses = function
+            .structural_clauses
+            .drain(..)
+            .map(|clause| expand_declared_resource_structural_clause(clause, &resource_parameters))
+            .collect::<Result<Vec<_>, _>>()?;
     }
 
     Ok(file)
@@ -14323,7 +14882,88 @@ fn expand_declared_resource_ensure_clause(
                 Ensure::Proposition(ClickProposition::PredicateCall { name, arguments });
         }
     }
+    clause.proof = expand_declared_resource_proof(clause.proof, resource_parameters)?;
     Ok(clause)
+}
+
+fn expand_declared_resource_effect_clause(
+    mut clause: EffectClause,
+    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+) -> Result<EffectClause, ClickError> {
+    clause.proof = expand_declared_resource_proof(clause.proof, resource_parameters)?;
+    Ok(clause)
+}
+
+fn expand_declared_resource_structural_clause(
+    mut clause: StructuralClause,
+    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+) -> Result<StructuralClause, ClickError> {
+    clause.items = clause
+        .items
+        .into_iter()
+        .map(|item| expand_declared_resource_structural_item(item, resource_parameters))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(clause)
+}
+
+fn expand_declared_resource_structural_item(
+    mut item: StructuralItem,
+    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+) -> Result<StructuralItem, ClickError> {
+    item.proof = expand_declared_resource_proof(item.proof, resource_parameters)?;
+    Ok(item)
+}
+
+fn expand_declared_resource_proof(
+    proof: Proof,
+    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+) -> Result<Proof, ClickError> {
+    match proof {
+        Proof::Tactic(_) => Ok(proof),
+        Proof::Steps(steps) => Ok(Proof::Steps(
+            steps
+                .into_iter()
+                .map(|step| expand_declared_resource_proof_step(step, resource_parameters))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+    }
+}
+
+fn expand_declared_resource_proof_step(
+    step: ProofStep,
+    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+) -> Result<ProofStep, ClickError> {
+    match step {
+        ProofStep::OpenResource(resource) => Ok(ProofStep::OpenResource(
+            expand_declared_resource_clause(resource, resource_parameters)?,
+        )),
+        ProofStep::CloseResource(resource) => Ok(ProofStep::CloseResource(
+            expand_declared_resource_clause(resource, resource_parameters)?,
+        )),
+        _ => Ok(step),
+    }
+}
+
+fn expand_declared_resource_clause(
+    resource: ResourceClause,
+    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+) -> Result<ResourceClause, ClickError> {
+    match resource {
+        ResourceClause::Named {
+            name,
+            arguments,
+            parameter_types,
+        } if parameter_types.is_empty() => {
+            let parameter_types =
+                declared_resource_parameter_types(&name, arguments.len(), resource_parameters)?;
+            Ok(ResourceClause::Named {
+                name,
+                arguments,
+                parameter_types,
+            })
+        }
+        resource => Ok(resource),
+    }
 }
 
 fn declared_resource_parameter_types(
@@ -14437,6 +15077,16 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
                 definition.name()
             )));
         }
+    }
+
+    for definition in &resource_definitions {
+        validate_resource_definition(
+            definition,
+            &resources,
+            &predicates,
+            &click_functions,
+            &click_function_types,
+        )?;
     }
 
     for definition in &predicate_definitions {
@@ -14578,6 +15228,54 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
         }
     }
 
+    Ok(())
+}
+
+fn validate_resource_definition(
+    definition: &ResourceDefinition,
+    resources: &BTreeMap<String, usize>,
+    predicates: &BTreeMap<String, usize>,
+    click_functions: &BTreeMap<String, usize>,
+    click_function_types: &BTreeMap<String, ClickFunctionType>,
+) -> Result<(), ClickError> {
+    let Some(representation) = definition.representation() else {
+        return Ok(());
+    };
+    let variables = definition
+        .parameters()
+        .iter()
+        .map(|parameter| (parameter.name().to_string(), parameter.c_type()))
+        .collect::<BTreeMap<_, _>>();
+    for resource in representation.contains() {
+        validate_resource_clause(
+            resource,
+            resources,
+            click_functions,
+            click_function_types,
+            &variables,
+            &format!("resource `{}` representation", definition.name()),
+        )?;
+    }
+    for invariant in representation.invariants() {
+        if proposition_contains_old_expression(invariant) {
+            return Err(ClickError::new(format!(
+                "`old(...)` is not available inside resource `{}` invariant",
+                definition.name()
+            )));
+        }
+        if proposition_contains_at_expression(invariant) {
+            return Err(ClickError::new(format!(
+                "`at(...)` is not available inside resource `{}` invariant",
+                definition.name()
+            )));
+        }
+        validate_predicate_calls_in_proposition(
+            invariant,
+            predicates,
+            click_functions,
+            &format!("resource `{}` invariant", definition.name()),
+        )?;
+    }
     Ok(())
 }
 
@@ -16109,6 +16807,83 @@ mod tests {
                     ProofStep::LoopVc(CodeRegionRef::Loop(0)),
                     ProofStep::Frame(Some(CodeRegionRef::Loop(0))),
                     ProofStep::Simp,
+                    ProofStep::Close,
+                ]
+                .as_slice()
+            )
+        );
+    }
+
+    #[test]
+    fn parses_represented_resource_definition() {
+        let source = r#"
+            affine resource uncalled(flag: int32*) {
+                contains write(flag[0..1]);
+                invariant flag[0] == 0;
+            }
+        "#;
+        let file = parse(source).expect("represented resource should parse");
+        let resource = &file.resource_definitions()[0];
+        let representation = resource
+            .representation()
+            .expect("resource should have representation");
+
+        assert_eq!(resource.name(), "uncalled");
+        assert_eq!(
+            resource.parameters(),
+            &[FunctionParameter {
+                c_type: C0Type::Int32Pointer,
+                name: "flag".to_string(),
+            }]
+        );
+        assert_eq!(
+            representation.contains(),
+            &[ResourceClause::Write(ContractSegment {
+                state: ContractSegmentState::Current,
+                base: CExpression::Variable("flag".to_string()),
+                start: CExpression::Value(int32(0)),
+                end: CExpression::Value(int32(1)),
+            })]
+        );
+        assert_eq!(representation.invariants().len(), 1);
+    }
+
+    #[test]
+    fn parses_resource_open_and_close_steps() {
+        let source = r#"
+            affine resource uncalled(flag: int32*);
+
+            verifying "identity.c";
+
+            int32 identity(int32* flag) {
+                requires uncalled(flag);
+
+                ensures uncalled(flag) by {
+                    open(uncalled(flag));
+                    symbolic_execute();
+                    close(uncalled(flag));
+                    close();
+                }
+            }
+        "#;
+        let file = parse(source).expect("resource proof steps should parse");
+        let ensure = &file.function_blocks()[0].ensures()[0];
+
+        assert_eq!(
+            ensure.proof().steps(),
+            Some(
+                [
+                    ProofStep::OpenResource(ResourceClause::Named {
+                        name: "uncalled".to_string(),
+                        arguments: vec![current_var("flag")],
+                        parameter_types: vec![C0Type::Int32Pointer],
+                    }),
+                    ProofStep::SymbolicExecute,
+                    ProofStep::CloseResource(ResourceClause::Named {
+                        name: "uncalled".to_string(),
+                        arguments: vec![current_var("flag")],
+                        parameter_types: vec![C0Type::Int32Pointer],
+                    }),
                     ProofStep::Close,
                 ]
                 .as_slice()
