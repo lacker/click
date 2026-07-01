@@ -111,6 +111,14 @@ After declaration, `requires open_fd(fd);` and
 requires a named affine resource consumes it unless the callee also returns it
 with a matching resource `ensures`.
 
+A function block may be resource-only when it consumes a resource:
+
+```click
+int32 complete(int32 cb) {
+    requires can_complete(cb);
+}
+```
+
 `write(...)` implies `read(...)`: a write resource permits both loads and
 stores, and can satisfy an `ensures read(...)` guarantee. `read(...)` is
 copyable across calls. A callee can declare `requires read(...)` without

@@ -179,6 +179,20 @@ rejoin, imply other resources, authorize C statements, or define custom algebra
 rules. Resource arguments currently support current-state C expressions such as
 parameters, constants, arithmetic, pointer expressions, and indexes.
 
+A function spec may exist only to consume a resource:
+
+```click
+affine resource can_complete(cb: int32);
+
+int32 complete(int32 cb) {
+    requires can_complete(cb);
+}
+```
+
+That spec contributes a call summary. Calling `complete(cb)` consumes
+`can_complete(cb)`, so a second call on the same path fails unless some other
+contract returns the resource.
+
 ## Split And Rejoin
 
 A caller can pass a subrange of a larger write resource:

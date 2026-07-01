@@ -676,6 +676,10 @@ impl Requirement {
     }
 }
 
+fn requirement_contains_resource(requirement: &Requirement) -> bool {
+    matches!(requirement.inner(), Requirement::Resource(_))
+}
+
 fn parameter_is_click_array_ref(parameter: &FunctionParameter) -> bool {
     matches!(
         parameter.c_type(),
@@ -12713,13 +12717,6 @@ impl Parser {
         }
         self.expect(Token::RBrace)?;
 
-        if ensures.is_empty() && effects.is_empty() {
-            return Err(self.error(format!(
-                "`{}` must contain at least one `ensures`, `immutable`, `mutable`, or `mutable_field` clause",
-                signature.name()
-            )));
-        }
-
         Ok(FunctionBlock {
             signature,
             requires,
@@ -14409,6 +14406,18 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
         if user_click_functions.contains(function.signature().name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a Click function and a C function spec",
+                function.signature().name()
+            )));
+        }
+        if function.ensures().is_empty()
+            && function.effects().is_empty()
+            && !function
+                .requires()
+                .iter()
+                .any(requirement_contains_resource)
+        {
+            return Err(ClickError::new(format!(
+                "`{}` must contain at least one `ensures`, `immutable`, `mutable`, `mutable_field`, or resource-consuming `requires` clause",
                 function.signature().name()
             )));
         }
