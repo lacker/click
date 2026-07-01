@@ -54,7 +54,8 @@ Common steps include:
 
 - `symbolic_execute();`: execute the C function symbolically.
 - `unfold(name);`: open a named predicate.
-- `apply(theorem(args));`: use an earlier verified theorem as a derived fact.
+- `apply(theorem(args));`: use a verified stdlib or current-file theorem as a
+  derived fact.
 - `simp();`: simplify the current proof goal.
 - `frame();`: prove an effect claim.
 

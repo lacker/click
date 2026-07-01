@@ -77,6 +77,33 @@ predicate cstr(uint8 bytes[]) {
 predicate cstr_bounded(uint8 bytes[], int32 max) {
     bytes_contains(bytes, 0, max, '\0')
 }
+
+theorem cstr_len_nonnegative(bytes: uint8[], len: int32) {
+    requires cstr_len(bytes, len);
+
+    ensures 0 <= len by {
+        unfold(cstr_len);
+        simp();
+    }
+}
+
+theorem cstr_len_has_prefix(bytes: uint8[], len: int32) {
+    requires cstr_len(bytes, len);
+
+    ensures cstr_prefix(bytes, len) by {
+        unfold(cstr_len);
+        simp();
+    }
+}
+
+theorem cstr_len_has_terminator(bytes: uint8[], len: int32) {
+    requires cstr_len(bytes, len);
+
+    ensures bytes_contains(bytes, len, len + 1, '\0') by {
+        unfold(cstr_len);
+        simp();
+    }
+}
 ```
 
 `count` is a pure Click function over a range. `permutation` is a Click
@@ -112,6 +139,14 @@ string values:
 - `cstr_bounded(bytes, max)` says a terminator exists somewhere before `max`.
   This matches bounded scanning APIs.
 
+The C-string projection theorems expose the public consequences of
+`cstr_len(bytes, len)` without requiring user proofs to unfold the predicate:
+
+- `cstr_len_nonnegative(bytes, len)` proves `0 <= len`.
+- `cstr_len_has_prefix(bytes, len)` proves `cstr_prefix(bytes, len)`.
+- `cstr_len_has_terminator(bytes, len)` proves
+  `bytes_contains(bytes, len, len + 1, '\0')`.
+
 These definitions are ordinary Click. They are not generic overloads and they
 are not special kernel names.
 
@@ -139,9 +174,9 @@ general proof support to the kernel only when the proof engine needs it.
 ## Namespace Behavior
 
 Stdlib definitions are combined with user Click definitions during validation.
-A user Click function or predicate cannot redefine a stdlib name. A C function
-spec may still have the same name as a stdlib Click function when there is no
-user Click definition conflict.
+A user Click function, predicate, resource, or theorem cannot redefine a stdlib
+name. A C function spec may still have the same name as a stdlib Click function
+when there is no user Click definition conflict.
 
 ## Current Example
 
@@ -178,9 +213,13 @@ a separate eager old-state evaluator.
 predicate requirement.
 
 `mdtests/cstr_stdlib.md` checks the first C-string predicate layer:
-`cstr_prefix`, `cstr_len`, `cstr`, and `cstr_bounded`.
+`cstr_prefix`, `cstr_len`, `cstr`, and `cstr_bounded`. It also checks that C
+function proof scripts can apply the `cstr_len` projection theorems.
 
-## Adding A Library Function
+`mdtests/stdlib_theorem_apply.md` checks that pure theorem proofs can apply
+theorems from the standard library.
+
+## Adding A Library Definition
 
 1. Add the definition to `stdlib/prelude.click`.
 2. Add an mdtest using it from an ordinary `.click` sidecar.

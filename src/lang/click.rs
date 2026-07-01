@@ -982,13 +982,19 @@ pub fn verify_click_theorems(click_source: &str) -> Result<Vec<VerifiedPureTheor
     let file = parse(click_source)?;
     let predicate_definitions = combined_predicate_definitions(&file)?;
     let click_function_definitions = combined_click_function_definitions(&file)?;
+    let (theorem_definitions, stdlib_theorem_ensure_count) =
+        combined_theorem_definitions_with_stdlib_ensure_count(&file)?;
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
     let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
-    verify_theorem_definitions(
-        file.theorem_definitions(),
+    let verified = verify_theorem_definitions(
+        &theorem_definitions,
         &predicate_environment,
         &click_function_environment,
-    )
+    )?;
+    Ok(verified
+        .into_iter()
+        .skip(stdlib_theorem_ensure_count)
+        .collect())
 }
 
 pub fn verify_c0_sources(
@@ -1002,12 +1008,12 @@ pub fn verify_c0_sources(
     let predicate_definitions = combined_predicate_definitions(&file)?;
     let click_function_definitions = combined_click_function_definitions(&file)?;
     let resource_definitions = combined_resource_definitions(&file)?;
-    let theorem_definitions = file.theorem_definitions().to_vec();
+    let theorem_definitions = combined_theorem_definitions(&file)?;
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
     let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
     let resource_environment = ResourceEnvironment::new(&resource_definitions);
     let _verified_theorems = verify_theorem_definitions(
-        file.theorem_definitions(),
+        &theorem_definitions,
         &predicate_environment,
         &click_function_environment,
     )?;
@@ -15684,23 +15690,22 @@ fn standard_library_definitions() -> Result<
         Vec<PredicateDefinition>,
         Vec<ClickFunctionDefinition>,
         Vec<ResourceDefinition>,
+        Vec<TheoremDefinition>,
     ),
     ClickError,
 > {
     let mut parser = Parser::new(CLICK_STANDARD_LIBRARY)?;
     let file = expand_declared_resource_clauses(parser.parse_file_items()?)?;
-    if !file.verifying_sources().is_empty()
-        || !file.theorem_definitions().is_empty()
-        || !file.function_blocks().is_empty()
-    {
+    if !file.verifying_sources().is_empty() || !file.function_blocks().is_empty() {
         return Err(ClickError::new(
-            "internal Click standard library must not contain verifying sources, theorem declarations, or C function specs",
+            "internal Click standard library must not contain verifying sources or C function specs",
         ));
     }
     Ok((
         file.predicate_definitions().to_vec(),
         file.click_function_definitions().to_vec(),
         file.resource_definitions().to_vec(),
+        file.theorem_definitions().to_vec(),
     ))
 }
 
@@ -15946,7 +15951,7 @@ fn declared_resource_parameter_types(
 fn combined_predicate_definitions(
     file: &ClickFile,
 ) -> Result<Vec<PredicateDefinition>, ClickError> {
-    let (mut definitions, _, _) = standard_library_definitions()?;
+    let (mut definitions, _, _, _) = standard_library_definitions()?;
     definitions.extend(file.predicate_definitions().iter().cloned());
     Ok(definitions)
 }
@@ -15954,21 +15959,40 @@ fn combined_predicate_definitions(
 fn combined_click_function_definitions(
     file: &ClickFile,
 ) -> Result<Vec<ClickFunctionDefinition>, ClickError> {
-    let (_, mut definitions, _) = standard_library_definitions()?;
+    let (_, mut definitions, _, _) = standard_library_definitions()?;
     definitions.extend(file.click_function_definitions().iter().cloned());
     Ok(definitions)
 }
 
 fn combined_resource_definitions(file: &ClickFile) -> Result<Vec<ResourceDefinition>, ClickError> {
-    let (_, _, mut definitions) = standard_library_definitions()?;
+    let (_, _, mut definitions, _) = standard_library_definitions()?;
     definitions.extend(file.resource_definitions().iter().cloned());
     Ok(definitions)
+}
+
+fn combined_theorem_definitions(file: &ClickFile) -> Result<Vec<TheoremDefinition>, ClickError> {
+    let (_, _, _, mut definitions) = standard_library_definitions()?;
+    definitions.extend(file.theorem_definitions().iter().cloned());
+    Ok(definitions)
+}
+
+fn combined_theorem_definitions_with_stdlib_ensure_count(
+    file: &ClickFile,
+) -> Result<(Vec<TheoremDefinition>, usize), ClickError> {
+    let (_, _, _, mut definitions) = standard_library_definitions()?;
+    let stdlib_ensure_count = definitions
+        .iter()
+        .map(|definition| definition.ensures().len())
+        .sum();
+    definitions.extend(file.theorem_definitions().iter().cloned());
+    Ok((definitions, stdlib_ensure_count))
 }
 
 fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
     let predicate_definitions = combined_predicate_definitions(file)?;
     let click_function_definitions = combined_click_function_definitions(file)?;
     let resource_definitions = combined_resource_definitions(file)?;
+    let theorem_definitions = combined_theorem_definitions(file)?;
 
     let mut predicates = BTreeMap::new();
     for definition in &predicate_definitions {
@@ -16042,7 +16066,7 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
     }
 
     let mut theorems = BTreeMap::new();
-    for definition in file.theorem_definitions() {
+    for definition in &theorem_definitions {
         if predicates.contains_key(definition.name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a predicate and a theorem",
@@ -16105,7 +16129,7 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
     }
     reject_recursive_click_functions(&function_calls)?;
 
-    for theorem in file.theorem_definitions() {
+    for theorem in &theorem_definitions {
         validate_theorem_definition(
             theorem,
             &predicates,

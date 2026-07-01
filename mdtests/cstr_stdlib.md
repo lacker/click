@@ -29,15 +29,21 @@ int32 cstr_stdlib(uint8 p[], int32 len, int32 max) {
     requires exact: cstr_len(p, len);
     requires bounded: cstr_bounded(p, max);
 
+    ensures exact_length_nonnegative: 0 <= len by {
+        symbolic_execute();
+        apply(cstr_len_nonnegative(p, len));
+        simp();
+    }
+
     ensures exact_prefix_has_no_null: cstr_prefix(p, len) by {
         symbolic_execute();
-        unfold(cstr_len);
+        apply(cstr_len_has_prefix(p, len));
         simp();
     }
 
     ensures exact_has_terminator: bytes_contains(p, len, len + 1, '\0') by {
         symbolic_execute();
-        unfold(cstr_len);
+        apply(cstr_len_has_terminator(p, len));
         simp();
     }
 

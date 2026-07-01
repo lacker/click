@@ -168,9 +168,9 @@ Likely additions:
   `.all`, `.any`, `.fold`, `.map`-like derived definitions, and standard
   theorems.
 - Richer theorem reuse:
-  theorem application exists for pure proposition theorems; next slices should
-  cover theorem libraries, better diagnostics, and eventually resource-aware
-  theorem forms.
+  theorem application exists for stdlib and current-file pure proposition
+  theorems; next slices should cover better diagnostics, named conclusion
+  selection, and eventually resource-aware theorem forms.
 - Explicit rewrite/calc steps:
   better than hiding all proof search inside `simp`.
 - Predicate/function namespaces that scale with modules.

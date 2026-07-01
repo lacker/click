@@ -63,3 +63,30 @@ predicate cstr(uint8 bytes[]) {
 predicate cstr_bounded(uint8 bytes[], int32 max) {
     bytes_contains(bytes, 0, max, '\0')
 }
+
+theorem cstr_len_nonnegative(bytes: uint8[], len: int32) {
+    requires cstr_len(bytes, len);
+
+    ensures 0 <= len by {
+        unfold(cstr_len);
+        simp();
+    }
+}
+
+theorem cstr_len_has_prefix(bytes: uint8[], len: int32) {
+    requires cstr_len(bytes, len);
+
+    ensures cstr_prefix(bytes, len) by {
+        unfold(cstr_len);
+        simp();
+    }
+}
+
+theorem cstr_len_has_terminator(bytes: uint8[], len: int32) {
+    requires cstr_len(bytes, len);
+
+    ensures bytes_contains(bytes, len, len + 1, '\0') by {
+        unfold(cstr_len);
+        simp();
+    }
+}
