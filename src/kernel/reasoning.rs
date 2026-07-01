@@ -1463,16 +1463,7 @@ pub(super) fn resource_context_has_read(
     byte_width: u32,
     assumptions: &Assumptions,
 ) -> bool {
-    resources.resources().iter().any(|resource| match resource {
-        CResource::Read(range) | CResource::Write(range) => assumptions.pointer_access_in_range(
-            pointer,
-            byte_width,
-            range.base(),
-            range.start(),
-            range.end(),
-        ),
-        CResource::Free(_) => false,
-    })
+    resources.permits_memory_read(pointer, byte_width, assumptions)
 }
 
 pub(super) fn resource_context_has_write(
@@ -1481,17 +1472,7 @@ pub(super) fn resource_context_has_write(
     byte_width: u32,
     assumptions: &Assumptions,
 ) -> bool {
-    resources.resources().iter().any(|resource| match resource {
-        CResource::Read(_) => false,
-        CResource::Write(range) => assumptions.pointer_access_in_range(
-            pointer,
-            byte_width,
-            range.base(),
-            range.start(),
-            range.end(),
-        ),
-        CResource::Free(_) => false,
-    })
+    resources.permits_memory_write(pointer, byte_width, assumptions)
 }
 
 pub(super) fn collect_condition_bitvector_variables(

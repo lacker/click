@@ -456,6 +456,11 @@ pub enum CResource {
     Free(CMemoryRange),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum ResourceFamily {
+    Memory,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResourceSpec {
     Read(CMemorySegment),
@@ -1816,89 +1821,41 @@ impl ResourceContext {
     pub fn satisfies(&self, resource: &CResource, assumptions: &Assumptions) -> bool {
         self.resources
             .iter()
-            .any(|available| resource_covers(available, resource, assumptions))
+            .any(|available| resource_entails(available, resource, assumptions))
     }
 
     pub fn is_empty(&self) -> bool {
         self.resources.is_empty()
     }
 
+    pub(super) fn permits_memory_read(
+        &self,
+        pointer: &Pointer,
+        byte_width: u32,
+        assumptions: &Assumptions,
+    ) -> bool {
+        self.resources.iter().any(|resource| {
+            memory_resource_permits_read(resource, pointer, byte_width, assumptions)
+        })
+    }
+
+    pub(super) fn permits_memory_write(
+        &self,
+        pointer: &Pointer,
+        byte_width: u32,
+        assumptions: &Assumptions,
+    ) -> bool {
+        self.resources.iter().any(|resource| {
+            memory_resource_permits_write(resource, pointer, byte_width, assumptions)
+        })
+    }
+
     pub(super) fn without_resource(
-        mut self,
+        self,
         resource: &CResource,
         assumptions: &Assumptions,
     ) -> Option<Self> {
-        match resource {
-            CResource::Read(required) => self
-                .resources
-                .iter()
-                .any(|candidate| match candidate {
-                    CResource::Read(available) | CResource::Write(available) => {
-                        memory_range_covers(available, required, assumptions)
-                    }
-                    CResource::Free(_) => false,
-                })
-                .then(|| self.normalized(assumptions)),
-            CResource::Write(required) => {
-                let index = self
-                    .resources
-                    .iter()
-                    .position(|candidate| match candidate {
-                        CResource::Read(_) => false,
-                        CResource::Write(available) => {
-                            memory_range_covers(available, required, assumptions)
-                        }
-                        CResource::Free(_) => false,
-                    })?;
-                let available = match self.resources.remove(index) {
-                    CResource::Write(available) => available,
-                    CResource::Read(_) | CResource::Free(_) => {
-                        unreachable!("write resource lookup ignored non-writes")
-                    }
-                };
-                self.resources.extend(
-                    split_memory_range(&available, required, assumptions)?
-                        .into_iter()
-                        .map(CResource::Write),
-                );
-                Some(self.normalized(assumptions))
-            }
-            CResource::Free(required) => self.without_free_resource(required, assumptions),
-        }
-    }
-
-    fn without_free_resource(
-        mut self,
-        required: &CMemoryRange,
-        assumptions: &Assumptions,
-    ) -> Option<Self> {
-        if !self.resources.iter().any(|candidate| match candidate {
-            CResource::Free(available) => memory_range_covers(available, required, assumptions),
-            CResource::Read(_) | CResource::Write(_) => false,
-        }) {
-            return None;
-        }
-
-        let mut resources = Vec::new();
-        for resource in self.resources {
-            let range = resource.range();
-            if memory_range_covers(range, required, assumptions) {
-                resources.extend(
-                    split_memory_range(range, required, assumptions)?
-                        .into_iter()
-                        .map(|range| resource.with_range(range)),
-                );
-            } else if memory_range_covers(required, range, assumptions) {
-                continue;
-            } else if memory_ranges_proven_disjoint(range, required, assumptions) {
-                resources.push(resource);
-            } else {
-                return None;
-            }
-        }
-
-        self.resources = resources;
-        Some(self.normalized(assumptions))
+        consume_resource(self, resource, assumptions)
     }
 
     pub(super) fn normalized(mut self, assumptions: &Assumptions) -> Self {
@@ -1907,13 +1864,8 @@ impl ResourceContext {
             let mut changed = false;
             let mut j = i + 1;
             while j < self.resources.len() {
-                if self.resources[i] == self.resources[j] {
-                    self.resources.remove(j);
-                    changed = true;
-                    break;
-                }
                 if let Some(merged) =
-                    merge_resources(&self.resources[i], &self.resources[j], assumptions)
+                    combine_resources(&self.resources[i], &self.resources[j], assumptions)
                 {
                     self.resources[i] = merged;
                     self.resources.remove(j);
@@ -1932,7 +1884,47 @@ impl ResourceContext {
     }
 }
 
-fn resource_covers(available: &CResource, required: &CResource, assumptions: &Assumptions) -> bool {
+fn resource_entails(
+    available: &CResource,
+    required: &CResource,
+    assumptions: &Assumptions,
+) -> bool {
+    if available.family() != required.family() {
+        return false;
+    }
+    match available.family() {
+        ResourceFamily::Memory => memory_resource_entails(available, required, assumptions),
+    }
+}
+
+fn consume_resource(
+    context: ResourceContext,
+    required: &CResource,
+    assumptions: &Assumptions,
+) -> Option<ResourceContext> {
+    match required.family() {
+        ResourceFamily::Memory => consume_memory_resource(context, required, assumptions),
+    }
+}
+
+fn combine_resources(
+    left: &CResource,
+    right: &CResource,
+    assumptions: &Assumptions,
+) -> Option<CResource> {
+    if left.family() != right.family() {
+        return None;
+    }
+    match left.family() {
+        ResourceFamily::Memory => combine_memory_resources(left, right, assumptions),
+    }
+}
+
+fn memory_resource_entails(
+    available: &CResource,
+    required: &CResource,
+    assumptions: &Assumptions,
+) -> bool {
     match (available, required) {
         (CResource::Read(available), CResource::Read(required))
         | (CResource::Write(available), CResource::Read(required))
@@ -1945,6 +1937,121 @@ fn resource_covers(available: &CResource, required: &CResource, assumptions: &As
         | (CResource::Write(_), CResource::Free(_))
         | (CResource::Free(_), CResource::Read(_))
         | (CResource::Free(_), CResource::Write(_)) => false,
+    }
+}
+
+fn consume_memory_resource(
+    mut context: ResourceContext,
+    required: &CResource,
+    assumptions: &Assumptions,
+) -> Option<ResourceContext> {
+    match required {
+        CResource::Read(required) => context
+            .resources
+            .iter()
+            .any(|candidate| match candidate {
+                CResource::Read(available) | CResource::Write(available) => {
+                    memory_range_covers(available, required, assumptions)
+                }
+                CResource::Free(_) => false,
+            })
+            .then(|| context.normalized(assumptions)),
+        CResource::Write(required) => {
+            let index = context
+                .resources
+                .iter()
+                .position(|candidate| match candidate {
+                    CResource::Read(_) => false,
+                    CResource::Write(available) => {
+                        memory_range_covers(available, required, assumptions)
+                    }
+                    CResource::Free(_) => false,
+                })?;
+            let available = match context.resources.remove(index) {
+                CResource::Write(available) => available,
+                CResource::Read(_) | CResource::Free(_) => {
+                    unreachable!("write resource lookup ignored non-writes")
+                }
+            };
+            context.resources.extend(
+                split_memory_range(&available, required, assumptions)?
+                    .into_iter()
+                    .map(CResource::Write),
+            );
+            Some(context.normalized(assumptions))
+        }
+        CResource::Free(required) => consume_memory_free_resource(context, required, assumptions),
+    }
+}
+
+fn consume_memory_free_resource(
+    mut context: ResourceContext,
+    required: &CMemoryRange,
+    assumptions: &Assumptions,
+) -> Option<ResourceContext> {
+    if !context.resources.iter().any(|candidate| match candidate {
+        CResource::Free(available) => memory_range_covers(available, required, assumptions),
+        CResource::Read(_) | CResource::Write(_) => false,
+    }) {
+        return None;
+    }
+
+    let mut resources = Vec::new();
+    for resource in context.resources {
+        let range = resource.memory_range();
+        if memory_range_covers(range, required, assumptions) {
+            resources.extend(
+                split_memory_range(range, required, assumptions)?
+                    .into_iter()
+                    .map(|range| resource.with_memory_range(range)),
+            );
+        } else if memory_range_covers(required, range, assumptions) {
+            continue;
+        } else if memory_ranges_proven_disjoint(range, required, assumptions) {
+            resources.push(resource);
+        } else {
+            return None;
+        }
+    }
+
+    context.resources = resources;
+    Some(context.normalized(assumptions))
+}
+
+fn memory_resource_permits_read(
+    resource: &CResource,
+    pointer: &Pointer,
+    byte_width: u32,
+    assumptions: &Assumptions,
+) -> bool {
+    match resource {
+        CResource::Read(range) | CResource::Write(range) => assumptions.pointer_access_in_range(
+            pointer,
+            byte_width,
+            range.base(),
+            range.start(),
+            range.end(),
+        ),
+        CResource::Free(_) => false,
+    }
+}
+
+fn memory_resource_permits_write(
+    resource: &CResource,
+    pointer: &Pointer,
+    byte_width: u32,
+    assumptions: &Assumptions,
+) -> bool {
+    match resource {
+        CResource::Read(_) => false,
+        CResource::Write(range) => assumptions.pointer_access_in_range(
+            pointer,
+            byte_width,
+            range.base(),
+            range.start(),
+            range.end(),
+        ),
+        CResource::Free(_) => false,
     }
 }
 
@@ -2013,13 +2120,19 @@ fn memory_ranges_proven_disjoint(
 }
 
 impl CResource {
-    fn range(&self) -> &CMemoryRange {
+    pub fn family(&self) -> ResourceFamily {
+        match self {
+            Self::Read(_) | Self::Write(_) | Self::Free(_) => ResourceFamily::Memory,
+        }
+    }
+
+    fn memory_range(&self) -> &CMemoryRange {
         match self {
             Self::Read(range) | Self::Write(range) | Self::Free(range) => range,
         }
     }
 
-    fn with_range(&self, range: CMemoryRange) -> Self {
+    fn with_memory_range(&self, range: CMemoryRange) -> Self {
         match self {
             Self::Read(_) => Self::Read(range),
             Self::Write(_) => Self::Write(range),
@@ -2028,14 +2141,14 @@ impl CResource {
     }
 }
 
-fn merge_resources(
+fn combine_memory_resources(
     left: &CResource,
     right: &CResource,
     assumptions: &Assumptions,
 ) -> Option<CResource> {
     match (left, right) {
-        _ if resource_covers(left, right, assumptions) => Some(left.clone()),
-        _ if resource_covers(right, left, assumptions) => Some(right.clone()),
+        _ if memory_resource_entails(left, right, assumptions) => Some(left.clone()),
+        _ if memory_resource_entails(right, left, assumptions) => Some(right.clone()),
         (CResource::Read(left), CResource::Read(right)) => {
             merge_memory_ranges(left, right, assumptions).map(CResource::Read)
         }

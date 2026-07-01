@@ -95,6 +95,11 @@ In practice, top-level verification gets a resource context from
 `requires read(...)`, `requires write(...)`, and `requires free(...)` clauses,
 while function calls use the callee's resource summary.
 
+These permissions are currently one built-in resource family: memory resources.
+The family defines how resources entail, split, rejoin, transfer, and consume
+each other. This keeps the user-facing syntax concrete while leaving room for
+non-memory resource families later.
+
 `write(...)` implies `read(...)`: a write resource permits both loads and
 stores, and can satisfy an `ensures read(...)` guarantee. `read(...)` is
 copyable across calls. A callee can declare `requires read(...)` without

@@ -3,7 +3,7 @@
 Permissions describe what external memory a proof may access. They are separate
 from ordinary propositions because some permissions must not be copied freely.
 
-Click currently has two memory permissions:
+Click currently has three memory permissions:
 
 ```click
 requires read(p[0..1]);
@@ -17,6 +17,29 @@ memory accesses must be covered by the current resource context:
 - a load requires `read(...)` or `write(...)`,
 - a store requires `write(...)`,
 - local stack memory does not require a resource.
+
+## Resource Context And Families
+
+Internally, Click treats permissions as resources. A resource is a proof-side
+token carried in the current resource context. A resource family defines the
+rules for a group of related resources:
+
+- when one resource entails another,
+- whether a resource is copyable or linear,
+- how resources split and rejoin,
+- what gets consumed by a function call or statement,
+- what other resources are invalidated by consumption.
+
+The current implementation has one built-in resource family: memory resources.
+`read(...)`, `write(...)`, and `free(...)` are all memory resources over a
+range. This is similar in spirit to a resource algebra: the context is not just
+a bag of facts, because each family has rules for combining, transferring, and
+consuming its resources.
+
+This resource-family boundary is intentionally more general than memory
+ownership. Future families might model obligations, protocol states, effect
+authority, or receipts from previous operations without forcing those concepts
+to look like heap cells.
 
 ## Validity And Authority
 
@@ -166,6 +189,8 @@ Implemented today:
 
 - mandatory permission checks for external loads and stores,
 - `read(...)`, `write(...)`, and `free(...)` over memory ranges,
+- an internal memory resource family boundary for entailment, consumption,
+  access authorization, splitting, and joining,
 - `write(...)` implying read authority,
 - copyable read transfer,
 - linear write transfer through function summaries,
