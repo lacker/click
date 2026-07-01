@@ -177,7 +177,13 @@ the token.
 Named resources currently have exact-match behavior only. They do not split,
 rejoin, imply other resources, authorize C statements, or define custom algebra
 rules. Resource arguments currently support current-state C expressions such as
-parameters, constants, arithmetic, pointer expressions, and indexes.
+parameters, constants, arithmetic, pointer expressions, and indexes. Arguments
+are checked against the types declared in the resource definition.
+
+Affine named resources are strict tokens. A resource context cannot contain the
+same named affine resource twice: duplicate clauses such as two
+`requires open_fd(fd);` entries are rejected, and a call cannot satisfy two
+callee resource parameters with the same token.
 
 A function spec may exist only to consume a resource:
 

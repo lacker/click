@@ -112,9 +112,10 @@ Likely additions:
   ranges, including covered subrange transfer for function calls and a narrow
   `free(p);` statement that consumes `free(p[0..1])`. The implementation now
   has an explicit internal resource-family boundary for the memory family plus
-  first exact-match affine named resources. Fractions, persistent named
-  resources, custom resource-family algebra, full heap deallocation semantics,
-  and abstract ownership predicates are still future work.
+  first exact-match affine named resources with declared argument types and
+  duplicate-token rejection. Fractions, persistent named resources, custom
+  resource-family algebra, full heap deallocation semantics, and abstract
+  ownership predicates are still future work.
 - First-class spec/model state:
   proof-only state that can be mentioned across program points if examples need
   arbitrary model variables beyond resources.

@@ -2592,12 +2592,17 @@ pub(super) fn substitute_bitvector_variable_in_resource_spec(
             start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
             end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
         }),
-        CResourceSpec::Named { name, arguments } => CResourceSpec::Named {
+        CResourceSpec::Named {
+            name,
+            arguments,
+            parameter_types,
+        } => CResourceSpec::Named {
             name: name.clone(),
             arguments: arguments
                 .iter()
                 .map(|argument| substitute_bitvector_variable_in_c_expression(argument, from, to))
                 .collect(),
+            parameter_types: parameter_types.clone(),
         },
     }
 }

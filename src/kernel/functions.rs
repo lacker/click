@@ -440,6 +440,11 @@ fn prepare_function_resource_transfer(
     }
     return_resources = return_resources
         .with_resources_normalized(ensured_resources.resources().iter().cloned(), assumptions);
+    if let Some(resource) = return_resources.duplicate_named_resource() {
+        return Ok(Err(CRuntimeError::DuplicateResource {
+            resource: resource.clone(),
+        }));
+    }
 
     Ok(Ok(CFunctionResourceTransfer {
         callee_resources: required_resources,
@@ -461,6 +466,11 @@ fn evaluate_function_resource_context(
             Err(error) => return Ok(Err(error)),
         };
         context = context.with_resource(resource);
+        if let Some(resource) = context.duplicate_named_resource() {
+            return Ok(Err(CRuntimeError::DuplicateResource {
+                resource: resource.clone(),
+            }));
+        }
     }
     Ok(Ok(context))
 }
@@ -505,9 +515,18 @@ fn evaluate_function_resource_spec(
                 segment.end,
             ))))
         }
-        CResourceSpec::Named { name, arguments } => {
+        CResourceSpec::Named {
+            name,
+            arguments,
+            parameter_types,
+        } => {
+            if arguments.len() != parameter_types.len() {
+                return Ok(Err(CRuntimeError::TypeMismatch));
+            }
             let mut values = Vec::new();
-            for (index, argument) in arguments.iter().enumerate() {
+            for (index, (argument, parameter_type)) in
+                arguments.iter().zip(parameter_types).enumerate()
+            {
                 let value = match evaluate_loop_effect_segment_value(
                     state,
                     argument,
@@ -518,6 +537,9 @@ fn evaluate_function_resource_spec(
                     Ok(value) => value,
                     Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
                 };
+                if !parameter_type.accepts(&value) {
+                    return Ok(Err(CRuntimeError::TypeMismatch));
+                }
                 values.push(value);
             }
             Ok(Ok(CResource::Named {

@@ -165,6 +165,12 @@ sequence:
   resource can be borrowed and returned.
 - `mdtests/affine_resource_consumed_by_call.md`: exact-match affine named
   resource is consumed when a callee does not return it.
+- `mdtests/affine_resource_rejects_argument_type.md`: affine named resource
+  arguments are checked against their declared types.
+- `mdtests/affine_resource_rejects_duplicate.md`: duplicate affine named
+  resource clauses are rejected.
+- `mdtests/affine_resource_rejects_call_duplicate.md`: a call cannot satisfy
+  two affine resource parameters with the same token.
 - `mdtests/callback_resource_complete_once.md`: resource-only callback
   consumer can be called once.
 - `mdtests/callback_resource_complete_twice.md`: affine callback token rejects

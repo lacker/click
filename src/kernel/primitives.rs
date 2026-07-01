@@ -366,6 +366,7 @@ pub enum CRuntimeError {
     WrongArity { expected: usize, actual: usize },
     MissingReturn,
     MissingResource { resource: CResource },
+    DuplicateResource { resource: CResource },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -474,6 +475,7 @@ pub enum CResourceSpec {
     Named {
         name: String,
         arguments: Vec<CExpression>,
+        parameter_types: Vec<CType>,
     },
 }
 
@@ -1827,6 +1829,21 @@ impl ResourceContext {
         &self.resources
     }
 
+    pub fn duplicate_named_resource(&self) -> Option<&CResource> {
+        for i in 0..self.resources.len() {
+            if !matches!(self.resources[i], CResource::Named { .. }) {
+                continue;
+            }
+            if self.resources[i + 1..]
+                .iter()
+                .any(|candidate| candidate == &self.resources[i])
+            {
+                return Some(&self.resources[i]);
+            }
+        }
+        None
+    }
+
     pub fn satisfies(&self, resource: &CResource, assumptions: &Assumptions) -> bool {
         self.resources
             .iter()
@@ -2054,8 +2071,8 @@ fn consume_named_resource(
     Some(context.normalized(assumptions))
 }
 
-fn combine_named_resources(left: &CResource, right: &CResource) -> Option<CResource> {
-    (left == right).then(|| left.clone())
+fn combine_named_resources(_left: &CResource, _right: &CResource) -> Option<CResource> {
+    None
 }
 
 fn memory_resource_permits_read(

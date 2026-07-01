@@ -109,7 +109,8 @@ affine resource open_fd(fd: int32);
 After declaration, `requires open_fd(fd);` and
 `ensures open_fd(fd) by auto;` use the same resource context. A callee that
 requires a named affine resource consumes it unless the callee also returns it
-with a matching resource `ensures`.
+with a matching resource `ensures`. Named resource arguments are type checked,
+and duplicate identical affine tokens in one resource context are rejected.
 
 A function block may be resource-only when it consumes a resource:
 

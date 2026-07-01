@@ -60,6 +60,12 @@ pub struct ResourceDefinition {
     kind: ResourceKind,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ClickFunctionType {
+    parameters: Vec<FunctionParameter>,
+    return_type: C0Type,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResourceKind {
     Affine,
@@ -179,6 +185,7 @@ pub enum ResourceClause {
     Named {
         name: String,
         arguments: Vec<ContractExpression>,
+        parameter_types: Vec<C0Type>,
     },
 }
 
@@ -2351,12 +2358,20 @@ fn resource_clause_to_resource_spec(
             segment.start.clone(),
             segment.end.clone(),
         ))),
-        ResourceClause::Named { name, arguments } => Ok(CResourceSpec::Named {
+        ResourceClause::Named {
+            name,
+            arguments,
+            parameter_types,
+        } => Ok(CResourceSpec::Named {
             name: name.clone(),
             arguments: arguments
                 .iter()
                 .map(resource_argument_to_c_expression)
                 .collect::<Result<Vec<_>, _>>()?,
+            parameter_types: parameter_types
+                .iter()
+                .map(|c_type| c_type.to_kernel_type())
+                .collect(),
         }),
     }
 }
@@ -2477,6 +2492,10 @@ fn describe_runtime_error(
         crate::kernel::CRuntimeError::MissingReturn => "missing return".to_string(),
         crate::kernel::CRuntimeError::MissingResource { resource } => format!(
             "missing resource `{}`",
+            describe_resource(resource, parameters, arguments)
+        ),
+        crate::kernel::CRuntimeError::DuplicateResource { resource } => format!(
+            "duplicate affine resource `{}`",
             describe_resource(resource, parameters, arguments)
         ),
     }
@@ -4709,12 +4728,17 @@ fn apply_contract_lets_to_resource_clause(
         ResourceClause::Free(segment) => Ok(ResourceClause::Free(apply_contract_lets_to_segment(
             segment, bindings,
         )?)),
-        ResourceClause::Named { name, arguments } => Ok(ResourceClause::Named {
+        ResourceClause::Named {
+            name,
+            arguments,
+            parameter_types,
+        } => Ok(ResourceClause::Named {
             name,
             arguments: arguments
                 .into_iter()
                 .map(|argument| apply_contract_lets_to_expression(argument, bindings))
                 .collect::<Result<Vec<_>, _>>()?,
+            parameter_types,
         }),
     }
 }
@@ -6032,13 +6056,21 @@ fn lower_resource_clause(
         ResourceClause::Named {
             name,
             arguments: resource_arguments,
+            parameter_types,
         } => {
             let parameter_values = parameter_values(parameters, arguments)
                 .map_err(|error| ClickError::new(error.message))?;
             let state = CState::new().with_memory(memory.clone());
             let assumptions = Assumptions::new();
             let mut values = Vec::new();
-            for (index, argument) in resource_arguments.iter().enumerate() {
+            if resource_arguments.len() != parameter_types.len() {
+                return Err(ClickError::new(format!(
+                    "resource `{name}` has malformed argument type metadata"
+                )));
+            }
+            for (index, (argument, parameter_type)) in
+                resource_arguments.iter().zip(parameter_types).enumerate()
+            {
                 let argument = resource_argument_to_c_expression(argument)?;
                 let value = evaluate_c_contract_expression(
                     &parameter_values,
@@ -6052,6 +6084,12 @@ fn lower_resource_clause(
                         "could not lower resource `{name}` argument {index}: {message}"
                     ))
                 })?;
+                if !c_value_matches_click_type(&value, *parameter_type) {
+                    return Err(ClickError::new(format!(
+                        "resource `{name}` argument {index} evaluated to {value:?}, which does not match {:?}",
+                        parameter_type
+                    )));
+                }
                 values.push(value);
             }
             Ok(CResource::Named {
@@ -14206,22 +14244,33 @@ fn standard_library_definitions() -> Result<
 }
 
 fn expand_declared_resource_clauses(mut file: ClickFile) -> Result<ClickFile, ClickError> {
-    let resource_arities = file
+    let resource_parameters = file
         .resource_definitions()
         .iter()
-        .map(|definition| (definition.name().to_string(), definition.parameters().len()))
+        .map(|definition| {
+            (
+                definition.name().to_string(),
+                definition
+                    .parameters()
+                    .iter()
+                    .map(FunctionParameter::c_type)
+                    .collect::<Vec<_>>(),
+            )
+        })
         .collect::<BTreeMap<_, _>>();
 
     for function in &mut file.function_blocks {
         function.requires = function
             .requires
             .drain(..)
-            .map(|requirement| expand_declared_resource_requirement(requirement, &resource_arities))
+            .map(|requirement| {
+                expand_declared_resource_requirement(requirement, &resource_parameters)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         function.ensures = function
             .ensures
             .drain(..)
-            .map(|clause| expand_declared_resource_ensure_clause(clause, &resource_arities))
+            .map(|clause| expand_declared_resource_ensure_clause(clause, &resource_parameters))
             .collect::<Result<Vec<_>, _>>()?;
     }
 
@@ -14230,23 +14279,25 @@ fn expand_declared_resource_clauses(mut file: ClickFile) -> Result<ClickFile, Cl
 
 fn expand_declared_resource_requirement(
     requirement: Requirement,
-    resource_arities: &BTreeMap<String, usize>,
+    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
 ) -> Result<Requirement, ClickError> {
     match requirement {
         Requirement::Labeled { label, requirement } => Ok(Requirement::Labeled {
             label,
             requirement: Box::new(expand_declared_resource_requirement(
                 *requirement,
-                resource_arities,
+                resource_parameters,
             )?),
         }),
         Requirement::Proposition(ClickProposition::PredicateCall { name, arguments })
-            if resource_arities.contains_key(&name) =>
+            if resource_parameters.contains_key(&name) =>
         {
-            validate_declared_resource_arity(&name, arguments.len(), resource_arities)?;
+            let parameter_types =
+                declared_resource_parameter_types(&name, arguments.len(), resource_parameters)?;
             Ok(Requirement::Resource(ResourceClause::Named {
                 name,
                 arguments,
+                parameter_types,
             }))
         }
         _ => Ok(requirement),
@@ -14255,13 +14306,18 @@ fn expand_declared_resource_requirement(
 
 fn expand_declared_resource_ensure_clause(
     mut clause: EnsureClause,
-    resource_arities: &BTreeMap<String, usize>,
+    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
 ) -> Result<EnsureClause, ClickError> {
     if let Ensure::Proposition(ClickProposition::PredicateCall { name, arguments }) = clause.ensure
     {
-        if resource_arities.contains_key(&name) {
-            validate_declared_resource_arity(&name, arguments.len(), resource_arities)?;
-            clause.ensure = Ensure::Resource(ResourceClause::Named { name, arguments });
+        if resource_parameters.contains_key(&name) {
+            let parameter_types =
+                declared_resource_parameter_types(&name, arguments.len(), resource_parameters)?;
+            clause.ensure = Ensure::Resource(ResourceClause::Named {
+                name,
+                arguments,
+                parameter_types,
+            });
         } else {
             clause.ensure =
                 Ensure::Proposition(ClickProposition::PredicateCall { name, arguments });
@@ -14270,18 +14326,19 @@ fn expand_declared_resource_ensure_clause(
     Ok(clause)
 }
 
-fn validate_declared_resource_arity(
+fn declared_resource_parameter_types(
     name: &str,
     actual: usize,
-    resource_arities: &BTreeMap<String, usize>,
-) -> Result<(), ClickError> {
-    let expected = resource_arities[name];
+    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+) -> Result<Vec<C0Type>, ClickError> {
+    let parameters = &resource_parameters[name];
+    let expected = parameters.len();
     if expected != actual {
         return Err(ClickError::new(format!(
             "resource `{name}` expects {expected} argument(s), got {actual}"
         )));
     }
-    Ok(())
+    Ok(parameters.clone())
 }
 
 fn combined_predicate_definitions(
@@ -14325,6 +14382,7 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
     }
 
     let mut click_functions = BTreeMap::new();
+    let mut click_function_types = BTreeMap::new();
     for definition in &click_function_definitions {
         if predicates.contains_key(definition.name()) {
             return Err(ClickError::new(format!(
@@ -14341,6 +14399,13 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
                 definition.name()
             )));
         }
+        click_function_types.insert(
+            definition.name().to_string(),
+            ClickFunctionType {
+                parameters: definition.parameters().to_vec(),
+                return_type: definition.return_type(),
+            },
+        );
     }
 
     let mut resources = BTreeMap::new();
@@ -14421,6 +14486,32 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
                 function.signature().name()
             )));
         }
+        let requires_type_environment =
+            function_signature_type_environment(function.signature(), false);
+        let ensures_type_environment =
+            function_signature_type_environment(function.signature(), true);
+
+        reject_duplicate_named_resource_clauses(
+            function
+                .requires()
+                .iter()
+                .filter_map(|requirement| match requirement.inner() {
+                    Requirement::Resource(resource) => Some(resource),
+                    _ => None,
+                }),
+            &format!("requires clauses in `{}`", function.signature().name()),
+        )?;
+        reject_duplicate_named_resource_clauses(
+            function
+                .ensures()
+                .iter()
+                .filter_map(|ensure| match ensure.ensure() {
+                    Ensure::Resource(resource) => Some(resource),
+                    _ => None,
+                }),
+            &format!("ensures clauses in `{}`", function.signature().name()),
+        )?;
+
         let mut requirement_labels = BTreeSet::new();
         for requirement in function.requires() {
             if let Some(label) = requirement.label() {
@@ -14443,6 +14534,8 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
                     resource,
                     &resources,
                     &click_functions,
+                    &click_function_types,
+                    &requires_type_environment,
                     &format!("requires clause in `{}`", function.signature().name()),
                 )?;
             }
@@ -14477,6 +14570,8 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
                     resource,
                     &resources,
                     &click_functions,
+                    &click_function_types,
+                    &ensures_type_environment,
                     &format!("ensures clause in `{}`", function.signature().name()),
                 )?,
             }
@@ -14486,15 +14581,379 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
     Ok(())
 }
 
+fn function_signature_type_environment(
+    signature: &FunctionSignature,
+    include_result: bool,
+) -> BTreeMap<String, C0Type> {
+    let mut variables = signature
+        .parameters()
+        .iter()
+        .map(|parameter| (parameter.name().to_string(), parameter.c_type()))
+        .collect::<BTreeMap<_, _>>();
+    if include_result {
+        variables.insert("result".to_string(), signature.return_type());
+    }
+    variables
+}
+
+fn reject_duplicate_named_resource_clauses<'a>(
+    resources: impl IntoIterator<Item = &'a ResourceClause>,
+    context: &str,
+) -> Result<(), ClickError> {
+    let mut seen = Vec::new();
+    for resource in resources {
+        if !matches!(resource, ResourceClause::Named { .. }) {
+            continue;
+        }
+        if seen.iter().any(|candidate| *candidate == resource) {
+            return Err(ClickError::new(format!(
+                "duplicate affine resource `{}` in {context}",
+                describe_resource_clause(resource)
+            )));
+        }
+        seen.push(resource);
+    }
+    Ok(())
+}
+
+fn describe_resource_clause(resource: &ResourceClause) -> String {
+    match resource {
+        ResourceClause::Read(segment) => format!(
+            "read({}[{}..{}])",
+            describe_c_expression(&segment.base),
+            describe_c_expression(&segment.start),
+            describe_c_expression(&segment.end)
+        ),
+        ResourceClause::Write(segment) => format!(
+            "write({}[{}..{}])",
+            describe_c_expression(&segment.base),
+            describe_c_expression(&segment.start),
+            describe_c_expression(&segment.end)
+        ),
+        ResourceClause::Free(segment) => format!(
+            "free({}[{}..{}])",
+            describe_c_expression(&segment.base),
+            describe_c_expression(&segment.start),
+            describe_c_expression(&segment.end)
+        ),
+        ResourceClause::Named {
+            name, arguments, ..
+        } => format!(
+            "{name}({})",
+            arguments
+                .iter()
+                .map(describe_contract_expression)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+fn describe_c0_type(c_type: C0Type) -> String {
+    match c_type {
+        C0Type::Int32 => "int32".to_string(),
+        C0Type::UInt8 => "uint8".to_string(),
+        C0Type::Int32Pointer | C0Type::Int32Array(_) => "int32*".to_string(),
+        C0Type::UInt8Pointer | C0Type::UInt8Array(_) => "uint8*".to_string(),
+    }
+}
+
+fn click_types_compatible(actual: C0Type, expected: C0Type) -> bool {
+    match (actual, expected) {
+        (C0Type::Int32Array(_), C0Type::Int32Pointer)
+        | (C0Type::Int32Pointer, C0Type::Int32Array(_)) => true,
+        (C0Type::UInt8Array(_), C0Type::UInt8Pointer)
+        | (C0Type::UInt8Pointer, C0Type::UInt8Array(_)) => true,
+        _ => actual == expected,
+    }
+}
+
+fn infer_contract_expression_type(
+    expression: &ContractExpression,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<Option<C0Type>, ClickError> {
+    match expression {
+        ContractExpression::CFragment(expression) => {
+            Ok(infer_c_expression_type(expression, variables))
+        }
+        ContractExpression::Old(expression) | ContractExpression::At { expression, .. } => {
+            infer_contract_expression_type(expression, variables, click_functions, context)
+        }
+        ContractExpression::Add(left, right) => {
+            infer_add_expression_type(left, right, variables, click_functions, context)
+        }
+        ContractExpression::Subtract(left, right) => {
+            infer_subtract_expression_type(left, right, variables, click_functions, context)
+        }
+        ContractExpression::Multiply(left, right)
+        | ContractExpression::Divide(left, right)
+        | ContractExpression::Remainder(left, right)
+        | ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right) => {
+            let left = infer_contract_expression_type(left, variables, click_functions, context)?;
+            let right = infer_contract_expression_type(right, variables, click_functions, context)?;
+            Ok(match (left, right) {
+                (Some(left), Some(right)) if type_is_scalar(left) && type_is_scalar(right) => {
+                    Some(C0Type::Int32)
+                }
+                _ => None,
+            })
+        }
+        ContractExpression::BitwiseNot(expression) => {
+            let expression =
+                infer_contract_expression_type(expression, variables, click_functions, context)?;
+            Ok(expression
+                .filter(|c_type| type_is_scalar(*c_type))
+                .map(|_| C0Type::Int32))
+        }
+        ContractExpression::Index(base, index) => {
+            let _ = infer_contract_expression_type(index, variables, click_functions, context)?;
+            Ok(
+                infer_contract_expression_type(base, variables, click_functions, context)?
+                    .and_then(pointer_element_type),
+            )
+        }
+        ContractExpression::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            let then_type =
+                infer_contract_expression_type(then_branch, variables, click_functions, context)?;
+            let else_type =
+                infer_contract_expression_type(else_branch, variables, click_functions, context)?;
+            Ok(match (then_type, else_type) {
+                (Some(then_type), Some(else_type))
+                    if click_types_compatible(then_type, else_type) =>
+                {
+                    Some(then_type)
+                }
+                (Some(_), Some(_)) => None,
+                (Some(c_type), None) | (None, Some(c_type)) => Some(c_type),
+                (None, None) => None,
+            })
+        }
+        ContractExpression::RangeFold {
+            initial,
+            accumulator,
+            item,
+            body,
+            ..
+        } => {
+            let initial_type =
+                infer_contract_expression_type(initial, variables, click_functions, context)?;
+            let mut body_variables = variables.clone();
+            if let Some(initial_type) = initial_type {
+                body_variables.insert(accumulator.clone(), initial_type);
+            }
+            body_variables.insert(item.clone(), C0Type::Int32);
+            infer_contract_expression_type(body, &body_variables, click_functions, context)
+                .map(|body_type| body_type.or(initial_type))
+        }
+        ContractExpression::Let {
+            name,
+            c_type,
+            value,
+            body,
+        } => {
+            let value_type =
+                infer_contract_expression_type(value, variables, click_functions, context)?;
+            if let (Some(expected), Some(actual)) = (*c_type, value_type) {
+                if !click_types_compatible(actual, expected) {
+                    return Err(ClickError::new(format!(
+                        "let binding `{name}` expects {}, got {} in {context}",
+                        describe_c0_type(expected),
+                        describe_c0_type(actual)
+                    )));
+                }
+            }
+            let mut body_variables = variables.clone();
+            if let Some(binding_type) = c_type.or(value_type) {
+                body_variables.insert(name.clone(), binding_type);
+            }
+            infer_contract_expression_type(body, &body_variables, click_functions, context)
+        }
+        ContractExpression::Call { name, arguments } => {
+            let Some(function) = click_functions.get(name) else {
+                return Ok(None);
+            };
+            for (index, (parameter, argument)) in
+                function.parameters.iter().zip(arguments).enumerate()
+            {
+                if let Some(actual) =
+                    infer_contract_expression_type(argument, variables, click_functions, context)?
+                {
+                    let expected = parameter.c_type();
+                    if !click_types_compatible(actual, expected) {
+                        return Err(ClickError::new(format!(
+                            "function `{name}` argument {index} expects {}, got {} in {context}",
+                            describe_c0_type(expected),
+                            describe_c0_type(actual)
+                        )));
+                    }
+                }
+            }
+            Ok(Some(function.return_type))
+        }
+    }
+}
+
+fn infer_c_expression_type(
+    expression: &CExpression,
+    variables: &BTreeMap<String, C0Type>,
+) -> Option<C0Type> {
+    match expression {
+        CExpression::Value(CValue::Int32(_)) => Some(C0Type::Int32),
+        CExpression::Value(CValue::UInt8(_)) => Some(C0Type::UInt8),
+        CExpression::Value(CValue::Pointer(_)) => None,
+        CExpression::Variable(name) => variables.get(name).copied(),
+        CExpression::AddressOf(_) => None,
+        CExpression::LessThan(_, _)
+        | CExpression::LessEqual(_, _)
+        | CExpression::GreaterThan(_, _)
+        | CExpression::GreaterEqual(_, _)
+        | CExpression::Equal(_, _)
+        | CExpression::NotEqual(_, _)
+        | CExpression::Not(_)
+        | CExpression::And(_, _)
+        | CExpression::Or(_, _) => Some(C0Type::Int32),
+        CExpression::Add(left, right) => infer_c_add_type(left, right, variables),
+        CExpression::Subtract(left, right) => infer_c_subtract_type(left, right, variables),
+        CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right) => {
+            let left = infer_c_expression_type(left, variables);
+            let right = infer_c_expression_type(right, variables);
+            match (left, right) {
+                (Some(left), Some(right)) if type_is_scalar(left) && type_is_scalar(right) => {
+                    Some(C0Type::Int32)
+                }
+                _ => None,
+            }
+        }
+        CExpression::BitwiseNot(expression) => infer_c_expression_type(expression, variables)
+            .filter(|c_type| type_is_scalar(*c_type))
+            .map(|_| C0Type::Int32),
+        CExpression::Load(pointer) => {
+            infer_c_expression_type(pointer, variables).and_then(pointer_element_type)
+        }
+        CExpression::Index(base, _) => {
+            infer_c_expression_type(base, variables).and_then(pointer_element_type)
+        }
+    }
+}
+
+fn infer_add_expression_type(
+    left: &ContractExpression,
+    right: &ContractExpression,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<Option<C0Type>, ClickError> {
+    let left = infer_contract_expression_type(left, variables, click_functions, context)?;
+    let right = infer_contract_expression_type(right, variables, click_functions, context)?;
+    Ok(pointer_arithmetic_type(left, right).or_else(|| scalar_arithmetic_type(left, right)))
+}
+
+fn infer_subtract_expression_type(
+    left: &ContractExpression,
+    right: &ContractExpression,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<Option<C0Type>, ClickError> {
+    let left = infer_contract_expression_type(left, variables, click_functions, context)?;
+    let right = infer_contract_expression_type(right, variables, click_functions, context)?;
+    Ok(match (left, right) {
+        (Some(left), Some(right)) if type_is_pointer(left) && type_is_scalar(right) => Some(left),
+        _ => scalar_arithmetic_type(left, right),
+    })
+}
+
+fn infer_c_add_type(
+    left: &CExpression,
+    right: &CExpression,
+    variables: &BTreeMap<String, C0Type>,
+) -> Option<C0Type> {
+    let left = infer_c_expression_type(left, variables);
+    let right = infer_c_expression_type(right, variables);
+    pointer_arithmetic_type(left, right).or_else(|| scalar_arithmetic_type(left, right))
+}
+
+fn infer_c_subtract_type(
+    left: &CExpression,
+    right: &CExpression,
+    variables: &BTreeMap<String, C0Type>,
+) -> Option<C0Type> {
+    let left = infer_c_expression_type(left, variables);
+    let right = infer_c_expression_type(right, variables);
+    match (left, right) {
+        (Some(left), Some(right)) if type_is_pointer(left) && type_is_scalar(right) => Some(left),
+        _ => scalar_arithmetic_type(left, right),
+    }
+}
+
+fn pointer_arithmetic_type(left: Option<C0Type>, right: Option<C0Type>) -> Option<C0Type> {
+    match (left, right) {
+        (Some(left), Some(right)) if type_is_pointer(left) && type_is_scalar(right) => Some(left),
+        (Some(left), Some(right)) if type_is_scalar(left) && type_is_pointer(right) => Some(right),
+        _ => None,
+    }
+}
+
+fn scalar_arithmetic_type(left: Option<C0Type>, right: Option<C0Type>) -> Option<C0Type> {
+    match (left, right) {
+        (Some(left), Some(right)) if type_is_scalar(left) && type_is_scalar(right) => {
+            Some(C0Type::Int32)
+        }
+        _ => None,
+    }
+}
+
+fn type_is_scalar(c_type: C0Type) -> bool {
+    matches!(c_type, C0Type::Int32 | C0Type::UInt8)
+}
+
+fn type_is_pointer(c_type: C0Type) -> bool {
+    matches!(
+        c_type,
+        C0Type::Int32Pointer | C0Type::UInt8Pointer | C0Type::Int32Array(_) | C0Type::UInt8Array(_)
+    )
+}
+
+fn pointer_element_type(c_type: C0Type) -> Option<C0Type> {
+    match c_type {
+        C0Type::Int32Pointer | C0Type::Int32Array(_) => Some(C0Type::Int32),
+        C0Type::UInt8Pointer | C0Type::UInt8Array(_) => Some(C0Type::UInt8),
+        C0Type::Int32 | C0Type::UInt8 => None,
+    }
+}
+
 fn validate_resource_clause(
     resource: &ResourceClause,
     resources: &BTreeMap<String, usize>,
     click_functions: &BTreeMap<String, usize>,
+    click_function_types: &BTreeMap<String, ClickFunctionType>,
+    variables: &BTreeMap<String, C0Type>,
     context: &str,
 ) -> Result<(), ClickError> {
     match resource {
         ResourceClause::Read(_) | ResourceClause::Write(_) | ResourceClause::Free(_) => Ok(()),
-        ResourceClause::Named { name, arguments } => {
+        ResourceClause::Named {
+            name,
+            arguments,
+            parameter_types,
+        } => {
             let Some(arity) = resources.get(name) else {
                 return Err(ClickError::new(format!(
                     "unknown resource `{name}` in {context}"
@@ -14506,8 +14965,28 @@ fn validate_resource_clause(
                     arguments.len()
                 )));
             }
-            for argument in arguments {
+            if parameter_types.len() != arguments.len() {
+                return Err(ClickError::new(format!(
+                    "resource `{name}` has malformed argument type metadata in {context}"
+                )));
+            }
+            for (index, argument) in arguments.iter().enumerate() {
                 validate_contract_expression_calls(argument, click_functions, context)?;
+                if let Some(actual) = infer_contract_expression_type(
+                    argument,
+                    variables,
+                    click_function_types,
+                    context,
+                )? {
+                    let expected = parameter_types[index];
+                    if !click_types_compatible(actual, expected) {
+                        return Err(ClickError::new(format!(
+                            "resource `{name}` argument {index} expects {}, got {} in {context}",
+                            describe_c0_type(expected),
+                            describe_c0_type(actual)
+                        )));
+                    }
+                }
             }
             Ok(())
         }
