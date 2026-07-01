@@ -11,7 +11,8 @@ by auto;
 
 `auto` is Click's default automation. It symbolically executes the C function,
 checks generated obligations, and tries the deterministic proof rules that are
-currently available.
+currently available. For pure theorem declarations, `auto` proves the theorem
+goal directly from the theorem's proposition requirements.
 
 ## Tactics
 
@@ -29,6 +30,10 @@ Use `simp` for deterministic local simplification, especially after unfolding a
 predicate.
 
 Use `frame` for `immutable` and `mutable` effect clauses.
+
+Pure theorem declarations currently support `auto`, `simp`, and proof-step
+scripts made from `unfold(name);` plus `simp();`. They do not run C execution
+steps because there is no C function body attached to the theorem.
 
 ## Proof-Step Scripts
 

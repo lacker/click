@@ -165,9 +165,10 @@ Likely additions:
   more source forms beyond requirements and better diagnostics for failed
   witnesses.
 - More complete range combinators:
-  `.all`, `.any`, `.fold`, `.map`-like derived definitions, and standard lemmas.
-- Lemma declarations:
-  reusable pure Click theorems over functions and predicates.
+  `.all`, `.any`, `.fold`, `.map`-like derived definitions, and standard
+  theorems.
+- Theorem declarations:
+  first-class reusable pure Click theorems over functions and predicates.
 - Explicit rewrite/calc steps:
   better than hiding all proof search inside `simp`.
 - Predicate/function namespaces that scale with modules.
@@ -176,7 +177,7 @@ Likely additions:
   permutations, sortedness, permission/ownership predicates, and frame
   predicates.
 - A clearer split between:
-  executable C behavior, pure Click functions, predicates, lemmas, and proof
+  executable C behavior, pure Click functions, predicates, theorems, and proof
   tactics.
 
 Design notes:
@@ -190,7 +191,7 @@ Done means:
 
 - The same library predicate can be reused across multiple functions without
   copying proof scripts.
-- Common range/string/frame facts are proved by named stdlib lemmas or stable
+- Common range/string/frame facts are proved by named stdlib theorems or stable
   proof steps, not by adding ad hoc special cases every time.
 
 ## Milestone 4: Modular Verification At Library Scale
@@ -274,7 +275,7 @@ Suggested order:
    functions.
 5. Verify memory safety first.
 6. Add functional postconditions once memory safety is stable.
-7. Document every reusable predicate or lemma in the standard library docs.
+7. Document every reusable predicate or theorem in the standard library docs.
 
 Done means:
 
@@ -293,7 +294,7 @@ Good next tasks from the current state:
 2. Document and then broaden the struct/field memory model beyond the current
    single-`int32`-field load/store, `valid_field(obj->field)`, and
    `mutable_field(obj->field)` lowering.
-3. Add more fold/range lemmas beyond alpha-equivalent folds and the current
+3. Add more fold/range theorems beyond alpha-equivalent folds and the current
    count-shaped split rules, especially when the pilot or sorting/string tests
    expose a reusable proof pattern.
 4. Extend the first C-string predicate layer toward a full string model. Open

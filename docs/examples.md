@@ -15,6 +15,14 @@ Larger example projects live directly under `examples/`. They contain ordinary
 - `mdtests/default_prover.md`: omitted proof clauses use `auto`.
 - `mdtests/simp_postconditions.md`: deterministic `simp` postconditions.
 
+## Pure Theorems
+
+- `mdtests/pure_theorem.md`: theorem-only `.click` file with no C source.
+- `mdtests/pure_theorem_unfold.md`: pure theorem proof script with predicate
+  unfolding.
+- `mdtests/pure_theorem_rejects_execution_step.md`: theorem proofs reject C
+  execution proof steps.
+
 ## Undefined Behavior And Arithmetic
 
 - `mdtests/overflow.md`: signed overflow proof behavior.

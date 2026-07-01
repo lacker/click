@@ -38,6 +38,33 @@ the current requirements/path facts must prove `0 <= value <= 255`.
 Each `ensures` clause is a separate guarantee. A guarantee may be labeled with
 `label:`. Omitting a proof clause uses the default prover, currently `auto`.
 
+## Pure Theorems
+
+Pure theorem declarations prove Click propositions without attaching the proof
+to a C function:
+
+```click
+theorem increment_preserves_positive(x: int32) {
+    requires x >= 0;
+    requires x < 2147483647;
+
+    ensures x + 1 > 0 by auto;
+}
+```
+
+Theorem parameters use `name: type` spelling. A theorem body uses the same
+contract-block shape as C function specs: immutable `let` bindings,
+proposition `requires` clauses, and proposition `ensures` clauses with proof
+clauses. A theorem-only `.click` file does not need a `verifying "file.c";`
+declaration.
+
+The first theorem slice is intentionally pure. It does not support resource
+`requires`, resource `ensures`, effects, structural proof blocks, `old(...)`,
+`at(...)`, or `result`. Pure theorem proof scripts currently support
+`unfold(name);` and `simp();`; C execution and resource proof steps are
+rejected. Theorem names are verified declarations, but theorem application as a
+reusable proof step is not implemented yet.
+
 ## Requirements
 
 Requirements are shared by all guarantees for the function.

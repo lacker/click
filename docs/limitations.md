@@ -140,7 +140,7 @@ for arithmetic bounds, memory safety, and postconditions.
 
 `simp` performs deterministic local normalization and selected proof rules. It
 does not search broadly, infer missing invariants, synthesize frame conditions,
-or invent arithmetic lemmas.
+or invent arithmetic theorems.
 
 ## Diagnostics Are Developer-Oriented
 

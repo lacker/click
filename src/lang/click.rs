@@ -35,6 +35,7 @@ pub struct ClickFile {
     predicate_definitions: Vec<PredicateDefinition>,
     click_function_definitions: Vec<ClickFunctionDefinition>,
     resource_definitions: Vec<ResourceDefinition>,
+    theorem_definitions: Vec<TheoremDefinition>,
     function_blocks: Vec<FunctionBlock>,
 }
 
@@ -65,6 +66,14 @@ pub struct ResourceDefinition {
 pub struct ResourceRepresentation {
     contains: Vec<ResourceClause>,
     invariants: Vec<ClickProposition>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TheoremDefinition {
+    name: String,
+    parameters: Vec<FunctionParameter>,
+    requires: Vec<Requirement>,
+    ensures: Vec<EnsureClause>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -555,6 +564,17 @@ pub struct VerifiedCTheorem {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedPureTheorem {
+    pub theorem_definition: TheoremDefinition,
+    pub ensure_index: usize,
+    pub ensure_clause: EnsureClause,
+    pub proof_kind: ProofKind,
+    pub proof_steps: Option<Vec<ProofStep>>,
+    pub requires: Vec<Proposition>,
+    pub conclusion: Proposition,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VerifiedClaim {
     Ensure { index: usize, clause: EnsureClause },
     Effect { index: usize, clause: EffectClause },
@@ -562,6 +582,7 @@ pub enum VerifiedClaim {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProofKind {
+    Pure,
     Frame,
     Simp,
     ProofSteps,
@@ -589,6 +610,10 @@ impl ClickFile {
 
     pub fn resource_definitions(&self) -> &[ResourceDefinition] {
         &self.resource_definitions
+    }
+
+    pub fn theorem_definitions(&self) -> &[TheoremDefinition] {
+        &self.theorem_definitions
     }
 
     pub fn function_blocks(&self) -> &[FunctionBlock] {
@@ -653,6 +678,24 @@ impl ResourceRepresentation {
 
     pub fn invariants(&self) -> &[ClickProposition] {
         &self.invariants
+    }
+}
+
+impl TheoremDefinition {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn parameters(&self) -> &[FunctionParameter] {
+        &self.parameters
+    }
+
+    pub fn requires(&self) -> &[Requirement] {
+        &self.requires
+    }
+
+    pub fn ensures(&self) -> &[EnsureClause] {
+        &self.ensures
     }
 }
 
@@ -903,6 +946,19 @@ pub fn parse(source: &str) -> Result<ClickFile, ClickError> {
     Parser::new(source)?.parse_file()
 }
 
+pub fn verify_click_theorems(click_source: &str) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
+    let file = parse(click_source)?;
+    let predicate_definitions = combined_predicate_definitions(&file)?;
+    let click_function_definitions = combined_click_function_definitions(&file)?;
+    let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
+    let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
+    verify_theorem_definitions(
+        file.theorem_definitions(),
+        &predicate_environment,
+        &click_function_environment,
+    )
+}
+
 pub fn verify_c0_sources(
     click_source: &str,
     c_sources: &[(&str, &str)],
@@ -917,6 +973,11 @@ pub fn verify_c0_sources(
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
     let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
     let resource_environment = ResourceEnvironment::new(&resource_definitions);
+    let _verified_theorems = verify_theorem_definitions(
+        file.theorem_definitions(),
+        &predicate_environment,
+        &click_function_environment,
+    )?;
     let mut verified = Vec::new();
 
     for function_block in file.function_blocks {
@@ -995,6 +1056,353 @@ pub fn verify_c0_sources(
     }
 
     Ok(verified)
+}
+
+fn verify_theorem_definitions(
+    theorem_definitions: &[TheoremDefinition],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
+    let mut verified = Vec::new();
+    for theorem in theorem_definitions {
+        let context =
+            pure_theorem_context(theorem, predicate_environment, click_function_environment)?;
+        for (ensure_index, ensure_clause) in theorem.ensures().iter().enumerate() {
+            let claim_label = theorem_claim_label(theorem.name(), ensure_index, ensure_clause);
+            let theorem = verify_theorem_ensure(
+                theorem,
+                ensure_index,
+                ensure_clause,
+                &claim_label,
+                &context,
+                predicate_environment,
+                click_function_environment,
+            )?;
+            verified.push(theorem);
+        }
+    }
+    Ok(verified)
+}
+
+#[derive(Clone, Debug)]
+struct PureTheoremContext {
+    memory: CMemory,
+    values: BTreeMap<String, CValue>,
+    array_refs: ClickArrayRefs,
+    requires: Vec<Proposition>,
+}
+
+fn pure_theorem_context(
+    theorem: &TheoremDefinition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<PureTheoremContext, ClickError> {
+    let memory = CMemory::new();
+    let values = pure_theorem_parameter_values(theorem.parameters());
+    let array_refs = pure_theorem_array_refs(theorem.parameters(), &values, &memory);
+    let requires = theorem
+        .requires()
+        .iter()
+        .map(|requirement| {
+            let Some(proposition) = requirement.proposition() else {
+                return Err(ClickError::new(format!(
+                    "pure theorem `{}` currently supports proposition `requires` clauses only",
+                    theorem.name()
+                )));
+            };
+            lower_pure_theorem_proposition(
+                theorem.name(),
+                proposition,
+                &values,
+                &array_refs,
+                &memory,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "theorem `{}` setup failed: could not lower requirement: {message}",
+                    theorem.name()
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(PureTheoremContext {
+        memory,
+        values,
+        array_refs,
+        requires,
+    })
+}
+
+fn pure_theorem_parameter_values(parameters: &[FunctionParameter]) -> BTreeMap<String, CValue> {
+    parameters
+        .iter()
+        .enumerate()
+        .map(|(index, parameter)| {
+            let value = match parameter.c_type() {
+                C0Type::Int32 => CValue::Int32(Bitvector32Term::Variable(Variable(index as u64))),
+                C0Type::UInt8 => CValue::UInt8(Bitvector32Term::Variable(Variable(index as u64))),
+                C0Type::Int32Pointer | C0Type::Int32Array(_) => CValue::Pointer(Pointer {
+                    block: EXTERNAL_ARGUMENT_MEMORY_BLOCK.to_string(),
+                    offset: scale_int32_offset(
+                        Bitvector32Term::Variable(Variable(
+                            POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                        )),
+                        4,
+                    ),
+                }),
+                C0Type::UInt8Pointer | C0Type::UInt8Array(_) => CValue::Pointer(Pointer {
+                    block: EXTERNAL_ARGUMENT_MEMORY_BLOCK.to_string(),
+                    offset: scale_int32_offset(
+                        Bitvector32Term::Variable(Variable(
+                            POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                        )),
+                        1,
+                    ),
+                }),
+            };
+            (parameter.name().to_string(), value)
+        })
+        .collect()
+}
+
+fn pure_theorem_array_refs(
+    parameters: &[FunctionParameter],
+    values: &BTreeMap<String, CValue>,
+    memory: &CMemory,
+) -> ClickArrayRefs {
+    parameters
+        .iter()
+        .filter_map(|parameter| {
+            let element_type = click_array_element_type(parameter.c_type())?;
+            let Some(CValue::Pointer(pointer)) = values.get(parameter.name()) else {
+                return None;
+            };
+            Some((
+                parameter.name().to_string(),
+                ClickArrayRef {
+                    memory: memory.clone(),
+                    pointer: pointer.clone(),
+                    element_type,
+                },
+            ))
+        })
+        .collect()
+}
+
+fn theorem_claim_label(
+    theorem_name: &str,
+    ensure_index: usize,
+    ensure_clause: &EnsureClause,
+) -> String {
+    match ensure_clause.name() {
+        Some(name) => format!("{theorem_name}.{name}"),
+        None => format!("{theorem_name}.ensures_{ensure_index}"),
+    }
+}
+
+fn verify_theorem_ensure(
+    theorem: &TheoremDefinition,
+    ensure_index: usize,
+    ensure_clause: &EnsureClause,
+    claim_label: &str,
+    context: &PureTheoremContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<VerifiedPureTheorem, ClickError> {
+    let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
+        return Err(ClickError::new(format!(
+            "pure theorem `{}` currently supports proposition `ensures` clauses only",
+            theorem.name()
+        )));
+    };
+    let goal = lower_pure_theorem_proposition(
+        theorem.name(),
+        surface_goal,
+        &context.values,
+        &context.array_refs,
+        &context.memory,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` failed: could not lower conclusion: {message}"
+        ))
+    })?;
+
+    match ensure_clause.proof() {
+        Proof::Tactic(Tactic::Auto) => {
+            prove_pure_theorem_goal(
+                claim_label,
+                "auto",
+                &context.requires,
+                &goal,
+                predicate_environment,
+                click_function_environment,
+                &[],
+                true,
+            )?;
+            Ok(VerifiedPureTheorem {
+                theorem_definition: theorem.clone(),
+                ensure_index,
+                ensure_clause: ensure_clause.clone(),
+                proof_kind: ProofKind::Pure,
+                proof_steps: None,
+                requires: context.requires.clone(),
+                conclusion: goal,
+            })
+        }
+        Proof::Tactic(Tactic::Simp) => {
+            prove_pure_theorem_goal(
+                claim_label,
+                "simp",
+                &context.requires,
+                &goal,
+                predicate_environment,
+                click_function_environment,
+                &[],
+                true,
+            )?;
+            Ok(VerifiedPureTheorem {
+                theorem_definition: theorem.clone(),
+                ensure_index,
+                ensure_clause: ensure_clause.clone(),
+                proof_kind: ProofKind::Simp,
+                proof_steps: None,
+                requires: context.requires.clone(),
+                conclusion: goal,
+            })
+        }
+        Proof::Tactic(Tactic::Frame) => Err(ClickError::new(format!(
+            "`frame` cannot prove pure theorem `{claim_label}`"
+        ))),
+        Proof::Steps(steps) => {
+            if steps.is_empty() {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` has an empty proof-step script"
+                )));
+            }
+            let mut unfolded_predicates = Vec::new();
+            let mut use_simp = false;
+            for (step_index, step) in steps.iter().enumerate() {
+                match step {
+                    ProofStep::Unfold(name) => {
+                        if predicate_environment.get(name).is_none() {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` proof step {step_index}: unknown predicate `{name}`"
+                            )));
+                        }
+                        if !unfolded_predicates.contains(name) {
+                            unfolded_predicates.push(name.clone());
+                        }
+                    }
+                    ProofStep::Simp => {
+                        use_simp = true;
+                    }
+                    _ => {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` proof step {step_index}: `{}` cannot prove a pure theorem",
+                            proof_step_name(step)
+                        )));
+                    }
+                }
+            }
+            prove_pure_theorem_goal(
+                claim_label,
+                "proof steps",
+                &context.requires,
+                &goal,
+                predicate_environment,
+                click_function_environment,
+                &unfolded_predicates,
+                use_simp,
+            )?;
+            Ok(VerifiedPureTheorem {
+                theorem_definition: theorem.clone(),
+                ensure_index,
+                ensure_clause: ensure_clause.clone(),
+                proof_kind: ProofKind::ProofSteps,
+                proof_steps: Some(steps.to_vec()),
+                requires: context.requires.clone(),
+                conclusion: goal,
+            })
+        }
+    }
+}
+
+fn lower_pure_theorem_proposition(
+    theorem_name: &str,
+    proposition: &ClickProposition,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
+    let mut lowerer = KernelPropositionLowerer::new(
+        values.clone(),
+        array_refs.clone(),
+        memory.clone(),
+        predicate_environment,
+        click_function_environment,
+    );
+    lowerer
+        .lower_requirement_proposition(proposition)
+        .map_err(|error| {
+            error
+                .message()
+                .replace("`requires`", &format!("pure theorem `{theorem_name}`"))
+        })
+}
+
+fn prove_pure_theorem_goal(
+    claim_label: &str,
+    proof_name: &str,
+    requires: &[Proposition],
+    goal: &Proposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+    use_simp: bool,
+) -> Result<(), ClickError> {
+    let available = unfold_available_predicate_facts(
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        requires,
+    )
+    .map_err(|message| ClickError::new(format!("`{claim_label}` failed: {message}")))?;
+    let assumptions = assumptions_from_propositions(&available);
+    let goal = unfold_predicates_in_proposition(
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        goal,
+        &assumptions,
+    )
+    .map_err(|message| ClickError::new(format!("`{claim_label}` failed: {message}")))?;
+    let assumptions = assumptions_from_propositions(&available);
+    if assumptions.proves(&goal) {
+        return Ok(());
+    }
+    if use_simp {
+        match simp_proposition(&goal, &assumptions) {
+            SimpProposition::True => return Ok(()),
+            simplified => {
+                return Err(ClickError::new(format!(
+                    "`{proof_name}` failed for `{claim_label}`: simplified proposition was not true: {simplified:?}\n  goal: {goal:?}\n  available requirements: {}",
+                    describe_propositions(&available)
+                )));
+            }
+        }
+    }
+
+    Err(ClickError::new(format!(
+        "`{proof_name}` failed for `{claim_label}`: proposition was not provable\n  goal: {goal:?}\n  available requirements: {}",
+        describe_propositions(&available)
+    )))
 }
 
 #[derive(Clone, Copy)]
@@ -2707,6 +3115,9 @@ fn parse_verified_sources<'a>(
     c_sources: &'a BTreeMap<&str, &str>,
 ) -> Result<BTreeMap<String, (String, syntax::C0Function)>, ClickError> {
     if file.verifying_sources.is_empty() {
+        if file.function_blocks().is_empty() {
+            return Ok(BTreeMap::new());
+        }
         return Err(ClickError::new(
             "`.click` file must declare at least one `verifying \"source.c\";`",
         ));
@@ -12985,6 +13396,7 @@ impl Parser {
         let mut predicate_definitions = Vec::new();
         let mut click_function_definitions = Vec::new();
         let mut resource_definitions = Vec::new();
+        let mut theorem_definitions = Vec::new();
         let mut function_blocks = Vec::new();
 
         while self.peek().is_some() {
@@ -12994,6 +13406,8 @@ impl Parser {
                 predicate_definitions.push(self.parse_predicate_definition()?);
             } else if self.peek_ident() == Some("function") {
                 click_function_definitions.push(self.parse_click_function_definition()?);
+            } else if self.peek_ident() == Some("theorem") {
+                theorem_definitions.push(self.parse_theorem_definition()?);
             } else if self.peek_ident() == Some("affine")
                 && self.peek_next_ident() == Some("resource")
             {
@@ -13008,6 +13422,7 @@ impl Parser {
             predicate_definitions,
             click_function_definitions,
             resource_definitions,
+            theorem_definitions,
             function_blocks,
         };
         Ok(file)
@@ -13153,6 +13568,86 @@ impl Parser {
                 None => return Err(self.error("expected `,` or `)`, got end of input")),
             }
         }
+    }
+
+    fn parse_theorem_definition(&mut self) -> Result<TheoremDefinition, ClickError> {
+        self.expect_ident_spelling("theorem")?;
+        let name = self.expect_ident("theorem name")?;
+        self.expect(Token::LParen)?;
+        let parameters = self.parse_resource_parameters()?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::LBrace)?;
+
+        let parameter_names = parameters
+            .iter()
+            .map(|parameter| parameter.name().to_string())
+            .collect::<BTreeSet<_>>();
+        let mut contract_lets = Vec::new();
+        let mut contract_let_names = BTreeSet::new();
+        let mut requires = Vec::new();
+        let mut ensures = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            match self.peek_ident() {
+                Some("let") => {
+                    let binding = self.parse_contract_let_binding()?;
+                    if parameter_names.contains(binding.name.as_str()) {
+                        return Err(self.error(format!(
+                            "theorem `let` `{}` conflicts with a parameter in `{name}`",
+                            binding.name
+                        )));
+                    }
+                    if !contract_let_names.insert(binding.name.clone()) {
+                        return Err(self.error(format!(
+                            "duplicate theorem `let` `{}` in `{name}`",
+                            binding.name
+                        )));
+                    }
+                    let substitutions = contract_let_substitutions(&contract_lets);
+                    let kind = match binding.kind {
+                        ContractLetBindingKind::Value(value) => ContractLetBindingKind::Value(
+                            substitute_contract_expression(&value, &substitutions)
+                                .map_err(|message| self.error(message))?,
+                        ),
+                        ContractLetBindingKind::Where(condition) => {
+                            ContractLetBindingKind::Where(condition)
+                        }
+                    };
+                    contract_lets.push(ContractLetBinding { kind, ..binding });
+                }
+                Some("requires") => {
+                    let requirement = self.parse_requirement()?;
+                    requires.push(
+                        apply_contract_lets_to_requirement(requirement, &contract_lets)
+                            .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some("ensures") => {
+                    let ensure = self.parse_ensure_clause()?;
+                    ensures.push(
+                        apply_contract_lets_to_ensure_clause(ensure, &contract_lets)
+                            .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some(keyword) => {
+                    return Err(self.error(format!(
+                        "expected `let`, `requires`, `ensures`, or `}}` in theorem `{name}`, got `{keyword}`"
+                    )));
+                }
+                None => {
+                    return Err(self.error(format!(
+                        "expected `let`, `requires`, `ensures`, or `}}` in theorem `{name}`"
+                    )));
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+
+        Ok(TheoremDefinition {
+            name,
+            parameters,
+            requires,
+            ensures,
+        })
     }
 
     fn parse_function_block(&mut self) -> Result<FunctionBlock, ClickError> {
@@ -14751,9 +15246,12 @@ fn standard_library_definitions() -> Result<
 > {
     let mut parser = Parser::new(CLICK_STANDARD_LIBRARY)?;
     let file = expand_declared_resource_clauses(parser.parse_file_items()?)?;
-    if !file.verifying_sources().is_empty() || !file.function_blocks().is_empty() {
+    if !file.verifying_sources().is_empty()
+        || !file.theorem_definitions().is_empty()
+        || !file.function_blocks().is_empty()
+    {
         return Err(ClickError::new(
-            "internal Click standard library must not contain verifying sources or C function specs",
+            "internal Click standard library must not contain verifying sources, theorem declarations, or C function specs",
         ));
     }
     Ok((
@@ -14807,6 +15305,21 @@ fn expand_declared_resource_clauses(mut file: ClickFile) -> Result<ClickFile, Cl
             .structural_clauses
             .drain(..)
             .map(|clause| expand_declared_resource_structural_clause(clause, &resource_parameters))
+            .collect::<Result<Vec<_>, _>>()?;
+    }
+
+    for theorem in &mut file.theorem_definitions {
+        theorem.requires = theorem
+            .requires
+            .drain(..)
+            .map(|requirement| {
+                expand_declared_resource_requirement(requirement, &resource_parameters)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        theorem.ensures = theorem
+            .ensures
+            .drain(..)
+            .map(|clause| expand_declared_resource_ensure_clause(clause, &resource_parameters))
             .collect::<Result<Vec<_>, _>>()?;
     }
 
@@ -15085,6 +15598,37 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
         }
     }
 
+    let mut theorems = BTreeMap::new();
+    for definition in file.theorem_definitions() {
+        if predicates.contains_key(definition.name()) {
+            return Err(ClickError::new(format!(
+                "`{}` is defined as both a predicate and a theorem",
+                definition.name()
+            )));
+        }
+        if click_functions.contains_key(definition.name()) {
+            return Err(ClickError::new(format!(
+                "`{}` is defined as both a function and a theorem",
+                definition.name()
+            )));
+        }
+        if resources.contains_key(definition.name()) {
+            return Err(ClickError::new(format!(
+                "`{}` is defined as both a resource and a theorem",
+                definition.name()
+            )));
+        }
+        if theorems
+            .insert(definition.name().to_string(), definition.parameters().len())
+            .is_some()
+        {
+            return Err(ClickError::new(format!(
+                "duplicate theorem definition `{}`",
+                definition.name()
+            )));
+        }
+    }
+
     for definition in &resource_definitions {
         validate_resource_definition(
             definition,
@@ -15118,6 +15662,15 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
     }
     reject_recursive_click_functions(&function_calls)?;
 
+    for theorem in file.theorem_definitions() {
+        validate_theorem_definition(
+            theorem,
+            &predicates,
+            &click_functions,
+            &click_function_types,
+        )?;
+    }
+
     let user_click_functions = file
         .click_function_definitions()
         .iter()
@@ -15128,6 +15681,12 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
         if user_click_functions.contains(function.signature().name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a Click function and a C function spec",
+                function.signature().name()
+            )));
+        }
+        if theorems.contains_key(function.signature().name()) {
+            return Err(ClickError::new(format!(
+                "`{}` is defined as both a theorem and a C function spec",
                 function.signature().name()
             )));
         }
@@ -15233,6 +15792,75 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
                 )?,
             }
         }
+    }
+
+    Ok(())
+}
+
+fn validate_theorem_definition(
+    theorem: &TheoremDefinition,
+    predicates: &BTreeMap<String, usize>,
+    click_functions: &BTreeMap<String, usize>,
+    click_function_types: &BTreeMap<String, ClickFunctionType>,
+) -> Result<(), ClickError> {
+    if theorem.ensures().is_empty() {
+        return Err(ClickError::new(format!(
+            "theorem `{}` must contain at least one `ensures` clause",
+            theorem.name()
+        )));
+    }
+
+    let variables = theorem_type_environment(theorem);
+    let mut requirement_labels = BTreeSet::new();
+    for requirement in theorem.requires() {
+        if let Some(label) = requirement.label() {
+            if !requirement_labels.insert(label.to_string()) {
+                return Err(ClickError::new(format!(
+                    "duplicate requirement label `{label}` in theorem `{}`",
+                    theorem.name()
+                )));
+            }
+        }
+        let Some(proposition) = requirement.proposition() else {
+            return Err(ClickError::new(format!(
+                "pure theorem `{}` currently supports proposition `requires` clauses only",
+                theorem.name()
+            )));
+        };
+        validate_predicate_calls_in_proposition(
+            proposition,
+            predicates,
+            click_functions,
+            &format!("requires clause in theorem `{}`", theorem.name()),
+        )?;
+        validate_proposition_expression_types(
+            proposition,
+            &variables,
+            click_function_types,
+            &format!("requires clause in theorem `{}`", theorem.name()),
+        )?;
+    }
+
+    for ensure in theorem.ensures() {
+        let Ensure::Proposition(proposition) = ensure.ensure() else {
+            return Err(ClickError::new(format!(
+                "pure theorem `{}` currently supports proposition `ensures` clauses only",
+                theorem.name()
+            )));
+        };
+        validate_predicate_calls_in_proposition(
+            proposition,
+            predicates,
+            click_functions,
+            &format!("ensures clause in theorem `{}`", theorem.name()),
+        )?;
+        validate_proposition_expression_types(
+            proposition,
+            &variables,
+            click_function_types,
+            &format!("ensures clause in theorem `{}`", theorem.name()),
+        )?;
+        validate_pure_theorem_proof(theorem.name(), ensure.proof())?;
     }
 
     Ok(())
@@ -15359,6 +15987,102 @@ fn function_signature_type_environment(
         variables.insert("result".to_string(), signature.return_type());
     }
     variables
+}
+
+fn theorem_type_environment(theorem: &TheoremDefinition) -> BTreeMap<String, C0Type> {
+    theorem
+        .parameters()
+        .iter()
+        .map(|parameter| (parameter.name().to_string(), parameter.c_type()))
+        .collect()
+}
+
+fn validate_proposition_expression_types(
+    proposition: &ClickProposition,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<(), ClickError> {
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            let _ = infer_contract_expression_type(left, variables, click_functions, context)?;
+            let _ = infer_contract_expression_type(right, variables, click_functions, context)?;
+            Ok(())
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            validate_proposition_expression_types(left, variables, click_functions, context)?;
+            validate_proposition_expression_types(right, variables, click_functions, context)
+        }
+        ClickProposition::Not(body)
+        | ClickProposition::ForAll { body, .. }
+        | ClickProposition::Exists { body, .. } => {
+            validate_proposition_expression_types(body, variables, click_functions, context)
+        }
+        ClickProposition::RangeAll {
+            start, end, body, ..
+        }
+        | ClickProposition::RangeAny {
+            start, end, body, ..
+        } => {
+            let _ = infer_contract_expression_type(start, variables, click_functions, context)?;
+            let _ = infer_contract_expression_type(end, variables, click_functions, context)?;
+            validate_proposition_expression_types(body, variables, click_functions, context)
+        }
+        ClickProposition::PredicateCall { arguments, .. } => {
+            for argument in arguments {
+                let _ =
+                    infer_contract_expression_type(argument, variables, click_functions, context)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_pure_theorem_proof(theorem_name: &str, proof: &Proof) -> Result<(), ClickError> {
+    match proof {
+        Proof::Tactic(Tactic::Auto | Tactic::Simp) => Ok(()),
+        Proof::Tactic(Tactic::Frame) => Err(ClickError::new(format!(
+            "`frame` cannot prove pure theorem `{theorem_name}`"
+        ))),
+        Proof::Steps(steps) => {
+            for step in steps {
+                match step {
+                    ProofStep::Unfold(_) | ProofStep::Simp => {}
+                    ProofStep::SymbolicExecute
+                    | ProofStep::BoundedExecute
+                    | ProofStep::LoopVc(_)
+                    | ProofStep::Frame(_)
+                    | ProofStep::OpenResource(_)
+                    | ProofStep::CloseResource(_)
+                    | ProofStep::Witness(_)
+                    | ProofStep::Choose(_) => {
+                        return Err(ClickError::new(format!(
+                            "proof step `{}` cannot prove pure theorem `{theorem_name}`",
+                            proof_step_name(step)
+                        )));
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+fn proof_step_name(step: &ProofStep) -> &'static str {
+    match step {
+        ProofStep::SymbolicExecute => "symbolic_execute",
+        ProofStep::BoundedExecute => "bounded_execute",
+        ProofStep::LoopVc(_) => "loop_vc",
+        ProofStep::Frame(_) => "frame",
+        ProofStep::Unfold(_) => "unfold",
+        ProofStep::OpenResource(_) => "open",
+        ProofStep::CloseResource(_) => "close",
+        ProofStep::Witness(_) => "witness",
+        ProofStep::Choose(_) => "choose",
+        ProofStep::Simp => "simp",
+    }
 }
 
 fn reject_duplicate_named_resource_clauses<'a>(
@@ -16588,6 +17312,50 @@ mod tests {
             )
         );
         assert!(ensure.proof().is_auto_tactic());
+    }
+
+    #[test]
+    fn parses_pure_theorem_definition() {
+        let source = r#"
+            theorem preserves_nonnegative(x: int32) {
+                requires input_nonnegative: x >= 0;
+                ensures output_nonnegative: x >= 0 by auto;
+            }
+        "#;
+
+        let file = parse(source).expect("theorem should parse");
+        assert_eq!(file.theorem_definitions().len(), 1);
+        let theorem = &file.theorem_definitions()[0];
+        assert_eq!(theorem.name(), "preserves_nonnegative");
+        assert_eq!(
+            theorem.parameters(),
+            &[FunctionParameter {
+                c_type: C0Type::Int32,
+                name: "x".to_string()
+            }]
+        );
+        assert_eq!(theorem.requires().len(), 1);
+        assert_eq!(theorem.requires()[0].label(), Some("input_nonnegative"));
+        assert_eq!(theorem.ensures().len(), 1);
+        assert_eq!(theorem.ensures()[0].name(), Some("output_nonnegative"));
+    }
+
+    #[test]
+    fn verifies_pure_theorem_definition() {
+        let source = r#"
+            theorem preserves_nonnegative(x: int32) {
+                requires x >= 0;
+                ensures x >= 0 by auto;
+            }
+        "#;
+
+        let verified = verify_click_theorems(source).expect("theorem should verify");
+        assert_eq!(verified.len(), 1);
+        assert_eq!(
+            verified[0].theorem_definition.name(),
+            "preserves_nonnegative"
+        );
+        assert_eq!(verified[0].proof_kind, ProofKind::Pure);
     }
 
     #[test]
