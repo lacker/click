@@ -49,6 +49,9 @@ Current proof steps:
 - `frame(loop(N));`: prove the effect summary for loop code region `N` and
   expose it for later postcondition reasoning.
 - `unfold(name);`: unfold matching predicate facts and goals.
+- `apply(theorem_name(args...));`: instantiate an earlier verified pure theorem,
+  prove its requirements from the current proof context, and add its conclusions
+  as derived facts.
 - `choose(k from requirement name);`: open a named existential precondition,
   introducing proof-local int32 value `k`.
 - `choose(k from requirement N);`: the same operation by zero-based requirement

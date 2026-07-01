@@ -167,8 +167,10 @@ Likely additions:
 - More complete range combinators:
   `.all`, `.any`, `.fold`, `.map`-like derived definitions, and standard
   theorems.
-- Theorem declarations:
-  first-class reusable pure Click theorems over functions and predicates.
+- Richer theorem reuse:
+  theorem application exists for pure proposition theorems; next slices should
+  cover theorem libraries, better diagnostics, and eventually resource-aware
+  theorem forms.
 - Explicit rewrite/calc steps:
   better than hiding all proof search inside `simp`.
 - Predicate/function namespaces that scale with modules.

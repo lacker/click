@@ -20,8 +20,14 @@ Larger example projects live directly under `examples/`. They contain ordinary
 - `mdtests/pure_theorem.md`: theorem-only `.click` file with no C source.
 - `mdtests/pure_theorem_unfold.md`: pure theorem proof script with predicate
   unfolding.
+- `mdtests/pure_theorem_apply.md`: pure theorem proof script applying an
+  earlier theorem.
 - `mdtests/pure_theorem_rejects_execution_step.md`: theorem proofs reject C
   execution proof steps.
+- `mdtests/theorem_apply_in_function_proof.md`: C function proof script applying
+  a pure theorem after symbolic execution.
+- `mdtests/theorem_apply_requires_precondition.md`: theorem application fails
+  when the applied theorem's requirements are not available.
 
 ## Undefined Behavior And Arithmetic
 

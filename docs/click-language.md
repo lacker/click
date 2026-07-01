@@ -61,9 +61,37 @@ declaration.
 The first theorem slice is intentionally pure. It does not support resource
 `requires`, resource `ensures`, effects, structural proof blocks, `old(...)`,
 `at(...)`, or `result`. Pure theorem proof scripts currently support
-`unfold(name);` and `simp();`; C execution and resource proof steps are
-rejected. Theorem names are verified declarations, but theorem application as a
-reusable proof step is not implemented yet.
+`unfold(name);`, `apply(theorem(args));`, and `simp();`; C execution and
+resource proof steps are rejected.
+
+Theorems can be reused by explicit application:
+
+```click
+theorem nonnegative_body(x: int32) {
+    requires nonnegative(x);
+    ensures x >= 0 by {
+        unfold(nonnegative);
+        simp();
+    }
+}
+
+theorem reuses_nonnegative_body(y: int32) {
+    requires nonnegative(y);
+    ensures y >= 0 by {
+        apply(nonnegative_body(y));
+        simp();
+    }
+}
+```
+
+`apply(...)` instantiates an earlier verified theorem, proves that theorem's
+`requires` clauses from the current proof context, and adds its proposition
+`ensures` clauses as derived facts. Theorem declarations are checked in source
+order, so a theorem proof can apply only earlier theorem declarations. C
+function proof scripts can apply any verified theorem in the file. In C
+function proof scripts, `apply(...)` runs after `symbolic_execute();` or
+`bounded_execute();`, where `result`, post-state expressions, and ordinary
+`old(...)` arguments can be evaluated.
 
 ## Requirements
 

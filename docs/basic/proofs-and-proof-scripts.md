@@ -32,8 +32,9 @@ predicate.
 Use `frame` for `immutable` and `mutable` effect clauses.
 
 Pure theorem declarations currently support `auto`, `simp`, and proof-step
-scripts made from `unfold(name);` plus `simp();`. They do not run C execution
-steps because there is no C function body attached to the theorem.
+scripts made from `unfold(name);`, `apply(theorem(args));`, and `simp();`.
+They do not run C execution steps because there is no C function body attached
+to the theorem.
 
 ## Proof-Step Scripts
 
@@ -53,6 +54,7 @@ Common steps include:
 
 - `symbolic_execute();`: execute the C function symbolically.
 - `unfold(name);`: open a named predicate.
+- `apply(theorem(args));`: use an earlier verified theorem as a derived fact.
 - `simp();`: simplify the current proof goal.
 - `frame();`: prove an effect claim.
 

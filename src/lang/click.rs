@@ -435,11 +435,18 @@ pub enum ProofStep {
     LoopVc(CodeRegionRef),
     Frame(Option<CodeRegionRef>),
     Unfold(String),
+    ApplyTheorem(TheoremApplication),
     OpenResource(ResourceClause),
     CloseResource(ResourceClause),
     Witness(ProofWitness),
     Choose(ProofChoice),
     Simp,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TheoremApplication {
+    name: String,
+    arguments: Vec<ContractExpression>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -549,6 +556,31 @@ impl ResourceEnvironment {
 
     fn get(&self, name: &str) -> Option<&ResourceDefinition> {
         self.definitions.get(name)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TheoremEnvironment {
+    definitions: BTreeMap<String, TheoremDefinition>,
+}
+
+impl TheoremEnvironment {
+    fn new(definitions: &[TheoremDefinition]) -> Self {
+        Self {
+            definitions: definitions
+                .iter()
+                .map(|definition| (definition.name().to_string(), definition.clone()))
+                .collect(),
+        }
+    }
+
+    fn get(&self, name: &str) -> Option<&TheoremDefinition> {
+        self.definitions.get(name)
+    }
+
+    fn insert(&mut self, definition: TheoremDefinition) {
+        self.definitions
+            .insert(definition.name().to_string(), definition);
     }
 }
 
@@ -970,6 +1002,7 @@ pub fn verify_c0_sources(
     let predicate_definitions = combined_predicate_definitions(&file)?;
     let click_function_definitions = combined_click_function_definitions(&file)?;
     let resource_definitions = combined_resource_definitions(&file)?;
+    let theorem_definitions = file.theorem_definitions().to_vec();
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
     let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
     let resource_environment = ResourceEnvironment::new(&resource_definitions);
@@ -978,6 +1011,7 @@ pub fn verify_c0_sources(
         &predicate_environment,
         &click_function_environment,
     )?;
+    let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
     let mut verified = Vec::new();
 
     for function_block in file.function_blocks {
@@ -1005,6 +1039,7 @@ pub fn verify_c0_sources(
                         &predicate_environment,
                         &click_function_environment,
                         &resource_environment,
+                        &theorem_environment,
                     )?;
                     verified.extend(theorems);
                 }
@@ -1019,6 +1054,7 @@ pub fn verify_c0_sources(
                         &predicate_environment,
                         &click_function_environment,
                         &resource_environment,
+                        &theorem_environment,
                     )?;
                     verified.extend(theorems);
                 }
@@ -1033,6 +1069,7 @@ pub fn verify_c0_sources(
                         &predicate_environment,
                         &click_function_environment,
                         &resource_environment,
+                        &theorem_environment,
                     )?;
                     verified.extend(theorems);
                 }
@@ -1047,6 +1084,7 @@ pub fn verify_c0_sources(
                         &predicate_environment,
                         &click_function_environment,
                         &resource_environment,
+                        &theorem_environment,
                         steps,
                     )?;
                     verified.extend(theorems);
@@ -1064,6 +1102,7 @@ fn verify_theorem_definitions(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let mut verified = Vec::new();
+    let mut theorem_environment = TheoremEnvironment::new(&[]);
     for theorem in theorem_definitions {
         let context =
             pure_theorem_context(theorem, predicate_environment, click_function_environment)?;
@@ -1077,9 +1116,11 @@ fn verify_theorem_definitions(
                 &context,
                 predicate_environment,
                 click_function_environment,
+                &theorem_environment,
             )?;
             verified.push(theorem);
         }
+        theorem_environment.insert(theorem.clone());
     }
     Ok(verified)
 }
@@ -1210,6 +1251,7 @@ fn verify_theorem_ensure(
     context: &PureTheoremContext,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
 ) -> Result<VerifiedPureTheorem, ClickError> {
     let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
         return Err(ClickError::new(format!(
@@ -1241,6 +1283,9 @@ fn verify_theorem_ensure(
                 &goal,
                 predicate_environment,
                 click_function_environment,
+                theorem_environment,
+                context,
+                &[],
                 &[],
                 true,
             )?;
@@ -1262,6 +1307,9 @@ fn verify_theorem_ensure(
                 &goal,
                 predicate_environment,
                 click_function_environment,
+                theorem_environment,
+                context,
+                &[],
                 &[],
                 true,
             )?;
@@ -1285,6 +1333,7 @@ fn verify_theorem_ensure(
                 )));
             }
             let mut unfolded_predicates = Vec::new();
+            let mut theorem_applications = Vec::new();
             let mut use_simp = false;
             for (step_index, step) in steps.iter().enumerate() {
                 match step {
@@ -1297,6 +1346,15 @@ fn verify_theorem_ensure(
                         if !unfolded_predicates.contains(name) {
                             unfolded_predicates.push(name.clone());
                         }
+                    }
+                    ProofStep::ApplyTheorem(application) => {
+                        if theorem_environment.get(&application.name).is_none() {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` proof step {step_index}: unknown theorem `{}`",
+                                application.name
+                            )));
+                        }
+                        theorem_applications.push((step_index, application.clone()));
                     }
                     ProofStep::Simp => {
                         use_simp = true;
@@ -1316,6 +1374,9 @@ fn verify_theorem_ensure(
                 &goal,
                 predicate_environment,
                 click_function_environment,
+                theorem_environment,
+                context,
+                &theorem_applications,
                 &unfolded_predicates,
                 use_simp,
             )?;
@@ -1364,16 +1425,38 @@ fn prove_pure_theorem_goal(
     goal: &Proposition,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    context: &PureTheoremContext,
+    theorem_applications: &[(usize, TheoremApplication)],
     unfolded_predicates: &[String],
     use_simp: bool,
 ) -> Result<(), ClickError> {
-    let available = unfold_available_predicate_facts(
+    let mut available = unfold_available_predicate_facts(
         predicate_environment,
         click_function_environment,
         unfolded_predicates,
         requires,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` failed: {message}")))?;
+    let state = CState::new().with_memory(context.memory.clone());
+    let application_context = TheoremApplicationContext {
+        values: &context.values,
+        array_refs: &context.array_refs,
+        pre_state: &state,
+        post_state: &state,
+        result: None,
+    };
+    available = apply_theorem_applications_to_available(
+        theorem_environment,
+        theorem_applications,
+        claim_label,
+        None,
+        available,
+        &application_context,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+    )?;
     let assumptions = assumptions_from_propositions(&available);
     let goal = unfold_predicates_in_proposition(
         predicate_environment,
@@ -1403,6 +1486,290 @@ fn prove_pure_theorem_goal(
         "`{proof_name}` failed for `{claim_label}`: proposition was not provable\n  goal: {goal:?}\n  available requirements: {}",
         describe_propositions(&available)
     )))
+}
+
+struct TheoremApplicationContext<'a> {
+    values: &'a BTreeMap<String, CValue>,
+    array_refs: &'a ClickArrayRefs,
+    pre_state: &'a CState,
+    post_state: &'a CState,
+    result: Option<&'a CValue>,
+}
+
+fn apply_theorem_applications_to_available(
+    theorem_environment: &TheoremEnvironment,
+    theorem_applications: &[(usize, TheoremApplication)],
+    claim_label: &str,
+    path_index: Option<usize>,
+    mut available: Vec<Proposition>,
+    context: &TheoremApplicationContext<'_>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+) -> Result<Vec<Proposition>, ClickError> {
+    for (step_index, application) in theorem_applications {
+        available = unfold_available_predicate_facts(
+            predicate_environment,
+            click_function_environment,
+            unfolded_predicates,
+            &available,
+        )
+        .map_err(|message| {
+            theorem_application_error(claim_label, path_index, *step_index, message)
+        })?;
+        let conclusions = instantiate_theorem_application(
+            theorem_environment,
+            application,
+            claim_label,
+            path_index,
+            *step_index,
+            &available,
+            context,
+            predicate_environment,
+            click_function_environment,
+            unfolded_predicates,
+        )?;
+        for conclusion in conclusions {
+            if !available.contains(&conclusion) {
+                available.push(conclusion);
+            }
+        }
+    }
+    unfold_available_predicate_facts(
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        &available,
+    )
+    .map_err(|message| theorem_application_error(claim_label, path_index, 0, message))
+}
+
+fn instantiate_theorem_application(
+    theorem_environment: &TheoremEnvironment,
+    application: &TheoremApplication,
+    claim_label: &str,
+    path_index: Option<usize>,
+    step_index: usize,
+    available: &[Proposition],
+    context: &TheoremApplicationContext<'_>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+) -> Result<Vec<Proposition>, ClickError> {
+    let theorem = theorem_environment.get(&application.name).ok_or_else(|| {
+        theorem_application_error(
+            claim_label,
+            path_index,
+            step_index,
+            format!("unknown theorem `{}`", application.name),
+        )
+    })?;
+    if application.arguments.len() != theorem.parameters().len() {
+        return Err(theorem_application_error(
+            claim_label,
+            path_index,
+            step_index,
+            format!(
+                "theorem `{}` expects {} argument(s), got {}",
+                theorem.name(),
+                theorem.parameters().len(),
+                application.arguments.len()
+            ),
+        ));
+    }
+
+    let assumptions = assumptions_from_propositions(available);
+    let (values, array_refs) = theorem_application_bindings(
+        theorem,
+        application,
+        context,
+        &assumptions,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| theorem_application_error(claim_label, path_index, step_index, message))?;
+    let mut lowerer = KernelPropositionLowerer::new(
+        values,
+        array_refs,
+        context.post_state.memory().clone(),
+        predicate_environment,
+        click_function_environment,
+    );
+
+    for requirement in theorem.requires() {
+        let Some(requirement) = requirement.proposition() else {
+            return Err(theorem_application_error(
+                claim_label,
+                path_index,
+                step_index,
+                format!(
+                    "theorem `{}` has a non-proposition requirement that cannot be applied here",
+                    theorem.name()
+                ),
+            ));
+        };
+        let mut lowered = lowerer
+            .lower_requirement_proposition(requirement)
+            .map_err(|error| {
+                theorem_application_error(
+                    claim_label,
+                    path_index,
+                    step_index,
+                    format!(
+                        "could not lower theorem `{}` requirement: {}",
+                        theorem.name(),
+                        error.message()
+                    ),
+                )
+            })?;
+        lowered = unfold_predicates_in_proposition(
+            predicate_environment,
+            click_function_environment,
+            unfolded_predicates,
+            &lowered,
+            &assumptions,
+        )
+        .map_err(|message| {
+            theorem_application_error(claim_label, path_index, step_index, message)
+        })?;
+        if !assumptions.proves(&lowered)
+            && !matches!(
+                simp_proposition(&lowered, &assumptions),
+                SimpProposition::True
+            )
+        {
+            return Err(theorem_application_error(
+                claim_label,
+                path_index,
+                step_index,
+                format!(
+                    "could not prove requirement for theorem `{}`: {lowered:?}\n  available requirements: {}",
+                    theorem.name(),
+                    describe_propositions(available)
+                ),
+            ));
+        }
+    }
+
+    let mut conclusions = Vec::new();
+    for ensure in theorem.ensures() {
+        let Ensure::Proposition(conclusion) = ensure.ensure() else {
+            return Err(theorem_application_error(
+                claim_label,
+                path_index,
+                step_index,
+                format!(
+                    "theorem `{}` has a non-proposition conclusion that cannot be applied here",
+                    theorem.name()
+                ),
+            ));
+        };
+        let conclusion = lowerer
+            .lower_requirement_proposition(conclusion)
+            .map_err(|error| {
+                theorem_application_error(
+                    claim_label,
+                    path_index,
+                    step_index,
+                    format!(
+                        "could not lower theorem `{}` conclusion: {}",
+                        theorem.name(),
+                        error.message()
+                    ),
+                )
+            })?;
+        conclusions.push(conclusion);
+    }
+    Ok(conclusions)
+}
+
+fn theorem_application_bindings(
+    theorem: &TheoremDefinition,
+    application: &TheoremApplication,
+    context: &TheoremApplicationContext<'_>,
+    assumptions: &Assumptions,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<(BTreeMap<String, CValue>, ClickArrayRefs), String> {
+    let mut active_functions = BTreeSet::new();
+    let mut values = BTreeMap::new();
+    let mut array_refs = BTreeMap::new();
+    for (parameter, argument) in theorem.parameters().iter().zip(&application.arguments) {
+        if parameter_is_click_array_ref(parameter) {
+            let array_ref = evaluate_contract_array_ref_with_environment(
+                context.values,
+                context.array_refs,
+                context.pre_state,
+                context.post_state,
+                context.result,
+                assumptions,
+                argument,
+                predicate_environment,
+                click_function_environment,
+                &mut active_functions,
+            )?;
+            let expected_element_type =
+                click_array_element_type(parameter.c_type()).ok_or_else(|| {
+                    format!(
+                        "theorem `{}` parameter `{}` is not an array-ref parameter",
+                        theorem.name(),
+                        parameter.name()
+                    )
+                })?;
+            if array_ref.element_type != expected_element_type {
+                return Err(format!(
+                    "theorem `{}` parameter `{}` expects {:?} array elements, got {:?}",
+                    theorem.name(),
+                    parameter.name(),
+                    expected_element_type,
+                    array_ref.element_type
+                ));
+            }
+            values.insert(
+                parameter.name().to_string(),
+                CValue::Pointer(array_ref.pointer.clone()),
+            );
+            array_refs.insert(parameter.name().to_string(), array_ref);
+        } else {
+            let value = evaluate_contract_expression_with_environment(
+                context.values,
+                context.array_refs,
+                context.pre_state,
+                context.post_state,
+                context.result,
+                assumptions,
+                argument,
+                predicate_environment,
+                click_function_environment,
+                &mut active_functions,
+            )?;
+            if !c_value_matches_click_type(&value, parameter.c_type()) {
+                return Err(format!(
+                    "theorem `{}` parameter `{}` expects {}, got {value:?}",
+                    theorem.name(),
+                    parameter.name(),
+                    describe_c0_type(parameter.c_type())
+                ));
+            }
+            values.insert(parameter.name().to_string(), value);
+        }
+    }
+    Ok((values, array_refs))
+}
+
+fn theorem_application_error(
+    claim_label: &str,
+    path_index: Option<usize>,
+    step_index: usize,
+    message: impl Into<String>,
+) -> ClickError {
+    let path = path_index
+        .map(|index| format!(" path {index},"))
+        .unwrap_or_default();
+    ClickError::new(format!(
+        "`{claim_label}`{path} proof step {step_index}: `apply` failed: {}",
+        message.into()
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -1459,6 +1826,7 @@ fn prove_claim_by_auto(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let (state, arguments, requirement_propositions) = initial_call(
         function_block.signature.name(),
@@ -1521,6 +1889,7 @@ fn prove_claim_by_auto(
                 predicate_environment,
                 click_function_environment,
                 resource_environment,
+                theorem_environment,
                 auto_loop_verification_proof_step_candidates(function_block, claim),
             );
             return Ok(with_proof_steps(theorems, proof_steps));
@@ -1569,6 +1938,7 @@ fn prove_claim_by_auto(
         predicate_environment,
         click_function_environment,
         resource_environment,
+        theorem_environment,
         bounded_execution_proof_step_candidates(claim),
     );
     Ok(with_proof_steps(theorems, proof_steps))
@@ -1584,6 +1954,7 @@ fn prove_claim_by_frame(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if matches!(claim, FunctionClaimRef::Ensure(_, _)) {
         return Err(ClickError::new(format!(
@@ -1655,6 +2026,7 @@ fn prove_claim_by_frame(
         predicate_environment,
         click_function_environment,
         resource_environment,
+        theorem_environment,
         frame_proof_step_candidates(),
     );
     Ok(with_proof_steps(theorems, proof_steps))
@@ -1670,6 +2042,7 @@ fn prove_claim_by_simp(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if count_loops(parsed_function.body()) != 0 {
         return Err(ClickError::new(format!(
@@ -1709,6 +2082,7 @@ fn prove_claim_by_simp(
         predicate_environment,
         click_function_environment,
         resource_environment,
+        theorem_environment,
         vec![vec![ProofStep::SymbolicExecute, ProofStep::Simp]],
     );
     let assumptions = assumptions_from_propositions(&requirement_propositions);
@@ -1808,6 +2182,7 @@ struct ProofStepReplayState {
     loop_vcs: BTreeSet<usize>,
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
+    theorem_applications: Vec<(usize, TheoremApplication)>,
     resource_closes: Vec<ResourceClause>,
     simp: bool,
 }
@@ -1828,6 +2203,7 @@ fn prove_claim_by_steps(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
     steps: &[ProofStep],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if steps.is_empty() {
@@ -1980,6 +2356,18 @@ fn prove_claim_by_steps(
                     replay.unfolded_predicates.push(name.clone());
                 }
             }
+            ProofStep::ApplyTheorem(application) => {
+                require_step_execution(&replay, claim_label, step_index, "apply")?;
+                if theorem_environment.get(&application.name).is_none() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: unknown theorem `{}`",
+                        application.name
+                    )));
+                }
+                replay
+                    .theorem_applications
+                    .push((step_index, application.clone()));
+            }
             ProofStep::CloseResource(resource) => {
                 require_step_execution(&replay, claim_label, step_index, "close")?;
                 replay.resource_closes.push(resource.clone());
@@ -2015,12 +2403,14 @@ fn prove_claim_by_steps(
         predicate_environment,
         click_function_environment,
         resource_environment,
+        theorem_environment,
         parsed_function.parameters(),
         &function,
         &state,
         &arguments,
         &requirement_propositions,
         &replay.unfolded_predicates,
+        &replay.theorem_applications,
         &replay.resource_closes,
         replay.simp,
         steps,
@@ -2622,12 +3012,14 @@ fn prove_claim_from_steps_execution(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
     parameters: &[syntax::C0Parameter],
     function: &CFunction,
     state: &CState,
     arguments: &[CExpression],
     requirement_propositions: &[Proposition],
     unfolded_predicates: &[String],
+    theorem_applications: &[(usize, TheoremApplication)],
     resource_closes: &[ResourceClause],
     use_simp: bool,
     proof_steps: &[ProofStep],
@@ -2692,6 +3084,44 @@ fn prove_claim_from_steps_execution(
             click_function_environment,
             unfolded_predicates,
         )?;
+        if !theorem_applications.is_empty() {
+            let CFunctionOutcome::Return {
+                value: result,
+                state: post_state,
+            } = &outcome
+            else {
+                return Err(ClickError::new(format!(
+                    "`proof steps` failed for `{claim_label}` path {path_index}: theorem application requires a return outcome, got {}\n  path facts: {}",
+                    describe_function_outcome(&outcome, parameters, arguments),
+                    describe_facts(path.facts())
+                )));
+            };
+            let values = parameter_values(parameters, arguments).map_err(|error| {
+                ClickError::new(format!(
+                    "`proof steps` failed for `{claim_label}` path {path_index}: {}",
+                    error.message
+                ))
+            })?;
+            let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
+            let application_context = TheoremApplicationContext {
+                values: &values,
+                array_refs: &array_refs,
+                pre_state: state,
+                post_state,
+                result: Some(result),
+            };
+            path_requirements = apply_theorem_applications_to_available(
+                theorem_environment,
+                theorem_applications,
+                claim_label,
+                Some(path_index),
+                path_requirements,
+                &application_context,
+                predicate_environment,
+                click_function_environment,
+                unfolded_predicates,
+            )?;
+        }
         let mut checking_requirements = path_requirements.clone();
         let has_existence_steps = proof_steps
             .iter()
@@ -2871,6 +3301,7 @@ fn certified_proof_steps(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
     candidates: Vec<Vec<ProofStep>>,
 ) -> Option<Vec<ProofStep>> {
     candidates.into_iter().find(|steps| {
@@ -2884,6 +3315,7 @@ fn certified_proof_steps(
             predicate_environment,
             click_function_environment,
             resource_environment,
+            theorem_environment,
             steps,
         )
         .is_ok()
@@ -14585,6 +15017,12 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 ProofStep::Unfold(predicate)
             }
+            "apply" => {
+                self.expect(Token::LParen)?;
+                let application = self.parse_theorem_application()?;
+                self.expect(Token::RParen)?;
+                ProofStep::ApplyTheorem(application)
+            }
             "open" => {
                 self.expect(Token::LParen)?;
                 let resource = self.parse_named_resource_call()?;
@@ -14626,6 +15064,11 @@ impl Parser {
         };
         self.expect(Token::Semicolon)?;
         Ok(step)
+    }
+
+    fn parse_theorem_application(&mut self) -> Result<TheoremApplication, ClickError> {
+        let (name, arguments) = self.parse_call_arguments("theorem name")?;
+        Ok(TheoremApplication { name, arguments })
     }
 
     fn parse_named_resource_call(&mut self) -> Result<ResourceClause, ClickError> {
@@ -16049,7 +16492,7 @@ fn validate_pure_theorem_proof(theorem_name: &str, proof: &Proof) -> Result<(), 
         Proof::Steps(steps) => {
             for step in steps {
                 match step {
-                    ProofStep::Unfold(_) | ProofStep::Simp => {}
+                    ProofStep::Unfold(_) | ProofStep::ApplyTheorem(_) | ProofStep::Simp => {}
                     ProofStep::SymbolicExecute
                     | ProofStep::BoundedExecute
                     | ProofStep::LoopVc(_)
@@ -16077,6 +16520,7 @@ fn proof_step_name(step: &ProofStep) -> &'static str {
         ProofStep::LoopVc(_) => "loop_vc",
         ProofStep::Frame(_) => "frame",
         ProofStep::Unfold(_) => "unfold",
+        ProofStep::ApplyTheorem(_) => "apply",
         ProofStep::OpenResource(_) => "open",
         ProofStep::CloseResource(_) => "close",
         ProofStep::Witness(_) => "witness",
@@ -17760,6 +18204,31 @@ mod tests {
                 [
                     ProofStep::SymbolicExecute,
                     ProofStep::Unfold("sorted".to_string()),
+                    ProofStep::Simp,
+                ]
+                .as_slice()
+            )
+        );
+    }
+
+    #[test]
+    fn parses_apply_theorem_proof_step() {
+        let source = FILL3_CLICK.replace(
+            "by auto;",
+            "by { symbolic_execute(); apply(nonnegative(result)); simp(); }",
+        );
+        let file = parse(&source).expect("apply proof-step script should parse");
+        let ensure = &file.function_blocks()[0].ensures()[0];
+
+        assert_eq!(
+            ensure.proof().steps(),
+            Some(
+                [
+                    ProofStep::SymbolicExecute,
+                    ProofStep::ApplyTheorem(TheoremApplication {
+                        name: "nonnegative".to_string(),
+                        arguments: vec![current_var("result")],
+                    }),
                     ProofStep::Simp,
                 ]
                 .as_slice()

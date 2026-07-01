@@ -79,7 +79,8 @@ and invariants that unfold stdlib definitions such as `permutation`.
 
 It is not yet enough for the full real-library proof story. The main missing
 pieces are full structs/layout, heap allocation and ownership, broader integer
-types/conversions, reusable theorem application, richer intermediate fact
+types/conversions, theorem libraries beyond the first `apply(...)` slice,
+richer intermediate fact
 management, module/import support, and a real-C or pilot-driven frontend
 strategy.
 
