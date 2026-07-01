@@ -186,10 +186,16 @@ sequence:
 - `mdtests/represented_resource_once_flag.md`: explicit `open(resource)` and
   `close(resource)` steps verify an affine token represented by memory
   permission plus an invariant.
+- `mdtests/represented_resource_composes_named.md`: a represented resource can
+  bundle another named affine resource with memory permission and an invariant.
 - `mdtests/represented_resource_rejects_bad_origin.md`: closing a represented
   resource fails when its invariant has not been established.
 - `mdtests/represented_resource_rejects_double_call.md`: a represented affine
   token is still consumed linearly through a call summary.
+- `mdtests/represented_resource_rejects_duplicate_contains.md`: represented
+  resources reject duplicate contained affine tokens.
+- `mdtests/represented_resource_rejects_cycle.md`: represented-resource
+  definitions reject containment cycles.
 
 ## Predicates And Pure Click Functions
 

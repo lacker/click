@@ -115,16 +115,21 @@ and duplicate identical affine tokens in one resource context are rejected.
 Named resources can have a representation:
 
 ```click
+affine resource socket_open(fd: int32);
+
 affine resource uncalled(flag: int32*) {
+    contains socket_open(7);
     contains write(flag[0..1]);
     invariant flag[0] == 0;
 }
 ```
 
 In an explicit proof script, `open(uncalled(flag));` consumes the abstract token
-and exposes its represented resources and invariant facts. `close(uncalled(flag));`
-proves the invariant, consumes the represented resources, and returns the
-abstract token. The end of the `by { ... }` block checks the overall claim.
+and exposes its represented resources and invariant facts. Representations can
+bundle built-in memory resources and other affine named resources.
+`close(uncalled(flag));` proves the invariant, consumes the represented
+resources, and returns the abstract token. The end of the `by { ... }` block
+checks the overall claim.
 
 A function block may be resource-only when it consumes a resource:
 

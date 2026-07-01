@@ -204,7 +204,10 @@ contract returns the resource.
 An affine named resource can also wrap concrete resources and invariant facts:
 
 ```click
+affine resource socket_open(fd: int32);
+
 affine resource uncalled(flag: int32*) {
+    contains socket_open(7);
     contains write(flag[0..1]);
     invariant flag[0] == 0;
 }
@@ -230,8 +233,10 @@ the abstract `called(flag)` token. The end of the `by { ... }` block checks the
 overall claim.
 
 This first slice supports built-in `read(...)`, `write(...)`, and `free(...)`
-clauses inside `contains`. Resource opening is explicit; `auto` does not yet
-choose open/close steps on its own.
+clauses plus exact-match affine named resources inside `contains`. Duplicate
+contained affine tokens are rejected, and represented-resource cycles are
+rejected. Resource opening is explicit; `auto` does not yet choose open/close
+steps on its own.
 
 ## Split And Rejoin
 
@@ -275,7 +280,8 @@ Implemented today:
   access authorization, splitting, and joining,
 - exact-match affine named resources declared with `affine resource name(...)`,
 - represented affine named resources with explicit `open(resource)` and
-  `close(resource)` proof steps,
+  `close(resource)` proof steps, including composition over other named affine
+  resources,
 - `write(...)` implying read authority,
 - copyable read transfer,
 - linear write transfer through function summaries,

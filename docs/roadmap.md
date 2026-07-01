@@ -115,10 +115,10 @@ Likely additions:
   first exact-match affine named resources with declared argument types and
   duplicate-token rejection. It also has represented affine resources with
   explicit proof-step `open(resource)` and `close(resource)` operations for
-  wrappers over built-in resources and invariant facts. Fractions, persistent
-  named resources, implicit open/close search, custom resource-family algebra,
-  full heap deallocation semantics, and abstract ownership predicates are still
-  future work.
+  wrappers over built-in resources, other named affine resources, and invariant
+  facts. Fractions, persistent named resources, implicit open/close search,
+  custom resource-family algebra, full heap deallocation semantics, and
+  abstract ownership predicates are still future work.
 - First-class spec/model state:
   proof-only state that can be mentioned across program points if examples need
   arbitrary model variables beyond resources.

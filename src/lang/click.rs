@@ -13095,7 +13095,7 @@ impl Parser {
             match self.peek_ident() {
                 Some("contains") => {
                     self.position += 1;
-                    contains.push(self.parse_resource_clause()?);
+                    contains.push(self.parse_resource_representation_clause()?);
                     self.expect(Token::Semicolon)?;
                 }
                 Some("invariant") => {
@@ -13120,6 +13120,13 @@ impl Parser {
             contains,
             invariants,
         })
+    }
+
+    fn parse_resource_representation_clause(&mut self) -> Result<ResourceClause, ClickError> {
+        if matches!(self.peek_ident(), Some("read" | "write" | "free")) {
+            return self.parse_resource_clause();
+        }
+        self.parse_named_resource_call()
     }
 
     fn parse_resource_parameters(&mut self) -> Result<Vec<FunctionParameter>, ClickError> {
@@ -14772,6 +14779,12 @@ fn expand_declared_resource_clauses(mut file: ClickFile) -> Result<ClickFile, Cl
         })
         .collect::<BTreeMap<_, _>>();
 
+    file.resource_definitions = file
+        .resource_definitions
+        .drain(..)
+        .map(|definition| expand_declared_resource_definition(definition, &resource_parameters))
+        .collect::<Result<Vec<_>, _>>()?;
+
     for function in &mut file.function_blocks {
         function.requires = function
             .requires
@@ -14798,6 +14811,33 @@ fn expand_declared_resource_clauses(mut file: ClickFile) -> Result<ClickFile, Cl
     }
 
     Ok(file)
+}
+
+fn expand_declared_resource_definition(
+    mut definition: ResourceDefinition,
+    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+) -> Result<ResourceDefinition, ClickError> {
+    if let Some(representation) = definition.representation {
+        definition.representation = Some(expand_declared_resource_representation(
+            representation,
+            resource_parameters,
+        )?);
+    }
+    Ok(definition)
+}
+
+fn expand_declared_resource_representation(
+    representation: ResourceRepresentation,
+    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+) -> Result<ResourceRepresentation, ClickError> {
+    Ok(ResourceRepresentation {
+        contains: representation
+            .contains
+            .into_iter()
+            .map(|resource| expand_declared_resource_clause(resource, resource_parameters))
+            .collect::<Result<Vec<_>, _>>()?,
+        invariants: representation.invariants,
+    })
 }
 
 fn expand_declared_resource_requirement(
@@ -14935,7 +14975,9 @@ fn declared_resource_parameter_types(
     actual: usize,
     resource_parameters: &BTreeMap<String, Vec<C0Type>>,
 ) -> Result<Vec<C0Type>, ClickError> {
-    let parameters = &resource_parameters[name];
+    let Some(parameters) = resource_parameters.get(name) else {
+        return Err(ClickError::new(format!("unknown resource `{name}`")));
+    };
     let expected = parameters.len();
     if expected != actual {
         return Err(ClickError::new(format!(
@@ -15052,6 +15094,7 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
             &click_function_types,
         )?;
     }
+    reject_resource_representation_cycles(&resource_definitions)?;
 
     for definition in &predicate_definitions {
         validate_predicate_calls_in_proposition(
@@ -15210,6 +15253,10 @@ fn validate_resource_definition(
         .iter()
         .map(|parameter| (parameter.name().to_string(), parameter.c_type()))
         .collect::<BTreeMap<_, _>>();
+    reject_duplicate_named_resource_clauses(
+        representation.contains(),
+        &format!("resource `{}` representation", definition.name()),
+    )?;
     for resource in representation.contains() {
         validate_resource_clause(
             resource,
@@ -15240,6 +15287,62 @@ fn validate_resource_definition(
             &format!("resource `{}` invariant", definition.name()),
         )?;
     }
+    Ok(())
+}
+
+fn reject_resource_representation_cycles(
+    definitions: &[ResourceDefinition],
+) -> Result<(), ClickError> {
+    let graph = definitions
+        .iter()
+        .map(|definition| {
+            let dependencies = definition
+                .representation()
+                .into_iter()
+                .flat_map(ResourceRepresentation::contains)
+                .filter_map(|resource| match resource {
+                    ResourceClause::Named { name, .. } => Some(name.clone()),
+                    ResourceClause::Read(_)
+                    | ResourceClause::Write(_)
+                    | ResourceClause::Free(_) => None,
+                })
+                .collect::<Vec<_>>();
+            (definition.name().to_string(), dependencies)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut permanent = BTreeSet::new();
+    let mut visiting = Vec::new();
+    for name in graph.keys() {
+        reject_resource_representation_cycles_from(name, &graph, &mut permanent, &mut visiting)?;
+    }
+    Ok(())
+}
+
+fn reject_resource_representation_cycles_from(
+    name: &str,
+    graph: &BTreeMap<String, Vec<String>>,
+    permanent: &mut BTreeSet<String>,
+    visiting: &mut Vec<String>,
+) -> Result<(), ClickError> {
+    if permanent.contains(name) {
+        return Ok(());
+    }
+    if let Some(index) = visiting.iter().position(|candidate| candidate == name) {
+        let mut cycle = visiting[index..].to_vec();
+        cycle.push(name.to_string());
+        return Err(ClickError::new(format!(
+            "resource representation cycle: {}",
+            cycle.join(" -> ")
+        )));
+    }
+    visiting.push(name.to_string());
+    for dependency in graph.get(name).into_iter().flatten() {
+        if graph.contains_key(dependency) {
+            reject_resource_representation_cycles_from(dependency, graph, permanent, visiting)?;
+        }
+    }
+    visiting.pop();
+    permanent.insert(name.to_string());
     Ok(())
 }
 
@@ -16780,13 +16883,16 @@ mod tests {
     #[test]
     fn parses_represented_resource_definition() {
         let source = r#"
+            affine resource socket_open(fd: int32);
+
             affine resource uncalled(flag: int32*) {
+                contains socket_open(7);
                 contains write(flag[0..1]);
                 invariant flag[0] == 0;
             }
         "#;
         let file = parse(source).expect("represented resource should parse");
-        let resource = &file.resource_definitions()[0];
+        let resource = &file.resource_definitions()[1];
         let representation = resource
             .representation()
             .expect("resource should have representation");
@@ -16801,12 +16907,19 @@ mod tests {
         );
         assert_eq!(
             representation.contains(),
-            &[ResourceClause::Write(ContractSegment {
-                state: ContractSegmentState::Current,
-                base: CExpression::Variable("flag".to_string()),
-                start: CExpression::Value(int32(0)),
-                end: CExpression::Value(int32(1)),
-            })]
+            &[
+                ResourceClause::Named {
+                    name: "socket_open".to_string(),
+                    arguments: vec![current_int(7)],
+                    parameter_types: vec![C0Type::Int32],
+                },
+                ResourceClause::Write(ContractSegment {
+                    state: ContractSegmentState::Current,
+                    base: CExpression::Variable("flag".to_string()),
+                    start: CExpression::Value(int32(0)),
+                    end: CExpression::Value(int32(1)),
+                })
+            ]
         );
         assert_eq!(representation.invariants().len(), 1);
     }
