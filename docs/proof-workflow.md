@@ -35,7 +35,6 @@ by {
     symbolic_execute();
     unfold(sorted);
     simp();
-    close();
 }
 ```
 
@@ -56,8 +55,10 @@ Current proof steps:
   index. Prefer labels for durable scripts.
 - `witness(k = expression);`: prove the current existential goal by substituting
   the given int32 expression for binder `k`.
-- `simp();`: request deterministic simplification during close.
-- `close();`: finish the proof. This must be the final proof step.
+- `simp();`: request deterministic simplification when the proof block is
+  checked.
+
+The end of a `by { ... }` block checks the overall claim.
 
 Some successful `auto` proofs record replayable proof-step certificates when the
 current proof-step language can express the argument.
@@ -70,7 +71,6 @@ ensures found: (0..n).any(|k| { k == result }) by {
     symbolic_execute();
     witness(k = 0);
     simp();
-    close();
 }
 ```
 
@@ -87,7 +87,6 @@ ensures again: exists (int32 j) { j == x } by {
     choose(k from requirement has_k);
     witness(j = k);
     simp();
-    close();
 }
 ```
 
@@ -102,7 +101,6 @@ ensures again: bytes_contains(p, 0, n, 'x') by {
     choose(found from requirement has_x);
     witness(k = found);
     simp();
-    close();
 }
 ```
 

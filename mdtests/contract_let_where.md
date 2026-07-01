@@ -16,7 +16,6 @@ int32 identity(int32 x) {
         symbolic_execute();
         witness(k = x);
         simp();
-        close();
     }
 }
 ```

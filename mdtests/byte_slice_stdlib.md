@@ -53,21 +53,18 @@ int32 byte_slice_facts(uint8 p[], uint8 q[]) {
         symbolic_execute();
         unfold(bytes_equal);
         simp();
-        close();
     }
 
     ensures first_q_is_a: q[0] == 'a' by {
         symbolic_execute();
         unfold(bytes_all_eq);
         simp();
-        close();
     }
 
     ensures current_equals_old: bytes_equal_range(p, old(p), 0, 3) by {
         symbolic_execute();
         unfold(bytes_equal_range);
         simp();
-        close();
     }
 }
 ```

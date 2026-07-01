@@ -38,7 +38,6 @@ When a proof needs more control, write a proof-step script:
 ensures result == x by {
     symbolic_execute();
     simp();
-    close();
 }
 ```
 
@@ -51,7 +50,8 @@ Common steps include:
 - `unfold(name);`: open a named predicate.
 - `simp();`: simplify the current proof goal.
 - `frame();`: prove an effect claim.
-- `close();`: finish the proof.
+
+The end of the `by { ... }` block checks the claim.
 
 Existential proofs also use:
 

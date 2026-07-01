@@ -80,7 +80,6 @@ Some loop proofs call loop-specific steps:
 ```click
 by {
     loop_vc(loop(0));
-    close();
 }
 ```
 

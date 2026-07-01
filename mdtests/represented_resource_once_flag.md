@@ -42,7 +42,6 @@ int32 init_once(int32 flag[]) {
     ensures uncalled(flag) by {
         symbolic_execute();
         close(uncalled(flag));
-        close();
     }
 }
 
@@ -53,7 +52,6 @@ int32 complete_once(int32 flag[]) {
         open(uncalled(flag));
         symbolic_execute();
         close(called(flag));
-        close();
     }
 
     ensures result == 1 by {
@@ -61,7 +59,6 @@ int32 complete_once(int32 flag[]) {
         symbolic_execute();
         close(called(flag));
         simp();
-        close();
     }
 }
 ```

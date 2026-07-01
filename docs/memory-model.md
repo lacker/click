@@ -80,7 +80,6 @@ ensures permutation(p, old(p), 0, 2) by {
     symbolic_execute();
     unfold(permutation);
     simp();
-    close();
 }
 ```
 

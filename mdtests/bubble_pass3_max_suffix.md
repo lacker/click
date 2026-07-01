@@ -47,7 +47,6 @@ int32 bubble_pass3(int32 p[3]) {
         loop_vc(loop(0));
         unfold(all_le_range);
         simp();
-        close();
     }
 }
 ```

@@ -33,21 +33,18 @@ int32 cstr_stdlib(uint8 p[], int32 len, int32 max) {
         symbolic_execute();
         unfold(cstr_len);
         simp();
-        close();
     }
 
     ensures exact_has_terminator: bytes_contains(p, len, len + 1, '\0') by {
         symbolic_execute();
         unfold(cstr_len);
         simp();
-        close();
     }
 
     ensures bounded_has_terminator: bytes_contains(p, 0, max, '\0') by {
         symbolic_execute();
         unfold(cstr_bounded);
         simp();
-        close();
     }
 }
 
@@ -62,7 +59,6 @@ int32 plain_cstr(uint8 p[]) {
         choose(found_len from requirement input_is_cstr);
         witness(len = found_len);
         simp();
-        close();
     }
 }
 ```

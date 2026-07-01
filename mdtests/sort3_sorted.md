@@ -54,7 +54,6 @@ int32 sort3(int32 p[3]) {
         unfold(sorted);
         unfold(sorted_range);
         simp();
-        close();
     }
 }
 ```

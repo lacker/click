@@ -24,7 +24,6 @@ int32 init_bad(int32 flag[]) {
     ensures uncalled(flag) by {
         symbolic_execute();
         close(uncalled(flag));
-        close();
     }
 }
 ```

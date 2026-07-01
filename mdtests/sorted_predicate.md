@@ -29,7 +29,6 @@ int32 sorted_predicate(int32 p[], int32 n) {
         symbolic_execute();
         unfold(sorted);
         simp();
-        close();
     }
 }
 ```

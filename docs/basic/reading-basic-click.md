@@ -68,7 +68,6 @@ by {
     symbolic_execute();
     unfold(sorted);
     simp();
-    close();
 }
 ```
 

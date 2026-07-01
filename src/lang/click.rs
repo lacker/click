@@ -431,7 +431,6 @@ pub enum ProofStep {
     Witness(ProofWitness),
     Choose(ProofChoice),
     Simp,
-    Close,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -1302,11 +1301,7 @@ fn prove_claim_by_simp(
         predicate_environment,
         click_function_environment,
         resource_environment,
-        vec![vec![
-            ProofStep::SymbolicExecute,
-            ProofStep::Simp,
-            ProofStep::Close,
-        ]],
+        vec![vec![ProofStep::SymbolicExecute, ProofStep::Simp]],
     );
     let assumptions = assumptions_from_propositions(&requirement_propositions);
     let execution = prove_symbolic_c_function_execution_paths_with_environment(
@@ -1407,7 +1402,6 @@ struct ProofStepReplayState {
     unfolded_predicates: Vec<String>,
     resource_closes: Vec<ResourceClause>,
     simp: bool,
-    closed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1592,52 +1586,37 @@ fn prove_claim_by_steps(
                 require_step_execution(&replay, claim_label, step_index, "simp")?;
                 replay.simp = true;
             }
-            ProofStep::Close => {
-                if step_index + 1 != steps.len() {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `close` must be the final proof step"
-                    )));
-                }
-                replay.closed = true;
-                let execution = replay.execution.as_ref().ok_or_else(|| {
-                    ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `close` requires `symbolic_execute()` first"
-                    ))
-                })?;
-                return prove_claim_from_steps_execution(
-                    execution,
-                    replay
-                        .execution_mode
-                        .expect("close should have an execution mode"),
-                    source_path,
-                    function_block,
-                    claim,
-                    claim_label,
-                    function_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    resource_environment,
-                    parsed_function.parameters(),
-                    &function,
-                    &state,
-                    &arguments,
-                    &requirement_propositions,
-                    &replay.unfolded_predicates,
-                    &replay.resource_closes,
-                    replay.simp,
-                    steps,
-                );
-            }
         }
     }
 
-    if !replay.closed {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` proof-step script did not end with `close()`"
-        )));
-    }
-
-    unreachable!("closed proof-step scripts return from the close step")
+    let execution = replay.execution.as_ref().ok_or_else(|| {
+        ClickError::new(format!(
+            "`{claim_label}` proof-step script must run `symbolic_execute()` or `bounded_execute()`"
+        ))
+    })?;
+    prove_claim_from_steps_execution(
+        execution,
+        replay
+            .execution_mode
+            .expect("proof-step execution should have an execution mode"),
+        source_path,
+        function_block,
+        claim,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        parsed_function.parameters(),
+        &function,
+        &state,
+        &arguments,
+        &requirement_propositions,
+        &replay.unfolded_predicates,
+        &replay.resource_closes,
+        replay.simp,
+        steps,
+    )
 }
 
 fn set_replay_execution(
@@ -2504,24 +2483,18 @@ fn certified_proof_steps(
 }
 
 fn frame_proof_step_candidates() -> Vec<Vec<ProofStep>> {
-    vec![vec![
-        ProofStep::SymbolicExecute,
-        ProofStep::Frame(None),
-        ProofStep::Close,
-    ]]
+    vec![vec![ProofStep::SymbolicExecute, ProofStep::Frame(None)]]
 }
 
 fn bounded_execution_proof_step_candidates(claim: &FunctionClaimRef<'_>) -> Vec<Vec<ProofStep>> {
     match claim {
         FunctionClaimRef::Ensure(_, _) => vec![
-            vec![ProofStep::BoundedExecute, ProofStep::Simp, ProofStep::Close],
-            vec![ProofStep::BoundedExecute, ProofStep::Close],
+            vec![ProofStep::BoundedExecute, ProofStep::Simp],
+            vec![ProofStep::BoundedExecute],
         ],
-        FunctionClaimRef::Effect(_, _) => vec![vec![
-            ProofStep::BoundedExecute,
-            ProofStep::Frame(None),
-            ProofStep::Close,
-        ]],
+        FunctionClaimRef::Effect(_, _) => {
+            vec![vec![ProofStep::BoundedExecute, ProofStep::Frame(None)]]
+        }
     }
 }
 
@@ -2545,19 +2518,15 @@ fn auto_loop_verification_proof_step_candidates(
         FunctionClaimRef::Ensure(_, _) => {
             let mut simp = base.clone();
             simp.push(ProofStep::Simp);
-            simp.push(ProofStep::Close);
 
-            let mut direct = base;
-            direct.push(ProofStep::Close);
+            let direct = base;
             vec![simp, direct]
         }
         FunctionClaimRef::Effect(_, _) => {
             let mut frame = base.clone();
             frame.push(ProofStep::Frame(None));
-            frame.push(ProofStep::Close);
 
-            let mut direct = base;
-            direct.push(ProofStep::Close);
+            let direct = base;
             vec![frame, direct]
         }
     }
@@ -14142,14 +14111,9 @@ impl Parser {
             }
             "close" => {
                 self.expect(Token::LParen)?;
-                if self.peek() == Some(&Token::RParen) {
-                    self.position += 1;
-                    ProofStep::Close
-                } else {
-                    let resource = self.parse_named_resource_call()?;
-                    self.expect(Token::RParen)?;
-                    ProofStep::CloseResource(resource)
-                }
+                let resource = self.parse_named_resource_call()?;
+                self.expect(Token::RParen)?;
+                ProofStep::CloseResource(resource)
             }
             _ if is_tactic_name(&name) => {
                 return Err(self.error(format!(
@@ -16794,7 +16758,7 @@ mod tests {
     fn parses_proof_step_script() {
         let source = FILL3_CLICK.replace(
             "by auto;",
-            "by { symbolic_execute(); loop_vc(loop(0)); frame(loop(0)); simp(); close(); }",
+            "by { symbolic_execute(); loop_vc(loop(0)); frame(loop(0)); simp(); }",
         );
         let file = parse(&source).expect("proof-step script should parse");
         let ensure = &file.function_blocks()[0].ensures()[0];
@@ -16807,7 +16771,6 @@ mod tests {
                     ProofStep::LoopVc(CodeRegionRef::Loop(0)),
                     ProofStep::Frame(Some(CodeRegionRef::Loop(0))),
                     ProofStep::Simp,
-                    ProofStep::Close,
                 ]
                 .as_slice()
             )
@@ -16862,7 +16825,6 @@ mod tests {
                     open(uncalled(flag));
                     symbolic_execute();
                     close(uncalled(flag));
-                    close();
                 }
             }
         "#;
@@ -16884,7 +16846,6 @@ mod tests {
                         arguments: vec![current_var("flag")],
                         parameter_types: vec![C0Type::Int32Pointer],
                     }),
-                    ProofStep::Close,
                 ]
                 .as_slice()
             )
@@ -16893,13 +16854,13 @@ mod tests {
 
     #[test]
     fn parses_bounded_execute_proof_step() {
-        let source = FILL3_CLICK.replace("by auto;", "by { bounded_execute(); close(); }");
+        let source = FILL3_CLICK.replace("by auto;", "by { bounded_execute(); }");
         let file = parse(&source).expect("bounded proof-step script should parse");
         let ensure = &file.function_blocks()[0].ensures()[0];
 
         assert_eq!(
             ensure.proof().steps(),
-            Some([ProofStep::BoundedExecute, ProofStep::Close].as_slice())
+            Some([ProofStep::BoundedExecute].as_slice())
         );
     }
 
@@ -16907,7 +16868,7 @@ mod tests {
     fn parses_unfold_proof_step() {
         let source = FILL3_CLICK.replace(
             "by auto;",
-            "by { symbolic_execute(); unfold(sorted); simp(); close(); }",
+            "by { symbolic_execute(); unfold(sorted); simp(); }",
         );
         let file = parse(&source).expect("unfold proof-step script should parse");
         let ensure = &file.function_blocks()[0].ensures()[0];
@@ -16919,7 +16880,6 @@ mod tests {
                     ProofStep::SymbolicExecute,
                     ProofStep::Unfold("sorted".to_string()),
                     ProofStep::Simp,
-                    ProofStep::Close,
                 ]
                 .as_slice()
             )
@@ -16930,7 +16890,7 @@ mod tests {
     fn parses_existential_proof_steps() {
         let source = FILL3_CLICK.replace(
             "by auto;",
-            "by { symbolic_execute(); choose(k from requirement has_k); witness(j = k + 1); simp(); close(); }",
+            "by { symbolic_execute(); choose(k from requirement has_k); witness(j = k + 1); simp(); }",
         );
         let file = parse(&source).expect("existential proof-step script should parse");
         let ensure = &file.function_blocks()[0].ensures()[0];
@@ -16952,7 +16912,6 @@ mod tests {
                         ),
                     }),
                     ProofStep::Simp,
-                    ProofStep::Close,
                 ]
                 .as_slice()
             )
@@ -17145,10 +17104,7 @@ mod tests {
 
     #[test]
     fn rejects_legacy_proof_step_region_syntax() {
-        let source = FILL3_CLICK.replace(
-            "by auto;",
-            "by { symbolic_execute(); loop_vc(loop 0); close(); }",
-        );
+        let source = FILL3_CLICK.replace("by auto;", "by { symbolic_execute(); loop_vc(loop 0); }");
         let error = parse(&source).expect_err("legacy proof-step region syntax should fail");
 
         assert!(
@@ -17426,7 +17382,6 @@ mod tests {
                     symbolic_execute();
                     unfold(sorted_pair);
                     simp();
-                    close();
                 }
             }
         "#;
@@ -17442,7 +17397,6 @@ mod tests {
                     ProofStep::SymbolicExecute,
                     ProofStep::Unfold("sorted_pair".to_string()),
                     ProofStep::Simp,
-                    ProofStep::Close,
                 ]
                 .as_slice()
             )
@@ -17478,7 +17432,6 @@ mod tests {
                     symbolic_execute();
                     unfold(sorted_pair);
                     simp();
-                    close();
                 }
             }
         "#;
@@ -17515,7 +17468,6 @@ mod tests {
                     symbolic_execute();
                     unfold(sorted);
                     simp();
-                    close();
                 }
             }
         "#;
@@ -17586,7 +17538,6 @@ mod tests {
                 ensures returns_x: result == x by {
                     symbolic_execute();
                     simp();
-                    close();
                 }
             }
         "#;
@@ -17639,18 +17590,13 @@ mod tests {
                 mutable p[1..2] by {
                     bounded_execute();
                     frame();
-                    close();
                 }
             }
         "#;
 
         let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
             .expect("bounded frame proof steps should prove mutable effect");
-        let expected_steps = [
-            ProofStep::BoundedExecute,
-            ProofStep::Frame(None),
-            ProofStep::Close,
-        ];
+        let expected_steps = [ProofStep::BoundedExecute, ProofStep::Frame(None)];
 
         assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].proof_kind(), ProofKind::ProofSteps);
@@ -17671,7 +17617,6 @@ mod tests {
                 ensures returns_x: result == x by {
                     symbolic_execute();
                     frame();
-                    close();
                 }
             }
         "#;
@@ -17718,7 +17663,7 @@ mod tests {
         let auto_verified =
             verify_c0_sources(auto_click_source, &[("fill3_array_loop.c", c_source)])
                 .expect("bounded auto proof should verify");
-        let expected_steps = [ProofStep::BoundedExecute, ProofStep::Simp, ProofStep::Close];
+        let expected_steps = [ProofStep::BoundedExecute, ProofStep::Simp];
 
         assert_eq!(auto_verified.len(), 1);
         assert_eq!(auto_verified[0].proof_kind(), ProofKind::BoundedExecution);
@@ -17740,7 +17685,6 @@ mod tests {
                 ensures writes_third: p[2] == 2 by {
                     bounded_execute();
                     simp();
-                    close();
                 }
             }
         "#;
@@ -19045,7 +18989,6 @@ mod tests {
                     unfold(sorted);
                     unfold(sorted_range);
                     simp();
-                    close();
                 }
             }
         "#;
@@ -19097,7 +19040,6 @@ mod tests {
                     loop_vc(loop(0));
                     frame(loop(0));
                     simp();
-                    close();
                 }
                 ensures copied_segment: forall (int32 k) {
                     0 <= k and k < n implies dst[k] == old(src[k])
@@ -19166,7 +19108,6 @@ mod tests {
             ProofStep::LoopVc(CodeRegionRef::Loop(0)),
             ProofStep::Frame(Some(CodeRegionRef::Loop(0))),
             ProofStep::Simp,
-            ProofStep::Close,
         ];
 
         assert_eq!(source_unchanged.proof_kind(), ProofKind::LoopVerification);
@@ -19201,7 +19142,6 @@ mod tests {
                     loop_vc(loop(0));
                     frame(loop(0));
                     simp();
-                    close();
                 }
             }
         "#;

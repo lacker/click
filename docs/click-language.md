@@ -124,7 +124,7 @@ affine resource uncalled(flag: int32*) {
 In an explicit proof script, `open(uncalled(flag));` consumes the abstract token
 and exposes its represented resources and invariant facts. `close(uncalled(flag));`
 proves the invariant, consumes the represented resources, and returns the
-abstract token. The final proof step is still `close();`.
+abstract token. The end of the `by { ... }` block checks the overall claim.
 
 A function block may be resource-only when it consumes a resource:
 
@@ -202,7 +202,6 @@ ensures found: (lo..hi).any(|k| { p[k] == result }) by {
     symbolic_execute();
     witness(k = lo);
     simp();
-    close();
 }
 ```
 
@@ -295,7 +294,6 @@ ensures result == k by {
     symbolic_execute();
     witness(k = x);
     simp();
-    close();
 }
 ```
 
@@ -359,7 +357,6 @@ ensures sorted: sorted_range(p, 0, n) by {
     symbolic_execute();
     unfold(sorted_range);
     simp();
-    close();
 }
 ```
 

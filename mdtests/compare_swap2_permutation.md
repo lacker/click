@@ -27,7 +27,6 @@ int32 compare_swap2_permutation(int32 p[2]) {
         symbolic_execute();
         unfold(permutation);
         simp();
-        close();
     }
 }
 ```

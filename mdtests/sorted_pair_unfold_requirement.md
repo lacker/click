@@ -23,7 +23,6 @@ int32 sorted_pair_unfold_requirement(int32 p[2]) {
         symbolic_execute();
         unfold(sorted_pair);
         simp();
-        close();
     }
 }
 ```

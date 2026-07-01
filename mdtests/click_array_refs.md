@@ -48,7 +48,6 @@ int32 keep_first_change_second(int32 p[2], int32 x) {
         symbolic_execute();
         unfold(same_first);
         simp();
-        close();
     }
 }
 
@@ -61,7 +60,6 @@ int32 identity_two_arrays(int32 p[1], int32 q[1]) {
         symbolic_execute();
         unfold(same_first);
         simp();
-        close();
     }
 }
 ```

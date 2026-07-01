@@ -55,7 +55,6 @@ int32 sort3_permutation_predicate(int32 p[3]) {
         symbolic_execute();
         unfold(permutation3);
         simp();
-        close();
     }
 }
 ```

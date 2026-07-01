@@ -22,7 +22,6 @@ int32 witness_zero(int32 n) {
         symbolic_execute();
         witness(k = 0);
         simp();
-        close();
     }
 }
 
@@ -33,14 +32,12 @@ int32 choose_requirement(int32 x) {
         choose(k from requirement 0);
         witness(j = k);
         simp();
-        close();
     }
     ensures found_again_by_label: exists (int32 j) { j == x } by {
         symbolic_execute();
         choose(k from requirement has_k);
         witness(j = k);
         simp();
-        close();
     }
 }
 ```

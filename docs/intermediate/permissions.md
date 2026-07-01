@@ -219,7 +219,6 @@ ensures result == 1 by {
     symbolic_execute();
     close(called(flag));
     simp();
-    close();
 }
 ```
 
@@ -227,8 +226,8 @@ ensures result == 1 by {
 `write(flag[0..1])` resource plus the invariant fact `flag[0] == 0`.
 `close(called(flag))` goes the other direction: it proves the representation's
 invariant in the current state, consumes the represented resources, and adds
-the abstract `called(flag)` token. `close()` with no argument is still the
-final proof-step command that closes the overall claim.
+the abstract `called(flag)` token. The end of the `by { ... }` block checks the
+overall claim.
 
 This first slice supports built-in `read(...)`, `write(...)`, and `free(...)`
 clauses inside `contains`. Resource opening is explicit; `auto` does not yet

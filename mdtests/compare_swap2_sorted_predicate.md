@@ -31,7 +31,6 @@ int32 compare_swap2_sorted_predicate(int32 p[2]) {
         symbolic_execute();
         unfold(sorted_pair);
         simp();
-        close();
     }
 }
 ```

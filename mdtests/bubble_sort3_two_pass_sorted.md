@@ -80,7 +80,6 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
         unfold(sorted_range);
         unfold(all_le_range);
         simp();
-        close();
     }
 }
 ```

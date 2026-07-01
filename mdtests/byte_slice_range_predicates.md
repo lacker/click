@@ -26,14 +26,12 @@ int32 byte_slice_range_predicates(uint8 p[], int32 n) {
         choose(found from requirement has_x);
         witness(k = found);
         simp();
-        close();
     }
 
     ensures second_prefix_byte_is_not_y: p[1] != 'y' by {
         symbolic_execute();
         unfold(bytes_all_not_eq);
         simp();
-        close();
     }
 }
 ```

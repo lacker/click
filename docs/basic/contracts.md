@@ -41,7 +41,6 @@ ensures result == k by {
     symbolic_execute();
     witness(k = x);
     simp();
-    close();
 }
 ```
 

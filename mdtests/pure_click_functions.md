@@ -99,7 +99,6 @@ int32 increment_value(int32 x) {
         symbolic_execute();
         unfold(one_more);
         simp();
-        close();
     }
 }
 
@@ -125,12 +124,10 @@ int32 range_helpers() {
     ensures all_reflexive: (0..3).all(|k| { k == k }) by {
         symbolic_execute();
         simp();
-        close();
     }
     ensures any_has_one: (0..3).any(|k| { k == 1 }) by {
         symbolic_execute();
         simp();
-        close();
     }
 }
 
@@ -140,7 +137,6 @@ int32 identity_permutation(int32 p[3]) {
         symbolic_execute();
         unfold(permutation);
         simp();
-        close();
     }
 }
 ```

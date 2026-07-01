@@ -17,7 +17,6 @@ ensures sorted_pair(p) by {
     symbolic_execute();
     unfold(sorted_pair);
     simp();
-    close();
 }
 ```
 

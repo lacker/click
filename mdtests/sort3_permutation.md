@@ -41,7 +41,6 @@ int32 sort3_permutation(int32 p[3]) {
         symbolic_execute();
         unfold(permutation);
         simp();
-        close();
     }
 }
 ```
