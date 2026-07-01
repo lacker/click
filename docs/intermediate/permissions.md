@@ -243,6 +243,18 @@ affine resource uncalled(flag: int32*) {
 }
 ```
 
+The coverage check can use scalar facts from the invariant itself:
+
+```click
+affine resource indexed_zero(p: int32*, k: int32, n: int32) {
+    contains write(p[0..n]);
+    invariant 0 <= k and k < n and p[k] == 0;
+}
+```
+
+This symbolic check proves the index is inside the range; the memory base must
+still match the contained write resource directly.
+
 `read(flag[0..1])` is not enough for this purpose. A read resource authorizes
 inspection but does not prevent another holder of write permission from
 changing the cell. Pure scalar invariants such as `fd >= 0` do not need a

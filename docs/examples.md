@@ -212,6 +212,13 @@ sequence:
   definitions reject containment cycles.
 - `mdtests/represented_resource_pure_invariant.md`: represented resources can
   carry scalar invariants that do not read memory.
+- `mdtests/represented_resource_symbolic_invariant_coverage.md`: scalar
+  invariant bounds can justify indexed memory reads inside a contained write
+  range.
+- `mdtests/represented_resource_predicate_bounds_invariant.md`: predicate-hidden
+  scalar bounds can justify indexed memory reads inside a contained write range.
+- `mdtests/represented_resource_rejects_missing_symbolic_bound.md`: symbolic
+  coverage fails when a required bound is missing.
 - `mdtests/represented_resource_rejects_unowned_invariant_read.md`: invariants
   cannot read memory without contained write permission.
 - `mdtests/represented_resource_rejects_read_backed_invariant.md`: contained

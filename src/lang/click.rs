@@ -16104,6 +16104,8 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
         .iter()
         .map(|definition| (definition.name(), definition))
         .collect::<BTreeMap<_, _>>();
+    let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
+    let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
 
     for definition in &resource_definitions {
         validate_resource_definition(
@@ -16114,6 +16116,8 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
             &click_function_types,
             &predicate_definition_map,
             &click_function_definition_map,
+            &predicate_environment,
+            &click_function_environment,
         )?;
     }
     reject_resource_representation_cycles(&resource_definitions)?;
@@ -16352,6 +16356,8 @@ fn validate_resource_definition(
     click_function_types: &BTreeMap<String, ClickFunctionType>,
     predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
     click_function_definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<(), ClickError> {
     let Some(representation) = definition.representation() else {
         return Ok(());
@@ -16406,6 +16412,8 @@ fn validate_resource_definition(
             invariant,
             predicate_definitions,
             click_function_definitions,
+            predicate_environment,
+            click_function_environment,
         )?;
     }
     Ok(())
@@ -16424,6 +16432,8 @@ fn validate_resource_invariant_memory_ownership(
     invariant: &ClickProposition,
     predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
     click_function_definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<(), ClickError> {
     let mut reads = Vec::new();
     let mut visited_predicates = Vec::new();
@@ -16437,8 +16447,34 @@ fn validate_resource_invariant_memory_ownership(
         &mut reads,
         definition.name(),
     )?;
+    let memory = CMemory::new();
+    let values = pure_theorem_parameter_values(definition.parameters());
+    let array_refs = pure_theorem_array_refs(definition.parameters(), &values, &memory);
+    let mut scalar_assumptions = Vec::new();
+    collect_resource_invariant_scalar_assumptions_from_proposition(
+        invariant,
+        predicate_definitions,
+        &values,
+        &array_refs,
+        &memory,
+        predicate_environment,
+        click_function_environment,
+        &mut Vec::new(),
+        &mut scalar_assumptions,
+        definition.name(),
+    )?;
+    let assumptions = assumptions_from_propositions(&scalar_assumptions);
     for read in reads {
-        if !resource_invariant_read_is_owned(&read, representation.contains()) {
+        if !resource_invariant_read_is_owned(
+            &read,
+            representation.contains(),
+            &assumptions,
+            &values,
+            &array_refs,
+            &memory,
+            predicate_environment,
+            click_function_environment,
+        ) {
             return Err(ClickError::new(format!(
                 "resource `{}` invariant reads `{}` without a covering contained `write(...)` resource",
                 definition.name(),
@@ -16447,6 +16483,100 @@ fn validate_resource_invariant_memory_ownership(
         }
     }
     Ok(())
+}
+
+fn collect_resource_invariant_scalar_assumptions_from_proposition(
+    proposition: &ClickProposition,
+    predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    visited_predicates: &mut Vec<String>,
+    assumptions: &mut Vec<Proposition>,
+    resource_name: &str,
+) -> Result<(), ClickError> {
+    match proposition {
+        ClickProposition::Comparison { .. } => {
+            let mut lowerer = KernelPropositionLowerer::new(
+                values.clone(),
+                array_refs.clone(),
+                memory.clone(),
+                predicate_environment,
+                click_function_environment,
+            );
+            if let Ok(proposition) = lowerer.lower_requirement_proposition(proposition) {
+                assumptions.push(proposition);
+            }
+            Ok(())
+        }
+        ClickProposition::And(left, right) => {
+            collect_resource_invariant_scalar_assumptions_from_proposition(
+                left,
+                predicate_definitions,
+                values,
+                array_refs,
+                memory,
+                predicate_environment,
+                click_function_environment,
+                visited_predicates,
+                assumptions,
+                resource_name,
+            )?;
+            collect_resource_invariant_scalar_assumptions_from_proposition(
+                right,
+                predicate_definitions,
+                values,
+                array_refs,
+                memory,
+                predicate_environment,
+                click_function_environment,
+                visited_predicates,
+                assumptions,
+                resource_name,
+            )
+        }
+        ClickProposition::PredicateCall { name, arguments } => {
+            let Some(definition) = predicate_definitions.get(name.as_str()) else {
+                return Ok(());
+            };
+            if visited_predicates.contains(name) {
+                return Err(ClickError::new(format!(
+                    "resource `{resource_name}` invariant cannot use recursive predicate `{name}`"
+                )));
+            }
+            visited_predicates.push(name.clone());
+            let body = instantiate_click_predicate_definition(definition, arguments).map_err(
+                |message| {
+                    ClickError::new(format!(
+                        "resource `{resource_name}` invariant could not inspect predicate `{name}`: {message}"
+                    ))
+                },
+            )?;
+            let result = collect_resource_invariant_scalar_assumptions_from_proposition(
+                &body,
+                predicate_definitions,
+                values,
+                array_refs,
+                memory,
+                predicate_environment,
+                click_function_environment,
+                visited_predicates,
+                assumptions,
+                resource_name,
+            );
+            visited_predicates.pop();
+            result
+        }
+        ClickProposition::Or(_, _)
+        | ClickProposition::Not(_)
+        | ClickProposition::Implies(_, _)
+        | ClickProposition::ForAll { .. }
+        | ClickProposition::Exists { .. }
+        | ClickProposition::RangeAll { .. }
+        | ClickProposition::RangeAny { .. } => Ok(()),
+    }
 }
 
 fn collect_resource_invariant_reads_from_proposition(
@@ -16889,6 +17019,12 @@ fn collect_resource_invariant_reads_from_c_expression(
 fn resource_invariant_read_is_owned(
     read: &ResourceInvariantRead,
     contained: &[ResourceClause],
+    assumptions: &Assumptions,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> bool {
     contained.iter().any(|resource| {
         let ResourceClause::Write(segment) = resource else {
@@ -16896,8 +17032,57 @@ fn resource_invariant_read_is_owned(
         };
         segment.state == ContractSegmentState::Current
             && segment.base == read.base
-            && constant_segment_covers_index(&segment.start, &segment.end, &read.index)
+            && (constant_segment_covers_index(&segment.start, &segment.end, &read.index)
+                || symbolic_segment_covers_index(
+                    &segment.start,
+                    &segment.end,
+                    &read.index,
+                    assumptions,
+                    values,
+                    array_refs,
+                    memory,
+                    predicate_environment,
+                    click_function_environment,
+                ))
     })
+}
+
+fn symbolic_segment_covers_index(
+    start: &CExpression,
+    end: &CExpression,
+    index: &CExpression,
+    assumptions: &Assumptions,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> bool {
+    let lowerer = KernelPropositionLowerer::new(
+        values.clone(),
+        array_refs.clone(),
+        memory.clone(),
+        predicate_environment,
+        click_function_environment,
+    );
+    let Ok(start) = lowerer.lower_requirement_c_expression(start) else {
+        return false;
+    };
+    let Ok(end) = lowerer.lower_requirement_c_expression(end) else {
+        return false;
+    };
+    let Ok(index) = lowerer.lower_requirement_c_expression(index) else {
+        return false;
+    };
+    let Ok(lower_bound) =
+        comparison_proposition(start, ComparisonOperator::LessEqual, index.clone())
+    else {
+        return false;
+    };
+    let Ok(upper_bound) = comparison_proposition(index, ComparisonOperator::LessThan, end) else {
+        return false;
+    };
+    assumptions.proves(&lower_bound) && assumptions.proves(&upper_bound)
 }
 
 fn constant_segment_covers_index(
