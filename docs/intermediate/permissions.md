@@ -292,6 +292,16 @@ contained affine tokens are rejected, and represented-resource cycles are
 rejected. Resource opening is explicit; `auto` does not yet choose open/close
 steps on its own.
 
+The smallest ownership-shaped pattern is a represented resource that bundles
+several concrete permissions. For example, `first_cell_copy_access(dst, src)`
+can contain `write(dst[0..1])` and `read(src[0..1])`, while
+`owned_one_cell(owner, data)` can contain permission for an owner object and an
+explicitly passed buffer pointer. In this conservative shape, the resource's
+parameters name the lower-level memory objects directly. More convenient
+field-dependent representations, such as deriving the contained buffer from
+`owner->data`, are a later design question rather than part of the current
+surface.
+
 ## Split And Rejoin
 
 A caller can pass a subrange of a larger write resource:

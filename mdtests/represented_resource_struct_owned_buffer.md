@@ -1,0 +1,50 @@
+# represented resource for a struct-owned buffer
+
+This checks the conservative "struct owns buffer" pattern. The abstract
+resource takes both the owner object and the buffer as explicit parameters,
+then ties the owner field to an invariant. It does not yet depend on reading
+fields inside `contains` clauses.
+
+```c filename=set_owned_first.c
+struct owner {
+    int32 len;
+};
+
+int32 set_owned_first(struct owner* owner, int32 data[]) {
+    data[0] = owner->len;
+    return data[0];
+}
+```
+
+```click
+affine resource owned_one_cell(owner: int32*, data: int32*) {
+    contains write(owner[0..1]);
+    contains write(data[0..1]);
+    invariant owner->len == 1;
+}
+
+verifying "set_owned_first.c";
+
+int32 set_owned_first(struct owner* owner, int32 data[]) {
+    requires valid_field(owner->len);
+    requires disjoint(owner[0..1], data[0..1]);
+    requires owned_one_cell(owner, data);
+
+    ensures owned_one_cell(owner, data) by {
+        open(owned_one_cell(owner, data));
+        symbolic_execute();
+        close(owned_one_cell(owner, data));
+    }
+
+    ensures result == 1 by {
+        open(owned_one_cell(owner, data));
+        symbolic_execute();
+        close(owned_one_cell(owner, data));
+        simp();
+    }
+}
+```
+
+```expect
+pass
+```

@@ -202,6 +202,10 @@ sequence:
   permission plus an invariant.
 - `mdtests/represented_resource_composes_named.md`: a represented resource can
   bundle another named affine resource with memory permission and an invariant.
+- `mdtests/represented_resource_two_arrays.md`: a represented resource can
+  bundle permissions for multiple arrays.
+- `mdtests/represented_resource_struct_owned_buffer.md`: a conservative
+  struct-owned-buffer pattern with explicit owner and buffer parameters.
 - `mdtests/represented_resource_rejects_bad_origin.md`: closing a represented
   resource fails when its invariant has not been established.
 - `mdtests/represented_resource_rejects_double_call.md`: a represented affine
