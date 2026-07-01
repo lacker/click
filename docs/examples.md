@@ -169,6 +169,14 @@ sequence:
   consumer can be called once.
 - `mdtests/callback_resource_complete_twice.md`: affine callback token rejects
   double completion.
+- `mdtests/callback_resource_branch_once.md`: branch-sensitive callback
+  completion passes when each path completes once.
+- `mdtests/callback_resource_branch_double.md`: branch-sensitive double
+  completion fails on the path that spent the token.
+- `mdtests/callback_resource_pipe_token.md`: a helper consumes one callback
+  token while returning another.
+- `mdtests/callback_resource_pipe_rejects_spent_token.md`: the caller cannot
+  reuse the callback token spent by the helper.
 
 ## Predicates And Pure Click Functions
 
