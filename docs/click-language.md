@@ -97,8 +97,19 @@ while function calls use the callee's resource summary.
 
 These permissions are currently one built-in resource family: memory resources.
 The family defines how resources entail, split, rejoin, transfer, and consume
-each other. This keeps the user-facing syntax concrete while leaving room for
-non-memory resource families later.
+each other. This keeps the user-facing memory syntax concrete while sharing the
+same context machinery with non-memory resources.
+
+Click also supports exact-match affine named resources:
+
+```click
+affine resource open_fd(fd: int32);
+```
+
+After declaration, `requires open_fd(fd);` and
+`ensures open_fd(fd) by auto;` use the same resource context. A callee that
+requires a named affine resource consumes it unless the callee also returns it
+with a matching resource `ensures`.
 
 `write(...)` implies `read(...)`: a write resource permits both loads and
 stores, and can satisfy an `ensures read(...)` guarantee. `read(...)` is

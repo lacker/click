@@ -1395,6 +1395,11 @@ pub(super) fn collect_resource_bitvector_variables(
         CResource::Read(range) => collect_c_memory_range_bitvector_variables(range, variables),
         CResource::Write(range) => collect_c_memory_range_bitvector_variables(range, variables),
         CResource::Free(range) => collect_c_memory_range_bitvector_variables(range, variables),
+        CResource::Named { arguments, .. } => {
+            for argument in arguments {
+                collect_c_value_bitvector_variables(argument, variables);
+            }
+        }
     }
 }
 
@@ -1430,6 +1435,11 @@ pub(super) fn collect_resource_spec_bitvector_variables(
             collect_c_expression_bitvector_variables(&segment.base, variables);
             collect_c_expression_bitvector_variables(&segment.start, variables);
             collect_c_expression_bitvector_variables(&segment.end, variables);
+        }
+        CResourceSpec::Named { arguments, .. } => {
+            for argument in arguments {
+                collect_c_expression_bitvector_variables(argument, variables);
+            }
         }
     }
 }
@@ -2528,6 +2538,13 @@ pub(super) fn substitute_bitvector_variable_in_resource(
         CResource::Free(range) => CResource::Free(substitute_bitvector_variable_in_c_memory_range(
             range, from, to,
         )),
+        CResource::Named { name, arguments } => CResource::Named {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_bitvector_variable_in_c_value(argument, from, to))
+                .collect(),
+        },
     }
 }
 
@@ -2575,6 +2592,13 @@ pub(super) fn substitute_bitvector_variable_in_resource_spec(
             start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
             end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
         }),
+        CResourceSpec::Named { name, arguments } => CResourceSpec::Named {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_bitvector_variable_in_c_expression(argument, from, to))
+                .collect(),
+        },
     }
 }
 

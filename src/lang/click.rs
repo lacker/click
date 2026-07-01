@@ -34,6 +34,7 @@ pub struct ClickFile {
     verifying_sources: Vec<String>,
     predicate_definitions: Vec<PredicateDefinition>,
     click_function_definitions: Vec<ClickFunctionDefinition>,
+    resource_definitions: Vec<ResourceDefinition>,
     function_blocks: Vec<FunctionBlock>,
 }
 
@@ -50,6 +51,18 @@ pub struct ClickFunctionDefinition {
     parameters: Vec<FunctionParameter>,
     return_type: C0Type,
     body: ContractExpression,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceDefinition {
+    name: String,
+    parameters: Vec<FunctionParameter>,
+    kind: ResourceKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResourceKind {
+    Affine,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -163,6 +176,10 @@ pub enum ResourceClause {
     Read(ContractSegment),
     Write(ContractSegment),
     Free(ContractSegment),
+    Named {
+        name: String,
+        arguments: Vec<ContractExpression>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -535,6 +552,10 @@ impl ClickFile {
         &self.click_function_definitions
     }
 
+    pub fn resource_definitions(&self) -> &[ResourceDefinition] {
+        &self.resource_definitions
+    }
+
     pub fn function_blocks(&self) -> &[FunctionBlock] {
         &self.function_blocks
     }
@@ -569,6 +590,20 @@ impl ClickFunctionDefinition {
 
     pub fn body(&self) -> &ContractExpression {
         &self.body
+    }
+}
+
+impl ResourceDefinition {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn parameters(&self) -> &[FunctionParameter] {
+        &self.parameters
+    }
+
+    pub fn kind(&self) -> ResourceKind {
+        self.kind
     }
 }
 
@@ -822,7 +857,7 @@ pub fn verify_c0_sources(
     let file = parse(click_source)?;
     let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
     let parsed_sources = parse_verified_sources(&file, &c_sources)?;
-    let function_environment = build_function_environment(&parsed_sources, file.function_blocks());
+    let function_environment = build_function_environment(&parsed_sources, file.function_blocks())?;
     let predicate_definitions = combined_predicate_definitions(&file)?;
     let click_function_definitions = combined_click_function_definitions(&file)?;
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
@@ -2250,30 +2285,30 @@ fn parse_verified_sources<'a>(
 fn build_function_environment(
     parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
     function_blocks: &[FunctionBlock],
-) -> CFunctionEnvironment {
-    parsed_sources
-        .values()
-        .fold(CFunctionEnvironment::new(), |environment, (_, function)| {
-            let function = match function_blocks
-                .iter()
-                .find(|block| block.signature().name() == function.name())
-            {
-                Some(function_block) => {
-                    let (resource_requires, resource_ensures) =
-                        function_resource_summary(function_block);
-                    function
-                        .to_kernel_function()
-                        .with_resource_summary(resource_requires, resource_ensures)
-                }
-                None => function.to_kernel_function(),
-            };
-            environment.with_function(function)
-        })
+) -> Result<CFunctionEnvironment, ClickError> {
+    let mut environment = CFunctionEnvironment::new();
+    for (_, function) in parsed_sources.values() {
+        let function = match function_blocks
+            .iter()
+            .find(|block| block.signature().name() == function.name())
+        {
+            Some(function_block) => {
+                let (resource_requires, resource_ensures) =
+                    function_resource_summary(function_block)?;
+                function
+                    .to_kernel_function()
+                    .with_resource_summary(resource_requires, resource_ensures)
+            }
+            None => function.to_kernel_function(),
+        };
+        environment = environment.with_function(function);
+    }
+    Ok(environment)
 }
 
 fn function_resource_summary(
     function_block: &FunctionBlock,
-) -> (Vec<CResourceSpec>, Vec<CResourceSpec>) {
+) -> Result<(Vec<CResourceSpec>, Vec<CResourceSpec>), ClickError> {
     let requires = function_block
         .requires()
         .iter()
@@ -2281,7 +2316,7 @@ fn function_resource_summary(
             Requirement::Resource(resource) => Some(resource_clause_to_resource_spec(resource)),
             _ => None,
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
     let ensures = function_block
         .ensures()
         .iter()
@@ -2289,27 +2324,36 @@ fn function_resource_summary(
             Ensure::Resource(resource) => Some(resource_clause_to_resource_spec(resource)),
             _ => None,
         })
-        .collect();
-    (requires, ensures)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((requires, ensures))
 }
 
-fn resource_clause_to_resource_spec(resource: &ResourceClause) -> CResourceSpec {
+fn resource_clause_to_resource_spec(
+    resource: &ResourceClause,
+) -> Result<CResourceSpec, ClickError> {
     match resource {
-        ResourceClause::Read(segment) => CResourceSpec::Read(CMemorySegment::new(
+        ResourceClause::Read(segment) => Ok(CResourceSpec::Read(CMemorySegment::new(
             segment.base.clone(),
             segment.start.clone(),
             segment.end.clone(),
-        )),
-        ResourceClause::Write(segment) => CResourceSpec::Write(CMemorySegment::new(
+        ))),
+        ResourceClause::Write(segment) => Ok(CResourceSpec::Write(CMemorySegment::new(
             segment.base.clone(),
             segment.start.clone(),
             segment.end.clone(),
-        )),
-        ResourceClause::Free(segment) => CResourceSpec::Free(CMemorySegment::new(
+        ))),
+        ResourceClause::Free(segment) => Ok(CResourceSpec::Free(CMemorySegment::new(
             segment.base.clone(),
             segment.start.clone(),
             segment.end.clone(),
-        )),
+        ))),
+        ResourceClause::Named { name, arguments } => Ok(CResourceSpec::Named {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(resource_argument_to_c_expression)
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
     }
 }
 
@@ -2458,6 +2502,19 @@ fn describe_resource(
         CResource::Read(range) => ("read", range),
         CResource::Write(range) => ("write", range),
         CResource::Free(range) => ("free", range),
+        CResource::Named {
+            name,
+            arguments: resource_arguments,
+        } => {
+            return format!(
+                "{name}({})",
+                resource_arguments
+                    .iter()
+                    .map(|argument| describe_c_value(argument, parameters, arguments))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
     };
     format!(
         "{name}({})",
@@ -2925,6 +2982,9 @@ fn describe_bitvector_with_context(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> String {
+    if let Some(name) = describe_parameter_bitvector(term, parameters, arguments) {
+        return name;
+    }
     match term {
         Bitvector32Term::Constant(value) => format!("{}", *value as i32),
         Bitvector32Term::Variable(variable) => format!("v{}", variable.0),
@@ -2979,6 +3039,29 @@ fn describe_bitvector_with_context(
             format!("load({})", describe_pointer(pointer, parameters, arguments))
         }
     }
+}
+
+fn describe_parameter_bitvector(
+    term: &Bitvector32Term,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    for (parameter, argument) in parameters.iter().zip(arguments) {
+        match argument {
+            CExpression::Value(CValue::Int32(value))
+                if value == term && parameter.c_type() == C0Type::Int32 =>
+            {
+                return Some(parameter.name().to_string());
+            }
+            CExpression::Value(CValue::UInt8(value))
+                if value == term && parameter.c_type() == C0Type::UInt8 =>
+            {
+                return Some(parameter.name().to_string());
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn describe_binary_bitvector_with_context(
@@ -3235,7 +3318,7 @@ fn annotated_function(
         next_quantifier_variable: 3_000_000,
     };
     let body = lowerer.lower_statement(parsed_function.body())?;
-    let (resource_requires, resource_ensures) = function_resource_summary(function_block);
+    let (resource_requires, resource_ensures) = function_resource_summary(function_block)?;
     Ok(c_function(
         parsed_function.return_type().to_kernel_type(),
         parsed_function.name().to_string(),
@@ -4622,6 +4705,13 @@ fn apply_contract_lets_to_resource_clause(
         ResourceClause::Free(segment) => Ok(ResourceClause::Free(apply_contract_lets_to_segment(
             segment, bindings,
         )?)),
+        ResourceClause::Named { name, arguments } => Ok(ResourceClause::Named {
+            name,
+            arguments: arguments
+                .into_iter()
+                .map(|argument| apply_contract_lets_to_expression(argument, bindings))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
     }
 }
 
@@ -5935,6 +6025,99 @@ fn lower_resource_clause(
             let range = lower_resource_segment("free", segment, parameters, arguments, memory)?;
             Ok(CResource::Free(range))
         }
+        ResourceClause::Named {
+            name,
+            arguments: resource_arguments,
+        } => {
+            let parameter_values = parameter_values(parameters, arguments)
+                .map_err(|error| ClickError::new(error.message))?;
+            let state = CState::new().with_memory(memory.clone());
+            let assumptions = Assumptions::new();
+            let mut values = Vec::new();
+            for (index, argument) in resource_arguments.iter().enumerate() {
+                let argument = resource_argument_to_c_expression(argument)?;
+                let value = evaluate_c_contract_expression(
+                    &parameter_values,
+                    &state,
+                    None,
+                    &assumptions,
+                    &argument,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "could not lower resource `{name}` argument {index}: {message}"
+                    ))
+                })?;
+                values.push(value);
+            }
+            Ok(CResource::Named {
+                name: name.clone(),
+                arguments: values,
+            })
+        }
+    }
+}
+
+fn resource_argument_to_c_expression(
+    argument: &ContractExpression,
+) -> Result<CExpression, ClickError> {
+    match argument {
+        ContractExpression::CFragment(expression) => Ok(expression.clone()),
+        ContractExpression::Add(left, right) => Ok(CExpression::Add(
+            Box::new(resource_argument_to_c_expression(left)?),
+            Box::new(resource_argument_to_c_expression(right)?),
+        )),
+        ContractExpression::Subtract(left, right) => Ok(CExpression::Subtract(
+            Box::new(resource_argument_to_c_expression(left)?),
+            Box::new(resource_argument_to_c_expression(right)?),
+        )),
+        ContractExpression::Multiply(left, right) => Ok(CExpression::Multiply(
+            Box::new(resource_argument_to_c_expression(left)?),
+            Box::new(resource_argument_to_c_expression(right)?),
+        )),
+        ContractExpression::Divide(left, right) => Ok(CExpression::Divide(
+            Box::new(resource_argument_to_c_expression(left)?),
+            Box::new(resource_argument_to_c_expression(right)?),
+        )),
+        ContractExpression::Remainder(left, right) => Ok(CExpression::Remainder(
+            Box::new(resource_argument_to_c_expression(left)?),
+            Box::new(resource_argument_to_c_expression(right)?),
+        )),
+        ContractExpression::ShiftLeft(left, right) => Ok(CExpression::ShiftLeft(
+            Box::new(resource_argument_to_c_expression(left)?),
+            Box::new(resource_argument_to_c_expression(right)?),
+        )),
+        ContractExpression::ShiftRight(left, right) => Ok(CExpression::ShiftRight(
+            Box::new(resource_argument_to_c_expression(left)?),
+            Box::new(resource_argument_to_c_expression(right)?),
+        )),
+        ContractExpression::BitwiseAnd(left, right) => Ok(CExpression::BitwiseAnd(
+            Box::new(resource_argument_to_c_expression(left)?),
+            Box::new(resource_argument_to_c_expression(right)?),
+        )),
+        ContractExpression::BitwiseOr(left, right) => Ok(CExpression::BitwiseOr(
+            Box::new(resource_argument_to_c_expression(left)?),
+            Box::new(resource_argument_to_c_expression(right)?),
+        )),
+        ContractExpression::BitwiseXor(left, right) => Ok(CExpression::BitwiseXor(
+            Box::new(resource_argument_to_c_expression(left)?),
+            Box::new(resource_argument_to_c_expression(right)?),
+        )),
+        ContractExpression::BitwiseNot(expression) => Ok(CExpression::BitwiseNot(Box::new(
+            resource_argument_to_c_expression(expression)?,
+        ))),
+        ContractExpression::Index(base, index) => Ok(CExpression::Index(
+            Box::new(resource_argument_to_c_expression(base)?),
+            Box::new(resource_argument_to_c_expression(index)?),
+        )),
+        ContractExpression::Old(_)
+        | ContractExpression::At { .. }
+        | ContractExpression::If { .. }
+        | ContractExpression::RangeFold { .. }
+        | ContractExpression::Let { .. }
+        | ContractExpression::Call { .. } => Err(ClickError::new(
+            "named resource arguments currently support current-state C expressions only",
+        )),
     }
 }
 
@@ -12306,7 +12489,7 @@ impl Parser {
     }
 
     fn parse_file(mut self) -> Result<ClickFile, ClickError> {
-        let file = self.parse_file_items()?;
+        let file = expand_declared_resource_clauses(self.parse_file_items()?)?;
         validate_click_definitions(&file)?;
         Ok(file)
     }
@@ -12315,6 +12498,7 @@ impl Parser {
         let mut verifying_sources = Vec::new();
         let mut predicate_definitions = Vec::new();
         let mut click_function_definitions = Vec::new();
+        let mut resource_definitions = Vec::new();
         let mut function_blocks = Vec::new();
 
         while self.peek().is_some() {
@@ -12324,6 +12508,10 @@ impl Parser {
                 predicate_definitions.push(self.parse_predicate_definition()?);
             } else if self.peek_ident() == Some("function") {
                 click_function_definitions.push(self.parse_click_function_definition()?);
+            } else if self.peek_ident() == Some("affine")
+                && self.peek_next_ident() == Some("resource")
+            {
+                resource_definitions.push(self.parse_resource_definition()?);
             } else {
                 function_blocks.push(self.parse_function_block()?);
             }
@@ -12333,6 +12521,7 @@ impl Parser {
             verifying_sources,
             predicate_definitions,
             click_function_definitions,
+            resource_definitions,
             function_blocks,
         };
         Ok(file)
@@ -12378,6 +12567,47 @@ impl Parser {
             return_type,
             body,
         })
+    }
+
+    fn parse_resource_definition(&mut self) -> Result<ResourceDefinition, ClickError> {
+        self.expect_ident_spelling("affine")?;
+        self.expect_ident_spelling("resource")?;
+        let name = self.expect_ident("resource name")?;
+        self.expect(Token::LParen)?;
+        let parameters = self.parse_resource_parameters()?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::Semicolon)?;
+        Ok(ResourceDefinition {
+            name,
+            parameters,
+            kind: ResourceKind::Affine,
+        })
+    }
+
+    fn parse_resource_parameters(&mut self) -> Result<Vec<FunctionParameter>, ClickError> {
+        let mut parameters = Vec::new();
+        if self.peek() == Some(&Token::RParen) {
+            return Ok(parameters);
+        }
+
+        loop {
+            let name = self.expect_ident("resource parameter name")?;
+            self.expect(Token::Colon)?;
+            let c_type = self.parse_type()?;
+            let c_type = self.parse_parameter_array_suffix(c_type)?;
+            parameters.push(FunctionParameter { c_type, name });
+
+            match self.peek() {
+                Some(Token::Comma) => {
+                    self.position += 1;
+                }
+                Some(Token::RParen) => return Ok(parameters),
+                Some(token) => {
+                    return Err(self.error(format!("expected `,` or `)`, got {token:?}")));
+                }
+                None => return Err(self.error("expected `,` or `)`, got end of input")),
+            }
+        }
     }
 
     fn parse_function_block(&mut self) -> Result<FunctionBlock, ClickError> {
@@ -13944,15 +14174,28 @@ impl Parser {
         }
     }
 
+    fn peek_next_ident(&self) -> Option<&str> {
+        match self.peek_next() {
+            Some(Token::Ident(name)) => Some(name),
+            _ => None,
+        }
+    }
+
     fn error(&self, message: impl Into<String>) -> ClickError {
         ClickError::new(format!("at token {}: {}", self.position, message.into()))
     }
 }
 
-fn standard_library_definitions()
--> Result<(Vec<PredicateDefinition>, Vec<ClickFunctionDefinition>), ClickError> {
+fn standard_library_definitions() -> Result<
+    (
+        Vec<PredicateDefinition>,
+        Vec<ClickFunctionDefinition>,
+        Vec<ResourceDefinition>,
+    ),
+    ClickError,
+> {
     let mut parser = Parser::new(CLICK_STANDARD_LIBRARY)?;
-    let file = parser.parse_file_items()?;
+    let file = expand_declared_resource_clauses(parser.parse_file_items()?)?;
     if !file.verifying_sources().is_empty() || !file.function_blocks().is_empty() {
         return Err(ClickError::new(
             "internal Click standard library must not contain verifying sources or C function specs",
@@ -13961,13 +14204,93 @@ fn standard_library_definitions()
     Ok((
         file.predicate_definitions().to_vec(),
         file.click_function_definitions().to_vec(),
+        file.resource_definitions().to_vec(),
     ))
+}
+
+fn expand_declared_resource_clauses(mut file: ClickFile) -> Result<ClickFile, ClickError> {
+    let resource_arities = file
+        .resource_definitions()
+        .iter()
+        .map(|definition| (definition.name().to_string(), definition.parameters().len()))
+        .collect::<BTreeMap<_, _>>();
+
+    for function in &mut file.function_blocks {
+        function.requires = function
+            .requires
+            .drain(..)
+            .map(|requirement| expand_declared_resource_requirement(requirement, &resource_arities))
+            .collect::<Result<Vec<_>, _>>()?;
+        function.ensures = function
+            .ensures
+            .drain(..)
+            .map(|clause| expand_declared_resource_ensure_clause(clause, &resource_arities))
+            .collect::<Result<Vec<_>, _>>()?;
+    }
+
+    Ok(file)
+}
+
+fn expand_declared_resource_requirement(
+    requirement: Requirement,
+    resource_arities: &BTreeMap<String, usize>,
+) -> Result<Requirement, ClickError> {
+    match requirement {
+        Requirement::Labeled { label, requirement } => Ok(Requirement::Labeled {
+            label,
+            requirement: Box::new(expand_declared_resource_requirement(
+                *requirement,
+                resource_arities,
+            )?),
+        }),
+        Requirement::Proposition(ClickProposition::PredicateCall { name, arguments })
+            if resource_arities.contains_key(&name) =>
+        {
+            validate_declared_resource_arity(&name, arguments.len(), resource_arities)?;
+            Ok(Requirement::Resource(ResourceClause::Named {
+                name,
+                arguments,
+            }))
+        }
+        _ => Ok(requirement),
+    }
+}
+
+fn expand_declared_resource_ensure_clause(
+    mut clause: EnsureClause,
+    resource_arities: &BTreeMap<String, usize>,
+) -> Result<EnsureClause, ClickError> {
+    if let Ensure::Proposition(ClickProposition::PredicateCall { name, arguments }) = clause.ensure
+    {
+        if resource_arities.contains_key(&name) {
+            validate_declared_resource_arity(&name, arguments.len(), resource_arities)?;
+            clause.ensure = Ensure::Resource(ResourceClause::Named { name, arguments });
+        } else {
+            clause.ensure =
+                Ensure::Proposition(ClickProposition::PredicateCall { name, arguments });
+        }
+    }
+    Ok(clause)
+}
+
+fn validate_declared_resource_arity(
+    name: &str,
+    actual: usize,
+    resource_arities: &BTreeMap<String, usize>,
+) -> Result<(), ClickError> {
+    let expected = resource_arities[name];
+    if expected != actual {
+        return Err(ClickError::new(format!(
+            "resource `{name}` expects {expected} argument(s), got {actual}"
+        )));
+    }
+    Ok(())
 }
 
 fn combined_predicate_definitions(
     file: &ClickFile,
 ) -> Result<Vec<PredicateDefinition>, ClickError> {
-    let (mut definitions, _) = standard_library_definitions()?;
+    let (mut definitions, _, _) = standard_library_definitions()?;
     definitions.extend(file.predicate_definitions().iter().cloned());
     Ok(definitions)
 }
@@ -13975,14 +14298,21 @@ fn combined_predicate_definitions(
 fn combined_click_function_definitions(
     file: &ClickFile,
 ) -> Result<Vec<ClickFunctionDefinition>, ClickError> {
-    let (_, mut definitions) = standard_library_definitions()?;
+    let (_, mut definitions, _) = standard_library_definitions()?;
     definitions.extend(file.click_function_definitions().iter().cloned());
+    Ok(definitions)
+}
+
+fn combined_resource_definitions(file: &ClickFile) -> Result<Vec<ResourceDefinition>, ClickError> {
+    let (_, _, mut definitions) = standard_library_definitions()?;
+    definitions.extend(file.resource_definitions().iter().cloned());
     Ok(definitions)
 }
 
 fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
     let predicate_definitions = combined_predicate_definitions(file)?;
     let click_function_definitions = combined_click_function_definitions(file)?;
+    let resource_definitions = combined_resource_definitions(file)?;
 
     let mut predicates = BTreeMap::new();
     for definition in &predicate_definitions {
@@ -14011,6 +14341,37 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
         {
             return Err(ClickError::new(format!(
                 "duplicate function definition `{}`",
+                definition.name()
+            )));
+        }
+    }
+
+    let mut resources = BTreeMap::new();
+    for definition in &resource_definitions {
+        if matches!(definition.name(), "read" | "write" | "free") {
+            return Err(ClickError::new(format!(
+                "`{}` is a built-in resource name",
+                definition.name()
+            )));
+        }
+        if predicates.contains_key(definition.name()) {
+            return Err(ClickError::new(format!(
+                "`{}` is defined as both a predicate and a resource",
+                definition.name()
+            )));
+        }
+        if click_functions.contains_key(definition.name()) {
+            return Err(ClickError::new(format!(
+                "`{}` is defined as both a function and a resource",
+                definition.name()
+            )));
+        }
+        if resources
+            .insert(definition.name().to_string(), definition.parameters().len())
+            .is_some()
+        {
+            return Err(ClickError::new(format!(
+                "duplicate resource definition `{}`",
                 definition.name()
             )));
         }
@@ -14068,6 +14429,13 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
                     &click_functions,
                     &format!("requires clause in `{}`", function.signature().name()),
                 )?;
+            } else if let Requirement::Resource(resource) = requirement.inner() {
+                validate_resource_clause(
+                    resource,
+                    &resources,
+                    &click_functions,
+                    &format!("requires clause in `{}`", function.signature().name()),
+                )?;
             }
         }
 
@@ -14096,12 +14464,45 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
                     &click_functions,
                     &format!("ensures clause in `{}`", function.signature().name()),
                 )?,
-                Ensure::Resource(_) => {}
+                Ensure::Resource(resource) => validate_resource_clause(
+                    resource,
+                    &resources,
+                    &click_functions,
+                    &format!("ensures clause in `{}`", function.signature().name()),
+                )?,
             }
         }
     }
 
     Ok(())
+}
+
+fn validate_resource_clause(
+    resource: &ResourceClause,
+    resources: &BTreeMap<String, usize>,
+    click_functions: &BTreeMap<String, usize>,
+    context: &str,
+) -> Result<(), ClickError> {
+    match resource {
+        ResourceClause::Read(_) | ResourceClause::Write(_) | ResourceClause::Free(_) => Ok(()),
+        ResourceClause::Named { name, arguments } => {
+            let Some(arity) = resources.get(name) else {
+                return Err(ClickError::new(format!(
+                    "unknown resource `{name}` in {context}"
+                )));
+            };
+            if *arity != arguments.len() {
+                return Err(ClickError::new(format!(
+                    "resource `{name}` expects {arity} argument(s), got {} in {context}",
+                    arguments.len()
+                )));
+            }
+            for argument in arguments {
+                validate_contract_expression_calls(argument, click_functions, context)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 fn validate_predicate_calls_in_proposition(

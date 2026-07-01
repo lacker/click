@@ -505,6 +505,26 @@ fn evaluate_function_resource_spec(
                 segment.end,
             ))))
         }
+        CResourceSpec::Named { name, arguments } => {
+            let mut values = Vec::new();
+            for (index, argument) in arguments.iter().enumerate() {
+                let value = match evaluate_loop_effect_segment_value(
+                    state,
+                    argument,
+                    assumptions,
+                    &format!("resource `{name}` argument {index}"),
+                    budget,
+                )? {
+                    Ok(value) => value,
+                    Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
+                };
+                values.push(value);
+            }
+            Ok(Ok(CResource::Named {
+                name: name.clone(),
+                arguments: values,
+            }))
+        }
     }
 }
 
@@ -513,6 +533,7 @@ fn resource_transfer_priority(resource: &CResource) -> u8 {
         CResource::Read(_) => 0,
         CResource::Write(_) => 1,
         CResource::Free(_) => 2,
+        CResource::Named { .. } => 3,
     }
 }
 

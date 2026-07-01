@@ -161,6 +161,10 @@ sequence:
   write permission.
 - `mdtests/free_statement_write_after.md`: writing after `free(p);` fails.
 - `mdtests/free_statement_double_free.md`: a second `free(p);` fails.
+- `mdtests/affine_resource_borrow_return.md`: exact-match affine named
+  resource can be borrowed and returned.
+- `mdtests/affine_resource_consumed_by_call.md`: exact-match affine named
+  resource is consumed when a callee does not return it.
 
 ## Predicates And Pure Click Functions
 

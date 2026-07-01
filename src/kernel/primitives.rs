@@ -454,11 +454,16 @@ pub enum CResource {
     Read(CMemoryRange),
     Write(CMemoryRange),
     Free(CMemoryRange),
+    Named {
+        name: String,
+        arguments: Vec<CValue>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum ResourceFamily {
     Memory,
+    Named,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -466,6 +471,10 @@ pub enum CResourceSpec {
     Read(CMemorySegment),
     Write(CMemorySegment),
     Free(CMemorySegment),
+    Named {
+        name: String,
+        arguments: Vec<CExpression>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1894,6 +1903,7 @@ fn resource_entails(
     }
     match available.family() {
         ResourceFamily::Memory => memory_resource_entails(available, required, assumptions),
+        ResourceFamily::Named => named_resource_entails(available, required),
     }
 }
 
@@ -1904,6 +1914,7 @@ fn consume_resource(
 ) -> Option<ResourceContext> {
     match required.family() {
         ResourceFamily::Memory => consume_memory_resource(context, required, assumptions),
+        ResourceFamily::Named => consume_named_resource(context, required, assumptions),
     }
 }
 
@@ -1917,6 +1928,7 @@ fn combine_resources(
     }
     match left.family() {
         ResourceFamily::Memory => combine_memory_resources(left, right, assumptions),
+        ResourceFamily::Named => combine_named_resources(left, right),
     }
 }
 
@@ -1936,7 +1948,9 @@ fn memory_resource_entails(
         | (CResource::Read(_), CResource::Free(_))
         | (CResource::Write(_), CResource::Free(_))
         | (CResource::Free(_), CResource::Read(_))
-        | (CResource::Free(_), CResource::Write(_)) => false,
+        | (CResource::Free(_), CResource::Write(_))
+        | (CResource::Named { .. }, _)
+        | (_, CResource::Named { .. }) => false,
     }
 }
 
@@ -1953,7 +1967,7 @@ fn consume_memory_resource(
                 CResource::Read(available) | CResource::Write(available) => {
                     memory_range_covers(available, required, assumptions)
                 }
-                CResource::Free(_) => false,
+                CResource::Free(_) | CResource::Named { .. } => false,
             })
             .then(|| context.normalized(assumptions)),
         CResource::Write(required) => {
@@ -1965,11 +1979,11 @@ fn consume_memory_resource(
                     CResource::Write(available) => {
                         memory_range_covers(available, required, assumptions)
                     }
-                    CResource::Free(_) => false,
+                    CResource::Free(_) | CResource::Named { .. } => false,
                 })?;
             let available = match context.resources.remove(index) {
                 CResource::Write(available) => available,
-                CResource::Read(_) | CResource::Free(_) => {
+                CResource::Read(_) | CResource::Free(_) | CResource::Named { .. } => {
                     unreachable!("write resource lookup ignored non-writes")
                 }
             };
@@ -1981,6 +1995,7 @@ fn consume_memory_resource(
             Some(context.normalized(assumptions))
         }
         CResource::Free(required) => consume_memory_free_resource(context, required, assumptions),
+        CResource::Named { .. } => unreachable!("named resource sent to memory resource consumer"),
     }
 }
 
@@ -1991,13 +2006,17 @@ fn consume_memory_free_resource(
 ) -> Option<ResourceContext> {
     if !context.resources.iter().any(|candidate| match candidate {
         CResource::Free(available) => memory_range_covers(available, required, assumptions),
-        CResource::Read(_) | CResource::Write(_) => false,
+        CResource::Read(_) | CResource::Write(_) | CResource::Named { .. } => false,
     }) {
         return None;
     }
 
     let mut resources = Vec::new();
     for resource in context.resources {
+        if matches!(resource, CResource::Named { .. }) {
+            resources.push(resource);
+            continue;
+        }
         let range = resource.memory_range();
         if memory_range_covers(range, required, assumptions) {
             resources.extend(
@@ -2018,6 +2037,27 @@ fn consume_memory_free_resource(
     Some(context.normalized(assumptions))
 }
 
+fn named_resource_entails(available: &CResource, required: &CResource) -> bool {
+    available == required
+}
+
+fn consume_named_resource(
+    mut context: ResourceContext,
+    required: &CResource,
+    assumptions: &Assumptions,
+) -> Option<ResourceContext> {
+    let index = context
+        .resources
+        .iter()
+        .position(|candidate| candidate == required)?;
+    context.resources.remove(index);
+    Some(context.normalized(assumptions))
+}
+
+fn combine_named_resources(left: &CResource, right: &CResource) -> Option<CResource> {
+    (left == right).then(|| left.clone())
+}
+
 fn memory_resource_permits_read(
     resource: &CResource,
     pointer: &Pointer,
@@ -2032,7 +2072,7 @@ fn memory_resource_permits_read(
             range.start(),
             range.end(),
         ),
-        CResource::Free(_) => false,
+        CResource::Free(_) | CResource::Named { .. } => false,
     }
 }
 
@@ -2051,7 +2091,7 @@ fn memory_resource_permits_write(
             range.start(),
             range.end(),
         ),
-        CResource::Free(_) => false,
+        CResource::Free(_) | CResource::Named { .. } => false,
     }
 }
 
@@ -2123,12 +2163,14 @@ impl CResource {
     pub fn family(&self) -> ResourceFamily {
         match self {
             Self::Read(_) | Self::Write(_) | Self::Free(_) => ResourceFamily::Memory,
+            Self::Named { .. } => ResourceFamily::Named,
         }
     }
 
     fn memory_range(&self) -> &CMemoryRange {
         match self {
             Self::Read(range) | Self::Write(range) | Self::Free(range) => range,
+            Self::Named { .. } => panic!("named resources do not have memory ranges"),
         }
     }
 
@@ -2137,6 +2179,7 @@ impl CResource {
             Self::Read(_) => Self::Read(range),
             Self::Write(_) => Self::Write(range),
             Self::Free(_) => Self::Free(range),
+            Self::Named { .. } => panic!("named resources do not have memory ranges"),
         }
     }
 }
@@ -2163,7 +2206,9 @@ fn combine_memory_resources(
         | (CResource::Write(_), CResource::Read(_))
         | (CResource::Write(_), CResource::Free(_))
         | (CResource::Free(_), CResource::Read(_))
-        | (CResource::Free(_), CResource::Write(_)) => None,
+        | (CResource::Free(_), CResource::Write(_))
+        | (CResource::Named { .. }, _)
+        | (_, CResource::Named { .. }) => None,
     }
 }
 

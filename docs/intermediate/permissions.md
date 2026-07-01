@@ -30,16 +30,16 @@ rules for a group of related resources:
 - what gets consumed by a function call or statement,
 - what other resources are invalidated by consumption.
 
-The current implementation has one built-in resource family: memory resources.
-`read(...)`, `write(...)`, and `free(...)` are all memory resources over a
-range. This is similar in spirit to a resource algebra: the context is not just
-a bag of facts, because each family has rules for combining, transferring, and
-consuming its resources.
+The main built-in resource family is memory resources. `read(...)`,
+`write(...)`, and `free(...)` are all memory resources over a range. This is
+similar in spirit to a resource algebra: the context is not just a bag of facts,
+because each family has rules for combining, transferring, and consuming its
+resources.
 
 This resource-family boundary is intentionally more general than memory
-ownership. Future families might model obligations, protocol states, effect
-authority, or receipts from previous operations without forcing those concepts
-to look like heap cells.
+ownership. Click also has a first exact-match slice for user-defined affine
+resources, which can model API protocols without forcing those protocols to
+look like heap cells.
 
 ## Validity And Authority
 
@@ -151,6 +151,34 @@ The caller must have a resource that covers every callee resource requirement.
 An unannotated callee receives no external memory permission, even if the caller
 has permissions in its own context.
 
+## Affine Named Resources
+
+You can declare an exact-match affine resource:
+
+```click
+affine resource open_fd(fd: int32);
+```
+
+Then a contract can require and return instances of that resource:
+
+```click
+int32 borrow_fd(int32 fd) {
+    requires open_fd(fd);
+
+    ensures open_fd(fd) by auto;
+}
+```
+
+An affine named resource is transferred by function calls. If a callee requires
+`open_fd(fd)` and returns it with `ensures open_fd(fd)`, the caller gets the
+token back. If the callee requires it and does not return it, the caller loses
+the token.
+
+Named resources currently have exact-match behavior only. They do not split,
+rejoin, imply other resources, authorize C statements, or define custom algebra
+rules. Resource arguments currently support current-state C expressions such as
+parameters, constants, arithmetic, pointer expressions, and indexes.
+
 ## Split And Rejoin
 
 A caller can pass a subrange of a larger write resource:
@@ -191,6 +219,7 @@ Implemented today:
 - `read(...)`, `write(...)`, and `free(...)` over memory ranges,
 - an internal memory resource family boundary for entailment, consumption,
   access authorization, splitting, and joining,
+- exact-match affine named resources declared with `affine resource name(...)`,
 - `write(...)` implying read authority,
 - copyable read transfer,
 - linear write transfer through function summaries,
@@ -202,7 +231,8 @@ Not implemented yet:
 
 - fractional permissions,
 - C heap allocation or allocation-sized deallocation semantics,
-- abstract resource predicates,
+- custom resource-family algebra,
+- persistent named resources,
 - ownership predicates,
 - explicit resource algebra proof steps,
 - general mutable spec/model state.
