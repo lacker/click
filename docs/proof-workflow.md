@@ -51,7 +51,8 @@ Current proof steps:
 - `unfold(name);`: unfold matching predicate facts and goals.
 - `apply(theorem_name(args...));`: instantiate a verified pure theorem from the
   standard library or current file, prove its requirements from the current
-  proof context, and add its conclusions as derived facts.
+  proof context, and add its conclusions as derived facts. This step never
+  changes the resource context.
 - `choose(k from requirement name);`: open a named existential precondition,
   introducing proof-local int32 value `k`.
 - `choose(k from requirement N);`: the same operation by zero-based requirement

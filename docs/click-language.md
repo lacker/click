@@ -58,11 +58,12 @@ proposition `requires` clauses, and proposition `ensures` clauses with proof
 clauses. A theorem-only `.click` file does not need a `verifying "file.c";`
 declaration.
 
-The first theorem slice is intentionally pure. It does not support resource
-`requires`, resource `ensures`, effects, structural proof blocks, `old(...)`,
-`at(...)`, or `result`. Pure theorem proof scripts currently support
-`unfold(name);`, `apply(theorem(args));`, and `simp();`; C execution and
-resource proof steps are rejected.
+Theorems are intentionally pure. They do not support resource `requires`,
+resource `ensures`, effects, structural proof blocks, `old(...)`, `at(...)`, or
+`result`. Pure theorem proof scripts currently support `unfold(name);`,
+`apply(theorem(args));`, and `simp();`; C execution and resource proof steps are
+rejected. Applying a theorem never consumes, creates, returns, opens, or closes
+resources.
 
 Theorems can be reused by explicit application:
 
@@ -84,12 +85,13 @@ theorem reuses_nonnegative_body(y: int32) {
 }
 ```
 
-`apply(...)` instantiates a verified theorem, proves that theorem's `requires`
-clauses from the current proof context, and adds its proposition `ensures`
-clauses as derived facts. Theorem declarations are checked in source order after
-the standard library, so a theorem proof can apply stdlib theorems and earlier
-theorem declarations. C function proof scripts can apply any verified theorem
-from the standard library or the current file. In C
+`apply(...)` instantiates a verified theorem, proves that theorem's proposition
+`requires` clauses from the current proof context, and adds its proposition
+`ensures` clauses as derived facts. It does not change the current resource
+context. Theorem declarations are checked in source order after the standard
+library, so a theorem proof can apply stdlib theorems and earlier theorem
+declarations. C function proof scripts can apply any verified theorem from the
+standard library or the current file. In C
 function proof scripts, `apply(...)` runs after `symbolic_execute();` or
 `bounded_execute();`, where `result`, post-state expressions, and ordinary
 `old(...)` arguments can be evaluated.

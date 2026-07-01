@@ -34,7 +34,8 @@ Use `frame` for `immutable` and `mutable` effect clauses.
 Pure theorem declarations currently support `auto`, `simp`, and proof-step
 scripts made from `unfold(name);`, `apply(theorem(args));`, and `simp();`.
 They do not run C execution steps because there is no C function body attached
-to the theorem.
+to the theorem, and they do not run resource steps because theorem application
+does not change the resource context.
 
 ## Proof-Step Scripts
 

@@ -170,7 +170,8 @@ Likely additions:
 - Richer theorem reuse:
   theorem application exists for stdlib and current-file pure proposition
   theorems; next slices should cover better diagnostics, named conclusion
-  selection, and eventually resource-aware theorem forms.
+  selection, and eventually separate reusable resource-rule forms if repeated
+  open/close patterns justify them.
 - Explicit rewrite/calc steps:
   better than hiding all proof search inside `simp`.
 - Predicate/function namespaces that scale with modules.

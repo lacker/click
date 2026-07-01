@@ -232,6 +232,32 @@ invariant in the current state, consumes the represented resources, and adds
 the abstract `called(flag)` token. The end of the `by { ... }` block checks the
 overall claim.
 
+A proof can also borrow a represented resource, learn its invariant, and return
+the same abstract token:
+
+```click
+int32 inspect_server(int32 fd, int32 state[]) {
+    requires live_server(fd, state);
+
+    ensures live_server(fd, state) by {
+        open(live_server(fd, state));
+        symbolic_execute();
+        close(live_server(fd, state));
+    }
+
+    ensures state[0] == 1 by {
+        open(live_server(fd, state));
+        symbolic_execute();
+        close(live_server(fd, state));
+        simp();
+    }
+}
+```
+
+This is resource-context reasoning, not theorem application. Theorems stay
+pure; `apply(theorem(...))` can add proposition facts, but it does not consume
+or return resources.
+
 This first slice supports built-in `read(...)`, `write(...)`, and `free(...)`
 clauses plus exact-match affine named resources inside `contains`. Duplicate
 contained affine tokens are rejected, and represented-resource cycles are
