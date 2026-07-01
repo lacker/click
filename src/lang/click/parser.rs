@@ -94,8 +94,8 @@ impl Parser {
     }
 
     fn parse_file(mut self) -> Result<ClickFile, ClickError> {
-        let file = expand_declared_resource_clauses(self.parse_file_items()?)?;
-        validate_click_definitions(&file)?;
+        let file = super::validation::expand_declared_resource_clauses(self.parse_file_items()?)?;
+        super::validation::validate_click_definitions(&file)?;
         Ok(file)
     }
 
