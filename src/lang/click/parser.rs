@@ -1,0 +1,2219 @@
+use super::*;
+
+pub(super) fn parse(source: &str) -> Result<ClickFile, ClickError> {
+    Parser::new(source)?.parse_file()
+}
+
+pub(super) fn parse_file_items(source: &str) -> Result<ClickFile, ClickError> {
+    let mut parser = Parser::new(source)?;
+    parser.parse_file_items()
+}
+
+fn is_tactic_name(name: &str) -> bool {
+    matches!(name, "auto" | "frame" | "simp")
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Token {
+    Ident(String),
+    Number(u32),
+    CharLiteral(u8),
+    String(String),
+    LBrace,
+    RBrace,
+    LParen,
+    RParen,
+    LBracket,
+    RBracket,
+    Colon,
+    Comma,
+    Semicolon,
+    Dot,
+    DotDot,
+    Arrow,
+    Equal,
+    EqualEqual,
+    BangEqual,
+    LessThan,
+    LessEqual,
+    ShiftLeft,
+    GreaterThan,
+    GreaterEqual,
+    ShiftRight,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Amp,
+    Caret,
+    Tilde,
+    Pipe,
+}
+
+struct Parser {
+    tokens: Vec<Token>,
+    position: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ContractLetBinding {
+    pub(super) name: String,
+    pub(super) c_type: Option<C0Type>,
+    kind: ContractLetBindingKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ContractLetBindingKind {
+    Value(ContractExpression),
+    Where(ClickProposition),
+}
+
+impl ContractLetBinding {
+    pub(super) fn value(&self) -> Option<&ContractExpression> {
+        match &self.kind {
+            ContractLetBindingKind::Value(value) => Some(value),
+            ContractLetBindingKind::Where(_) => None,
+        }
+    }
+
+    pub(super) fn where_condition(&self) -> Option<&ClickProposition> {
+        match &self.kind {
+            ContractLetBindingKind::Value(_) => None,
+            ContractLetBindingKind::Where(condition) => Some(condition),
+        }
+    }
+}
+
+impl Parser {
+    fn new(source: &str) -> Result<Self, ClickError> {
+        Ok(Self {
+            tokens: tokenize(source)?,
+            position: 0,
+        })
+    }
+
+    fn parse_file(mut self) -> Result<ClickFile, ClickError> {
+        let file = expand_declared_resource_clauses(self.parse_file_items()?)?;
+        validate_click_definitions(&file)?;
+        Ok(file)
+    }
+
+    fn parse_file_items(&mut self) -> Result<ClickFile, ClickError> {
+        let mut verifying_sources = Vec::new();
+        let mut predicate_definitions = Vec::new();
+        let mut click_function_definitions = Vec::new();
+        let mut resource_definitions = Vec::new();
+        let mut theorem_definitions = Vec::new();
+        let mut function_blocks = Vec::new();
+
+        while self.peek().is_some() {
+            if self.peek_ident() == Some("verifying") {
+                verifying_sources.push(self.parse_verifying_source()?);
+            } else if self.peek_ident() == Some("predicate") {
+                predicate_definitions.push(self.parse_predicate_definition()?);
+            } else if self.peek_ident() == Some("function") {
+                click_function_definitions.push(self.parse_click_function_definition()?);
+            } else if self.peek_ident() == Some("theorem") {
+                theorem_definitions.push(self.parse_theorem_definition()?);
+            } else if self.peek_ident() == Some("affine")
+                && self.peek_next_ident() == Some("resource")
+            {
+                resource_definitions.push(self.parse_resource_definition()?);
+            } else {
+                function_blocks.push(self.parse_function_block()?);
+            }
+        }
+
+        let file = ClickFile {
+            verifying_sources,
+            predicate_definitions,
+            click_function_definitions,
+            resource_definitions,
+            theorem_definitions,
+            function_blocks,
+        };
+        Ok(file)
+    }
+
+    fn parse_verifying_source(&mut self) -> Result<String, ClickError> {
+        self.expect_ident_spelling("verifying")?;
+        let source_path = self.expect_string("C source path")?;
+        self.expect(Token::Semicolon)?;
+        Ok(source_path)
+    }
+
+    fn parse_predicate_definition(&mut self) -> Result<PredicateDefinition, ClickError> {
+        self.expect_ident_spelling("predicate")?;
+        let name = self.expect_ident("predicate name")?;
+        self.expect(Token::LParen)?;
+        let parameters = self.parse_parameters()?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::LBrace)?;
+        let body = self.parse_proposition()?;
+        self.expect(Token::RBrace)?;
+        Ok(PredicateDefinition {
+            name,
+            parameters,
+            body,
+        })
+    }
+
+    fn parse_click_function_definition(&mut self) -> Result<ClickFunctionDefinition, ClickError> {
+        self.expect_ident_spelling("function")?;
+        let name = self.expect_ident("function name")?;
+        self.expect(Token::LParen)?;
+        let parameters = self.parse_parameters()?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::Arrow)?;
+        let return_type = self.parse_type()?;
+        self.expect(Token::LBrace)?;
+        let body = self.parse_contract_expression()?;
+        self.expect(Token::RBrace)?;
+        Ok(ClickFunctionDefinition {
+            name,
+            parameters,
+            return_type,
+            body,
+        })
+    }
+
+    fn parse_resource_definition(&mut self) -> Result<ResourceDefinition, ClickError> {
+        self.expect_ident_spelling("affine")?;
+        self.expect_ident_spelling("resource")?;
+        let name = self.expect_ident("resource name")?;
+        self.expect(Token::LParen)?;
+        let parameters = self.parse_resource_parameters()?;
+        self.expect(Token::RParen)?;
+        let representation = match self.peek() {
+            Some(Token::Semicolon) => {
+                self.position += 1;
+                None
+            }
+            Some(Token::LBrace) => Some(self.parse_resource_representation()?),
+            Some(token) => {
+                return Err(self.error(format!(
+                    "expected `;` or resource representation body, got {token:?}"
+                )));
+            }
+            None => {
+                return Err(
+                    self.error("expected `;` or resource representation body, got end of input")
+                );
+            }
+        };
+        Ok(ResourceDefinition {
+            name,
+            parameters,
+            kind: ResourceKind::Affine,
+            representation,
+        })
+    }
+
+    fn parse_resource_representation(&mut self) -> Result<ResourceRepresentation, ClickError> {
+        self.expect(Token::LBrace)?;
+        let mut contains = Vec::new();
+        let mut invariants = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            match self.peek_ident() {
+                Some("contains") => {
+                    self.position += 1;
+                    contains.push(self.parse_resource_representation_clause()?);
+                    self.expect(Token::Semicolon)?;
+                }
+                Some("invariant") => {
+                    self.position += 1;
+                    invariants.push(self.parse_proposition()?);
+                    self.expect(Token::Semicolon)?;
+                }
+                Some(name) => {
+                    return Err(self.error(format!(
+                        "expected `contains` or `invariant` in resource body, got `{name}`"
+                    )));
+                }
+                None => {
+                    return Err(self.error(
+                        "expected `contains` or `invariant` in resource body, got end of input",
+                    ));
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+        Ok(ResourceRepresentation {
+            contains,
+            invariants,
+        })
+    }
+
+    fn parse_resource_representation_clause(&mut self) -> Result<ResourceClause, ClickError> {
+        if matches!(self.peek_ident(), Some("read" | "write" | "free")) {
+            return self.parse_resource_clause();
+        }
+        self.parse_named_resource_call()
+    }
+
+    fn parse_resource_parameters(&mut self) -> Result<Vec<FunctionParameter>, ClickError> {
+        let mut parameters = Vec::new();
+        if self.peek() == Some(&Token::RParen) {
+            return Ok(parameters);
+        }
+
+        loop {
+            let name = self.expect_ident("resource parameter name")?;
+            self.expect(Token::Colon)?;
+            let c_type = self.parse_type()?;
+            let c_type = self.parse_parameter_array_suffix(c_type)?;
+            parameters.push(FunctionParameter { c_type, name });
+
+            match self.peek() {
+                Some(Token::Comma) => {
+                    self.position += 1;
+                }
+                Some(Token::RParen) => return Ok(parameters),
+                Some(token) => {
+                    return Err(self.error(format!("expected `,` or `)`, got {token:?}")));
+                }
+                None => return Err(self.error("expected `,` or `)`, got end of input")),
+            }
+        }
+    }
+
+    fn parse_theorem_definition(&mut self) -> Result<TheoremDefinition, ClickError> {
+        self.expect_ident_spelling("theorem")?;
+        let name = self.expect_ident("theorem name")?;
+        self.expect(Token::LParen)?;
+        let parameters = self.parse_resource_parameters()?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::LBrace)?;
+
+        let parameter_names = parameters
+            .iter()
+            .map(|parameter| parameter.name().to_string())
+            .collect::<BTreeSet<_>>();
+        let mut contract_lets = Vec::new();
+        let mut contract_let_names = BTreeSet::new();
+        let mut requires = Vec::new();
+        let mut ensures = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            match self.peek_ident() {
+                Some("let") => {
+                    let binding = self.parse_contract_let_binding()?;
+                    if parameter_names.contains(binding.name.as_str()) {
+                        return Err(self.error(format!(
+                            "theorem `let` `{}` conflicts with a parameter in `{name}`",
+                            binding.name
+                        )));
+                    }
+                    if !contract_let_names.insert(binding.name.clone()) {
+                        return Err(self.error(format!(
+                            "duplicate theorem `let` `{}` in `{name}`",
+                            binding.name
+                        )));
+                    }
+                    let substitutions = contract_let_substitutions(&contract_lets);
+                    let kind = match binding.kind {
+                        ContractLetBindingKind::Value(value) => ContractLetBindingKind::Value(
+                            substitute_contract_expression(&value, &substitutions)
+                                .map_err(|message| self.error(message))?,
+                        ),
+                        ContractLetBindingKind::Where(condition) => {
+                            ContractLetBindingKind::Where(condition)
+                        }
+                    };
+                    contract_lets.push(ContractLetBinding { kind, ..binding });
+                }
+                Some("requires") => {
+                    let requirement = self.parse_requirement()?;
+                    requires.push(
+                        apply_contract_lets_to_requirement(requirement, &contract_lets)
+                            .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some("ensures") => {
+                    let ensure = self.parse_ensure_clause()?;
+                    ensures.push(
+                        apply_contract_lets_to_ensure_clause(ensure, &contract_lets)
+                            .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some(keyword) => {
+                    return Err(self.error(format!(
+                        "expected `let`, `requires`, `ensures`, or `}}` in theorem `{name}`, got `{keyword}`"
+                    )));
+                }
+                None => {
+                    return Err(self.error(format!(
+                        "expected `let`, `requires`, `ensures`, or `}}` in theorem `{name}`"
+                    )));
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+
+        Ok(TheoremDefinition {
+            name,
+            parameters,
+            requires,
+            ensures,
+        })
+    }
+
+    fn parse_function_block(&mut self) -> Result<FunctionBlock, ClickError> {
+        let signature = self.parse_function_signature()?;
+        self.expect(Token::LBrace)?;
+
+        let parameter_names = signature
+            .parameters()
+            .iter()
+            .map(|parameter| parameter.name().to_string())
+            .collect::<BTreeSet<_>>();
+        let mut contract_lets = Vec::new();
+        let mut contract_let_names = BTreeSet::new();
+        let mut requires = Vec::new();
+        let mut structural_clauses = Vec::new();
+        let mut structural_labels = BTreeSet::new();
+        let mut effects = Vec::new();
+        let mut ensures = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            match self.peek_ident() {
+                Some("let") => {
+                    let binding = self.parse_contract_let_binding()?;
+                    if parameter_names.contains(binding.name.as_str()) {
+                        return Err(self.error(format!(
+                            "contract `let` `{}` conflicts with a C parameter in `{}`",
+                            binding.name,
+                            signature.name()
+                        )));
+                    }
+                    if !contract_let_names.insert(binding.name.clone()) {
+                        return Err(self.error(format!(
+                            "duplicate contract `let` `{}` in `{}`",
+                            binding.name,
+                            signature.name()
+                        )));
+                    }
+                    let substitutions = contract_let_substitutions(&contract_lets);
+                    let kind = match binding.kind {
+                        ContractLetBindingKind::Value(value) => ContractLetBindingKind::Value(
+                            substitute_contract_expression(&value, &substitutions)
+                                .map_err(|message| self.error(message))?,
+                        ),
+                        ContractLetBindingKind::Where(condition) => {
+                            ContractLetBindingKind::Where(condition)
+                        }
+                    };
+                    contract_lets.push(ContractLetBinding { kind, ..binding });
+                }
+                Some("requires") => {
+                    let requirement = self.parse_requirement()?;
+                    requires.push(
+                        apply_contract_lets_to_requirement(requirement, &contract_lets)
+                            .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some("for") => {
+                    let clause = self.parse_structural_clause()?;
+                    if let Some(label) = clause.label() {
+                        if matches!(label, "function" | "loop" | "statement") {
+                            return Err(self.error(format!(
+                                "`{label}` is reserved and cannot be used as a code region label"
+                            )));
+                        }
+                        if !structural_labels.insert(label.to_string()) {
+                            return Err(self.error(format!(
+                                "duplicate code region label `{label}` in `{}`",
+                                signature.name()
+                            )));
+                        }
+                    }
+                    structural_clauses.push(
+                        apply_contract_lets_to_structural_clause(clause, &contract_lets)
+                            .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some("immutable" | "mutable" | "mutable_field") => {
+                    let effect = self.parse_effect_clause()?;
+                    effects.push(
+                        apply_contract_lets_to_effect_clause(effect, &contract_lets)
+                            .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some("ensures") => {
+                    let ensure = self.parse_ensure_clause()?;
+                    ensures.push(
+                        apply_contract_lets_to_ensure_clause(ensure, &contract_lets)
+                            .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some(keyword) => {
+                    return Err(self.error(format!(
+                        "expected `let`, `requires`, `immutable`, `mutable`, `mutable_field`, `for`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        signature.name()
+                    )));
+                }
+                None => {
+                    return Err(self.error(format!(
+                        "expected `let`, `requires`, `immutable`, `mutable`, `mutable_field`, `for`, `ensures`, or `}}` in `{}`",
+                        signature.name()
+                    )));
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+
+        Ok(FunctionBlock {
+            signature,
+            requires,
+            structural_clauses,
+            effects,
+            ensures,
+        })
+    }
+
+    fn parse_contract_let_binding(&mut self) -> Result<ContractLetBinding, ClickError> {
+        self.expect_ident_spelling("let")?;
+        let name = self.expect_ident("let binding name")?;
+        let c_type = if self.peek() == Some(&Token::Colon) {
+            self.position += 1;
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        let kind = if self.peek() == Some(&Token::Equal) {
+            self.position += 1;
+            ContractLetBindingKind::Value(self.parse_contract_expression()?)
+        } else if self.peek_ident() == Some("where") {
+            self.position += 1;
+            if c_type.is_none() {
+                return Err(self.error("`let ... where` requires an explicit type annotation"));
+            }
+            ContractLetBindingKind::Where(self.parse_proposition()?)
+        } else {
+            return Err(self.error("expected `=` or `where` in `let` binding"));
+        };
+        self.expect(Token::Semicolon)?;
+        Ok(ContractLetBinding { name, c_type, kind })
+    }
+
+    fn parse_function_signature(&mut self) -> Result<FunctionSignature, ClickError> {
+        let return_type = self.parse_type()?;
+        let name = self.expect_ident("function name")?;
+        self.expect(Token::LParen)?;
+        let parameters = self.parse_parameters()?;
+        self.expect(Token::RParen)?;
+
+        Ok(FunctionSignature {
+            return_type,
+            name,
+            parameters,
+        })
+    }
+
+    fn parse_parameters(&mut self) -> Result<Vec<FunctionParameter>, ClickError> {
+        let mut parameters = Vec::new();
+        if self.peek() == Some(&Token::RParen) {
+            return Ok(parameters);
+        }
+
+        loop {
+            let c_type = self.parse_type()?;
+            let name = self.expect_ident("parameter name")?;
+            let c_type = self.parse_parameter_array_suffix(c_type)?;
+            parameters.push(FunctionParameter { c_type, name });
+
+            match self.peek() {
+                Some(Token::Comma) => {
+                    self.position += 1;
+                }
+                Some(Token::RParen) => return Ok(parameters),
+                Some(token) => {
+                    return Err(self.error(format!("expected `,` or `)`, got {token:?}")));
+                }
+                None => return Err(self.error("expected `,` or `)`, got end of input")),
+            }
+        }
+    }
+
+    fn parse_type(&mut self) -> Result<C0Type, ClickError> {
+        let spelling = self.expect_ident("type")?;
+        if spelling == "struct" {
+            let _struct_name = self.expect_ident("struct name")?;
+            if self.peek() == Some(&Token::Star) {
+                self.position += 1;
+                return Ok(C0Type::Int32Pointer);
+            }
+            return Err(self.error("only pointer-to-struct types are supported"));
+        }
+
+        let scalar_type = match spelling.as_str() {
+            "int32" => C0Type::Int32,
+            "uint8" => C0Type::UInt8,
+            _ => {
+                return Err(self.error(format!(
+                    "expected type `int32` or `uint8`, got `{spelling}`"
+                )));
+            }
+        };
+        if self.peek() == Some(&Token::Star) {
+            self.position += 1;
+            Ok(match scalar_type {
+                C0Type::Int32 => C0Type::Int32Pointer,
+                C0Type::UInt8 => C0Type::UInt8Pointer,
+                _ => unreachable!("scalar type should not be aggregate"),
+            })
+        } else {
+            Ok(scalar_type)
+        }
+    }
+
+    fn parse_parameter_array_suffix(&mut self, c_type: C0Type) -> Result<C0Type, ClickError> {
+        if self.peek() != Some(&Token::LBracket) {
+            return Ok(c_type);
+        }
+        let pointer_type = match c_type {
+            C0Type::Int32 => C0Type::Int32Pointer,
+            C0Type::UInt8 => C0Type::UInt8Pointer,
+            _ => return Err(self.error("only scalar array parameters are supported")),
+        };
+
+        self.position += 1;
+        if matches!(self.peek(), Some(Token::Number(_))) {
+            self.position += 1;
+        }
+        self.expect(Token::RBracket)?;
+        Ok(pointer_type)
+    }
+
+    fn parse_requirement(&mut self) -> Result<Requirement, ClickError> {
+        self.expect_ident_spelling("requires")?;
+        let label = if matches!(self.peek(), Some(Token::Ident(_)))
+            && self.peek_next() == Some(&Token::Colon)
+        {
+            let label = self.expect_ident("requirement label")?;
+            self.expect(Token::Colon)?;
+            Some(label)
+        } else {
+            None
+        };
+        let requirement = match (self.peek_ident(), self.peek_next()) {
+            (Some("valid_range"), Some(Token::LParen)) => self.parse_valid_range_requirement()?,
+            (Some("valid_field"), Some(Token::LParen)) => self.parse_valid_field_requirement()?,
+            (Some("disjoint"), Some(Token::LParen)) => self.parse_disjoint_requirement()?,
+            (Some("read") | Some("write") | Some("free"), Some(Token::LParen)) => {
+                Requirement::Resource(self.parse_resource_clause()?)
+            }
+            _ => {
+                let proposition = self.parse_proposition()?;
+                self.expect(Token::Semicolon)?;
+                Requirement::Proposition(proposition)
+            }
+        };
+        if !matches!(requirement, Requirement::Proposition(_)) {
+            self.expect(Token::Semicolon)?;
+        }
+        Ok(if let Some(label) = label {
+            Requirement::Labeled {
+                label,
+                requirement: Box::new(requirement),
+            }
+        } else {
+            requirement
+        })
+    }
+
+    fn parse_valid_range_requirement(&mut self) -> Result<Requirement, ClickError> {
+        self.expect_ident_spelling("valid_range")?;
+        self.expect(Token::LParen)?;
+        let requirement = if matches!(self.peek(), Some(Token::Ident(_)))
+            && self.peek_next() == Some(&Token::Comma)
+        {
+            let name = self.expect_ident("range base name")?;
+            self.expect(Token::Comma)?;
+            let bytes = self.parse_range_bytes()?;
+            Requirement::ValidRange { name, bytes }
+        } else {
+            let segment = self.parse_current_contract_segment()?;
+            Requirement::ValidRangeSegment { segment }
+        };
+        self.expect(Token::RParen)?;
+        Ok(requirement)
+    }
+
+    fn parse_valid_field_requirement(&mut self) -> Result<Requirement, ClickError> {
+        self.expect_ident_spelling("valid_field")?;
+        self.expect(Token::LParen)?;
+        let field = self.parse_ensure_expression()?;
+        self.expect(Token::RParen)?;
+
+        let C0Expression::Load(base) = field else {
+            return Err(self.error("`valid_field` expects a field access like `obj->field`"));
+        };
+        let C0Expression::Variable(name) = *base else {
+            return Err(self.error("`valid_field` currently supports pointer parameters only"));
+        };
+
+        Ok(Requirement::ValidRange {
+            name,
+            bytes: RangeBytes::Constant(4),
+        })
+    }
+
+    fn parse_disjoint_requirement(&mut self) -> Result<Requirement, ClickError> {
+        self.expect_ident_spelling("disjoint")?;
+        self.expect(Token::LParen)?;
+        let left = self.parse_current_contract_segment()?;
+        self.expect(Token::Comma)?;
+        let right = self.parse_current_contract_segment()?;
+        self.expect(Token::RParen)?;
+        Ok(Requirement::Disjoint { left, right })
+    }
+
+    fn parse_resource_clause(&mut self) -> Result<ResourceClause, ClickError> {
+        let name = self.expect_ident("resource name")?;
+        self.expect(Token::LParen)?;
+        let segment = self.parse_current_contract_segment()?;
+        self.expect(Token::RParen)?;
+        match name.as_str() {
+            "read" => Ok(ResourceClause::Read(segment)),
+            "write" => Ok(ResourceClause::Write(segment)),
+            "free" => Ok(ResourceClause::Free(segment)),
+            _ => Err(self.error(format!("unknown resource `{name}`"))),
+        }
+    }
+
+    fn parse_range_bytes(&mut self) -> Result<RangeBytes, ClickError> {
+        self.parse_range_bytes_add()
+    }
+
+    fn parse_range_bytes_add(&mut self) -> Result<RangeBytes, ClickError> {
+        let mut expression = self.parse_range_bytes_multiply()?;
+        loop {
+            expression = match self.peek() {
+                Some(Token::Plus) => {
+                    self.position += 1;
+                    let right = self.parse_range_bytes_multiply()?;
+                    RangeBytes::Add(Box::new(expression), Box::new(right))
+                }
+                Some(Token::Minus) => {
+                    self.position += 1;
+                    let right = self.parse_range_bytes_multiply()?;
+                    RangeBytes::Subtract(Box::new(expression), Box::new(right))
+                }
+                _ => return Ok(expression),
+            };
+        }
+    }
+
+    fn parse_range_bytes_multiply(&mut self) -> Result<RangeBytes, ClickError> {
+        let mut expression = self.parse_range_bytes_primary()?;
+        while self.peek() == Some(&Token::Star) {
+            self.position += 1;
+            let right = self.parse_range_bytes_primary()?;
+            expression = RangeBytes::Multiply(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_range_bytes_primary(&mut self) -> Result<RangeBytes, ClickError> {
+        match self.next() {
+            Some(Token::Ident(name)) => Ok(RangeBytes::Parameter(name)),
+            Some(Token::Number(value)) => Ok(RangeBytes::Constant(value)),
+            Some(Token::LParen) => {
+                let expression = self.parse_range_bytes()?;
+                self.expect(Token::RParen)?;
+                Ok(expression)
+            }
+            Some(token) => Err(self.error(format!(
+                "expected valid_range byte expression, got {token:?}"
+            ))),
+            None => Err(self.error("expected valid_range byte expression, got end of input")),
+        }
+    }
+
+    fn parse_structural_clause(&mut self) -> Result<StructuralClause, ClickError> {
+        self.expect_ident_spelling("for")?;
+        let region = self.parse_structural_code_region()?;
+        let label = if self.peek_ident() == Some("as") {
+            self.position += 1;
+            Some(self.expect_ident("code region label")?)
+        } else {
+            None
+        };
+        self.expect(Token::LBrace)?;
+        let mut items = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            items.extend(self.parse_structural_items()?);
+        }
+        self.expect(Token::RBrace)?;
+        if items.is_empty() {
+            return Err(self.error("structural proof block must contain at least one item"));
+        }
+        Ok(StructuralClause {
+            region,
+            label,
+            items,
+        })
+    }
+
+    fn parse_structural_code_region(&mut self) -> Result<CodeRegion, ClickError> {
+        match self.next() {
+            Some(Token::Ident(kind)) if kind == "loop" => {
+                self.expect(Token::LParen)?;
+                let index = self.expect_index("loop index")?;
+                self.expect(Token::RParen)?;
+                Ok(CodeRegion::Loop(index))
+            }
+            Some(Token::Ident(kind)) if kind == "statement" => {
+                self.expect(Token::LParen)?;
+                let index = self.expect_index("statement index")?;
+                self.expect(Token::RParen)?;
+                Ok(CodeRegion::Statement(index))
+            }
+            Some(Token::Ident(kind)) => Err(self.error(format!(
+                "expected `loop(N)` or `statement(N)`, got `{kind}`"
+            ))),
+            Some(token) => Err(self.error(format!(
+                "expected `loop(N)` or `statement(N)`, got {token:?}"
+            ))),
+            None => Err(self.error("expected `loop(N)` or `statement(N)`, got end of input")),
+        }
+    }
+
+    fn parse_structural_items(&mut self) -> Result<Vec<StructuralItem>, ClickError> {
+        match self.next() {
+            Some(Token::Ident(kind)) if kind == "invariant" || kind == "assert" => {
+                let item_kind = if kind == "invariant" {
+                    StructuralItemKind::Invariant
+                } else {
+                    StructuralItemKind::Assert
+                };
+                let proposition = self.parse_proposition()?;
+                let proof = self.parse_proof_clause_or_default()?;
+                Ok(vec![StructuralItem {
+                    kind: item_kind,
+                    claim: StructuralItemClaim::Proposition(proposition),
+                    proof,
+                }])
+            }
+            Some(Token::Ident(kind))
+                if kind == "immutable" || kind == "mutable" || kind == "mutable_field" =>
+            {
+                let effect = self.parse_effect_after_keyword(kind)?;
+                let proof = self.parse_proof_clause_or_default()?;
+                Ok(vec![StructuralItem {
+                    kind: StructuralItemKind::Effect,
+                    claim: StructuralItemClaim::Effect(effect),
+                    proof,
+                }])
+            }
+            Some(Token::Ident(kind)) if kind == "step" => {
+                self.expect(Token::LBrace)?;
+                let mut items = Vec::new();
+                while self.peek() != Some(&Token::RBrace) {
+                    let effect_kind = self.expect_ident("step effect")?;
+                    if effect_kind != "immutable"
+                        && effect_kind != "mutable"
+                        && effect_kind != "mutable_field"
+                    {
+                        return Err(self.error(format!(
+                            "expected `immutable`, `mutable`, or `mutable_field` inside `step`, got `{effect_kind}`"
+                        )));
+                    }
+                    let effect = self.parse_effect_after_keyword(effect_kind)?;
+                    let proof = self.parse_proof_clause_or_default()?;
+                    items.push(StructuralItem {
+                        kind: StructuralItemKind::StepEffect,
+                        claim: StructuralItemClaim::Effect(effect),
+                        proof,
+                    });
+                }
+                self.expect(Token::RBrace)?;
+                if items.is_empty() {
+                    return Err(self.error("`step` block must contain at least one effect"));
+                }
+                Ok(items)
+            }
+            Some(Token::Ident(kind)) => Err(self.error(format!(
+                "expected `invariant`, `assert`, `immutable`, `mutable`, `mutable_field`, or `step`, got `{kind}`"
+            ))),
+            Some(token) => Err(self.error(format!(
+                "expected `invariant`, `assert`, `immutable`, `mutable`, `mutable_field`, or `step`, got {token:?}"
+            ))),
+            None => Err(self.error(
+                "expected `invariant`, `assert`, `immutable`, `mutable`, `mutable_field`, or `step`, got end of input",
+            )),
+        }
+    }
+
+    fn parse_effect_clause(&mut self) -> Result<EffectClause, ClickError> {
+        let effect = match self.next() {
+            Some(Token::Ident(kind))
+                if kind == "immutable" || kind == "mutable" || kind == "mutable_field" =>
+            {
+                self.parse_effect_after_keyword(kind)?
+            }
+            Some(Token::Ident(kind)) => {
+                return Err(self.error(format!(
+                    "expected `immutable`, `mutable`, or `mutable_field`, got `{kind}`"
+                )));
+            }
+            Some(token) => {
+                return Err(self.error(format!(
+                    "expected `immutable`, `mutable`, or `mutable_field`, got {token:?}"
+                )));
+            }
+            None => {
+                return Err(self.error(
+                    "expected `immutable`, `mutable`, or `mutable_field`, got end of input",
+                ));
+            }
+        };
+        let proof = self.parse_proof_clause_or_default()?;
+        Ok(EffectClause { effect, proof })
+    }
+
+    fn parse_effect_after_keyword(&mut self, kind: String) -> Result<Effect, ClickError> {
+        if kind == "immutable" {
+            return Ok(Effect::Immutable);
+        }
+
+        if kind == "mutable_field" {
+            return self.parse_mutable_field_effect();
+        }
+
+        let mut segments = vec![self.parse_contract_segment()?];
+        while self.peek() == Some(&Token::Comma) {
+            self.position += 1;
+            segments.push(self.parse_contract_segment()?);
+        }
+        Ok(Effect::Mutable(segments))
+    }
+
+    fn parse_mutable_field_effect(&mut self) -> Result<Effect, ClickError> {
+        let mut segments = vec![self.parse_current_field_segment()?];
+        while self.peek() == Some(&Token::Comma) {
+            self.position += 1;
+            segments.push(self.parse_current_field_segment()?);
+        }
+        Ok(Effect::Mutable(segments))
+    }
+
+    fn parse_current_field_segment(&mut self) -> Result<ContractSegment, ClickError> {
+        self.expect(Token::LParen)?;
+        let field = self.parse_ensure_expression()?;
+        self.expect(Token::RParen)?;
+
+        let C0Expression::Load(base) = field else {
+            return Err(self.error("`mutable_field` expects a field access like `obj->field`"));
+        };
+
+        Ok(ContractSegment {
+            state: ContractSegmentState::Current,
+            base: base.to_kernel_expression(),
+            start: C0Expression::Int32Literal(0).to_kernel_expression(),
+            end: C0Expression::Int32Literal(1).to_kernel_expression(),
+        })
+    }
+
+    fn parse_ensure_clause(&mut self) -> Result<EnsureClause, ClickError> {
+        self.expect_ident_spelling("ensures")?;
+        let name = if matches!(self.peek(), Some(Token::Ident(_)))
+            && self.peek_next() == Some(&Token::Colon)
+        {
+            let name = self.expect_ident("ensure name")?;
+            self.expect(Token::Colon)?;
+            Some(name)
+        } else {
+            None
+        };
+        let ensure = self.parse_ensure_condition()?;
+        let proof = self.parse_proof_clause_or_default()?;
+
+        Ok(EnsureClause {
+            name,
+            ensure,
+            proof,
+        })
+    }
+
+    fn parse_ensure_condition(&mut self) -> Result<Ensure, ClickError> {
+        if matches!(self.peek_ident(), Some("read" | "write" | "free"))
+            && self.peek_next() == Some(&Token::LParen)
+        {
+            return Ok(Ensure::Resource(self.parse_resource_clause()?));
+        }
+        Ok(Ensure::Proposition(self.parse_proposition()?))
+    }
+
+    fn parse_proposition(&mut self) -> Result<ClickProposition, ClickError> {
+        self.parse_proposition_implies()
+    }
+
+    fn parse_proposition_implies(&mut self) -> Result<ClickProposition, ClickError> {
+        let left = self.parse_proposition_or()?;
+        if self.peek_ident() == Some("implies") {
+            self.position += 1;
+            let right = self.parse_proposition_implies()?;
+            Ok(ClickProposition::Implies(Box::new(left), Box::new(right)))
+        } else {
+            Ok(left)
+        }
+    }
+
+    fn parse_proposition_or(&mut self) -> Result<ClickProposition, ClickError> {
+        let mut proposition = self.parse_proposition_and()?;
+        while self.peek_ident() == Some("or") {
+            self.position += 1;
+            let right = self.parse_proposition_and()?;
+            proposition = ClickProposition::Or(Box::new(proposition), Box::new(right));
+        }
+        Ok(proposition)
+    }
+
+    fn parse_proposition_and(&mut self) -> Result<ClickProposition, ClickError> {
+        let mut proposition = self.parse_proposition_not()?;
+        while self.peek_ident() == Some("and") {
+            self.position += 1;
+            let right = self.parse_proposition_not()?;
+            proposition = ClickProposition::And(Box::new(proposition), Box::new(right));
+        }
+        Ok(proposition)
+    }
+
+    fn parse_proposition_not(&mut self) -> Result<ClickProposition, ClickError> {
+        if self.peek_ident() == Some("not") {
+            self.position += 1;
+            Ok(ClickProposition::Not(Box::new(
+                self.parse_proposition_not()?,
+            )))
+        } else {
+            self.parse_proposition_atom()
+        }
+    }
+
+    fn parse_proposition_atom(&mut self) -> Result<ClickProposition, ClickError> {
+        if self.peek_ident() == Some("let") {
+            let start = self.position;
+            let binding = self.parse_contract_let_binding()?;
+            let ContractLetBindingKind::Where(condition) = binding.kind else {
+                self.position = start;
+                return self.parse_proposition_comparison();
+            };
+            let Some(c_type) = binding.c_type else {
+                unreachable!("`let ... where` parser requires an explicit type")
+            };
+            let body = self.parse_proposition()?;
+            return Ok(ClickProposition::Exists {
+                c_type,
+                name: binding.name,
+                body: Box::new(ClickProposition::And(Box::new(condition), Box::new(body))),
+            });
+        }
+
+        if self.peek_ident() == Some("forall") {
+            self.position += 1;
+            self.expect(Token::LParen)?;
+            let c_type = self.parse_type()?;
+            let name = self.expect_ident("forall variable name")?;
+            self.expect(Token::RParen)?;
+            self.expect(Token::LBrace)?;
+            let body = self.parse_proposition()?;
+            self.expect(Token::RBrace)?;
+            return Ok(ClickProposition::ForAll {
+                c_type,
+                name,
+                body: Box::new(body),
+            });
+        }
+
+        if self.peek_ident() == Some("exists") {
+            self.position += 1;
+            self.expect(Token::LParen)?;
+            let c_type = self.parse_type()?;
+            let name = self.expect_ident("exists variable name")?;
+            self.expect(Token::RParen)?;
+            self.expect(Token::LBrace)?;
+            let body = self.parse_proposition()?;
+            self.expect(Token::RBrace)?;
+            return Ok(ClickProposition::Exists {
+                c_type,
+                name,
+                body: Box::new(body),
+            });
+        }
+
+        if self.peek() == Some(&Token::LParen) {
+            let start = self.position;
+            match self.parse_range_proposition_method() {
+                Ok(proposition) => return Ok(proposition),
+                Err(_) => {
+                    self.position = start;
+                }
+            }
+        }
+
+        if self.peek() == Some(&Token::LParen) {
+            let start = self.position;
+            self.position += 1;
+            let grouped = self.parse_proposition().and_then(|proposition| {
+                self.expect(Token::RParen)?;
+                Ok(proposition)
+            });
+            if grouped.is_ok() {
+                return grouped;
+            }
+            self.position = start;
+        }
+
+        if matches!(self.peek(), Some(Token::Ident(_)))
+            && self.peek_ident() != Some("old")
+            && self.peek_ident() != Some("at")
+            && self.peek_next() == Some(&Token::LParen)
+        {
+            let start = self.position;
+            let (name, arguments) = self.parse_call_arguments("predicate or function name")?;
+            match self.peek() {
+                Some(
+                    Token::EqualEqual
+                    | Token::BangEqual
+                    | Token::LessThan
+                    | Token::LessEqual
+                    | Token::GreaterThan
+                    | Token::GreaterEqual,
+                ) => {
+                    let operator = self.parse_comparison_operator("proposition")?;
+                    let right = self.parse_contract_expression()?;
+                    return Ok(ClickProposition::Comparison {
+                        left: ContractExpression::Call { name, arguments },
+                        operator,
+                        right,
+                    });
+                }
+                Some(
+                    Token::Plus
+                    | Token::Minus
+                    | Token::Star
+                    | Token::Slash
+                    | Token::Percent
+                    | Token::ShiftLeft
+                    | Token::ShiftRight
+                    | Token::Amp
+                    | Token::Pipe
+                    | Token::Caret
+                    | Token::LBracket,
+                ) => {
+                    self.position = start;
+                    return self.parse_proposition_comparison();
+                }
+                _ => return Ok(ClickProposition::PredicateCall { name, arguments }),
+            }
+        }
+
+        self.parse_proposition_comparison()
+    }
+
+    fn parse_range_proposition_method(&mut self) -> Result<ClickProposition, ClickError> {
+        self.expect(Token::LParen)?;
+        let start = self.parse_contract_expression()?;
+        self.expect(Token::DotDot)?;
+        let end = self.parse_contract_expression()?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::Dot)?;
+        let method = self.expect_ident("range proposition method")?;
+        if method != "all" && method != "any" {
+            return Err(self.error(format!(
+                "unsupported range proposition method `{method}`; expected `all` or `any`"
+            )));
+        }
+
+        self.expect(Token::LParen)?;
+        self.expect(Token::Pipe)?;
+        let item = self.expect_ident("range item name")?;
+        self.expect(Token::Pipe)?;
+        let body = if self.peek() == Some(&Token::LBrace) {
+            self.position += 1;
+            let body = self.parse_proposition()?;
+            self.expect(Token::RBrace)?;
+            body
+        } else {
+            self.parse_proposition()?
+        };
+        self.expect(Token::RParen)?;
+
+        match method.as_str() {
+            "all" => Ok(ClickProposition::RangeAll {
+                start,
+                end,
+                item,
+                body: Box::new(body),
+            }),
+            "any" => Ok(ClickProposition::RangeAny {
+                start,
+                end,
+                item,
+                body: Box::new(body),
+            }),
+            _ => unreachable!("range proposition method checked above"),
+        }
+    }
+
+    fn parse_call_arguments(
+        &mut self,
+        expected_name: &str,
+    ) -> Result<(String, Vec<ContractExpression>), ClickError> {
+        let name = self.expect_ident(expected_name)?;
+        self.expect(Token::LParen)?;
+        let mut arguments = Vec::new();
+        if self.peek() != Some(&Token::RParen) {
+            loop {
+                arguments.push(self.parse_contract_expression()?);
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                    }
+                    Some(Token::RParen) => break,
+                    Some(token) => {
+                        return Err(self.error(format!("expected `,` or `)`, got {token:?}")));
+                    }
+                    None => return Err(self.error("expected `,` or `)`, got end of input")),
+                }
+            }
+        }
+        self.expect(Token::RParen)?;
+        Ok((name, arguments))
+    }
+
+    fn parse_proposition_comparison(&mut self) -> Result<ClickProposition, ClickError> {
+        let left = self.parse_contract_expression()?;
+        let operator = self.parse_comparison_operator("proposition")?;
+        let right = self.parse_contract_expression()?;
+
+        Ok(ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        })
+    }
+
+    fn parse_comparison_operator(
+        &mut self,
+        clause: &str,
+    ) -> Result<ComparisonOperator, ClickError> {
+        let operator = self.next().ok_or_else(|| {
+            self.error(format!(
+                "expected comparison operator in `{clause}`, got end of input"
+            ))
+        })?;
+
+        match operator {
+            Token::LessThan => Ok(ComparisonOperator::LessThan),
+            Token::LessEqual => Ok(ComparisonOperator::LessEqual),
+            Token::GreaterThan => Ok(ComparisonOperator::GreaterThan),
+            Token::GreaterEqual => Ok(ComparisonOperator::GreaterEqual),
+            Token::EqualEqual => Ok(ComparisonOperator::Equal),
+            Token::BangEqual => Ok(ComparisonOperator::NotEqual),
+            token => Err(self.error(format!(
+                "expected comparison operator in `{clause}`, got {token:?}"
+            ))),
+        }
+    }
+
+    fn parse_by_clause(&mut self) -> Result<Proof, ClickError> {
+        self.expect_ident_spelling("by")?;
+        if self.peek() == Some(&Token::LBrace) {
+            self.position += 1;
+            let proof = match self.peek() {
+                Some(Token::Ident(name))
+                    if is_tactic_name(name) && self.peek_next() == Some(&Token::Semicolon) =>
+                {
+                    let tactic = self.parse_tactic()?;
+                    self.expect(Token::RBrace)?;
+                    Proof::Tactic(tactic)
+                }
+                Some(Token::RBrace) => {
+                    return Err(
+                        self.error("`by` block must contain at least one proof step or tactic")
+                    );
+                }
+                Some(_) => {
+                    let mut steps = Vec::new();
+                    while self.peek() != Some(&Token::RBrace) {
+                        steps.push(self.parse_proof_step()?);
+                    }
+                    self.expect(Token::RBrace)?;
+                    Proof::Steps(steps)
+                }
+                None => return Err(self.error("expected proof step or tactic, got end of input")),
+            };
+            return Ok(proof);
+        }
+
+        Ok(Proof::Tactic(self.parse_tactic()?))
+    }
+
+    fn parse_proof_clause_or_default(&mut self) -> Result<Proof, ClickError> {
+        if self.peek_ident() == Some("by") {
+            self.parse_by_clause()
+        } else {
+            self.expect(Token::Semicolon)?;
+            Ok(Proof::Tactic(Tactic::Auto))
+        }
+    }
+
+    fn parse_proof_step(&mut self) -> Result<ProofStep, ClickError> {
+        let name = self.expect_ident("proof step")?;
+        let step = match name.as_str() {
+            "symbolic_execute" => {
+                self.expect_empty_step_args(&name)?;
+                ProofStep::SymbolicExecute
+            }
+            "bounded_execute" => {
+                self.expect_empty_step_args(&name)?;
+                ProofStep::BoundedExecute
+            }
+            "loop_vc" => {
+                self.expect(Token::LParen)?;
+                let region_ref = self.parse_code_region_ref()?;
+                self.expect(Token::RParen)?;
+                ProofStep::LoopVc(region_ref)
+            }
+            "frame" => {
+                self.expect(Token::LParen)?;
+                let region_ref = if self.peek() == Some(&Token::RParen) {
+                    None
+                } else {
+                    Some(self.parse_code_region_ref()?)
+                };
+                self.expect(Token::RParen)?;
+                ProofStep::Frame(region_ref)
+            }
+            "unfold" => {
+                self.expect(Token::LParen)?;
+                let predicate = self.expect_ident("predicate name")?;
+                self.expect(Token::RParen)?;
+                ProofStep::Unfold(predicate)
+            }
+            "apply" => {
+                self.expect(Token::LParen)?;
+                let application = self.parse_theorem_application()?;
+                self.expect(Token::RParen)?;
+                ProofStep::ApplyTheorem(application)
+            }
+            "open" => {
+                self.expect(Token::LParen)?;
+                let resource = self.parse_named_resource_call()?;
+                self.expect(Token::RParen)?;
+                ProofStep::OpenResource(resource)
+            }
+            "witness" => {
+                self.expect(Token::LParen)?;
+                let name = self.expect_ident("witness variable name")?;
+                self.expect(Token::Equal)?;
+                let value = self.parse_contract_expression()?;
+                self.expect(Token::RParen)?;
+                ProofStep::Witness(ProofWitness { name, value })
+            }
+            "choose" => {
+                self.expect(Token::LParen)?;
+                let name = self.expect_ident("chosen variable name")?;
+                self.expect_ident_spelling("from")?;
+                let source = self.parse_proof_fact_source()?;
+                self.expect(Token::RParen)?;
+                ProofStep::Choose(ProofChoice { name, source })
+            }
+            "simp" => {
+                self.expect_empty_step_args(&name)?;
+                ProofStep::Simp
+            }
+            "close" => {
+                self.expect(Token::LParen)?;
+                let resource = self.parse_named_resource_call()?;
+                self.expect(Token::RParen)?;
+                ProofStep::CloseResource(resource)
+            }
+            _ if is_tactic_name(&name) => {
+                return Err(self.error(format!(
+                    "`{name}` is a tactic, not a deterministic proof step; use `by {name};` or an explicit proof-step script"
+                )));
+            }
+            _ => return Err(self.error(format!("unknown proof step `{name}`"))),
+        };
+        self.expect(Token::Semicolon)?;
+        Ok(step)
+    }
+
+    fn parse_theorem_application(&mut self) -> Result<TheoremApplication, ClickError> {
+        let (name, arguments) = self.parse_call_arguments("theorem name")?;
+        Ok(TheoremApplication { name, arguments })
+    }
+
+    fn parse_named_resource_call(&mut self) -> Result<ResourceClause, ClickError> {
+        let (name, arguments) = self.parse_call_arguments("resource name")?;
+        Ok(ResourceClause::Named {
+            name,
+            arguments,
+            parameter_types: Vec::new(),
+        })
+    }
+
+    fn expect_empty_step_args(&mut self, name: &str) -> Result<(), ClickError> {
+        self.expect(Token::LParen)?;
+        if self.peek() != Some(&Token::RParen) {
+            return Err(self.error(format!("`{name}` expects no arguments")));
+        }
+        self.expect(Token::RParen)
+    }
+
+    fn parse_proof_fact_source(&mut self) -> Result<ProofFactSource, ClickError> {
+        match self.next() {
+            Some(Token::Ident(kind)) if kind == "requirement" => match self.next() {
+                Some(Token::Number(index)) => {
+                    let index = usize::try_from(index)
+                        .map_err(|_| self.error("requirement index does not fit in usize"))?;
+                    Ok(ProofFactSource::Requirement(index))
+                }
+                Some(Token::Ident(label)) => Ok(ProofFactSource::RequirementLabel(label)),
+                Some(token) => Err(self.error(format!(
+                    "expected requirement index or label, got {token:?}"
+                ))),
+                None => Err(self.error("expected requirement index or label, got end of input")),
+            },
+            Some(Token::Ident(kind)) => Err(self.error(format!(
+                "expected proof fact source `requirement N` or `requirement name`, got `{kind}`"
+            ))),
+            Some(token) => Err(self.error(format!(
+                "expected proof fact source `requirement N` or `requirement name`, got {token:?}"
+            ))),
+            None => Err(self.error("expected proof fact source `requirement N`, got end of input")),
+        }
+    }
+
+    fn parse_code_region_ref(&mut self) -> Result<CodeRegionRef, ClickError> {
+        match self.next() {
+            Some(Token::Ident(kind)) if kind == "function" => Ok(CodeRegionRef::Function),
+            Some(Token::Ident(kind)) if kind == "loop" => {
+                self.expect(Token::LParen)?;
+                let index = self.expect_index("loop index")?;
+                self.expect(Token::RParen)?;
+                Ok(CodeRegionRef::Loop(index))
+            }
+            Some(Token::Ident(kind)) if kind == "statement" => {
+                self.expect(Token::LParen)?;
+                let index = self.expect_index("statement index")?;
+                self.expect(Token::RParen)?;
+                Ok(CodeRegionRef::Statement(index))
+            }
+            Some(Token::Ident(label)) => Ok(CodeRegionRef::Label(label)),
+            Some(token) => Err(self.error(format!(
+                "expected code region `function`, `loop(N)`, `statement(N)`, or label, got {token:?}"
+            ))),
+            None => Err(self.error(
+                "expected code region `function`, `loop(N)`, `statement(N)`, or label, got end of input",
+            )),
+        }
+    }
+
+    fn parse_tactic(&mut self) -> Result<Tactic, ClickError> {
+        let tactic = match self.next() {
+            Some(Token::Ident(name)) if name == "auto" => Tactic::Auto,
+            Some(Token::Ident(name)) if name == "frame" => Tactic::Frame,
+            Some(Token::Ident(name)) if name == "simp" => Tactic::Simp,
+            Some(Token::Ident(name)) => {
+                return Err(self.error(format!("expected tactic, got `{name}`")));
+            }
+            Some(token) => {
+                return Err(self.error(format!("expected tactic, got {token:?}")));
+            }
+            None => return Err(self.error("expected tactic, got end of input")),
+        };
+        self.expect(Token::Semicolon)?;
+        Ok(tactic)
+    }
+
+    fn parse_ensure_expression(&mut self) -> Result<C0Expression, ClickError> {
+        self.parse_ensure_bitwise_or()
+    }
+
+    fn parse_contract_expression(&mut self) -> Result<ContractExpression, ClickError> {
+        self.parse_contract_bitwise_or()
+    }
+
+    fn parse_contract_segment(&mut self) -> Result<ContractSegment, ClickError> {
+        if self.peek_ident() == Some("old") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 2;
+            let mut segment = self.parse_current_contract_segment()?;
+            segment.state = ContractSegmentState::Old;
+            self.expect(Token::RParen)?;
+            return Ok(segment);
+        }
+
+        self.parse_current_contract_segment()
+    }
+
+    fn parse_current_contract_segment(&mut self) -> Result<ContractSegment, ClickError> {
+        let base = self.parse_ensure_primary()?.to_kernel_expression();
+        self.expect(Token::LBracket)?;
+        let start = self.parse_ensure_expression()?.to_kernel_expression();
+        self.expect(Token::DotDot)?;
+        let end = self.parse_ensure_expression()?.to_kernel_expression();
+        self.expect(Token::RBracket)?;
+        Ok(ContractSegment {
+            state: ContractSegmentState::Current,
+            base,
+            start,
+            end,
+        })
+    }
+
+    fn parse_contract_bitwise_or(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut expression = self.parse_contract_bitwise_xor()?;
+        while self.peek() == Some(&Token::Pipe) {
+            self.position += 1;
+            let right = self.parse_contract_bitwise_xor()?;
+            expression = ContractExpression::BitwiseOr(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_contract_bitwise_xor(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut expression = self.parse_contract_bitwise_and()?;
+        while self.peek() == Some(&Token::Caret) {
+            self.position += 1;
+            let right = self.parse_contract_bitwise_and()?;
+            expression = ContractExpression::BitwiseXor(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_contract_bitwise_and(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut expression = self.parse_contract_shift()?;
+        while self.peek() == Some(&Token::Amp) {
+            self.position += 1;
+            let right = self.parse_contract_shift()?;
+            expression = ContractExpression::BitwiseAnd(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_contract_shift(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut expression = self.parse_contract_add()?;
+        loop {
+            expression = match self.peek() {
+                Some(Token::ShiftLeft) => {
+                    self.position += 1;
+                    let right = self.parse_contract_add()?;
+                    ContractExpression::ShiftLeft(Box::new(expression), Box::new(right))
+                }
+                Some(Token::ShiftRight) => {
+                    self.position += 1;
+                    let right = self.parse_contract_add()?;
+                    ContractExpression::ShiftRight(Box::new(expression), Box::new(right))
+                }
+                _ => return Ok(expression),
+            };
+        }
+    }
+
+    fn parse_contract_add(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut expression = self.parse_contract_multiply()?;
+        loop {
+            expression = match self.peek() {
+                Some(Token::Plus) => {
+                    self.position += 1;
+                    let right = self.parse_contract_multiply()?;
+                    ContractExpression::Add(Box::new(expression), Box::new(right))
+                }
+                Some(Token::Minus) => {
+                    self.position += 1;
+                    let right = self.parse_contract_multiply()?;
+                    ContractExpression::Subtract(Box::new(expression), Box::new(right))
+                }
+                _ => return Ok(expression),
+            };
+        }
+    }
+
+    fn parse_contract_multiply(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut expression = self.parse_contract_unary()?;
+        loop {
+            let Some(operator) = self.peek() else {
+                break;
+            };
+            let constructor = match operator {
+                Token::Star => ContractExpression::Multiply,
+                Token::Slash => ContractExpression::Divide,
+                Token::Percent => ContractExpression::Remainder,
+                _ => break,
+            };
+            self.position += 1;
+            let right = self.parse_contract_unary()?;
+            expression = constructor(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_contract_unary(&mut self) -> Result<ContractExpression, ClickError> {
+        if self.peek() == Some(&Token::Tilde) {
+            self.position += 1;
+            return Ok(ContractExpression::BitwiseNot(Box::new(
+                self.parse_contract_unary()?,
+            )));
+        }
+
+        self.parse_contract_postfix()
+    }
+
+    fn parse_contract_postfix(&mut self) -> Result<ContractExpression, ClickError> {
+        let mut expression = self.parse_contract_primary()?;
+        loop {
+            match self.peek() {
+                Some(Token::LBracket) => {
+                    self.position += 1;
+                    let index = self.parse_contract_expression()?;
+                    self.expect(Token::RBracket)?;
+                    expression = ContractExpression::Index(Box::new(expression), Box::new(index));
+                }
+                Some(Token::Arrow) => {
+                    self.position += 1;
+                    let _field_name = self.expect_ident("field name")?;
+                    let Some(base) = contract_expression_as_c_fragment(&expression) else {
+                        return Err(
+                            self.error("field access is only supported on current C fragments")
+                        );
+                    };
+                    expression = ContractExpression::CFragment(CExpression::Load(Box::new(base)));
+                }
+                _ => return Ok(expression),
+            }
+        }
+    }
+
+    fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
+        if self.peek_ident() == Some("let") {
+            let binding = self.parse_contract_let_binding()?;
+            let ContractLetBindingKind::Value(value) = binding.kind else {
+                return Err(
+                    self.error("`let ... where` is a proposition binding, not an expression")
+                );
+            };
+            let body = self.parse_contract_expression()?;
+            return Ok(ContractExpression::Let {
+                name: binding.name,
+                c_type: binding.c_type,
+                value: Box::new(value),
+                body: Box::new(body),
+            });
+        }
+
+        if self.peek_ident() == Some("if") {
+            self.position += 1;
+            let condition = self.parse_proposition()?;
+            self.expect(Token::LBrace)?;
+            let then_branch = self.parse_contract_expression()?;
+            self.expect(Token::RBrace)?;
+            if self.peek_ident() != Some("else") {
+                return Err(self.error("expected `else` in `if` expression"));
+            }
+            self.position += 1;
+            self.expect(Token::LBrace)?;
+            let else_branch = self.parse_contract_expression()?;
+            self.expect(Token::RBrace)?;
+            return Ok(ContractExpression::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(then_branch),
+                else_branch: Box::new(else_branch),
+            });
+        }
+
+        if self.peek_ident() == Some("old") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 2;
+            let expression = self.parse_contract_expression()?;
+            self.expect(Token::RParen)?;
+            return Ok(ContractExpression::Old(Box::new(expression)));
+        }
+
+        if self.peek_ident() == Some("at") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 2;
+            let selector = self.parse_visit_selector()?;
+            self.expect(Token::Comma)?;
+            let expression = self.parse_contract_expression()?;
+            self.expect(Token::RParen)?;
+            return Ok(ContractExpression::At {
+                selector,
+                expression: Box::new(expression),
+            });
+        }
+
+        if matches!(self.peek(), Some(Token::Ident(_))) && self.peek_next() == Some(&Token::LParen)
+        {
+            let (name, arguments) = self.parse_call_arguments("function name")?;
+            return Ok(ContractExpression::Call { name, arguments });
+        }
+
+        match self.next() {
+            Some(Token::Ident(name)) if name == "by" => {
+                Err(self.error("expected contract expression, got `by`"))
+            }
+            Some(Token::Ident(name)) => {
+                Ok(ContractExpression::CFragment(CExpression::Variable(name)))
+            }
+            Some(Token::Number(value)) => Ok(ContractExpression::CFragment(CExpression::Value(
+                CValue::Int32(Bitvector32Term::Constant(value)),
+            ))),
+            Some(Token::CharLiteral(value)) => Ok(ContractExpression::CFragment(
+                CExpression::Value(CValue::UInt8(Bitvector32Term::Constant(u32::from(value)))),
+            )),
+            Some(Token::LParen) => {
+                let expression = self.parse_contract_expression()?;
+                if self.peek() == Some(&Token::DotDot) {
+                    self.position += 1;
+                    let end = self.parse_contract_expression()?;
+                    self.expect(Token::RParen)?;
+                    return self.parse_range_fold(expression, end);
+                }
+                self.expect(Token::RParen)?;
+                Ok(expression)
+            }
+            Some(token) => Err(self.error(format!("expected contract expression, got {token:?}"))),
+            None => Err(self.error("expected contract expression, got end of input")),
+        }
+    }
+
+    fn parse_visit_selector(&mut self) -> Result<VisitSelector, ClickError> {
+        Ok(VisitSelector::ProgramPoint(self.parse_program_point_ref()?))
+    }
+
+    fn parse_program_point_ref(&mut self) -> Result<ProgramPointRef, ClickError> {
+        let region = self.parse_code_region_ref()?;
+        self.expect(Token::Dot)?;
+        let kind = match self.expect_ident("program point kind")?.as_str() {
+            "entry" => ProgramPointKind::Entry,
+            kind => {
+                return Err(
+                    self.error(format!("expected program point kind `entry`, got `{kind}`"))
+                );
+            }
+        };
+        Ok(ProgramPointRef { region, kind })
+    }
+
+    fn parse_range_fold(
+        &mut self,
+        start: ContractExpression,
+        end: ContractExpression,
+    ) -> Result<ContractExpression, ClickError> {
+        self.expect(Token::Dot)?;
+        let method = self.expect_ident("range method")?;
+        if method != "fold" {
+            return Err(self.error(format!(
+                "unsupported range method `{method}`; expected `fold`"
+            )));
+        }
+
+        self.expect(Token::LParen)?;
+        let initial = self.parse_contract_expression()?;
+        self.expect(Token::Comma)?;
+        self.expect(Token::Pipe)?;
+        let accumulator = self.expect_ident("fold accumulator name")?;
+        self.expect(Token::Comma)?;
+        let item = self.expect_ident("fold item name")?;
+        self.expect(Token::Pipe)?;
+        let body = if self.peek() == Some(&Token::LBrace) {
+            self.position += 1;
+            let body = self.parse_contract_expression()?;
+            self.expect(Token::RBrace)?;
+            body
+        } else {
+            self.parse_contract_expression()?
+        };
+        self.expect(Token::RParen)?;
+
+        Ok(ContractExpression::RangeFold {
+            start: Box::new(start),
+            end: Box::new(end),
+            initial: Box::new(initial),
+            accumulator,
+            item,
+            body: Box::new(body),
+        })
+    }
+
+    fn parse_ensure_bitwise_or(&mut self) -> Result<C0Expression, ClickError> {
+        let mut expression = self.parse_ensure_bitwise_xor()?;
+        while self.peek() == Some(&Token::Pipe) {
+            self.position += 1;
+            let right = self.parse_ensure_bitwise_xor()?;
+            expression = C0Expression::BitwiseOr(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_ensure_bitwise_xor(&mut self) -> Result<C0Expression, ClickError> {
+        let mut expression = self.parse_ensure_bitwise_and()?;
+        while self.peek() == Some(&Token::Caret) {
+            self.position += 1;
+            let right = self.parse_ensure_bitwise_and()?;
+            expression = C0Expression::BitwiseXor(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_ensure_bitwise_and(&mut self) -> Result<C0Expression, ClickError> {
+        let mut expression = self.parse_ensure_shift()?;
+        while self.peek() == Some(&Token::Amp) {
+            self.position += 1;
+            let right = self.parse_ensure_shift()?;
+            expression = C0Expression::BitwiseAnd(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_ensure_shift(&mut self) -> Result<C0Expression, ClickError> {
+        let mut expression = self.parse_ensure_add()?;
+        loop {
+            expression = match self.peek() {
+                Some(Token::ShiftLeft) => {
+                    self.position += 1;
+                    let right = self.parse_ensure_add()?;
+                    C0Expression::ShiftLeft(Box::new(expression), Box::new(right))
+                }
+                Some(Token::ShiftRight) => {
+                    self.position += 1;
+                    let right = self.parse_ensure_add()?;
+                    C0Expression::ShiftRight(Box::new(expression), Box::new(right))
+                }
+                _ => return Ok(expression),
+            };
+        }
+    }
+
+    fn parse_ensure_add(&mut self) -> Result<C0Expression, ClickError> {
+        let mut expression = self.parse_ensure_multiply()?;
+        loop {
+            expression = match self.peek() {
+                Some(Token::Plus) => {
+                    self.position += 1;
+                    let right = self.parse_ensure_multiply()?;
+                    C0Expression::Add(Box::new(expression), Box::new(right))
+                }
+                Some(Token::Minus) => {
+                    self.position += 1;
+                    let right = self.parse_ensure_multiply()?;
+                    C0Expression::Subtract(Box::new(expression), Box::new(right))
+                }
+                _ => return Ok(expression),
+            };
+        }
+    }
+
+    fn parse_ensure_multiply(&mut self) -> Result<C0Expression, ClickError> {
+        let mut expression = self.parse_ensure_unary()?;
+        loop {
+            let Some(operator) = self.peek() else {
+                break;
+            };
+            let constructor = match operator {
+                Token::Star => C0Expression::Multiply,
+                Token::Slash => C0Expression::Divide,
+                Token::Percent => C0Expression::Remainder,
+                _ => break,
+            };
+            self.position += 1;
+            let right = self.parse_ensure_unary()?;
+            expression = constructor(Box::new(expression), Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn parse_ensure_unary(&mut self) -> Result<C0Expression, ClickError> {
+        if self.peek() == Some(&Token::Tilde) {
+            self.position += 1;
+            return Ok(C0Expression::BitwiseNot(Box::new(
+                self.parse_ensure_unary()?,
+            )));
+        }
+
+        self.parse_ensure_postfix()
+    }
+
+    fn parse_ensure_postfix(&mut self) -> Result<C0Expression, ClickError> {
+        let mut expression = self.parse_ensure_primary()?;
+        loop {
+            match self.peek() {
+                Some(Token::LBracket) => {
+                    self.position += 1;
+                    let index = self.parse_ensure_expression()?;
+                    self.expect(Token::RBracket)?;
+                    expression = C0Expression::Index(Box::new(expression), Box::new(index));
+                }
+                Some(Token::Arrow) => {
+                    self.position += 1;
+                    let _field_name = self.expect_ident("field name")?;
+                    expression = C0Expression::Load(Box::new(expression));
+                }
+                _ => return Ok(expression),
+            }
+        }
+    }
+
+    fn parse_ensure_primary(&mut self) -> Result<C0Expression, ClickError> {
+        match self.next() {
+            Some(Token::Ident(name)) if name == "by" => {
+                Err(self.error("expected result expression, got `by`"))
+            }
+            Some(Token::Ident(name)) => Ok(C0Expression::Variable(name)),
+            Some(Token::Number(value)) => Ok(C0Expression::Int32Literal(value)),
+            Some(Token::CharLiteral(value)) => Ok(C0Expression::UInt8Literal(value)),
+            Some(Token::LParen) => {
+                let expression = self.parse_ensure_expression()?;
+                self.expect(Token::RParen)?;
+                Ok(expression)
+            }
+            Some(token) => Err(self.error(format!("expected result expression, got {token:?}"))),
+            None => Err(self.error("expected result expression, got end of input")),
+        }
+    }
+
+    fn expect_ident(&mut self, expected: &str) -> Result<String, ClickError> {
+        match self.next() {
+            Some(Token::Ident(name)) => Ok(name),
+            Some(token) => Err(self.error(format!("expected {expected}, got {token:?}"))),
+            None => Err(self.error(format!("expected {expected}, got end of input"))),
+        }
+    }
+
+    fn expect_ident_spelling(&mut self, expected: &str) -> Result<(), ClickError> {
+        match self.next() {
+            Some(Token::Ident(name)) if name == expected => Ok(()),
+            Some(Token::Ident(name)) => {
+                Err(self.error(format!("expected `{expected}`, got `{name}`")))
+            }
+            Some(token) => Err(self.error(format!("expected `{expected}`, got {token:?}"))),
+            None => Err(self.error(format!("expected `{expected}`, got end of input"))),
+        }
+    }
+
+    fn expect_number(&mut self, expected: &str) -> Result<u32, ClickError> {
+        match self.next() {
+            Some(Token::Number(value)) => Ok(value),
+            Some(token) => Err(self.error(format!("expected {expected}, got {token:?}"))),
+            None => Err(self.error(format!("expected {expected}, got end of input"))),
+        }
+    }
+
+    fn expect_index(&mut self, expected: &str) -> Result<usize, ClickError> {
+        usize::try_from(self.expect_number(expected)?)
+            .map_err(|_| self.error(format!("{expected} does not fit in usize")))
+    }
+
+    fn expect_string(&mut self, expected: &str) -> Result<String, ClickError> {
+        match self.next() {
+            Some(Token::String(value)) => Ok(value),
+            Some(token) => Err(self.error(format!("expected {expected}, got {token:?}"))),
+            None => Err(self.error(format!("expected {expected}, got end of input"))),
+        }
+    }
+
+    fn expect(&mut self, expected: Token) -> Result<(), ClickError> {
+        match self.next() {
+            Some(token) if token == expected => Ok(()),
+            Some(token) => Err(self.error(format!("expected {expected:?}, got {token:?}"))),
+            None => Err(self.error(format!("expected {expected:?}, got end of input"))),
+        }
+    }
+
+    fn next(&mut self) -> Option<Token> {
+        let token = self.tokens.get(self.position).cloned()?;
+        self.position += 1;
+        Some(token)
+    }
+
+    fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.position)
+    }
+
+    fn peek_next(&self) -> Option<&Token> {
+        self.tokens.get(self.position + 1)
+    }
+
+    fn peek_ident(&self) -> Option<&str> {
+        match self.peek() {
+            Some(Token::Ident(name)) => Some(name),
+            _ => None,
+        }
+    }
+
+    fn peek_next_ident(&self) -> Option<&str> {
+        match self.peek_next() {
+            Some(Token::Ident(name)) => Some(name),
+            _ => None,
+        }
+    }
+
+    fn error(&self, message: impl Into<String>) -> ClickError {
+        ClickError::new(format!("at token {}: {}", self.position, message.into()))
+    }
+}
+
+fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
+    let chars: Vec<char> = source.chars().collect();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+
+    while let Some(ch) = chars.get(index).copied() {
+        match ch {
+            ch if ch.is_whitespace() => {
+                index += 1;
+            }
+            '{' => {
+                tokens.push(Token::LBrace);
+                index += 1;
+            }
+            '}' => {
+                tokens.push(Token::RBrace);
+                index += 1;
+            }
+            '(' => {
+                tokens.push(Token::LParen);
+                index += 1;
+            }
+            ')' => {
+                tokens.push(Token::RParen);
+                index += 1;
+            }
+            '[' => {
+                tokens.push(Token::LBracket);
+                index += 1;
+            }
+            ']' => {
+                tokens.push(Token::RBracket);
+                index += 1;
+            }
+            ':' => {
+                tokens.push(Token::Colon);
+                index += 1;
+            }
+            ',' => {
+                tokens.push(Token::Comma);
+                index += 1;
+            }
+            ';' => {
+                tokens.push(Token::Semicolon);
+                index += 1;
+            }
+            '.' => {
+                if chars.get(index + 1) == Some(&'.') {
+                    tokens.push(Token::DotDot);
+                    index += 2;
+                } else {
+                    tokens.push(Token::Dot);
+                    index += 1;
+                }
+            }
+            '+' => {
+                tokens.push(Token::Plus);
+                index += 1;
+            }
+            '-' => {
+                if chars.get(index + 1) == Some(&'>') {
+                    tokens.push(Token::Arrow);
+                    index += 2;
+                } else {
+                    tokens.push(Token::Minus);
+                    index += 1;
+                }
+            }
+            '*' => {
+                tokens.push(Token::Star);
+                index += 1;
+            }
+            '/' => {
+                tokens.push(Token::Slash);
+                index += 1;
+            }
+            '%' => {
+                tokens.push(Token::Percent);
+                index += 1;
+            }
+            '&' => {
+                tokens.push(Token::Amp);
+                index += 1;
+            }
+            '|' => {
+                tokens.push(Token::Pipe);
+                index += 1;
+            }
+            '^' => {
+                tokens.push(Token::Caret);
+                index += 1;
+            }
+            '~' => {
+                tokens.push(Token::Tilde);
+                index += 1;
+            }
+            '<' => {
+                if chars.get(index + 1) == Some(&'<') {
+                    tokens.push(Token::ShiftLeft);
+                    index += 2;
+                } else if chars.get(index + 1) == Some(&'=') {
+                    tokens.push(Token::LessEqual);
+                    index += 2;
+                } else {
+                    tokens.push(Token::LessThan);
+                    index += 1;
+                }
+            }
+            '>' => {
+                if chars.get(index + 1) == Some(&'>') {
+                    tokens.push(Token::ShiftRight);
+                    index += 2;
+                } else if chars.get(index + 1) == Some(&'=') {
+                    tokens.push(Token::GreaterEqual);
+                    index += 2;
+                } else {
+                    tokens.push(Token::GreaterThan);
+                    index += 1;
+                }
+            }
+            '!' => {
+                if chars.get(index + 1) == Some(&'=') {
+                    tokens.push(Token::BangEqual);
+                    index += 2;
+                } else {
+                    return Err(ClickError::new(format!(
+                        "expected `!=`, got `!` at byte offset {index}"
+                    )));
+                }
+            }
+            '=' => {
+                if chars.get(index + 1) == Some(&'=') {
+                    tokens.push(Token::EqualEqual);
+                    index += 2;
+                } else {
+                    tokens.push(Token::Equal);
+                    index += 1;
+                }
+            }
+            '"' => {
+                let (value, next_index) = tokenize_string(&chars, index)?;
+                tokens.push(Token::String(value));
+                index = next_index;
+            }
+            '\'' => {
+                let (value, next_index) = tokenize_char_literal(&chars, index)?;
+                tokens.push(Token::CharLiteral(value));
+                index = next_index;
+            }
+            ch if ch.is_ascii_digit() => {
+                let start = index;
+                while chars.get(index).is_some_and(|next| next.is_ascii_digit()) {
+                    index += 1;
+                }
+                let spelling: String = chars[start..index].iter().collect();
+                let value = spelling.parse::<u32>().map_err(|_| {
+                    ClickError::new(format!("number `{spelling}` does not fit in u32"))
+                })?;
+                tokens.push(Token::Number(value));
+            }
+            ch if is_ident_start(ch) => {
+                let start = index;
+                index += 1;
+                while chars
+                    .get(index)
+                    .is_some_and(|next| is_ident_continue(*next))
+                {
+                    index += 1;
+                }
+                tokens.push(Token::Ident(chars[start..index].iter().collect()));
+            }
+            other => {
+                return Err(ClickError::new(format!(
+                    "unexpected character `{other}` at byte offset {index}"
+                )));
+            }
+        }
+    }
+
+    Ok(tokens)
+}
+
+fn tokenize_char_literal(chars: &[char], start: usize) -> Result<(u8, usize), ClickError> {
+    let Some(first) = chars.get(start + 1).copied() else {
+        return Err(ClickError::new("unterminated character literal"));
+    };
+    let (value, end) = if first == '\\' {
+        let Some(escaped) = chars.get(start + 2).copied() else {
+            return Err(ClickError::new("unterminated character literal"));
+        };
+        let value = match escaped {
+            'n' => b'\n',
+            'r' => b'\r',
+            't' => b'\t',
+            '0' => b'\0',
+            '\\' => b'\\',
+            '\'' => b'\'',
+            '"' => b'"',
+            other => {
+                return Err(ClickError::new(format!(
+                    "unsupported character escape `\\{other}`"
+                )));
+            }
+        };
+        (value, start + 3)
+    } else {
+        if !first.is_ascii() {
+            return Err(ClickError::new(
+                "only ASCII character literals are supported",
+            ));
+        }
+        (first as u8, start + 2)
+    };
+
+    if chars.get(end) != Some(&'\'') {
+        return Err(ClickError::new(
+            "character literals must contain exactly one byte",
+        ));
+    }
+
+    Ok((value, end + 1))
+}
+
+fn tokenize_string(chars: &[char], start: usize) -> Result<(String, usize), ClickError> {
+    let mut value = String::new();
+    let mut index = start + 1;
+    while let Some(ch) = chars.get(index).copied() {
+        match ch {
+            '"' => return Ok((value, index + 1)),
+            '\\' => {
+                let Some(escaped) = chars.get(index + 1).copied() else {
+                    return Err(ClickError::new("unterminated string literal"));
+                };
+                match escaped {
+                    '"' | '\\' => value.push(escaped),
+                    'n' => value.push('\n'),
+                    't' => value.push('\t'),
+                    other => {
+                        return Err(ClickError::new(format!(
+                            "unsupported escape `\\{other}` in string literal"
+                        )));
+                    }
+                }
+                index += 2;
+            }
+            other => {
+                value.push(other);
+                index += 1;
+            }
+        }
+    }
+
+    Err(ClickError::new("unterminated string literal"))
+}
+
+fn is_ident_start(ch: char) -> bool {
+    ch.is_ascii_alphabetic() || ch == '_'
+}
+
+fn is_ident_continue(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
