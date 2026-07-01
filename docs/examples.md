@@ -210,6 +210,14 @@ sequence:
   resources reject duplicate contained affine tokens.
 - `mdtests/represented_resource_rejects_cycle.md`: represented-resource
   definitions reject containment cycles.
+- `mdtests/represented_resource_pure_invariant.md`: represented resources can
+  carry scalar invariants that do not read memory.
+- `mdtests/represented_resource_rejects_unowned_invariant_read.md`: invariants
+  cannot read memory without contained write permission.
+- `mdtests/represented_resource_rejects_read_backed_invariant.md`: contained
+  read permission is not enough to stabilize a memory invariant.
+- `mdtests/represented_resource_rejects_predicate_hidden_invariant_read.md`:
+  predicate-hidden memory reads are checked against contained write permission.
 
 ## Predicates And Pure Click Functions
 

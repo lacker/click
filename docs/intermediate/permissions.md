@@ -232,6 +232,22 @@ invariant in the current state, consumes the represented resources, and adds
 the abstract `called(flag)` token. The end of the `by { ... }` block checks the
 overall claim.
 
+If an invariant reads mutable memory, the representation must contain write
+permission covering that memory. This is what makes the invariant stable while
+the resource is closed:
+
+```click
+affine resource uncalled(flag: int32*) {
+    contains write(flag[0..1]);
+    invariant flag[0] == 0;
+}
+```
+
+`read(flag[0..1])` is not enough for this purpose. A read resource authorizes
+inspection but does not prevent another holder of write permission from
+changing the cell. Pure scalar invariants such as `fd >= 0` do not need a
+contained memory resource.
+
 A proof can also borrow a represented resource, learn its invariant, and return
 the same abstract token:
 

@@ -16096,6 +16096,15 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
         }
     }
 
+    let predicate_definition_map = predicate_definitions
+        .iter()
+        .map(|definition| (definition.name(), definition))
+        .collect::<BTreeMap<_, _>>();
+    let click_function_definition_map = click_function_definitions
+        .iter()
+        .map(|definition| (definition.name(), definition))
+        .collect::<BTreeMap<_, _>>();
+
     for definition in &resource_definitions {
         validate_resource_definition(
             definition,
@@ -16103,6 +16112,8 @@ fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
             &predicates,
             &click_functions,
             &click_function_types,
+            &predicate_definition_map,
+            &click_function_definition_map,
         )?;
     }
     reject_resource_representation_cycles(&resource_definitions)?;
@@ -16339,6 +16350,8 @@ fn validate_resource_definition(
     predicates: &BTreeMap<String, usize>,
     click_functions: &BTreeMap<String, usize>,
     click_function_types: &BTreeMap<String, ClickFunctionType>,
+    predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
+    click_function_definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
 ) -> Result<(), ClickError> {
     let Some(representation) = definition.representation() else {
         return Ok(());
@@ -16381,8 +16394,545 @@ fn validate_resource_definition(
             click_functions,
             &format!("resource `{}` invariant", definition.name()),
         )?;
+        validate_proposition_expression_types(
+            invariant,
+            &variables,
+            click_function_types,
+            &format!("resource `{}` invariant", definition.name()),
+        )?;
+        validate_resource_invariant_memory_ownership(
+            definition,
+            representation,
+            invariant,
+            predicate_definitions,
+            click_function_definitions,
+        )?;
     }
     Ok(())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ResourceInvariantRead {
+    base: CExpression,
+    index: CExpression,
+    expression: String,
+}
+
+fn validate_resource_invariant_memory_ownership(
+    definition: &ResourceDefinition,
+    representation: &ResourceRepresentation,
+    invariant: &ClickProposition,
+    predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
+    click_function_definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
+) -> Result<(), ClickError> {
+    let mut reads = Vec::new();
+    let mut visited_predicates = Vec::new();
+    let mut visited_functions = Vec::new();
+    collect_resource_invariant_reads_from_proposition(
+        invariant,
+        predicate_definitions,
+        click_function_definitions,
+        &mut visited_predicates,
+        &mut visited_functions,
+        &mut reads,
+        definition.name(),
+    )?;
+    for read in reads {
+        if !resource_invariant_read_is_owned(&read, representation.contains()) {
+            return Err(ClickError::new(format!(
+                "resource `{}` invariant reads `{}` without a covering contained `write(...)` resource",
+                definition.name(),
+                read.expression
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn collect_resource_invariant_reads_from_proposition(
+    proposition: &ClickProposition,
+    predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
+    click_function_definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
+    visited_predicates: &mut Vec<String>,
+    visited_functions: &mut Vec<String>,
+    reads: &mut Vec<ResourceInvariantRead>,
+    resource_name: &str,
+) -> Result<(), ClickError> {
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            collect_resource_invariant_reads_from_contract_expression(
+                left,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_invariant_reads_from_contract_expression(
+                right,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            collect_resource_invariant_reads_from_proposition(
+                left,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_invariant_reads_from_proposition(
+                right,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
+        ClickProposition::Not(body)
+        | ClickProposition::ForAll { body, .. }
+        | ClickProposition::Exists { body, .. } => {
+            collect_resource_invariant_reads_from_proposition(
+                body,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
+        ClickProposition::RangeAll {
+            start, end, body, ..
+        }
+        | ClickProposition::RangeAny {
+            start, end, body, ..
+        } => {
+            collect_resource_invariant_reads_from_contract_expression(
+                start,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_invariant_reads_from_contract_expression(
+                end,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_invariant_reads_from_proposition(
+                body,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
+        ClickProposition::PredicateCall { name, arguments } => {
+            for argument in arguments {
+                collect_resource_invariant_reads_from_contract_expression(
+                    argument,
+                    predicate_definitions,
+                    click_function_definitions,
+                    visited_predicates,
+                    visited_functions,
+                    reads,
+                    resource_name,
+                )?;
+            }
+            let Some(definition) = predicate_definitions.get(name.as_str()) else {
+                return Ok(());
+            };
+            if visited_predicates.contains(name) {
+                return Err(ClickError::new(format!(
+                    "resource `{resource_name}` invariant cannot use recursive predicate `{name}`"
+                )));
+            }
+            visited_predicates.push(name.clone());
+            let body = instantiate_click_predicate_definition(definition, arguments).map_err(
+                |message| {
+                    ClickError::new(format!(
+                        "resource `{resource_name}` invariant could not inspect predicate `{name}`: {message}"
+                    ))
+                },
+            )?;
+            let result = collect_resource_invariant_reads_from_proposition(
+                &body,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            );
+            visited_predicates.pop();
+            result
+        }
+    }
+}
+
+fn collect_resource_invariant_reads_from_contract_expression(
+    expression: &ContractExpression,
+    predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
+    click_function_definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
+    visited_predicates: &mut Vec<String>,
+    visited_functions: &mut Vec<String>,
+    reads: &mut Vec<ResourceInvariantRead>,
+    resource_name: &str,
+) -> Result<(), ClickError> {
+    match expression {
+        ContractExpression::CFragment(expression) => {
+            collect_resource_invariant_reads_from_c_expression(expression, reads);
+            Ok(())
+        }
+        ContractExpression::Old(_) => Err(ClickError::new(format!(
+            "`old(...)` is not available inside resource `{resource_name}` invariant"
+        ))),
+        ContractExpression::At { .. } => Err(ClickError::new(format!(
+            "`at(...)` is not available inside resource `{resource_name}` invariant"
+        ))),
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
+        | ContractExpression::Divide(left, right)
+        | ContractExpression::Remainder(left, right)
+        | ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right) => {
+            collect_resource_invariant_reads_from_contract_expression(
+                left,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_invariant_reads_from_contract_expression(
+                right,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
+        ContractExpression::BitwiseNot(expression) => {
+            collect_resource_invariant_reads_from_contract_expression(
+                expression,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
+        ContractExpression::Index(base, index) => {
+            collect_resource_invariant_reads_from_contract_expression(
+                base,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_invariant_reads_from_contract_expression(
+                index,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            let Some(base) = contract_expression_as_c_fragment(base) else {
+                return Err(ClickError::new(format!(
+                    "resource `{resource_name}` invariant reads `{}` in a form that cannot be matched to a contained `write(...)` resource",
+                    describe_contract_expression(expression)
+                )));
+            };
+            let Some(index) = contract_expression_as_c_fragment(index) else {
+                return Err(ClickError::new(format!(
+                    "resource `{resource_name}` invariant reads `{}` in a form that cannot be matched to a contained `write(...)` resource",
+                    describe_contract_expression(expression)
+                )));
+            };
+            reads.push(ResourceInvariantRead {
+                expression: describe_contract_expression(expression),
+                base,
+                index,
+            });
+            Ok(())
+        }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_resource_invariant_reads_from_proposition(
+                condition,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_invariant_reads_from_contract_expression(
+                then_branch,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_invariant_reads_from_contract_expression(
+                else_branch,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            collect_resource_invariant_reads_from_contract_expression(
+                start,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_invariant_reads_from_contract_expression(
+                end,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_invariant_reads_from_contract_expression(
+                initial,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_invariant_reads_from_contract_expression(
+                body,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
+        ContractExpression::Let { value, body, .. } => {
+            collect_resource_invariant_reads_from_contract_expression(
+                value,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_invariant_reads_from_contract_expression(
+                body,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
+        ContractExpression::Call { name, arguments } => {
+            for argument in arguments {
+                collect_resource_invariant_reads_from_contract_expression(
+                    argument,
+                    predicate_definitions,
+                    click_function_definitions,
+                    visited_predicates,
+                    visited_functions,
+                    reads,
+                    resource_name,
+                )?;
+            }
+            let Some(definition) = click_function_definitions.get(name.as_str()) else {
+                return Ok(());
+            };
+            if visited_functions.contains(name) {
+                return Err(ClickError::new(format!(
+                    "resource `{resource_name}` invariant cannot use recursive function `{name}`"
+                )));
+            }
+            visited_functions.push(name.clone());
+            let substitutions = definition
+                .parameters()
+                .iter()
+                .zip(arguments)
+                .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
+                .collect::<BTreeMap<_, _>>();
+            let body = substitute_contract_expression(definition.body(), &substitutions).map_err(
+                |message| {
+                    ClickError::new(format!(
+                        "resource `{resource_name}` invariant could not inspect function `{name}`: {message}"
+                    ))
+                },
+            )?;
+            let result = collect_resource_invariant_reads_from_contract_expression(
+                &body,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            );
+            visited_functions.pop();
+            result
+        }
+    }
+}
+
+fn collect_resource_invariant_reads_from_c_expression(
+    expression: &CExpression,
+    reads: &mut Vec<ResourceInvariantRead>,
+) {
+    match expression {
+        CExpression::Value(_) | CExpression::Variable(_) => {}
+        CExpression::AddressOf(_) => {}
+        CExpression::Load(pointer) => {
+            collect_resource_invariant_reads_from_c_expression(pointer, reads);
+            reads.push(ResourceInvariantRead {
+                base: pointer.as_ref().clone(),
+                index: CExpression::Value(CValue::Int32(Bitvector32Term::Constant(0))),
+                expression: describe_c_expression(expression),
+            });
+        }
+        CExpression::Index(base, index) => {
+            collect_resource_invariant_reads_from_c_expression(base, reads);
+            collect_resource_invariant_reads_from_c_expression(index, reads);
+            reads.push(ResourceInvariantRead {
+                base: base.as_ref().clone(),
+                index: index.as_ref().clone(),
+                expression: describe_c_expression(expression),
+            });
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right) => {
+            collect_resource_invariant_reads_from_c_expression(left, reads);
+            collect_resource_invariant_reads_from_c_expression(right, reads);
+        }
+        CExpression::Not(expression) | CExpression::BitwiseNot(expression) => {
+            collect_resource_invariant_reads_from_c_expression(expression, reads);
+        }
+    }
+}
+
+fn resource_invariant_read_is_owned(
+    read: &ResourceInvariantRead,
+    contained: &[ResourceClause],
+) -> bool {
+    contained.iter().any(|resource| {
+        let ResourceClause::Write(segment) = resource else {
+            return false;
+        };
+        segment.state == ContractSegmentState::Current
+            && segment.base == read.base
+            && constant_segment_covers_index(&segment.start, &segment.end, &read.index)
+    })
+}
+
+fn constant_segment_covers_index(
+    start: &CExpression,
+    end: &CExpression,
+    index: &CExpression,
+) -> bool {
+    let Some(start) = constant_c_expression_i64(start) else {
+        return false;
+    };
+    let Some(end) = constant_c_expression_i64(end) else {
+        return false;
+    };
+    let Some(index) = constant_c_expression_i64(index) else {
+        return false;
+    };
+    start <= index && index < end
+}
+
+fn constant_c_expression_i64(expression: &CExpression) -> Option<i64> {
+    match expression {
+        CExpression::Value(CValue::Int32(Bitvector32Term::Constant(value))) => {
+            Some(*value as i32 as i64)
+        }
+        CExpression::Value(CValue::UInt8(Bitvector32Term::Constant(value))) => {
+            Some(i64::from(*value))
+        }
+        CExpression::Add(left, right) => {
+            Some(constant_c_expression_i64(left)? + constant_c_expression_i64(right)?)
+        }
+        CExpression::Subtract(left, right) => {
+            Some(constant_c_expression_i64(left)? - constant_c_expression_i64(right)?)
+        }
+        _ => None,
+    }
 }
 
 fn reject_resource_representation_cycles(
