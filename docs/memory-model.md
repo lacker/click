@@ -49,9 +49,14 @@ one-byte elements.
 
 Symbolic memory access usually needs:
 
-- a valid range
+- a covering `read(...)` or `write(...)` resource, or a separate valid range
 - lower and upper index bounds
 - loop invariants if the bounds are established by a loop
+
+`read(...)` and `write(...)` imply validity for the covered range. A separate
+`valid_range(...)` clause is useful when a proof needs validity without access
+permission, or when it needs a larger structural range than the immediate
+permission covers.
 
 ## Old Memory
 

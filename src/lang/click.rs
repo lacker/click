@@ -14,7 +14,7 @@ use crate::kernel::{
     CResourceSpec, CState, CStatement, CType, CValue, ConditionTerm, PathFact, Pointer,
     PointerOffsetTerm, ProofObligation, Proposition, ResourceContext, Sort, SpecExpression,
     SpecMemory, SpecProposition, Term, Theorem, Variable, c_function, c_function_specification,
-    c_labeled_assert, c_pointer_value, c_seq, c_while_with_invariant_and_effect_checks,
+    c_labeled_assert, c_pointer_value, c_seq, c_while_with_invariant_and_effect_checks, int32,
     prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
@@ -1018,8 +1018,9 @@ pub fn verify_c0_sources(
     click_source: &str,
     c_sources: &[(&str, &str)],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let file = parse(click_source)?;
     let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
+    let struct_layouts = parse_c_struct_layouts(&c_sources)?;
+    let file = parser::parse_with_struct_layouts(click_source, struct_layouts)?;
     let parsed_sources = parse_verified_sources(&file, &c_sources)?;
     let function_environment = build_function_environment(&parsed_sources, file.function_blocks())?;
     let predicate_definitions = combined_predicate_definitions(&file)?;
@@ -1117,6 +1118,30 @@ pub fn verify_c0_sources(
     }
 
     Ok(verified)
+}
+
+fn parse_c_struct_layouts(
+    c_sources: &BTreeMap<&str, &str>,
+) -> Result<BTreeMap<String, syntax::C0StructLayout>, ClickError> {
+    let mut layouts = BTreeMap::new();
+    for (source_path, c_source) in c_sources {
+        let function = syntax::parse_function(c_source).map_err(|error| {
+            ClickError::new(format!(
+                "failed to parse C source `{source_path}`: {}",
+                error.message()
+            ))
+        })?;
+        for (name, layout) in function.structs() {
+            if let Some(previous) = layouts.insert(name.clone(), layout.clone()) {
+                if previous != *layout {
+                    return Err(ClickError::new(format!(
+                        "conflicting declarations for struct `{name}`"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(layouts)
 }
 
 fn parse_verified_sources<'a>(

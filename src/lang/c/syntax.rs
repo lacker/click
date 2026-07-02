@@ -8,6 +8,7 @@ pub struct C0Function {
     name: String,
     parameters: Vec<C0Parameter>,
     body: C0Statement,
+    structs: BTreeMap<String, C0StructLayout>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,12 +24,12 @@ struct ParsedType {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct StructLayout {
-    fields: BTreeMap<String, StructField>,
+pub struct C0StructLayout {
+    fields: BTreeMap<String, C0StructField>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct StructField {
+pub struct C0StructField {
     c_type: C0Type,
     offset_bytes: u32,
 }
@@ -135,6 +136,10 @@ impl C0Function {
         &self.body
     }
 
+    pub fn structs(&self) -> &BTreeMap<String, C0StructLayout> {
+        &self.structs
+    }
+
     pub fn body_kernel_statement(&self) -> crate::kernel::CStatement {
         self.body.to_kernel_statement()
     }
@@ -149,6 +154,30 @@ impl C0Function {
                 .collect(),
             self.body.to_kernel_statement(),
         )
+    }
+}
+
+impl C0StructLayout {
+    pub fn fields(&self) -> &BTreeMap<String, C0StructField> {
+        &self.fields
+    }
+
+    pub fn field(&self, name: &str) -> Option<&C0StructField> {
+        self.fields.get(name)
+    }
+}
+
+impl C0StructField {
+    pub fn c_type(&self) -> C0Type {
+        self.c_type
+    }
+
+    pub fn offset_bytes(&self) -> u32 {
+        self.offset_bytes
+    }
+
+    pub fn byte_width(&self) -> u32 {
+        self.c_type.to_kernel_type().byte_width()
     }
 }
 
@@ -424,7 +453,7 @@ impl Token {
 struct Parser {
     tokens: Vec<Token>,
     position: usize,
-    structs: BTreeMap<String, StructLayout>,
+    structs: BTreeMap<String, C0StructLayout>,
     variable_structs: BTreeMap<String, String>,
 }
 
@@ -453,6 +482,7 @@ impl Parser {
             name,
             parameters,
             body,
+            structs: self.structs,
         })
     }
 
@@ -485,7 +515,7 @@ impl Parser {
                 if fields
                     .insert(
                         field_name.clone(),
-                        StructField {
+                        C0StructField {
                             c_type: field_type.c_type,
                             offset_bytes,
                         },
@@ -513,7 +543,7 @@ impl Parser {
             }
             if self
                 .structs
-                .insert(name.clone(), StructLayout { fields })
+                .insert(name.clone(), C0StructLayout { fields })
                 .is_some()
             {
                 return Err(C0SyntaxError::new(format!(

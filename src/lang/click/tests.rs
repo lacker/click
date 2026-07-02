@@ -310,9 +310,13 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
     );
     assert_eq!(
         function.requires(),
-        &[Requirement::ValidRange {
-            name: "obj".to_string(),
-            bytes: RangeBytes::Constant(4),
+        &[Requirement::ValidRangeSegment {
+            segment: ContractSegment {
+                state: ContractSegmentState::Current,
+                base: CExpression::Variable("obj".to_string()),
+                start: CExpression::Value(int32(0)),
+                end: CExpression::Value(int32(1)),
+            },
         }]
     );
     assert!(matches!(
@@ -2987,7 +2991,14 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
     };
     let initial_memory = memory_with_symbolic_valid_range_cells(
         CMemory::new(),
-        &std::collections::BTreeMap::from([("p".to_string(), (base.clone(), 12))]),
+        &std::collections::BTreeMap::from([(
+            "p".to_string(),
+            ConcreteMemoryRangeSeed {
+                base: base.clone(),
+                bytes: 12,
+                element_width: 4,
+            },
+        )]),
     );
     let initial_resources =
         ResourceContext::new().with_resource(CResource::Write(CMemoryRange::new(

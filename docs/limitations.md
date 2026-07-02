@@ -12,10 +12,9 @@ Struct support is partial. C0 accepts compact multi-field struct declarations
 with `int32` and pointer-valued fields, plus `p->field` loads/stores through
 struct pointers. It still has no C ABI padding/alignment model, struct values,
 nested struct values, arrays of structs, or general field-address expressions.
-Click contracts also do not yet know general struct layouts:
-`valid_field(p->field)` and `mutable_field(p->field)` remain first-field
-conveniences for the json-c-shaped fixture. Multi-field examples should use
-explicit ranges such as `valid_range(owner[0..3])` and `write(owner[0..3])`.
+Click contracts can use field places in `read(...)` and `write(...)`, but this
+is still compact-layout support, not C ABI layout. Explicit ranges such as
+`write(owner[0..3])` remain useful for broader footprints.
 
 ## Type Support Is Still Narrow
 

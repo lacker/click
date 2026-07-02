@@ -1,7 +1,7 @@
 # pointer range verification rejects missing requirements
 
-This checks that an indexed pointer load without a `valid_range` requirement
-reports a memory access obligation.
+This checks that an indexed pointer load without a `read(...)` requirement
+reports a missing resource.
 
 ```c filename=pointer_range_missing_requires.c
 int32 read_second(int32* p) {
@@ -13,11 +13,10 @@ int32 read_second(int32* p) {
 verifying "pointer_range_missing_requires.c";
 
 int32 read_second(int32* p) {
-    requires read(p[1..2]);
     ensures reads_second_cell: result == p[1] by auto;
 }
 ```
 
 ```expect
-fail: CMemoryCanLoad
+fail: missing resource `read(p[1..2])`
 ```

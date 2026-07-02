@@ -16,11 +16,15 @@ the contract needs:
 
 ```click
 int32 first(int32 p[]) {
-    requires valid_range(p[0..1]);
     requires read(p[0..1]);
     ensures result == p[0] by auto;
 }
 ```
+
+`read(...)` and `write(...)` imply validity for the range they cover. Use
+`valid_range(...)` when you need memory-validity information without granting
+access permission, or when the proof needs a larger range than any single
+access resource provides.
 
 ## Ranges
 
@@ -76,7 +80,12 @@ requires valid_field(obj->ref_count);
 mutable obj->ref_count by frame;
 ```
 
-This is not yet a general struct layout model. C0 can lower compact multi-field
-struct loads and stores, but multi-field contracts should still use explicit
-ranges such as `valid_range(owner[0..3])` and `write(owner[0..3])` until Click
-has a contract-level layout environment.
+For multi-field structs, prefer field resources:
+
+```click
+requires read(obj->len);
+requires write(obj->data);
+```
+
+Those resources imply validity for the covered fields. Explicit ranges remain
+useful when a proof needs a broader footprint than one field.

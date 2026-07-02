@@ -2580,6 +2580,13 @@ pub(super) fn collect_c_expression_referenced_names(
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ConcreteMemoryRangeSeed {
+    pub(super) base: Pointer,
+    pub(super) bytes: u32,
+    pub(super) element_width: u32,
+}
+
 pub(super) fn initial_call(
     function_name: &str,
     requires: &[Requirement],
@@ -2641,7 +2648,7 @@ pub(super) fn initial_call(
         }
         if let Requirement::Resource(resource) = requirement.inner() {
             if let Some((name, bytes)) =
-                concrete_write_resource_block(resource, parameters, &arguments)?
+                concrete_access_resource_block(resource, parameters, &arguments)?
             {
                 valid_ranges.insert(name, bytes);
             }
@@ -2679,22 +2686,41 @@ pub(super) fn initial_call(
 
 pub(super) fn memory_with_symbolic_valid_range_cells(
     mut memory: CMemory,
-    valid_ranges: &BTreeMap<String, (Pointer, u32)>,
+    valid_ranges: &BTreeMap<String, ConcreteMemoryRangeSeed>,
 ) -> CMemory {
     let base_memory = memory.clone();
-    for (base, bytes) in valid_ranges.values() {
+    for range in valid_ranges.values() {
         let mut offset: u32 = 0;
-        while offset.checked_add(4).is_some_and(|end| end <= *bytes) {
-            let pointer = offset_pointer_by_int32_elements(
-                base.clone(),
-                Bitvector32Term::Constant(offset / 4),
-            );
-            let value = CValue::Int32(Bitvector32Term::MemoryLoad(
-                Box::new(base_memory.clone()),
-                Box::new(pointer.clone()),
-            ));
-            memory = memory.store(pointer, value);
-            offset += 4;
+        match range.element_width {
+            1 => {
+                while offset < range.bytes {
+                    let pointer = offset_pointer_by_elements(
+                        range.base.clone(),
+                        Bitvector32Term::Constant(offset),
+                        1,
+                    );
+                    let value = CValue::UInt8(Bitvector32Term::MemoryLoad(
+                        Box::new(base_memory.clone()),
+                        Box::new(pointer.clone()),
+                    ));
+                    memory = memory.store(pointer, value);
+                    offset += 1;
+                }
+            }
+            _ => {
+                while offset.checked_add(4).is_some_and(|end| end <= range.bytes) {
+                    let pointer = offset_pointer_by_int32_elements(
+                        range.base.clone(),
+                        Bitvector32Term::Constant(offset / 4),
+                    );
+                    let value = CValue::Int32(Bitvector32Term::MemoryLoad(
+                        Box::new(base_memory.clone()),
+                        Box::new(pointer.clone()),
+                    ));
+                    memory = memory.store(pointer, value);
+                    offset += 4;
+                }
+            }
         }
     }
     memory
@@ -2935,13 +2961,13 @@ pub(super) fn concrete_valid_range_block(
     requirement: &Requirement,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-) -> Result<Option<(String, (Pointer, u32))>, ClickError> {
+) -> Result<Option<(String, ConcreteMemoryRangeSeed)>, ClickError> {
     match requirement.inner() {
         Requirement::ValidRange { name, bytes } => {
             let Some(bytes) = range_bytes_constant(bytes) else {
                 return Ok(None);
             };
-            let Some((_, argument)) = parameters
+            let Some((parameter, argument)) = parameters
                 .iter()
                 .zip(arguments)
                 .find(|(parameter, _)| parameter.name() == name)
@@ -2951,7 +2977,14 @@ pub(super) fn concrete_valid_range_block(
             let CExpression::Value(CValue::Pointer(base)) = argument else {
                 return Ok(None);
             };
-            Ok(Some((name.clone(), (base.clone(), bytes))))
+            Ok(Some((
+                name.clone(),
+                ConcreteMemoryRangeSeed {
+                    base: base.clone(),
+                    bytes,
+                    element_width: parameter_element_width(parameter).unwrap_or(4),
+                },
+            )))
         }
         Requirement::ValidRangeSegment { segment } => {
             let state = CState::new();
@@ -2973,7 +3006,11 @@ pub(super) fn concrete_valid_range_block(
                 .ok_or_else(|| ClickError::new("`valid_range` segment overflows byte count"))?;
             Ok(Some((
                 format!("{:?}", segment.source),
-                (segment.base, bytes),
+                ConcreteMemoryRangeSeed {
+                    base: segment.base,
+                    bytes,
+                    element_width,
+                },
             )))
         }
         Requirement::Labeled { .. }
@@ -2983,13 +3020,14 @@ pub(super) fn concrete_valid_range_block(
     }
 }
 
-pub(super) fn concrete_write_resource_block(
+pub(super) fn concrete_access_resource_block(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-) -> Result<Option<(String, (Pointer, u32))>, ClickError> {
-    let ResourceClause::Write(segment) = resource else {
-        return Ok(None);
+) -> Result<Option<(String, ConcreteMemoryRangeSeed)>, ClickError> {
+    let segment = match resource {
+        ResourceClause::Read(segment) | ResourceClause::Write(segment) => segment,
+        ResourceClause::Free(_) | ResourceClause::Named { .. } => return Ok(None),
     };
     let state = CState::new();
     let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment) else {
@@ -3002,7 +3040,7 @@ pub(super) fn concrete_write_resource_block(
     };
     if end < start {
         return Err(ClickError::new(format!(
-            "`write` segment has an end before its start: {start}..{end}"
+            "resource segment has an end before its start: {start}..{end}"
         )));
     }
     let element_width = contract_segment_element_width(parameters, &segment.source);
@@ -3012,10 +3050,11 @@ pub(super) fn concrete_write_resource_block(
         .ok_or_else(|| ClickError::new("`write` segment overflows byte count"))?;
     Ok(Some((
         format!("{:?}", segment.source),
-        (
-            offset_pointer_by_elements(segment.base, segment.start, element_width),
+        ConcreteMemoryRangeSeed {
+            base: offset_pointer_by_elements(segment.base, segment.start, element_width),
             bytes,
-        ),
+            element_width,
+        },
     )))
 }
 
@@ -3124,6 +3163,14 @@ pub(super) fn contract_expression_element_width(
         CExpression::Add(left, right) => contract_expression_element_width(parameters, left)
             .or_else(|| contract_expression_element_width(parameters, right)),
         CExpression::Subtract(left, _) => contract_expression_element_width(parameters, left),
+        _ => None,
+    }
+}
+
+fn parameter_element_width(parameter: &syntax::C0Parameter) -> Option<u32> {
+    match parameter.c_type() {
+        C0Type::Int32Pointer => Some(4),
+        C0Type::UInt8Pointer => Some(1),
         _ => None,
     }
 }

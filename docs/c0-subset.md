@@ -74,8 +74,8 @@ requires x > -2147483648;
 
 Out-of-bounds memory accesses become proof obligations or undefined behavior
 depending on the symbolic execution path. Prove access safety with
-`valid_range(...)`, the pilot `valid_field(...)` requirement, index bounds, and
-loop invariants.
+`read(...)`, `write(...)`, `valid_range(...)`, index bounds, and loop
+invariants.
 
 ## Local Arrays
 
@@ -121,12 +121,13 @@ lowered as a typed load or store at the field's compact byte offset. There is
 no C ABI padding/alignment model yet, and struct values, nested struct values,
 arrays of structs, and general field-address expressions are still unsupported.
 
-Click contracts do not yet have a general struct-layout environment. The
-`valid_field(p->field)` and `mutable_field(p->field)` helpers remain a
-first-field convenience for the json-c-shaped example. For multi-field structs,
-write explicit ranges such as `valid_range(owner[0..3])` and
-`write(owner[0..3])`; an `int32*` or `uint8*` field occupies two int32 cells in
-that spelling.
+Click contracts can use field places in resource clauses, such as
+`read(owner->len)` and `write(owner->data)`. These lower through the same
+compact field offsets, and the access resource makes the field valid for
+symbolic execution. Explicit ranges such as `write(owner[0..3])` are still
+available when a contract needs to describe a broader footprint. The
+`valid_field(p->field)` and `mutable_field(p->field)` helpers remain as
+compatibility conveniences for field-sized validity and effects.
 
 ## Loops
 

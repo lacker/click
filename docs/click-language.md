@@ -213,16 +213,15 @@ or free permissions unless another contract explicitly returns them.
 A call can pass a covered subrange, such as passing `write(p[0..1])` from a
 caller that has `write(p[0..2])`; Click keeps the residue and rejoins adjacent
 returned ranges. The same applies to symbolic ranges when the current facts
-prove the subrange is covered. In this first slice, `write(...)` also seeds the
-matching symbolic memory cells for concrete `int32[]` ranges, so simple
-one-cell int32 writes do not need a separate `valid_range(...)` requirement.
-`read(...)` does not seed memory cells; validity remains separate from
-permission.
+prove the subrange is covered. `read(...)` and `write(...)` also make the
+covered range valid for symbolic execution, so ordinary external reads and
+writes do not need a separate `valid_range(...)` requirement for the same
+range.
 
 This is intentionally not the full permission system. There are no fractions,
 ownership predicates, explicit resource algebra proof steps, C heap allocation,
 or allocation-sized deallocation semantics yet. `valid_range`, `mutable`, and
-`immutable` remain separate from permission: validity proves an access is in
+`immutable` remain separate concepts from permission: validity proves an access is in
 bounds, while resources authorize the access.
 
 ## Propositions
@@ -386,13 +385,11 @@ functions and predicates, not built-in kernel concepts.
 
 C0 accepts a small multi-field struct slice with `int32` and pointer-valued
 fields. The C side can lower `obj->field` loads and stores at compact field
-offsets. Click contracts do not yet have a general struct-layout environment,
-so `valid_field(obj->field)` and
-`mutable_field(obj->field)` remain first-field conveniences for the
-json-c-shaped example. For multi-field structs, state the footprint explicitly:
-use ranges such as `valid_range(owner[0..3])`, `read(owner[0..3])`, and
-`write(owner[0..3])`. A pointer field occupies two int32 cells in that range
-spelling.
+offsets. Click contracts can use field places in resources:
+`read(obj->field)` and `write(obj->field)`. The access resource also makes the
+field valid for symbolic execution. Explicit ranges such as
+`write(owner[0..3])` are still available for broader footprints. A pointer
+field occupies two int32 cells in that range spelling.
 
 Concrete folds are unrolled. Symbolic folds remain `RangeFold` value terms in
 the kernel and can be reasoned about by supported fold laws.

@@ -87,6 +87,8 @@ Larger example projects live directly under `examples/`. They contain ordinary
 
 - `mdtests/struct_multifield_explicit_permissions.md`: compact multi-field
   struct loads/stores with explicit validity and write ranges.
+- `mdtests/struct_field_resources_imply_validity.md`: preferred field-resource
+  shape where `read(p->field)` and `write(p->field)` imply field validity.
 - `mdtests/struct_pointer_field_explicit_permissions.md`: pointer-valued
   struct field load followed by a write through the loaded pointer, again using
   explicit ranges rather than ownership sugar.

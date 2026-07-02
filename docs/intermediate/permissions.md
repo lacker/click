@@ -43,7 +43,8 @@ look like heap cells.
 
 ## Validity And Authority
 
-`valid_range(...)` and permissions answer different questions.
+`valid_range(...)` and permissions still answer different questions, but access
+permissions include the validity needed for the covered access.
 
 `valid_range(p[0..n])` says the range is a valid memory range. It is about
 memory safety and bounds.
@@ -51,22 +52,20 @@ memory safety and bounds.
 `read(p[0..n])` or `write(p[0..n])` says the current code has authority to
 access that range. It is about permission.
 
-For an external read, you normally need both:
+For an external read, `read(...)` is normally enough:
 
 ```click
 int32 first(int32 p[]) {
-    requires valid_range(p[0..1]);
     requires read(p[0..1]);
 
     ensures result == p[0] by auto;
 }
 ```
 
-For a write, `write(...)` grants authority to store. In the current
-implementation, concrete `int32[]` write ranges also seed the symbolic memory
-cells for that range, so small write examples often do not need a separate
-`valid_range(...)` clause. This is an implementation convenience, not the
-general ownership model.
+Similarly, `write(...)` grants authority to store and makes the covered range
+valid. Use `valid_range(...)` separately when you need to prove memory exists
+without granting read or write authority, or when a larger structural bound is
+useful for index reasoning.
 
 ## Read Permission
 
@@ -74,7 +73,6 @@ general ownership model.
 
 ```click
 int32 peek(int32 p[]) {
-    requires valid_range(p[0..1]);
     requires read(p[0..1]);
 
     ensures read(p[0..1]) by auto;

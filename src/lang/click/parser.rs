@@ -4,6 +4,13 @@ pub(super) fn parse(source: &str) -> Result<ClickFile, ClickError> {
     Parser::new(source)?.parse_file()
 }
 
+pub(super) fn parse_with_struct_layouts(
+    source: &str,
+    struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
+) -> Result<ClickFile, ClickError> {
+    Parser::new_with_struct_layouts(source, struct_layouts)?.parse_file()
+}
+
 pub(super) fn parse_file_items(source: &str) -> Result<ClickFile, ClickError> {
     let mut parser = Parser::new(source)?;
     parser.parse_file_items()
@@ -54,6 +61,33 @@ enum Token {
 struct Parser {
     tokens: Vec<Token>,
     position: usize,
+    struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
+    current_struct_params: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ParsedType {
+    c_type: C0Type,
+    struct_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ParsedParameter {
+    parameter: FunctionParameter,
+    struct_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ParsedParameters {
+    parameters: Vec<FunctionParameter>,
+    struct_params: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ResolvedField {
+    c_type: C0Type,
+    offset_bytes: u32,
+    byte_width: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -87,9 +121,18 @@ impl ContractLetBinding {
 
 impl Parser {
     fn new(source: &str) -> Result<Self, ClickError> {
+        Self::new_with_struct_layouts(source, BTreeMap::new())
+    }
+
+    fn new_with_struct_layouts(
+        source: &str,
+        struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
+    ) -> Result<Self, ClickError> {
         Ok(Self {
             tokens: tokenize(source)?,
             position: 0,
+            struct_layouts,
+            current_struct_params: BTreeMap::new(),
         })
     }
 
@@ -147,14 +190,19 @@ impl Parser {
         self.expect_ident_spelling("predicate")?;
         let name = self.expect_ident("predicate name")?;
         self.expect(Token::LParen)?;
-        let parameters = self.parse_parameters()?;
+        let parsed_parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
         self.expect(Token::LBrace)?;
+        let previous_struct_params = std::mem::replace(
+            &mut self.current_struct_params,
+            parsed_parameters.struct_params,
+        );
         let body = self.parse_proposition()?;
+        self.current_struct_params = previous_struct_params;
         self.expect(Token::RBrace)?;
         Ok(PredicateDefinition {
             name,
-            parameters,
+            parameters: parsed_parameters.parameters,
             body,
         })
     }
@@ -163,16 +211,21 @@ impl Parser {
         self.expect_ident_spelling("function")?;
         let name = self.expect_ident("function name")?;
         self.expect(Token::LParen)?;
-        let parameters = self.parse_parameters()?;
+        let parsed_parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
         self.expect(Token::Arrow)?;
-        let return_type = self.parse_type()?;
+        let return_type = self.parse_type()?.c_type;
         self.expect(Token::LBrace)?;
+        let previous_struct_params = std::mem::replace(
+            &mut self.current_struct_params,
+            parsed_parameters.struct_params,
+        );
         let body = self.parse_contract_expression()?;
+        self.current_struct_params = previous_struct_params;
         self.expect(Token::RBrace)?;
         Ok(ClickFunctionDefinition {
             name,
-            parameters,
+            parameters: parsed_parameters.parameters,
             return_type,
             body,
         })
@@ -183,8 +236,12 @@ impl Parser {
         self.expect_ident_spelling("resource")?;
         let name = self.expect_ident("resource name")?;
         self.expect(Token::LParen)?;
-        let parameters = self.parse_resource_parameters()?;
+        let parsed_parameters = self.parse_resource_parameters()?;
         self.expect(Token::RParen)?;
+        let previous_struct_params = std::mem::replace(
+            &mut self.current_struct_params,
+            parsed_parameters.struct_params,
+        );
         let representation = match self.peek() {
             Some(Token::Semicolon) => {
                 self.position += 1;
@@ -202,9 +259,10 @@ impl Parser {
                 );
             }
         };
+        self.current_struct_params = previous_struct_params;
         Ok(ResourceDefinition {
             name,
-            parameters,
+            parameters: parsed_parameters.parameters,
             kind: ResourceKind::Affine,
             representation,
         })
@@ -252,24 +310,36 @@ impl Parser {
         self.parse_named_resource_call()
     }
 
-    fn parse_resource_parameters(&mut self) -> Result<Vec<FunctionParameter>, ClickError> {
+    fn parse_resource_parameters(&mut self) -> Result<ParsedParameters, ClickError> {
         let mut parameters = Vec::new();
+        let mut struct_params = BTreeMap::new();
         if self.peek() == Some(&Token::RParen) {
-            return Ok(parameters);
+            return Ok(ParsedParameters {
+                parameters,
+                struct_params,
+            });
         }
 
         loop {
             let name = self.expect_ident("resource parameter name")?;
             self.expect(Token::Colon)?;
-            let c_type = self.parse_type()?;
-            let c_type = self.parse_parameter_array_suffix(c_type)?;
-            parameters.push(FunctionParameter { c_type, name });
+            let parsed_type = self.parse_type()?;
+            let parsed_parameter = self.parse_parameter_array_suffix(name, parsed_type)?;
+            if let Some(struct_name) = parsed_parameter.struct_name {
+                struct_params.insert(parsed_parameter.parameter.name.clone(), struct_name);
+            }
+            parameters.push(parsed_parameter.parameter);
 
             match self.peek() {
                 Some(Token::Comma) => {
                     self.position += 1;
                 }
-                Some(Token::RParen) => return Ok(parameters),
+                Some(Token::RParen) => {
+                    return Ok(ParsedParameters {
+                        parameters,
+                        struct_params,
+                    });
+                }
                 Some(token) => {
                     return Err(self.error(format!("expected `,` or `)`, got {token:?}")));
                 }
@@ -282,14 +352,19 @@ impl Parser {
         self.expect_ident_spelling("theorem")?;
         let name = self.expect_ident("theorem name")?;
         self.expect(Token::LParen)?;
-        let parameters = self.parse_resource_parameters()?;
+        let parsed_parameters = self.parse_resource_parameters()?;
         self.expect(Token::RParen)?;
         self.expect(Token::LBrace)?;
 
-        let parameter_names = parameters
+        let parameter_names = parsed_parameters
+            .parameters
             .iter()
             .map(|parameter| parameter.name().to_string())
             .collect::<BTreeSet<_>>();
+        let previous_struct_params = std::mem::replace(
+            &mut self.current_struct_params,
+            parsed_parameters.struct_params,
+        );
         let mut contract_lets = Vec::new();
         let mut contract_let_names = BTreeSet::new();
         let mut requires = Vec::new();
@@ -349,17 +424,18 @@ impl Parser {
             }
         }
         self.expect(Token::RBrace)?;
+        self.current_struct_params = previous_struct_params;
 
         Ok(TheoremDefinition {
             name,
-            parameters,
+            parameters: parsed_parameters.parameters,
             requires,
             ensures,
         })
     }
 
     fn parse_function_block(&mut self) -> Result<FunctionBlock, ClickError> {
-        let signature = self.parse_function_signature()?;
+        let (signature, struct_params) = self.parse_function_signature()?;
         self.expect(Token::LBrace)?;
 
         let parameter_names = signature
@@ -374,6 +450,8 @@ impl Parser {
         let mut structural_labels = BTreeSet::new();
         let mut effects = Vec::new();
         let mut ensures = Vec::new();
+        let previous_struct_params =
+            std::mem::replace(&mut self.current_struct_params, struct_params);
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
                 Some("let") => {
@@ -460,6 +538,7 @@ impl Parser {
             }
         }
         self.expect(Token::RBrace)?;
+        self.current_struct_params = previous_struct_params;
 
         Ok(FunctionBlock {
             signature,
@@ -475,7 +554,7 @@ impl Parser {
         let name = self.expect_ident("let binding name")?;
         let c_type = if self.peek() == Some(&Token::Colon) {
             self.position += 1;
-            Some(self.parse_type()?)
+            Some(self.parse_type()?.c_type)
         } else {
             None
         };
@@ -495,37 +574,55 @@ impl Parser {
         Ok(ContractLetBinding { name, c_type, kind })
     }
 
-    fn parse_function_signature(&mut self) -> Result<FunctionSignature, ClickError> {
-        let return_type = self.parse_type()?;
+    fn parse_function_signature(
+        &mut self,
+    ) -> Result<(FunctionSignature, BTreeMap<String, String>), ClickError> {
+        let return_type = self.parse_type()?.c_type;
         let name = self.expect_ident("function name")?;
         self.expect(Token::LParen)?;
-        let parameters = self.parse_parameters()?;
+        let parsed_parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
+        let struct_params = parsed_parameters.struct_params;
 
-        Ok(FunctionSignature {
-            return_type,
-            name,
-            parameters,
-        })
+        Ok((
+            FunctionSignature {
+                return_type,
+                name,
+                parameters: parsed_parameters.parameters,
+            },
+            struct_params,
+        ))
     }
 
-    fn parse_parameters(&mut self) -> Result<Vec<FunctionParameter>, ClickError> {
+    fn parse_parameters(&mut self) -> Result<ParsedParameters, ClickError> {
         let mut parameters = Vec::new();
+        let mut struct_params = BTreeMap::new();
         if self.peek() == Some(&Token::RParen) {
-            return Ok(parameters);
+            return Ok(ParsedParameters {
+                parameters,
+                struct_params,
+            });
         }
 
         loop {
-            let c_type = self.parse_type()?;
+            let parsed_type = self.parse_type()?;
             let name = self.expect_ident("parameter name")?;
-            let c_type = self.parse_parameter_array_suffix(c_type)?;
-            parameters.push(FunctionParameter { c_type, name });
+            let parsed_parameter = self.parse_parameter_array_suffix(name, parsed_type)?;
+            if let Some(struct_name) = parsed_parameter.struct_name {
+                struct_params.insert(parsed_parameter.parameter.name.clone(), struct_name);
+            }
+            parameters.push(parsed_parameter.parameter);
 
             match self.peek() {
                 Some(Token::Comma) => {
                     self.position += 1;
                 }
-                Some(Token::RParen) => return Ok(parameters),
+                Some(Token::RParen) => {
+                    return Ok(ParsedParameters {
+                        parameters,
+                        struct_params,
+                    });
+                }
                 Some(token) => {
                     return Err(self.error(format!("expected `,` or `)`, got {token:?}")));
                 }
@@ -534,13 +631,16 @@ impl Parser {
         }
     }
 
-    fn parse_type(&mut self) -> Result<C0Type, ClickError> {
+    fn parse_type(&mut self) -> Result<ParsedType, ClickError> {
         let spelling = self.expect_ident("type")?;
         if spelling == "struct" {
-            let _struct_name = self.expect_ident("struct name")?;
+            let struct_name = self.expect_ident("struct name")?;
             if self.peek() == Some(&Token::Star) {
                 self.position += 1;
-                return Ok(C0Type::Int32Pointer);
+                return Ok(ParsedType {
+                    c_type: C0Type::Int32Pointer,
+                    struct_name: Some(struct_name),
+                });
             }
             return Err(self.error("only pointer-to-struct types are supported"));
         }
@@ -556,21 +656,40 @@ impl Parser {
         };
         if self.peek() == Some(&Token::Star) {
             self.position += 1;
-            Ok(match scalar_type {
-                C0Type::Int32 => C0Type::Int32Pointer,
-                C0Type::UInt8 => C0Type::UInt8Pointer,
-                _ => unreachable!("scalar type should not be aggregate"),
+            Ok(ParsedType {
+                c_type: match scalar_type {
+                    C0Type::Int32 => C0Type::Int32Pointer,
+                    C0Type::UInt8 => C0Type::UInt8Pointer,
+                    _ => unreachable!("scalar type should not be aggregate"),
+                },
+                struct_name: None,
             })
         } else {
-            Ok(scalar_type)
+            Ok(ParsedType {
+                c_type: scalar_type,
+                struct_name: None,
+            })
         }
     }
 
-    fn parse_parameter_array_suffix(&mut self, c_type: C0Type) -> Result<C0Type, ClickError> {
+    fn parse_parameter_array_suffix(
+        &mut self,
+        name: String,
+        parsed_type: ParsedType,
+    ) -> Result<ParsedParameter, ClickError> {
         if self.peek() != Some(&Token::LBracket) {
-            return Ok(c_type);
+            return Ok(ParsedParameter {
+                parameter: FunctionParameter {
+                    c_type: parsed_type.c_type,
+                    name,
+                },
+                struct_name: parsed_type.struct_name,
+            });
         }
-        let pointer_type = match c_type {
+        if parsed_type.struct_name.is_some() {
+            return Err(self.error("array parameters of struct type are not supported"));
+        }
+        let pointer_type = match parsed_type.c_type {
             C0Type::Int32 => C0Type::Int32Pointer,
             C0Type::UInt8 => C0Type::UInt8Pointer,
             _ => return Err(self.error("only scalar array parameters are supported")),
@@ -581,7 +700,13 @@ impl Parser {
             self.position += 1;
         }
         self.expect(Token::RBracket)?;
-        Ok(pointer_type)
+        Ok(ParsedParameter {
+            parameter: FunctionParameter {
+                c_type: pointer_type,
+                name,
+            },
+            struct_name: None,
+        })
     }
 
     fn parse_requirement(&mut self) -> Result<Requirement, ClickError> {
@@ -641,21 +766,9 @@ impl Parser {
 
     fn parse_valid_field_requirement(&mut self) -> Result<Requirement, ClickError> {
         self.expect_ident_spelling("valid_field")?;
-        self.expect(Token::LParen)?;
-        let field = self.parse_ensure_expression()?;
-        self.expect(Token::RParen)?;
+        let segment = self.parse_current_field_segment()?;
 
-        let C0Expression::Load(base) = field else {
-            return Err(self.error("`valid_field` expects a field access like `obj->field`"));
-        };
-        let C0Expression::Variable(name) = *base else {
-            return Err(self.error("`valid_field` currently supports pointer parameters only"));
-        };
-
-        Ok(Requirement::ValidRange {
-            name,
-            bytes: RangeBytes::Constant(4),
-        })
+        Ok(Requirement::ValidRangeSegment { segment })
     }
 
     fn parse_disjoint_requirement(&mut self) -> Result<Requirement, ClickError> {
@@ -900,19 +1013,11 @@ impl Parser {
 
     fn parse_current_field_segment(&mut self) -> Result<ContractSegment, ClickError> {
         self.expect(Token::LParen)?;
-        let field = self.parse_ensure_expression()?;
+        let base = self.parse_ensure_primary()?.to_kernel_expression();
+        self.expect(Token::Arrow)?;
+        let field_name = self.expect_ident("field name")?;
         self.expect(Token::RParen)?;
-
-        let C0Expression::Load(base) = field else {
-            return Err(self.error("`mutable_field` expects a field access like `obj->field`"));
-        };
-
-        Ok(ContractSegment {
-            state: ContractSegmentState::Current,
-            base: base.to_kernel_expression(),
-            start: C0Expression::Int32Literal(0).to_kernel_expression(),
-            end: C0Expression::Int32Literal(1).to_kernel_expression(),
-        })
+        self.resolve_field_segment(base, &field_name)
     }
 
     fn parse_ensure_clause(&mut self) -> Result<EnsureClause, ClickError> {
@@ -1013,7 +1118,7 @@ impl Parser {
         if self.peek_ident() == Some("forall") {
             self.position += 1;
             self.expect(Token::LParen)?;
-            let c_type = self.parse_type()?;
+            let c_type = self.parse_type()?.c_type;
             let name = self.expect_ident("forall variable name")?;
             self.expect(Token::RParen)?;
             self.expect(Token::LBrace)?;
@@ -1029,7 +1134,7 @@ impl Parser {
         if self.peek_ident() == Some("exists") {
             self.position += 1;
             self.expect(Token::LParen)?;
-            let c_type = self.parse_type()?;
+            let c_type = self.parse_type()?.c_type;
             let name = self.expect_ident("exists variable name")?;
             self.expect(Token::RParen)?;
             self.expect(Token::LBrace)?;
@@ -1452,6 +1557,11 @@ impl Parser {
 
     fn parse_current_contract_segment(&mut self) -> Result<ContractSegment, ClickError> {
         let base = self.parse_ensure_primary()?.to_kernel_expression();
+        if self.peek() == Some(&Token::Arrow) {
+            self.position += 1;
+            let field_name = self.expect_ident("field name")?;
+            return self.resolve_field_segment(base, &field_name);
+        }
         self.expect(Token::LBracket)?;
         let start = self.parse_ensure_expression()?.to_kernel_expression();
         self.expect(Token::DotDot)?;
@@ -1463,6 +1573,109 @@ impl Parser {
             start,
             end,
         })
+    }
+
+    fn resolve_field_segment(
+        &self,
+        base: CExpression,
+        field_name: &str,
+    ) -> Result<ContractSegment, ClickError> {
+        let Some(field) = self.resolve_field_metadata(&base, field_name)? else {
+            return Ok(ContractSegment {
+                state: ContractSegmentState::Current,
+                base,
+                start: CExpression::Value(int32(0)),
+                end: CExpression::Value(int32(1)),
+            });
+        };
+        Ok(ContractSegment {
+            state: ContractSegmentState::Current,
+            base,
+            start: CExpression::Value(int32(field.offset_bytes / 4)),
+            end: CExpression::Value(int32((field.offset_bytes + field.byte_width) / 4)),
+        })
+    }
+
+    fn resolve_field_load(
+        &self,
+        base: CExpression,
+        field_name: &str,
+    ) -> Result<CExpression, ClickError> {
+        let Some(field) = self.resolve_field_metadata(&base, field_name)? else {
+            return Ok(CExpression::Load(Box::new(base)));
+        };
+        Ok(CExpression::TypedLoad {
+            pointer: Box::new(self.offset_field_pointer(base, field.offset_bytes)),
+            value_type: field.c_type.to_kernel_type(),
+        })
+    }
+
+    fn resolve_c0_field_load(
+        &self,
+        base: C0Expression,
+        field_name: &str,
+    ) -> Result<Option<C0Expression>, ClickError> {
+        let Some(field) = self.resolve_field_metadata(&base.to_kernel_expression(), field_name)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(C0Expression::Field {
+            pointer: Box::new(self.offset_c0_field_pointer(base, field.offset_bytes)),
+            field_type: field.c_type,
+        }))
+    }
+
+    fn resolve_field_metadata(
+        &self,
+        base: &CExpression,
+        field_name: &str,
+    ) -> Result<Option<ResolvedField>, ClickError> {
+        let CExpression::Variable(base_name) = base else {
+            return Ok(None);
+        };
+        let Some(struct_name) = self.current_struct_params.get(base_name) else {
+            return Ok(None);
+        };
+        let Some(layout) = self.struct_layouts.get(struct_name) else {
+            return Ok(None);
+        };
+        let Some(field) = layout.field(field_name) else {
+            return Err(self.error(format!(
+                "struct `{struct_name}` has no field `{field_name}`"
+            )));
+        };
+        if field.offset_bytes() % 4 != 0 || field.byte_width() % 4 != 0 {
+            return Err(
+                self.error("field places currently require int32-aligned offsets and widths")
+            );
+        }
+        Ok(Some(ResolvedField {
+            c_type: field.c_type(),
+            offset_bytes: field.offset_bytes(),
+            byte_width: field.byte_width(),
+        }))
+    }
+
+    fn offset_field_pointer(&self, base: CExpression, offset_bytes: u32) -> CExpression {
+        if offset_bytes == 0 {
+            base
+        } else {
+            CExpression::Add(
+                Box::new(base),
+                Box::new(CExpression::Value(int32(offset_bytes / 4))),
+            )
+        }
+    }
+
+    fn offset_c0_field_pointer(&self, base: C0Expression, offset_bytes: u32) -> C0Expression {
+        if offset_bytes == 0 {
+            base
+        } else {
+            C0Expression::Add(
+                Box::new(base),
+                Box::new(C0Expression::Int32Literal(offset_bytes / 4)),
+            )
+        }
     }
 
     fn parse_contract_bitwise_or(&mut self) -> Result<ContractExpression, ClickError> {
@@ -1575,13 +1788,14 @@ impl Parser {
                 }
                 Some(Token::Arrow) => {
                     self.position += 1;
-                    let _field_name = self.expect_ident("field name")?;
+                    let field_name = self.expect_ident("field name")?;
                     let Some(base) = contract_expression_as_c_fragment(&expression) else {
                         return Err(
                             self.error("field access is only supported on current C fragments")
                         );
                     };
-                    expression = ContractExpression::CFragment(CExpression::Load(Box::new(base)));
+                    expression =
+                        ContractExpression::CFragment(self.resolve_field_load(base, &field_name)?);
                 }
                 _ => return Ok(expression),
             }
@@ -1848,8 +2062,11 @@ impl Parser {
                 }
                 Some(Token::Arrow) => {
                     self.position += 1;
-                    let _field_name = self.expect_ident("field name")?;
-                    expression = C0Expression::Load(Box::new(expression));
+                    let field_name = self.expect_ident("field name")?;
+                    let base = expression;
+                    expression = self
+                        .resolve_c0_field_load(base.clone(), &field_name)?
+                        .unwrap_or_else(|| C0Expression::Load(Box::new(base)));
                 }
                 _ => return Ok(expression),
             }

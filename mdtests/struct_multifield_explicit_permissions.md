@@ -1,8 +1,8 @@
 # multi-field struct fields
 
-This checks the first ordinary multi-field struct slice. C0 can lower field
-loads and stores at nonzero offsets, while the Click contract still gives the
-object footprint as an explicit memory range.
+This checks that compact multi-field struct lowering still works with an
+explicit object-range footprint. Most field-sized contracts should prefer
+`read(p->field)` and `write(p->field)`.
 
 ```c filename=write_second.c
 struct pair {
