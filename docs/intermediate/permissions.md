@@ -345,6 +345,8 @@ Implemented today:
   `pack(resource)` proof steps, including composition over other named affine
   resources,
 - `write(...)` implying read authority,
+- visible `write(...)` resources imply `disjoint(...)` facts for their ranges,
+  and provably overlapping visible writes are rejected,
 - copyable read transfer,
 - linear write transfer through function summaries,
 - linear free transfer that removes overlapping access resources when consumed,

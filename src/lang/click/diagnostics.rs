@@ -95,6 +95,11 @@ pub(super) fn describe_runtime_error(
             "duplicate affine resource `{}`",
             describe_resource(resource, parameters, arguments)
         ),
+        crate::kernel::CRuntimeError::OverlappingWriteResources { left, right } => format!(
+            "overlapping write resources `write({})` and `write({})`",
+            describe_memory_range(left, parameters, arguments),
+            describe_memory_range(right, parameters, arguments)
+        ),
     }
 }
 

@@ -445,6 +445,12 @@ fn prepare_function_resource_transfer(
             resource: resource.clone(),
         }));
     }
+    if let Some((left, right)) = return_resources.overlapping_write_pair(assumptions) {
+        return Ok(Err(CRuntimeError::OverlappingWriteResources {
+            left: Box::new(left.clone()),
+            right: Box::new(right.clone()),
+        }));
+    }
 
     Ok(Ok(CFunctionResourceTransfer {
         callee_resources: required_resources,
@@ -469,6 +475,12 @@ fn evaluate_function_resource_context(
         if let Some(resource) = context.duplicate_named_resource() {
             return Ok(Err(CRuntimeError::DuplicateResource {
                 resource: resource.clone(),
+            }));
+        }
+        if let Some((left, right)) = context.overlapping_write_pair(assumptions) {
+            return Ok(Err(CRuntimeError::OverlappingWriteResources {
+                left: Box::new(left.clone()),
+                right: Box::new(right.clone()),
             }));
         }
     }

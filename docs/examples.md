@@ -238,6 +238,10 @@ sequence:
   token is still consumed linearly through a call summary.
 - `mdtests/represented_resource_rejects_duplicate_contains.md`: represented
   resources reject duplicate contained affine tokens.
+- `mdtests/write_resources_imply_disjoint.md`: two visible `write(...)`
+  resources imply a `disjoint(...)` fact without a separate requirement.
+- `mdtests/write_resources_reject_proven_overlap.md`: provably overlapping
+  visible `write(...)` resources are rejected.
 - `mdtests/represented_resource_rejects_cycle.md`: represented-resource
   definitions reject containment cycles.
 - `mdtests/represented_resource_pure_fact.md`: represented resources can carry

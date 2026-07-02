@@ -1519,6 +1519,19 @@ fn project_initial_resource_facts(
     claim_label: &str,
 ) -> Result<Vec<Proposition>, ClickError> {
     let result = CValue::Int32(Bitvector32Term::Constant(0));
+    let projected_propositions;
+    let available_propositions = if state.resources().has_multiple_write_resources() {
+        projected_propositions = project_write_resource_disjoint_facts(
+            parameters,
+            arguments,
+            state,
+            available_propositions,
+            &format!("`{claim_label}` setup"),
+        )?;
+        &projected_propositions
+    } else {
+        available_propositions
+    };
     project_packed_resource_facts(
         resource_environment,
         parameters,
@@ -1548,6 +1561,19 @@ fn project_outcome_resource_facts(
     let CFunctionOutcome::Return { value, state } = outcome else {
         return Ok(available_propositions.to_vec());
     };
+    let projected_propositions;
+    let available_propositions = if state.resources().has_multiple_write_resources() {
+        projected_propositions = project_write_resource_disjoint_facts(
+            parameters,
+            arguments,
+            state,
+            available_propositions,
+            &format!("`{claim_label}` path {path_index}"),
+        )?;
+        &projected_propositions
+    } else {
+        available_propositions
+    };
     project_packed_resource_facts(
         resource_environment,
         parameters,
@@ -1564,6 +1590,52 @@ fn project_outcome_resource_facts(
             "`{claim_label}` path {path_index}: could not project packed resource facts: {message}"
         ))
     })
+}
+
+fn project_write_resource_disjoint_facts(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    available_propositions: &[Proposition],
+    context: &str,
+) -> Result<Vec<Proposition>, ClickError> {
+    let assumptions = assumptions_from_propositions(available_propositions);
+    if let Some((left, right)) = state.resources().overlapping_write_pair(&assumptions) {
+        return Err(ClickError::new(format!(
+            "{context}: overlapping write resources `write({})` and `write({})`",
+            describe_memory_range(left, parameters, arguments),
+            describe_memory_range(right, parameters, arguments)
+        )));
+    }
+
+    let mut propositions = available_propositions.to_vec();
+    for proposition in state.resources().write_disjoint_propositions() {
+        if !propositions.contains(&proposition) {
+            propositions.push(proposition);
+        }
+    }
+    Ok(propositions)
+}
+
+fn append_write_resource_disjoint_facts(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    available_propositions: &mut Vec<Proposition>,
+    context: &str,
+) -> Result<(), ClickError> {
+    if !state.resources().has_multiple_write_resources() {
+        return Ok(());
+    }
+
+    *available_propositions = project_write_resource_disjoint_facts(
+        parameters,
+        arguments,
+        state,
+        available_propositions,
+        context,
+    )?;
+    Ok(())
 }
 
 fn project_packed_resource_facts(
@@ -1773,6 +1845,17 @@ fn unpack_represented_resource(
         })?;
         available_propositions.push(lowered_fact);
     }
+
+    append_write_resource_disjoint_facts(
+        parameters,
+        arguments,
+        &state,
+        available_propositions,
+        &format!(
+            "`{claim_label}` proof step {step_index}: `unpack({})`",
+            describe_resource_clause(resource)
+        ),
+    )?;
 
     Ok(state)
 }

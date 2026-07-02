@@ -372,10 +372,21 @@ pub enum CRuntimeError {
     UnboundVariable(String),
     UnknownFunction(String),
     TypeMismatch,
-    WrongArity { expected: usize, actual: usize },
+    WrongArity {
+        expected: usize,
+        actual: usize,
+    },
     MissingReturn,
-    MissingResource { resource: CResource },
-    DuplicateResource { resource: CResource },
+    MissingResource {
+        resource: CResource,
+    },
+    DuplicateResource {
+        resource: CResource,
+    },
+    OverlappingWriteResources {
+        left: Box<CMemoryRange>,
+        right: Box<CMemoryRange>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1852,6 +1863,61 @@ impl ResourceContext {
         &self.resources
     }
 
+    pub fn has_multiple_write_resources(&self) -> bool {
+        self.resources
+            .iter()
+            .filter(|resource| matches!(resource, CResource::Write(_)))
+            .take(2)
+            .count()
+            == 2
+    }
+
+    pub fn overlapping_write_pair(
+        &self,
+        assumptions: &Assumptions,
+    ) -> Option<(&CMemoryRange, &CMemoryRange)> {
+        for i in 0..self.resources.len() {
+            let CResource::Write(left) = &self.resources[i] else {
+                continue;
+            };
+            for candidate in &self.resources[i + 1..] {
+                let CResource::Write(right) = candidate else {
+                    continue;
+                };
+                if memory_ranges_proven_overlapping(left, right, assumptions) {
+                    return Some((left, right));
+                }
+            }
+        }
+        None
+    }
+
+    pub fn write_disjoint_propositions(&self) -> Vec<Proposition> {
+        let writes = self
+            .resources
+            .iter()
+            .filter_map(|resource| match resource {
+                CResource::Write(range) => Some(range),
+                CResource::Read(_) | CResource::Free(_) | CResource::Named { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        let mut propositions = Vec::new();
+        for i in 0..writes.len() {
+            for right in &writes[i + 1..] {
+                let left = writes[i];
+                propositions.push(Proposition::CMemoryDisjoint {
+                    left_base: left.base.clone(),
+                    left_start: left.start.clone(),
+                    left_end: left.end.clone(),
+                    right_base: right.base.clone(),
+                    right_start: right.start.clone(),
+                    right_end: right.end.clone(),
+                });
+            }
+        }
+        propositions
+    }
+
     pub fn duplicate_named_resource(&self) -> Option<&CResource> {
         for i in 0..self.resources.len() {
             if !matches!(self.resources[i], CResource::Named { .. }) {
@@ -2192,6 +2258,31 @@ fn memory_ranges_proven_disjoint(
         || assumptions.decide(&ConditionTerm::signed_less_equal(
             right_end,
             left.start().clone(),
+        )) == Some(true)
+}
+
+fn memory_ranges_proven_overlapping(
+    left: &CMemoryRange,
+    right: &CMemoryRange,
+    assumptions: &Assumptions,
+) -> bool {
+    if left.base().block != right.base().block {
+        return false;
+    }
+
+    let Some(base_delta) = right.base().element_index_from_base(left.base()) else {
+        return false;
+    };
+    let right_start = Bitvector32Term::add(base_delta.clone(), right.start().clone());
+    let right_end = Bitvector32Term::add(base_delta, right.end().clone());
+
+    assumptions.decide(&ConditionTerm::signed_less_than(
+        left.start().clone(),
+        right_end,
+    )) == Some(true)
+        && assumptions.decide(&ConditionTerm::signed_less_than(
+            right_start,
+            left.end().clone(),
         )) == Some(true)
 }
 

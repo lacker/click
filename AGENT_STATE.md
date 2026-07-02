@@ -88,6 +88,10 @@ Click currently has:
 - Resource facts can include `disjoint(...)` range facts. This has standalone
   mdtest coverage in `mdtests/represented_resource_disjoint_fact.md` as well as
   the owner-buffer pressure test.
+- Visible `write(...)` resources imply `disjoint(...)` facts for their ranges;
+  `read(...)` resources do not. Packed resource permissions remain hidden unless
+  the represented resource declares explicit facts.
+- Provably overlapping visible `write(...)` resources are rejected.
 - Holding a covering `read(...)` or `write(...)` resource discharges external
   load validity obligations for the covered access. Holding `write(...)`
   similarly discharges external store validity obligations.
@@ -149,11 +153,12 @@ The shape now supported is:
 - Packing the resource proves those facts and repackages the contained
   resources.
 
-The unresolved part is no longer basic syntax for non-aliasing facts or whether
-packed resources expose facts. Remaining design questions include:
+The unresolved part is no longer basic syntax for non-aliasing facts, whether
+packed resources expose facts, or whether visible writes imply disjointness.
+Remaining design questions include:
 
-- Should common non-aliasing facts remain ordinary explicit `fact disjoint(...)`
-  clauses, or should some be derived from `write(...)`/allocation resources?
+- Should hidden represented-resource footprints expose derived non-aliasing
+  facts, or should those remain ordinary explicit `fact disjoint(...)` clauses?
 - How much should `read` or `write` imply about stability?
 - What allocation/provenance structure, if any, should justify inferred
   non-aliasing facts?
@@ -163,15 +168,16 @@ is implemented.
 
 ## Useful Next Steps
 
-The owner-buffer example now passes, and `read(...)`/`write(...)` now both
-carry the validity needed for covered external memory accesses. Good next
-slices:
+The owner-buffer example now passes, `read(...)`/`write(...)` now both carry
+the validity needed for covered external memory accesses, and visible
+`write(...)` resources now imply disjointness. Good next slices:
 
-1. Decide how much non-aliasing should stay as explicit `fact disjoint(...)`
-   clauses versus being inferred from allocation/resource structure.
-2. Add a focused expected-fail owner-buffer mdtest showing the ergonomic goal
-   without an explicit `fact disjoint(...)`, then decide what source of
-   allocation/provenance evidence should prove it.
+1. Add a focused expected-fail owner-buffer mdtest showing the ergonomic goal
+   without an explicit `fact disjoint(...)` for a hidden represented-resource
+   footprint, then decide whether hidden contained writes should imply facts
+   while packed.
+2. Decide what allocation/provenance evidence should prove freshness for future
+   allocation resources.
 3. Consider a scoped unpack/pack proof step only if examples show explicit
    `unpack(...)`/`pack(...)` is creating avoidable proof noise.
 4. Keep tightening owner-buffer ergonomics through concrete mdtests before
