@@ -5,16 +5,18 @@ Last updated: 2026-07-02.
 ## Repository State
 
 - Working tree was clean when this file was written.
-- The docs are built with mdBook. `mdbook serve` is the normal build-and-serve
-  command.
+- The docs are built with mdBook. `scripts/mdbook-serve.sh` installs a pinned
+  repo-local mdBook into `target/tools` if needed and then runs `mdbook serve`.
 - The most recent verification pass I ran was:
   - `cargo fmt`
   - `cargo test`
   - `git diff --check`
-- `mdbook build` could not be run in this environment because `mdbook` was not
-  installed.
-- Those checks passed after adding resource-packaged `disjoint(...)` facts for
-  the owner-buffer example.
+- `scripts/mdbook-serve.sh --port 4000` successfully installed mdBook 0.4.52
+  into `target/tools`, built the book, and served it at
+  `http://localhost:4000`; the foreground serve process was then stopped.
+- Those checks passed after adding resource-packaged `disjoint(...)` facts,
+  load-validity discharge from `read(...)`, and a standalone represented
+  resource `fact disjoint(...)` mdtest.
 
 ## Current Design Thread
 
@@ -73,7 +75,9 @@ Click currently has:
   by contained `write(...)` permission, not merely `read(...)`.
 - Resource fact validation can use scalar facts from the same fact clause to
   justify symbolic indexed reads, for example `0 <= k and k < n and p[k] == 0`.
-- Resource facts can include `disjoint(...)` range facts.
+- Resource facts can include `disjoint(...)` range facts. This has standalone
+  mdtest coverage in `mdtests/represented_resource_disjoint_fact.md` as well as
+  the owner-buffer pressure test.
 - Holding a covering `read(...)` or `write(...)` resource discharges external
   load validity obligations for the covered access. Holding `write(...)`
   similarly discharges external store validity obligations.
@@ -153,13 +157,11 @@ The owner-buffer example now passes, and `read(...)`/`write(...)` now both
 carry the validity needed for covered external memory accesses. Good next
 slices:
 
-1. Add a smaller regression mdtest for `fact disjoint(...)` that is independent
-   of structs, if more coverage feels useful.
+1. Improve diagnostics for failed resource fact framing so aliasing failures say
+   which write may alias which fact read.
 2. Explore whether any non-aliasing facts can be inferred from allocation or
    stronger memory-resource structure instead of written explicitly.
-3. Improve diagnostics for failed resource fact framing so aliasing failures say
-   which write may alias which fact read.
-4. Decide whether any of the explicit `fact disjoint(...)` clauses in represented
+3. Decide whether any of the explicit `fact disjoint(...)` clauses in represented
    resources should become derived facts from allocation/resource structure.
 
 Keep forcing each resource-logic feature through a concrete mdtest before
@@ -274,9 +276,7 @@ these permissions and how much should be explicit facts.
 
 ## Suggested Immediate Next Task
 
-Run `scripts/mdbook-serve.sh` once to smoke-test the docs with the repo-local
-mdBook wrapper. The first run may download mdBook into `target/tools`.
-
-After that, the next resource-design slice should probably be a small,
-standalone mdtest for `fact disjoint(...)` or diagnostics for failed represented
-resource fact framing.
+Improve diagnostics for failed represented resource fact framing. The current
+errors identify the fact read that lacks a covering contained `write(...)`, but
+they do not yet explain which contained write ranges were considered or whether
+possible aliasing/disjointness was the blocker.

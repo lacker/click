@@ -216,6 +216,8 @@ sequence:
   bundle another named affine resource with memory permission and a fact.
 - `mdtests/represented_resource_two_arrays.md`: a represented resource can
   bundle permissions for multiple arrays.
+- `mdtests/represented_resource_disjoint_fact.md`: a represented resource can
+  package a `disjoint(...)` fact and expose it while opened.
 - `mdtests/represented_resource_struct_owned_buffer.md`: a conservative
   struct-owned-buffer pattern with explicit owner and buffer parameters.
 - `mdtests/represented_resource_owner_buffer_field_dependent.md`: the desired
