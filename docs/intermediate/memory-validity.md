@@ -70,22 +70,18 @@ This is how postconditions talk about preservation or change. The expression
 inside `old(...)` still needs to be meaningful in the entry state, so memory
 validity and permission requirements still matter.
 
-## Field Validity
+## Field Resources
 
-The current Click-side field helper support is intentionally narrow. For the
-json-c-shaped pilot, Click accepts:
-
-```click
-requires valid_field(obj->ref_count);
-mutable obj->ref_count by frame;
-```
-
-For multi-field structs, prefer field resources:
+For struct fields, prefer field resources:
 
 ```click
-requires read(obj->len);
+requires read(obj->ref_count);
 requires write(obj->data);
 ```
 
 Those resources imply validity for the covered fields. Explicit ranges remain
-useful when a proof needs a broader footprint than one field.
+useful when a proof needs a broader footprint than one field:
+
+```click
+requires write(obj[0..3]);
+```

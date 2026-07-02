@@ -678,12 +678,14 @@ impl Parser {
         parsed_type: ParsedType,
     ) -> Result<ParsedParameter, ClickError> {
         if self.peek() != Some(&Token::LBracket) {
+            let struct_name = parsed_type.struct_name;
             return Ok(ParsedParameter {
                 parameter: FunctionParameter {
                     c_type: parsed_type.c_type,
                     name,
+                    struct_name: struct_name.clone(),
                 },
-                struct_name: parsed_type.struct_name,
+                struct_name,
             });
         }
         if parsed_type.struct_name.is_some() {
@@ -704,6 +706,7 @@ impl Parser {
             parameter: FunctionParameter {
                 c_type: pointer_type,
                 name,
+                struct_name: None,
             },
             struct_name: None,
         })

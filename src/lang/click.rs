@@ -124,6 +124,7 @@ pub struct FunctionSignature {
 pub struct FunctionParameter {
     c_type: C0Type,
     name: String,
+    struct_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -792,6 +793,10 @@ impl FunctionParameter {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    pub fn struct_name(&self) -> Option<&str> {
+        self.struct_name.as_deref()
+    }
 }
 
 impl Requirement {
@@ -1321,20 +1326,30 @@ fn check_signature(
         .zip(parsed_function.parameters())
         .enumerate()
     {
-        if expected.c_type() != actual.c_type() || expected.name() != actual.name() {
+        if expected.c_type() != actual.c_type()
+            || expected.name() != actual.name()
+            || expected.struct_name() != actual.struct_name()
+        {
             return Err(ClickError::new(format!(
-                "signature mismatch for `{}` parameter {} in `{source_path}`: .click has {:?} {}, C has {:?} {}",
+                "signature mismatch for `{}` parameter {} in `{source_path}`: .click has {} {}, C has {} {}",
                 signature.name(),
                 index + 1,
-                expected.c_type(),
+                describe_parameter_type(expected.c_type(), expected.struct_name()),
                 expected.name(),
-                actual.c_type(),
+                describe_parameter_type(actual.c_type(), actual.struct_name()),
                 actual.name()
             )));
         }
     }
 
     Ok(())
+}
+
+fn describe_parameter_type(c_type: C0Type, struct_name: Option<&str>) -> String {
+    match struct_name {
+        Some(name) => format!("struct {name}*"),
+        None => format!("{c_type:?}"),
+    }
 }
 
 fn validate_structural_clauses(

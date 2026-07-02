@@ -308,6 +308,7 @@ fn c0_syntax_targets_kernel_struct_field_load() {
         function.parameters()[0].c_type(),
         syntax::C0Type::Int32Pointer
     );
+    assert_eq!(function.parameters()[0].struct_name(), Some("json_object"));
 
     let pointer = crate::kernel::Pointer {
         block: "object".to_string(),

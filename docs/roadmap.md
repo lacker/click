@@ -295,8 +295,8 @@ Good next tasks from the current state:
 1. Choose the first spec/model-state design before adding permission logic,
    allocation, final release, or double-release checks.
 2. Broaden the struct/field memory model beyond compact C0 field lowering:
-   Click-side layout facts, non-first-field `valid_field`/`mutable_field`,
-   field frames, and eventually ABI layout details.
+   whole-object resources, field-dependent represented resources, field
+   frames, and eventually ABI layout details.
 3. Add more fold/range theorems beyond alpha-equivalent folds and the current
    count-shaped split rules, especially when the pilot or sorting/string tests
    expose a reusable proof pattern.

@@ -68,7 +68,8 @@ fn parses_checked_signature_and_contract_clauses() {
         function.signature().parameters(),
         &[FunctionParameter {
             c_type: C0Type::Int32Pointer,
-            name: "p".to_string()
+            name: "p".to_string(),
+            struct_name: None,
         }]
     );
     assert_eq!(
@@ -117,7 +118,8 @@ fn parses_pure_theorem_definition() {
         theorem.parameters(),
         &[FunctionParameter {
             c_type: C0Type::Int32,
-            name: "x".to_string()
+            name: "x".to_string(),
+            struct_name: None,
         }]
     );
     assert_eq!(theorem.requires().len(), 1);
@@ -282,6 +284,7 @@ fn parses_array_parameter_signature_as_pointer() {
         &[FunctionParameter {
             c_type: C0Type::Int32Pointer,
             name: "p".to_string(),
+            struct_name: None,
         }]
     );
 }
@@ -306,6 +309,7 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
         &[FunctionParameter {
             c_type: C0Type::Int32Pointer,
             name: "obj".to_string(),
+            struct_name: Some("json_object".to_string()),
         }]
     );
     assert_eq!(
@@ -461,6 +465,7 @@ fn parses_represented_resource_definition() {
         &[FunctionParameter {
             c_type: C0Type::Int32Pointer,
             name: "flag".to_string(),
+            struct_name: None,
         }]
     );
     assert_eq!(
@@ -3057,6 +3062,43 @@ fn signature_mismatch_reports_direct_error() {
 
     assert!(
         error.message().contains("signature mismatch"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn struct_name_signature_mismatch_reports_direct_error() {
+    let c_source = r#"
+        struct actual {
+            int32 value;
+        };
+
+        struct expected {
+            int32 value;
+        };
+
+        int32 get_value(struct actual* p) {
+            return p->value;
+        }
+    "#;
+    let click_source = r#"
+        verifying "get_value.c";
+
+        int32 get_value(struct expected* p) {
+            requires read(p->value);
+            ensures result == old(p->value) by auto;
+            ensures read(p->value) by auto;
+        }
+    "#;
+
+    let error = verify_c0_sources(click_source, &[("get_value.c", c_source)])
+        .expect_err("wrong struct name should fail");
+
+    assert!(
+        error.message().contains(
+            "signature mismatch for `get_value` parameter 1 in `get_value.c`: .click has struct expected* p, C has struct actual* p"
+        ),
         "{}",
         error.message()
     );

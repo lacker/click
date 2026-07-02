@@ -4594,6 +4594,19 @@ pub(super) fn evaluate_contract_memory_load_from_memory(
         {
             Ok(value)
         }
+        crate::kernel::CExpressionOutcome::Value(value)
+            if matches!(
+                (value_type, &value),
+                (
+                    CType::Int32Pointer | CType::UInt8Pointer,
+                    CValue::Int32(Bitvector32Term::MemoryLoad(_, _))
+                )
+            ) =>
+        {
+            Err(format!(
+                "symbolic pointer loads are not supported yet; cannot read {value_type:?} from memory"
+            ))
+        }
         crate::kernel::CExpressionOutcome::Value(value) => Err(format!(
             "load from {pointer:?} produced {value:?}, not {value_type:?}"
         )),

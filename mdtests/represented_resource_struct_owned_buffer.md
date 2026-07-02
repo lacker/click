@@ -2,8 +2,8 @@
 
 This checks the conservative "struct owns buffer" pattern. The abstract
 resource takes both the owner object and the buffer as explicit parameters,
-then ties the owner field to an invariant. It does not yet depend on reading
-fields inside `contains` clauses.
+then ties the owner field to an invariant. This avoids depending on an initial
+symbolic pointer load from an owner field.
 
 ```c filename=set_owned_first.c
 struct owner {
@@ -17,8 +17,8 @@ int32 set_owned_first(struct owner* owner, int32 data[]) {
 ```
 
 ```click
-affine resource owned_one_cell(owner: int32*, data: int32*) {
-    contains write(owner[0..1]);
+affine resource owned_one_cell(owner: struct owner*, data: int32*) {
+    contains write(owner->len);
     contains write(data[0..1]);
     invariant owner->len == 1;
 }
@@ -26,7 +26,6 @@ affine resource owned_one_cell(owner: int32*, data: int32*) {
 verifying "set_owned_first.c";
 
 int32 set_owned_first(struct owner* owner, int32 data[]) {
-    requires valid_field(owner->len);
     requires disjoint(owner[0..1], data[0..1]);
     requires owned_one_cell(owner, data);
 

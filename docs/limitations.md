@@ -14,7 +14,9 @@ struct pointers. It still has no C ABI padding/alignment model, struct values,
 nested struct values, arrays of structs, or general field-address expressions.
 Click contracts can use field places in `read(...)` and `write(...)`, but this
 is still compact-layout support, not C ABI layout. Explicit ranges such as
-`write(owner[0..3])` remain useful for broader footprints.
+`write(owner[0..3])` remain useful for broader footprints. C and Click function
+signatures check struct pointer names, but deeper expression typing still
+mostly sees erased pointer types.
 
 ## Type Support Is Still Narrow
 

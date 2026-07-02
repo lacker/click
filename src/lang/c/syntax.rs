@@ -15,6 +15,7 @@ pub struct C0Function {
 pub struct C0Parameter {
     c_type: C0Type,
     name: String,
+    struct_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -188,6 +189,10 @@ impl C0Parameter {
 
     pub fn c_type(&self) -> C0Type {
         self.c_type
+    }
+
+    pub fn struct_name(&self) -> Option<&str> {
+        self.struct_name.as_deref()
     }
 
     pub fn to_kernel_parameter(&self) -> crate::kernel::CParameter {
@@ -565,7 +570,8 @@ impl Parser {
             let parsed_type = self.parse_type()?;
             let name = self.expect_ident("parameter name")?;
             let c_type = self.parse_parameter_array_suffix(parsed_type.c_type)?;
-            if parsed_type.struct_name.is_some() {
+            let struct_name = parsed_type.struct_name;
+            if struct_name.is_some() {
                 if c_type != parsed_type.c_type {
                     return Err(C0SyntaxError::new(
                         "array parameters of struct type are not supported",
@@ -573,10 +579,14 @@ impl Parser {
                 }
                 self.variable_structs.insert(
                     name.clone(),
-                    parsed_type.struct_name.expect("struct_name checked above"),
+                    struct_name.clone().expect("struct_name checked above"),
                 );
             }
-            parameters.push(C0Parameter { c_type, name });
+            parameters.push(C0Parameter {
+                c_type,
+                name,
+                struct_name,
+            });
 
             if self.peek() != Some(&Token::Comma) {
                 return Ok(parameters);

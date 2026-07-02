@@ -298,7 +298,10 @@ explicitly passed buffer pointer. In this conservative shape, the resource's
 parameters name the lower-level memory objects directly. More convenient
 field-dependent representations, such as deriving the contained buffer from
 `owner->data`, are a later design question rather than part of the current
-surface.
+surface. The current blocker is symbolic pointer-valued field loads: Click can
+use a pointer field after code stores a concrete pointer into it, but cannot yet
+start from an unknown external `owner->data` value and turn it into a buffer
+permission.
 
 ## Split And Rejoin
 

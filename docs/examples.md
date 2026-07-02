@@ -216,6 +216,9 @@ sequence:
   bundle permissions for multiple arrays.
 - `mdtests/represented_resource_struct_owned_buffer.md`: a conservative
   struct-owned-buffer pattern with explicit owner and buffer parameters.
+- `mdtests/represented_resource_owner_buffer_field_dependent.md`: the desired
+  field-dependent owner-buffer shape, currently expected to fail because
+  symbolic pointer-valued field loads are not implemented.
 - `mdtests/represented_resource_rejects_bad_origin.md`: closing a represented
   resource fails when its invariant has not been established.
 - `mdtests/represented_resource_rejects_double_call.md`: a represented affine
@@ -295,8 +298,8 @@ sequence:
 ## Library-Shaped Mdtests
 
 - `mdtests/jsonc_refcount_getter.md`: first json-c-shaped pilot proof,
-  using first-field helpers for a reference-count getter.
+  using a field read resource for a reference-count getter.
 - `mdtests/jsonc_refcount_setter.md`: first-field struct write
-  with a field-validity precondition and field-level mutable footprint.
+  using a field write resource.
 - `mdtests/jsonc_refcount_increment.md`: field read/modify/write
   proof with `old(obj->field)` postconditions and a no-overflow requirement.
