@@ -679,6 +679,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                         pointer_path.facts,
                         pointer_path.obligations,
                         assumptions,
+                        false,
                     )
                     .into_iter()
                     .filter_map(c_expression_path_value),

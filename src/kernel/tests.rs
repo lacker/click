@@ -1699,7 +1699,7 @@ fn store_then_load_threads_native_memory() {
 }
 
 #[test]
-fn symbolic_load_from_incomplete_memory_reports_validity_obligation() {
+fn read_resource_permits_symbolic_external_load_from_incomplete_memory() {
     let pointer = Pointer {
         block: "block".to_string(),
         offset: PointerOffsetTerm::Constant(4),
@@ -1712,33 +1712,20 @@ fn symbolic_load_from_incomplete_memory_reports_validity_obligation() {
         prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
 
     assert_eq!(execution.paths().len(), 1);
-    assert_eq!(
-        execution.paths()[0].obligations(),
-        &[ProofObligation::memory_can_load(
-            CMemory::new(),
-            pointer.clone()
-        )]
-    );
+    assert_eq!(execution.paths()[0].obligations(), &[]);
     assert_eq!(
         execution.paths()[0].theorem().proposition(),
-        &Proposition::Implies(
-            Box::new(Proposition::CMemoryCanLoad {
-                memory: CMemory::new(),
-                pointer: pointer.clone(),
-                byte_width: 4,
-            }),
-            Box::new(Proposition::CStatementExecutes {
-                state: state.clone(),
-                statement,
-                outcome: CStatementOutcome::Return {
-                    value: int32(Bitvector32Term::MemoryLoad(
-                        Box::new(CMemory::new()),
-                        Box::new(pointer),
-                    )),
-                    state,
-                },
-            }),
-        )
+        &Proposition::CStatementExecutes {
+            state: state.clone(),
+            statement,
+            outcome: CStatementOutcome::Return {
+                value: int32(Bitvector32Term::MemoryLoad(
+                    Box::new(CMemory::new()),
+                    Box::new(pointer),
+                )),
+                state,
+            },
+        }
     );
 }
 
@@ -1856,7 +1843,7 @@ fn pointer_addition_scales_int32_offsets_for_loads() {
 }
 
 #[test]
-fn pointer_addition_out_of_range_load_reports_validity_obligation() {
+fn read_resource_permits_pointer_addition_load_beyond_memory_block() {
     let base = Pointer {
         block: "block".to_string(),
         offset: PointerOffsetTerm::Constant(0),
@@ -1875,33 +1862,20 @@ fn pointer_addition_out_of_range_load_reports_validity_obligation() {
         prove_symbolic_c_execution_paths(state.clone(), statement.clone(), Assumptions::new());
 
     assert_eq!(execution.paths().len(), 1);
-    assert_eq!(
-        execution.paths()[0].obligations(),
-        &[ProofObligation::memory_can_load(
-            memory.clone(),
-            derived.clone()
-        )]
-    );
+    assert_eq!(execution.paths()[0].obligations(), &[]);
     assert_eq!(
         execution.paths()[0].theorem().proposition(),
-        &Proposition::Implies(
-            Box::new(Proposition::CMemoryCanLoad {
-                memory: memory.clone(),
-                pointer: derived.clone(),
-                byte_width: 4,
-            }),
-            Box::new(Proposition::CStatementExecutes {
-                state: state.clone(),
-                statement,
-                outcome: CStatementOutcome::Return {
-                    value: int32(Bitvector32Term::MemoryLoad(
-                        Box::new(memory),
-                        Box::new(derived),
-                    )),
-                    state,
-                },
-            }),
-        )
+        &Proposition::CStatementExecutes {
+            state: state.clone(),
+            statement,
+            outcome: CStatementOutcome::Return {
+                value: int32(Bitvector32Term::MemoryLoad(
+                    Box::new(memory),
+                    Box::new(derived),
+                )),
+                state,
+            },
+        }
     );
 }
 

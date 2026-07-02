@@ -74,6 +74,9 @@ Click currently has:
 - Resource fact validation can use scalar facts from the same fact clause to
   justify symbolic indexed reads, for example `0 <= k and k < n and p[k] == 0`.
 - Resource facts can include `disjoint(...)` range facts.
+- Holding a covering `read(...)` or `write(...)` resource discharges external
+  load validity obligations for the covered access. Holding `write(...)`
+  similarly discharges external store validity obligations.
 
 ## Recent Cleanup
 
@@ -146,16 +149,18 @@ is implemented.
 
 ## Useful Next Steps
 
-The owner-buffer example now passes. Good next slices:
+The owner-buffer example now passes, and `read(...)`/`write(...)` now both
+carry the validity needed for covered external memory accesses. Good next
+slices:
 
-1. Decide whether `read(...)` should also discharge external load validity
-   obligations the same way `write(...)` now discharges external store validity.
-2. Add a smaller regression mdtest for `fact disjoint(...)` that is independent
+1. Add a smaller regression mdtest for `fact disjoint(...)` that is independent
    of structs, if more coverage feels useful.
-3. Explore whether any non-aliasing facts can be inferred from allocation or
+2. Explore whether any non-aliasing facts can be inferred from allocation or
    stronger memory-resource structure instead of written explicitly.
-4. Improve diagnostics for failed resource fact framing so aliasing failures say
+3. Improve diagnostics for failed resource fact framing so aliasing failures say
    which write may alias which fact read.
+4. Decide whether any of the explicit `fact disjoint(...)` clauses in represented
+   resources should become derived facts from allocation/resource structure.
 
 Keep forcing each resource-logic feature through a concrete mdtest before
 adding broader abstraction.
@@ -250,9 +255,9 @@ the exact semantic story is still not fully polished.
 
 Important points:
 
-- `read` authorizes inspection.
-- `write` authorizes mutation and is the permission currently required for a
-  resource fact that reads memory.
+- `read` authorizes inspection and carries validity for covered external loads.
+- `write` authorizes mutation, carries validity for covered external stores,
+  and is the permission currently required for a resource fact that reads memory.
 - `read` alone is not enough to make a memory-reading resource fact stable,
   because another holder could write the same memory.
 - `free` is affine/consumable in practice because freeing twice should fail.
@@ -264,16 +269,14 @@ these permissions and how much should be explicit facts.
 
 - Run all tests: `cargo test`
 - Format: `cargo fmt`
-- Build docs: `mdbook build`
-- Serve docs: `mdbook serve`
+- Serve docs with repo-local mdBook install: `scripts/mdbook-serve.sh`
 - Check whitespace: `git diff --check`
 
 ## Suggested Immediate Next Task
 
-Run `mdbook build` in an environment with `mdbook` installed, or install
-`mdbook`, because the code/tests pass but the docs build could not be checked in
-this environment.
+Run `scripts/mdbook-serve.sh` once to smoke-test the docs with the repo-local
+mdBook wrapper. The first run may download mdBook into `target/tools`.
 
-After that, the next design slice should probably be load-validity/resource
-semantics for `read(...)`, since store validity for external memory is now
-discharged by `write(...)`.
+After that, the next resource-design slice should probably be a small,
+standalone mdtest for `fact disjoint(...)` or diagnostics for failed represented
+resource fact framing.

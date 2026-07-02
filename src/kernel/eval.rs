@@ -501,14 +501,14 @@ pub(super) fn read_c_lvalue_paths(
             CLValueStorage::Memory { pointer } => {
                 let effective_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
-                if is_external_memory_pointer(pointer)
-                    && !resource_context_has_read(
+                let has_external_read_resource = is_external_memory_pointer(pointer)
+                    && resource_context_has_read(
                         state.resources(),
                         pointer,
                         lvalue.value_type.byte_width(),
                         &effective_assumptions,
-                    )
-                {
+                    );
+                if is_external_memory_pointer(pointer) && !has_external_read_resource {
                     return vec![CExpressionPath {
                         outcome: CExpressionOutcome::RuntimeError(CRuntimeError::MissingResource {
                             resource: CResource::Read(CMemoryRange::new(
@@ -528,6 +528,7 @@ pub(super) fn read_c_lvalue_paths(
                     facts,
                     obligations,
                     assumptions,
+                    has_external_read_resource,
                 )
             }
         },
@@ -789,6 +790,7 @@ pub(super) fn evaluate_c_memory_load_paths(
     facts: Vec<PathFact>,
     mut obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
+    has_external_read_resource: bool,
 ) -> Vec<CExpressionPath> {
     let memory = memory.without_proven_distinct_cells(&pointer, assumptions);
 
@@ -862,6 +864,7 @@ pub(super) fn evaluate_c_memory_load_paths(
                 distinct_facts,
                 obligations,
                 assumptions,
+                has_external_read_resource,
             ));
         }
 
@@ -883,13 +886,15 @@ pub(super) fn evaluate_c_memory_load_paths(
         }];
     }
 
-    let proposition = Proposition::CMemoryCanLoad {
-        memory: memory.clone(),
-        pointer: pointer.clone(),
-        byte_width: value_type.byte_width(),
-    };
-    if add_proof_obligation(&mut obligations, assumptions, proposition).is_none() {
-        return Vec::new();
+    if !has_external_read_resource {
+        let proposition = Proposition::CMemoryCanLoad {
+            memory: memory.clone(),
+            pointer: pointer.clone(),
+            byte_width: value_type.byte_width(),
+        };
+        if add_proof_obligation(&mut obligations, assumptions, proposition).is_none() {
+            return Vec::new();
+        }
     }
 
     let Some(value) = symbolic_load_value(&memory, &pointer, value_type) else {
