@@ -736,7 +736,7 @@ pub(super) fn prove_claim_by_auto(
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let (state, arguments, requirement_propositions) = initial_call(
+    let (mut state, arguments, requirement_propositions) = initial_call(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
@@ -750,6 +750,23 @@ pub(super) fn prove_claim_by_auto(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
+    state = materialize_closed_resource_representation_cells(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        state,
+        claim_label,
+    )?;
+    let requirement_propositions = project_initial_resource_facts(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        &state,
+        &requirement_propositions,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+    )?;
     let function = annotated_function(
         function_block,
         parsed_function,
@@ -785,6 +802,7 @@ pub(super) fn prove_claim_by_auto(
         &requirement_propositions,
         predicate_environment,
         click_function_environment,
+        resource_environment,
     ) {
         Ok(theorems) => {
             let proof_steps = certified_proof_steps(
@@ -835,6 +853,7 @@ pub(super) fn prove_claim_by_auto(
         &requirement_propositions,
         predicate_environment,
         click_function_environment,
+        resource_environment,
     )?;
     let proof_steps = certified_proof_steps(
         source_path,
@@ -870,7 +889,7 @@ pub(super) fn prove_claim_by_frame(
         )));
     }
 
-    let (state, arguments, requirement_propositions) = initial_call(
+    let (mut state, arguments, requirement_propositions) = initial_call(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
@@ -884,6 +903,23 @@ pub(super) fn prove_claim_by_frame(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
+    state = materialize_closed_resource_representation_cells(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        state,
+        claim_label,
+    )?;
+    let requirement_propositions = project_initial_resource_facts(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        &state,
+        &requirement_propositions,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+    )?;
     let function = annotated_function(
         function_block,
         parsed_function,
@@ -923,6 +959,7 @@ pub(super) fn prove_claim_by_frame(
         &requirement_propositions,
         predicate_environment,
         click_function_environment,
+        resource_environment,
     )?;
     let proof_steps = certified_proof_steps(
         source_path,
@@ -958,7 +995,7 @@ pub(super) fn prove_claim_by_simp(
         )));
     }
 
-    let (state, arguments, requirement_propositions) = initial_call(
+    let (mut state, arguments, requirement_propositions) = initial_call(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
@@ -972,6 +1009,23 @@ pub(super) fn prove_claim_by_simp(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
+    state = materialize_closed_resource_representation_cells(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        state,
+        claim_label,
+    )?;
+    let requirement_propositions = project_initial_resource_facts(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        &state,
+        &requirement_propositions,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+    )?;
     let function = annotated_function(
         function_block,
         parsed_function,
@@ -1036,6 +1090,18 @@ pub(super) fn prove_claim_by_simp(
 
         let mut path_requirements = requirement_propositions.to_vec();
         path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+        path_requirements = project_outcome_resource_facts(
+            resource_environment,
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &outcome,
+            &path_requirements,
+            predicate_environment,
+            click_function_environment,
+            claim_label,
+            path_index,
+        )?;
         check_function_claim_by_simp(
             claim_label,
             path_index,
@@ -1134,6 +1200,23 @@ pub(super) fn prove_claim_by_steps(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
+    state = materialize_closed_resource_representation_cells(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        state,
+        claim_label,
+    )?;
+    requirement_propositions = project_initial_resource_facts(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        &state,
+        &requirement_propositions,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+    )?;
     let function = annotated_function(
         function_block,
         parsed_function,
@@ -1369,6 +1452,234 @@ fn require_verification_execution(
         )));
     }
     Ok(())
+}
+
+fn materialize_closed_resource_representation_cells(
+    resource_environment: &ResourceEnvironment,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: CState,
+    claim_label: &str,
+) -> Result<CState, ClickError> {
+    let memory = materialize_closed_resource_representation_memory(
+        resource_environment,
+        parameters,
+        arguments,
+        &state,
+    )
+    .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
+    Ok(state.with_memory(memory))
+}
+
+fn materialize_closed_resource_representation_memory(
+    resource_environment: &ResourceEnvironment,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Result<CMemory, String> {
+    let mut memory = state.memory().clone();
+    for resource in state.resources().resources() {
+        let CResource::Named {
+            name,
+            arguments: resource_arguments,
+        } = resource
+        else {
+            continue;
+        };
+        let Some(definition) = resource_environment.get(name) else {
+            continue;
+        };
+        let Some(representation) = definition.representation() else {
+            continue;
+        };
+        let substitutions =
+            resource_value_substitutions(definition, resource_arguments).map_err(|message| {
+                format!("could not instantiate resource `{name}` representation: {message}")
+            })?;
+        memory = materialize_resource_representation_memory(
+            name,
+            representation,
+            &substitutions,
+            parameters,
+            arguments,
+            memory,
+        )?;
+    }
+    Ok(memory)
+}
+
+fn project_initial_resource_facts(
+    resource_environment: &ResourceEnvironment,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    available_propositions: &[Proposition],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+) -> Result<Vec<Proposition>, ClickError> {
+    let result = CValue::Int32(Bitvector32Term::Constant(0));
+    project_closed_resource_facts(
+        resource_environment,
+        parameters,
+        arguments,
+        state,
+        state,
+        &result,
+        available_propositions,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))
+}
+
+fn project_outcome_resource_facts(
+    resource_environment: &ResourceEnvironment,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    outcome: &CFunctionOutcome,
+    available_propositions: &[Proposition],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+    path_index: usize,
+) -> Result<Vec<Proposition>, ClickError> {
+    let CFunctionOutcome::Return { value, state } = outcome else {
+        return Ok(available_propositions.to_vec());
+    };
+    project_closed_resource_facts(
+        resource_environment,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        value,
+        available_propositions,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` path {path_index}: could not project closed resource facts: {message}"
+        ))
+    })
+}
+
+fn project_closed_resource_facts(
+    resource_environment: &ResourceEnvironment,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: &CValue,
+    available_propositions: &[Proposition],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<Proposition>, String> {
+    let mut propositions = available_propositions.to_vec();
+    for resource in state.resources().resources() {
+        let CResource::Named {
+            name,
+            arguments: resource_arguments,
+        } = resource
+        else {
+            continue;
+        };
+        let Some(definition) = resource_environment.get(name) else {
+            continue;
+        };
+        let Some(representation) = definition.representation() else {
+            continue;
+        };
+        let substitutions =
+            resource_value_substitutions(definition, resource_arguments).map_err(|message| {
+                format!("could not instantiate resource `{name}` facts: {message}")
+            })?;
+
+        let fact_memory = materialize_resource_representation_memory(
+            name,
+            representation,
+            &substitutions,
+            parameters,
+            arguments,
+            state.memory().clone(),
+        )?;
+        let fact_state = state.clone().with_memory(fact_memory);
+
+        for fact in representation.facts() {
+            let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
+                format!("could not instantiate resource `{name}` fact: {message}")
+            })?;
+            let lowered = lower_outcome_proposition(
+                parameters,
+                arguments,
+                pre_state,
+                &fact_state,
+                result,
+                &propositions,
+                &fact,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| format!("could not lower resource `{name}` fact: {message}"))?;
+            if !propositions.contains(&lowered) {
+                propositions.push(lowered);
+            }
+        }
+    }
+    Ok(propositions)
+}
+
+fn materialize_resource_representation_memory(
+    name: &str,
+    representation: &ResourceRepresentation,
+    substitutions: &BTreeMap<String, ContractExpression>,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    mut memory: CMemory,
+) -> Result<CMemory, String> {
+    for contained in representation.contains() {
+        let contained =
+            instantiate_resource_clause(contained, substitutions).map_err(|message| {
+                format!("could not instantiate resource `{name}` representation: {message}")
+            })?;
+        let lowered =
+            lower_resource_clause(&contained, parameters, arguments, &memory).map_err(|error| {
+                format!(
+                    "could not lower resource `{name}` contained `{}`: {}",
+                    describe_resource_clause(&contained),
+                    error.message()
+                )
+            })?;
+        memory = materialize_represented_resource_cells(memory, &contained, &lowered, parameters);
+    }
+    Ok(memory)
+}
+
+fn resource_value_substitutions(
+    definition: &ResourceDefinition,
+    arguments: &[CValue],
+) -> Result<BTreeMap<String, ContractExpression>, String> {
+    if definition.parameters().len() != arguments.len() {
+        return Err(format!(
+            "resource `{}` expects {} argument(s), got {}",
+            definition.name(),
+            definition.parameters().len(),
+            arguments.len()
+        ));
+    }
+    Ok(definition
+        .parameters()
+        .iter()
+        .zip(arguments)
+        .map(|(parameter, argument)| {
+            (
+                parameter.name().to_string(),
+                ContractExpression::CFragment(CExpression::Value(argument.clone())),
+            )
+        })
+        .collect())
 }
 
 fn open_represented_resource(
@@ -1990,6 +2301,18 @@ fn prove_claim_from_steps_execution(
             click_function_environment,
             unfolded_predicates,
         )?;
+        path_requirements = project_outcome_resource_facts(
+            resource_environment,
+            parameters,
+            arguments,
+            state,
+            &outcome,
+            &path_requirements,
+            predicate_environment,
+            click_function_environment,
+            claim_label,
+            path_index,
+        )?;
         if !theorem_applications.is_empty() {
             let CFunctionOutcome::Return {
                 value: result,
@@ -2357,6 +2680,7 @@ fn prove_claim_from_execution(
     requirement_propositions: &[Proposition],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let proof_kind = execution_kind.proof_kind();
     let tactic_name = execution_kind.tactic_name();
@@ -2386,6 +2710,18 @@ fn prove_claim_from_execution(
 
         let mut path_requirements = requirement_propositions.to_vec();
         path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+        path_requirements = project_outcome_resource_facts(
+            resource_environment,
+            parameters,
+            arguments,
+            state,
+            &outcome,
+            &path_requirements,
+            predicate_environment,
+            click_function_environment,
+            claim_label,
+            path_index,
+        )?;
         check_function_claim(
             claim_label,
             path_index,

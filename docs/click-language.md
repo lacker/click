@@ -182,13 +182,14 @@ affine resource uncalled(flag: int32*) {
 }
 ```
 
-In an explicit proof script, `open(uncalled(flag));` consumes the abstract token
-and exposes its represented resources and resource facts. Representations can
-bundle built-in memory resources and other affine named resources.
-Resource facts may include scalar propositions and `disjoint(...)` range facts.
-`close(uncalled(flag));` proves the fact, consumes the represented
-resources, and returns the abstract token. The end of the `by { ... }` block
-checks the overall claim.
+Holding the closed abstract token exposes its resource facts, but not its
+contained resources. In an explicit proof script, `open(uncalled(flag));`
+consumes the abstract token and exposes its represented resources for mutation.
+Representations can bundle built-in memory resources and other affine named
+resources. Resource facts may include scalar propositions and `disjoint(...)`
+range facts. `close(uncalled(flag));` proves the fact in the current state,
+consumes the represented resources, and returns the abstract token. The end of
+the `by { ... }` block checks the overall claim.
 
 A function block may be resource-only when it consumes a resource:
 

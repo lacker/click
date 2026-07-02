@@ -12,6 +12,7 @@ Last updated: 2026-07-02.
   - `cargo fmt`
   - `cargo test`
   - `git diff --check`
+  - `target/tools/bin/mdbook build`
 - `scripts/mdbook-serve.sh --port 4000` successfully installed mdBook 0.4.52
   into `target/tools`, built the book, and served it at
   `http://localhost:4000`; the foreground serve process was then stopped.
@@ -21,6 +22,9 @@ Last updated: 2026-07-02.
 - Failed represented-resource fact framing diagnostics now keep the original
   one-line error and add notes about contained resources considered and scalar
   fact assumptions available.
+- Closed represented resources now project their `fact` clauses while the
+  abstract resource token is held. Their contained resources/permissions remain
+  hidden until an explicit `open(...)`.
 
 ## Current Design Thread
 
@@ -72,7 +76,8 @@ Click currently has:
   - `fact ...;`
   - explicit `open(resource);`
   - explicit `close(resource);`
-- Resource facts are exposed by `open(...)`.
+- Resource facts are projected while the abstract resource token is held closed,
+  and are also available while the resource is opened.
 - `close(...)` proves the facts, consumes the contained resources, and returns
   the abstract resource token.
 - Resource fact validation checks that facts which read mutable memory are backed
@@ -143,14 +148,14 @@ The shape now supported is:
 - Closing the resource proves those facts and repackages the contained
   resources.
 
-The unresolved part is no longer basic syntax for non-aliasing facts. Remaining
-design questions include:
+The unresolved part is no longer basic syntax for non-aliasing facts or whether
+closed resources expose facts. Remaining design questions include:
 
 - Should common non-aliasing facts remain ordinary explicit `fact disjoint(...)`
   clauses, or should some be derived from `write(...)`/allocation resources?
 - How much should `read` or `write` imply about stability?
-- What exactly should it mean for a resource fact to remain true while the
-  resource is held but closed?
+- What allocation/provenance structure, if any, should justify inferred
+  non-aliasing facts?
 
 This is still the next real design frontier, but the first explicit-fact slice
 is implemented.
@@ -163,9 +168,12 @@ slices:
 
 1. Decide how much non-aliasing should stay as explicit `fact disjoint(...)`
    clauses versus being inferred from allocation/resource structure.
-2. Decide whether closed represented resources should expose any facts
-   persistently, or whether facts are only available while opened.
-3. Keep tightening owner-buffer ergonomics through concrete mdtests before
+2. Add a focused expected-fail owner-buffer mdtest showing the ergonomic goal
+   without an explicit `fact disjoint(...)`, then decide what source of
+   allocation/provenance evidence should prove it.
+3. Consider a scoped open/close proof step only if examples show explicit
+   `open(...)`/`close(...)` is creating avoidable proof noise.
+4. Keep tightening owner-buffer ergonomics through concrete mdtests before
    adding larger abstractions.
 
 Keep forcing each resource-logic feature through a concrete mdtest before
@@ -280,19 +288,15 @@ these permissions and how much should be explicit facts.
 
 ## Suggested Immediate Next Task
 
-Design the next owner-buffer ergonomics slice around fact visibility. The key
-question is whether facts from a closed represented resource should be usable
-while the abstract resource is held, or only after an explicit `open(...)`.
+Design the next owner-buffer ergonomics slice around inferred versus explicit
+non-aliasing.
 
 Recommended pressure test:
 
-1. Write a small expected-fail mdtest where a function requires a represented
-   resource with a pure or `disjoint(...)` fact and tries to use that fact
-   without opening the resource.
-2. Decide whether that should remain a failure. The conservative position is
-   yes: facts are available only while opened, because opening also exposes the
-   contained write resources that justify fact stability.
-3. If keeping explicit open/close, improve proof ergonomics instead, for example
-   with a scoped `with open(resource) { ... }` proof step later. If allowing
-   closed facts, design which fact classes are safe to expose without also
-   exposing contained resources.
+1. Write a small expected-fail mdtest for the owner-buffer shape without an
+   explicit `fact disjoint(...)`.
+2. Decide what evidence should imply that the owner fields and derived buffer do
+   not overlap: allocation provenance, exclusive `write(...)` resources, or an
+   explicit fact that users must keep writing.
+3. Only after that, implement the narrow inference rule or keep the explicit
+   fact model and improve proof ergonomics where examples show real friction.

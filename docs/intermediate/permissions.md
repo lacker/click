@@ -223,12 +223,12 @@ ensures result == 1 by {
 }
 ```
 
-`open(uncalled(flag))` consumes the abstract token and adds the represented
-`write(flag[0..1])` resource plus the fact `flag[0] == 0`.
-`close(called(flag))` goes the other direction: it proves the representation's
-fact in the current state, consumes the represented resources, and adds
-the abstract `called(flag)` token. The end of the `by { ... }` block checks the
-overall claim.
+Holding a closed represented resource exposes its facts, but not its contained
+resources. `open(uncalled(flag))` consumes the abstract token and adds the
+represented `write(flag[0..1])` resource for mutation. `close(called(flag))`
+goes the other direction: it proves the representation's fact in the current
+state, consumes the represented resources, and adds the abstract `called(flag)`
+token. The end of the `by { ... }` block checks the overall claim.
 
 If a fact reads mutable memory, the representation must contain write
 permission covering that memory. This is what makes the fact stable while
