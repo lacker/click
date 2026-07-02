@@ -115,7 +115,7 @@ Likely additions:
   first exact-match affine named resources with declared argument types and
   duplicate-token rejection. It also has represented affine resources with
   explicit proof-step `open(resource)` and `close(resource)` operations for
-  wrappers over built-in resources, other named affine resources, and invariant
+  wrappers over built-in resources, other named affine resources, and resource
   facts. Fractions, persistent named resources, implicit open/close search,
   custom resource-family algebra, full heap deallocation semantics, and
   abstract ownership predicates are still future work.
@@ -135,7 +135,7 @@ Likely additions:
   standard-library predicates for disjoint objects, object fields, byte strings,
   arrays, and maybe linked structures.
 - Better alias diagnostics:
-  failures should say which write might alias which old read or invariant.
+  failures should say which write might alias which old read or resource fact.
 
 Design notes:
 

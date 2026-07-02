@@ -271,7 +271,7 @@ impl Parser {
     fn parse_resource_representation(&mut self) -> Result<ResourceRepresentation, ClickError> {
         self.expect(Token::LBrace)?;
         let mut contains = Vec::new();
-        let mut invariants = Vec::new();
+        let mut facts = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
                 Some("contains") => {
@@ -279,28 +279,25 @@ impl Parser {
                     contains.push(self.parse_resource_representation_clause()?);
                     self.expect(Token::Semicolon)?;
                 }
-                Some("invariant") => {
+                Some("fact") => {
                     self.position += 1;
-                    invariants.push(self.parse_proposition()?);
+                    facts.push(self.parse_proposition()?);
                     self.expect(Token::Semicolon)?;
                 }
                 Some(name) => {
                     return Err(self.error(format!(
-                        "expected `contains` or `invariant` in resource body, got `{name}`"
+                        "expected `contains` or `fact` in resource body, got `{name}`"
                     )));
                 }
                 None => {
                     return Err(self.error(
-                        "expected `contains` or `invariant` in resource body, got end of input",
+                        "expected `contains` or `fact` in resource body, got end of input",
                     ));
                 }
             }
         }
         self.expect(Token::RBrace)?;
-        Ok(ResourceRepresentation {
-            contains,
-            invariants,
-        })
+        Ok(ResourceRepresentation { contains, facts })
     }
 
     fn parse_resource_representation_clause(&mut self) -> Result<ResourceClause, ClickError> {

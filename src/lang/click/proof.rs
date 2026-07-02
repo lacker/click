@@ -1436,32 +1436,31 @@ fn open_represented_resource(
         )));
     }
 
-    for invariant in representation.invariants() {
-        let invariant =
-            substitute_click_proposition(invariant, &substitutions).map_err(|message| {
+    for fact in representation.facts() {
+        let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: could not instantiate `open({})` invariant: {message}",
+                    "`{claim_label}` proof step {step_index}: could not instantiate `open({})` fact: {message}",
                     describe_resource_clause(resource)
                 ))
             })?;
-        let fact = lower_outcome_proposition(
+        let lowered_fact = lower_outcome_proposition(
             parameters,
             arguments,
             &state,
             &state,
             &CValue::Int32(Bitvector32Term::Constant(0)),
             available_propositions,
-            &invariant,
+            &fact,
             predicate_environment,
             click_function_environment,
         )
         .map_err(|message| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: could not lower `open({})` invariant: {message}",
+                "`{claim_label}` proof step {step_index}: could not lower `open({})` fact: {message}",
                 describe_resource_clause(resource)
             ))
         })?;
-        available_propositions.push(fact);
+        available_propositions.push(lowered_fact);
     }
 
     Ok(state)
@@ -1496,11 +1495,10 @@ fn close_represented_resources_on_outcome(
         let substitutions =
             resource_argument_substitutions(definition, resource, claim_label, path_index)?;
 
-        for invariant in representation.invariants() {
-            let invariant =
-                substitute_click_proposition(invariant, &substitutions).map_err(|message| {
+        for fact in representation.facts() {
+            let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` path {path_index}: could not instantiate `close({})` invariant: {message}",
+                        "`{claim_label}` path {path_index}: could not instantiate `close({})` fact: {message}",
                         describe_resource_clause(resource)
                     ))
                 })?;
@@ -1509,7 +1507,7 @@ fn close_represented_resources_on_outcome(
                 path_index,
                 path_facts,
                 available_propositions,
-                &invariant,
+                &fact,
                 parameters,
                 arguments,
                 pre_state,
@@ -1520,7 +1518,7 @@ fn close_represented_resources_on_outcome(
             )
             .map_err(|error| {
                 ClickError::new(format!(
-                    "`{claim_label}` path {path_index}: `close({})` invariant failed: {}",
+                    "`{claim_label}` path {path_index}: `close({})` fact failed: {}",
                     describe_resource_clause(resource),
                     error.message()
                 ))

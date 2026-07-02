@@ -1771,6 +1771,20 @@ impl CMemory {
             Box::new(pointer.clone()),
         ))
     }
+
+    pub(super) fn symbolic_pointer_load(
+        &self,
+        pointer: &Pointer,
+        pointee_byte_width: u32,
+    ) -> CValue {
+        CValue::Pointer(Pointer {
+            block: pointer.block.clone(),
+            offset: PointerOffsetTerm::scale_int32(
+                Bitvector32Term::MemoryLoad(Box::new(self.clone()), Box::new(pointer.clone())),
+                i64::from(pointee_byte_width),
+            ),
+        })
+    }
 }
 
 impl CState {

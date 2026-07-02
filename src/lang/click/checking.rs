@@ -4594,18 +4594,10 @@ pub(super) fn evaluate_contract_memory_load_from_memory(
         {
             Ok(value)
         }
-        crate::kernel::CExpressionOutcome::Value(value)
-            if matches!(
-                (value_type, &value),
-                (
-                    CType::Int32Pointer | CType::UInt8Pointer,
-                    CValue::Int32(Bitvector32Term::MemoryLoad(_, _))
-                )
-            ) =>
-        {
-            Err(format!(
-                "symbolic pointer loads are not supported yet; cannot read {value_type:?} from memory"
-            ))
+        crate::kernel::CExpressionOutcome::Value(CValue::Int32(
+            bits @ Bitvector32Term::MemoryLoad(_, _),
+        )) if matches!(value_type, CType::Int32Pointer | CType::UInt8Pointer) => {
+            symbolic_pointer_contract_memory_load(pointer, bits, value_type)
         }
         crate::kernel::CExpressionOutcome::Value(value) => Err(format!(
             "load from {pointer:?} produced {value:?}, not {value_type:?}"
@@ -4634,14 +4626,33 @@ pub(super) fn symbolic_contract_memory_load(
     pointer: Pointer,
     value_type: CType,
 ) -> Result<CValue, String> {
-    let load = Bitvector32Term::MemoryLoad(Box::new(memory.clone()), Box::new(pointer));
+    let load = Bitvector32Term::MemoryLoad(Box::new(memory.clone()), Box::new(pointer.clone()));
     match value_type {
         CType::Int32 => Ok(CValue::Int32(load)),
         CType::UInt8 => Ok(CValue::UInt8(load)),
-        CType::Int32Pointer | CType::UInt8Pointer | CType::Int32Array(_) | CType::UInt8Array(_) => {
+        CType::Int32Pointer | CType::UInt8Pointer => {
+            symbolic_pointer_contract_memory_load(pointer, load, value_type)
+        }
+        CType::Int32Array(_) | CType::UInt8Array(_) => {
             Err(format!("cannot symbolically load {value_type:?}"))
         }
     }
+}
+
+fn symbolic_pointer_contract_memory_load(
+    pointer: Pointer,
+    bits: Bitvector32Term,
+    value_type: CType,
+) -> Result<CValue, String> {
+    let pointee_byte_width = match value_type {
+        CType::Int32Pointer => 4,
+        CType::UInt8Pointer => 1,
+        _ => return Err(format!("cannot symbolically load {value_type:?}")),
+    };
+    Ok(CValue::Pointer(Pointer {
+        block: pointer.block,
+        offset: scale_int32_offset(bits, i64::from(pointee_byte_width)),
+    }))
 }
 
 pub(super) fn evaluate_postcondition_add(left: CValue, right: CValue) -> Result<CValue, String> {

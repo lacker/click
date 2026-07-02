@@ -3,8 +3,8 @@
 This is the more ergonomic owner-buffer shape we want eventually: the resource
 only takes the owner object, and the contained buffer permission is derived
 from `owner->data` and `owner->len`. Current Click cannot prove this yet because
-symbolic pointer loads are not supported for pointer-valued fields in the
-initial external memory state.
+the resource cannot yet package the needed non-aliasing fact between the owner
+fields and the derived buffer range.
 
 ```c filename=set_owned_first.c
 struct owner {
@@ -25,7 +25,7 @@ affine resource owned_buffer(owner: struct owner*) {
     contains write(owner->len);
     contains write(owner->data);
     contains write((owner->data)[0..owner->len]);
-    invariant owner->len == 1;
+    fact owner->len == 1;
 }
 
 verifying "set_owned_first.c";
@@ -43,5 +43,5 @@ int32 set_owned_first(struct owner* owner) {
 ```
 
 ```expect
-fail: symbolic pointer loads are not supported yet
+fail: fact failed
 ```

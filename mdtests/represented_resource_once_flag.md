@@ -25,12 +25,12 @@ int32 complete_once(int32 flag[]) {
 ```click
 affine resource uncalled(flag: int32*) {
     contains write(flag[0..1]);
-    invariant flag[0] == 0;
+    fact flag[0] == 0;
 }
 
 affine resource called(flag: int32*) {
     contains write(flag[0..1]);
-    invariant flag[0] == 1;
+    fact flag[0] == 1;
 }
 
 verifying "init_once.c";

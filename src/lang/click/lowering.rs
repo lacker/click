@@ -2666,6 +2666,7 @@ pub(super) fn initial_call(
 
     let mut memory = CMemory::new();
     memory = memory_with_symbolic_valid_range_cells(memory, &valid_ranges);
+    memory = materialize_symbolic_access_resource_cells(memory, requires, parameters, &arguments)?;
     let resources = resource_context_from_requirements(requires, parameters, &arguments, &memory)?;
     let requirement_propositions = requirement_propositions(
         requires,
@@ -2724,6 +2725,66 @@ pub(super) fn memory_with_symbolic_valid_range_cells(
         }
     }
     memory
+}
+
+fn materialize_symbolic_access_resource_cells(
+    mut memory: CMemory,
+    requires: &[Requirement],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Result<CMemory, ClickError> {
+    for requirement in requires {
+        let Requirement::Resource(ResourceClause::Read(segment) | ResourceClause::Write(segment)) =
+            requirement.inner()
+        else {
+            continue;
+        };
+        memory = materialize_access_segment_cells(memory, segment, parameters, arguments)?;
+    }
+    Ok(memory)
+}
+
+fn materialize_access_segment_cells(
+    mut memory: CMemory,
+    segment: &ContractSegment,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Result<CMemory, ClickError> {
+    let state = CState::new().with_memory(memory.clone());
+    let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment) else {
+        return Ok(memory);
+    };
+    let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
+        (&segment.start, &segment.end)
+    else {
+        return Ok(memory);
+    };
+    if end < start {
+        return Err(ClickError::new(format!(
+            "resource segment has an end before its start: {start}..{end}"
+        )));
+    }
+
+    let element_width = contract_segment_element_width(parameters, &segment.source);
+    let base_memory = memory.clone();
+    for index in *start..*end {
+        let pointer = offset_pointer_by_elements(
+            segment.base.clone(),
+            Bitvector32Term::Constant(index),
+            element_width,
+        );
+        if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
+            continue;
+        }
+        let load =
+            Bitvector32Term::MemoryLoad(Box::new(base_memory.clone()), Box::new(pointer.clone()));
+        let value = match element_width {
+            1 => CValue::UInt8(load),
+            _ => CValue::Int32(load),
+        };
+        memory = memory.store(pointer, value);
+    }
+    Ok(memory)
 }
 
 pub(super) fn requirement_propositions(
@@ -3163,6 +3224,11 @@ pub(super) fn contract_expression_element_width(
         CExpression::Add(left, right) => contract_expression_element_width(parameters, left)
             .or_else(|| contract_expression_element_width(parameters, right)),
         CExpression::Subtract(left, _) => contract_expression_element_width(parameters, left),
+        CExpression::TypedLoad { value_type, .. } => match value_type {
+            CType::Int32Pointer => Some(4),
+            CType::UInt8Pointer => Some(1),
+            _ => None,
+        },
         _ => None,
     }
 }

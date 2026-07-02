@@ -793,6 +793,13 @@ pub(super) fn evaluate_c_memory_load_paths(
     let memory = memory.without_proven_distinct_cells(&pointer, assumptions);
 
     if let Some(value) = memory.known_value(&pointer) {
+        if let Some(value) = symbolic_pointer_value_from_int_cell(&pointer, &value, value_type) {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::Value(value),
+                facts,
+                obligations,
+            }];
+        }
         if !value_type.accepts(&value) {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -822,12 +829,17 @@ pub(super) fn evaluate_c_memory_load_paths(
         )
         .is_some()
         {
+            let equal_outcome = if let Some(value) =
+                symbolic_pointer_value_from_int_cell(&pointer, &stored_value, value_type)
+            {
+                CExpressionOutcome::Value(value)
+            } else if value_type.accepts(&stored_value) {
+                CExpressionOutcome::Value(stored_value)
+            } else {
+                CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+            };
             paths.push(CExpressionPath {
-                outcome: if value_type.accepts(&stored_value) {
-                    CExpressionOutcome::Value(stored_value)
-                } else {
-                    CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch)
-                },
+                outcome: equal_outcome,
                 facts: equal_facts,
                 obligations: obligations.clone(),
             });
@@ -895,6 +907,25 @@ pub(super) fn evaluate_c_memory_load_paths(
     }]
 }
 
+fn symbolic_pointer_value_from_int_cell(
+    pointer: &Pointer,
+    value: &CValue,
+    value_type: CType,
+) -> Option<CValue> {
+    let CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) = value else {
+        return None;
+    };
+    let pointee_byte_width = match value_type {
+        CType::Int32Pointer => 4,
+        CType::UInt8Pointer => 1,
+        _ => return None,
+    };
+    Some(CValue::Pointer(Pointer {
+        block: pointer.block.clone(),
+        offset: PointerOffsetTerm::scale_int32(bits.clone(), i64::from(pointee_byte_width)),
+    }))
+}
+
 pub(super) fn symbolic_load_value(
     memory: &CMemory,
     pointer: &Pointer,
@@ -903,9 +934,9 @@ pub(super) fn symbolic_load_value(
     match value_type {
         CType::Int32 => Some(memory.symbolic_int32_load(pointer)),
         CType::UInt8 => Some(memory.symbolic_uint8_load(pointer)),
-        CType::Int32Pointer | CType::UInt8Pointer | CType::Int32Array(_) | CType::UInt8Array(_) => {
-            None
-        }
+        CType::Int32Pointer => Some(memory.symbolic_pointer_load(pointer, 4)),
+        CType::UInt8Pointer => Some(memory.symbolic_pointer_load(pointer, 1)),
+        CType::Int32Array(_) | CType::UInt8Array(_) => None,
     }
 }
 

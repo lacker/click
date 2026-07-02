@@ -82,7 +82,7 @@ pub struct ResourceDefinition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceRepresentation {
     contains: Vec<ResourceClause>,
-    invariants: Vec<ClickProposition>,
+    facts: Vec<ClickProposition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -726,8 +726,8 @@ impl ResourceRepresentation {
         &self.contains
     }
 
-    pub fn invariants(&self) -> &[ClickProposition] {
-        &self.invariants
+    pub fn facts(&self) -> &[ClickProposition] {
+        &self.facts
     }
 }
 

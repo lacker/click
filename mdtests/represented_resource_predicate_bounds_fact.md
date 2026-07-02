@@ -1,7 +1,7 @@
-# represented resource predicate bounds invariant
+# represented resource predicate bounds fact
 
 This checks that scalar bounds hidden behind a predicate can justify a
-represented resource invariant memory read.
+represented resource fact memory read.
 
 ```click
 predicate in_bounds(int32 k, int32 n) {
@@ -10,7 +10,7 @@ predicate in_bounds(int32 k, int32 n) {
 
 affine resource indexed_zero(p: int32*, k: int32, n: int32) {
     contains write(p[0..n]);
-    invariant in_bounds(k, n) and p[k] == 0;
+    fact in_bounds(k, n) and p[k] == 0;
 }
 ```
 

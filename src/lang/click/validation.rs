@@ -115,7 +115,7 @@ fn expand_declared_resource_representation(
             .into_iter()
             .map(|resource| expand_declared_resource_clause(resource, resource_parameters))
             .collect::<Result<Vec<_>, _>>()?,
-        invariants: representation.invariants,
+        facts: representation.facts,
     })
 }
 
@@ -703,35 +703,35 @@ fn validate_resource_definition(
             &format!("resource `{}` representation", definition.name()),
         )?;
     }
-    for invariant in representation.invariants() {
-        if proposition_contains_old_expression(invariant) {
+    for fact in representation.facts() {
+        if proposition_contains_old_expression(fact) {
             return Err(ClickError::new(format!(
-                "`old(...)` is not available inside resource `{}` invariant",
+                "`old(...)` is not available inside resource `{}` fact",
                 definition.name()
             )));
         }
-        if proposition_contains_at_expression(invariant) {
+        if proposition_contains_at_expression(fact) {
             return Err(ClickError::new(format!(
-                "`at(...)` is not available inside resource `{}` invariant",
+                "`at(...)` is not available inside resource `{}` fact",
                 definition.name()
             )));
         }
         validate_predicate_calls_in_proposition(
-            invariant,
+            fact,
             predicates,
             click_functions,
-            &format!("resource `{}` invariant", definition.name()),
+            &format!("resource `{}` fact", definition.name()),
         )?;
         validate_proposition_expression_types(
-            invariant,
+            fact,
             &variables,
             click_function_types,
-            &format!("resource `{}` invariant", definition.name()),
+            &format!("resource `{}` fact", definition.name()),
         )?;
-        validate_resource_invariant_memory_ownership(
+        validate_resource_fact_memory_ownership(
             definition,
             representation,
-            invariant,
+            fact,
             predicate_definitions,
             click_function_definitions,
             predicate_environment,
@@ -742,16 +742,16 @@ fn validate_resource_definition(
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ResourceInvariantRead {
+struct ResourceFactRead {
     base: CExpression,
     index: CExpression,
     expression: String,
 }
 
-fn validate_resource_invariant_memory_ownership(
+fn validate_resource_fact_memory_ownership(
     definition: &ResourceDefinition,
     representation: &ResourceRepresentation,
-    invariant: &ClickProposition,
+    fact: &ClickProposition,
     predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
     click_function_definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
     predicate_environment: &PredicateEnvironment,
@@ -760,8 +760,8 @@ fn validate_resource_invariant_memory_ownership(
     let mut reads = Vec::new();
     let mut visited_predicates = Vec::new();
     let mut visited_functions = Vec::new();
-    collect_resource_invariant_reads_from_proposition(
-        invariant,
+    collect_resource_fact_reads_from_proposition(
+        fact,
         predicate_definitions,
         click_function_definitions,
         &mut visited_predicates,
@@ -773,8 +773,8 @@ fn validate_resource_invariant_memory_ownership(
     let values = pure_theorem_parameter_values(definition.parameters());
     let array_refs = pure_theorem_array_refs(definition.parameters(), &values, &memory);
     let mut scalar_assumptions = Vec::new();
-    collect_resource_invariant_scalar_assumptions_from_proposition(
-        invariant,
+    collect_resource_fact_scalar_assumptions_from_proposition(
+        fact,
         predicate_definitions,
         &values,
         &array_refs,
@@ -787,7 +787,7 @@ fn validate_resource_invariant_memory_ownership(
     )?;
     let assumptions = assumptions_from_propositions(&scalar_assumptions);
     for read in reads {
-        if !resource_invariant_read_is_owned(
+        if !resource_fact_read_is_owned(
             &read,
             representation.contains(),
             &assumptions,
@@ -798,7 +798,7 @@ fn validate_resource_invariant_memory_ownership(
             click_function_environment,
         ) {
             return Err(ClickError::new(format!(
-                "resource `{}` invariant reads `{}` without a covering contained `write(...)` resource",
+                "resource `{}` fact reads `{}` without a covering contained `write(...)` resource",
                 definition.name(),
                 read.expression
             )));
@@ -807,7 +807,7 @@ fn validate_resource_invariant_memory_ownership(
     Ok(())
 }
 
-fn collect_resource_invariant_scalar_assumptions_from_proposition(
+fn collect_resource_fact_scalar_assumptions_from_proposition(
     proposition: &ClickProposition,
     predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
     values: &BTreeMap<String, CValue>,
@@ -834,7 +834,7 @@ fn collect_resource_invariant_scalar_assumptions_from_proposition(
             Ok(())
         }
         ClickProposition::And(left, right) => {
-            collect_resource_invariant_scalar_assumptions_from_proposition(
+            collect_resource_fact_scalar_assumptions_from_proposition(
                 left,
                 predicate_definitions,
                 values,
@@ -846,7 +846,7 @@ fn collect_resource_invariant_scalar_assumptions_from_proposition(
                 assumptions,
                 resource_name,
             )?;
-            collect_resource_invariant_scalar_assumptions_from_proposition(
+            collect_resource_fact_scalar_assumptions_from_proposition(
                 right,
                 predicate_definitions,
                 values,
@@ -865,18 +865,18 @@ fn collect_resource_invariant_scalar_assumptions_from_proposition(
             };
             if visited_predicates.contains(name) {
                 return Err(ClickError::new(format!(
-                    "resource `{resource_name}` invariant cannot use recursive predicate `{name}`"
+                    "resource `{resource_name}` fact cannot use recursive predicate `{name}`"
                 )));
             }
             visited_predicates.push(name.clone());
             let body = instantiate_click_predicate_definition(definition, arguments).map_err(
                 |message| {
                     ClickError::new(format!(
-                        "resource `{resource_name}` invariant could not inspect predicate `{name}`: {message}"
+                        "resource `{resource_name}` fact could not inspect predicate `{name}`: {message}"
                     ))
                 },
             )?;
-            let result = collect_resource_invariant_scalar_assumptions_from_proposition(
+            let result = collect_resource_fact_scalar_assumptions_from_proposition(
                 &body,
                 predicate_definitions,
                 values,
@@ -901,18 +901,18 @@ fn collect_resource_invariant_scalar_assumptions_from_proposition(
     }
 }
 
-fn collect_resource_invariant_reads_from_proposition(
+fn collect_resource_fact_reads_from_proposition(
     proposition: &ClickProposition,
     predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
     click_function_definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
     visited_predicates: &mut Vec<String>,
     visited_functions: &mut Vec<String>,
-    reads: &mut Vec<ResourceInvariantRead>,
+    reads: &mut Vec<ResourceFactRead>,
     resource_name: &str,
 ) -> Result<(), ClickError> {
     match proposition {
         ClickProposition::Comparison { left, right, .. } => {
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 left,
                 predicate_definitions,
                 click_function_definitions,
@@ -921,7 +921,7 @@ fn collect_resource_invariant_reads_from_proposition(
                 reads,
                 resource_name,
             )?;
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 right,
                 predicate_definitions,
                 click_function_definitions,
@@ -934,7 +934,7 @@ fn collect_resource_invariant_reads_from_proposition(
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
-            collect_resource_invariant_reads_from_proposition(
+            collect_resource_fact_reads_from_proposition(
                 left,
                 predicate_definitions,
                 click_function_definitions,
@@ -943,7 +943,7 @@ fn collect_resource_invariant_reads_from_proposition(
                 reads,
                 resource_name,
             )?;
-            collect_resource_invariant_reads_from_proposition(
+            collect_resource_fact_reads_from_proposition(
                 right,
                 predicate_definitions,
                 click_function_definitions,
@@ -955,24 +955,22 @@ fn collect_resource_invariant_reads_from_proposition(
         }
         ClickProposition::Not(body)
         | ClickProposition::ForAll { body, .. }
-        | ClickProposition::Exists { body, .. } => {
-            collect_resource_invariant_reads_from_proposition(
-                body,
-                predicate_definitions,
-                click_function_definitions,
-                visited_predicates,
-                visited_functions,
-                reads,
-                resource_name,
-            )
-        }
+        | ClickProposition::Exists { body, .. } => collect_resource_fact_reads_from_proposition(
+            body,
+            predicate_definitions,
+            click_function_definitions,
+            visited_predicates,
+            visited_functions,
+            reads,
+            resource_name,
+        ),
         ClickProposition::RangeAll {
             start, end, body, ..
         }
         | ClickProposition::RangeAny {
             start, end, body, ..
         } => {
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 start,
                 predicate_definitions,
                 click_function_definitions,
@@ -981,7 +979,7 @@ fn collect_resource_invariant_reads_from_proposition(
                 reads,
                 resource_name,
             )?;
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 end,
                 predicate_definitions,
                 click_function_definitions,
@@ -990,7 +988,7 @@ fn collect_resource_invariant_reads_from_proposition(
                 reads,
                 resource_name,
             )?;
-            collect_resource_invariant_reads_from_proposition(
+            collect_resource_fact_reads_from_proposition(
                 body,
                 predicate_definitions,
                 click_function_definitions,
@@ -1002,7 +1000,7 @@ fn collect_resource_invariant_reads_from_proposition(
         }
         ClickProposition::PredicateCall { name, arguments } => {
             for argument in arguments {
-                collect_resource_invariant_reads_from_contract_expression(
+                collect_resource_fact_reads_from_contract_expression(
                     argument,
                     predicate_definitions,
                     click_function_definitions,
@@ -1017,18 +1015,18 @@ fn collect_resource_invariant_reads_from_proposition(
             };
             if visited_predicates.contains(name) {
                 return Err(ClickError::new(format!(
-                    "resource `{resource_name}` invariant cannot use recursive predicate `{name}`"
+                    "resource `{resource_name}` fact cannot use recursive predicate `{name}`"
                 )));
             }
             visited_predicates.push(name.clone());
             let body = instantiate_click_predicate_definition(definition, arguments).map_err(
                 |message| {
                     ClickError::new(format!(
-                        "resource `{resource_name}` invariant could not inspect predicate `{name}`: {message}"
+                        "resource `{resource_name}` fact could not inspect predicate `{name}`: {message}"
                     ))
                 },
             )?;
-            let result = collect_resource_invariant_reads_from_proposition(
+            let result = collect_resource_fact_reads_from_proposition(
                 &body,
                 predicate_definitions,
                 click_function_definitions,
@@ -1043,25 +1041,25 @@ fn collect_resource_invariant_reads_from_proposition(
     }
 }
 
-fn collect_resource_invariant_reads_from_contract_expression(
+fn collect_resource_fact_reads_from_contract_expression(
     expression: &ContractExpression,
     predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
     click_function_definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
     visited_predicates: &mut Vec<String>,
     visited_functions: &mut Vec<String>,
-    reads: &mut Vec<ResourceInvariantRead>,
+    reads: &mut Vec<ResourceFactRead>,
     resource_name: &str,
 ) -> Result<(), ClickError> {
     match expression {
         ContractExpression::CFragment(expression) => {
-            collect_resource_invariant_reads_from_c_expression(expression, reads);
+            collect_resource_fact_reads_from_c_expression(expression, reads);
             Ok(())
         }
         ContractExpression::Old(_) => Err(ClickError::new(format!(
-            "`old(...)` is not available inside resource `{resource_name}` invariant"
+            "`old(...)` is not available inside resource `{resource_name}` fact"
         ))),
         ContractExpression::At { .. } => Err(ClickError::new(format!(
-            "`at(...)` is not available inside resource `{resource_name}` invariant"
+            "`at(...)` is not available inside resource `{resource_name}` fact"
         ))),
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
@@ -1073,7 +1071,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
         | ContractExpression::BitwiseAnd(left, right)
         | ContractExpression::BitwiseOr(left, right)
         | ContractExpression::BitwiseXor(left, right) => {
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 left,
                 predicate_definitions,
                 click_function_definitions,
@@ -1082,7 +1080,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
                 reads,
                 resource_name,
             )?;
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 right,
                 predicate_definitions,
                 click_function_definitions,
@@ -1093,7 +1091,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
             )
         }
         ContractExpression::BitwiseNot(expression) => {
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 expression,
                 predicate_definitions,
                 click_function_definitions,
@@ -1104,7 +1102,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
             )
         }
         ContractExpression::Index(base, index) => {
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 base,
                 predicate_definitions,
                 click_function_definitions,
@@ -1113,7 +1111,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
                 reads,
                 resource_name,
             )?;
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 index,
                 predicate_definitions,
                 click_function_definitions,
@@ -1124,17 +1122,17 @@ fn collect_resource_invariant_reads_from_contract_expression(
             )?;
             let Some(base) = contract_expression_as_c_fragment(base) else {
                 return Err(ClickError::new(format!(
-                    "resource `{resource_name}` invariant reads `{}` in a form that cannot be matched to a contained `write(...)` resource",
+                    "resource `{resource_name}` fact reads `{}` in a form that cannot be matched to a contained `write(...)` resource",
                     describe_contract_expression(expression)
                 )));
             };
             let Some(index) = contract_expression_as_c_fragment(index) else {
                 return Err(ClickError::new(format!(
-                    "resource `{resource_name}` invariant reads `{}` in a form that cannot be matched to a contained `write(...)` resource",
+                    "resource `{resource_name}` fact reads `{}` in a form that cannot be matched to a contained `write(...)` resource",
                     describe_contract_expression(expression)
                 )));
             };
-            reads.push(ResourceInvariantRead {
+            reads.push(ResourceFactRead {
                 expression: describe_contract_expression(expression),
                 base,
                 index,
@@ -1146,7 +1144,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
             then_branch,
             else_branch,
         } => {
-            collect_resource_invariant_reads_from_proposition(
+            collect_resource_fact_reads_from_proposition(
                 condition,
                 predicate_definitions,
                 click_function_definitions,
@@ -1155,7 +1153,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
                 reads,
                 resource_name,
             )?;
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 then_branch,
                 predicate_definitions,
                 click_function_definitions,
@@ -1164,7 +1162,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
                 reads,
                 resource_name,
             )?;
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 else_branch,
                 predicate_definitions,
                 click_function_definitions,
@@ -1181,7 +1179,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
             body,
             ..
         } => {
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 start,
                 predicate_definitions,
                 click_function_definitions,
@@ -1190,7 +1188,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
                 reads,
                 resource_name,
             )?;
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 end,
                 predicate_definitions,
                 click_function_definitions,
@@ -1199,7 +1197,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
                 reads,
                 resource_name,
             )?;
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 initial,
                 predicate_definitions,
                 click_function_definitions,
@@ -1208,7 +1206,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
                 reads,
                 resource_name,
             )?;
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 body,
                 predicate_definitions,
                 click_function_definitions,
@@ -1219,7 +1217,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
             )
         }
         ContractExpression::Let { value, body, .. } => {
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 value,
                 predicate_definitions,
                 click_function_definitions,
@@ -1228,7 +1226,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
                 reads,
                 resource_name,
             )?;
-            collect_resource_invariant_reads_from_contract_expression(
+            collect_resource_fact_reads_from_contract_expression(
                 body,
                 predicate_definitions,
                 click_function_definitions,
@@ -1240,7 +1238,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
         }
         ContractExpression::Call { name, arguments } => {
             for argument in arguments {
-                collect_resource_invariant_reads_from_contract_expression(
+                collect_resource_fact_reads_from_contract_expression(
                     argument,
                     predicate_definitions,
                     click_function_definitions,
@@ -1255,7 +1253,7 @@ fn collect_resource_invariant_reads_from_contract_expression(
             };
             if visited_functions.contains(name) {
                 return Err(ClickError::new(format!(
-                    "resource `{resource_name}` invariant cannot use recursive function `{name}`"
+                    "resource `{resource_name}` fact cannot use recursive function `{name}`"
                 )));
             }
             visited_functions.push(name.clone());
@@ -1268,11 +1266,11 @@ fn collect_resource_invariant_reads_from_contract_expression(
             let body = substitute_contract_expression(definition.body(), &substitutions).map_err(
                 |message| {
                     ClickError::new(format!(
-                        "resource `{resource_name}` invariant could not inspect function `{name}`: {message}"
+                        "resource `{resource_name}` fact could not inspect function `{name}`: {message}"
                     ))
                 },
             )?;
-            let result = collect_resource_invariant_reads_from_contract_expression(
+            let result = collect_resource_fact_reads_from_contract_expression(
                 &body,
                 predicate_definitions,
                 click_function_definitions,
@@ -1287,33 +1285,33 @@ fn collect_resource_invariant_reads_from_contract_expression(
     }
 }
 
-fn collect_resource_invariant_reads_from_c_expression(
+fn collect_resource_fact_reads_from_c_expression(
     expression: &CExpression,
-    reads: &mut Vec<ResourceInvariantRead>,
+    reads: &mut Vec<ResourceFactRead>,
 ) {
     match expression {
         CExpression::Value(_) | CExpression::Variable(_) => {}
         CExpression::AddressOf(_) => {}
         CExpression::Load(pointer) => {
-            collect_resource_invariant_reads_from_c_expression(pointer, reads);
-            reads.push(ResourceInvariantRead {
+            collect_resource_fact_reads_from_c_expression(pointer, reads);
+            reads.push(ResourceFactRead {
                 base: pointer.as_ref().clone(),
                 index: CExpression::Value(CValue::Int32(Bitvector32Term::Constant(0))),
                 expression: describe_c_expression(expression),
             });
         }
         CExpression::TypedLoad { pointer, .. } => {
-            collect_resource_invariant_reads_from_c_expression(pointer, reads);
-            reads.push(ResourceInvariantRead {
+            collect_resource_fact_reads_from_c_expression(pointer, reads);
+            reads.push(ResourceFactRead {
                 base: pointer.as_ref().clone(),
                 index: CExpression::Value(CValue::Int32(Bitvector32Term::Constant(0))),
                 expression: describe_c_expression(expression),
             });
         }
         CExpression::Index(base, index) => {
-            collect_resource_invariant_reads_from_c_expression(base, reads);
-            collect_resource_invariant_reads_from_c_expression(index, reads);
-            reads.push(ResourceInvariantRead {
+            collect_resource_fact_reads_from_c_expression(base, reads);
+            collect_resource_fact_reads_from_c_expression(index, reads);
+            reads.push(ResourceFactRead {
                 base: base.as_ref().clone(),
                 index: index.as_ref().clone(),
                 expression: describe_c_expression(expression),
@@ -1337,17 +1335,17 @@ fn collect_resource_invariant_reads_from_c_expression(
         | CExpression::BitwiseAnd(left, right)
         | CExpression::BitwiseOr(left, right)
         | CExpression::BitwiseXor(left, right) => {
-            collect_resource_invariant_reads_from_c_expression(left, reads);
-            collect_resource_invariant_reads_from_c_expression(right, reads);
+            collect_resource_fact_reads_from_c_expression(left, reads);
+            collect_resource_fact_reads_from_c_expression(right, reads);
         }
         CExpression::Not(expression) | CExpression::BitwiseNot(expression) => {
-            collect_resource_invariant_reads_from_c_expression(expression, reads);
+            collect_resource_fact_reads_from_c_expression(expression, reads);
         }
     }
 }
 
-fn resource_invariant_read_is_owned(
-    read: &ResourceInvariantRead,
+fn resource_fact_read_is_owned(
+    read: &ResourceFactRead,
     contained: &[ResourceClause],
     assumptions: &Assumptions,
     values: &BTreeMap<String, CValue>,

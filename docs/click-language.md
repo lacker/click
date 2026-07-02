@@ -178,14 +178,14 @@ affine resource socket_open(fd: int32);
 affine resource uncalled(flag: int32*) {
     contains socket_open(7);
     contains write(flag[0..1]);
-    invariant flag[0] == 0;
+    fact flag[0] == 0;
 }
 ```
 
 In an explicit proof script, `open(uncalled(flag));` consumes the abstract token
-and exposes its represented resources and invariant facts. Representations can
+and exposes its represented resources and resource facts. Representations can
 bundle built-in memory resources and other affine named resources.
-`close(uncalled(flag));` proves the invariant, consumes the represented
+`close(uncalled(flag));` proves the fact, consumes the represented
 resources, and returns the abstract token. The end of the `by { ... }` block
 checks the overall claim.
 

@@ -199,7 +199,7 @@ contract returns the resource.
 
 ## Represented Resources
 
-An affine named resource can also wrap concrete resources and invariant facts:
+An affine named resource can also wrap concrete resources and facts:
 
 ```click
 affine resource socket_open(fd: int32);
@@ -207,7 +207,7 @@ affine resource socket_open(fd: int32);
 affine resource uncalled(flag: int32*) {
     contains socket_open(7);
     contains write(flag[0..1]);
-    invariant flag[0] == 0;
+    fact flag[0] == 0;
 }
 ```
 
@@ -224,29 +224,29 @@ ensures result == 1 by {
 ```
 
 `open(uncalled(flag))` consumes the abstract token and adds the represented
-`write(flag[0..1])` resource plus the invariant fact `flag[0] == 0`.
+`write(flag[0..1])` resource plus the fact `flag[0] == 0`.
 `close(called(flag))` goes the other direction: it proves the representation's
-invariant in the current state, consumes the represented resources, and adds
+fact in the current state, consumes the represented resources, and adds
 the abstract `called(flag)` token. The end of the `by { ... }` block checks the
 overall claim.
 
-If an invariant reads mutable memory, the representation must contain write
-permission covering that memory. This is what makes the invariant stable while
+If a fact reads mutable memory, the representation must contain write
+permission covering that memory. This is what makes the fact stable while
 the resource is closed:
 
 ```click
 affine resource uncalled(flag: int32*) {
     contains write(flag[0..1]);
-    invariant flag[0] == 0;
+    fact flag[0] == 0;
 }
 ```
 
-The coverage check can use scalar facts from the invariant itself:
+The coverage check can use scalar facts from the fact itself:
 
 ```click
 affine resource indexed_zero(p: int32*, k: int32, n: int32) {
     contains write(p[0..n]);
-    invariant 0 <= k and k < n and p[k] == 0;
+    fact 0 <= k and k < n and p[k] == 0;
 }
 ```
 
@@ -255,10 +255,10 @@ still match the contained write resource directly.
 
 `read(flag[0..1])` is not enough for this purpose. A read resource authorizes
 inspection but does not prevent another holder of write permission from
-changing the cell. Pure scalar invariants such as `fd >= 0` do not need a
-contained memory resource.
+changing the cell. Pure scalar facts such as `fd >= 0` do not need a contained
+memory resource.
 
-A proof can also borrow a represented resource, learn its invariant, and return
+A proof can also borrow a represented resource, learn its fact, and return
 the same abstract token:
 
 ```click
@@ -298,10 +298,10 @@ explicitly passed buffer pointer. In this conservative shape, the resource's
 parameters name the lower-level memory objects directly. More convenient
 field-dependent representations, such as deriving the contained buffer from
 `owner->data`, are a later design question rather than part of the current
-surface. The current blocker is symbolic pointer-valued field loads: Click can
-use a pointer field after code stores a concrete pointer into it, but cannot yet
-start from an unknown external `owner->data` value and turn it into a buffer
-permission.
+surface. Click can now start from an unknown external `owner->data` value and
+turn it into a buffer permission. The remaining blocker is packaging the
+non-aliasing fact that the derived buffer does not overlap the owner fields; the
+resource representation language cannot express that yet.
 
 ## Split And Rejoin
 

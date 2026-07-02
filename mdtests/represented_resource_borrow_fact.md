@@ -1,6 +1,6 @@
-# represented resource borrow invariant
+# represented resource borrow fact
 
-This checks the intended baseline pattern for learning an invariant from a
+This checks the intended baseline pattern for learning a fact from a
 represented resource while returning that resource to the caller.
 
 ```c filename=inspect_server.c
@@ -15,7 +15,7 @@ affine resource socket_open(fd: int32);
 affine resource live_server(fd: int32, state: int32*) {
     contains socket_open(fd);
     contains write(state[0..1]);
-    invariant state[0] == 1;
+    fact state[0] == 1;
 }
 
 verifying "inspect_server.c";

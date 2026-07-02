@@ -22,7 +22,7 @@ int32 call_twice(int32 flag[]) {
 ```click
 affine resource uncalled(flag: int32*) {
     contains write(flag[0..1]);
-    invariant flag[0] == 0;
+    fact flag[0] == 0;
 }
 
 verifying "consume_uncalled.c";

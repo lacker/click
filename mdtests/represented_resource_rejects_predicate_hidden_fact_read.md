@@ -1,4 +1,4 @@
-# represented resource rejects predicate-hidden invariant read
+# represented resource rejects resource fact read
 
 This checks that memory reads hidden behind a predicate still need to be backed
 by contained write permission.
@@ -9,10 +9,10 @@ predicate flag_is_zero(int32* flag) {
 }
 
 affine resource bogus(flag: int32*) {
-    invariant flag_is_zero(flag);
+    fact flag_is_zero(flag);
 }
 ```
 
 ```expect
-fail: resource `bogus` invariant reads `flag[0]` without a covering contained `write(...)` resource
+fail: resource `bogus` fact reads `flag[0]` without a covering contained `write(...)` resource
 ```

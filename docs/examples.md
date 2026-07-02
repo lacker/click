@@ -92,6 +92,8 @@ Larger example projects live directly under `examples/`. They contain ordinary
 - `mdtests/struct_pointer_field_explicit_permissions.md`: pointer-valued
   struct field load followed by a write through the loaded pointer, again using
   explicit ranges rather than ownership sugar.
+- `mdtests/struct_symbolic_pointer_field_load.md`: a pointer-valued field is
+  loaded from external memory and used as the base of a write resource.
 
 ## Byte Values And Buffers
 
@@ -209,38 +211,38 @@ sequence:
   reuse the callback token spent by the helper.
 - `mdtests/represented_resource_once_flag.md`: explicit `open(resource)` and
   `close(resource)` steps verify an affine token represented by memory
-  permission plus an invariant.
+  permission plus a fact.
 - `mdtests/represented_resource_composes_named.md`: a represented resource can
-  bundle another named affine resource with memory permission and an invariant.
+  bundle another named affine resource with memory permission and a fact.
 - `mdtests/represented_resource_two_arrays.md`: a represented resource can
   bundle permissions for multiple arrays.
 - `mdtests/represented_resource_struct_owned_buffer.md`: a conservative
   struct-owned-buffer pattern with explicit owner and buffer parameters.
 - `mdtests/represented_resource_owner_buffer_field_dependent.md`: the desired
-  field-dependent owner-buffer shape, currently expected to fail because
-  symbolic pointer-valued field loads are not implemented.
+  field-dependent owner-buffer shape, currently expected to fail because the
+  resource cannot yet package the needed non-aliasing fact.
 - `mdtests/represented_resource_rejects_bad_origin.md`: closing a represented
-  resource fails when its invariant has not been established.
+  resource fails when its fact has not been established.
 - `mdtests/represented_resource_rejects_double_call.md`: a represented affine
   token is still consumed linearly through a call summary.
 - `mdtests/represented_resource_rejects_duplicate_contains.md`: represented
   resources reject duplicate contained affine tokens.
 - `mdtests/represented_resource_rejects_cycle.md`: represented-resource
   definitions reject containment cycles.
-- `mdtests/represented_resource_pure_invariant.md`: represented resources can
-  carry scalar invariants that do not read memory.
-- `mdtests/represented_resource_symbolic_invariant_coverage.md`: scalar
-  invariant bounds can justify indexed memory reads inside a contained write
+- `mdtests/represented_resource_pure_fact.md`: represented resources can carry
+  scalar facts that do not read memory.
+- `mdtests/represented_resource_symbolic_fact_coverage.md`: scalar fact bounds
+  can justify indexed memory reads inside a contained write
   range.
-- `mdtests/represented_resource_predicate_bounds_invariant.md`: predicate-hidden
+- `mdtests/represented_resource_predicate_bounds_fact.md`: predicate-hidden
   scalar bounds can justify indexed memory reads inside a contained write range.
 - `mdtests/represented_resource_rejects_missing_symbolic_bound.md`: symbolic
   coverage fails when a required bound is missing.
-- `mdtests/represented_resource_rejects_unowned_invariant_read.md`: invariants
+- `mdtests/represented_resource_rejects_unowned_fact_read.md`: facts
   cannot read memory without contained write permission.
-- `mdtests/represented_resource_rejects_read_backed_invariant.md`: contained
-  read permission is not enough to stabilize a memory invariant.
-- `mdtests/represented_resource_rejects_predicate_hidden_invariant_read.md`:
+- `mdtests/represented_resource_rejects_read_backed_fact.md`: contained
+  read permission is not enough to stabilize a memory fact.
+- `mdtests/represented_resource_rejects_predicate_hidden_fact_read.md`:
   predicate-hidden memory reads are checked against contained write permission.
 
 ## Predicates And Pure Click Functions

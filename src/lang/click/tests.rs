@@ -450,7 +450,7 @@ fn parses_represented_resource_definition() {
             affine resource uncalled(flag: int32*) {
                 contains socket_open(7);
                 contains write(flag[0..1]);
-                invariant flag[0] == 0;
+                fact flag[0] == 0;
             }
         "#;
     let file = parse(source).expect("represented resource should parse");
@@ -484,7 +484,7 @@ fn parses_represented_resource_definition() {
             })
         ]
     );
-    assert_eq!(representation.invariants().len(), 1);
+    assert_eq!(representation.facts().len(), 1);
 }
 
 #[test]
