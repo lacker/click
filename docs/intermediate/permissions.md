@@ -296,12 +296,9 @@ can contain `write(dst[0..1])` and `read(src[0..1])`, while
 `owned_one_cell(owner, data)` can contain permission for an owner object and an
 explicitly passed buffer pointer. In this conservative shape, the resource's
 parameters name the lower-level memory objects directly. More convenient
-field-dependent representations, such as deriving the contained buffer from
-`owner->data`, are a later design question rather than part of the current
-surface. Click can now start from an unknown external `owner->data` value and
-turn it into a buffer permission. The remaining blocker is packaging the
-non-aliasing fact that the derived buffer does not overlap the owner fields; the
-resource representation language cannot express that yet.
+field-dependent representations can derive a contained buffer from
+`owner->data` and package a `disjoint(...)` fact showing that the buffer does
+not overlap the owner fields.
 
 ## Split And Rejoin
 

@@ -236,6 +236,10 @@ pub enum ClickProposition {
         operator: ComparisonOperator,
         right: ContractExpression,
     },
+    Disjoint {
+        left: ContractSegment,
+        right: ContractSegment,
+    },
     And(Box<ClickProposition>, Box<ClickProposition>),
     Or(Box<ClickProposition>, Box<ClickProposition>),
     Not(Box<ClickProposition>),

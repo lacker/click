@@ -911,6 +911,36 @@ pub(super) fn lower_predicate_body_proposition_with_environment(
             )?;
             comparison_proposition(left, *operator, right).map_err(|error| error.message)
         }
+        ClickProposition::Disjoint { left, right } => {
+            let left = evaluate_predicate_contract_segment(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                left,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_predicate_contract_segment(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                right,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            Ok(Proposition::CMemoryDisjoint {
+                left_base: left.base,
+                left_start: left.start,
+                left_end: left.end,
+                right_base: right.base,
+                right_start: right.start,
+                right_end: right.end,
+            })
+        }
         ClickProposition::And(left, right) => Ok(Proposition::And(
             Box::new(lower_predicate_body_proposition_with_environment(
                 values,
@@ -1269,6 +1299,67 @@ pub(super) fn lower_predicate_body_proposition_with_environment(
             })
         }
     }
+}
+
+fn evaluate_predicate_contract_segment(
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    memory: &CMemory,
+    assumptions: &Assumptions,
+    segment: &ContractSegment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    active_functions: &mut BTreeSet<String>,
+) -> Result<EvaluatedContractSegment, String> {
+    if segment.state != ContractSegmentState::Current {
+        return Err("`old(...)` is not available in `disjoint` propositions".to_string());
+    }
+    let base = evaluate_predicate_contract_expression(
+        values,
+        array_refs,
+        memory,
+        assumptions,
+        &ContractExpression::CFragment(segment.base.clone()),
+        predicate_environment,
+        click_function_environment,
+        active_functions,
+    )?;
+    let CValue::Pointer(base) = base else {
+        return Err("segment base did not evaluate to a pointer".to_string());
+    };
+    let start = evaluate_predicate_contract_expression(
+        values,
+        array_refs,
+        memory,
+        assumptions,
+        &ContractExpression::CFragment(segment.start.clone()),
+        predicate_environment,
+        click_function_environment,
+        active_functions,
+    )?;
+    let CValue::Int32(start) = start else {
+        return Err("segment start did not evaluate to int32".to_string());
+    };
+    let end = evaluate_predicate_contract_expression(
+        values,
+        array_refs,
+        memory,
+        assumptions,
+        &ContractExpression::CFragment(segment.end.clone()),
+        predicate_environment,
+        click_function_environment,
+        active_functions,
+    )?;
+    let CValue::Int32(end) = end else {
+        return Err("segment end did not evaluate to int32".to_string());
+    };
+
+    Ok(EvaluatedContractSegment {
+        source: segment.clone(),
+        base,
+        start,
+        end,
+    })
 }
 
 pub(super) fn evaluate_predicate_contract_expression(
@@ -2800,6 +2891,40 @@ pub(super) fn lower_outcome_proposition_with_environment(
             )?;
             comparison_proposition(left, *operator, right).map_err(|error| error.message)
         }
+        ClickProposition::Disjoint { left, right } => {
+            let left = evaluate_contract_segment_with_environment(
+                values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                left,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_contract_segment_with_environment(
+                values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                right,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            Ok(Proposition::CMemoryDisjoint {
+                left_base: left.base,
+                left_start: left.start,
+                left_end: left.end,
+                right_base: right.base,
+                right_start: right.start,
+                right_end: right.end,
+            })
+        }
         ClickProposition::And(left, right) => Ok(Proposition::And(
             Box::new(lower_outcome_proposition_with_environment(
                 values,
@@ -3211,6 +3336,75 @@ pub(super) fn lower_outcome_proposition_with_environment(
             })
         }
     }
+}
+
+fn evaluate_contract_segment_with_environment(
+    parameter_values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    post_state: &CState,
+    result: Option<&CValue>,
+    assumptions: &Assumptions,
+    segment: &ContractSegment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    active_functions: &mut BTreeSet<String>,
+) -> Result<EvaluatedContractSegment, String> {
+    if segment.state != ContractSegmentState::Current {
+        return Err("`old(...)` is not available in `disjoint` propositions".to_string());
+    }
+    let base = evaluate_contract_expression_with_environment(
+        parameter_values,
+        array_refs,
+        pre_state,
+        post_state,
+        result,
+        assumptions,
+        &ContractExpression::CFragment(segment.base.clone()),
+        predicate_environment,
+        click_function_environment,
+        active_functions,
+    )?;
+    let CValue::Pointer(base) = base else {
+        return Err("segment base did not evaluate to a pointer".to_string());
+    };
+    let start = evaluate_contract_expression_with_environment(
+        parameter_values,
+        array_refs,
+        pre_state,
+        post_state,
+        result,
+        assumptions,
+        &ContractExpression::CFragment(segment.start.clone()),
+        predicate_environment,
+        click_function_environment,
+        active_functions,
+    )?;
+    let CValue::Int32(start) = start else {
+        return Err("segment start did not evaluate to int32".to_string());
+    };
+    let end = evaluate_contract_expression_with_environment(
+        parameter_values,
+        array_refs,
+        pre_state,
+        post_state,
+        result,
+        assumptions,
+        &ContractExpression::CFragment(segment.end.clone()),
+        predicate_environment,
+        click_function_environment,
+        active_functions,
+    )?;
+    let CValue::Int32(end) = end else {
+        return Err("segment end did not evaluate to int32".to_string());
+    };
+
+    Ok(EvaluatedContractSegment {
+        source: segment.clone(),
+        base,
+        start,
+        end,
+    })
 }
 
 pub(super) fn evaluate_contract_expression_with_environment(

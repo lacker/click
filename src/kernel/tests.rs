@@ -198,11 +198,6 @@ fn function_call_threads_memory_but_discards_callee_locals() {
         .with_local("caller", int32(42))
         .with_memory(CMemory::new().store(pointer.clone(), int32(9)))
         .with_resource_context(resources);
-    let store_obligation = Proposition::CMemoryCanStore {
-        memory: CMemory::new(),
-        pointer,
-        byte_width: 4,
-    };
     let theorem = prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
@@ -213,18 +208,15 @@ fn function_call_threads_memory_but_discards_callee_locals() {
 
     assert_eq!(
         theorem.proposition(),
-        &Proposition::Implies(
-            Box::new(store_obligation),
-            Box::new(Proposition::CFunctionExecutes {
-                state,
-                function,
-                arguments,
-                outcome: CFunctionOutcome::Return {
-                    value: int32(9),
-                    state: final_state,
-                },
-            }),
-        )
+        &Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome: CFunctionOutcome::Return {
+                value: int32(9),
+                state: final_state,
+            },
+        }
     );
 }
 
@@ -1690,27 +1682,19 @@ fn store_then_load_threads_native_memory() {
     let final_state = CState::new()
         .with_memory(CMemory::new().store(pointer.clone(), int32(9)))
         .with_resource_context(resources);
-    let store_obligation = Proposition::CMemoryCanStore {
-        memory: CMemory::new(),
-        pointer,
-        byte_width: 4,
-    };
     let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
         .expect("store then load should execute");
 
     assert_eq!(
         theorem.proposition(),
-        &Proposition::Implies(
-            Box::new(store_obligation),
-            Box::new(Proposition::CStatementExecutes {
-                state,
-                statement,
-                outcome: CStatementOutcome::Return {
-                    value: int32(9),
-                    state: final_state,
-                },
-            }),
-        )
+        &Proposition::CStatementExecutes {
+            state,
+            statement,
+            outcome: CStatementOutcome::Return {
+                value: int32(9),
+                state: final_state,
+            },
+        }
     );
 }
 
@@ -2616,6 +2600,30 @@ fn additive_equality_cancellation_feeds_range_contradictions() {
         );
 
     assert!(assumptions.is_inconsistent());
+}
+
+#[test]
+fn equality_to_constant_feeds_signed_order_decisions() {
+    let value = Bitvector32Term::Variable(Variable(93));
+    let assumptions = Assumptions::new().assume_condition(
+        ConditionTerm::equal(value.clone(), Bitvector32Term::Constant(1)),
+        true,
+    );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_less_than(
+            Bitvector32Term::Constant(0),
+            value.clone(),
+        )),
+        Some(true)
+    );
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_greater_equal(
+            value,
+            Bitvector32Term::Constant(1),
+        )),
+        Some(true)
+    );
 }
 
 #[test]

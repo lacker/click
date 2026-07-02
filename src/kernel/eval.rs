@@ -2395,14 +2395,14 @@ pub(super) fn write_c_lvalue_paths(
             }]
         }
         CLValueStorage::Memory { pointer } => {
-            if is_external_memory_pointer(&pointer)
-                && !resource_context_has_write(
+            let has_external_write_resource = is_external_memory_pointer(&pointer)
+                && resource_context_has_write(
                     state.resources(),
                     &pointer,
                     value.byte_width(),
                     &effective_assumptions,
-                )
-            {
+                );
+            if is_external_memory_pointer(&pointer) && !has_external_write_resource {
                 return vec![CStatementExecutionPath {
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
                         resource: CResource::Write(CMemoryRange::new(
@@ -2415,20 +2415,25 @@ pub(super) fn write_c_lvalue_paths(
                     obligations,
                 }];
             }
-            let Some(obligations) = add_memory_store_obligation(
-                &state.memory,
-                &pointer,
-                &value,
-                obligations,
-                assumptions,
-            ) else {
-                return Vec::new();
+            let obligations = if has_external_write_resource {
+                obligations
+            } else {
+                let Some(obligations) = add_memory_store_obligation(
+                    &state.memory,
+                    &pointer,
+                    &value,
+                    obligations,
+                    &effective_assumptions,
+                ) else {
+                    return Vec::new();
+                };
+                obligations
             };
             let before_memory = state.memory.clone();
             let mut state = state.clone();
             state.memory = state
                 .memory
-                .without_possible_aliasing_cells(&pointer, assumptions)
+                .without_possible_aliasing_cells(&pointer, &effective_assumptions)
                 .store(pointer.clone(), value.clone());
             let mut facts = facts;
             if add_internal_path_fact(

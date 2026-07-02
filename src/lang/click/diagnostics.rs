@@ -515,6 +515,11 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             describe_contract_expression(left),
             describe_contract_expression(right)
         ),
+        ClickProposition::Disjoint { left, right } => format!(
+            "disjoint({}, {})",
+            describe_contract_segment(left),
+            describe_contract_segment(right)
+        ),
         ClickProposition::And(left, right) => describe_binary_click_proposition(left, "&&", right),
         ClickProposition::Or(left, right) => describe_binary_click_proposition(left, "||", right),
         ClickProposition::Not(proposition) => {

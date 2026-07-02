@@ -261,11 +261,6 @@ fn c0_syntax_targets_kernel_store_and_load() {
         .with_local("p", crate::kernel::CValue::Pointer(pointer.clone()))
         .with_memory(crate::kernel::CMemory::new().store(pointer.clone(), crate::kernel::int32(9)))
         .with_resource_context(resources);
-    let store_obligation = crate::kernel::Proposition::CMemoryCanStore {
-        memory: crate::kernel::CMemory::new(),
-        pointer,
-        byte_width: 4,
-    };
     let theorem = crate::kernel::prove_symbolic_c_execution(
         initial.clone(),
         statement.clone(),
@@ -275,17 +270,14 @@ fn c0_syntax_targets_kernel_store_and_load() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::kernel::Proposition::Implies(
-            Box::new(store_obligation),
-            Box::new(crate::kernel::Proposition::CStatementExecutes {
-                state: initial,
-                statement,
-                outcome: crate::kernel::CStatementOutcome::Return {
-                    value: crate::kernel::int32(9),
-                    state: final_state,
-                },
-            }),
-        )
+        &crate::kernel::Proposition::CStatementExecutes {
+            state: initial,
+            statement,
+            outcome: crate::kernel::CStatementOutcome::Return {
+                value: crate::kernel::int32(9),
+                state: final_state,
+            },
+        }
     );
 }
 
@@ -564,11 +556,6 @@ fn c0_syntax_targets_kernel_store_and_load_function_call() {
         .with_local("caller", crate::kernel::int32(7))
         .with_memory(crate::kernel::CMemory::new().store(pointer.clone(), crate::kernel::int32(9)))
         .with_resource_context(resources);
-    let store_obligation = crate::kernel::Proposition::CMemoryCanStore {
-        memory: crate::kernel::CMemory::new(),
-        pointer,
-        byte_width: 4,
-    };
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
@@ -579,18 +566,15 @@ fn c0_syntax_targets_kernel_store_and_load_function_call() {
 
     assert_eq!(
         theorem.proposition(),
-        &crate::kernel::Proposition::Implies(
-            Box::new(store_obligation),
-            Box::new(crate::kernel::Proposition::CFunctionExecutes {
-                state,
-                function,
-                arguments,
-                outcome: crate::kernel::CFunctionOutcome::Return {
-                    value: crate::kernel::int32(9),
-                    state: final_state,
-                },
-            }),
-        )
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(9),
+                state: final_state,
+            },
+        }
     );
 }
 

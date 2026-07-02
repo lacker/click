@@ -349,6 +349,41 @@ impl Assumptions {
         matches!((range.lower, range.upper), (Some(lower), Some(upper)) if lower == upper && lower == constant)
     }
 
+    pub(super) fn signed_constant_known_equal(&self, term: &Bitvector32Term) -> Option<i64> {
+        if let Some(value) = signed_bitvector_constant(term) {
+            return Some(value);
+        }
+
+        for (condition, value) in &self.condition_facts {
+            let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value) else {
+                continue;
+            };
+            if self.bitvector_terms_proven_equal(term, left) {
+                if let Some(value) = signed_bitvector_constant(right) {
+                    return Some(value);
+                }
+            }
+            if self.bitvector_terms_proven_equal(term, right) {
+                if let Some(value) = signed_bitvector_constant(left) {
+                    return Some(value);
+                }
+            }
+        }
+
+        None
+    }
+
+    pub(super) fn decide_signed_comparison_from_equal_constants(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        compare: impl FnOnce(i64, i64) -> bool,
+    ) -> Option<bool> {
+        let left = self.signed_constant_known_equal(left)?;
+        let right = self.signed_constant_known_equal(right)?;
+        Some(compare(left, right))
+    }
+
     pub(super) fn decide_from_order_facts(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
             ConditionTerm::PointerOffsetEqual(left, right) if left == right => Some(true),
@@ -488,6 +523,13 @@ impl Assumptions {
             ConditionTerm::Bitvector32SignedLessThan(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
+                if let Some(result) = self.decide_signed_comparison_from_equal_constants(
+                    &left,
+                    &right,
+                    |left, right| left < right,
+                ) {
+                    return Some(result);
+                }
                 if self.subtract_same_const_order_fact(&left, &right, true)
                     || self.has_order_path(&left, &right, true)
                     || self.has_condition_fact(
@@ -522,6 +564,13 @@ impl Assumptions {
             ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
+                if let Some(result) = self.decide_signed_comparison_from_equal_constants(
+                    &left,
+                    &right,
+                    |left, right| left <= right,
+                ) {
+                    return Some(result);
+                }
                 if self.has_order_path(&left, &right, false)
                     || left.add_const_base(1).is_some_and(|base| {
                         self.has_condition_fact(
@@ -571,6 +620,13 @@ impl Assumptions {
             ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
+                if let Some(result) = self.decide_signed_comparison_from_equal_constants(
+                    &left,
+                    &right,
+                    |left, right| left > right,
+                ) {
+                    return Some(result);
+                }
                 if self.has_order_path(&right, &left, true)
                     || left.add_const_base(1).is_some_and(|base| {
                         right == Bitvector32Term::Constant(0)
@@ -610,6 +666,13 @@ impl Assumptions {
             ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
                 let left = left.as_ref().clone();
                 let right = right.as_ref().clone();
+                if let Some(result) = self.decide_signed_comparison_from_equal_constants(
+                    &left,
+                    &right,
+                    |left, right| left >= right,
+                ) {
+                    return Some(result);
+                }
                 if self.has_order_path(&right, &left, false)
                     || left.add_const_base(1).is_some_and(|base| {
                         right == Bitvector32Term::Constant(0)

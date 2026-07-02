@@ -219,8 +219,8 @@ sequence:
 - `mdtests/represented_resource_struct_owned_buffer.md`: a conservative
   struct-owned-buffer pattern with explicit owner and buffer parameters.
 - `mdtests/represented_resource_owner_buffer_field_dependent.md`: the desired
-  field-dependent owner-buffer shape, currently expected to fail because the
-  resource cannot yet package the needed non-aliasing fact.
+  field-dependent owner-buffer shape, with the derived buffer permission and
+  non-aliasing fact packaged inside the represented resource.
 - `mdtests/represented_resource_rejects_bad_origin.md`: closing a represented
   resource fails when its fact has not been established.
 - `mdtests/represented_resource_rejects_double_call.md`: a represented affine

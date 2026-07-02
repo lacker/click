@@ -772,13 +772,20 @@ impl Parser {
     }
 
     fn parse_disjoint_requirement(&mut self) -> Result<Requirement, ClickError> {
+        let (left, right) = self.parse_disjoint_segments()?;
+        Ok(Requirement::Disjoint { left, right })
+    }
+
+    fn parse_disjoint_segments(
+        &mut self,
+    ) -> Result<(ContractSegment, ContractSegment), ClickError> {
         self.expect_ident_spelling("disjoint")?;
         self.expect(Token::LParen)?;
         let left = self.parse_current_contract_segment()?;
         self.expect(Token::Comma)?;
         let right = self.parse_current_contract_segment()?;
         self.expect(Token::RParen)?;
-        Ok(Requirement::Disjoint { left, right })
+        Ok((left, right))
     }
 
     fn parse_resource_clause(&mut self) -> Result<ResourceClause, ClickError> {
@@ -1168,6 +1175,11 @@ impl Parser {
                 return grouped;
             }
             self.position = start;
+        }
+
+        if self.peek_ident() == Some("disjoint") && self.peek_next() == Some(&Token::LParen) {
+            let (left, right) = self.parse_disjoint_segments()?;
+            return Ok(ClickProposition::Disjoint { left, right });
         }
 
         if matches!(self.peek(), Some(Token::Ident(_)))

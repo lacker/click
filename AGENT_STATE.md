@@ -10,9 +10,11 @@ Last updated: 2026-07-02.
 - The most recent verification pass I ran was:
   - `cargo fmt`
   - `cargo test`
-  - `mdbook build`
   - `git diff --check`
-- Those checks passed after the resource `fact` terminology cleanup.
+- `mdbook build` could not be run in this environment because `mdbook` was not
+  installed.
+- Those checks passed after adding resource-packaged `disjoint(...)` facts for
+  the owner-buffer example.
 
 ## Current Design Thread
 
@@ -71,6 +73,7 @@ Click currently has:
   by contained `write(...)` permission, not merely `read(...)`.
 - Resource fact validation can use scalar facts from the same fact clause to
   justify symbolic indexed reads, for example `0 <= k and k < n and p[k] == 0`.
+- Resource facts can include `disjoint(...)` range facts.
 
 ## Recent Cleanup
 
@@ -106,60 +109,56 @@ The important pressure-test example is:
 - `mdtests/represented_resource_owner_buffer_field_dependent.md`
 
 That example is intentionally the desired ergonomic shape and is currently
-expected to fail. The docs describe it as blocked because the resource cannot
-yet package the needed non-aliasing fact between the owner fields and the
-derived buffer.
+passing. It packages the needed non-aliasing fact between the owner fields and
+the derived buffer as a `fact disjoint(...)` clause.
 
 ## Known Open Design Issue
 
-The main open design issue is how represented resources should package derived
-facts and permissions for struct-owned buffers.
+The owner-buffer pressure test now works for the explicit-fact design: a
+represented resource can contain permissions derived from `owner->data` and
+`owner->len`, and can package an explicit `disjoint(...)` fact for the derived
+buffer.
 
-The shape we want is something like:
+The broader open design issue is how much of this should remain explicit and
+how much should become derived from memory-resource/allocation structure.
+
+The shape now supported is:
 
 - A struct has fields such as `owner->data` and `owner->len`.
 - A resource over `owner` should be able to contain permissions for the buffer
   derived from `owner->data`.
 - The resource should also carry facts tying the owner fields to the buffer
   shape, for example length/capacity facts.
-- Closing the resource should prove those facts and repackage the contained
+- Closing the resource proves those facts and repackages the contained
   resources.
 
-The unresolved part is not just syntax. It is the logical story for facts needed
-to make this sound and ergonomic:
+The unresolved part is no longer basic syntax for non-aliasing facts. Remaining
+design questions include:
 
-- How does a represented resource express that a derived buffer range does not
-  alias the owner struct fields?
-- Are those non-aliasing facts ordinary `fact` clauses, built-in memory facts,
-  or some kind of derived consequence of `write(...)`/allocation resources?
+- Should common non-aliasing facts remain ordinary explicit `fact disjoint(...)`
+  clauses, or should some be derived from `write(...)`/allocation resources?
 - How much should `read` or `write` imply about stability?
 - What exactly should it mean for a resource fact to remain true while the
   resource is held but closed?
 
-This is the next real design frontier.
+This is still the next real design frontier, but the first explicit-fact slice
+is implemented.
 
 ## Useful Next Steps
 
-The next good implementation direction is to make the owner-buffer example work
-cleanly, but only after choosing the right small slice.
+The owner-buffer example now passes. Good next slices:
 
-Possible slices:
+1. Decide whether `read(...)` should also discharge external load validity
+   obligations the same way `write(...)` now discharges external store validity.
+2. Add a smaller regression mdtest for `fact disjoint(...)` that is independent
+   of structs, if more coverage feels useful.
+3. Explore whether any non-aliasing facts can be inferred from allocation or
+   stronger memory-resource structure instead of written explicitly.
+4. Improve diagnostics for failed resource fact framing so aliasing failures say
+   which write may alias which fact read.
 
-1. Add explicit resource facts for non-aliasing/disjointness and see whether the
-   owner-buffer example can be proven without new magic.
-2. Improve the built-in memory-resource model so `write` over one range provides
-   stronger stability/non-aliasing consequences when paired with other ranges.
-3. Add first-class support for field-dependent represented resources, where
-   contained resources may be derived from facts about fields such as
-   `owner->data`.
-4. Keep owner-buffer expected-fail for now and instead build a smaller
-   compositional-resource example that needs facts but not struct-derived buffer
-   permissions.
-
-My current preference is to keep examples small and force every resource-logic
-feature through a concrete mdtest. The owner-buffer example is valuable, but it
-may be too large for the very next slice unless we first isolate the
-non-aliasing/stability question.
+Keep forcing each resource-logic feature through a concrete mdtest before
+adding broader abstraction.
 
 ## Other Design Threads Already Touched
 
@@ -271,14 +270,10 @@ these permissions and how much should be explicit facts.
 
 ## Suggested Immediate Next Task
 
-Re-open `mdtests/represented_resource_owner_buffer_field_dependent.md` and
-decide what single missing concept would make it pass.
+Run `mdbook build` in an environment with `mdbook` installed, or install
+`mdbook`, because the code/tests pass but the docs build could not be checked in
+this environment.
 
-The likely candidates are:
-
-- explicit disjoint/non-aliasing resource facts;
-- stronger consequences from contained `write(...)` resources;
-- first-class field-dependent represented resources;
-- or a smaller intermediate example before owner-buffer.
-
-Do not add a broad abstraction until one of these examples forces it.
+After that, the next design slice should probably be load-validity/resource
+semantics for `read(...)`, since store validity for external memory is now
+discharged by `write(...)`.

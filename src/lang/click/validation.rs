@@ -833,6 +833,7 @@ fn collect_resource_fact_scalar_assumptions_from_proposition(
             }
             Ok(())
         }
+        ClickProposition::Disjoint { .. } => Ok(()),
         ClickProposition::And(left, right) => {
             collect_resource_fact_scalar_assumptions_from_proposition(
                 left,
@@ -922,6 +923,26 @@ fn collect_resource_fact_reads_from_proposition(
                 resource_name,
             )?;
             collect_resource_fact_reads_from_contract_expression(
+                right,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
+        ClickProposition::Disjoint { left, right } => {
+            collect_resource_fact_reads_from_contract_segment(
+                left,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_fact_reads_from_contract_segment(
                 right,
                 predicate_definitions,
                 click_function_definitions,
@@ -1039,6 +1060,29 @@ fn collect_resource_fact_reads_from_proposition(
             result
         }
     }
+}
+
+fn collect_resource_fact_reads_from_contract_segment(
+    segment: &ContractSegment,
+    predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
+    click_function_definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
+    visited_predicates: &mut Vec<String>,
+    visited_functions: &mut Vec<String>,
+    reads: &mut Vec<ResourceFactRead>,
+    resource_name: &str,
+) -> Result<(), ClickError> {
+    for expression in [&segment.base, &segment.start, &segment.end] {
+        collect_resource_fact_reads_from_contract_expression(
+            &ContractExpression::CFragment(expression.clone()),
+            predicate_definitions,
+            click_function_definitions,
+            visited_predicates,
+            visited_functions,
+            reads,
+            resource_name,
+        )?;
+    }
+    Ok(())
 }
 
 fn collect_resource_fact_reads_from_contract_expression(
@@ -1358,8 +1402,10 @@ fn resource_fact_read_is_owned(
         let ResourceClause::Write(segment) = resource else {
             return false;
         };
-        segment.state == ContractSegmentState::Current
-            && segment.base == read.base
+        if segment.state != ContractSegmentState::Current {
+            return false;
+        }
+        if segment.base == read.base
             && (constant_segment_covers_index(&segment.start, &segment.end, &read.index)
                 || symbolic_segment_covers_index(
                     &segment.start,
@@ -1372,7 +1418,54 @@ fn resource_fact_read_is_owned(
                     predicate_environment,
                     click_function_environment,
                 ))
+        {
+            return true;
+        }
+        evaluated_segment_covers_resource_fact_read(segment, read, assumptions, values, memory)
     })
+}
+
+fn evaluated_segment_covers_resource_fact_read(
+    segment: &ContractSegment,
+    read: &ResourceFactRead,
+    assumptions: &Assumptions,
+    values: &BTreeMap<String, CValue>,
+    memory: &CMemory,
+) -> bool {
+    let state = CState::new().with_memory(memory.clone());
+    let Ok(CValue::Pointer(base)) =
+        evaluate_c_contract_expression(values, &state, None, assumptions, &segment.base)
+    else {
+        return false;
+    };
+    let Ok(CValue::Int32(start)) =
+        evaluate_c_contract_expression(values, &state, None, assumptions, &segment.start)
+    else {
+        return false;
+    };
+    let Ok(CValue::Int32(end)) =
+        evaluate_c_contract_expression(values, &state, None, assumptions, &segment.end)
+    else {
+        return false;
+    };
+    let Ok(CValue::Pointer(read_base)) =
+        evaluate_c_contract_expression(values, &state, None, assumptions, &read.base)
+    else {
+        return false;
+    };
+    let Ok(CValue::Int32(index)) =
+        evaluate_c_contract_expression(values, &state, None, assumptions, &read.index)
+    else {
+        return false;
+    };
+    let segment = EvaluatedContractSegment {
+        source: segment.clone(),
+        base,
+        start,
+        end,
+    };
+    let read_pointer = offset_pointer_by_elements(read_base, index, 4);
+    segment_contains_pointer(&segment, &read_pointer, assumptions)
 }
 
 fn symbolic_segment_covers_index(
@@ -1538,6 +1631,10 @@ fn validate_proposition_expression_types(
             let _ = infer_contract_expression_type(left, variables, click_functions, context)?;
             let _ = infer_contract_expression_type(right, variables, click_functions, context)?;
             Ok(())
+        }
+        ClickProposition::Disjoint { left, right } => {
+            validate_contract_segment_expression_types(left, variables, click_functions, context)?;
+            validate_contract_segment_expression_types(right, variables, click_functions, context)
         }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
@@ -1966,6 +2063,33 @@ fn pointer_element_type(c_type: C0Type) -> Option<C0Type> {
     }
 }
 
+fn validate_contract_segment_expression_types(
+    segment: &ContractSegment,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<(), ClickError> {
+    let _ = infer_contract_expression_type(
+        &ContractExpression::CFragment(segment.base.clone()),
+        variables,
+        click_functions,
+        context,
+    )?;
+    let _ = infer_contract_expression_type(
+        &ContractExpression::CFragment(segment.start.clone()),
+        variables,
+        click_functions,
+        context,
+    )?;
+    let _ = infer_contract_expression_type(
+        &ContractExpression::CFragment(segment.end.clone()),
+        variables,
+        click_functions,
+        context,
+    )?;
+    Ok(())
+}
+
 fn validate_resource_clause(
     resource: &ResourceClause,
     resources: &BTreeMap<String, usize>,
@@ -2031,6 +2155,10 @@ fn validate_predicate_calls_in_proposition(
             validate_contract_expression_calls(left, click_functions, context)?;
             validate_contract_expression_calls(right, click_functions, context)
         }
+        ClickProposition::Disjoint { left, right } => {
+            validate_contract_segment_calls(left, click_functions, context)?;
+            validate_contract_segment_calls(right, click_functions, context)
+        }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -2088,6 +2216,28 @@ fn validate_click_function_expression(
         )));
     }
     validate_contract_expression_calls(expression, click_functions, context)
+}
+
+fn validate_contract_segment_calls(
+    segment: &ContractSegment,
+    click_functions: &BTreeMap<String, usize>,
+    context: &str,
+) -> Result<(), ClickError> {
+    validate_contract_expression_calls(
+        &ContractExpression::CFragment(segment.base.clone()),
+        click_functions,
+        context,
+    )?;
+    validate_contract_expression_calls(
+        &ContractExpression::CFragment(segment.start.clone()),
+        click_functions,
+        context,
+    )?;
+    validate_contract_expression_calls(
+        &ContractExpression::CFragment(segment.end.clone()),
+        click_functions,
+        context,
+    )
 }
 
 fn validate_contract_expression_calls(
@@ -2175,6 +2325,10 @@ fn validate_if_condition_proposition(
             validate_contract_expression_calls(left, click_functions, context)?;
             validate_contract_expression_calls(right, click_functions, context)
         }
+        ClickProposition::Disjoint { left, right } => {
+            validate_contract_segment_calls(left, click_functions, context)?;
+            validate_contract_segment_calls(right, click_functions, context)
+        }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -2249,10 +2403,22 @@ pub(super) fn contains_old_expression(expression: &ContractExpression) -> bool {
     }
 }
 
+fn contract_segment_contains_old_expression(segment: &ContractSegment) -> bool {
+    [&segment.base, &segment.start, &segment.end]
+        .into_iter()
+        .any(|expression| {
+            contains_old_expression(&ContractExpression::CFragment(expression.clone()))
+        })
+}
+
 fn proposition_contains_old_expression(proposition: &ClickProposition) -> bool {
     match proposition {
         ClickProposition::Comparison { left, right, .. } => {
             contains_old_expression(left) || contains_old_expression(right)
+        }
+        ClickProposition::Disjoint { left, right } => {
+            contract_segment_contains_old_expression(left)
+                || contract_segment_contains_old_expression(right)
         }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
@@ -2326,10 +2492,22 @@ pub(super) fn contains_at_expression(expression: &ContractExpression) -> bool {
     }
 }
 
+fn contract_segment_contains_at_expression(segment: &ContractSegment) -> bool {
+    [&segment.base, &segment.start, &segment.end]
+        .into_iter()
+        .any(|expression| {
+            contains_at_expression(&ContractExpression::CFragment(expression.clone()))
+        })
+}
+
 fn proposition_contains_at_expression(proposition: &ClickProposition) -> bool {
     match proposition {
         ClickProposition::Comparison { left, right, .. } => {
             contains_at_expression(left) || contains_at_expression(right)
+        }
+        ClickProposition::Disjoint { left, right } => {
+            contract_segment_contains_at_expression(left)
+                || contract_segment_contains_at_expression(right)
         }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
@@ -2413,6 +2591,15 @@ fn collect_click_function_calls(expression: &ContractExpression, calls: &mut BTr
     }
 }
 
+fn collect_click_function_calls_in_segment(
+    segment: &ContractSegment,
+    calls: &mut BTreeSet<String>,
+) {
+    for expression in [&segment.base, &segment.start, &segment.end] {
+        collect_click_function_calls(&ContractExpression::CFragment(expression.clone()), calls);
+    }
+}
+
 fn collect_click_function_calls_in_proposition(
     proposition: &ClickProposition,
     calls: &mut BTreeSet<String>,
@@ -2421,6 +2608,10 @@ fn collect_click_function_calls_in_proposition(
         ClickProposition::Comparison { left, right, .. } => {
             collect_click_function_calls(left, calls);
             collect_click_function_calls(right, calls);
+        }
+        ClickProposition::Disjoint { left, right } => {
+            collect_click_function_calls_in_segment(left, calls);
+            collect_click_function_calls_in_segment(right, calls);
         }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)

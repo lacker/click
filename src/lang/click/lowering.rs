@@ -198,6 +198,9 @@ impl AnnotationLowerer<'_> {
                 operator: c_comparison_operator(*operator),
                 right: self.lower_contract_expression_to_spec(right, environment)?,
             }),
+            ClickProposition::Disjoint { .. } => {
+                Err("`disjoint(...)` is not supported in spec-state clauses".to_string())
+            }
             ClickProposition::And(left, right) => Ok(SpecProposition::And(
                 Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
                 Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
@@ -1128,6 +1131,10 @@ pub(super) fn unfold_click_predicates_in_proposition_with_active(
             operator: *operator,
             right: right.clone(),
         }),
+        ClickProposition::Disjoint { left, right } => Ok(ClickProposition::Disjoint {
+            left: left.clone(),
+            right: right.clone(),
+        }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
             Box::new(unfold_click_predicates_in_proposition_with_active(
                 predicate_environment,
@@ -1275,6 +1282,10 @@ pub(super) fn substitute_click_proposition(
             operator: *operator,
             right: substitute_contract_expression(right, substitutions)?,
         }),
+        ClickProposition::Disjoint { left, right } => Ok(ClickProposition::Disjoint {
+            left: substitute_contract_segment(left, substitutions)?,
+            right: substitute_contract_segment(right, substitutions)?,
+        }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
             Box::new(substitute_click_proposition(left, substitutions)?),
             Box::new(substitute_click_proposition(right, substitutions)?),
@@ -1348,6 +1359,18 @@ pub(super) fn substitute_click_proposition(
             })
         }
     }
+}
+
+fn substitute_contract_segment(
+    segment: &ContractSegment,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<ContractSegment, String> {
+    Ok(ContractSegment {
+        state: segment.state,
+        base: substitute_c_fragment(&segment.base, substitutions)?,
+        start: substitute_c_fragment(&segment.start, substitutions)?,
+        end: substitute_c_fragment(&segment.end, substitutions)?,
+    })
 }
 
 pub(super) fn apply_contract_lets_to_requirement(
@@ -1643,6 +1666,10 @@ pub(super) fn apply_contract_let_expressions_to_proposition(
             operator,
             right: apply_contract_lets_to_expression(right, bindings)?,
         }),
+        ClickProposition::Disjoint { left, right } => Ok(ClickProposition::Disjoint {
+            left: apply_contract_lets_to_segment(left, bindings)?,
+            right: apply_contract_lets_to_segment(right, bindings)?,
+        }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
             Box::new(apply_contract_let_expressions_to_proposition(
                 *left, bindings,
@@ -1896,6 +1923,10 @@ pub(super) fn collect_click_proposition_referenced_names(
         ClickProposition::Comparison { left, right, .. } => {
             collect_contract_expression_referenced_names(left, names);
             collect_contract_expression_referenced_names(right, names);
+        }
+        ClickProposition::Disjoint { left, right } => {
+            names.extend(contract_segment_referenced_names(left));
+            names.extend(contract_segment_referenced_names(right));
         }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
@@ -2384,6 +2415,7 @@ pub(super) fn click_proposition_to_c_expression(
         | ClickProposition::Exists { .. }
         | ClickProposition::RangeAll { .. }
         | ClickProposition::RangeAny { .. }
+        | ClickProposition::Disjoint { .. }
         | ClickProposition::PredicateCall { .. } => None,
     }
 }
@@ -3393,6 +3425,18 @@ impl KernelPropositionLowerer {
                 let right = self.lower_requirement_value(right)?;
                 comparison_proposition(left, *operator, right)
             }
+            ClickProposition::Disjoint { left, right } => {
+                let left = self.lower_requirement_segment(left)?;
+                let right = self.lower_requirement_segment(right)?;
+                Ok(Proposition::CMemoryDisjoint {
+                    left_base: left.base,
+                    left_start: left.start,
+                    left_end: left.end,
+                    right_base: right.base,
+                    right_start: right.start,
+                    right_end: right.end,
+                })
+            }
             ClickProposition::And(left, right) => Ok(Proposition::And(
                 Box::new(self.lower_requirement_proposition(left)?),
                 Box::new(self.lower_requirement_proposition(right)?),
@@ -3583,6 +3627,38 @@ impl KernelPropositionLowerer {
                 })
             }
         }
+    }
+
+    fn lower_requirement_segment(
+        &mut self,
+        segment: &ContractSegment,
+    ) -> Result<EvaluatedContractSegment, ClickError> {
+        if segment.state != ContractSegmentState::Current {
+            return Err(ClickError::new(
+                "`old(...)` is not available in `disjoint` propositions",
+            ));
+        }
+        let base = self.lower_requirement_c_expression(&segment.base)?;
+        let CValue::Pointer(base) = base else {
+            return Err(ClickError::new(
+                "segment base did not evaluate to a pointer",
+            ));
+        };
+        let start = self.lower_requirement_c_expression(&segment.start)?;
+        let CValue::Int32(start) = start else {
+            return Err(ClickError::new("segment start did not evaluate to int32"));
+        };
+        let end = self.lower_requirement_c_expression(&segment.end)?;
+        let CValue::Int32(end) = end else {
+            return Err(ClickError::new("segment end did not evaluate to int32"));
+        };
+
+        Ok(EvaluatedContractSegment {
+            source: segment.clone(),
+            base,
+            start,
+            end,
+        })
     }
 
     fn lower_requirement_value(

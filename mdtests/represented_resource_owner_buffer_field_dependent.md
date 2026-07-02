@@ -1,10 +1,9 @@
 # field-dependent owner buffer resource
 
-This is the more ergonomic owner-buffer shape we want eventually: the resource
-only takes the owner object, and the contained buffer permission is derived
-from `owner->data` and `owner->len`. Current Click cannot prove this yet because
-the resource cannot yet package the needed non-aliasing fact between the owner
-fields and the derived buffer range.
+This is the ergonomic owner-buffer shape where the resource only takes the
+owner object, and the contained buffer permission is derived from `owner->data`
+and `owner->len`. The resource packages the non-aliasing fact that the derived
+buffer range does not overlap the owner fields.
 
 ```c filename=set_owned_first.c
 struct owner {
@@ -26,6 +25,7 @@ affine resource owned_buffer(owner: struct owner*) {
     contains write(owner->data);
     contains write((owner->data)[0..owner->len]);
     fact owner->len == 1;
+    fact disjoint(owner[0..2], (owner->data)[0..owner->len]);
 }
 
 verifying "set_owned_first.c";
@@ -43,5 +43,5 @@ int32 set_owned_first(struct owner* owner) {
 ```
 
 ```expect
-fail: fact failed
+pass
 ```
