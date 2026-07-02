@@ -375,6 +375,7 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
         CExpression::BitwiseXor(left, right) => describe_binary_c_expression(left, "^", right),
         CExpression::BitwiseNot(expression) => format!("~{}", describe_c_expression(expression)),
         CExpression::Load(pointer) => format!("*{}", describe_c_expression(pointer)),
+        CExpression::TypedLoad { pointer, .. } => format!("*{}", describe_c_expression(pointer)),
         CExpression::Index(base, index) => {
             format!(
                 "{}[{}]",

@@ -146,6 +146,10 @@ pub enum CExpression {
     BitwiseXor(Box<CExpression>, Box<CExpression>),
     BitwiseNot(Box<CExpression>),
     Load(Box<CExpression>),
+    TypedLoad {
+        pointer: Box<CExpression>,
+        value_type: CType,
+    },
     Index(Box<CExpression>, Box<CExpression>),
 }
 
@@ -263,6 +267,11 @@ pub enum CStatement {
     Store {
         pointer: CExpression,
         value: CExpression,
+    },
+    TypedStore {
+        pointer: CExpression,
+        value: CExpression,
+        value_type: CType,
     },
     Free {
         pointer: CExpression,

@@ -323,7 +323,7 @@ pub(super) fn evaluate_c_expression_paths(
             budget,
             Bitvector32Term::bitwise_not,
         )?,
-        CExpression::Load(_) | CExpression::Index(_, _) => {
+        CExpression::Load(_) | CExpression::TypedLoad { .. } | CExpression::Index(_, _) => {
             read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
         }
     };
@@ -362,6 +362,39 @@ pub(super) fn evaluate_c_lvalue_paths(
                 paths.push(match pointer_path.outcome {
                     CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
                         outcome: CLValueOutcome::LValue(CLValue::memory(pointer, value_type)),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExpressionOutcome::Value(_) => CLValuePath {
+                        outcome: CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExpressionOutcome::UndefinedBehavior(undefined_behavior) => CLValuePath {
+                        outcome: CLValueOutcome::UndefinedBehavior(undefined_behavior),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                    CExpressionOutcome::RuntimeError(error) => CLValuePath {
+                        outcome: CLValueOutcome::RuntimeError(error),
+                        facts: pointer_path.facts,
+                        obligations: pointer_path.obligations,
+                    },
+                });
+            }
+            paths
+        }
+        CExpression::TypedLoad {
+            pointer: pointer_expression,
+            value_type,
+        } => {
+            let mut paths = Vec::new();
+            for pointer_path in
+                evaluate_c_expression_paths(state, pointer_expression, assumptions, budget)?
+            {
+                paths.push(match pointer_path.outcome {
+                    CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
+                        outcome: CLValueOutcome::LValue(CLValue::memory(pointer, *value_type)),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,
                     },
@@ -558,6 +591,7 @@ pub(super) fn c_expression_pointee_type(state: &CState, expression: &CExpression
             None => None,
         },
         CExpression::AddressOf(target) => c_expression_lvalue_type(state, target),
+        CExpression::TypedLoad { value_type, .. } => value_type.pointee_type(),
         CExpression::Add(left, right) => c_expression_pointee_type(state, left)
             .or_else(|| c_expression_pointee_type(state, right)),
         CExpression::Subtract(left, _) => c_expression_pointee_type(state, left),
@@ -569,6 +603,7 @@ pub(super) fn c_expression_lvalue_type(state: &CState, expression: &CExpression)
     match expression {
         CExpression::Variable(name) => state.locals.object_type(name),
         CExpression::Load(pointer) => c_expression_pointee_type(state, pointer),
+        CExpression::TypedLoad { value_type, .. } => Some(*value_type),
         CExpression::Index(base, _) => c_expression_pointee_type(state, base),
         _ => None,
     }
@@ -2564,6 +2599,20 @@ pub(super) fn execute_c_statement_paths(
         CStatement::Store { pointer, value } => execute_c_lvalue_assignment_paths(
             state,
             &CExpression::Load(Box::new(pointer.clone())),
+            value,
+            assumptions,
+            budget,
+        )?,
+        CStatement::TypedStore {
+            pointer,
+            value,
+            value_type,
+        } => execute_c_lvalue_assignment_paths(
+            state,
+            &CExpression::TypedLoad {
+                pointer: Box::new(pointer.clone()),
+                value_type: *value_type,
+            },
             value,
             assumptions,
             budget,

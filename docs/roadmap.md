@@ -76,8 +76,8 @@ Likely additions:
   null-terminated byte arrays, read-only static storage, and byte/string
   predicates in the standard library.
 - Structs and field access:
-  enough layout to model common library state objects without pretending a
-  struct is an untyped blob.
+  Click-side layout helpers, field frames, and ABI layout details for common
+  library state objects.
 - Enums and named constants:
   needed for real error codes and option flags.
 - Globals:
@@ -294,9 +294,9 @@ Good next tasks from the current state:
 
 1. Choose the first spec/model-state design before adding permission logic,
    allocation, final release, or double-release checks.
-2. Document and then broaden the struct/field memory model beyond the current
-   single-`int32`-field load/store, `valid_field(obj->field)`, and
-   `mutable_field(obj->field)` lowering.
+2. Broaden the struct/field memory model beyond compact C0 field lowering:
+   Click-side layout facts, non-first-field `valid_field`/`mutable_field`,
+   field frames, and eventually ABI layout details.
 3. Add more fold/range theorems beyond alpha-equivalent folds and the current
    count-shaped split rules, especially when the pilot or sorting/string tests
    expose a reusable proof pattern.

@@ -384,15 +384,15 @@ The prelude currently provides byte-slice helpers over `uint8[]`: `byte_count`,
 `cstr_prefix`, `cstr_len`, `cstr`, and `cstr_bounded`. These are ordinary Click
 functions and predicates, not built-in kernel concepts.
 
-The first pilot struct slice accepts `obj->field` as a current-state C fragment
-for a single-`int32`-field struct, and C0 can write that field. `requires
-valid_field(obj->field);` is the matching field-validity precondition and
-currently lowers to four bytes at the start of the object. `mutable_field`
-accepts the same field-access shape for field writes and lowers to the
-one-element mutable segment at the start of the object. Field reads and writes
-still need the ordinary resource context: use `read(obj[0..1])` or
-`write(obj[0..1])` for the one-field pilot object. This is not yet a general
-struct expression, layout, or field-frame model.
+C0 accepts a small multi-field struct slice with `int32` and pointer-valued
+fields. The C side can lower `obj->field` loads and stores at compact field
+offsets. Click contracts do not yet have a general struct-layout environment,
+so `valid_field(obj->field)` and
+`mutable_field(obj->field)` remain first-field conveniences for the
+json-c-shaped example. For multi-field structs, state the footprint explicitly:
+use ranges such as `valid_range(owner[0..3])`, `read(owner[0..3])`, and
+`write(owner[0..3])`. A pointer field occupies two int32 cells in that range
+spelling.
 
 Concrete folds are unrolled. Symbolic folds remain `RangeFold` value terms in
 the kernel and can be reasoned about by supported fold laws.

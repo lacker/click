@@ -112,6 +112,13 @@ pub fn c_load(pointer: CExpression) -> CExpression {
     CExpression::Load(Box::new(pointer))
 }
 
+pub fn c_typed_load(pointer: CExpression, value_type: CType) -> CExpression {
+    CExpression::TypedLoad {
+        pointer: Box::new(pointer),
+        value_type,
+    }
+}
+
 pub fn c_index(base: CExpression, index: CExpression) -> CExpression {
     CExpression::Index(Box::new(base), Box::new(index))
 }
@@ -166,6 +173,14 @@ pub fn c_return(expression: CExpression) -> CStatement {
 
 pub fn c_store(pointer: CExpression, value: CExpression) -> CStatement {
     CStatement::Store { pointer, value }
+}
+
+pub fn c_typed_store(pointer: CExpression, value: CExpression, value_type: CType) -> CStatement {
+    CStatement::TypedStore {
+        pointer,
+        value,
+        value_type,
+    }
 }
 
 pub fn c_free(pointer: CExpression) -> CStatement {

@@ -2240,6 +2240,13 @@ pub(super) fn substitute_c_fragment(
             body,
             substitutions,
         )?))),
+        CExpression::TypedLoad {
+            pointer,
+            value_type,
+        } => Ok(CExpression::TypedLoad {
+            pointer: Box::new(substitute_c_fragment(pointer, substitutions)?),
+            value_type: *value_type,
+        }),
         CExpression::Index(base, index) => Ok(CExpression::Index(
             Box::new(substitute_c_fragment(base, substitutions)?),
             Box::new(substitute_c_fragment(index, substitutions)?),
@@ -2541,6 +2548,9 @@ pub(super) fn collect_c_expression_referenced_names(
         | CExpression::Not(expression)
         | CExpression::Load(expression) => {
             collect_c_expression_referenced_names(expression, names);
+        }
+        CExpression::TypedLoad { pointer, .. } => {
+            collect_c_expression_referenced_names(pointer, names);
         }
         CExpression::LessThan(left, right)
         | CExpression::LessEqual(left, right)
@@ -3720,6 +3730,22 @@ impl KernelPropositionLowerer {
                     &self.memory,
                     pointer,
                     CType::Int32,
+                    &Assumptions::new(),
+                )
+                .map_err(ClickError::new)
+            }
+            CExpression::TypedLoad {
+                pointer,
+                value_type,
+            } => {
+                let pointer = self.lower_requirement_c_expression(pointer)?;
+                let CValue::Pointer(pointer) = pointer else {
+                    return Err(ClickError::new("field load base is not a pointer"));
+                };
+                evaluate_contract_memory_load_from_memory(
+                    &self.memory,
+                    pointer,
+                    *value_type,
                     &Assumptions::new(),
                 )
                 .map_err(ClickError::new)

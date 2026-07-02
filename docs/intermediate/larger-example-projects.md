@@ -20,9 +20,9 @@ It contains json-c-shaped operations over a one-field object:
 - `json_object_set_ref_count`
 - `json_object_inc_ref_count`
 
-The current proof scope is intentionally narrow:
+This fixture's proof scope is intentionally narrow:
 
-- one `int32` field per struct,
+- one `int32` field in the json-c-shaped struct,
 - pointer-to-struct parameters,
 - `->` field loads and stores for that first field,
 - `valid_field(obj->ref_count)` for field validity,

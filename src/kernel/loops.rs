@@ -974,7 +974,9 @@ pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
         | CStatement::Assert { .. }
         | CStatement::Return(_)
         | CStatement::Free { .. } => false,
-        CStatement::CallAssign { .. } | CStatement::Store { .. } => true,
+        CStatement::CallAssign { .. }
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. } => true,
         CStatement::Seq(first, second) => {
             statement_may_write_memory(first) || statement_may_write_memory(second)
         }
@@ -993,6 +995,7 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
         | CStatement::Assert { .. }
         | CStatement::Return(_)
         | CStatement::Store { .. }
+        | CStatement::TypedStore { .. }
         | CStatement::Free { .. } => {}
         CStatement::Assign { name, .. } => {
             names.insert(name.clone());
@@ -1064,6 +1067,10 @@ pub(super) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
             collect_address_taken_in_expression(pointer, names);
             collect_address_taken_in_expression(value, names);
         }
+        CStatement::TypedStore { pointer, value, .. } => {
+            collect_address_taken_in_expression(pointer, names);
+            collect_address_taken_in_expression(value, names);
+        }
         CStatement::Free { pointer } => collect_address_taken_in_expression(pointer, names),
         CStatement::Seq(first, second) => {
             collect_address_taken_locals(first, names);
@@ -1098,6 +1105,9 @@ pub(super) fn collect_address_taken_in_expression(
         CExpression::Value(_) | CExpression::Variable(_) => {}
         CExpression::Not(inner) | CExpression::Load(inner) => {
             collect_address_taken_in_expression(inner, names)
+        }
+        CExpression::TypedLoad { pointer, .. } => {
+            collect_address_taken_in_expression(pointer, names)
         }
         CExpression::LessThan(left, right)
         | CExpression::LessEqual(left, right)
@@ -1136,6 +1146,7 @@ pub(super) fn collect_variable_names(expression: &CExpression, names: &mut BTree
         CExpression::AddressOf(inner) | CExpression::Not(inner) | CExpression::Load(inner) => {
             collect_variable_names(inner, names)
         }
+        CExpression::TypedLoad { pointer, .. } => collect_variable_names(pointer, names),
         CExpression::LessThan(left, right)
         | CExpression::LessEqual(left, right)
         | CExpression::GreaterThan(left, right)

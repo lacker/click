@@ -2184,19 +2184,37 @@ impl Assumptions {
         start: &Bitvector32Term,
         end: &Bitvector32Term,
     ) -> bool {
-        let index = match byte_width {
-            1 => pointer_byte_offset_from_base(pointer, base),
-            4 => pointer.element_index_from_base(base),
-            _ => None,
-        };
-        let Some(index) = index else {
-            return false;
-        };
-        self.decide(&ConditionTerm::signed_less_equal(
-            start.clone(),
-            index.clone(),
-        )) == Some(true)
-            && self.decide(&ConditionTerm::signed_less_than(index, end.clone())) == Some(true)
+        if let Some(index) = pointer.element_index_from_base(base) {
+            if byte_width == 4 {
+                return self.decide(&ConditionTerm::signed_less_equal(
+                    start.clone(),
+                    index.clone(),
+                )) == Some(true)
+                    && self.decide(&ConditionTerm::signed_less_than(index, end.clone()))
+                        == Some(true);
+            }
+            if byte_width > 4 && byte_width % 4 == 0 {
+                let element_width = Bitvector32Term::Constant(byte_width / 4);
+                let access_end = Bitvector32Term::add(index.clone(), element_width);
+                return self.decide(&ConditionTerm::signed_less_equal(start.clone(), index))
+                    == Some(true)
+                    && self.decide(&ConditionTerm::signed_less_equal(access_end, end.clone()))
+                        == Some(true);
+            }
+        }
+
+        if byte_width == 1 {
+            let Some(index) = pointer_byte_offset_from_base(pointer, base) else {
+                return false;
+            };
+            return self.decide(&ConditionTerm::signed_less_equal(
+                start.clone(),
+                index.clone(),
+            )) == Some(true)
+                && self.decide(&ConditionTerm::signed_less_than(index, end.clone())) == Some(true);
+        }
+
+        false
     }
 
     pub(super) fn ranges_proven_disjoint_from_pointer(

@@ -4538,6 +4538,22 @@ pub(super) fn evaluate_c_contract_expression(
             };
             evaluate_contract_memory_load(state, pointer, CType::Int32, assumptions)
         }
+        CExpression::TypedLoad {
+            pointer,
+            value_type,
+        } => {
+            let pointer = evaluate_c_contract_expression(
+                parameter_values,
+                state,
+                result,
+                assumptions,
+                pointer,
+            )?;
+            let CValue::Pointer(pointer) = pointer else {
+                return Err("field load base is not a pointer".to_string());
+            };
+            evaluate_contract_memory_load(state, pointer, *value_type, assumptions)
+        }
         CExpression::Index(base, index) => {
             let base =
                 evaluate_c_contract_expression(parameter_values, state, result, assumptions, base)?;

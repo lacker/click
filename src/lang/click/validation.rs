@@ -1302,6 +1302,14 @@ fn collect_resource_invariant_reads_from_c_expression(
                 expression: describe_c_expression(expression),
             });
         }
+        CExpression::TypedLoad { pointer, .. } => {
+            collect_resource_invariant_reads_from_c_expression(pointer, reads);
+            reads.push(ResourceInvariantRead {
+                base: pointer.as_ref().clone(),
+                index: CExpression::Value(CValue::Int32(Bitvector32Term::Constant(0))),
+                expression: describe_c_expression(expression),
+            });
+        }
         CExpression::Index(base, index) => {
             collect_resource_invariant_reads_from_c_expression(base, reads);
             collect_resource_invariant_reads_from_c_expression(index, reads);
@@ -1861,6 +1869,13 @@ fn infer_c_expression_type(
         CExpression::Load(pointer) => {
             infer_c_expression_type(pointer, variables).and_then(pointer_element_type)
         }
+        CExpression::TypedLoad { value_type, .. } => match value_type {
+            CType::Int32 => Some(C0Type::Int32),
+            CType::UInt8 => Some(C0Type::UInt8),
+            CType::Int32Pointer => Some(C0Type::Int32Pointer),
+            CType::UInt8Pointer => Some(C0Type::UInt8Pointer),
+            CType::Int32Array(_) | CType::UInt8Array(_) => None,
+        },
         CExpression::Index(base, _) => {
             infer_c_expression_type(base, variables).and_then(pointer_element_type)
         }

@@ -400,6 +400,144 @@ fn c0_syntax_targets_kernel_struct_field_store() {
 }
 
 #[test]
+fn c0_syntax_targets_kernel_multifield_struct_offset_load() {
+    let function = syntax::parse_function(
+        r#"
+        struct pair {
+            int32 first;
+            int32 second;
+        };
+
+        int32 pair_second(struct pair* p) {
+            return p->second;
+        }
+        "#,
+    )
+    .expect("multi-field struct getter should parse")
+    .to_kernel_function();
+
+    let base = crate::kernel::Pointer {
+        block: "pair".to_string(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let second = crate::kernel::Pointer {
+        block: "pair".to_string(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(4),
+    };
+    let memory = crate::kernel::CMemory::new()
+        .with_block("pair", 8)
+        .store(second, crate::kernel::int32(7));
+    let state = crate::kernel::CState::new()
+        .with_memory(memory)
+        .with_resource_context(read_context(base.clone(), 1, 2));
+    let arguments = vec![crate::kernel::c_pointer_value(base)];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Default::default(),
+    )
+    .expect("parsed multi-field struct getter should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state: state.clone(),
+            function,
+            arguments,
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(7),
+                state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_targets_kernel_struct_pointer_field_roundtrip() {
+    let function = syntax::parse_function(
+        r#"
+        struct owner {
+            int32 len;
+            int32* data;
+        };
+
+        int32 set_owned_first(struct owner* owner, int32 data[]) {
+            int32* current;
+            owner->len = 1;
+            owner->data = data;
+            current = owner->data;
+            current[0] = owner->len;
+            return current[0];
+        }
+        "#,
+    )
+    .expect("struct pointer field roundtrip should parse")
+    .to_kernel_function();
+
+    let owner = crate::kernel::Pointer {
+        block: "owner".to_string(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let owner_data = crate::kernel::Pointer {
+        block: "owner".to_string(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(4),
+    };
+    let data = crate::kernel::Pointer {
+        block: "data".to_string(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let resources = crate::kernel::ResourceContext::new().with_resources(vec![
+        crate::kernel::CResource::Write(memory_range(owner.clone(), 0, 3)),
+        crate::kernel::CResource::Write(memory_range(data.clone(), 0, 1)),
+    ]);
+    let state = crate::kernel::CState::new()
+        .with_memory(
+            crate::kernel::CMemory::new()
+                .with_block("owner", 12)
+                .with_block("data", 4),
+        )
+        .with_resource_context(resources);
+    let arguments = vec![
+        crate::kernel::c_pointer_value(owner.clone()),
+        crate::kernel::c_pointer_value(data.clone()),
+    ];
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        arguments.clone(),
+        Default::default(),
+    )
+    .expect("parsed struct pointer field roundtrip should execute");
+
+    let crate::kernel::Proposition::CFunctionExecutes {
+        outcome:
+            crate::kernel::CFunctionOutcome::Return {
+                value,
+                state: final_state,
+            },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("expected function execution theorem, got {:#?}", theorem);
+    };
+
+    assert_eq!(value, &crate::kernel::int32(1));
+    assert_eq!(
+        final_state.memory().load(&owner),
+        crate::kernel::CExpressionOutcome::Value(crate::kernel::int32(1))
+    );
+    assert_eq!(
+        final_state.memory().load(&owner_data),
+        crate::kernel::CExpressionOutcome::Value(crate::kernel::CValue::Pointer(data.clone()))
+    );
+    assert_eq!(
+        final_state.memory().load(&data),
+        crate::kernel::CExpressionOutcome::Value(crate::kernel::int32(1))
+    );
+}
+
+#[test]
 fn c0_syntax_targets_kernel_store_and_load_function_call() {
     let function = syntax::parse_function(
         r#"

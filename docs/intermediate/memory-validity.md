@@ -68,13 +68,15 @@ validity and permission requirements still matter.
 
 ## Field Validity
 
-The current struct support is intentionally narrow. For the json-c-shaped pilot,
-Click accepts:
+The current Click-side field helper support is intentionally narrow. For the
+json-c-shaped pilot, Click accepts:
 
 ```click
 requires valid_field(obj->ref_count);
 mutable obj->ref_count by frame;
 ```
 
-This is not yet a general struct layout model. It is a focused slice to support
-the current example project while the broader memory model is still growing.
+This is not yet a general struct layout model. C0 can lower compact multi-field
+struct loads and stores, but multi-field contracts should still use explicit
+ranges such as `valid_range(owner[0..3])` and `write(owner[0..3])` until Click
+has a contract-level layout environment.

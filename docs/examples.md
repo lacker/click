@@ -83,6 +83,14 @@ Larger example projects live directly under `examples/`. They contain ordinary
 - `mdtests/local_array_decays_to_helper.md`: array-to-pointer function call.
 - `mdtests/local_array_rejects_assignment.md`: direct array assignment fails.
 
+## Structs
+
+- `mdtests/struct_multifield_explicit_permissions.md`: compact multi-field
+  struct loads/stores with explicit validity and write ranges.
+- `mdtests/struct_pointer_field_explicit_permissions.md`: pointer-valued
+  struct field load followed by a write through the loaded pointer, again using
+  explicit ranges rather than ownership sugar.
+
 ## Byte Values And Buffers
 
 - `mdtests/uint8_literals.md`: `uint8` returns and ASCII character literals.
@@ -285,8 +293,8 @@ sequence:
 ## Library-Shaped Mdtests
 
 - `mdtests/jsonc_refcount_getter.md`: first json-c-shaped pilot proof,
-  using the initial single-field struct slice for a reference-count getter.
-- `mdtests/jsonc_refcount_setter.md`: pilot single-field struct write
+  using first-field helpers for a reference-count getter.
+- `mdtests/jsonc_refcount_setter.md`: first-field struct write
   with a field-validity precondition and field-level mutable footprint.
-- `mdtests/jsonc_refcount_increment.md`: pilot field read/modify/write
+- `mdtests/jsonc_refcount_increment.md`: field read/modify/write
   proof with `old(obj->field)` postconditions and a no-overflow requirement.

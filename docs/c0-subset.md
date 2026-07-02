@@ -43,8 +43,8 @@ Supported C0 surface includes:
 - pointer loads and stores
 - `free(p);` as a narrow one-cell resource operation requiring `free(p[0..1])`
 - `p[i]` indexing for `int32*` and `uint8*`
-- a pilot struct slice: `struct name { int32 field; };`,
-  `struct name*` parameters, and `p->field` loads/stores for that single field
+- a small struct slice: `struct name { ... };`, `struct name*` pointers, and
+  `p->field` loads/stores for `int32` and pointer fields
 - known function calls through the current function environment
 - local scalar, pointer, and fixed-size array declarations for `int32` and
   `uint8`
@@ -94,27 +94,39 @@ An array name decays to a pointer rvalue for indexing and function arguments.
 Direct assignment to an array object is rejected. `int32` arrays allocate four
 bytes per element; `uint8` arrays allocate one byte per element.
 
-## Pilot Struct Slice
+## Struct Slice
 
-The first real-library pilot supports only a single-field struct shape:
+C0 supports a small struct-pointer slice:
 
 ```c
-struct json_object {
-    int32 ref_count;
+struct owner {
+    int32 len;
+    int32* data;
 };
 
-int32 json_object_get_ref_count(struct json_object* obj) {
-    return obj->ref_count;
+int32 set_first(struct owner* owner, int32 data[]) {
+    int32* current;
+    owner->len = 1;
+    owner->data = data;
+    current = owner->data;
+    current[0] = owner->len;
+    return current[0];
 }
 ```
 
-This is intentionally not a full C struct model yet. `struct name*` is accepted
-for parameters, and `p->field` is lowered as an `int32` field load or store at
-the start of the object. In Click contracts, `valid_field(p->field)` is
-accepted for this pilot field and currently lowers to the same four-byte memory
-validity obligation as `valid_range(p, 4)`. Multiple fields, nested structs,
-struct values, layout/alignment rules, and field-address expressions are still
-future work.
+This is intentionally not a full C struct model yet. Struct fields may be
+`int32` or pointer-typed fields such as `int32*`, `uint8*`, and `struct name*`.
+`struct name*` is accepted for parameters and local pointers, and `p->field` is
+lowered as a typed load or store at the field's compact byte offset. There is
+no C ABI padding/alignment model yet, and struct values, nested struct values,
+arrays of structs, and general field-address expressions are still unsupported.
+
+Click contracts do not yet have a general struct-layout environment. The
+`valid_field(p->field)` and `mutable_field(p->field)` helpers remain a
+first-field convenience for the json-c-shaped example. For multi-field structs,
+write explicit ranges such as `valid_range(owner[0..3])` and
+`write(owner[0..3])`; an `int32*` or `uint8*` field occupies two int32 cells in
+that spelling.
 
 ## Loops
 

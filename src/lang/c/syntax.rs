@@ -1,5 +1,7 @@
 //! Tiny C0 syntax import for the executable C model.
 
+use std::collections::BTreeMap;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0Function {
     return_type: C0Type,
@@ -12,6 +14,23 @@ pub struct C0Function {
 pub struct C0Parameter {
     c_type: C0Type,
     name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ParsedType {
+    c_type: C0Type,
+    struct_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StructLayout {
+    fields: BTreeMap<String, StructField>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StructField {
+    c_type: C0Type,
+    offset_bytes: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,6 +63,7 @@ pub enum C0Statement {
     Store {
         pointer: C0Expression,
         value: C0Expression,
+        value_type: Option<C0Type>,
     },
     Free {
         pointer: C0Expression,
@@ -86,6 +106,10 @@ pub enum C0Expression {
     BitwiseXor(Box<C0Expression>, Box<C0Expression>),
     BitwiseNot(Box<C0Expression>),
     Load(Box<C0Expression>),
+    Field {
+        pointer: Box<C0Expression>,
+        field_type: C0Type,
+    },
     Index(Box<C0Expression>, Box<C0Expression>),
 }
 
@@ -180,9 +204,21 @@ impl C0Statement {
                 crate::kernel::c_seq(first.to_kernel_statement(), second.to_kernel_statement())
             }
             Self::Return(expression) => crate::kernel::c_return(expression.to_kernel_expression()),
-            Self::Store { pointer, value } => {
-                crate::kernel::c_store(pointer.to_kernel_expression(), value.to_kernel_expression())
-            }
+            Self::Store {
+                pointer,
+                value,
+                value_type,
+            } => match value_type {
+                Some(value_type) => crate::kernel::c_typed_store(
+                    pointer.to_kernel_expression(),
+                    value.to_kernel_expression(),
+                    value_type.to_kernel_type(),
+                ),
+                None => crate::kernel::c_store(
+                    pointer.to_kernel_expression(),
+                    value.to_kernel_expression(),
+                ),
+            },
             Self::Free { pointer } => crate::kernel::c_free(pointer.to_kernel_expression()),
             Self::If {
                 condition,
@@ -281,6 +317,13 @@ impl C0Expression {
                 crate::kernel::c_bitwise_not(expression.to_kernel_expression())
             }
             Self::Load(pointer) => crate::kernel::c_load(pointer.to_kernel_expression()),
+            Self::Field {
+                pointer,
+                field_type,
+            } => crate::kernel::c_typed_load(
+                pointer.to_kernel_expression(),
+                field_type.to_kernel_type(),
+            ),
             Self::Index(base, index) => {
                 crate::kernel::c_index(base.to_kernel_expression(), index.to_kernel_expression())
             }
@@ -302,6 +345,24 @@ impl C0SyntaxError {
 
 pub fn parse_function(source: &str) -> Result<C0Function, C0SyntaxError> {
     Parser::new(source)?.parse_function()
+}
+
+fn offset_field_pointer(
+    base: C0Expression,
+    offset_bytes: u32,
+) -> Result<C0Expression, C0SyntaxError> {
+    if offset_bytes == 0 {
+        return Ok(base);
+    }
+    if offset_bytes % 4 != 0 {
+        return Err(C0SyntaxError::new(
+            "struct field offsets must be int32-aligned in this C0 slice",
+        ));
+    }
+    Ok(C0Expression::Add(
+        Box::new(base),
+        Box::new(C0Expression::Int32Literal(offset_bytes / 4)),
+    ))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -363,6 +424,8 @@ impl Token {
 struct Parser {
     tokens: Vec<Token>,
     position: usize,
+    structs: BTreeMap<String, StructLayout>,
+    variable_structs: BTreeMap<String, String>,
 }
 
 impl Parser {
@@ -370,12 +433,14 @@ impl Parser {
         Ok(Self {
             tokens: tokenize(source)?,
             position: 0,
+            structs: BTreeMap::new(),
+            variable_structs: BTreeMap::new(),
         })
     }
 
     fn parse_function(mut self) -> Result<C0Function, C0SyntaxError> {
         self.parse_struct_declarations()?;
-        let return_type = self.parse_type()?;
+        let return_type = self.parse_type()?.c_type;
         let name = self.expect_ident("function name")?;
         self.expect(Token::LParen)?;
         let parameters = self.parse_parameters()?;
@@ -395,9 +460,11 @@ impl Parser {
         while self.peek_ident() == Some("struct") && self.peek_n(2) == Some(&Token::LBrace) {
             self.expect_ident_spelling("struct")?;
             let _name = self.expect_ident("struct name")?;
+            let name = _name;
             self.expect(Token::LBrace)?;
 
-            let mut field_count = 0;
+            let mut fields = BTreeMap::new();
+            let mut offset_bytes = 0u32;
             while self.peek() != Some(&Token::RBrace) {
                 if self.peek().is_none() {
                     return Err(C0SyntaxError::new(
@@ -405,23 +472,53 @@ impl Parser {
                     ));
                 }
                 let field_type = self.parse_type()?;
-                if field_type != C0Type::Int32 {
+                if !matches!(
+                    field_type.c_type,
+                    C0Type::Int32 | C0Type::Int32Pointer | C0Type::UInt8Pointer
+                ) {
                     return Err(C0SyntaxError::new(
-                        "only single-int32-field structs are supported",
+                        "struct fields currently support int32 and pointer fields",
                     ));
                 }
-                let _field_name = self.expect_ident("struct field name")?;
+                let field_name = self.expect_ident("struct field name")?;
                 self.expect(Token::Semicolon)?;
-                field_count += 1;
+                if fields
+                    .insert(
+                        field_name.clone(),
+                        StructField {
+                            c_type: field_type.c_type,
+                            offset_bytes,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(C0SyntaxError::new(format!(
+                        "duplicate field `{field_name}` in struct `{name}`"
+                    )));
+                }
+                offset_bytes = offset_bytes
+                    .checked_add(field_type.c_type.to_kernel_type().byte_width())
+                    .ok_or_else(|| {
+                        C0SyntaxError::new(format!("struct `{name}` layout is too large"))
+                    })?;
             }
 
             self.expect(Token::RBrace)?;
             self.expect(Token::Semicolon)?;
 
-            if field_count != 1 {
+            if fields.is_empty() {
                 return Err(C0SyntaxError::new(
-                    "only single-int32-field structs are supported",
+                    "struct declarations must contain at least one field",
                 ));
+            }
+            if self
+                .structs
+                .insert(name.clone(), StructLayout { fields })
+                .is_some()
+            {
+                return Err(C0SyntaxError::new(format!(
+                    "duplicate struct declaration `{name}`"
+                )));
             }
         }
 
@@ -435,9 +532,20 @@ impl Parser {
         }
 
         loop {
-            let c_type = self.parse_type()?;
+            let parsed_type = self.parse_type()?;
             let name = self.expect_ident("parameter name")?;
-            let c_type = self.parse_parameter_array_suffix(c_type)?;
+            let c_type = self.parse_parameter_array_suffix(parsed_type.c_type)?;
+            if parsed_type.struct_name.is_some() {
+                if c_type != parsed_type.c_type {
+                    return Err(C0SyntaxError::new(
+                        "array parameters of struct type are not supported",
+                    ));
+                }
+                self.variable_structs.insert(
+                    name.clone(),
+                    parsed_type.struct_name.expect("struct_name checked above"),
+                );
+            }
             parameters.push(C0Parameter { c_type, name });
 
             if self.peek() != Some(&Token::Comma) {
@@ -447,13 +555,16 @@ impl Parser {
         }
     }
 
-    fn parse_type(&mut self) -> Result<C0Type, C0SyntaxError> {
+    fn parse_type(&mut self) -> Result<ParsedType, C0SyntaxError> {
         match self.next() {
             Some(Token::Ident(name)) if name == "struct" => {
-                let _struct_name = self.expect_ident("struct name")?;
+                let struct_name = self.expect_ident("struct name")?;
                 if self.peek() == Some(&Token::Star) {
                     self.position += 1;
-                    Ok(C0Type::Int32Pointer)
+                    Ok(ParsedType {
+                        c_type: C0Type::Int32Pointer,
+                        struct_name: Some(struct_name),
+                    })
                 } else {
                     Err(C0SyntaxError::new(
                         "only pointer-to-struct types are supported",
@@ -468,20 +579,26 @@ impl Parser {
                 };
                 if self.peek() == Some(&Token::Star) {
                     self.position += 1;
-                    Ok(match scalar_type {
-                        C0Type::Int32 => C0Type::Int32Pointer,
-                        C0Type::UInt8 => C0Type::UInt8Pointer,
-                        _ => unreachable!("scalar type should not be aggregate"),
+                    Ok(ParsedType {
+                        c_type: match scalar_type {
+                            C0Type::Int32 => C0Type::Int32Pointer,
+                            C0Type::UInt8 => C0Type::UInt8Pointer,
+                            _ => unreachable!("scalar type should not be aggregate"),
+                        },
+                        struct_name: None,
                     })
                 } else {
-                    Ok(scalar_type)
+                    Ok(ParsedType {
+                        c_type: scalar_type,
+                        struct_name: None,
+                    })
                 }
             }
             Some(token) => Err(C0SyntaxError::new(format!(
-                "expected type `int32` or `uint8`, got {token:?}"
+                "expected type `int32`, `uint8`, or `struct`, got {token:?}"
             ))),
             None => Err(C0SyntaxError::new(
-                "expected type `int32` or `uint8`, got end of input",
+                "expected type `int32`, `uint8`, or `struct`, got end of input",
             )),
         }
     }
@@ -590,31 +707,54 @@ impl Parser {
                 self.expect(Token::Equal)?;
                 let value = self.parse_expression()?;
                 self.expect(Token::Semicolon)?;
-                Ok(C0Statement::Store { pointer, value })
+                Ok(C0Statement::Store {
+                    pointer,
+                    value,
+                    value_type: None,
+                })
             }
             Some(Token::Ident(_)) if self.peek_next() == Some(&Token::LBracket) => {
                 let pointer = self.parse_indexed_lvalue_pointer()?;
                 self.expect(Token::Equal)?;
                 let value = self.parse_expression()?;
                 self.expect(Token::Semicolon)?;
-                Ok(C0Statement::Store { pointer, value })
+                Ok(C0Statement::Store {
+                    pointer,
+                    value,
+                    value_type: None,
+                })
             }
             Some(Token::Ident(_)) if self.peek_next() == Some(&Token::Arrow) => {
-                let pointer = self.parse_field_lvalue_pointer()?;
+                let (pointer, value_type) = self.parse_field_lvalue_pointer()?;
                 self.expect(Token::Equal)?;
                 let value = self.parse_expression()?;
                 self.expect(Token::Semicolon)?;
-                Ok(C0Statement::Store { pointer, value })
+                Ok(C0Statement::Store {
+                    pointer,
+                    value,
+                    value_type: Some(value_type),
+                })
             }
             Some(Token::Ident(_)) if self.peek_next().is_some_and(Token::is_scalar_update) => {
                 let statement = self.parse_scalar_update_statement("statement")?;
                 self.expect(Token::Semicolon)?;
                 Ok(statement)
             }
-            Some(Token::Ident(name)) if name == "int32" || name == "uint8" => {
-                let c_type = self.parse_type()?;
+            Some(Token::Ident(name)) if name == "int32" || name == "uint8" || name == "struct" => {
+                let parsed_type = self.parse_type()?;
                 let name = self.expect_ident("local name")?;
-                let c_type = self.parse_local_array_suffix(c_type)?;
+                let c_type = self.parse_local_array_suffix(parsed_type.c_type)?;
+                if parsed_type.struct_name.is_some() {
+                    if c_type != parsed_type.c_type {
+                        return Err(C0SyntaxError::new(
+                            "local arrays of struct type are not supported",
+                        ));
+                    }
+                    self.variable_structs.insert(
+                        name.clone(),
+                        parsed_type.struct_name.expect("struct_name checked above"),
+                    );
+                }
                 self.expect(Token::Semicolon)?;
                 Ok(C0Statement::Declare { c_type, name })
             }
@@ -997,8 +1137,13 @@ impl Parser {
                 }
                 Some(Token::Arrow) => {
                     self.position += 1;
-                    let _field_name = self.expect_ident("field name")?;
-                    expression = C0Expression::Load(Box::new(expression));
+                    let field_name = self.expect_ident("field name")?;
+                    let (pointer, field_type) =
+                        self.resolve_field_access(&expression, &field_name)?;
+                    expression = C0Expression::Field {
+                        pointer: Box::new(pointer),
+                        field_type,
+                    };
                 }
                 _ => return Ok(expression),
             }
@@ -1018,11 +1163,38 @@ impl Parser {
         }
     }
 
-    fn parse_field_lvalue_pointer(&mut self) -> Result<C0Expression, C0SyntaxError> {
+    fn parse_field_lvalue_pointer(&mut self) -> Result<(C0Expression, C0Type), C0SyntaxError> {
         let base = self.parse_primary()?;
         self.expect(Token::Arrow)?;
-        let _field_name = self.expect_ident("field name")?;
-        Ok(base)
+        let field_name = self.expect_ident("field name")?;
+        self.resolve_field_access(&base, &field_name)
+    }
+
+    fn resolve_field_access(
+        &self,
+        base: &C0Expression,
+        field_name: &str,
+    ) -> Result<(C0Expression, C0Type), C0SyntaxError> {
+        let C0Expression::Variable(base_name) = base else {
+            return Err(C0SyntaxError::new(
+                "field access currently supports struct pointer variables only",
+            ));
+        };
+        let struct_name = self.variable_structs.get(base_name).ok_or_else(|| {
+            C0SyntaxError::new(format!("`{base_name}` is not a known struct pointer"))
+        })?;
+        let layout = self.structs.get(struct_name).ok_or_else(|| {
+            C0SyntaxError::new(format!("unknown struct declaration `{struct_name}`"))
+        })?;
+        let field = layout.fields.get(field_name).ok_or_else(|| {
+            C0SyntaxError::new(format!(
+                "struct `{struct_name}` has no field `{field_name}`"
+            ))
+        })?;
+        Ok((
+            offset_field_pointer(base.clone(), field.offset_bytes)?,
+            field.c_type,
+        ))
     }
 
     fn parse_primary(&mut self) -> Result<C0Expression, C0SyntaxError> {

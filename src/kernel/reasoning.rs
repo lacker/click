@@ -1104,6 +1104,9 @@ pub(super) fn collect_c_expression_bitvector_variables(
         CExpression::AddressOf(body) | CExpression::Not(body) | CExpression::Load(body) => {
             collect_c_expression_bitvector_variables(body, variables);
         }
+        CExpression::TypedLoad { pointer, .. } => {
+            collect_c_expression_bitvector_variables(pointer, variables);
+        }
         CExpression::LessThan(left, right)
         | CExpression::LessEqual(left, right)
         | CExpression::GreaterThan(left, right)
@@ -1159,6 +1162,10 @@ pub(super) fn collect_c_statement_bitvector_variables(
             collect_c_statement_bitvector_variables(second, variables);
         }
         CStatement::Store { pointer, value } => {
+            collect_c_expression_bitvector_variables(pointer, variables);
+            collect_c_expression_bitvector_variables(value, variables);
+        }
+        CStatement::TypedStore { pointer, value, .. } => {
             collect_c_expression_bitvector_variables(pointer, variables);
             collect_c_expression_bitvector_variables(value, variables);
         }
@@ -1872,6 +1879,15 @@ pub(super) fn substitute_bitvector_variable_in_c_expression(
         CExpression::Load(body) => CExpression::Load(Box::new(
             substitute_bitvector_variable_in_c_expression(body, from, to),
         )),
+        CExpression::TypedLoad {
+            pointer,
+            value_type,
+        } => CExpression::TypedLoad {
+            pointer: Box::new(substitute_bitvector_variable_in_c_expression(
+                pointer, from, to,
+            )),
+            value_type: *value_type,
+        },
         CExpression::LessThan(left, right) => CExpression::LessThan(
             Box::new(substitute_bitvector_variable_in_c_expression(
                 left, from, to,
@@ -2074,6 +2090,15 @@ pub(super) fn substitute_bitvector_variable_in_c_statement(
         CStatement::Store { pointer, value } => CStatement::Store {
             pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
             value: substitute_bitvector_variable_in_c_expression(value, from, to),
+        },
+        CStatement::TypedStore {
+            pointer,
+            value,
+            value_type,
+        } => CStatement::TypedStore {
+            pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
+            value: substitute_bitvector_variable_in_c_expression(value, from, to),
+            value_type: *value_type,
         },
         CStatement::Free { pointer } => CStatement::Free {
             pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),

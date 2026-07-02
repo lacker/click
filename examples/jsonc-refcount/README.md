@@ -19,7 +19,7 @@ no-overflow precondition.
 
 The current support is intentionally narrow:
 
-- one `int32` field per struct
+- one `int32` field in the json-c-shaped struct
 - pointer-to-struct parameters
 - `->` field loads and stores for that first field
 - `valid_field(obj->ref_count)` as the field-validity precondition

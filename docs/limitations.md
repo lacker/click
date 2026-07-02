@@ -8,13 +8,14 @@ Click does not parse general C. See [c0-subset.md](c0-subset.md). Missing
 features include full structs, unsigned integers beyond the narrow `uint8` byte
 type, casts, globals, heap allocation, `switch`, and many operators.
 
-There is one pilot struct slice for the first real-library fixture: a
-single-`int32`-field `struct`, `struct name*` parameters, and `p->field`
-loads/stores. Click accepts `valid_field(p->field)` as a field-validity
-precondition and `mutable_field(p->field)` as a field-write footprint for that
-slice. Field accesses still require the ordinary resource context, such as
-`read(p[0..1])` or `write(p[0..1])`, and this is not yet a general layout or
-field-frame model.
+Struct support is partial. C0 accepts compact multi-field struct declarations
+with `int32` and pointer-valued fields, plus `p->field` loads/stores through
+struct pointers. It still has no C ABI padding/alignment model, struct values,
+nested struct values, arrays of structs, or general field-address expressions.
+Click contracts also do not yet know general struct layouts:
+`valid_field(p->field)` and `mutable_field(p->field)` remain first-field
+conveniences for the json-c-shaped fixture. Multi-field examples should use
+explicit ranges such as `valid_range(owner[0..3])` and `write(owner[0..3])`.
 
 ## Type Support Is Still Narrow
 
