@@ -11,4 +11,5 @@ affine resource bogus(flag: int32*) {
 
 ```expect
 fail: resource `bogus` fact reads `flag[0]` without a covering contained `write(...)` resource
+note: the representation contains no resources to consider
 ```

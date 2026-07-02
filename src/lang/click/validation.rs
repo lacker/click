@@ -748,6 +748,18 @@ struct ResourceFactRead {
     expression: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ResourceFactScalarAssumption {
+    source: String,
+    proposition: Proposition,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ResourceFactReadOwnershipAnalysis {
+    covered: bool,
+    notes: Vec<String>,
+}
+
 fn validate_resource_fact_memory_ownership(
     definition: &ResourceDefinition,
     representation: &ResourceRepresentation,
@@ -785,9 +797,13 @@ fn validate_resource_fact_memory_ownership(
         &mut scalar_assumptions,
         definition.name(),
     )?;
-    let assumptions = assumptions_from_propositions(&scalar_assumptions);
+    let assumption_propositions = scalar_assumptions
+        .iter()
+        .map(|assumption| assumption.proposition.clone())
+        .collect::<Vec<_>>();
+    let assumptions = assumptions_from_propositions(&assumption_propositions);
     for read in reads {
-        if !resource_fact_read_is_owned(
+        let analysis = analyze_resource_fact_read_ownership(
             &read,
             representation.contains(),
             &assumptions,
@@ -796,11 +812,13 @@ fn validate_resource_fact_memory_ownership(
             &memory,
             predicate_environment,
             click_function_environment,
-        ) {
-            return Err(ClickError::new(format!(
-                "resource `{}` fact reads `{}` without a covering contained `write(...)` resource",
+        );
+        if !analysis.covered {
+            return Err(ClickError::new(resource_fact_read_ownership_error(
                 definition.name(),
-                read.expression
+                &read,
+                &analysis,
+                &scalar_assumptions,
             )));
         }
     }
@@ -816,11 +834,12 @@ fn collect_resource_fact_scalar_assumptions_from_proposition(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     visited_predicates: &mut Vec<String>,
-    assumptions: &mut Vec<Proposition>,
+    assumptions: &mut Vec<ResourceFactScalarAssumption>,
     resource_name: &str,
 ) -> Result<(), ClickError> {
     match proposition {
         ClickProposition::Comparison { .. } => {
+            let source = describe_click_proposition(proposition);
             let mut lowerer = KernelPropositionLowerer::new(
                 values.clone(),
                 array_refs.clone(),
@@ -829,7 +848,10 @@ fn collect_resource_fact_scalar_assumptions_from_proposition(
                 click_function_environment,
             );
             if let Ok(proposition) = lowerer.lower_requirement_proposition(proposition) {
-                assumptions.push(proposition);
+                assumptions.push(ResourceFactScalarAssumption {
+                    source,
+                    proposition,
+                });
             }
             Ok(())
         }
@@ -1388,7 +1410,7 @@ fn collect_resource_fact_reads_from_c_expression(
     }
 }
 
-fn resource_fact_read_is_owned(
+fn analyze_resource_fact_read_ownership(
     read: &ResourceFactRead,
     contained: &[ResourceClause],
     assumptions: &Assumptions,
@@ -1397,32 +1419,105 @@ fn resource_fact_read_is_owned(
     memory: &CMemory,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-) -> bool {
-    contained.iter().any(|resource| {
+) -> ResourceFactReadOwnershipAnalysis {
+    let mut notes = Vec::new();
+    for resource in contained {
         let ResourceClause::Write(segment) = resource else {
-            return false;
+            notes.push(format!(
+                "`{}` is not a `write(...)` resource",
+                describe_resource_clause(resource)
+            ));
+            continue;
         };
+        let resource_description = describe_resource_clause(resource);
         if segment.state != ContractSegmentState::Current {
-            return false;
+            notes.push(format!(
+                "`{resource_description}` is not current-state write permission"
+            ));
+            continue;
         }
         if segment.base == read.base
-            && (constant_segment_covers_index(&segment.start, &segment.end, &read.index)
-                || symbolic_segment_covers_index(
-                    &segment.start,
-                    &segment.end,
-                    &read.index,
-                    assumptions,
-                    values,
-                    array_refs,
-                    memory,
-                    predicate_environment,
-                    click_function_environment,
-                ))
+            && constant_segment_covers_index(&segment.start, &segment.end, &read.index)
         {
-            return true;
+            return ResourceFactReadOwnershipAnalysis {
+                covered: true,
+                notes,
+            };
         }
-        evaluated_segment_covers_resource_fact_read(segment, read, assumptions, values, memory)
-    })
+        if segment.base == read.base {
+            if symbolic_segment_covers_index(
+                &segment.start,
+                &segment.end,
+                &read.index,
+                assumptions,
+                values,
+                array_refs,
+                memory,
+                predicate_environment,
+                click_function_environment,
+            ) {
+                return ResourceFactReadOwnershipAnalysis {
+                    covered: true,
+                    notes,
+                };
+            }
+            notes.push(format!(
+                "`{resource_description}` has the right base, but the available scalar facts do not prove `{}` <= `{}` < `{}`",
+                describe_c_expression(&segment.start),
+                describe_c_expression(&read.index),
+                describe_c_expression(&segment.end)
+            ));
+            continue;
+        }
+        if evaluated_segment_covers_resource_fact_read(segment, read, assumptions, values, memory) {
+            return ResourceFactReadOwnershipAnalysis {
+                covered: true,
+                notes,
+            };
+        }
+        notes.push(format!(
+            "`{resource_description}` does not prove coverage of `{}`",
+            read.expression
+        ));
+    }
+    ResourceFactReadOwnershipAnalysis {
+        covered: false,
+        notes,
+    }
+}
+
+fn resource_fact_read_ownership_error(
+    resource_name: &str,
+    read: &ResourceFactRead,
+    analysis: &ResourceFactReadOwnershipAnalysis,
+    scalar_assumptions: &[ResourceFactScalarAssumption],
+) -> String {
+    let mut lines = vec![format!(
+        "resource `{resource_name}` fact reads `{}` without a covering contained `write(...)` resource",
+        read.expression
+    )];
+    if analysis.notes.is_empty() {
+        lines.push("note: the representation contains no resources to consider".to_string());
+    } else {
+        lines.push("note: contained resource coverage considered:".to_string());
+        lines.extend(analysis.notes.iter().map(|note| format!("  - {note}")));
+    }
+    if scalar_assumptions.is_empty() {
+        lines.push(
+            "note: no scalar fact assumptions were available to prove symbolic coverage"
+                .to_string(),
+        );
+    } else {
+        lines.push(format!(
+            "note: scalar fact assumptions available: {}",
+            scalar_assumptions
+                .iter()
+                .map(|assumption| assumption.source.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    lines.join("\n")
 }
 
 fn evaluated_segment_covers_resource_fact_read(

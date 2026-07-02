@@ -4,10 +4,11 @@ Last updated: 2026-07-02.
 
 ## Repository State
 
-- Working tree was clean when this file was written.
+- This file is a working handoff note, not canonical documentation. Check
+  `git status --short --untracked-files=all` for the current worktree state.
 - The docs are built with mdBook. `scripts/mdbook-serve.sh` installs a pinned
   repo-local mdBook into `target/tools` if needed and then runs `mdbook serve`.
-- The most recent verification pass I ran was:
+- The most recent verification pass recorded here was:
   - `cargo fmt`
   - `cargo test`
   - `git diff --check`
@@ -17,6 +18,9 @@ Last updated: 2026-07-02.
 - Those checks passed after adding resource-packaged `disjoint(...)` facts,
   load-validity discharge from `read(...)`, and a standalone represented
   resource `fact disjoint(...)` mdtest.
+- Failed represented-resource fact framing diagnostics now keep the original
+  one-line error and add notes about contained resources considered and scalar
+  fact assumptions available.
 
 ## Current Design Thread
 
@@ -157,12 +161,12 @@ The owner-buffer example now passes, and `read(...)`/`write(...)` now both
 carry the validity needed for covered external memory accesses. Good next
 slices:
 
-1. Improve diagnostics for failed resource fact framing so aliasing failures say
-   which write may alias which fact read.
-2. Explore whether any non-aliasing facts can be inferred from allocation or
-   stronger memory-resource structure instead of written explicitly.
-3. Decide whether any of the explicit `fact disjoint(...)` clauses in represented
-   resources should become derived facts from allocation/resource structure.
+1. Decide how much non-aliasing should stay as explicit `fact disjoint(...)`
+   clauses versus being inferred from allocation/resource structure.
+2. Decide whether closed represented resources should expose any facts
+   persistently, or whether facts are only available while opened.
+3. Keep tightening owner-buffer ergonomics through concrete mdtests before
+   adding larger abstractions.
 
 Keep forcing each resource-logic feature through a concrete mdtest before
 adding broader abstraction.
@@ -276,7 +280,19 @@ these permissions and how much should be explicit facts.
 
 ## Suggested Immediate Next Task
 
-Improve diagnostics for failed represented resource fact framing. The current
-errors identify the fact read that lacks a covering contained `write(...)`, but
-they do not yet explain which contained write ranges were considered or whether
-possible aliasing/disjointness was the blocker.
+Design the next owner-buffer ergonomics slice around fact visibility. The key
+question is whether facts from a closed represented resource should be usable
+while the abstract resource is held, or only after an explicit `open(...)`.
+
+Recommended pressure test:
+
+1. Write a small expected-fail mdtest where a function requires a represented
+   resource with a pure or `disjoint(...)` fact and tries to use that fact
+   without opening the resource.
+2. Decide whether that should remain a failure. The conservative position is
+   yes: facts are available only while opened, because opening also exposes the
+   contained write resources that justify fact stability.
+3. If keeping explicit open/close, improve proof ergonomics instead, for example
+   with a scoped `with open(resource) { ... }` proof step later. If allowing
+   closed facts, design which fact classes are safe to expose without also
+   exposing contained resources.
