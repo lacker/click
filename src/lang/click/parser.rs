@@ -1416,11 +1416,11 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 ProofStep::ApplyTheorem(application)
             }
-            "open" => {
+            "unpack" => {
                 self.expect(Token::LParen)?;
                 let resource = self.parse_named_resource_call()?;
                 self.expect(Token::RParen)?;
-                ProofStep::OpenResource(resource)
+                ProofStep::UnpackResource(resource)
             }
             "witness" => {
                 self.expect(Token::LParen)?;
@@ -1442,11 +1442,11 @@ impl Parser {
                 self.expect_empty_step_args(&name)?;
                 ProofStep::Simp
             }
-            "close" => {
+            "pack" => {
                 self.expect(Token::LParen)?;
                 let resource = self.parse_named_resource_call()?;
                 self.expect(Token::RParen)?;
-                ProofStep::CloseResource(resource)
+                ProofStep::PackResource(resource)
             }
             _ if is_tactic_name(&name) => {
                 return Err(self.error(format!(

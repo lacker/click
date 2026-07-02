@@ -24,15 +24,15 @@ int32 inspect_server(int32 fd, int32 state[]) {
     requires live_server(fd, state);
 
     ensures live_server(fd, state) by {
-        open(live_server(fd, state));
+        unpack(live_server(fd, state));
         symbolic_execute();
-        close(live_server(fd, state));
+        pack(live_server(fd, state));
     }
 
     ensures state_is_ready: state[0] == 1 by {
-        open(live_server(fd, state));
+        unpack(live_server(fd, state));
         symbolic_execute();
-        close(live_server(fd, state));
+        pack(live_server(fd, state));
         simp();
     }
 }

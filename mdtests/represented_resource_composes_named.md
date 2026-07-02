@@ -38,7 +38,7 @@ int32 init_server(int32 fd, int32 state[]) {
 
     ensures live_server(fd, state) by {
         symbolic_execute();
-        close(live_server(fd, state));
+        pack(live_server(fd, state));
     }
 }
 
@@ -46,9 +46,9 @@ int32 use_server(int32 fd, int32 state[]) {
     requires live_server(fd, state);
 
     ensures result == fd by {
-        open(live_server(fd, state));
+        unpack(live_server(fd, state));
         symbolic_execute();
-        close(live_server(fd, state));
+        pack(live_server(fd, state));
         simp();
     }
 }

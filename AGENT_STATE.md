@@ -22,9 +22,9 @@ Last updated: 2026-07-02.
 - Failed represented-resource fact framing diagnostics now keep the original
   one-line error and add notes about contained resources considered and scalar
   fact assumptions available.
-- Closed represented resources now project their `fact` clauses while the
+- Packed represented resources now project their `fact` clauses while the
   abstract resource token is held. Their contained resources/permissions remain
-  hidden until an explicit `open(...)`.
+  hidden until an explicit `unpack(...)`.
 
 ## Current Design Thread
 
@@ -38,7 +38,8 @@ The current settled terminology is:
 - A `visit` is a dynamic execution occurrence of a program point. Visits are
   conceptual for now, not first-class Click expressions.
 - A resource is something the proof/resource context can `hold`.
-- A resource may expose `fact` clauses while it is opened or held.
+- A represented resource may expose `fact` clauses while its abstract token is
+  held packed, and while it is unpacked.
 - Resource facts are not called invariants. Loop `invariant` remains a separate
   concept.
 
@@ -74,11 +75,11 @@ Click currently has:
 - Represented resources with:
   - `contains ...;`
   - `fact ...;`
-  - explicit `open(resource);`
-  - explicit `close(resource);`
-- Resource facts are projected while the abstract resource token is held closed,
-  and are also available while the resource is opened.
-- `close(...)` proves the facts, consumes the contained resources, and returns
+  - explicit `unpack(resource);`
+  - explicit `pack(resource);`
+- Resource facts are projected while the abstract resource token is held packed,
+  and are also available while the resource is unpacked.
+- `pack(...)` proves the facts, consumes the contained resources, and returns
   the abstract resource token.
 - Resource fact validation checks that facts which read mutable memory are backed
   by contained `write(...)` permission, not merely `read(...)`.
@@ -145,11 +146,11 @@ The shape now supported is:
   derived from `owner->data`.
 - The resource should also carry facts tying the owner fields to the buffer
   shape, for example length/capacity facts.
-- Closing the resource proves those facts and repackages the contained
+- Packing the resource proves those facts and repackages the contained
   resources.
 
 The unresolved part is no longer basic syntax for non-aliasing facts or whether
-closed resources expose facts. Remaining design questions include:
+packed resources expose facts. Remaining design questions include:
 
 - Should common non-aliasing facts remain ordinary explicit `fact disjoint(...)`
   clauses, or should some be derived from `write(...)`/allocation resources?
@@ -171,8 +172,8 @@ slices:
 2. Add a focused expected-fail owner-buffer mdtest showing the ergonomic goal
    without an explicit `fact disjoint(...)`, then decide what source of
    allocation/provenance evidence should prove it.
-3. Consider a scoped open/close proof step only if examples show explicit
-   `open(...)`/`close(...)` is creating avoidable proof noise.
+3. Consider a scoped unpack/pack proof step only if examples show explicit
+   `unpack(...)`/`pack(...)` is creating avoidable proof noise.
 4. Keep tightening owner-buffer ergonomics through concrete mdtests before
    adding larger abstractions.
 

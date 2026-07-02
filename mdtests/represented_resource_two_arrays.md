@@ -23,9 +23,9 @@ int32 copy_first(int32 dst[], int32 src[]) {
     requires first_cell_copy_access(dst, src);
 
     ensures first_cell_copy_access(dst, src) by {
-        open(first_cell_copy_access(dst, src));
+        unpack(first_cell_copy_access(dst, src));
         symbolic_execute();
-        close(first_cell_copy_access(dst, src));
+        pack(first_cell_copy_access(dst, src));
     }
 }
 ```

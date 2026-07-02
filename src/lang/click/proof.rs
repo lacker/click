@@ -750,7 +750,7 @@ pub(super) fn prove_claim_by_auto(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_closed_resource_representation_cells(
+    state = materialize_packed_resource_representation_cells(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
@@ -903,7 +903,7 @@ pub(super) fn prove_claim_by_frame(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_closed_resource_representation_cells(
+    state = materialize_packed_resource_representation_cells(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
@@ -1009,7 +1009,7 @@ pub(super) fn prove_claim_by_simp(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_closed_resource_representation_cells(
+    state = materialize_packed_resource_representation_cells(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
@@ -1157,7 +1157,7 @@ struct ProofStepReplayState {
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
     theorem_applications: Vec<(usize, TheoremApplication)>,
-    resource_closes: Vec<ResourceClause>,
+    resource_packs: Vec<ResourceClause>,
     simp: bool,
 }
 
@@ -1200,7 +1200,7 @@ pub(super) fn prove_claim_by_steps(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_closed_resource_representation_cells(
+    state = materialize_packed_resource_representation_cells(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
@@ -1230,13 +1230,13 @@ pub(super) fn prove_claim_by_steps(
 
     for (step_index, step) in steps.iter().enumerate() {
         match step {
-            ProofStep::OpenResource(resource) => {
+            ProofStep::UnpackResource(resource) => {
                 if replay.execution.is_some() {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `open` must run before `symbolic_execute()` or `bounded_execute()`"
+                        "`{claim_label}` proof step {step_index}: `unpack` must run before `symbolic_execute()` or `bounded_execute()`"
                     )));
                 }
-                state = open_represented_resource(
+                state = unpack_represented_resource(
                     resource_environment,
                     resource,
                     parsed_function.parameters(),
@@ -1359,9 +1359,9 @@ pub(super) fn prove_claim_by_steps(
                     .theorem_applications
                     .push((step_index, application.clone()));
             }
-            ProofStep::CloseResource(resource) => {
-                require_step_execution(&replay, claim_label, step_index, "close")?;
-                replay.resource_closes.push(resource.clone());
+            ProofStep::PackResource(resource) => {
+                require_step_execution(&replay, claim_label, step_index, "pack")?;
+                replay.resource_packs.push(resource.clone());
             }
             ProofStep::Witness(_) => {
                 require_step_execution(&replay, claim_label, step_index, "witness")?;
@@ -1402,7 +1402,7 @@ pub(super) fn prove_claim_by_steps(
         &requirement_propositions,
         &replay.unfolded_predicates,
         &replay.theorem_applications,
-        &replay.resource_closes,
+        &replay.resource_packs,
         replay.simp,
         steps,
     )
@@ -1454,14 +1454,14 @@ fn require_verification_execution(
     Ok(())
 }
 
-fn materialize_closed_resource_representation_cells(
+fn materialize_packed_resource_representation_cells(
     resource_environment: &ResourceEnvironment,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: CState,
     claim_label: &str,
 ) -> Result<CState, ClickError> {
-    let memory = materialize_closed_resource_representation_memory(
+    let memory = materialize_packed_resource_representation_memory(
         resource_environment,
         parameters,
         arguments,
@@ -1471,7 +1471,7 @@ fn materialize_closed_resource_representation_cells(
     Ok(state.with_memory(memory))
 }
 
-fn materialize_closed_resource_representation_memory(
+fn materialize_packed_resource_representation_memory(
     resource_environment: &ResourceEnvironment,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -1519,7 +1519,7 @@ fn project_initial_resource_facts(
     claim_label: &str,
 ) -> Result<Vec<Proposition>, ClickError> {
     let result = CValue::Int32(Bitvector32Term::Constant(0));
-    project_closed_resource_facts(
+    project_packed_resource_facts(
         resource_environment,
         parameters,
         arguments,
@@ -1548,7 +1548,7 @@ fn project_outcome_resource_facts(
     let CFunctionOutcome::Return { value, state } = outcome else {
         return Ok(available_propositions.to_vec());
     };
-    project_closed_resource_facts(
+    project_packed_resource_facts(
         resource_environment,
         parameters,
         arguments,
@@ -1561,12 +1561,12 @@ fn project_outcome_resource_facts(
     )
     .map_err(|message| {
         ClickError::new(format!(
-            "`{claim_label}` path {path_index}: could not project closed resource facts: {message}"
+            "`{claim_label}` path {path_index}: could not project packed resource facts: {message}"
         ))
     })
 }
 
-fn project_closed_resource_facts(
+fn project_packed_resource_facts(
     resource_environment: &ResourceEnvironment,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -1682,7 +1682,7 @@ fn resource_value_substitutions(
         .collect())
 }
 
-fn open_represented_resource(
+fn unpack_represented_resource(
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -1697,7 +1697,7 @@ fn open_represented_resource(
     let definition = represented_resource_definition(
         resource_environment,
         resource,
-        "open",
+        "unpack",
         claim_label,
         step_index,
     )?;
@@ -1714,7 +1714,7 @@ fn open_represented_resource(
         .without_resource(&abstract_resource, &assumptions)
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `open({})` is missing resource `{}`\n  available resources: {}",
+                "`{claim_label}` proof step {step_index}: `unpack({})` is missing resource `{}`\n  available resources: {}",
                 describe_resource_clause(resource),
                 describe_resource(&abstract_resource, parameters, arguments),
                 describe_resources(state.resources().resources(), parameters, arguments)
@@ -1725,7 +1725,7 @@ fn open_represented_resource(
     for contained in representation.contains() {
         let contained = instantiate_resource_clause(contained, &substitutions).map_err(|message| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: could not instantiate `open({})`: {message}",
+                "`{claim_label}` proof step {step_index}: could not instantiate `unpack({})`: {message}",
                 describe_resource_clause(resource)
             ))
         })?;
@@ -1741,7 +1741,7 @@ fn open_represented_resource(
     }
     if let Some(duplicate) = state.resources().duplicate_named_resource() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `open({})` produced duplicate affine resource `{}`",
+            "`{claim_label}` proof step {step_index}: `unpack({})` produced duplicate affine resource `{}`",
             describe_resource_clause(resource),
             describe_resource(duplicate, parameters, arguments)
         )));
@@ -1750,7 +1750,7 @@ fn open_represented_resource(
     for fact in representation.facts() {
         let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: could not instantiate `open({})` fact: {message}",
+                    "`{claim_label}` proof step {step_index}: could not instantiate `unpack({})` fact: {message}",
                     describe_resource_clause(resource)
                 ))
             })?;
@@ -1767,7 +1767,7 @@ fn open_represented_resource(
         )
         .map_err(|message| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: could not lower `open({})` fact: {message}",
+                "`{claim_label}` proof step {step_index}: could not lower `unpack({})` fact: {message}",
                 describe_resource_clause(resource)
             ))
         })?;
@@ -1777,9 +1777,9 @@ fn open_represented_resource(
     Ok(state)
 }
 
-fn close_represented_resources_on_outcome(
+fn pack_represented_resources_on_outcome(
     resource_environment: &ResourceEnvironment,
-    resource_closes: &[ResourceClause],
+    resource_packs: &[ResourceClause],
     claim_label: &str,
     path_index: usize,
     path_facts: &[PathFact],
@@ -1792,11 +1792,11 @@ fn close_represented_resources_on_outcome(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
 ) -> Result<CFunctionOutcome, ClickError> {
-    for resource in resource_closes {
+    for resource in resource_packs {
         let definition = represented_resource_definition(
             resource_environment,
             resource,
-            "close",
+            "pack",
             claim_label,
             path_index,
         )?;
@@ -1809,7 +1809,7 @@ fn close_represented_resources_on_outcome(
         for fact in representation.facts() {
             let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` path {path_index}: could not instantiate `close({})` fact: {message}",
+                        "`{claim_label}` path {path_index}: could not instantiate `pack({})` fact: {message}",
                         describe_resource_clause(resource)
                     ))
                 })?;
@@ -1829,7 +1829,7 @@ fn close_represented_resources_on_outcome(
             )
             .map_err(|error| {
                 ClickError::new(format!(
-                    "`{claim_label}` path {path_index}: `close({})` fact failed: {}",
+                    "`{claim_label}` path {path_index}: `pack({})` fact failed: {}",
                     describe_resource_clause(resource),
                     error.message()
                 ))
@@ -1838,7 +1838,7 @@ fn close_represented_resources_on_outcome(
 
         let CFunctionOutcome::Return { value, state } = outcome else {
             return Err(ClickError::new(format!(
-                "`{claim_label}` path {path_index}: `close({})` requires a return outcome, got {}\n  path facts: {}",
+                "`{claim_label}` path {path_index}: `pack({})` requires a return outcome, got {}\n  path facts: {}",
                 describe_resource_clause(resource),
                 describe_function_outcome(&outcome, parameters, arguments),
                 describe_facts(path_facts)
@@ -1850,7 +1850,7 @@ fn close_represented_resources_on_outcome(
             let contained =
                 instantiate_resource_clause(contained, &substitutions).map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` path {path_index}: could not instantiate `close({})`: {message}",
+                        "`{claim_label}` path {path_index}: could not instantiate `pack({})`: {message}",
                         describe_resource_clause(resource)
                     ))
                 })?;
@@ -1862,7 +1862,7 @@ fn close_represented_resources_on_outcome(
                 .without_resource(&lowered, &assumptions)
                 .ok_or_else(|| {
                     ClickError::new(format!(
-                        "`{claim_label}` path {path_index}: `close({})` is missing contained resource `{}`\n  final resources: {}\n  path facts: {}",
+                        "`{claim_label}` path {path_index}: `pack({})` is missing contained resource `{}`\n  final resources: {}\n  path facts: {}",
                         describe_resource_clause(resource),
                         describe_resource(&lowered, parameters, arguments),
                         describe_resources(post_state.resources().resources(), parameters, arguments),
@@ -1881,7 +1881,7 @@ fn close_represented_resources_on_outcome(
         post_state = post_state.with_resource_context(resources);
         if let Some(duplicate) = post_state.resources().duplicate_named_resource() {
             return Err(ClickError::new(format!(
-                "`{claim_label}` path {path_index}: `close({})` produced duplicate affine resource `{}`",
+                "`{claim_label}` path {path_index}: `pack({})` produced duplicate affine resource `{}`",
                 describe_resource_clause(resource),
                 describe_resource(duplicate, parameters, arguments)
             )));
@@ -2237,7 +2237,7 @@ fn prove_claim_from_steps_execution(
     requirement_propositions: &[Proposition],
     unfolded_predicates: &[String],
     theorem_applications: &[(usize, TheoremApplication)],
-    resource_closes: &[ResourceClause],
+    resource_packs: &[ResourceClause],
     use_simp: bool,
     proof_steps: &[ProofStep],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
@@ -2286,9 +2286,9 @@ fn prove_claim_from_steps_execution(
                 "`proof steps` failed for `{claim_label}` path {path_index}: {message}"
             ))
         })?;
-        outcome = close_represented_resources_on_outcome(
+        outcome = pack_represented_resources_on_outcome(
             resource_environment,
-            resource_closes,
+            resource_packs,
             claim_label,
             path_index,
             path.facts(),

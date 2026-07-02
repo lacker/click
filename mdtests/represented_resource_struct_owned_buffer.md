@@ -30,15 +30,15 @@ int32 set_owned_first(struct owner* owner, int32 data[]) {
     requires owned_one_cell(owner, data);
 
     ensures owned_one_cell(owner, data) by {
-        open(owned_one_cell(owner, data));
+        unpack(owned_one_cell(owner, data));
         symbolic_execute();
-        close(owned_one_cell(owner, data));
+        pack(owned_one_cell(owner, data));
     }
 
     ensures result == 1 by {
-        open(owned_one_cell(owner, data));
+        unpack(owned_one_cell(owner, data));
         symbolic_execute();
-        close(owned_one_cell(owner, data));
+        pack(owned_one_cell(owner, data));
         simp();
     }
 }

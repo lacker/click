@@ -1,7 +1,7 @@
-# represented resource closed memory fact projection
+# represented resource packed memory fact projection
 
-This checks that holding a closed represented resource exposes its memory facts
-without opening the contained write permission.
+This checks that holding a packed represented resource exposes its memory facts
+without unpacking the contained write permission.
 
 ```c filename=noop_flag.c
 int32 noop_flag(int32* flag) {

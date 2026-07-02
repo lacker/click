@@ -488,7 +488,7 @@ fn parses_represented_resource_definition() {
 }
 
 #[test]
-fn parses_resource_open_and_close_steps() {
+fn parses_resource_unpack_and_pack_steps() {
     let source = r#"
             affine resource uncalled(flag: int32*);
 
@@ -498,9 +498,9 @@ fn parses_resource_open_and_close_steps() {
                 requires uncalled(flag);
 
                 ensures uncalled(flag) by {
-                    open(uncalled(flag));
+                    unpack(uncalled(flag));
                     symbolic_execute();
-                    close(uncalled(flag));
+                    pack(uncalled(flag));
                 }
             }
         "#;
@@ -511,13 +511,13 @@ fn parses_resource_open_and_close_steps() {
         ensure.proof().steps(),
         Some(
             [
-                ProofStep::OpenResource(ResourceClause::Named {
+                ProofStep::UnpackResource(ResourceClause::Named {
                     name: "uncalled".to_string(),
                     arguments: vec![current_var("flag")],
                     parameter_types: vec![C0Type::Int32Pointer],
                 }),
                 ProofStep::SymbolicExecute,
-                ProofStep::CloseResource(ResourceClause::Named {
+                ProofStep::PackResource(ResourceClause::Named {
                     name: "uncalled".to_string(),
                     arguments: vec![current_var("flag")],
                     parameter_types: vec![C0Type::Int32Pointer],

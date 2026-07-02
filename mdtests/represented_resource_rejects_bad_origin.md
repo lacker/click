@@ -1,8 +1,8 @@
 # represented resource rejects bad origin
 
-This checks that closing a represented resource proves its fact. The code
+This checks that packing a represented resource proves its fact. The code
 keeps `write(flag[0..1])`, but it never establishes `flag[0] == 0`, so it
-cannot close `uncalled(flag)`.
+cannot pack `uncalled(flag)`.
 
 ```c filename=init_bad.c
 int32 init_bad(int32 flag[]) {
@@ -23,11 +23,11 @@ int32 init_bad(int32 flag[]) {
 
     ensures uncalled(flag) by {
         symbolic_execute();
-        close(uncalled(flag));
+        pack(uncalled(flag));
     }
 }
 ```
 
 ```expect
-fail: `close(uncalled(flag))` fact failed
+fail: `pack(uncalled(flag))` fact failed
 ```

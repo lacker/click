@@ -34,9 +34,9 @@ int32 set_owned_first(struct owner* owner) {
     requires owned_buffer(owner);
 
     ensures result == 1 by {
-        open(owned_buffer(owner));
+        unpack(owned_buffer(owner));
         symbolic_execute();
-        close(owned_buffer(owner));
+        pack(owned_buffer(owner));
         simp();
     }
 }

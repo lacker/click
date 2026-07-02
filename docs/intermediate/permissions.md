@@ -212,27 +212,27 @@ affine resource uncalled(flag: int32*) {
 ```
 
 At function boundaries, `uncalled(flag)` is still an abstract affine token.
-Inside an explicit proof script, the token can be opened:
+Inside an explicit proof script, the token can be unpacked:
 
 ```click
 ensures result == 1 by {
-    open(uncalled(flag));
+    unpack(uncalled(flag));
     symbolic_execute();
-    close(called(flag));
+    pack(called(flag));
     simp();
 }
 ```
 
-Holding a closed represented resource exposes its facts, but not its contained
-resources. `open(uncalled(flag))` consumes the abstract token and adds the
-represented `write(flag[0..1])` resource for mutation. `close(called(flag))`
+Holding a packed represented resource exposes its facts, but not its contained
+resources. `unpack(uncalled(flag))` consumes the abstract token and adds the
+represented `write(flag[0..1])` resource for mutation. `pack(called(flag))`
 goes the other direction: it proves the representation's fact in the current
 state, consumes the represented resources, and adds the abstract `called(flag)`
 token. The end of the `by { ... }` block checks the overall claim.
 
 If a fact reads mutable memory, the representation must contain write
 permission covering that memory. This is what makes the fact stable while
-the resource is closed:
+the resource is packed:
 
 ```click
 affine resource uncalled(flag: int32*) {
@@ -266,15 +266,15 @@ int32 inspect_server(int32 fd, int32 state[]) {
     requires live_server(fd, state);
 
     ensures live_server(fd, state) by {
-        open(live_server(fd, state));
+        unpack(live_server(fd, state));
         symbolic_execute();
-        close(live_server(fd, state));
+        pack(live_server(fd, state));
     }
 
     ensures state[0] == 1 by {
-        open(live_server(fd, state));
+        unpack(live_server(fd, state));
         symbolic_execute();
-        close(live_server(fd, state));
+        pack(live_server(fd, state));
         simp();
     }
 }
@@ -287,7 +287,7 @@ or return resources.
 This first slice supports built-in `read(...)`, `write(...)`, and `free(...)`
 clauses plus exact-match affine named resources inside `contains`. Duplicate
 contained affine tokens are rejected, and represented-resource cycles are
-rejected. Resource opening is explicit; `auto` does not yet choose open/close
+rejected. Resource unpacking is explicit; `auto` does not yet choose unpack/pack
 steps on its own.
 
 The smallest ownership-shaped pattern is a represented resource that bundles
@@ -341,8 +341,8 @@ Implemented today:
 - an internal memory resource family boundary for entailment, consumption,
   access authorization, splitting, and joining,
 - exact-match affine named resources declared with `affine resource name(...)`,
-- represented affine named resources with explicit `open(resource)` and
-  `close(resource)` proof steps, including composition over other named affine
+- represented affine named resources with explicit `unpack(resource)` and
+  `pack(resource)` proof steps, including composition over other named affine
   resources,
 - `write(...)` implying read authority,
 - copyable read transfer,
@@ -356,7 +356,7 @@ Not implemented yet:
 - fractional permissions,
 - C heap allocation or allocation-sized deallocation semantics,
 - custom resource-family algebra,
-- implicit resource open/close search in `auto`,
+- implicit resource unpack/pack search in `auto`,
 - persistent named resources,
 - ownership predicates,
 - explicit resource algebra proof steps,

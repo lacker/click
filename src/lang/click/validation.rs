@@ -217,10 +217,10 @@ fn expand_declared_resource_proof_step(
     resource_parameters: &BTreeMap<String, Vec<C0Type>>,
 ) -> Result<ProofStep, ClickError> {
     match step {
-        ProofStep::OpenResource(resource) => Ok(ProofStep::OpenResource(
+        ProofStep::UnpackResource(resource) => Ok(ProofStep::UnpackResource(
             expand_declared_resource_clause(resource, resource_parameters)?,
         )),
-        ProofStep::CloseResource(resource) => Ok(ProofStep::CloseResource(
+        ProofStep::PackResource(resource) => Ok(ProofStep::PackResource(
             expand_declared_resource_clause(resource, resource_parameters)?,
         )),
         _ => Ok(step),
@@ -1776,8 +1776,8 @@ fn validate_pure_theorem_proof(theorem_name: &str, proof: &Proof) -> Result<(), 
                     | ProofStep::BoundedExecute
                     | ProofStep::LoopVc(_)
                     | ProofStep::Frame(_)
-                    | ProofStep::OpenResource(_)
-                    | ProofStep::CloseResource(_)
+                    | ProofStep::UnpackResource(_)
+                    | ProofStep::PackResource(_)
                     | ProofStep::Witness(_)
                     | ProofStep::Choose(_) => {
                         return Err(ClickError::new(format!(
@@ -1800,8 +1800,8 @@ pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
         ProofStep::Frame(_) => "frame",
         ProofStep::Unfold(_) => "unfold",
         ProofStep::ApplyTheorem(_) => "apply",
-        ProofStep::OpenResource(_) => "open",
-        ProofStep::CloseResource(_) => "close",
+        ProofStep::UnpackResource(_) => "unpack",
+        ProofStep::PackResource(_) => "pack",
         ProofStep::Witness(_) => "witness",
         ProofStep::Choose(_) => "choose",
         ProofStep::Simp => "simp",

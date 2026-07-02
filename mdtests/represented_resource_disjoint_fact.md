@@ -1,7 +1,7 @@
 # represented resource disjoint fact
 
 This checks that a represented resource can package a `disjoint(...)` fact and
-that opening the resource exposes that fact to effect reasoning.
+that unpacking the resource exposes that fact to effect reasoning.
 
 ```c filename=clobber_dst_packaged.c
 int32 clobber_dst_packaged(int32* dst, int32* src) {
@@ -25,15 +25,15 @@ int32 clobber_dst_packaged(int32* dst, int32* src) {
     requires separated_first_cells(dst, src);
 
     ensures separated_first_cells(dst, src) by {
-        open(separated_first_cells(dst, src));
+        unpack(separated_first_cells(dst, src));
         symbolic_execute();
-        close(separated_first_cells(dst, src));
+        pack(separated_first_cells(dst, src));
     }
 
     ensures source_unchanged: src[0] == old(src[0]) by {
-        open(separated_first_cells(dst, src));
+        unpack(separated_first_cells(dst, src));
         symbolic_execute();
-        close(separated_first_cells(dst, src));
+        pack(separated_first_cells(dst, src));
     }
 }
 ```

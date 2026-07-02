@@ -209,30 +209,30 @@ sequence:
   token while returning another.
 - `mdtests/callback_resource_pipe_rejects_spent_token.md`: the caller cannot
   reuse the callback token spent by the helper.
-- `mdtests/represented_resource_once_flag.md`: explicit `open(resource)` and
-  `close(resource)` steps verify an affine token represented by memory
+- `mdtests/represented_resource_once_flag.md`: explicit `unpack(resource)` and
+  `pack(resource)` steps verify an affine token represented by memory
   permission plus a fact.
 - `mdtests/represented_resource_composes_named.md`: a represented resource can
   bundle another named affine resource with memory permission and a fact.
 - `mdtests/represented_resource_two_arrays.md`: a represented resource can
   bundle permissions for multiple arrays.
 - `mdtests/represented_resource_disjoint_fact.md`: a represented resource can
-  package a `disjoint(...)` fact and expose it while opened.
-- `mdtests/represented_resource_closed_pure_fact_projection.md`: a closed
+  package a `disjoint(...)` fact and expose it while unpacked.
+- `mdtests/represented_resource_packed_pure_fact_projection.md`: a packed
   represented resource exposes pure facts while held.
-- `mdtests/represented_resource_closed_memory_fact_projection.md`: a closed
+- `mdtests/represented_resource_packed_memory_fact_projection.md`: a packed
   represented resource exposes memory facts while keeping contained permission
   hidden.
-- `mdtests/represented_resource_closed_disjoint_fact_projection.md`: a closed
+- `mdtests/represented_resource_packed_disjoint_fact_projection.md`: a packed
   represented resource exposes a packaged `disjoint(...)` fact.
-- `mdtests/represented_resource_closed_fact_hides_permissions.md`: closed facts
+- `mdtests/represented_resource_packed_fact_hides_permissions.md`: packed facts
   do not expose contained write permission.
 - `mdtests/represented_resource_struct_owned_buffer.md`: a conservative
   struct-owned-buffer pattern with explicit owner and buffer parameters.
 - `mdtests/represented_resource_owner_buffer_field_dependent.md`: the desired
   field-dependent owner-buffer shape, with the derived buffer permission and
   non-aliasing fact packaged inside the represented resource.
-- `mdtests/represented_resource_rejects_bad_origin.md`: closing a represented
+- `mdtests/represented_resource_rejects_bad_origin.md`: packing a represented
   resource fails when its fact has not been established.
 - `mdtests/represented_resource_rejects_double_call.md`: a represented affine
   token is still consumed linearly through a call summary.

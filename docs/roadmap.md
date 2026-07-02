@@ -114,9 +114,9 @@ Likely additions:
   has an explicit internal resource-family boundary for the memory family plus
   first exact-match affine named resources with declared argument types and
   duplicate-token rejection. It also has represented affine resources with
-  explicit proof-step `open(resource)` and `close(resource)` operations for
+  explicit proof-step `unpack(resource)` and `pack(resource)` operations for
   wrappers over built-in resources, other named affine resources, and resource
-  facts. Fractions, persistent named resources, implicit open/close search,
+  facts. Fractions, persistent named resources, implicit unpack/pack search,
   custom resource-family algebra, full heap deallocation semantics, and
   abstract ownership predicates are still future work.
 - First-class spec/model state:
@@ -171,7 +171,7 @@ Likely additions:
   theorem application exists for stdlib and current-file pure proposition
   theorems; next slices should cover better diagnostics, named conclusion
   selection, and eventually separate reusable resource-rule forms if repeated
-  open/close patterns justify them.
+  unpack/pack patterns justify them.
 - Explicit rewrite/calc steps:
   better than hiding all proof search inside `simp`.
 - Predicate/function namespaces that scale with modules.
