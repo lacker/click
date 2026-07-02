@@ -1669,7 +1669,7 @@ fn project_packed_resource_facts(
                 format!("could not instantiate resource `{name}` facts: {message}")
             })?;
 
-        let fact_memory = materialize_resource_representation_memory(
+        let (fact_memory, represented_resources) = instantiate_resource_representation_resources(
             name,
             representation,
             &substitutions,
@@ -1678,6 +1678,23 @@ fn project_packed_resource_facts(
             state.memory().clone(),
         )?;
         let fact_state = state.clone().with_memory(fact_memory);
+
+        if represented_resources.has_multiple_write_resources() {
+            let assumptions = assumptions_from_propositions(&propositions);
+            if let Some((left, right)) = represented_resources.overlapping_write_pair(&assumptions)
+            {
+                return Err(format!(
+                    "resource `{name}` representation has overlapping write resources `write({})` and `write({})`",
+                    describe_memory_range(left, parameters, arguments),
+                    describe_memory_range(right, parameters, arguments)
+                ));
+            }
+            for proposition in represented_resources.write_disjoint_propositions() {
+                if !propositions.contains(&proposition) {
+                    propositions.push(proposition);
+                }
+            }
+        }
 
         for fact in representation.facts() {
             let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
@@ -1709,8 +1726,28 @@ fn materialize_resource_representation_memory(
     substitutions: &BTreeMap<String, ContractExpression>,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    mut memory: CMemory,
+    memory: CMemory,
 ) -> Result<CMemory, String> {
+    let (memory, _) = instantiate_resource_representation_resources(
+        name,
+        representation,
+        substitutions,
+        parameters,
+        arguments,
+        memory,
+    )?;
+    Ok(memory)
+}
+
+fn instantiate_resource_representation_resources(
+    name: &str,
+    representation: &ResourceRepresentation,
+    substitutions: &BTreeMap<String, ContractExpression>,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    mut memory: CMemory,
+) -> Result<(CMemory, ResourceContext), String> {
+    let mut resources = ResourceContext::new();
     for contained in representation.contains() {
         let contained =
             instantiate_resource_clause(contained, substitutions).map_err(|message| {
@@ -1725,8 +1762,9 @@ fn materialize_resource_representation_memory(
                 )
             })?;
         memory = materialize_represented_resource_cells(memory, &contained, &lowered, parameters);
+        resources = resources.with_resource(lowered);
     }
-    Ok(memory)
+    Ok((memory, resources))
 }
 
 fn resource_value_substitutions(

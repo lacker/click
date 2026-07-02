@@ -232,6 +232,9 @@ sequence:
 - `mdtests/represented_resource_owner_buffer_field_dependent.md`: the desired
   field-dependent owner-buffer shape, with the derived buffer permission and
   non-aliasing fact packaged inside the represented resource.
+- `mdtests/represented_resource_owner_buffer_hidden_disjoint_projection.md`:
+  hidden contained writes imply packed-resource `disjoint(...)` facts without
+  exposing the hidden permissions.
 - `mdtests/represented_resource_rejects_bad_origin.md`: packing a represented
   resource fails when its fact has not been established.
 - `mdtests/represented_resource_rejects_double_call.md`: a represented affine

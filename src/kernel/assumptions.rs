@@ -1514,6 +1514,24 @@ impl Assumptions {
                 pointer,
                 byte_width,
             } => self.proves_memory_access(memory, pointer, *byte_width),
+            Proposition::CMemoryDisjoint {
+                left_base,
+                left_start,
+                left_end,
+                right_base,
+                right_start,
+                right_end,
+            } => {
+                self.prop_facts.contains(proposition)
+                    || self.proves_memory_disjoint(
+                        left_base,
+                        left_start,
+                        left_end,
+                        right_base,
+                        right_start,
+                        right_end,
+                    )
+            }
             _ => self.prop_facts.contains(proposition),
         };
         direct
@@ -2239,6 +2257,77 @@ impl Assumptions {
             && self.decide(&ConditionTerm::signed_less_than(index, end.clone())) == Some(true)
     }
 
+    pub(super) fn proves_memory_disjoint(
+        &self,
+        left_base: &Pointer,
+        left_start: &Bitvector32Term,
+        left_end: &Bitvector32Term,
+        right_base: &Pointer,
+        right_start: &Bitvector32Term,
+        right_end: &Bitvector32Term,
+    ) -> bool {
+        let left = CMemoryRange::new(left_base.clone(), left_start.clone(), left_end.clone());
+        let right = CMemoryRange::new(right_base.clone(), right_start.clone(), right_end.clone());
+        self.range_covered_by_disjoint_fact_ranges(&left, &right)
+            || self.range_covered_by_disjoint_fact_ranges(&right, &left)
+    }
+
+    fn range_covered_by_disjoint_fact_ranges(
+        &self,
+        target: &CMemoryRange,
+        other: &CMemoryRange,
+    ) -> bool {
+        let mut intervals = Vec::new();
+        for proposition in &self.prop_facts {
+            let Proposition::CMemoryDisjoint {
+                left_base,
+                left_start,
+                left_end,
+                right_base,
+                right_start,
+                right_end,
+            } = proposition
+            else {
+                continue;
+            };
+
+            if self.range_covered_by_fact_range(other, right_base, right_start, right_end) {
+                if let Some(interval) =
+                    self.fact_range_interval_on_target(target, left_base, left_start, left_end)
+                {
+                    intervals.push(interval);
+                }
+            }
+            if self.range_covered_by_fact_range(other, left_base, left_start, left_end) {
+                if let Some(interval) =
+                    self.fact_range_interval_on_target(target, right_base, right_start, right_end)
+                {
+                    intervals.push(interval);
+                }
+            }
+        }
+        range_intervals_cover_target(target, intervals)
+    }
+
+    fn fact_range_interval_on_target(
+        &self,
+        target: &CMemoryRange,
+        base: &Pointer,
+        start: &Bitvector32Term,
+        end: &Bitvector32Term,
+    ) -> Option<(i64, i64)> {
+        if target.base.block != base.block {
+            return None;
+        }
+        let base_delta = base.element_index_from_base(&target.base)?;
+        let start = Bitvector32Term::add(base_delta.clone(), start.clone());
+        let end = Bitvector32Term::add(base_delta, end.clone());
+        Some((
+            signed_bitvector_constant(&start)?,
+            signed_bitvector_constant(&end)?,
+        ))
+    }
+
     pub(super) fn pointer_access_in_range(
         &self,
         pointer: &Pointer,
@@ -2350,6 +2439,36 @@ impl Assumptions {
         )) == Some(true)
             && self.decide(&ConditionTerm::signed_less_equal(range_end, end.clone())) == Some(true)
     }
+}
+
+fn range_intervals_cover_target(target: &CMemoryRange, mut intervals: Vec<(i64, i64)>) -> bool {
+    let Some(target_start) = signed_bitvector_constant(target.start()) else {
+        return false;
+    };
+    let Some(target_end) = signed_bitvector_constant(target.end()) else {
+        return false;
+    };
+    if target_end <= target_start {
+        return true;
+    }
+
+    intervals.sort_unstable();
+    let mut covered_until = target_start;
+    for (start, end) in intervals {
+        let start = start.max(target_start);
+        let end = end.min(target_end);
+        if end <= covered_until {
+            continue;
+        }
+        if start > covered_until {
+            return false;
+        }
+        covered_until = end;
+        if covered_until >= target_end {
+            return true;
+        }
+    }
+    false
 }
 
 impl ProofObligation {

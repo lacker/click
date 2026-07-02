@@ -2440,6 +2440,70 @@ fn covering_disjoint_fact_handles_shifted_mutable_range() {
 }
 
 #[test]
+fn adjacent_disjoint_fact_ranges_cover_larger_disjoint_goal() {
+    let n_bits = Bitvector32Term::Variable(Variable(87));
+    let p_base = Pointer {
+        block: "arg-memory".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let p_plus_one = p_base.offset_by_int32_elements(Bitvector32Term::Constant(1));
+    let q_base = Pointer {
+        block: "arg-memory".to_string(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(88)), 4),
+    };
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::CMemoryDisjoint {
+            left_base: p_base.clone(),
+            left_start: Bitvector32Term::Constant(0),
+            left_end: Bitvector32Term::Constant(1),
+            right_base: q_base.clone(),
+            right_start: Bitvector32Term::Constant(0),
+            right_end: n_bits.clone(),
+        })
+        .assume_proposition(Proposition::CMemoryDisjoint {
+            left_base: p_plus_one,
+            left_start: Bitvector32Term::Constant(0),
+            left_end: Bitvector32Term::Constant(2),
+            right_base: q_base.clone(),
+            right_start: Bitvector32Term::Constant(0),
+            right_end: n_bits.clone(),
+        });
+
+    assert!(assumptions.proves(&Proposition::CMemoryDisjoint {
+        left_base: p_base,
+        left_start: Bitvector32Term::Constant(0),
+        left_end: Bitvector32Term::Constant(2),
+        right_base: q_base,
+        right_start: Bitvector32Term::Constant(0),
+        right_end: n_bits,
+    }));
+}
+
+#[test]
+fn symbolic_disjoint_fact_proves_itself() {
+    let n_bits = Bitvector32Term::Variable(Variable(89));
+    let p_base = Pointer {
+        block: "arg-memory".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let q_base = Pointer {
+        block: "arg-memory".to_string(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(90)), 4),
+    };
+    let fact = Proposition::CMemoryDisjoint {
+        left_base: p_base,
+        left_start: Bitvector32Term::Constant(0),
+        left_end: n_bits.clone(),
+        right_base: q_base,
+        right_start: Bitvector32Term::Constant(0),
+        right_end: n_bits,
+    };
+    let assumptions = Assumptions::new().assume_proposition(fact.clone());
+
+    assert!(assumptions.proves(&fact));
+}
+
+#[test]
 fn while_invariant_rule_proves_symbolic_loop_exit_fact() {
     let i = Variable(71);
     let n = Variable(72);

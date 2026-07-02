@@ -16,15 +16,20 @@ Last updated: 2026-07-02.
 - `scripts/mdbook-serve.sh --port 4000` successfully installed mdBook 0.4.52
   into `target/tools`, built the book, and served it at
   `http://localhost:4000`; the foreground serve process was then stopped.
-- Those checks passed after adding resource-packaged `disjoint(...)` facts,
-  load-validity discharge from `read(...)`, and a standalone represented
-  resource `fact disjoint(...)` mdtest.
+- Those checks most recently passed after adding visible-write `disjoint(...)`
+  projection, direct hidden-write `disjoint(...)` projection for packed
+  represented resources, rejection of provably overlapping visible writes,
+  packed represented-resource fact projection, improved represented-resource
+  fact diagnostics, and the related docs/mdtests.
 - Failed represented-resource fact framing diagnostics now keep the original
   one-line error and add notes about contained resources considered and scalar
   fact assumptions available.
 - Packed represented resources now project their `fact` clauses while the
   abstract resource token is held. Their contained resources/permissions remain
   hidden until an explicit `unpack(...)`.
+- `mdtests/represented_resource_owner_buffer_hidden_disjoint_projection.md`
+  records that hidden contained writes imply packed-resource `disjoint(...)`
+  facts without exposing hidden permissions.
 
 ## Current Design Thread
 
@@ -89,8 +94,9 @@ Click currently has:
   mdtest coverage in `mdtests/represented_resource_disjoint_fact.md` as well as
   the owner-buffer pressure test.
 - Visible `write(...)` resources imply `disjoint(...)` facts for their ranges;
-  `read(...)` resources do not. Packed resource permissions remain hidden unless
-  the represented resource declares explicit facts.
+  direct hidden contained `write(...)` resources do the same while a represented
+  resource is packed; `read(...)` resources do not imply disjointness. Packed
+  resource permissions remain hidden.
 - Provably overlapping visible `write(...)` resources are rejected.
 - Holding a covering `read(...)` or `write(...)` resource discharges external
   load validity obligations for the covered access. Holding `write(...)`
@@ -125,20 +131,21 @@ Current support includes:
 - Struct field validity/read support in the memory model.
 - Basic represented-resource examples involving structs.
 
-The important pressure-test example is:
+The important pressure-test examples are:
 
 - `mdtests/represented_resource_owner_buffer_field_dependent.md`
+- `mdtests/represented_resource_owner_buffer_hidden_disjoint_projection.md`
 
-That example is intentionally the desired ergonomic shape and is currently
-passing. It packages the needed non-aliasing fact between the owner fields and
-the derived buffer as a `fact disjoint(...)` clause.
+These examples exercise the desired ergonomic shape and are currently passing.
+The field-dependent resource can package explicit shape facts, and its hidden
+contained writes now expose derived packed-resource non-aliasing facts.
 
 ## Known Open Design Issue
 
-The owner-buffer pressure test now works for the explicit-fact design: a
-represented resource can contain permissions derived from `owner->data` and
-`owner->len`, and can package an explicit `disjoint(...)` fact for the derived
-buffer.
+The owner-buffer pressure tests now work with both explicit facts and direct
+hidden-write-derived disjointness: a represented resource can contain
+permissions derived from `owner->data` and `owner->len`, and a packed instance
+exposes derived non-aliasing facts for those direct contained writes.
 
 The broader open design issue is how much of this should remain explicit and
 how much should become derived from memory-resource/allocation structure.
@@ -157,25 +164,26 @@ The unresolved part is no longer basic syntax for non-aliasing facts, whether
 packed resources expose facts, or whether visible writes imply disjointness.
 Remaining design questions include:
 
-- Should hidden represented-resource footprints expose derived non-aliasing
-  facts, or should those remain ordinary explicit `fact disjoint(...)` clauses?
+- How broad should hidden represented-resource footprint projection be beyond
+  direct contained writes, for example nested represented resources or allocation
+  provenance?
 - How much should `read` or `write` imply about stability?
 - What allocation/provenance structure, if any, should justify inferred
   non-aliasing facts?
 
-This is still the next real design frontier, but the first explicit-fact slice
-is implemented.
+This is still the next real design frontier, but the explicit-fact slice,
+visible-write-derived disjointness, and direct hidden-write-derived disjointness
+are implemented.
 
 ## Useful Next Steps
 
-The owner-buffer example now passes, `read(...)`/`write(...)` now both carry
-the validity needed for covered external memory accesses, and visible
-`write(...)` resources now imply disjointness. Good next slices:
+The owner-buffer examples now pass, `read(...)`/`write(...)` now both carry the
+validity needed for covered external memory accesses, and visible plus direct
+hidden contained `write(...)` resources now imply disjointness. Good next
+slices:
 
-1. Add a focused expected-fail owner-buffer mdtest showing the ergonomic goal
-   without an explicit `fact disjoint(...)` for a hidden represented-resource
-   footprint, then decide whether hidden contained writes should imply facts
-   while packed.
+1. Decide how far hidden footprint fact projection should go beyond direct
+   contained writes, especially for nested represented resources.
 2. Decide what allocation/provenance evidence should prove freshness for future
    allocation resources.
 3. Consider a scoped unpack/pack proof step only if examples show explicit

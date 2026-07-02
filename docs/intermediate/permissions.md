@@ -297,8 +297,9 @@ can contain `write(dst[0..1])` and `read(src[0..1])`, while
 explicitly passed buffer pointer. In this conservative shape, the resource's
 parameters name the lower-level memory objects directly. More convenient
 field-dependent representations can derive a contained buffer from
-`owner->data` and package a `disjoint(...)` fact showing that the buffer does
-not overlap the owner fields.
+`owner->data`. The packed resource exposes derived `disjoint(...)` facts from
+its hidden contained writes, while explicit `fact` clauses can carry additional
+shape facts such as length and capacity.
 
 ## Split And Rejoin
 
@@ -347,6 +348,8 @@ Implemented today:
 - `write(...)` implying read authority,
 - visible `write(...)` resources imply `disjoint(...)` facts for their ranges,
   and provably overlapping visible writes are rejected,
+- hidden contained `write(...)` resources in packed represented resources imply
+  `disjoint(...)` facts without exposing the hidden permissions,
 - copyable read transfer,
 - linear write transfer through function summaries,
 - linear free transfer that removes overlapping access resources when consumed,
