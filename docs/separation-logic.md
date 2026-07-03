@@ -12,25 +12,28 @@ explicit algebraic model.
 
 ## Current Resource Cases
 
-The Click surface currently has memory clauses and named-resource clauses:
+The Click surface currently has memory clauses and declared-resource clauses:
 
 ```text
 read(range)
 write(range)
-named(name, arguments)
+name(arguments)
 ```
 
-The kernel resource state now represents memory clauses through a subject plus
-an access mode:
+The kernel resource state represents resources through a subject plus an access
+mode:
 
 ```text
 view(memory(range))  // surface read(range)
 own(memory(range))   // surface write(range)
-named(name, arguments)
+view(token(name, arguments))
+own(token(name, arguments))
+view(composite(name, arguments))
+own(composite(name, arguments))
 ```
 
-Composite resources are not a separate kernel resource case. A composite
-resource is a named resource with a body in the Click resource environment:
+Bodyless declarations are token resources. Declarations with a body are
+composite resources:
 
 ```click
 resource owner_buffer(owner: struct owner*) {
@@ -40,7 +43,8 @@ resource owner_buffer(owner: struct owner*) {
 }
 ```
 
-When `owner_buffer(owner)` is packed, the resource context holds a named token.
+When `owner_buffer(owner)` is packed, the resource context holds an owned
+composite subject.
 Its contained resources stay hidden until `unpack(owner_buffer(owner))`. Its
 declared facts, and some facts derived from the contained resources, may be
 observed without unpacking.
@@ -49,12 +53,11 @@ So the current surface categories are better described as:
 
 - memory read resources,
 - memory write resources,
-- named resources, some of which are composite resources.
+- declared token resources,
+- composite resources.
 
-Internally, the memory cases are `View(Memory(...))` and `Own(Memory(...))`.
-The kernel stores a packed composite resource as a named token today; the
-composite body is consulted by proof-layer `pack`, `unpack`, and `observe`
-operations.
+Internally, these are `View(subject)` and `Own(subject)`. The composite body is
+consulted by proof-layer `pack`, `unpack`, and `observe` operations.
 
 ## Resource State
 
@@ -221,28 +224,29 @@ Read stability is a memory-model promise, not a permission to mutate. A
 `read(...)` resource allows code to rely on the current cell value across
 ordinary repeated loads, but it does not allow stores.
 
-## Named Resource Rules
+## Token And Composite Rules
 
-Plain named resources currently behave as strict linear tokens:
+Plain token resources currently behave as strict linear tokens:
 
 - exact-match entailment only,
 - no splitting or joining,
-- duplicate identical named tokens are invalid,
-- consuming a named resource removes the token,
-- returning the same named resource adds the token back.
+- duplicate identical owned token resources are invalid,
+- consuming a token resource removes the token,
+- returning the same token resource adds the token back.
 
 Composite resources add a definitional layer:
 
-- `unpack(resource)` consumes the packed named token and exposes its contained
+- `unpack(resource)` consumes the owned composite resource and exposes its contained
   resources.
 - `pack(resource)` proves the declared facts, consumes the contained resources,
-  and returns the packed named token.
+  and returns the owned composite resource.
 - `observe(resource)` projects observable facts without exposing contained
   resources.
 
 In the algebraic model, a composite resource is not a new primitive kind of
-resource. It is a named token with laws connecting the packed token to a
-composite body made from other resource assertions and facts.
+assertion. It is a declared resource whose subject has laws connecting the
+owned composite resource to a composite body made from other resource
+assertions and facts. Its core is the viewed composite resource.
 
 ## Refactor Direction
 
@@ -251,7 +255,7 @@ still mostly hardcoded:
 
 - `ResourceContext` is a list of concrete tokens rather than an explicit `M`.
 - `ResourceContext::validity_error` is the beginning of an explicit validity
-  check, currently covering duplicate named resources and overlapping writes.
+  check, currently covering duplicate token resources and overlapping writes.
 - `ResourceContext::try_compose_with_resource(s)(...)` is the beginning of an
   explicit checked composition operation. It validates the raw combined context
   before normalizing it, so invalid combinations cannot merge away before being
@@ -260,10 +264,9 @@ still mostly hardcoded:
   It should stay limited to tests and assumption-free lowering/materialization
   paths that build provisional contexts before validity can be checked.
 - `CResource::core()` is the beginning of an explicit core operation, currently
-  mapping `own(memory(range))` to `view(memory(range))` and strict named tokens
-  to empty core.
-- Memory and named resources still use separate entailment, consume, and
-  combine functions.
+  mapping `own(subject)` and `view(subject)` to `view(subject)`.
+- Memory, token, and composite resources still use family-specific entailment,
+  consume, and combine functions.
 - `ResourceContext::observable_facts(...)` is the beginning of an explicit
   observable-facts operation, currently covering owned-memory disjointness.
   Projection paths call it unconditionally so observable-facts projection also
@@ -279,7 +282,7 @@ explicit:
 1. Introduce names in code and docs that match the model: resource state,
    compose, valid, core, and observable facts.
 2. Treat the current memory rules as the first resource-family implementation.
-3. Keep composite resources as named resources with composite-body laws.
+3. Keep composite resources as declared resources with composite-body laws.
 4. Move hidden disjointness reasoning toward "facts derived from valid
    composition" instead of special cases tied to a particular projection path.
 5. Avoid adding new resource features until they can be expressed through this

@@ -56,12 +56,8 @@ fn memory_resource_core_is_read_permission() {
         Some(read_resource(base, 0, 1))
     );
     assert_eq!(
-        CResource::Named {
-            name: "token".to_string(),
-            arguments: vec![int32(0)]
-        }
-        .core(),
-        None
+        CResource::own_token("token".to_string(), vec![int32(0)]).core(),
+        Some(CResource::view_token("token".to_string(), vec![int32(0)]))
     );
 }
 

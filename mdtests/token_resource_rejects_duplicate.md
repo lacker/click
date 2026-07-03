@@ -1,6 +1,6 @@
 # resource rejects duplicate token clauses
 
-This checks that an named resource is not silently duplicated by writing
+This checks that a token resource is not silently duplicated by writing
 the same resource requirement twice.
 
 ```c filename=use_once.c

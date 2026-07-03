@@ -471,7 +471,9 @@ fn parses_composite_resource_definition() {
     assert_eq!(
         composite_body.contains(),
         &[
-            ResourceClause::Named {
+            ResourceClause::Declared {
+                access: ResourceAccess::Own,
+                kind: ResourceKind::Token,
                 name: "socket_open".to_string(),
                 arguments: vec![current_int(7)],
                 parameter_types: vec![C0Type::Int32],
@@ -490,7 +492,9 @@ fn parses_composite_resource_definition() {
 #[test]
 fn parses_resource_observe_unpack_and_pack_steps() {
     let source = r#"
-            resource uncalled(flag: int32*);
+            resource uncalled(flag: int32*) {
+                owns flag[0..1];
+            }
 
             verifying "identity.c";
 
@@ -512,18 +516,24 @@ fn parses_resource_observe_unpack_and_pack_steps() {
         ensure.proof().steps(),
         Some(
             [
-                ProofStep::ObserveResource(ResourceClause::Named {
+                ProofStep::ObserveResource(ResourceClause::Declared {
+                    access: ResourceAccess::View,
+                    kind: ResourceKind::Composite,
                     name: "uncalled".to_string(),
                     arguments: vec![current_var("flag")],
                     parameter_types: vec![C0Type::Int32Pointer],
                 }),
-                ProofStep::UnpackResource(ResourceClause::Named {
+                ProofStep::UnpackResource(ResourceClause::Declared {
+                    access: ResourceAccess::Own,
+                    kind: ResourceKind::Composite,
                     name: "uncalled".to_string(),
                     arguments: vec![current_var("flag")],
                     parameter_types: vec![C0Type::Int32Pointer],
                 }),
                 ProofStep::SymbolicExecute,
-                ProofStep::PackResource(ResourceClause::Named {
+                ProofStep::PackResource(ResourceClause::Declared {
+                    access: ResourceAccess::Own,
+                    kind: ResourceKind::Composite,
                     name: "uncalled".to_string(),
                     arguments: vec![current_var("flag")],
                     parameter_types: vec![C0Type::Int32Pointer],
@@ -531,6 +541,76 @@ fn parses_resource_observe_unpack_and_pack_steps() {
             ]
             .as_slice()
         )
+    );
+}
+
+#[test]
+fn parses_resource_verb_function_clauses() {
+    let source = r#"
+            resource socket_open(fd: int32);
+
+            verifying "identity.c";
+
+            int32 identity(int32* flag) {
+                owns flag[0..1];
+                views socket_open(7);
+                consumes socket_open(8);
+                produces socket_open(9);
+            }
+        "#;
+    let file = parse(source).expect("resource verb clauses should parse");
+    let function = &file.function_blocks()[0];
+
+    assert_eq!(
+        function.requires(),
+        &[
+            Requirement::Resource(ResourceClause::Write(ContractSegment {
+                state: ContractSegmentState::Current,
+                base: CExpression::Variable("flag".to_string()),
+                start: CExpression::Value(int32(0)),
+                end: CExpression::Value(int32(1)),
+            })),
+            Requirement::Resource(ResourceClause::Declared {
+                access: ResourceAccess::View,
+                kind: ResourceKind::Token,
+                name: "socket_open".to_string(),
+                arguments: vec![current_int(7)],
+                parameter_types: vec![C0Type::Int32],
+            }),
+            Requirement::Resource(ResourceClause::Declared {
+                access: ResourceAccess::Own,
+                kind: ResourceKind::Token,
+                name: "socket_open".to_string(),
+                arguments: vec![current_int(8)],
+                parameter_types: vec![C0Type::Int32],
+            }),
+        ]
+    );
+    assert_eq!(
+        function.ensures(),
+        &[
+            EnsureClause {
+                name: None,
+                ensure: Ensure::Resource(ResourceClause::Write(ContractSegment {
+                    state: ContractSegmentState::Current,
+                    base: CExpression::Variable("flag".to_string()),
+                    start: CExpression::Value(int32(0)),
+                    end: CExpression::Value(int32(1)),
+                })),
+                proof: Proof::Tactic(Tactic::Auto),
+            },
+            EnsureClause {
+                name: None,
+                ensure: Ensure::Resource(ResourceClause::Declared {
+                    access: ResourceAccess::Own,
+                    kind: ResourceKind::Token,
+                    name: "socket_open".to_string(),
+                    arguments: vec![current_int(9)],
+                    parameter_types: vec![C0Type::Int32],
+                }),
+                proof: Proof::Tactic(Tactic::Auto),
+            },
+        ]
     );
 }
 

@@ -1,7 +1,7 @@
 # composite resource rejects duplicate contained token
 
-This checks that a composite resource cannot contain the same named
-resource token twice.
+This checks that a composite resource cannot contain the same token resource
+twice.
 
 ```c filename=zero.c
 int32 zero(int32 fd) {

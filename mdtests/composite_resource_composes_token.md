@@ -1,6 +1,6 @@
-# composite resource composes named resources
+# composite resource composes token resources
 
-This checks that a composite resource can bundle another named resource with
+This checks that a composite resource can bundle another token resource with
 memory permission and a fact.
 
 ```c filename=init_server.c

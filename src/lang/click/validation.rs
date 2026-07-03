@@ -2,6 +2,12 @@ use super::diagnostics::*;
 use super::proof::{pure_theorem_array_refs, pure_theorem_parameter_values};
 use super::*;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DeclaredResourceInfo {
+    parameter_types: Vec<C0Type>,
+    kind: ResourceKind,
+}
+
 fn standard_library_definitions() -> Result<
     (
         Vec<PredicateDefinition>,
@@ -28,17 +34,24 @@ fn standard_library_definitions() -> Result<
 pub(super) fn expand_declared_resource_clauses(
     mut file: ClickFile,
 ) -> Result<ClickFile, ClickError> {
-    let resource_parameters = file
+    let resource_definitions = file
         .resource_definitions()
         .iter()
         .map(|definition| {
             (
                 definition.name().to_string(),
-                definition
-                    .parameters()
-                    .iter()
-                    .map(FunctionParameter::c_type)
-                    .collect::<Vec<_>>(),
+                DeclaredResourceInfo {
+                    parameter_types: definition
+                        .parameters()
+                        .iter()
+                        .map(FunctionParameter::c_type)
+                        .collect::<Vec<_>>(),
+                    kind: if definition.composite_body().is_some() {
+                        ResourceKind::Composite
+                    } else {
+                        ResourceKind::Token
+                    },
+                },
             )
         })
         .collect::<BTreeMap<_, _>>();
@@ -46,7 +59,7 @@ pub(super) fn expand_declared_resource_clauses(
     file.resource_definitions = file
         .resource_definitions
         .drain(..)
-        .map(|definition| expand_declared_resource_definition(definition, &resource_parameters))
+        .map(|definition| expand_declared_resource_definition(definition, &resource_definitions))
         .collect::<Result<Vec<_>, _>>()?;
 
     for function in &mut file.function_blocks {
@@ -54,23 +67,23 @@ pub(super) fn expand_declared_resource_clauses(
             .requires
             .drain(..)
             .map(|requirement| {
-                expand_declared_resource_requirement(requirement, &resource_parameters)
+                expand_declared_resource_requirement(requirement, &resource_definitions)
             })
             .collect::<Result<Vec<_>, _>>()?;
         function.ensures = function
             .ensures
             .drain(..)
-            .map(|clause| expand_declared_resource_ensure_clause(clause, &resource_parameters))
+            .map(|clause| expand_declared_resource_ensure_clause(clause, &resource_definitions))
             .collect::<Result<Vec<_>, _>>()?;
         function.effects = function
             .effects
             .drain(..)
-            .map(|clause| expand_declared_resource_effect_clause(clause, &resource_parameters))
+            .map(|clause| expand_declared_resource_effect_clause(clause, &resource_definitions))
             .collect::<Result<Vec<_>, _>>()?;
         function.structural_clauses = function
             .structural_clauses
             .drain(..)
-            .map(|clause| expand_declared_resource_structural_clause(clause, &resource_parameters))
+            .map(|clause| expand_declared_resource_structural_clause(clause, &resource_definitions))
             .collect::<Result<Vec<_>, _>>()?;
     }
 
@@ -79,13 +92,13 @@ pub(super) fn expand_declared_resource_clauses(
             .requires
             .drain(..)
             .map(|requirement| {
-                expand_declared_resource_requirement(requirement, &resource_parameters)
+                expand_declared_resource_requirement(requirement, &resource_definitions)
             })
             .collect::<Result<Vec<_>, _>>()?;
         theorem.ensures = theorem
             .ensures
             .drain(..)
-            .map(|clause| expand_declared_resource_ensure_clause(clause, &resource_parameters))
+            .map(|clause| expand_declared_resource_ensure_clause(clause, &resource_definitions))
             .collect::<Result<Vec<_>, _>>()?;
     }
 
@@ -94,12 +107,12 @@ pub(super) fn expand_declared_resource_clauses(
 
 fn expand_declared_resource_definition(
     mut definition: ResourceDefinition,
-    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<ResourceDefinition, ClickError> {
     if let Some(composite_body) = definition.composite_body {
         definition.composite_body = Some(expand_declared_composite_resource_body(
             composite_body,
-            resource_parameters,
+            resource_definitions,
         )?);
     }
     Ok(definition)
@@ -107,13 +120,13 @@ fn expand_declared_resource_definition(
 
 fn expand_declared_composite_resource_body(
     composite_body: CompositeResourceBody,
-    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<CompositeResourceBody, ClickError> {
     Ok(CompositeResourceBody {
         contains: composite_body
             .contains
             .into_iter()
-            .map(|resource| expand_declared_resource_clause(resource, resource_parameters))
+            .map(|resource| expand_declared_resource_clause(resource, resource_definitions))
             .collect::<Result<Vec<_>, _>>()?,
         facts: composite_body.facts,
     })
@@ -121,92 +134,100 @@ fn expand_declared_composite_resource_body(
 
 fn expand_declared_resource_requirement(
     requirement: Requirement,
-    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<Requirement, ClickError> {
     match requirement {
         Requirement::Labeled { label, requirement } => Ok(Requirement::Labeled {
             label,
             requirement: Box::new(expand_declared_resource_requirement(
                 *requirement,
-                resource_parameters,
+                resource_definitions,
             )?),
         }),
         Requirement::Proposition(ClickProposition::PredicateCall { name, arguments })
-            if resource_parameters.contains_key(&name) =>
+            if resource_definitions.contains_key(&name) =>
         {
-            let parameter_types =
-                declared_resource_parameter_types(&name, arguments.len(), resource_parameters)?;
-            Ok(Requirement::Resource(ResourceClause::Named {
+            let info = declared_resource_info(&name, arguments.len(), resource_definitions)?;
+            Ok(Requirement::Resource(ResourceClause::Declared {
+                access: ResourceAccess::Own,
+                kind: info.kind,
                 name,
                 arguments,
-                parameter_types,
+                parameter_types: info.parameter_types,
             }))
         }
+        Requirement::Resource(resource) => Ok(Requirement::Resource(
+            expand_declared_resource_clause(resource, resource_definitions)?,
+        )),
         _ => Ok(requirement),
     }
 }
 
 fn expand_declared_resource_ensure_clause(
     mut clause: EnsureClause,
-    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<EnsureClause, ClickError> {
-    if let Ensure::Proposition(ClickProposition::PredicateCall { name, arguments }) = clause.ensure
-    {
-        if resource_parameters.contains_key(&name) {
-            let parameter_types =
-                declared_resource_parameter_types(&name, arguments.len(), resource_parameters)?;
-            clause.ensure = Ensure::Resource(ResourceClause::Named {
+    clause.ensure = match clause.ensure {
+        Ensure::Proposition(ClickProposition::PredicateCall { name, arguments })
+            if resource_definitions.contains_key(&name) =>
+        {
+            let info = declared_resource_info(&name, arguments.len(), resource_definitions)?;
+            Ensure::Resource(ResourceClause::Declared {
+                access: ResourceAccess::Own,
+                kind: info.kind,
                 name,
                 arguments,
-                parameter_types,
-            });
-        } else {
-            clause.ensure =
-                Ensure::Proposition(ClickProposition::PredicateCall { name, arguments });
+                parameter_types: info.parameter_types,
+            })
         }
-    }
-    clause.proof = expand_declared_resource_proof(clause.proof, resource_parameters)?;
+        Ensure::Proposition(proposition) => Ensure::Proposition(proposition),
+        Ensure::Resource(resource) => Ensure::Resource(expand_declared_resource_clause(
+            resource,
+            resource_definitions,
+        )?),
+    };
+    clause.proof = expand_declared_resource_proof(clause.proof, resource_definitions)?;
     Ok(clause)
 }
 
 fn expand_declared_resource_effect_clause(
     mut clause: EffectClause,
-    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<EffectClause, ClickError> {
-    clause.proof = expand_declared_resource_proof(clause.proof, resource_parameters)?;
+    clause.proof = expand_declared_resource_proof(clause.proof, resource_definitions)?;
     Ok(clause)
 }
 
 fn expand_declared_resource_structural_clause(
     mut clause: StructuralClause,
-    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<StructuralClause, ClickError> {
     clause.items = clause
         .items
         .into_iter()
-        .map(|item| expand_declared_resource_structural_item(item, resource_parameters))
+        .map(|item| expand_declared_resource_structural_item(item, resource_definitions))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(clause)
 }
 
 fn expand_declared_resource_structural_item(
     mut item: StructuralItem,
-    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<StructuralItem, ClickError> {
-    item.proof = expand_declared_resource_proof(item.proof, resource_parameters)?;
+    item.proof = expand_declared_resource_proof(item.proof, resource_definitions)?;
     Ok(item)
 }
 
 fn expand_declared_resource_proof(
     proof: Proof,
-    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<Proof, ClickError> {
     match proof {
         Proof::Tactic(_) => Ok(proof),
         Proof::Steps(steps) => Ok(Proof::Steps(
             steps
                 .into_iter()
-                .map(|step| expand_declared_resource_proof_step(step, resource_parameters))
+                .map(|step| expand_declared_resource_proof_step(step, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
     }
@@ -214,17 +235,17 @@ fn expand_declared_resource_proof(
 
 fn expand_declared_resource_proof_step(
     step: ProofStep,
-    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<ProofStep, ClickError> {
     match step {
         ProofStep::UnpackResource(resource) => Ok(ProofStep::UnpackResource(
-            expand_declared_resource_clause(resource, resource_parameters)?,
+            expand_declared_resource_clause(resource, resource_definitions)?,
         )),
         ProofStep::ObserveResource(resource) => Ok(ProofStep::ObserveResource(
-            expand_declared_resource_clause(resource, resource_parameters)?,
+            expand_declared_resource_clause(resource, resource_definitions)?,
         )),
         ProofStep::PackResource(resource) => Ok(ProofStep::PackResource(
-            expand_declared_resource_clause(resource, resource_parameters)?,
+            expand_declared_resource_clause(resource, resource_definitions)?,
         )),
         _ => Ok(step),
     }
@@ -232,41 +253,44 @@ fn expand_declared_resource_proof_step(
 
 fn expand_declared_resource_clause(
     resource: ResourceClause,
-    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<ResourceClause, ClickError> {
     match resource {
-        ResourceClause::Named {
+        ResourceClause::Declared {
+            access,
+            kind: _,
             name,
             arguments,
             parameter_types,
         } if parameter_types.is_empty() => {
-            let parameter_types =
-                declared_resource_parameter_types(&name, arguments.len(), resource_parameters)?;
-            Ok(ResourceClause::Named {
+            let info = declared_resource_info(&name, arguments.len(), resource_definitions)?;
+            Ok(ResourceClause::Declared {
+                access,
+                kind: info.kind,
                 name,
                 arguments,
-                parameter_types,
+                parameter_types: info.parameter_types,
             })
         }
         resource => Ok(resource),
     }
 }
 
-fn declared_resource_parameter_types(
+fn declared_resource_info(
     name: &str,
     actual: usize,
-    resource_parameters: &BTreeMap<String, Vec<C0Type>>,
-) -> Result<Vec<C0Type>, ClickError> {
-    let Some(parameters) = resource_parameters.get(name) else {
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+) -> Result<DeclaredResourceInfo, ClickError> {
+    let Some(info) = resource_definitions.get(name) else {
         return Err(ClickError::new(format!("unknown resource `{name}`")));
     };
-    let expected = parameters.len();
+    let expected = info.parameter_types.len();
     if expected != actual {
         return Err(ClickError::new(format!(
             "resource `{name}` expects {expected} argument(s), got {actual}"
         )));
     }
-    Ok(parameters.clone())
+    Ok(info.clone())
 }
 
 pub(super) fn combined_predicate_definitions(
@@ -514,7 +538,7 @@ pub(super) fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickEr
         let ensures_type_environment =
             function_signature_type_environment(function.signature(), true);
 
-        reject_duplicate_named_resource_clauses(
+        reject_duplicate_owned_declared_resource_clauses(
             function
                 .requires()
                 .iter()
@@ -524,7 +548,7 @@ pub(super) fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickEr
                 }),
             &format!("requires clauses in `{}`", function.signature().name()),
         )?;
-        reject_duplicate_named_resource_clauses(
+        reject_duplicate_owned_declared_resource_clauses(
             function
                 .ensures()
                 .iter()
@@ -692,7 +716,7 @@ fn validate_resource_definition(
         .iter()
         .map(|parameter| (parameter.name().to_string(), parameter.c_type()))
         .collect::<BTreeMap<_, _>>();
-    reject_duplicate_named_resource_clauses(
+    reject_duplicate_owned_declared_resource_clauses(
         composite_body.contains(),
         &format!("composite resource `{}` body", definition.name()),
     )?;
@@ -1648,8 +1672,13 @@ fn reject_composite_resource_cycles(definitions: &[ResourceDefinition]) -> Resul
                 .into_iter()
                 .flat_map(CompositeResourceBody::contains)
                 .filter_map(|resource| match resource {
-                    ResourceClause::Named { name, .. } => Some(name.clone()),
+                    ResourceClause::Declared {
+                        kind: ResourceKind::Composite,
+                        name,
+                        ..
+                    } => Some(name.clone()),
                     ResourceClause::Read(_) | ResourceClause::Write(_) => None,
+                    ResourceClause::Declared { .. } => None,
                 })
                 .collect::<Vec<_>>();
             (definition.name().to_string(), dependencies)
@@ -1809,13 +1838,19 @@ pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
     }
 }
 
-fn reject_duplicate_named_resource_clauses<'a>(
+fn reject_duplicate_owned_declared_resource_clauses<'a>(
     resources: impl IntoIterator<Item = &'a ResourceClause>,
     context: &str,
 ) -> Result<(), ClickError> {
     let mut seen = Vec::new();
     for resource in resources {
-        if !matches!(resource, ResourceClause::Named { .. }) {
+        if !matches!(
+            resource,
+            ResourceClause::Declared {
+                access: ResourceAccess::Own,
+                ..
+            }
+        ) {
             continue;
         }
         if seen.iter().any(|candidate| *candidate == resource) {
@@ -1843,16 +1878,25 @@ pub(super) fn describe_resource_clause(resource: &ResourceClause) -> String {
             describe_c_expression(&segment.start),
             describe_c_expression(&segment.end)
         ),
-        ResourceClause::Named {
-            name, arguments, ..
-        } => format!(
-            "{name}({})",
-            arguments
-                .iter()
-                .map(describe_contract_expression)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        ResourceClause::Declared {
+            access,
+            name,
+            arguments,
+            ..
+        } => {
+            let resource = format!(
+                "{name}({})",
+                arguments
+                    .iter()
+                    .map(describe_contract_expression)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            match access {
+                ResourceAccess::Own => resource,
+                ResourceAccess::View => format!("view {resource}"),
+            }
+        }
     }
 }
 
@@ -2190,10 +2234,11 @@ fn validate_resource_clause(
 ) -> Result<(), ClickError> {
     match resource {
         ResourceClause::Read(_) | ResourceClause::Write(_) => Ok(()),
-        ResourceClause::Named {
+        ResourceClause::Declared {
             name,
             arguments,
             parameter_types,
+            ..
         } => {
             let Some(arity) = resources.get(name) else {
                 return Err(ClickError::new(format!(

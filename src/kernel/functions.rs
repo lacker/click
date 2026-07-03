@@ -474,7 +474,7 @@ fn evaluate_function_resource_context(
 
 fn resource_context_runtime_error(error: ResourceContextValidityError) -> CRuntimeError {
     match error {
-        ResourceContextValidityError::DuplicateNamedResource(resource) => {
+        ResourceContextValidityError::DuplicateOwnedResource(resource) => {
             CRuntimeError::DuplicateResource { resource }
         }
         ResourceContextValidityError::OverlappingWriteResources { left, right } => {
@@ -515,46 +515,91 @@ fn evaluate_function_resource_spec(
                 segment.end,
             ))))
         }
-        CResourceSpec::Named {
+        CResourceSpec::Composite {
+            access,
             name,
             arguments,
             parameter_types,
-        } => {
-            if arguments.len() != parameter_types.len() {
-                return Ok(Err(CRuntimeError::TypeMismatch));
-            }
-            let mut values = Vec::new();
-            for (index, (argument, parameter_type)) in
-                arguments.iter().zip(parameter_types).enumerate()
-            {
-                let value = match evaluate_loop_effect_segment_value(
-                    state,
-                    argument,
-                    assumptions,
-                    &format!("resource `{name}` argument {index}"),
-                    budget,
-                )? {
-                    Ok(value) => value,
-                    Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
-                };
-                if !parameter_type.accepts(&value) {
-                    return Ok(Err(CRuntimeError::TypeMismatch));
-                }
-                values.push(value);
-            }
-            Ok(Ok(CResource::Named {
-                name: name.clone(),
-                arguments: values,
-            }))
-        }
+        } => evaluate_function_declared_resource_spec(
+            state,
+            *access,
+            ResourceFamily::Composite,
+            name,
+            arguments,
+            parameter_types,
+            assumptions,
+            budget,
+        ),
+        CResourceSpec::Token {
+            access,
+            name,
+            arguments,
+            parameter_types,
+        } => evaluate_function_declared_resource_spec(
+            state,
+            *access,
+            ResourceFamily::Token,
+            name,
+            arguments,
+            parameter_types,
+            assumptions,
+            budget,
+        ),
     }
+}
+
+fn evaluate_function_declared_resource_spec(
+    state: &CState,
+    access: CResourceAccess,
+    family: ResourceFamily,
+    name: &str,
+    arguments: &[CExpression],
+    parameter_types: &[CType],
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<CResource, CRuntimeError>> {
+    if arguments.len() != parameter_types.len() {
+        return Ok(Err(CRuntimeError::TypeMismatch));
+    }
+    let mut values = Vec::new();
+    for (index, (argument, parameter_type)) in arguments.iter().zip(parameter_types).enumerate() {
+        let value = match evaluate_loop_effect_segment_value(
+            state,
+            argument,
+            assumptions,
+            &format!("resource `{name}` argument {index}"),
+            budget,
+        )? {
+            Ok(value) => value,
+            Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
+        };
+        if !parameter_type.accepts(&value) {
+            return Ok(Err(CRuntimeError::TypeMismatch));
+        }
+        values.push(value);
+    }
+    let subject = match family {
+        ResourceFamily::Composite => CResourceSubject::Composite {
+            name: name.to_string(),
+            arguments: values,
+        },
+        ResourceFamily::Token => CResourceSubject::Token {
+            name: name.to_string(),
+            arguments: values,
+        },
+        ResourceFamily::Memory => return Ok(Err(CRuntimeError::TypeMismatch)),
+    };
+    Ok(Ok(match access {
+        CResourceAccess::Own => CResource::Own(subject),
+        CResourceAccess::View => CResource::View(subject),
+    }))
 }
 
 fn resource_transfer_priority(resource: &CResource) -> u8 {
     match resource {
-        CResource::View(CResourceSubject::Memory(_)) => 0,
+        CResource::View(_) => 0,
         CResource::Own(CResourceSubject::Memory(_)) => 1,
-        CResource::Named { .. } => 2,
+        CResource::Own(CResourceSubject::Composite { .. } | CResourceSubject::Token { .. }) => 2,
     }
 }
 

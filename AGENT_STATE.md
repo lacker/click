@@ -46,10 +46,9 @@ We are in the middle of designing Click's resource logic.
 Iris-inspired resource model. It says Click is not yet implemented as a full
 resource algebra, but should refactor toward explicit resource state `M`,
 `empty`, `compose`, `valid`, `core`, and observable facts. It also records that
-the Click surface has `read(...)`, `write(...)`, and named resources, while the
-kernel now stores memory resources as `view(memory(range))` and
-`own(memory(range))`; composite resources are named resources with
-composite-body laws, not a separate kernel variant.
+the Click surface has `read(...)`, `write(...)`, declared token resources, and
+composite resources, while the kernel now stores resources as `view(subject)`
+or `own(subject)` for memory, token, and composite subjects.
 The first code refactor toward that model added
 `ResourceContext::validity_error(...)` / `ResourceContextValidityError` for
 explicit resource-state validity checks. Checked composition now goes through
@@ -61,15 +60,17 @@ Raw context construction is now explicitly named
 `unchecked_with_resource(s)(...)`; it remains for tests and assumption-free
 lowering/materialization paths that build provisional contexts before
 proposition assumptions are available.
-The next refactor added `CResource::core()`: viewed memory cores to itself,
-owned memory cores to viewed memory, and strict named resources currently have
-empty core. Read entailment, read consumption, and memory-read authorization
-now route through that resource-level core operation.
+The next refactor added `CResource::core()`. The latest version makes this
+generic: `core(own(subject)) = view(subject)` and
+`core(view(subject)) = view(subject)` for memory, token, and composite
+subjects. Read entailment, read consumption, and memory-read authorization now
+route through that resource-level core operation.
 The latest resource refactor keeps the Click surface syntax `read(...)` /
 `write(...)`, but changes the internal kernel resource shape to
 `CResource::View(CResourceSubject::Memory(range))` for reads and
-`CResource::Own(CResourceSubject::Memory(range))` for writes. Internally,
-`core(own(memory(range))) = view(memory(range))`.
+`CResource::Own(CResourceSubject::Memory(range))` for writes. Declared
+bodyless resources lower to token subjects, and body-backed resources lower to
+composite subjects.
 The next observable-facts refactor added
 `ResourceContext::observable_facts(...)`, which checks resource-state validity
 and returns ordinary facts derived from the concrete resource context. Today it
@@ -90,6 +91,9 @@ The current settled terminology is:
 - A resource is something the proof/resource context can `hold`.
 - A composite resource may expose `fact` clauses while its abstract token is
   held packed, and while it is unpacked.
+- `own`/`view` are internal access modes. The new surface verbs are
+  `owns`, `views`, `consumes`, and `produces`; old `requires`/`ensures`
+  resource clauses are still accepted for compatibility.
 - Resource facts are not called invariants. Loop `invariant` remains a separate
   concept.
 
@@ -119,8 +123,8 @@ Click currently has:
 - Function specs that require and ensure resources.
 - Function calls that consume required resources unless returned.
 - Basic resource diagnostics for missing or duplicate resources.
-- Named resources.
-- Duplicate identical resource-token rejection.
+- Token resources.
+- Duplicate owned token/composite resource rejection.
 - Composite resources with:
   - `contains ...;`
   - `fact ...;`
@@ -159,11 +163,17 @@ Click currently has:
 ## Recent Cleanup
 
 The most recent separation-logic cleanup narrowed the first-layer resource
-surface to `read(...)`, `write(...)`, named resources, composition, and facts.
-Resource definitions now use `resource name(...)` directly; the old prefixed
-resource keyword form is gone. Deallocation authority was removed from the
-active Click/C0/kernel surface and is parked for a later allocation lifecycle
-layer.
+surface to `read(...)`, `write(...)`, declared token resources, composite
+resources, composition, and facts. Resource definitions now use
+`resource name(...)` directly; the old prefixed resource keyword form is gone.
+Deallocation authority was removed from the active Click/C0/kernel surface and
+is parked for a later allocation lifecycle layer.
+
+The current refactor added `owns`, `views`, `consumes`, and `produces` as
+resource verbs in function specs. Internally, declared resources are now
+classified as either token resources or composite resources, and both use the
+same `Own`/`View` access mode as memory resources. Duplicate owned token or
+composite resources are rejected; duplicate views can normalize harmlessly.
 
 An earlier terminology cleanup changed composite-resource clauses from
 `invariant` to `fact`.

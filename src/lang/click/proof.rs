@@ -1499,12 +1499,11 @@ fn materialize_packed_composite_resource_memory(
 ) -> Result<CMemory, String> {
     let mut memory = state.memory().clone();
     for resource in state.resources().resources() {
-        let CResource::Named {
-            name,
-            arguments: resource_arguments,
-        } = resource
-        else {
-            continue;
+        let (name, resource_arguments) = match resource.subject() {
+            CResourceSubject::Composite { name, arguments } => (name, arguments),
+            CResourceSubject::Memory(_) | CResourceSubject::Token { .. } => {
+                continue;
+            }
         };
         let Some(definition) = resource_environment.get(name) else {
             continue;
@@ -1701,10 +1700,10 @@ fn observe_composite_resource(
             describe_resources(state.resources().resources(), parameters, arguments)
         )));
     }
-    let CResource::Named {
+    let CResourceSubject::Composite {
         arguments: resource_arguments,
         ..
-    } = abstract_resource
+    } = abstract_resource.subject()
     else {
         return Err(ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: `observe` expects a composite resource"
@@ -1745,12 +1744,11 @@ fn project_held_resource_observable_facts(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<CMemory, String> {
-    let CResource::Named {
-        name,
-        arguments: resource_arguments,
-    } = resource
-    else {
-        return Ok(memory);
+    let (name, resource_arguments) = match resource.subject() {
+        CResourceSubject::Composite { name, arguments } => (name, arguments),
+        CResourceSubject::Memory(_) | CResourceSubject::Token { .. } => {
+            return Ok(memory);
+        }
     };
     let Some(definition) = resource_environment.get(name) else {
         return Ok(memory);
@@ -1833,12 +1831,11 @@ fn project_composite_resource_observable_facts(
 
     let mut memory = memory;
     for contained in contained_resources.resources() {
-        let CResource::Named {
-            name,
-            arguments: contained_arguments,
-        } = contained
-        else {
-            continue;
+        let (name, contained_arguments) = match contained.subject() {
+            CResourceSubject::Composite { name, arguments } => (name, arguments),
+            CResourceSubject::Memory(_) | CResourceSubject::Token { .. } => {
+                continue;
+            }
         };
         let Some(contained_definition) = resource_environment.get(name) else {
             continue;
@@ -1975,7 +1972,7 @@ fn describe_resource_context_validity_error(
     arguments: &[CExpression],
 ) -> String {
     match error {
-        ResourceContextValidityError::DuplicateNamedResource(resource) => {
+        ResourceContextValidityError::DuplicateOwnedResource(resource) => {
             format!(
                 "duplicate resource `{}`",
                 describe_resource(&resource, parameters, arguments)
@@ -2300,11 +2297,35 @@ fn composite_resource_definition<'a>(
     claim_label: &str,
     step_index: usize,
 ) -> Result<&'a ResourceDefinition, ClickError> {
-    let ResourceClause::Named { name, .. } = resource else {
+    let ResourceClause::Declared { name, .. } = resource else {
         return Err(ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: `{action}` expects a composite resource"
         )));
     };
+    if matches!(action, "pack" | "unpack")
+        && !matches!(
+            resource,
+            ResourceClause::Declared {
+                access: ResourceAccess::Own,
+                ..
+            }
+        )
+    {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{action}` expects an owned composite resource"
+        )));
+    }
+    if !matches!(
+        resource,
+        ResourceClause::Declared {
+            kind: ResourceKind::Composite,
+            ..
+        }
+    ) {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{action}` expects composite resource `{name}` to have a body"
+        )));
+    }
     let definition = resource_environment.get(name).ok_or_else(|| {
         ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: unknown resource `{name}`"
@@ -2324,14 +2345,15 @@ fn resource_argument_substitutions(
     claim_label: &str,
     step_index: usize,
 ) -> Result<BTreeMap<String, ContractExpression>, ClickError> {
-    let ResourceClause::Named {
+    let ResourceClause::Declared {
         name,
         arguments,
         parameter_types,
+        ..
     } = resource
     else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: expected named resource"
+            "`{claim_label}` proof step {step_index}: expected declared resource"
         )));
     };
     if definition.name() != name {
@@ -2377,11 +2399,15 @@ fn instantiate_resource_clause(
             segment,
             substitutions,
         )?)),
-        ResourceClause::Named {
+        ResourceClause::Declared {
+            access,
+            kind,
             name,
             arguments,
             parameter_types,
-        } => Ok(ResourceClause::Named {
+        } => Ok(ResourceClause::Declared {
+            access: *access,
+            kind: *kind,
             name: name.clone(),
             arguments: arguments
                 .iter()
@@ -2413,7 +2439,7 @@ fn materialize_composite_resource_cells(
     let Some((segment, range)) = (match resource_clause {
         ResourceClause::Read(segment) => lowered.memory_view_range().map(|range| (segment, range)),
         ResourceClause::Write(segment) => lowered.memory_own_range().map(|range| (segment, range)),
-        ResourceClause::Named { .. } => None,
+        ResourceClause::Declared { .. } => None,
     }) else {
         return memory;
     };

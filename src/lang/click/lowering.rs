@@ -1437,11 +1437,15 @@ pub(super) fn apply_contract_lets_to_resource_clause(
         ResourceClause::Write(segment) => Ok(ResourceClause::Write(
             apply_contract_lets_to_segment(segment, bindings)?,
         )),
-        ResourceClause::Named {
+        ResourceClause::Declared {
+            access,
+            kind,
             name,
             arguments,
             parameter_types,
-        } => Ok(ResourceClause::Named {
+        } => Ok(ResourceClause::Declared {
+            access,
+            kind,
             name,
             arguments: arguments
                 .into_iter()
@@ -2883,7 +2887,9 @@ pub(super) fn lower_resource_clause(
             let range = lower_resource_segment("write", segment, parameters, arguments, memory)?;
             Ok(CResource::own_memory(range))
         }
-        ResourceClause::Named {
+        ResourceClause::Declared {
+            access,
+            kind,
             name,
             arguments: resource_arguments,
             parameter_types,
@@ -2922,9 +2928,19 @@ pub(super) fn lower_resource_clause(
                 }
                 values.push(value);
             }
-            Ok(CResource::Named {
-                name: name.clone(),
-                arguments: values,
+            let subject = match kind {
+                ResourceKind::Composite => CResourceSubject::Composite {
+                    name: name.clone(),
+                    arguments: values,
+                },
+                ResourceKind::Token => CResourceSubject::Token {
+                    name: name.clone(),
+                    arguments: values,
+                },
+            };
+            Ok(match access {
+                ResourceAccess::Own => CResource::Own(subject),
+                ResourceAccess::View => CResource::View(subject),
             })
         }
     }
@@ -2988,7 +3004,7 @@ pub(super) fn resource_argument_to_c_expression(
         | ContractExpression::RangeFold { .. }
         | ContractExpression::Let { .. }
         | ContractExpression::Call { .. } => Err(ClickError::new(
-            "named resource arguments currently support current-state C expressions only",
+            "declared resource arguments currently support current-state C expressions only",
         )),
     }
 }
@@ -3115,7 +3131,7 @@ pub(super) fn concrete_access_resource_block(
 ) -> Result<Option<(String, ConcreteMemoryRangeSeed)>, ClickError> {
     let segment = match resource {
         ResourceClause::Read(segment) | ResourceClause::Write(segment) => segment,
-        ResourceClause::Named { .. } => return Ok(None),
+        ResourceClause::Declared { .. } => return Ok(None),
     };
     let state = CState::new();
     let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment) else {

@@ -140,7 +140,7 @@ The caller must have a resource that covers every callee resource requirement.
 An unannotated callee receives no external memory permission, even if the caller
 has permissions in its own context.
 
-## Named Resources
+## Token Resources
 
 You can declare an exact-match resource:
 
@@ -158,19 +158,19 @@ int32 borrow_fd(int32 fd) {
 }
 ```
 
-A named resource is transferred by function calls. If a callee requires
+A token resource is transferred by function calls. If a callee requires
 `open_fd(fd)` and returns it with `ensures open_fd(fd)`, the caller gets the
 token back. If the callee requires it and does not return it, the caller loses
 the token.
 
-Named resources currently have exact-match behavior only. They do not split,
+Token resources currently have exact-match behavior only. They do not split,
 rejoin, imply other resources, authorize C statements, or define custom algebra
 rules. Resource arguments currently support current-state C expressions such as
 parameters, constants, arithmetic, pointer expressions, and indexes. Arguments
 are checked against the types declared in the resource definition.
 
-Named resources are strict tokens. A resource context cannot contain the
-same named resource twice: duplicate clauses such as two
+Token resources are strict tokens. A resource context cannot contain the
+same token resource twice: duplicate clauses such as two
 `requires open_fd(fd);` entries are rejected, and a call cannot satisfy two
 callee resource parameters with the same token.
 
@@ -190,7 +190,7 @@ contract returns the resource.
 
 ## Composite Resources
 
-An named resource can also wrap concrete resources and facts:
+A declared resource can also wrap concrete resources and facts:
 
 ```click
 resource socket_open(fd: int32);
@@ -278,7 +278,7 @@ pure; `apply(theorem(...))` can add proposition facts, but it does not consume
 or return resources.
 
 This first slice supports built-in `read(...)` and `write(...)` clauses plus
-exact-match named resources inside `contains`. Duplicate contained resource
+exact-match token resources inside `contains`. Duplicate contained resource
 tokens are rejected, and composite-resource cycles are rejected. Resource
 unpacking is explicit; `auto` does not yet choose unpack/pack steps on its own.
 
@@ -333,9 +333,9 @@ Implemented today:
 - `read(...)` and `write(...)` over memory ranges,
 - an internal memory resource family boundary for entailment, consumption,
   access authorization, splitting, and joining,
-- exact-match named resources declared with `resource name(...)`,
+- exact-match token resources declared with `resource name(...)`,
 - composite resources with explicit `unpack(resource)` and
-  `pack(resource)` proof steps, including composition over other named
+  `pack(resource)` proof steps, including composition over other declared
   resources,
 - recursive fact views for packed composite resources, plus
   `observe(resource)` proof steps that explicitly record fact-view projection
@@ -356,7 +356,7 @@ Not implemented yet:
 - deallocation/free authority in the Click resource surface,
 - custom resource-family algebra,
 - implicit resource unpack/pack search in `auto`,
-- persistent named resources,
+- persistent token resources,
 - ownership predicates,
 - explicit resource algebra proof steps,
 - general mutable spec/model state.

@@ -1,6 +1,6 @@
 # resource consumed by call
 
-This checks that an named resource is consumed when a callee requires it
+This checks that a token resource is consumed when a callee requires it
 and does not return it. `close_fd(fd)` receives `open_fd(fd)` but has no
 matching resource `ensures`, so the later `borrow_fd(fd)` call fails.
 

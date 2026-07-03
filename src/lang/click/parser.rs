@@ -273,6 +273,16 @@ impl Parser {
                     contains.push(self.parse_composite_resource_contains_clause()?);
                     self.expect(Token::Semicolon)?;
                 }
+                Some("owns") => {
+                    self.position += 1;
+                    contains.push(self.parse_resource_target(ResourceAccess::Own)?);
+                    self.expect(Token::Semicolon)?;
+                }
+                Some("views") => {
+                    self.position += 1;
+                    contains.push(self.parse_resource_target(ResourceAccess::View)?);
+                    self.expect(Token::Semicolon)?;
+                }
                 Some("fact") => {
                     self.position += 1;
                     facts.push(self.parse_proposition()?);
@@ -280,12 +290,12 @@ impl Parser {
                 }
                 Some(name) => {
                     return Err(self.error(format!(
-                        "expected `contains` or `fact` in resource body, got `{name}`"
+                        "expected `contains`, `owns`, `views`, or `fact` in resource body, got `{name}`"
                     )));
                 }
                 None => {
                     return Err(self.error(
-                        "expected `contains` or `fact` in resource body, got end of input",
+                        "expected `contains`, `owns`, `views`, or `fact` in resource body, got end of input",
                     ));
                 }
             }
@@ -298,7 +308,7 @@ impl Parser {
         if matches!(self.peek_ident(), Some("read" | "write")) {
             return self.parse_resource_clause();
         }
-        self.parse_named_resource_call()
+        self.parse_declared_resource_call()
     }
 
     fn parse_resource_parameters(&mut self) -> Result<ParsedParameters, ClickError> {
@@ -395,6 +405,69 @@ impl Parser {
                             .map_err(|message| self.error(message))?,
                     );
                 }
+                Some("owns") => {
+                    self.position += 1;
+                    let resource = self.parse_resource_target(ResourceAccess::Own)?;
+                    let proof = self.parse_proof_clause_or_default()?;
+                    requires.push(
+                        apply_contract_lets_to_requirement(
+                            Requirement::Resource(resource.clone()),
+                            &contract_lets,
+                        )
+                        .map_err(|message| self.error(message))?,
+                    );
+                    ensures.push(
+                        apply_contract_lets_to_ensure_clause(
+                            EnsureClause {
+                                name: None,
+                                ensure: Ensure::Resource(resource),
+                                proof,
+                            },
+                            &contract_lets,
+                        )
+                        .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some("views") => {
+                    self.position += 1;
+                    let resource = self.parse_resource_target(ResourceAccess::View)?;
+                    self.expect(Token::Semicolon)?;
+                    requires.push(
+                        apply_contract_lets_to_requirement(
+                            Requirement::Resource(resource),
+                            &contract_lets,
+                        )
+                        .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some("consumes") => {
+                    self.position += 1;
+                    let resource = self.parse_resource_target(ResourceAccess::Own)?;
+                    self.expect(Token::Semicolon)?;
+                    requires.push(
+                        apply_contract_lets_to_requirement(
+                            Requirement::Resource(resource),
+                            &contract_lets,
+                        )
+                        .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some("produces") => {
+                    self.position += 1;
+                    let resource = self.parse_resource_target(ResourceAccess::Own)?;
+                    let proof = self.parse_proof_clause_or_default()?;
+                    ensures.push(
+                        apply_contract_lets_to_ensure_clause(
+                            EnsureClause {
+                                name: None,
+                                ensure: Ensure::Resource(resource),
+                                proof,
+                            },
+                            &contract_lets,
+                        )
+                        .map_err(|message| self.error(message))?,
+                    );
+                }
                 Some("ensures") => {
                     let ensure = self.parse_ensure_clause()?;
                     ensures.push(
@@ -480,6 +553,69 @@ impl Parser {
                             .map_err(|message| self.error(message))?,
                     );
                 }
+                Some("owns") => {
+                    self.position += 1;
+                    let resource = self.parse_resource_target(ResourceAccess::Own)?;
+                    let proof = self.parse_proof_clause_or_default()?;
+                    requires.push(
+                        apply_contract_lets_to_requirement(
+                            Requirement::Resource(resource.clone()),
+                            &contract_lets,
+                        )
+                        .map_err(|message| self.error(message))?,
+                    );
+                    ensures.push(
+                        apply_contract_lets_to_ensure_clause(
+                            EnsureClause {
+                                name: None,
+                                ensure: Ensure::Resource(resource),
+                                proof,
+                            },
+                            &contract_lets,
+                        )
+                        .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some("views") => {
+                    self.position += 1;
+                    let resource = self.parse_resource_target(ResourceAccess::View)?;
+                    self.expect(Token::Semicolon)?;
+                    requires.push(
+                        apply_contract_lets_to_requirement(
+                            Requirement::Resource(resource),
+                            &contract_lets,
+                        )
+                        .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some("consumes") => {
+                    self.position += 1;
+                    let resource = self.parse_resource_target(ResourceAccess::Own)?;
+                    self.expect(Token::Semicolon)?;
+                    requires.push(
+                        apply_contract_lets_to_requirement(
+                            Requirement::Resource(resource),
+                            &contract_lets,
+                        )
+                        .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some("produces") => {
+                    self.position += 1;
+                    let resource = self.parse_resource_target(ResourceAccess::Own)?;
+                    let proof = self.parse_proof_clause_or_default()?;
+                    ensures.push(
+                        apply_contract_lets_to_ensure_clause(
+                            EnsureClause {
+                                name: None,
+                                ensure: Ensure::Resource(resource),
+                                proof,
+                            },
+                            &contract_lets,
+                        )
+                        .map_err(|message| self.error(message))?,
+                    );
+                }
                 Some("for") => {
                     let clause = self.parse_structural_clause()?;
                     if let Some(label) = clause.label() {
@@ -516,13 +652,13 @@ impl Parser {
                 }
                 Some(keyword) => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `immutable`, `mutable`, `mutable_field`, `for`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        "expected `let`, `requires`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `mutable_field`, `for`, `ensures`, or `}}` in `{}`, got `{keyword}`",
                         signature.name()
                     )));
                 }
                 None => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `immutable`, `mutable`, `mutable_field`, `for`, `ensures`, or `}}` in `{}`",
+                        "expected `let`, `requires`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `mutable_field`, `for`, `ensures`, or `}}` in `{}`",
                         signature.name()
                     )));
                 }
@@ -792,6 +928,26 @@ impl Parser {
             "write" => Ok(ResourceClause::Write(segment)),
             _ => Err(self.error(format!("unknown resource `{name}`"))),
         }
+    }
+
+    fn parse_resource_target(
+        &mut self,
+        access: ResourceAccess,
+    ) -> Result<ResourceClause, ClickError> {
+        if matches!(self.peek_ident(), Some("read" | "write"))
+            && self.peek_next() == Some(&Token::LParen)
+        {
+            return self.parse_resource_clause();
+        }
+        if matches!(self.peek(), Some(Token::Ident(_))) && self.peek_next() == Some(&Token::LParen)
+        {
+            return self.parse_declared_resource_call_with_access(access);
+        }
+        let segment = self.parse_current_contract_segment()?;
+        Ok(match access {
+            ResourceAccess::Own => ResourceClause::Write(segment),
+            ResourceAccess::View => ResourceClause::Read(segment),
+        })
     }
 
     fn parse_range_bytes(&mut self) -> Result<RangeBytes, ClickError> {
@@ -1411,13 +1567,14 @@ impl Parser {
             }
             "observe" => {
                 self.expect(Token::LParen)?;
-                let resource = self.parse_named_resource_call()?;
+                let resource =
+                    self.parse_declared_resource_call_with_access(ResourceAccess::View)?;
                 self.expect(Token::RParen)?;
                 ProofStep::ObserveResource(resource)
             }
             "unpack" => {
                 self.expect(Token::LParen)?;
-                let resource = self.parse_named_resource_call()?;
+                let resource = self.parse_declared_resource_call()?;
                 self.expect(Token::RParen)?;
                 ProofStep::UnpackResource(resource)
             }
@@ -1443,7 +1600,7 @@ impl Parser {
             }
             "pack" => {
                 self.expect(Token::LParen)?;
-                let resource = self.parse_named_resource_call()?;
+                let resource = self.parse_declared_resource_call()?;
                 self.expect(Token::RParen)?;
                 ProofStep::PackResource(resource)
             }
@@ -1463,9 +1620,18 @@ impl Parser {
         Ok(TheoremApplication { name, arguments })
     }
 
-    fn parse_named_resource_call(&mut self) -> Result<ResourceClause, ClickError> {
+    fn parse_declared_resource_call(&mut self) -> Result<ResourceClause, ClickError> {
+        self.parse_declared_resource_call_with_access(ResourceAccess::Own)
+    }
+
+    fn parse_declared_resource_call_with_access(
+        &mut self,
+        access: ResourceAccess,
+    ) -> Result<ResourceClause, ClickError> {
         let (name, arguments) = self.parse_call_arguments("resource name")?;
-        Ok(ResourceClause::Named {
+        Ok(ResourceClause::Declared {
+            access,
+            kind: ResourceKind::Token,
             name,
             arguments,
             parameter_types: Vec::new(),

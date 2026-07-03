@@ -180,15 +180,15 @@ sequence:
   to its caller.
 - `mdtests/permission_call_split_rejoin.md`: a caller splits a write range for
   a helper call and rejoins it afterward.
-- `mdtests/named_resource_borrow_return.md`: exact-match named
+- `mdtests/token_resource_borrow_return.md`: exact-match token
   resource can be borrowed and returned.
-- `mdtests/named_resource_consumed_by_call.md`: exact-match named
+- `mdtests/token_resource_consumed_by_call.md`: exact-match token
   resource is consumed when a callee does not return it.
-- `mdtests/named_resource_rejects_argument_type.md`: named resource
+- `mdtests/token_resource_rejects_argument_type.md`: token resource
   arguments are checked against their declared types.
-- `mdtests/named_resource_rejects_duplicate.md`: duplicate named
+- `mdtests/token_resource_rejects_duplicate.md`: duplicate owned token
   resource clauses are rejected.
-- `mdtests/named_resource_rejects_call_duplicate.md`: a call cannot satisfy
+- `mdtests/token_resource_rejects_call_duplicate.md`: a call cannot satisfy
   two resource parameters with the same token.
 - `mdtests/callback_resource_complete_once.md`: resource-only callback
   consumer can be called once.
@@ -205,8 +205,8 @@ sequence:
 - `mdtests/composite_resource_once_flag.md`: explicit `unpack(resource)` and
   `pack(resource)` steps verify a resource token backed by memory
   permission plus a fact.
-- `mdtests/composite_resource_composes_named.md`: a composite resource can
-  bundle another named resource with memory permission and a fact.
+- `mdtests/composite_resource_composes_token.md`: a composite resource can
+  bundle another token resource with memory permission and a fact.
 - `mdtests/composite_resource_two_arrays.md`: a composite resource can
   bundle permissions for multiple arrays.
 - `mdtests/composite_resource_disjoint_fact.md`: a composite resource can

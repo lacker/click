@@ -1,7 +1,7 @@
 # resource can be borrowed and returned
 
-This checks the first user-defined resource slice. `open_fd(fd)` is a named
-resource token carried in the resource context. The helper requires it and
+This checks the first user-defined resource slice. `open_fd(fd)` is a token
+resource carried in the resource context. The helper requires it and
 returns it, so the caller can use the same token twice and still prove it has
 the token.
 

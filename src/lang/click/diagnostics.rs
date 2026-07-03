@@ -136,21 +136,50 @@ pub(super) fn describe_resource(
         );
     }
     match resource {
-        CResource::Named {
-            name,
-            arguments: resource_arguments,
-        } => {
-            format!(
-                "{name}({})",
-                resource_arguments
-                    .iter()
-                    .map(|argument| describe_c_value(argument, parameters, arguments))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
+        CResource::Own(
+            CResourceSubject::Composite {
+                name,
+                arguments: resource_arguments,
+            }
+            | CResourceSubject::Token {
+                name,
+                arguments: resource_arguments,
+            },
+        ) => format_declared_resource(name, resource_arguments, parameters, arguments),
+        CResource::View(
+            CResourceSubject::Composite {
+                name,
+                arguments: resource_arguments,
+            }
+            | CResourceSubject::Token {
+                name,
+                arguments: resource_arguments,
+            },
+        ) => format!(
+            "view {}",
+            format_declared_resource(name, resource_arguments, parameters, arguments)
+        ),
+        CResource::Own(CResourceSubject::Memory(_))
+        | CResource::View(CResourceSubject::Memory(_)) => {
+            unreachable!("memory resources handled above")
         }
-        CResource::Own(_) | CResource::View(_) => unreachable!("memory resources handled above"),
     }
+}
+
+fn format_declared_resource(
+    name: &str,
+    resource_arguments: &[CValue],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    format!(
+        "{name}({})",
+        resource_arguments
+            .iter()
+            .map(|argument| describe_c_value(argument, parameters, arguments))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 pub(super) fn describe_memory_range(

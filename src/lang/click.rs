@@ -11,11 +11,11 @@ use crate::kernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CExpression, CExpressionOutcome, CFunction,
     CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
     CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CResource,
-    CResourceSpec, CState, CStatement, CType, CValue, ConditionTerm, PathFact, Pointer,
-    PointerOffsetTerm, ProofObligation, Proposition, ResourceContext, ResourceContextValidityError,
-    Sort, SpecExpression, SpecMemory, SpecProposition, Term, Theorem, Variable, c_function,
-    c_function_specification, c_labeled_assert, c_pointer_value, c_seq,
-    c_while_with_invariant_and_effect_checks, int32,
+    CResourceAccess, CResourceSpec, CResourceSubject, CState, CStatement, CType, CValue,
+    ConditionTerm, PathFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition,
+    ResourceContext, ResourceContextValidityError, Sort, SpecExpression, SpecMemory,
+    SpecProposition, Term, Theorem, Variable, c_function, c_function_specification,
+    c_labeled_assert, c_pointer_value, c_seq, c_while_with_invariant_and_effect_checks, int32,
     prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
@@ -210,11 +210,25 @@ pub enum Ensure {
 pub enum ResourceClause {
     Read(ContractSegment),
     Write(ContractSegment),
-    Named {
+    Declared {
+        access: ResourceAccess,
+        kind: ResourceKind,
         name: String,
         arguments: Vec<ContractExpression>,
         parameter_types: Vec<C0Type>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResourceAccess {
+    Own,
+    View,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResourceKind {
+    Composite,
+    Token,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1242,21 +1256,44 @@ fn resource_clause_to_resource_spec(
             segment.start.clone(),
             segment.end.clone(),
         ))),
-        ResourceClause::Named {
+        ResourceClause::Declared {
+            access,
+            kind,
             name,
             arguments,
             parameter_types,
-        } => Ok(CResourceSpec::Named {
-            name: name.clone(),
-            arguments: arguments
+        } => {
+            let access = resource_access_to_kernel(*access);
+            let arguments = arguments
                 .iter()
                 .map(resource_argument_to_c_expression)
-                .collect::<Result<Vec<_>, _>>()?,
-            parameter_types: parameter_types
+                .collect::<Result<Vec<_>, _>>()?;
+            let parameter_types = parameter_types
                 .iter()
                 .map(|c_type| c_type.to_kernel_type())
-                .collect(),
-        }),
+                .collect();
+            Ok(match kind {
+                ResourceKind::Composite => CResourceSpec::Composite {
+                    access,
+                    name: name.clone(),
+                    arguments,
+                    parameter_types,
+                },
+                ResourceKind::Token => CResourceSpec::Token {
+                    access,
+                    name: name.clone(),
+                    arguments,
+                    parameter_types,
+                },
+            })
+        }
+    }
+}
+
+fn resource_access_to_kernel(access: ResourceAccess) -> CResourceAccess {
+    match access {
+        ResourceAccess::Own => CResourceAccess::Own,
+        ResourceAccess::View => CResourceAccess::View,
     }
 }
 

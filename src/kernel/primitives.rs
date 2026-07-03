@@ -471,20 +471,24 @@ pub struct ResourceContext {
 pub enum CResource {
     Own(CResourceSubject),
     View(CResourceSubject),
-    Named {
-        name: String,
-        arguments: Vec<CValue>,
-    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResourceSubject {
     Memory(CMemoryRange),
+    Composite {
+        name: String,
+        arguments: Vec<CValue>,
+    },
+    Token {
+        name: String,
+        arguments: Vec<CValue>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceContextValidityError {
-    DuplicateNamedResource(CResource),
+    DuplicateOwnedResource(CResource),
     OverlappingWriteResources {
         left: CMemoryRange,
         right: CMemoryRange,
@@ -494,14 +498,28 @@ pub enum ResourceContextValidityError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum ResourceFamily {
     Memory,
-    Named,
+    Composite,
+    Token,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CResourceAccess {
+    Own,
+    View,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResourceSpec {
     Read(CMemorySegment),
     Write(CMemorySegment),
-    Named {
+    Composite {
+        access: CResourceAccess,
+        name: String,
+        arguments: Vec<CExpression>,
+        parameter_types: Vec<CType>,
+    },
+    Token {
+        access: CResourceAccess,
         name: String,
         arguments: Vec<CExpression>,
         parameter_types: Vec<CType>,
@@ -1899,8 +1917,8 @@ impl ResourceContext {
         &self,
         assumptions: &Assumptions,
     ) -> Option<ResourceContextValidityError> {
-        if let Some(resource) = self.duplicate_named_resource() {
-            return Some(ResourceContextValidityError::DuplicateNamedResource(
+        if let Some(resource) = self.duplicate_owned_resource() {
+            return Some(ResourceContextValidityError::DuplicateOwnedResource(
                 resource.clone(),
             ));
         }
@@ -1979,9 +1997,9 @@ impl ResourceContext {
         propositions
     }
 
-    pub fn duplicate_named_resource(&self) -> Option<&CResource> {
+    pub fn duplicate_owned_resource(&self) -> Option<&CResource> {
         for i in 0..self.resources.len() {
-            if !matches!(self.resources[i], CResource::Named { .. }) {
+            if !self.resources[i].is_owned_non_memory() {
                 continue;
             }
             if self.resources[i + 1..]
@@ -2066,7 +2084,9 @@ fn resource_entails(
     }
     match available.family() {
         ResourceFamily::Memory => memory_resource_entails(available, required, assumptions),
-        ResourceFamily::Named => named_resource_entails(available, required),
+        ResourceFamily::Composite | ResourceFamily::Token => {
+            non_memory_resource_entails(available, required)
+        }
     }
 }
 
@@ -2077,7 +2097,9 @@ fn consume_resource(
 ) -> Option<ResourceContext> {
     match required.family() {
         ResourceFamily::Memory => consume_memory_resource(context, required, assumptions),
-        ResourceFamily::Named => consume_named_resource(context, required, assumptions),
+        ResourceFamily::Composite | ResourceFamily::Token => {
+            consume_non_memory_resource(context, required, assumptions)
+        }
     }
 }
 
@@ -2091,7 +2113,9 @@ fn combine_resources(
     }
     match left.family() {
         ResourceFamily::Memory => combine_memory_resources(left, right, assumptions),
-        ResourceFamily::Named => combine_named_resources(left, right),
+        ResourceFamily::Composite | ResourceFamily::Token => {
+            combine_non_memory_resources(left, right)
+        }
     }
 }
 
@@ -2155,15 +2179,28 @@ fn consume_memory_resource(
     unreachable!("non-memory resource sent to memory resource consumer")
 }
 
-fn named_resource_entails(available: &CResource, required: &CResource) -> bool {
-    available == required
+fn non_memory_resource_entails(available: &CResource, required: &CResource) -> bool {
+    match (available, required) {
+        (CResource::Own(available), CResource::Own(required)) => available == required,
+        (CResource::Own(available) | CResource::View(available), CResource::View(required)) => {
+            available == required
+        }
+        _ => false,
+    }
 }
 
-fn consume_named_resource(
+fn consume_non_memory_resource(
     mut context: ResourceContext,
     required: &CResource,
     assumptions: &Assumptions,
 ) -> Option<ResourceContext> {
+    if matches!(required, CResource::View(_)) {
+        return context
+            .resources
+            .iter()
+            .any(|candidate| non_memory_resource_entails(candidate, required))
+            .then(|| context.normalized(assumptions));
+    }
     let index = context
         .resources
         .iter()
@@ -2172,35 +2209,34 @@ fn consume_named_resource(
     Some(context.normalized(assumptions))
 }
 
-fn combine_named_resources(_left: &CResource, _right: &CResource) -> Option<CResource> {
-    None
+fn combine_non_memory_resources(left: &CResource, right: &CResource) -> Option<CResource> {
+    match (left, right) {
+        (CResource::Own(left), CResource::View(right))
+        | (CResource::View(right), CResource::Own(left))
+            if left == right =>
+        {
+            Some(CResource::Own(left.clone()))
+        }
+        (CResource::View(left), CResource::View(right)) if left == right => {
+            Some(CResource::View(left.clone()))
+        }
+        _ => None,
+    }
 }
 
 fn resource_core(resource: &CResource) -> Option<CResource> {
-    match resource.family() {
-        ResourceFamily::Memory => memory_resource_core(resource),
-        ResourceFamily::Named => named_resource_core(resource),
-    }
-}
-
-fn memory_resource_core(resource: &CResource) -> Option<CResource> {
     match resource {
-        CResource::Own(CResourceSubject::Memory(range))
-        | CResource::View(CResourceSubject::Memory(range)) => {
-            Some(CResource::view_memory(range.clone()))
+        CResource::Own(subject) | CResource::View(subject) => {
+            Some(CResource::View(subject.clone()))
         }
-        CResource::Named { .. } => None,
     }
-}
-
-fn named_resource_core(_resource: &CResource) -> Option<CResource> {
-    None
 }
 
 fn resource_read_core_range(resource: &CResource) -> Option<CMemoryRange> {
     match resource.core()? {
         CResource::View(CResourceSubject::Memory(range)) => Some(range),
-        CResource::Own(_) | CResource::Named { .. } => None,
+        CResource::View(CResourceSubject::Composite { .. } | CResourceSubject::Token { .. })
+        | CResource::Own(_) => None,
     }
 }
 
@@ -2235,7 +2271,8 @@ fn memory_resource_permits_write(
             range.start(),
             range.end(),
         ),
-        CResource::View(_) | CResource::Named { .. } => false,
+        CResource::Own(CResourceSubject::Composite { .. } | CResourceSubject::Token { .. })
+        | CResource::View(_) => false,
     }
 }
 
@@ -2312,12 +2349,48 @@ impl CResource {
         Self::View(CResourceSubject::Memory(range))
     }
 
-    pub fn family(&self) -> ResourceFamily {
+    pub fn own_composite(name: String, arguments: Vec<CValue>) -> Self {
+        Self::Own(CResourceSubject::Composite { name, arguments })
+    }
+
+    pub fn view_composite(name: String, arguments: Vec<CValue>) -> Self {
+        Self::View(CResourceSubject::Composite { name, arguments })
+    }
+
+    pub fn own_token(name: String, arguments: Vec<CValue>) -> Self {
+        Self::Own(CResourceSubject::Token { name, arguments })
+    }
+
+    pub fn view_token(name: String, arguments: Vec<CValue>) -> Self {
+        Self::View(CResourceSubject::Token { name, arguments })
+    }
+
+    pub fn subject(&self) -> &CResourceSubject {
         match self {
-            Self::Own(CResourceSubject::Memory(_)) | Self::View(CResourceSubject::Memory(_)) => {
-                ResourceFamily::Memory
-            }
-            Self::Named { .. } => ResourceFamily::Named,
+            Self::Own(subject) | Self::View(subject) => subject,
+        }
+    }
+
+    pub fn is_own(&self) -> bool {
+        matches!(self, Self::Own(_))
+    }
+
+    pub fn is_view(&self) -> bool {
+        matches!(self, Self::View(_))
+    }
+
+    pub fn is_owned_non_memory(&self) -> bool {
+        matches!(
+            self,
+            Self::Own(CResourceSubject::Composite { .. } | CResourceSubject::Token { .. })
+        )
+    }
+
+    pub fn family(&self) -> ResourceFamily {
+        match self.subject() {
+            CResourceSubject::Memory(_) => ResourceFamily::Memory,
+            CResourceSubject::Composite { .. } => ResourceFamily::Composite,
+            CResourceSubject::Token { .. } => ResourceFamily::Token,
         }
     }
 
@@ -2328,14 +2401,16 @@ impl CResource {
     pub fn memory_own_range(&self) -> Option<&CMemoryRange> {
         match self {
             Self::Own(CResourceSubject::Memory(range)) => Some(range),
-            Self::View(_) | Self::Named { .. } => None,
+            Self::Own(CResourceSubject::Composite { .. } | CResourceSubject::Token { .. })
+            | Self::View(_) => None,
         }
     }
 
     pub fn memory_view_range(&self) -> Option<&CMemoryRange> {
         match self {
             Self::View(CResourceSubject::Memory(range)) => Some(range),
-            Self::Own(_) | Self::Named { .. } => None,
+            Self::View(CResourceSubject::Composite { .. } | CResourceSubject::Token { .. })
+            | Self::Own(_) => None,
         }
     }
 
@@ -2343,14 +2418,18 @@ impl CResource {
         match self {
             Self::Own(CResourceSubject::Memory(range))
             | Self::View(CResourceSubject::Memory(range)) => Some(range),
-            Self::Named { .. } => None,
+            Self::Own(CResourceSubject::Composite { .. } | CResourceSubject::Token { .. })
+            | Self::View(CResourceSubject::Composite { .. } | CResourceSubject::Token { .. }) => {
+                None
+            }
         }
     }
 
     fn into_memory_own_range(self) -> Option<CMemoryRange> {
         match self {
             Self::Own(CResourceSubject::Memory(range)) => Some(range),
-            Self::View(_) | Self::Named { .. } => None,
+            Self::Own(CResourceSubject::Composite { .. } | CResourceSubject::Token { .. })
+            | Self::View(_) => None,
         }
     }
 }

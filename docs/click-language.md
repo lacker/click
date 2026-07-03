@@ -158,7 +158,7 @@ The family defines how resources entail, split, rejoin, transfer, and consume
 each other. This keeps the user-facing memory syntax concrete while sharing the
 same context machinery with non-memory resources.
 
-Click also supports exact-match named resources:
+Click also supports exact-match token resources:
 
 ```click
 resource open_fd(fd: int32);
@@ -166,11 +166,11 @@ resource open_fd(fd: int32);
 
 After declaration, `requires open_fd(fd);` and
 `ensures open_fd(fd) by auto;` use the same resource context. A callee that
-requires a named resource consumes it unless the callee also returns it
-with a matching resource `ensures`. Named resource arguments are type checked,
+requires a token resource consumes it unless the callee also returns it
+with a matching resource `ensures`. Token resource arguments are type checked,
 and duplicate identical resource tokens in one resource context are rejected.
 
-Composite resources are named resources with a body:
+Composite resources are declared resources with a body:
 
 ```click
 resource socket_open(fd: int32);
@@ -188,7 +188,7 @@ derived `disjoint(...)` facts for their ranges. In an explicit proof script,
 `observe(uncalled(flag));` non-destructively records fact-view projection while
 keeping permissions hidden. `unpack(uncalled(flag));` consumes the abstract
 token and exposes its contained resources for mutation. Composite bodies can
-bundle built-in memory resources and other named resources. Resource
+bundle built-in memory resources and other declared resources. Resource
 facts may include scalar propositions and `disjoint(...)` range facts.
 `pack(uncalled(flag));` proves the fact in the current state, consumes the
 contained resources, and returns the abstract token. The end of the
@@ -201,6 +201,32 @@ int32 complete(int32 cb) {
     requires can_complete(cb);
 }
 ```
+
+Resource clauses can also be written with resource verbs:
+
+```click
+int32 update(int32* p) {
+    owns p[0..1];
+}
+
+int32 inspect(int32* p) {
+    views p[0..1];
+}
+
+int32 close(int32 fd) {
+    consumes open_fd(fd);
+}
+
+int32 open(int32 fd) {
+    produces open_fd(fd);
+}
+```
+
+`owns` means the function starts and ends with the owned resource. `views`
+means the function can rely on the viewed/core resource without consuming it.
+`consumes` requires an owned resource and does not return it. `produces`
+returns an owned resource. The older `requires ...;` and
+`ensures ... by ...;` forms are still accepted.
 
 `write(...)` implies `read(...)`: a write resource permits both loads and
 stores, and can satisfy an `ensures read(...)` guarantee. `read(...)` is

@@ -111,11 +111,11 @@ Likely additions:
   `read(...)`/`write(...)` resource context exists for memory ranges, including
   covered subrange transfer for function calls. The implementation now has an
   explicit internal resource-family boundary for the memory family plus
-  exact-match named resources with declared argument types and duplicate-token
+  exact-match token resources with declared argument types and duplicate-owned-token
   rejection. It also has composite resources with explicit proof-step
   `unpack(resource)` and `pack(resource)` operations for wrappers over built-in
-  resources, other named resources, and resource facts. Fractions, persistent
-  named resources, implicit unpack/pack search, custom resource-family algebra,
+  resources, other declared resources, and resource facts. Fractions, persistent
+  token resources, implicit unpack/pack search, custom resource-family algebra,
   free/deallocation authority, full heap deallocation semantics, and abstract
   ownership predicates are still future work.
 - First-class spec/model state:
