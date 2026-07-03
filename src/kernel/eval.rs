@@ -2472,78 +2472,6 @@ fn is_external_memory_pointer(pointer: &Pointer) -> bool {
     !pointer.block.starts_with("local:") && !pointer.block.starts_with("havoc:")
 }
 
-fn execute_c_free_paths(
-    state: &CState,
-    pointer_expression: &CExpression,
-    assumptions: &Assumptions,
-    budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CStatementExecutionPath>> {
-    let mut paths = Vec::new();
-    for pointer_path in evaluate_c_expression_paths(state, pointer_expression, assumptions, budget)?
-    {
-        let CExpressionPath {
-            outcome,
-            facts,
-            obligations,
-        } = pointer_path;
-        match outcome {
-            CExpressionOutcome::Value(CValue::Pointer(pointer)) => {
-                let resource = CResource::Free(CMemoryRange::new(
-                    pointer,
-                    Bitvector32Term::Constant(0),
-                    Bitvector32Term::Constant(1),
-                ));
-                let effective_assumptions =
-                    assumptions_with_path_context(assumptions, &facts, &obligations);
-                let Some(resources) = state
-                    .resources()
-                    .clone()
-                    .without_resource(&resource, &effective_assumptions)
-                else {
-                    paths.push(CStatementExecutionPath {
-                        outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
-                            resource,
-                        }),
-                        facts,
-                        obligations,
-                    });
-                    continue;
-                };
-
-                let mut state = state.clone();
-                state = state.with_resource_context(resources);
-                paths.push(CStatementExecutionPath {
-                    outcome: CStatementOutcome::Normal(state),
-                    facts,
-                    obligations,
-                });
-            }
-            CExpressionOutcome::Value(_) => {
-                paths.push(CStatementExecutionPath {
-                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                    facts,
-                    obligations,
-                });
-            }
-            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
-                paths.push(CStatementExecutionPath {
-                    outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
-                    facts,
-                    obligations,
-                });
-            }
-            CExpressionOutcome::RuntimeError(error) => {
-                paths.push(CStatementExecutionPath {
-                    outcome: CStatementOutcome::RuntimeError(error),
-                    facts,
-                    obligations,
-                });
-            }
-        }
-    }
-    Ok(paths)
-}
-
 pub(super) fn local_name_from_pointer(pointer: &Pointer) -> Option<&str> {
     if pointer.offset != PointerOffsetTerm::Constant(0) {
         return None;
@@ -2658,7 +2586,6 @@ pub(super) fn execute_c_statement_paths(
             assumptions,
             budget,
         )?,
-        CStatement::Free { pointer } => execute_c_free_paths(state, pointer, assumptions, budget)?,
         CStatement::If {
             condition,
             then_branch,

@@ -1,7 +1,7 @@
 # callback resource rejects double completion
 
 This checks the guiding synthetic-resource example: `can_complete(cb)` is an
-affine right to call `complete(cb)`. The first call consumes the token, so the
+resource right to call `complete(cb)`. The first call consumes the token, so the
 second call is rejected.
 
 ```c filename=complete.c
@@ -20,7 +20,7 @@ int32 complete_twice(int32 cb) {
 ```
 
 ```click
-affine resource can_complete(cb: int32);
+resource can_complete(cb: int32);
 
 verifying "complete.c";
 verifying "complete_twice.c";

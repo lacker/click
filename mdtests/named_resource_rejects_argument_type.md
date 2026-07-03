@@ -1,4 +1,4 @@
-# affine resource rejects wrong argument type
+# resource rejects wrong argument type
 
 This checks that user-defined resource parameters are type checked. The
 resource expects an `int32` callback id, but the contract passes an `int32*`.
@@ -10,7 +10,7 @@ int32 use_pointer(int32* p) {
 ```
 
 ```click
-affine resource can_complete(cb: int32);
+resource can_complete(cb: int32);
 
 verifying "use_pointer.c";
 

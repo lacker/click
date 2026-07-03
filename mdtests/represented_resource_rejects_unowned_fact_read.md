@@ -4,7 +4,7 @@ This checks that a represented resource cannot claim a fact about memory
 unless it contains write permission covering that memory.
 
 ```click
-affine resource bogus(flag: int32*) {
+resource bogus(flag: int32*) {
     fact flag[0] == 0;
 }
 ```

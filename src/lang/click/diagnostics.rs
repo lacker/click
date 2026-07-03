@@ -92,7 +92,7 @@ pub(super) fn describe_runtime_error(
             describe_resource(resource, parameters, arguments)
         ),
         crate::kernel::CRuntimeError::DuplicateResource { resource } => format!(
-            "duplicate affine resource `{}`",
+            "duplicate resource `{}`",
             describe_resource(resource, parameters, arguments)
         ),
         crate::kernel::CRuntimeError::OverlappingWriteResources { left, right } => format!(
@@ -126,7 +126,6 @@ pub(super) fn describe_resource(
     let (name, range) = match resource {
         CResource::Read(range) => ("read", range),
         CResource::Write(range) => ("write", range),
-        CResource::Free(range) => ("free", range),
         CResource::Named {
             name,
             arguments: resource_arguments,

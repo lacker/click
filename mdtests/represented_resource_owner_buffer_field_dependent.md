@@ -20,7 +20,7 @@ int32 set_owned_first(struct owner* owner) {
 ```
 
 ```click
-affine resource owned_buffer(owner: struct owner*) {
+resource owned_buffer(owner: struct owner*) {
     contains write(owner->len);
     contains write(owner->data);
     contains write((owner->data)[0..owner->len]);

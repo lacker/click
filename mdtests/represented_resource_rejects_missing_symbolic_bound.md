@@ -4,7 +4,7 @@ This checks that a represented resource fact still needs enough scalar
 bounds to prove that each memory read is covered by contained write permission.
 
 ```click
-affine resource indexed_zero(p: int32*, k: int32, n: int32) {
+resource indexed_zero(p: int32*, k: int32, n: int32) {
     contains write(p[0..n]);
     fact 0 <= k and p[k] == 0;
 }

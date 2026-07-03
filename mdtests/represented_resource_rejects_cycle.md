@@ -10,11 +10,11 @@ int32 zero(int32 fd) {
 ```
 
 ```click
-affine resource left_token(fd: int32) {
+resource left_token(fd: int32) {
     contains right_token(fd);
 }
 
-affine resource right_token(fd: int32) {
+resource right_token(fd: int32) {
     contains left_token(fd);
 }
 

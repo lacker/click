@@ -126,12 +126,12 @@ fragment syntax.
 requirements are intentionally limited. If a precondition needs memory reads,
 package it as a named predicate and unfold it at proof sites when needed.
 
-## Read, Write, And Free Resources
+## Read And Write Resources
 
-`read(base[start..end])`, `write(base[start..end])`, and
-`free(base[start..end])` are the first resource-context permissions. They are
-not classical predicates: they are carried in the verifier's resource context
-rather than copied as ordinary proof facts.
+`read(base[start..end])` and `write(base[start..end])` are the first
+resource-context permissions. They are not classical predicates: they are
+carried in the verifier's resource context rather than copied as ordinary proof
+facts.
 
 ```click
 int32 write_next(int32 p[], int32 x) {
@@ -150,32 +150,32 @@ so `int32 p[]` ranges count four-byte cells and `uint8 bytes[]` ranges count
 bytes. Local stack accesses do not require resources. A function with no
 resource context has no permission to access external memory.
 In practice, top-level verification gets a resource context from
-`requires read(...)`, `requires write(...)`, and `requires free(...)` clauses,
-while function calls use the callee's resource summary.
+`requires read(...)` and `requires write(...)` clauses, while function calls
+use the callee's resource summary.
 
 These permissions are currently one built-in resource family: memory resources.
 The family defines how resources entail, split, rejoin, transfer, and consume
 each other. This keeps the user-facing memory syntax concrete while sharing the
 same context machinery with non-memory resources.
 
-Click also supports exact-match affine named resources:
+Click also supports exact-match named resources:
 
 ```click
-affine resource open_fd(fd: int32);
+resource open_fd(fd: int32);
 ```
 
 After declaration, `requires open_fd(fd);` and
 `ensures open_fd(fd) by auto;` use the same resource context. A callee that
-requires a named affine resource consumes it unless the callee also returns it
+requires a named resource consumes it unless the callee also returns it
 with a matching resource `ensures`. Named resource arguments are type checked,
-and duplicate identical affine tokens in one resource context are rejected.
+and duplicate identical resource tokens in one resource context are rejected.
 
 Named resources can have a representation:
 
 ```click
-affine resource socket_open(fd: int32);
+resource socket_open(fd: int32);
 
-affine resource uncalled(flag: int32*) {
+resource uncalled(flag: int32*) {
     contains socket_open(7);
     contains write(flag[0..1]);
     fact flag[0] == 0;
@@ -188,7 +188,7 @@ derived `disjoint(...)` facts for their ranges. In an explicit proof script,
 `observe(uncalled(flag));` non-destructively records fact-view projection while
 keeping permissions hidden. `unpack(uncalled(flag));` consumes the abstract
 token and exposes its represented resources for mutation. Representations can
-bundle built-in memory resources and other affine named resources. Resource
+bundle built-in memory resources and other named resources. Resource
 facts may include scalar propositions and `disjoint(...)` range facts.
 `pack(uncalled(flag));` proves the fact in the current state, consumes the
 represented resources, and returns the abstract token. The end of the
@@ -207,13 +207,9 @@ stores, and can satisfy an `ensures read(...)` guarantee. `read(...)` is
 copyable across calls. A callee can declare `requires read(...)` without
 consuming the caller's read or write permission. `write(...)` is transferred
 linearly: a callee must declare `requires write(...)` to receive write
-permission and `ensures write(...)` to return it. `free(...)` is also linear,
-does not grant read or write access, and consuming it removes overlapping access
-resources from the caller context.
-
-The C0 statement `free(p);` consumes `free(p[0..1])`. It does not require write
-permission, and after it runs the caller no longer has overlapping read, write,
-or free permissions unless another contract explicitly returns them.
+permission and `ensures write(...)` to return it. Allocation lifecycle and
+deallocation authority are intentionally outside this first-layer resource
+surface.
 
 A call can pass a covered subrange, such as passing `write(p[0..1])` from a
 caller that has `write(p[0..2])`; Click keeps the residue and rejoins adjacent

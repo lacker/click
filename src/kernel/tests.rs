@@ -24,14 +24,6 @@ fn write_resource(
     CResource::Write(memory_range(base, start, end))
 }
 
-fn free_resource(
-    base: Pointer,
-    start: impl Into<Bitvector32Term>,
-    end: impl Into<Bitvector32Term>,
-) -> CResource {
-    CResource::Free(memory_range(base, start, end))
-}
-
 fn read_context(
     base: Pointer,
     start: impl Into<Bitvector32Term>,
@@ -46,16 +38,6 @@ fn write_context(
     end: impl Into<Bitvector32Term>,
 ) -> ResourceContext {
     ResourceContext::new().with_resource(write_resource(base, start, end))
-}
-
-fn write_free_context(
-    base: Pointer,
-    start: impl Into<Bitvector32Term> + Clone,
-    end: impl Into<Bitvector32Term> + Clone,
-) -> ResourceContext {
-    ResourceContext::new()
-        .with_resource(write_resource(base.clone(), start.clone(), end.clone()))
-        .with_resource(free_resource(base, start, end))
 }
 
 #[test]
@@ -262,91 +244,6 @@ fn function_call_does_not_inherit_undeclared_resources() {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::MissingResource {
                 resource: write_resource(pointer, 0, 1),
             }),
-        }
-    );
-}
-
-#[test]
-fn function_call_consumes_free_and_overlapping_write_resources() {
-    let pointer = Pointer {
-        block: "block".to_string(),
-        offset: PointerOffsetTerm::Constant(0),
-    };
-    let resources = write_free_context(pointer.clone(), 0, 1);
-    let state = CState::new().with_resource_context(resources);
-    let segment = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(1));
-    let release = c_function(
-        CType::Int32,
-        "release",
-        vec![c_parameter("p", CType::Int32Pointer)],
-        c_return(c_int32_literal(0)),
-    )
-    .with_resource_summary(
-        vec![
-            CResourceSpec::Free(segment.clone()),
-            CResourceSpec::Write(segment),
-        ],
-        Vec::new(),
-    );
-    let caller = c_function(
-        CType::Int32,
-        "caller",
-        vec![c_parameter("p", CType::Int32Pointer)],
-        c_seq(
-            c_call_assign("ignored", "release", vec![c_variable("p")]),
-            c_return(c_int32_literal(0)),
-        ),
-    );
-    let arguments = vec![c_pointer_value(pointer)];
-    let theorem = prove_symbolic_c_function_execution_with_environment(
-        state.clone(),
-        caller.clone(),
-        arguments.clone(),
-        Assumptions::new(),
-        CFunctionEnvironment::new().with_function(release),
-    )
-    .expect("free transfer should not depend on textual resource order");
-
-    assert_eq!(
-        theorem.proposition(),
-        &Proposition::CFunctionExecutes {
-            state,
-            function: caller,
-            arguments,
-            outcome: CFunctionOutcome::Return {
-                value: int32(0),
-                state: CState::new(),
-            },
-        }
-    );
-}
-
-#[test]
-fn free_statement_consumes_free_and_overlapping_write_resources() {
-    let pointer = Pointer {
-        block: "block".to_string(),
-        offset: PointerOffsetTerm::Constant(0),
-    };
-    let state = CState::new()
-        .with_local("p", CValue::Pointer(pointer.clone()))
-        .with_resource_context(write_free_context(pointer, 0, 1));
-    let statement = c_free(c_variable("p"));
-    let expected_state = CState::new().with_local(
-        "p",
-        CValue::Pointer(Pointer {
-            block: "block".to_string(),
-            offset: PointerOffsetTerm::Constant(0),
-        }),
-    );
-    let theorem = prove_symbolic_c_execution(state.clone(), statement.clone(), Assumptions::new())
-        .expect("free should consume deallocation authority");
-
-    assert_eq!(
-        theorem.proposition(),
-        &Proposition::CStatementExecutes {
-            state,
-            statement,
-            outcome: CStatementOutcome::Normal(expected_state),
         }
     );
 }

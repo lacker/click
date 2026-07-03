@@ -67,9 +67,6 @@ pub enum C0Statement {
         value: C0Expression,
         value_type: Option<C0Type>,
     },
-    Free {
-        pointer: C0Expression,
-    },
     If {
         condition: C0Expression,
         then_branch: Box<C0Statement>,
@@ -253,7 +250,6 @@ impl C0Statement {
                     value.to_kernel_expression(),
                 ),
             },
-            Self::Free { pointer } => crate::kernel::c_free(pointer.to_kernel_expression()),
             Self::If {
                 condition,
                 then_branch,
@@ -804,14 +800,6 @@ impl Parser {
                     let expression = self.parse_expression()?;
                     self.expect(Token::Semicolon)?;
                     Ok(C0Statement::Return(expression))
-                }
-                Some("free") => {
-                    self.position += 1;
-                    self.expect(Token::LParen)?;
-                    let pointer = self.parse_expression()?;
-                    self.expect(Token::RParen)?;
-                    self.expect(Token::Semicolon)?;
-                    Ok(C0Statement::Free { pointer })
                 }
                 Some("if") => {
                     self.position += 1;

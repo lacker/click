@@ -516,17 +516,6 @@ fn evaluate_function_resource_spec(
                 segment.end,
             ))))
         }
-        CResourceSpec::Free(segment) => {
-            let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
-                Ok(segment) => segment,
-                Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
-            };
-            Ok(Ok(CResource::Free(CMemoryRange::new(
-                segment.base,
-                segment.start,
-                segment.end,
-            ))))
-        }
         CResourceSpec::Named {
             name,
             arguments,
@@ -566,8 +555,7 @@ fn resource_transfer_priority(resource: &CResource) -> u8 {
     match resource {
         CResource::Read(_) => 0,
         CResource::Write(_) => 1,
-        CResource::Free(_) => 2,
-        CResource::Named { .. } => 3,
+        CResource::Named { .. } => 2,
     }
 }
 

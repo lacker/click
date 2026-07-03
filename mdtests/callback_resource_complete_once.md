@@ -19,7 +19,7 @@ int32 complete_once(int32 cb) {
 ```
 
 ```click
-affine resource can_complete(cb: int32);
+resource can_complete(cb: int32);
 
 verifying "complete.c";
 verifying "complete_once.c";

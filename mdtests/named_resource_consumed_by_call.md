@@ -1,6 +1,6 @@
-# affine resource consumed by call
+# resource consumed by call
 
-This checks that an affine named resource is consumed when a callee requires it
+This checks that an named resource is consumed when a callee requires it
 and does not return it. `close_fd(fd)` receives `open_fd(fd)` but has no
 matching resource `ensures`, so the later `borrow_fd(fd)` call fails.
 
@@ -26,7 +26,7 @@ int32 borrow_after_close(int32 fd) {
 ```
 
 ```click
-affine resource open_fd(fd: int32);
+resource open_fd(fd: int32);
 
 verifying "borrow_fd.c";
 verifying "close_fd.c";

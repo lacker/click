@@ -1,7 +1,7 @@
 # represented resource composes named resources
 
-This checks that a represented resource can bundle another named affine
-resource with memory permission and a fact.
+This checks that a represented resource can bundle another named resource with
+memory permission and a fact.
 
 ```c filename=init_server.c
 int32 init_server(int32 fd, int32 state[]) {
@@ -21,9 +21,9 @@ int32 use_server(int32 fd, int32 state[]) {
 ```
 
 ```click
-affine resource socket_open(fd: int32);
+resource socket_open(fd: int32);
 
-affine resource live_server(fd: int32, state: int32*) {
+resource live_server(fd: int32, state: int32*) {
     contains socket_open(fd);
     contains write(state[0..1]);
     fact state[0] == 1;

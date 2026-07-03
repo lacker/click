@@ -361,7 +361,7 @@ pub(super) fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickEr
 
     let mut resources = BTreeMap::new();
     for definition in &resource_definitions {
-        if matches!(definition.name(), "read" | "write" | "free") {
+        if matches!(definition.name(), "read" | "write") {
             return Err(ClickError::new(format!(
                 "`{}` is a built-in resource name",
                 definition.name()
@@ -1651,9 +1651,7 @@ fn reject_resource_representation_cycles(
                 .flat_map(ResourceRepresentation::contains)
                 .filter_map(|resource| match resource {
                     ResourceClause::Named { name, .. } => Some(name.clone()),
-                    ResourceClause::Read(_)
-                    | ResourceClause::Write(_)
-                    | ResourceClause::Free(_) => None,
+                    ResourceClause::Read(_) | ResourceClause::Write(_) => None,
                 })
                 .collect::<Vec<_>>();
             (definition.name().to_string(), dependencies)
@@ -1824,7 +1822,7 @@ fn reject_duplicate_named_resource_clauses<'a>(
         }
         if seen.iter().any(|candidate| *candidate == resource) {
             return Err(ClickError::new(format!(
-                "duplicate affine resource `{}` in {context}",
+                "duplicate resource `{}` in {context}",
                 describe_resource_clause(resource)
             )));
         }
@@ -1843,12 +1841,6 @@ pub(super) fn describe_resource_clause(resource: &ResourceClause) -> String {
         ),
         ResourceClause::Write(segment) => format!(
             "write({}[{}..{}])",
-            describe_c_expression(&segment.base),
-            describe_c_expression(&segment.start),
-            describe_c_expression(&segment.end)
-        ),
-        ResourceClause::Free(segment) => format!(
-            "free({}[{}..{}])",
             describe_c_expression(&segment.base),
             describe_c_expression(&segment.start),
             describe_c_expression(&segment.end)
@@ -2199,7 +2191,7 @@ fn validate_resource_clause(
     context: &str,
 ) -> Result<(), ClickError> {
     match resource {
-        ResourceClause::Read(_) | ResourceClause::Write(_) | ResourceClause::Free(_) => Ok(()),
+        ResourceClause::Read(_) | ResourceClause::Write(_) => Ok(()),
         ResourceClause::Named {
             name,
             arguments,

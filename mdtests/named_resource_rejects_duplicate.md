@@ -1,6 +1,6 @@
-# affine resource rejects duplicate token clauses
+# resource rejects duplicate token clauses
 
-This checks that an affine named resource is not silently duplicated by writing
+This checks that an named resource is not silently duplicated by writing
 the same resource requirement twice.
 
 ```c filename=use_once.c
@@ -10,7 +10,7 @@ int32 use_once(int32 cb) {
 ```
 
 ```click
-affine resource can_complete(cb: int32);
+resource can_complete(cb: int32);
 
 verifying "use_once.c";
 
@@ -23,5 +23,5 @@ int32 use_once(int32 cb) {
 ```
 
 ```expect
-fail: duplicate affine resource `can_complete(cb)`
+fail: duplicate resource `can_complete(cb)`
 ```

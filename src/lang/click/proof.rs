@@ -2062,7 +2062,7 @@ fn unpack_represented_resource(
     }
     if let Some(duplicate) = state.resources().duplicate_named_resource() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `unpack({})` produced duplicate affine resource `{}`",
+            "`{claim_label}` proof step {step_index}: `unpack({})` produced duplicate resource `{}`",
             describe_resource_clause(resource),
             describe_resource(duplicate, parameters, arguments)
         )));
@@ -2213,7 +2213,7 @@ fn pack_represented_resources_on_outcome(
         post_state = post_state.with_resource_context(resources);
         if let Some(duplicate) = post_state.resources().duplicate_named_resource() {
             return Err(ClickError::new(format!(
-                "`{claim_label}` path {path_index}: `pack({})` produced duplicate affine resource `{}`",
+                "`{claim_label}` path {path_index}: `pack({})` produced duplicate resource `{}`",
                 describe_resource_clause(resource),
                 describe_resource(duplicate, parameters, arguments)
             )));
@@ -2308,10 +2308,6 @@ fn instantiate_resource_clause(
             substitutions,
         )?)),
         ResourceClause::Write(segment) => Ok(ResourceClause::Write(instantiate_contract_segment(
-            segment,
-            substitutions,
-        )?)),
-        ResourceClause::Free(segment) => Ok(ResourceClause::Free(instantiate_contract_segment(
             segment,
             substitutions,
         )?)),

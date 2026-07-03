@@ -3,7 +3,7 @@
 This checks that theorem proof scripts cannot manipulate the resource context.
 
 ```click
-affine resource token(x: int32);
+resource token(x: int32);
 
 theorem pack_step_is_not_pure(x: int32) {
     ensures x == x by {

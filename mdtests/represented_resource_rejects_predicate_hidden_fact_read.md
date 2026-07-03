@@ -8,7 +8,7 @@ predicate flag_is_zero(int32* flag) {
     flag[0] == 0
 }
 
-affine resource bogus(flag: int32*) {
+resource bogus(flag: int32*) {
     fact flag_is_zero(flag);
 }
 ```

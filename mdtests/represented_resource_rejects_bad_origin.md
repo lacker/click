@@ -11,7 +11,7 @@ int32 init_bad(int32 flag[]) {
 ```
 
 ```click
-affine resource uncalled(flag: int32*) {
+resource uncalled(flag: int32*) {
     contains write(flag[0..1]);
     fact flag[0] == 0;
 }

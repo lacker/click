@@ -176,32 +176,19 @@ sequence:
   to its caller.
 - `mdtests/permission_call_split_rejoin.md`: a caller splits a write range for
   a helper call and rejoins it afterward.
-- `mdtests/permission_free_not_write.md`: free permission does not grant write
-  access.
-- `mdtests/permission_free_consumes_access.md`: consuming free permission
-  removes overlapping access permissions.
-- `mdtests/permission_free_returns.md`: free permission can be returned through
-  a helper summary.
-- `mdtests/permission_free_split_rejoin.md`: free permission supports subrange
-  split and rejoin.
-- `mdtests/free_statement.md`: executable `free(p);` consumes free permission.
-- `mdtests/free_statement_no_write_required.md`: `free(p);` does not require
-  write permission.
-- `mdtests/free_statement_write_after.md`: writing after `free(p);` fails.
-- `mdtests/free_statement_double_free.md`: a second `free(p);` fails.
-- `mdtests/affine_resource_borrow_return.md`: exact-match affine named
+- `mdtests/named_resource_borrow_return.md`: exact-match named
   resource can be borrowed and returned.
-- `mdtests/affine_resource_consumed_by_call.md`: exact-match affine named
+- `mdtests/named_resource_consumed_by_call.md`: exact-match named
   resource is consumed when a callee does not return it.
-- `mdtests/affine_resource_rejects_argument_type.md`: affine named resource
+- `mdtests/named_resource_rejects_argument_type.md`: named resource
   arguments are checked against their declared types.
-- `mdtests/affine_resource_rejects_duplicate.md`: duplicate affine named
+- `mdtests/named_resource_rejects_duplicate.md`: duplicate named
   resource clauses are rejected.
-- `mdtests/affine_resource_rejects_call_duplicate.md`: a call cannot satisfy
-  two affine resource parameters with the same token.
+- `mdtests/named_resource_rejects_call_duplicate.md`: a call cannot satisfy
+  two resource parameters with the same token.
 - `mdtests/callback_resource_complete_once.md`: resource-only callback
   consumer can be called once.
-- `mdtests/callback_resource_complete_twice.md`: affine callback token rejects
+- `mdtests/callback_resource_complete_twice.md`: callback resource rejects
   double completion.
 - `mdtests/callback_resource_branch_once.md`: branch-sensitive callback
   completion passes when each path completes once.
@@ -212,10 +199,10 @@ sequence:
 - `mdtests/callback_resource_pipe_rejects_spent_token.md`: the caller cannot
   reuse the callback token spent by the helper.
 - `mdtests/represented_resource_once_flag.md`: explicit `unpack(resource)` and
-  `pack(resource)` steps verify an affine token represented by memory
+  `pack(resource)` steps verify an resource token represented by memory
   permission plus a fact.
 - `mdtests/represented_resource_composes_named.md`: a represented resource can
-  bundle another named affine resource with memory permission and a fact.
+  bundle another named resource with memory permission and a fact.
 - `mdtests/represented_resource_two_arrays.md`: a represented resource can
   bundle permissions for multiple arrays.
 - `mdtests/represented_resource_disjoint_fact.md`: a represented resource can
@@ -245,10 +232,10 @@ sequence:
   exposing the hidden permissions.
 - `mdtests/represented_resource_rejects_bad_origin.md`: packing a represented
   resource fails when its fact has not been established.
-- `mdtests/represented_resource_rejects_double_call.md`: a represented affine
+- `mdtests/represented_resource_rejects_double_call.md`: a represented
   token is still consumed linearly through a call summary.
 - `mdtests/represented_resource_rejects_duplicate_contains.md`: represented
-  resources reject duplicate contained affine tokens.
+  resources reject duplicate contained resource tokens.
 - `mdtests/write_resources_imply_disjoint.md`: two visible `write(...)`
   resources imply a `disjoint(...)` fact without a separate requirement.
 - `mdtests/write_resources_reject_proven_overlap.md`: provably overlapping

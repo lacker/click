@@ -28,7 +28,7 @@ int32 pipe_callback_bad(int32 primary, int32 secondary) {
 ```
 
 ```click
-affine resource can_complete(cb: int32);
+resource can_complete(cb: int32);
 
 verifying "complete.c";
 verifying "complete_primary_and_secondary.c";

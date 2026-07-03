@@ -75,7 +75,6 @@ pub struct ClickFunctionDefinition {
 pub struct ResourceDefinition {
     name: String,
     parameters: Vec<FunctionParameter>,
-    kind: ResourceKind,
     representation: Option<ResourceRepresentation>,
 }
 
@@ -97,11 +96,6 @@ pub struct TheoremDefinition {
 struct ClickFunctionType {
     parameters: Vec<FunctionParameter>,
     return_type: C0Type,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ResourceKind {
-    Affine,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -215,7 +209,6 @@ pub enum Ensure {
 pub enum ResourceClause {
     Read(ContractSegment),
     Write(ContractSegment),
-    Free(ContractSegment),
     Named {
         name: String,
         arguments: Vec<ContractExpression>,
@@ -715,10 +708,6 @@ impl ResourceDefinition {
 
     pub fn parameters(&self) -> &[FunctionParameter] {
         &self.parameters
-    }
-
-    pub fn kind(&self) -> ResourceKind {
-        self.kind
     }
 
     pub fn representation(&self) -> Option<&ResourceRepresentation> {
@@ -1248,11 +1237,6 @@ fn resource_clause_to_resource_spec(
             segment.end.clone(),
         ))),
         ResourceClause::Write(segment) => Ok(CResourceSpec::Write(CMemorySegment::new(
-            segment.base.clone(),
-            segment.start.clone(),
-            segment.end.clone(),
-        ))),
-        ResourceClause::Free(segment) => Ok(CResourceSpec::Free(CMemorySegment::new(
             segment.base.clone(),
             segment.start.clone(),
             segment.end.clone(),

@@ -1437,9 +1437,6 @@ pub(super) fn apply_contract_lets_to_resource_clause(
         ResourceClause::Write(segment) => Ok(ResourceClause::Write(
             apply_contract_lets_to_segment(segment, bindings)?,
         )),
-        ResourceClause::Free(segment) => Ok(ResourceClause::Free(apply_contract_lets_to_segment(
-            segment, bindings,
-        )?)),
         ResourceClause::Named {
             name,
             arguments,
@@ -2533,8 +2530,7 @@ pub(super) fn collect_c0_loop_modified_locals(
     match statement {
         syntax::C0Statement::Declare { .. }
         | syntax::C0Statement::Return(_)
-        | syntax::C0Statement::Store { .. }
-        | syntax::C0Statement::Free { .. } => {}
+        | syntax::C0Statement::Store { .. } => {}
         syntax::C0Statement::Assign { name, .. } => {
             names.insert(name.clone());
         }
@@ -2884,10 +2880,6 @@ pub(super) fn lower_resource_clause(
             let range = lower_resource_segment("write", segment, parameters, arguments, memory)?;
             Ok(CResource::Write(range))
         }
-        ResourceClause::Free(segment) => {
-            let range = lower_resource_segment("free", segment, parameters, arguments, memory)?;
-            Ok(CResource::Free(range))
-        }
         ResourceClause::Named {
             name,
             arguments: resource_arguments,
@@ -3120,7 +3112,7 @@ pub(super) fn concrete_access_resource_block(
 ) -> Result<Option<(String, ConcreteMemoryRangeSeed)>, ClickError> {
     let segment = match resource {
         ResourceClause::Read(segment) | ResourceClause::Write(segment) => segment,
-        ResourceClause::Free(_) | ResourceClause::Named { .. } => return Ok(None),
+        ResourceClause::Named { .. } => return Ok(None),
     };
     let state = CState::new();
     let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment) else {

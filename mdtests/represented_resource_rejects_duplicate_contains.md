@@ -1,7 +1,7 @@
 # represented resource rejects duplicate contained token
 
-This checks that a represented affine resource cannot contain the same named
-affine token twice.
+This checks that a represented resource cannot contain the same named
+resource token twice.
 
 ```c filename=zero.c
 int32 zero(int32 fd) {
@@ -10,9 +10,9 @@ int32 zero(int32 fd) {
 ```
 
 ```click
-affine resource socket_open(fd: int32);
+resource socket_open(fd: int32);
 
-affine resource bad_bundle(fd: int32) {
+resource bad_bundle(fd: int32) {
     contains socket_open(fd);
     contains socket_open(fd);
 }
@@ -25,5 +25,5 @@ int32 zero(int32 fd) {
 ```
 
 ```expect
-fail: duplicate affine resource `socket_open(fd)`
+fail: duplicate resource `socket_open(fd)`
 ```

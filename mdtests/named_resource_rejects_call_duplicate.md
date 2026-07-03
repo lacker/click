@@ -1,6 +1,6 @@
-# affine resource rejects duplicate token at call site
+# resource rejects duplicate token at call site
 
-This checks that a call cannot satisfy two affine resource parameters with the
+This checks that a call cannot satisfy two resource parameters with the
 same token. `consume_two` requires separate resources for `first` and `second`;
 calling it as `consume_two(cb, cb)` tries to duplicate `can_complete(cb)`.
 
@@ -19,7 +19,7 @@ int32 call_same(int32 cb) {
 ```
 
 ```click
-affine resource can_complete(cb: int32);
+resource can_complete(cb: int32);
 
 verifying "consume_two.c";
 verifying "call_same.c";
@@ -37,5 +37,5 @@ int32 call_same(int32 cb) {
 ```
 
 ```expect
-fail: duplicate affine resource `can_complete(cb)`
+fail: duplicate resource `can_complete(cb)`
 ```

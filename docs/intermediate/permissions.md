@@ -3,12 +3,11 @@
 Permissions describe what external memory a proof may access. They are separate
 from ordinary propositions because some permissions must not be copied freely.
 
-Click currently has three memory permissions:
+Click currently has two first-layer memory permissions:
 
 ```click
 requires read(p[0..1]);
 requires write(p[0..1]);
-requires free(p[0..1]);
 ```
 
 These clauses create resources in the verifier's resource context. External C
@@ -30,16 +29,14 @@ rules for a group of related resources:
 - what gets consumed by a function call or statement,
 - what other resources are invalidated by consumption.
 
-The main built-in resource family is memory resources. `read(...)`,
-`write(...)`, and `free(...)` are all memory resources over a range. This is
-similar in spirit to a resource algebra: the context is not just a bag of facts,
-because each family has rules for combining, transferring, and consuming its
-resources.
+The main built-in resource family is memory resources. `read(...)` and
+`write(...)` are memory resources over a range. This is similar in spirit to a
+resource algebra: the context is not just a bag of facts, because each family
+has rules for combining, transferring, and consuming its resources.
 
 This resource-family boundary is intentionally more general than memory
-ownership. Click also has a first exact-match slice for user-defined affine
-resources, which can model API protocols without forcing those protocols to
-look like heap cells.
+ownership. Click also has exact-match user-defined resources, which can model
+API protocols without forcing those protocols to look like heap cells.
 
 ## Validity And Authority
 
@@ -104,31 +101,6 @@ it with `ensures write(...)`, the caller cannot use or prove it afterward.
 This is the main difference between a permission and an ordinary proposition.
 Ordinary facts can be used repeatedly. A write resource can be transferred.
 
-## Free Permission
-
-`free(...)` represents authority to release a range. It is separate from access
-permission:
-
-- `free(...)` does not permit loads,
-- `free(...)` does not permit stores,
-- `write(...)` does not imply `free(...)`.
-
-This lets a contract say that code may write a field without being allowed to
-release the whole object.
-
-Free resources are linear. If a callee requires
-`free(p[0..1])` and does not return it, the caller loses that free resource.
-Consuming a free resource also removes overlapping `read(...)` and `write(...)`
-resources from the caller context. That models the permission consequence of
-deallocation: after handing off authority to release a range, the caller cannot
-continue accessing that same range unless the callee explicitly returns the
-needed resources.
-
-The executable C0 statement `free(p);` consumes `free(p[0..1])` and removes
-overlapping access resources in the same way. This is still a narrow
-resource-level model: Click does not yet have C heap allocation, allocation-size
-tracking, or block invalidation.
-
 ## Function Calls
 
 Function calls use the callee's resource summary:
@@ -149,12 +121,12 @@ The caller must have a resource that covers every callee resource requirement.
 An unannotated callee receives no external memory permission, even if the caller
 has permissions in its own context.
 
-## Affine Named Resources
+## Named Resources
 
-You can declare an exact-match affine resource:
+You can declare an exact-match resource:
 
 ```click
-affine resource open_fd(fd: int32);
+resource open_fd(fd: int32);
 ```
 
 Then a contract can require and return instances of that resource:
@@ -167,7 +139,7 @@ int32 borrow_fd(int32 fd) {
 }
 ```
 
-An affine named resource is transferred by function calls. If a callee requires
+A named resource is transferred by function calls. If a callee requires
 `open_fd(fd)` and returns it with `ensures open_fd(fd)`, the caller gets the
 token back. If the callee requires it and does not return it, the caller loses
 the token.
@@ -178,15 +150,15 @@ rules. Resource arguments currently support current-state C expressions such as
 parameters, constants, arithmetic, pointer expressions, and indexes. Arguments
 are checked against the types declared in the resource definition.
 
-Affine named resources are strict tokens. A resource context cannot contain the
-same named affine resource twice: duplicate clauses such as two
+Named resources are strict tokens. A resource context cannot contain the
+same named resource twice: duplicate clauses such as two
 `requires open_fd(fd);` entries are rejected, and a call cannot satisfy two
 callee resource parameters with the same token.
 
 A function spec may exist only to consume a resource:
 
 ```click
-affine resource can_complete(cb: int32);
+resource can_complete(cb: int32);
 
 int32 complete(int32 cb) {
     requires can_complete(cb);
@@ -199,19 +171,19 @@ contract returns the resource.
 
 ## Represented Resources
 
-An affine named resource can also wrap concrete resources and facts:
+An named resource can also wrap concrete resources and facts:
 
 ```click
-affine resource socket_open(fd: int32);
+resource socket_open(fd: int32);
 
-affine resource uncalled(flag: int32*) {
+resource uncalled(flag: int32*) {
     contains socket_open(7);
     contains write(flag[0..1]);
     fact flag[0] == 0;
 }
 ```
 
-At function boundaries, `uncalled(flag)` is still an abstract affine token.
+At function boundaries, `uncalled(flag)` is still an abstract resource token.
 Inside an explicit proof script, the token can be unpacked:
 
 ```click
@@ -237,7 +209,7 @@ permission covering that memory. This is what makes the fact stable while
 the resource is packed:
 
 ```click
-affine resource uncalled(flag: int32*) {
+resource uncalled(flag: int32*) {
     contains write(flag[0..1]);
     fact flag[0] == 0;
 }
@@ -246,7 +218,7 @@ affine resource uncalled(flag: int32*) {
 The coverage check can use scalar facts from the fact itself:
 
 ```click
-affine resource indexed_zero(p: int32*, k: int32, n: int32) {
+resource indexed_zero(p: int32*, k: int32, n: int32) {
     contains write(p[0..n]);
     fact 0 <= k and k < n and p[k] == 0;
 }
@@ -286,11 +258,10 @@ This is resource-context reasoning, not theorem application. Theorems stay
 pure; `apply(theorem(...))` can add proposition facts, but it does not consume
 or return resources.
 
-This first slice supports built-in `read(...)`, `write(...)`, and `free(...)`
-clauses plus exact-match affine named resources inside `contains`. Duplicate
-contained affine tokens are rejected, and represented-resource cycles are
-rejected. Resource unpacking is explicit; `auto` does not yet choose unpack/pack
-steps on its own.
+This first slice supports built-in `read(...)` and `write(...)` clauses plus
+exact-match named resources inside `contains`. Duplicate contained resource
+tokens are rejected, and represented-resource cycles are rejected. Resource
+unpacking is explicit; `auto` does not yet choose unpack/pack steps on its own.
 
 The smallest ownership-shaped pattern is a represented resource that bundles
 several concrete permissions. For example, `first_cell_copy_access(dst, src)`
@@ -340,12 +311,12 @@ cover `p[1]`.
 Implemented today:
 
 - mandatory permission checks for external loads and stores,
-- `read(...)`, `write(...)`, and `free(...)` over memory ranges,
+- `read(...)` and `write(...)` over memory ranges,
 - an internal memory resource family boundary for entailment, consumption,
   access authorization, splitting, and joining,
-- exact-match affine named resources declared with `affine resource name(...)`,
-- represented affine named resources with explicit `unpack(resource)` and
-  `pack(resource)` proof steps, including composition over other named affine
+- exact-match named resources declared with `resource name(...)`,
+- represented named resources with explicit `unpack(resource)` and
+  `pack(resource)` proof steps, including composition over other named
   resources,
 - recursive fact views for packed represented resources, plus
   `observe(resource)` proof steps that explicitly record fact-view projection
@@ -357,14 +328,13 @@ Implemented today:
   `disjoint(...)` facts without exposing the hidden permissions,
 - copyable read transfer,
 - linear write transfer through function summaries,
-- linear free transfer that removes overlapping access resources when consumed,
-- executable `free(p);` as a one-cell free-resource consumer,
 - covered subrange splitting and adjacent range rejoining.
 
 Not implemented yet:
 
 - fractional permissions,
 - C heap allocation or allocation-sized deallocation semantics,
+- deallocation/free authority in the Click resource surface,
 - custom resource-family algebra,
 - implicit resource unpack/pack search in `auto`,
 - persistent named resources,

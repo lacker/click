@@ -10,7 +10,7 @@ int32 return_fd(int32 fd) {
 ```
 
 ```click
-affine resource nonnegative_fd(fd: int32) {
+resource nonnegative_fd(fd: int32) {
     fact fd >= 0;
 }
 

@@ -445,9 +445,9 @@ fn parses_proof_step_script() {
 #[test]
 fn parses_represented_resource_definition() {
     let source = r#"
-            affine resource socket_open(fd: int32);
+            resource socket_open(fd: int32);
 
-            affine resource uncalled(flag: int32*) {
+            resource uncalled(flag: int32*) {
                 contains socket_open(7);
                 contains write(flag[0..1]);
                 fact flag[0] == 0;
@@ -490,7 +490,7 @@ fn parses_represented_resource_definition() {
 #[test]
 fn parses_resource_observe_unpack_and_pack_steps() {
     let source = r#"
-            affine resource uncalled(flag: int32*);
+            resource uncalled(flag: int32*);
 
             verifying "identity.c";
 

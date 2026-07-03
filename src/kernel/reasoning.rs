@@ -1143,9 +1143,6 @@ pub(super) fn collect_c_statement_bitvector_variables(
         CStatement::Declare { .. } => {}
         CStatement::Assign { expression, .. }
         | CStatement::Return(expression)
-        | CStatement::Free {
-            pointer: expression,
-        }
         | CStatement::Assert {
             condition: expression,
             ..
@@ -1401,7 +1398,6 @@ pub(super) fn collect_resource_bitvector_variables(
     match resource {
         CResource::Read(range) => collect_c_memory_range_bitvector_variables(range, variables),
         CResource::Write(range) => collect_c_memory_range_bitvector_variables(range, variables),
-        CResource::Free(range) => collect_c_memory_range_bitvector_variables(range, variables),
         CResource::Named { arguments, .. } => {
             for argument in arguments {
                 collect_c_value_bitvector_variables(argument, variables);
@@ -1434,11 +1430,6 @@ pub(super) fn collect_resource_spec_bitvector_variables(
             collect_c_expression_bitvector_variables(&segment.end, variables);
         }
         CResourceSpec::Write(segment) => {
-            collect_c_expression_bitvector_variables(&segment.base, variables);
-            collect_c_expression_bitvector_variables(&segment.start, variables);
-            collect_c_expression_bitvector_variables(&segment.end, variables);
-        }
-        CResourceSpec::Free(segment) => {
             collect_c_expression_bitvector_variables(&segment.base, variables);
             collect_c_expression_bitvector_variables(&segment.start, variables);
             collect_c_expression_bitvector_variables(&segment.end, variables);
@@ -2100,9 +2091,6 @@ pub(super) fn substitute_bitvector_variable_in_c_statement(
             value: substitute_bitvector_variable_in_c_expression(value, from, to),
             value_type: *value_type,
         },
-        CStatement::Free { pointer } => CStatement::Free {
-            pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
-        },
         CStatement::If {
             condition,
             then_branch,
@@ -2560,9 +2548,6 @@ pub(super) fn substitute_bitvector_variable_in_resource(
         CResource::Write(range) => CResource::Write(
             substitute_bitvector_variable_in_c_memory_range(range, from, to),
         ),
-        CResource::Free(range) => CResource::Free(substitute_bitvector_variable_in_c_memory_range(
-            range, from, to,
-        )),
         CResource::Named { name, arguments } => CResource::Named {
             name: name.clone(),
             arguments: arguments
@@ -2608,11 +2593,6 @@ pub(super) fn substitute_bitvector_variable_in_resource_spec(
             end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
         }),
         CResourceSpec::Write(segment) => CResourceSpec::Write(CMemorySegment {
-            base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
-            start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
-            end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
-        }),
-        CResourceSpec::Free(segment) => CResourceSpec::Free(CMemorySegment {
             base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
             start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
             end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),

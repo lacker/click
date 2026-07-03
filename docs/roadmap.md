@@ -107,18 +107,17 @@ comfortable.
 Likely additions:
 
 - Permission logic:
-  read/write/free authority over memory locations or ranges. A first mandatory
-  `read(...)`/`write(...)`/`free(...)` resource context exists for memory
-  ranges, including covered subrange transfer for function calls and a narrow
-  `free(p);` statement that consumes `free(p[0..1])`. The implementation now
-  has an explicit internal resource-family boundary for the memory family plus
-  first exact-match affine named resources with declared argument types and
-  duplicate-token rejection. It also has represented affine resources with
-  explicit proof-step `unpack(resource)` and `pack(resource)` operations for
-  wrappers over built-in resources, other named affine resources, and resource
-  facts. Fractions, persistent named resources, implicit unpack/pack search,
-  custom resource-family algebra, full heap deallocation semantics, and
-  abstract ownership predicates are still future work.
+  read/write authority over memory locations or ranges. A first mandatory
+  `read(...)`/`write(...)` resource context exists for memory ranges, including
+  covered subrange transfer for function calls. The implementation now has an
+  explicit internal resource-family boundary for the memory family plus
+  exact-match named resources with declared argument types and duplicate-token
+  rejection. It also has represented resources with explicit proof-step
+  `unpack(resource)` and `pack(resource)` operations for wrappers over built-in
+  resources, other named resources, and resource facts. Fractions, persistent
+  named resources, implicit unpack/pack search, custom resource-family algebra,
+  free/deallocation authority, full heap deallocation semantics, and abstract
+  ownership predicates are still future work.
 - First-class spec/model state:
   proof-only state that can be mentioned across program points if examples need
   arbitrary model variables beyond resources.

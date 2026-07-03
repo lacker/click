@@ -10,7 +10,7 @@ int32 noop_flag(int32* flag) {
 ```
 
 ```click
-affine resource zero_flag(flag: int32*) {
+resource zero_flag(flag: int32*) {
     contains write(flag[0..1]);
     fact flag[0] == 0;
 }

@@ -183,10 +183,6 @@ pub fn c_typed_store(pointer: CExpression, value: CExpression, value_type: CType
     }
 }
 
-pub fn c_free(pointer: CExpression) -> CStatement {
-    CStatement::Free { pointer }
-}
-
 pub fn c_if(
     condition: CExpression,
     then_branch: CStatement,

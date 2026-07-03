@@ -5,7 +5,7 @@ resource fact. The resource must own write permission for memory that the
 fact reads.
 
 ```click
-affine resource bogus(flag: int32*) {
+resource bogus(flag: int32*) {
     contains read(flag[0..1]);
     fact flag[0] == 0;
 }

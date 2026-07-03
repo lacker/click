@@ -159,9 +159,7 @@ impl Parser {
                 click_function_definitions.push(self.parse_click_function_definition()?);
             } else if self.peek_ident() == Some("theorem") {
                 theorem_definitions.push(self.parse_theorem_definition()?);
-            } else if self.peek_ident() == Some("affine")
-                && self.peek_next_ident() == Some("resource")
-            {
+            } else if self.peek_ident() == Some("resource") {
                 resource_definitions.push(self.parse_resource_definition()?);
             } else {
                 function_blocks.push(self.parse_function_block()?);
@@ -232,7 +230,6 @@ impl Parser {
     }
 
     fn parse_resource_definition(&mut self) -> Result<ResourceDefinition, ClickError> {
-        self.expect_ident_spelling("affine")?;
         self.expect_ident_spelling("resource")?;
         let name = self.expect_ident("resource name")?;
         self.expect(Token::LParen)?;
@@ -263,7 +260,6 @@ impl Parser {
         Ok(ResourceDefinition {
             name,
             parameters: parsed_parameters.parameters,
-            kind: ResourceKind::Affine,
             representation,
         })
     }
@@ -301,7 +297,7 @@ impl Parser {
     }
 
     fn parse_resource_representation_clause(&mut self) -> Result<ResourceClause, ClickError> {
-        if matches!(self.peek_ident(), Some("read" | "write" | "free")) {
+        if matches!(self.peek_ident(), Some("read" | "write")) {
             return self.parse_resource_clause();
         }
         self.parse_named_resource_call()
@@ -724,7 +720,7 @@ impl Parser {
             (Some("valid_range"), Some(Token::LParen)) => self.parse_valid_range_requirement()?,
             (Some("valid_field"), Some(Token::LParen)) => self.parse_valid_field_requirement()?,
             (Some("disjoint"), Some(Token::LParen)) => self.parse_disjoint_requirement()?,
-            (Some("read") | Some("write") | Some("free"), Some(Token::LParen)) => {
+            (Some("read") | Some("write"), Some(Token::LParen)) => {
                 Requirement::Resource(self.parse_resource_clause()?)
             }
             _ => {
@@ -796,7 +792,6 @@ impl Parser {
         match name.as_str() {
             "read" => Ok(ResourceClause::Read(segment)),
             "write" => Ok(ResourceClause::Write(segment)),
-            "free" => Ok(ResourceClause::Free(segment)),
             _ => Err(self.error(format!("unknown resource `{name}`"))),
         }
     }
@@ -1049,7 +1044,7 @@ impl Parser {
     }
 
     fn parse_ensure_condition(&mut self) -> Result<Ensure, ClickError> {
-        if matches!(self.peek_ident(), Some("read" | "write" | "free"))
+        if matches!(self.peek_ident(), Some("read" | "write"))
             && self.peek_next() == Some(&Token::LParen)
         {
             return Ok(Ensure::Resource(self.parse_resource_clause()?));
@@ -2173,13 +2168,6 @@ impl Parser {
 
     fn peek_ident(&self) -> Option<&str> {
         match self.peek() {
-            Some(Token::Ident(name)) => Some(name),
-            _ => None,
-        }
-    }
-
-    fn peek_next_ident(&self) -> Option<&str> {
-        match self.peek_next() {
             Some(Token::Ident(name)) => Some(name),
             _ => None,
         }

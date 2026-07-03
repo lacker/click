@@ -1,6 +1,6 @@
 # Agent State
 
-Last updated: 2026-07-02.
+Last updated: 2026-07-03.
 
 ## Repository State
 
@@ -61,7 +61,7 @@ The current philosophical model for resources is:
   - it must be consumed to do something;
   - it bundles other resources;
   - it makes facts available while the resource is held.
-- `read`, `write`, and `free` are the built-in memory resource families.
+- `read` and `write` are the built-in first-layer memory resource families.
 - User-defined resources are needed for concepts that are not just memory
   ownership, such as "this callback may still be called once".
 - "hold" is the preferred descriptive verb for now. "own" is too suggestive of
@@ -75,12 +75,11 @@ Click currently has:
 - Built-in memory resources:
   - `read(p[a..b])`
   - `write(p[a..b])`
-  - `free(p[a..b])`
 - Function specs that require and ensure resources.
-- Function calls that consume required affine resources unless returned.
+- Function calls that consume required resources unless returned.
 - Basic resource diagnostics for missing or duplicate resources.
-- Affine named resources.
-- Duplicate identical affine-token rejection.
+- Named resources.
+- Duplicate identical resource-token rejection.
 - Represented resources with:
   - `contains ...;`
   - `fact ...;`
@@ -113,13 +112,20 @@ Click currently has:
 
 ## Recent Cleanup
 
-The most recent terminology cleanup changed represented-resource clauses from
+The most recent separation-logic cleanup narrowed the first-layer resource
+surface to `read(...)`, `write(...)`, named resources, composition, and facts.
+Resource definitions now use `resource name(...)` directly; the old prefixed
+resource keyword form is gone. Deallocation authority was removed from the
+active Click/C0/kernel surface and is parked for a later allocation lifecycle
+layer.
+
+An earlier terminology cleanup changed represented-resource clauses from
 `invariant` to `fact`.
 
 Example current syntax:
 
 ```click
-affine resource uncalled(flag: int32*) {
+resource uncalled(flag: int32*) {
     contains write(flag[0..1]);
     fact flag[0] == 0;
 }
@@ -275,7 +281,7 @@ Use:
 - `resource fact`
 - `contained resource`
 - `represented resource`
-- `affine resource`
+- `resource`
 - `code region`
 - `program point`
 - `visit`
@@ -289,8 +295,8 @@ Avoid:
 
 ## Current Mental Model Of `read`, `write`, And Stability
 
-The existing implementation treats `read`, `write`, and `free` as resources, but
-the exact semantic story is still not fully polished.
+The existing implementation treats `read` and `write` as the first-layer memory
+resources, but the exact semantic story is still not fully polished.
 
 Important points:
 
@@ -299,7 +305,8 @@ Important points:
   and is the permission currently required for a resource fact that reads memory.
 - `read` alone is not enough to make a memory-reading resource fact stable,
   because another holder could write the same memory.
-- `free` is affine/consumable in practice because freeing twice should fail.
+- Free/deallocation authority is deliberately parked for a later allocation
+  lifecycle layer.
 
 The unresolved part is how much non-aliasing/stability should be inferred from
 these permissions and how much should be explicit facts.

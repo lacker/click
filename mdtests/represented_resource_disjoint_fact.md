@@ -11,7 +11,7 @@ int32 clobber_dst_packaged(int32* dst, int32* src) {
 ```
 
 ```click
-affine resource separated_first_cells(dst: int32*, src: int32*) {
+resource separated_first_cells(dst: int32*, src: int32*) {
     contains write(dst[0..1]);
     contains read(src[0..1]);
     fact disjoint(dst[0..1], src[0..1]);

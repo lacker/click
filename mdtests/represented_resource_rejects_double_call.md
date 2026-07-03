@@ -1,6 +1,6 @@
 # represented resource rejects double call
 
-This checks that a represented affine resource still behaves linearly through a
+This checks that a represented resource still behaves linearly through a
 call summary. After the first `consume_uncalled(flag)`, the caller no longer has
 `uncalled(flag)`, so the second call is rejected.
 
@@ -20,7 +20,7 @@ int32 call_twice(int32 flag[]) {
 ```
 
 ```click
-affine resource uncalled(flag: int32*) {
+resource uncalled(flag: int32*) {
     contains write(flag[0..1]);
     fact flag[0] == 0;
 }
