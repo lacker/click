@@ -16,16 +16,16 @@ Last updated: 2026-07-02.
 - `scripts/mdbook-serve.sh --port 4000` successfully installed mdBook 0.4.52
   into `target/tools`, built the book, and served it at
   `http://localhost:4000`; the foreground serve process was then stopped.
-- Those checks most recently passed after adding visible-write `disjoint(...)`
-  projection, direct hidden-write `disjoint(...)` projection for packed
-  represented resources, explicit `observe(resource)` fact projection, rejection
-  of provably overlapping visible writes, packed represented-resource fact
-  projection, improved represented-resource fact diagnostics, and the related
-  docs/mdtests.
+- Those checks most recently passed after making packed represented-resource
+  fact views recursive, adding visible-write `disjoint(...)` projection, direct
+  hidden-write `disjoint(...)` projection for packed represented resources,
+  explicit `observe(resource)` fact projection, rejection of provably
+  overlapping visible writes, improved represented-resource fact diagnostics,
+  and the related docs/mdtests.
 - Failed represented-resource fact framing diagnostics now keep the original
   one-line error and add notes about contained resources considered and scalar
   fact assumptions available.
-- Packed represented resources now project their `fact` clauses while the
+- Packed represented resources now project their recursive fact view while the
   abstract resource token is held. Their contained resources/permissions remain
   hidden until an explicit `unpack(...)`.
 - `observe(resource);` is a non-consuming proof step that projects the fact view
@@ -88,10 +88,11 @@ Click currently has:
   - explicit `unpack(resource);`
   - explicit `pack(resource);`
 - Resource facts are projected while the abstract resource token is held packed,
-  and are also available while the resource is unpacked.
+  including facts from nested represented resources, and are also available
+  while the resource is unpacked.
 - `observe(resource);` explicitly projects a held represented resource's fact
-  view before execution. It is useful when facts are nested through contained
-  represented resources and should be used without unpacking.
+  view before execution. It is useful when a proof script should record the
+  non-destructive fact-projection step.
 - `pack(...)` proves the facts, consumes the contained resources, and returns
   the abstract resource token.
 - Resource fact validation checks that facts which read mutable memory are backed
@@ -180,15 +181,16 @@ Remaining design questions include:
   non-aliasing facts?
 
 This is still the next real design frontier, but the explicit-fact slice,
-visible-write-derived disjointness, direct hidden-write-derived disjointness, and
-explicit nested fact observation are implemented.
+recursive fact views, visible-write-derived disjointness, direct
+hidden-write-derived disjointness, and explicit fact observation are implemented.
 
 ## Useful Next Steps
 
 The owner-buffer examples now pass, `read(...)`/`write(...)` now both carry the
-validity needed for covered external memory accesses, visible plus direct hidden
-contained `write(...)` resources now imply disjointness, and `observe(...)`
-provides an explicit fact-projection escape hatch. Good next slices:
+validity needed for covered external memory accesses, packed resources expose
+recursive fact views, visible plus direct hidden contained `write(...)`
+resources now imply disjointness, and `observe(...)` provides an explicit
+fact-projection certificate step. Good next slices:
 
 1. Decide how far hidden footprint disjointness should go beyond direct
    contained writes, especially across nested represented-resource footprints.

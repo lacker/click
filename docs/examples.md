@@ -227,6 +227,8 @@ sequence:
   hidden.
 - `mdtests/represented_resource_packed_disjoint_fact_projection.md`: a packed
   represented resource exposes a packaged `disjoint(...)` fact.
+- `mdtests/represented_resource_packed_nested_fact_projection.md`: a packed
+  represented resource exposes nested represented-resource facts.
 - `mdtests/represented_resource_packed_fact_hides_permissions.md`: packed facts
   do not expose contained write permission.
 - `mdtests/represented_resource_observe_nested_fact.md`: `observe(resource)`

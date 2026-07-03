@@ -182,17 +182,17 @@ affine resource uncalled(flag: int32*) {
 }
 ```
 
-Holding the packed abstract token exposes its resource facts, but not its
-contained resources. Hidden contained `write(...)` resources also expose
+Holding the packed abstract token exposes its recursive resource fact view, but
+not its contained resources. Hidden contained `write(...)` resources also expose
 derived `disjoint(...)` facts for their ranges. In an explicit proof script,
-`observe(uncalled(flag));` non-destructively projects the resource's fact view,
-including facts from nested represented resources, while keeping permissions
-hidden. `unpack(uncalled(flag));` consumes the abstract token and exposes its
-represented resources for mutation. Representations can bundle built-in memory
-resources and other affine named resources. Resource facts may include scalar
-propositions and `disjoint(...)` range facts. `pack(uncalled(flag));` proves the
-fact in the current state, consumes the represented resources, and returns the
-abstract token. The end of the `by { ... }` block checks the overall claim.
+`observe(uncalled(flag));` non-destructively records fact-view projection while
+keeping permissions hidden. `unpack(uncalled(flag));` consumes the abstract
+token and exposes its represented resources for mutation. Representations can
+bundle built-in memory resources and other affine named resources. Resource
+facts may include scalar propositions and `disjoint(...)` range facts.
+`pack(uncalled(flag));` proves the fact in the current state, consumes the
+represented resources, and returns the abstract token. The end of the
+`by { ... }` block checks the overall claim.
 
 A function block may be resource-only when it consumes a resource:
 

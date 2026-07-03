@@ -1671,64 +1671,18 @@ fn project_packed_resource_facts(
 ) -> Result<Vec<Proposition>, String> {
     let mut propositions = available_propositions.to_vec();
     for resource in state.resources().resources() {
-        let CResource::Named {
-            name,
-            arguments: resource_arguments,
-        } = resource
-        else {
-            continue;
-        };
-        let Some(definition) = resource_environment.get(name) else {
-            continue;
-        };
-        let Some(representation) = definition.representation() else {
-            continue;
-        };
-        let substitutions =
-            resource_value_substitutions(definition, resource_arguments).map_err(|message| {
-                format!("could not instantiate resource `{name}` facts: {message}")
-            })?;
-
-        let (fact_memory, represented_resources) = instantiate_resource_representation_resources(
-            name,
-            representation,
-            &substitutions,
+        project_held_resource_fact_view(
+            resource_environment,
+            resource,
             parameters,
             arguments,
+            pre_state,
             state.memory().clone(),
+            result,
+            &mut propositions,
+            predicate_environment,
+            click_function_environment,
         )?;
-        let fact_state = state.clone().with_memory(fact_memory);
-
-        if represented_resources.has_multiple_write_resources() {
-            append_resource_context_write_disjoint_facts(
-                name,
-                &represented_resources,
-                parameters,
-                arguments,
-                &mut propositions,
-            )?;
-        }
-
-        for fact in representation.facts() {
-            let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
-                format!("could not instantiate resource `{name}` fact: {message}")
-            })?;
-            let lowered = lower_outcome_proposition(
-                parameters,
-                arguments,
-                pre_state,
-                &fact_state,
-                result,
-                &propositions,
-                &fact,
-                predicate_environment,
-                click_function_environment,
-            )
-            .map_err(|message| format!("could not lower resource `{name}` fact: {message}"))?;
-            if !propositions.contains(&lowered) {
-                propositions.push(lowered);
-            }
-        }
     }
     Ok(propositions)
 }
@@ -1774,7 +1728,7 @@ fn observe_represented_resource(
             "`{claim_label}` proof step {step_index}: `observe` expects a named represented resource"
         )));
     };
-    let memory = observe_resource_fact_view(
+    let memory = project_resource_fact_view(
         resource_environment,
         definition,
         &resource_arguments,
@@ -1797,7 +1751,45 @@ fn observe_represented_resource(
     Ok(state.with_memory(memory))
 }
 
-fn observe_resource_fact_view(
+fn project_held_resource_fact_view(
+    resource_environment: &ResourceEnvironment,
+    resource: &CResource,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    memory: CMemory,
+    result: &CValue,
+    available_propositions: &mut Vec<Proposition>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<CMemory, String> {
+    let CResource::Named {
+        name,
+        arguments: resource_arguments,
+    } = resource
+    else {
+        return Ok(memory);
+    };
+    let Some(definition) = resource_environment.get(name) else {
+        return Ok(memory);
+    };
+    project_resource_fact_view(
+        resource_environment,
+        definition,
+        resource_arguments,
+        parameters,
+        arguments,
+        pre_state,
+        memory,
+        result,
+        available_propositions,
+        predicate_environment,
+        click_function_environment,
+        &mut Vec::new(),
+    )
+}
+
+fn project_resource_fact_view(
     resource_environment: &ResourceEnvironment,
     definition: &ResourceDefinition,
     resource_arguments: &[CValue],
@@ -1816,7 +1808,7 @@ fn observe_resource_fact_view(
         .any(|name| name == definition.name())
     {
         return Err(format!(
-            "resource fact observation cycle through `{}`",
+            "resource fact projection cycle through `{}`",
             definition.name()
         ));
     }
@@ -1896,7 +1888,7 @@ fn observe_resource_fact_view(
         if contained_definition.representation().is_none() {
             continue;
         }
-        memory = observe_resource_fact_view(
+        memory = project_resource_fact_view(
             resource_environment,
             contained_definition,
             contained_arguments,
