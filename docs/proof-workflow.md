@@ -49,6 +49,10 @@ Current proof steps:
 - `frame(loop(N));`: prove the effect summary for loop code region `N` and
   expose it for later postcondition reasoning.
 - `unfold(name);`: unfold matching predicate facts and goals.
+- `unfold(resource);`: consume one owned composite resource and expose its
+  immediate body.
+- `fold(resource);`: consume one immediate composite body and rebuild the owned
+  composite resource.
 - `apply(theorem_name(args...));`: instantiate a verified pure theorem from the
   standard library or current file, prove its requirements from the current
   proof context, and add its conclusions as derived facts. This step never

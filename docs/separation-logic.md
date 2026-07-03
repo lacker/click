@@ -237,12 +237,13 @@ Plain token resources currently behave as strict linear tokens:
 
 Composite resources add a definitional layer:
 
-- `unfold(resource)` consumes the owned composite resource and exposes its contained
-  resources.
-- `fold(resource)` proves the declared facts, consumes the contained resources,
-  and returns the owned composite resource.
-- `observe(resource)` projects observable facts without exposing contained
-  resources.
+- `unfold(resource)` consumes one owned composite resource and exposes its
+  immediate body resources and facts.
+- `fold(resource)` proves the declared facts, consumes one immediate body, and
+  returns the owned composite resource.
+- `observe(resource)` projects one view step without consuming the resource.
+  It exposes immediate facts and viewed immediate contained resources, but not
+  owned contained permissions.
 
 In the algebraic model, a composite resource is not a new primitive kind of
 assertion. It is a declared resource whose subject has laws connecting the

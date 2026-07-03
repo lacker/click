@@ -33,6 +33,9 @@ Last updated: 2026-07-03.
   step of a held composite resource. It exposes immediate facts and viewed
   immediate contained resources without exposing owned permissions; nested
   composite facts need another explicit `observe(...)`.
+- `docs/intermediate/permissions.md` now has a worked composite-resource
+  section organized around the three local proof steps: `observe`, `unfold`,
+  and `fold`.
 - `mdtests/composite_resource_owner_buffer_hidden_disjoint_projection.md`
   records that hidden contained writes imply folded-resource `disjoint(...)`
   facts without exposing hidden permissions.

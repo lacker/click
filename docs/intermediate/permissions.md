@@ -190,39 +190,102 @@ contract returns the resource.
 
 ## Composite Resources
 
-A declared resource can also wrap concrete resources and facts:
+Declarations with a body define composite resources. The body is a one-layer
+definition: it names contained resources and facts that justify the abstract
+resource.
 
 ```click
-resource socket_open(fd: int32);
+resource nonnegative_fd(fd: int32) {
+    fact fd >= 0;
+}
 
+resource live_fd(fd: int32) {
+    contains nonnegative_fd(fd);
+}
+```
+
+A function that holds `live_fd(fd)` owns the folded abstract resource. It does
+not automatically get every nested fact. `observe(resource)` takes one
+non-consuming view step:
+
+```click
+int32 return_fd(int32 fd) {
+    requires live_fd(fd);
+
+    ensures result >= 0 by {
+        observe(live_fd(fd));
+        observe(nonnegative_fd(fd));
+        symbolic_execute();
+        simp();
+    }
+
+    ensures live_fd(fd) by auto;
+}
+```
+
+The first `observe` exposes a viewed `nonnegative_fd(fd)` resource. The second
+`observe` exposes that resource's immediate fact, `fd >= 0`. Neither step
+consumes `live_fd(fd)`, and neither step unfolds owned permissions.
+
+When code needs the contained owned resources, use `unfold(resource)`. When
+the proof has rebuilt the body, use `fold(resource)`:
+
+```click
 resource uncalled(flag: int32*) {
-    contains socket_open(7);
     contains write(flag[0..1]);
     fact flag[0] == 0;
 }
-```
 
-At function boundaries, `uncalled(flag)` is still an abstract resource token.
-Inside an explicit proof script, the token can be unfolded:
+resource called(flag: int32*) {
+    contains write(flag[0..1]);
+    fact flag[0] == 1;
+}
 
-```click
-ensures result == 1 by {
-    unfold(uncalled(flag));
-    symbolic_execute();
-    fold(called(flag));
-    simp();
+int32 complete_once(int32 flag[]) {
+    requires uncalled(flag);
+
+    ensures called(flag) by {
+        unfold(uncalled(flag));
+        symbolic_execute();
+        fold(called(flag));
+    }
+
+    ensures result == 1 by {
+        unfold(uncalled(flag));
+        symbolic_execute();
+        fold(called(flag));
+        simp();
+    }
 }
 ```
 
-Holding a folded composite resource exposes its immediate fact view, but not
-its owned contained resources. `observe(uncalled(flag))` explicitly records one
-fact-view projection step without consuming the token or exposing contained
-owned permissions.
-`unfold(uncalled(flag))` consumes the abstract token and adds the contained
-`write(flag[0..1])` resource for mutation. `fold(called(flag))` goes the other
-direction: it proves the composite body's fact in the current state, consumes
-the contained resources, and adds the abstract `called(flag)` token. The end
-of the `by { ... }` block checks the overall claim.
+`unfold(uncalled(flag))` consumes the folded `uncalled(flag)` resource and adds
+the contained `write(flag[0..1])` resource to the proof state. The C execution
+can then mutate the flag. `fold(called(flag))` proves the `called` body's fact,
+consumes the contained write resource, and adds the folded `called(flag)`
+resource. The end of the `by { ... }` block checks the overall claim.
+
+`fold` also builds a composite resource from lower-level resources at a
+function boundary:
+
+```click
+int32 init_once(int32 flag[]) {
+    requires write(flag[0..1]);
+
+    ensures uncalled(flag) by {
+        symbolic_execute();
+        fold(uncalled(flag));
+    }
+}
+```
+
+Together, the three resource proof steps are deliberately local:
+
+- `observe(resource);` exposes one immediate view layer and consumes nothing.
+- `unfold(resource);` consumes one owned composite resource and exposes its
+  immediate body.
+- `fold(resource);` consumes one immediate body and produces the owned
+  composite resource.
 
 If a fact reads mutable memory, the composite body must contain write
 permission covering that memory. This is what makes the fact stable while
@@ -251,28 +314,6 @@ still match the contained write resource directly.
 inspection but does not prevent another holder of write permission from
 changing the cell. Pure scalar facts such as `fd >= 0` do not need a contained
 memory resource.
-
-A proof can also borrow a composite resource, learn its fact, and return
-the same abstract token:
-
-```click
-int32 inspect_server(int32 fd, int32 state[]) {
-    requires live_server(fd, state);
-
-    ensures live_server(fd, state) by {
-        unfold(live_server(fd, state));
-        symbolic_execute();
-        fold(live_server(fd, state));
-    }
-
-    ensures state[0] == 1 by {
-        unfold(live_server(fd, state));
-        symbolic_execute();
-        fold(live_server(fd, state));
-        simp();
-    }
-}
-```
 
 This is resource-context reasoning, not theorem application. Theorems stay
 pure; `apply(theorem(...))` can add proposition facts, but it does not consume

@@ -55,10 +55,12 @@ Common steps include:
 
 - `symbolic_execute();`: execute the C function symbolically.
 - `unfold(name);`: open a named predicate.
+- `unfold(resource);`: expose one body layer of an owned composite resource.
+- `fold(resource);`: rebuild one owned composite resource from its body.
 - `apply(theorem(args));`: use a verified stdlib or current-file theorem as a
   derived fact.
-- `observe(resource);`: expose facts associated with a held composite
-  resource without unfolding its contained permissions.
+- `observe(resource);`: expose one view layer of a held composite resource
+  without unfolding its contained permissions.
 - `simp();`: simplify the current proof goal.
 - `frame();`: prove an effect claim.
 
