@@ -202,64 +202,64 @@ sequence:
   token while returning another.
 - `mdtests/callback_resource_pipe_rejects_spent_token.md`: the caller cannot
   reuse the callback token spent by the helper.
-- `mdtests/represented_resource_once_flag.md`: explicit `unpack(resource)` and
-  `pack(resource)` steps verify an resource token represented by memory
+- `mdtests/composite_resource_once_flag.md`: explicit `unpack(resource)` and
+  `pack(resource)` steps verify a resource token backed by memory
   permission plus a fact.
-- `mdtests/represented_resource_composes_named.md`: a represented resource can
+- `mdtests/composite_resource_composes_named.md`: a composite resource can
   bundle another named resource with memory permission and a fact.
-- `mdtests/represented_resource_two_arrays.md`: a represented resource can
+- `mdtests/composite_resource_two_arrays.md`: a composite resource can
   bundle permissions for multiple arrays.
-- `mdtests/represented_resource_disjoint_fact.md`: a represented resource can
+- `mdtests/composite_resource_disjoint_fact.md`: a composite resource can
   package a `disjoint(...)` fact and expose it while unpacked.
-- `mdtests/represented_resource_packed_pure_fact_projection.md`: a packed
-  represented resource exposes pure facts while held.
-- `mdtests/represented_resource_packed_memory_fact_projection.md`: a packed
-  represented resource exposes memory facts while keeping contained permission
+- `mdtests/composite_resource_packed_pure_fact_projection.md`: a packed
+  composite resource exposes pure facts while held.
+- `mdtests/composite_resource_packed_memory_fact_projection.md`: a packed
+  composite resource exposes memory facts while keeping contained permission
   hidden.
-- `mdtests/represented_resource_packed_disjoint_fact_projection.md`: a packed
-  represented resource exposes a packaged `disjoint(...)` fact.
-- `mdtests/represented_resource_packed_nested_fact_projection.md`: a packed
-  represented resource exposes nested represented-resource facts.
-- `mdtests/represented_resource_packed_fact_hides_permissions.md`: packed facts
+- `mdtests/composite_resource_packed_disjoint_fact_projection.md`: a packed
+  composite resource exposes a packaged `disjoint(...)` fact.
+- `mdtests/composite_resource_packed_nested_fact_projection.md`: a packed
+  composite resource exposes nested composite-resource facts.
+- `mdtests/composite_resource_packed_fact_hides_permissions.md`: packed facts
   do not expose contained write permission.
-- `mdtests/represented_resource_observe_nested_fact.md`: `observe(resource)`
-  exposes nested represented-resource facts without unpacking.
-- `mdtests/represented_resource_observe_hides_permissions.md`: `observe(...)`
+- `mdtests/composite_resource_observe_nested_fact.md`: `observe(resource)`
+  exposes nested composite-resource facts without unpacking.
+- `mdtests/composite_resource_observe_hides_permissions.md`: `observe(...)`
   does not expose contained write permission.
-- `mdtests/represented_resource_struct_owned_buffer.md`: a conservative
+- `mdtests/composite_resource_struct_owned_buffer.md`: a conservative
   struct-owned-buffer pattern with explicit owner and buffer parameters.
-- `mdtests/represented_resource_owner_buffer_field_dependent.md`: the desired
+- `mdtests/composite_resource_owner_buffer_field_dependent.md`: the desired
   field-dependent owner-buffer shape, with the derived buffer permission and
-  non-aliasing fact packaged inside the represented resource.
-- `mdtests/represented_resource_owner_buffer_hidden_disjoint_projection.md`:
+  non-aliasing fact packaged inside the composite resource.
+- `mdtests/composite_resource_owner_buffer_hidden_disjoint_projection.md`:
   hidden contained writes imply packed-resource `disjoint(...)` facts without
   exposing the hidden permissions.
-- `mdtests/represented_resource_rejects_bad_origin.md`: packing a represented
+- `mdtests/composite_resource_rejects_bad_origin.md`: packing a composite
   resource fails when its fact has not been established.
-- `mdtests/represented_resource_rejects_double_call.md`: a represented
+- `mdtests/composite_resource_rejects_double_call.md`: a composite
   token is still consumed linearly through a call summary.
-- `mdtests/represented_resource_rejects_duplicate_contains.md`: represented
+- `mdtests/composite_resource_rejects_duplicate_contains.md`: composite
   resources reject duplicate contained resource tokens.
 - `mdtests/write_resources_imply_disjoint.md`: two visible `write(...)`
   resources imply a `disjoint(...)` fact without a separate requirement.
 - `mdtests/write_resources_reject_proven_overlap.md`: provably overlapping
   visible `write(...)` resources are rejected.
-- `mdtests/represented_resource_rejects_cycle.md`: represented-resource
+- `mdtests/composite_resource_rejects_cycle.md`: composite-resource
   definitions reject containment cycles.
-- `mdtests/represented_resource_pure_fact.md`: represented resources can carry
+- `mdtests/composite_resource_pure_fact.md`: composite resources can carry
   scalar facts that do not read memory.
-- `mdtests/represented_resource_symbolic_fact_coverage.md`: scalar fact bounds
+- `mdtests/composite_resource_symbolic_fact_coverage.md`: scalar fact bounds
   can justify indexed memory reads inside a contained write
   range.
-- `mdtests/represented_resource_predicate_bounds_fact.md`: predicate-hidden
+- `mdtests/composite_resource_predicate_bounds_fact.md`: predicate-hidden
   scalar bounds can justify indexed memory reads inside a contained write range.
-- `mdtests/represented_resource_rejects_missing_symbolic_bound.md`: symbolic
+- `mdtests/composite_resource_rejects_missing_symbolic_bound.md`: symbolic
   coverage fails when a required bound is missing.
-- `mdtests/represented_resource_rejects_unowned_fact_read.md`: facts
+- `mdtests/composite_resource_rejects_unowned_fact_read.md`: facts
   cannot read memory without contained write permission.
-- `mdtests/represented_resource_rejects_read_backed_fact.md`: contained
+- `mdtests/composite_resource_rejects_read_backed_fact.md`: contained
   read permission is not enough to stabilize a memory fact.
-- `mdtests/represented_resource_rejects_predicate_hidden_fact_read.md`:
+- `mdtests/composite_resource_rejects_predicate_hidden_fact_read.md`:
   predicate-hidden memory reads are checked against contained write permission.
 
 ## Predicates And Pure Click Functions

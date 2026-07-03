@@ -1,6 +1,6 @@
-# represented resource packed memory fact projection
+# composite resource packed memory fact projection
 
-This checks that holding a packed represented resource exposes its memory facts
+This checks that holding a packed composite resource exposes its memory facts
 without unpacking the contained write permission.
 
 ```c filename=noop_flag.c

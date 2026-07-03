@@ -1,6 +1,6 @@
-# represented resource rejects double call
+# composite resource rejects double call
 
-This checks that a represented resource still behaves linearly through a
+This checks that a composite resource still behaves linearly through a
 call summary. After the first `consume_uncalled(flag)`, the caller no longer has
 `uncalled(flag)`, so the second call is rejected.
 

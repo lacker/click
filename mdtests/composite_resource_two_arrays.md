@@ -1,4 +1,4 @@
-# represented resource bundles two arrays
+# composite resource bundles two arrays
 
 This checks the simplest compositional resource shape: one abstract token
 bundles write permission for one array and read permission for another.

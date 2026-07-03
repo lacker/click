@@ -750,7 +750,7 @@ pub(super) fn prove_claim_by_auto(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_packed_resource_representation_cells(
+    state = materialize_packed_composite_resource_cells(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
@@ -903,7 +903,7 @@ pub(super) fn prove_claim_by_frame(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_packed_resource_representation_cells(
+    state = materialize_packed_composite_resource_cells(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
@@ -1009,7 +1009,7 @@ pub(super) fn prove_claim_by_simp(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_packed_resource_representation_cells(
+    state = materialize_packed_composite_resource_cells(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
@@ -1200,7 +1200,7 @@ pub(super) fn prove_claim_by_steps(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_packed_resource_representation_cells(
+    state = materialize_packed_composite_resource_cells(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
@@ -1236,7 +1236,7 @@ pub(super) fn prove_claim_by_steps(
                         "`{claim_label}` proof step {step_index}: `unpack` must run before `symbolic_execute()` or `bounded_execute()`"
                     )));
                 }
-                state = unpack_represented_resource(
+                state = unpack_composite_resource(
                     resource_environment,
                     resource,
                     parsed_function.parameters(),
@@ -1256,7 +1256,7 @@ pub(super) fn prove_claim_by_steps(
                         "`{claim_label}` proof step {step_index}: `observe` must run before `symbolic_execute()` or `bounded_execute()`"
                     )));
                 }
-                state = observe_represented_resource(
+                state = observe_composite_resource(
                     resource_environment,
                     resource,
                     parsed_function.parameters(),
@@ -1474,14 +1474,14 @@ fn require_verification_execution(
     Ok(())
 }
 
-fn materialize_packed_resource_representation_cells(
+fn materialize_packed_composite_resource_cells(
     resource_environment: &ResourceEnvironment,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: CState,
     claim_label: &str,
 ) -> Result<CState, ClickError> {
-    let memory = materialize_packed_resource_representation_memory(
+    let memory = materialize_packed_composite_resource_memory(
         resource_environment,
         parameters,
         arguments,
@@ -1491,7 +1491,7 @@ fn materialize_packed_resource_representation_cells(
     Ok(state.with_memory(memory))
 }
 
-fn materialize_packed_resource_representation_memory(
+fn materialize_packed_composite_resource_memory(
     resource_environment: &ResourceEnvironment,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -1509,16 +1509,16 @@ fn materialize_packed_resource_representation_memory(
         let Some(definition) = resource_environment.get(name) else {
             continue;
         };
-        let Some(representation) = definition.representation() else {
+        let Some(composite_body) = definition.composite_body() else {
             continue;
         };
         let substitutions =
             resource_value_substitutions(definition, resource_arguments).map_err(|message| {
-                format!("could not instantiate resource `{name}` representation: {message}")
+                format!("could not instantiate composite resource `{name}` body: {message}")
             })?;
-        memory = materialize_resource_representation_memory(
+        memory = materialize_composite_resource_memory(
             name,
-            representation,
+            composite_body,
             &substitutions,
             parameters,
             arguments,
@@ -1669,7 +1669,7 @@ fn project_packed_resource_observable_facts(
     Ok(propositions)
 }
 
-fn observe_represented_resource(
+fn observe_composite_resource(
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -1681,7 +1681,7 @@ fn observe_represented_resource(
     claim_label: &str,
     step_index: usize,
 ) -> Result<CState, ClickError> {
-    let definition = represented_resource_definition(
+    let definition = composite_resource_definition(
         resource_environment,
         resource,
         "observe",
@@ -1707,10 +1707,10 @@ fn observe_represented_resource(
     } = abstract_resource
     else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `observe` expects a named represented resource"
+            "`{claim_label}` proof step {step_index}: `observe` expects a composite resource"
         )));
     };
-    let memory = project_represented_resource_observable_facts(
+    let memory = project_composite_resource_observable_facts(
         resource_environment,
         definition,
         &resource_arguments,
@@ -1755,7 +1755,7 @@ fn project_held_resource_observable_facts(
     let Some(definition) = resource_environment.get(name) else {
         return Ok(memory);
     };
-    project_represented_resource_observable_facts(
+    project_composite_resource_observable_facts(
         resource_environment,
         definition,
         resource_arguments,
@@ -1771,7 +1771,7 @@ fn project_held_resource_observable_facts(
     )
 }
 
-fn project_represented_resource_observable_facts(
+fn project_composite_resource_observable_facts(
     resource_environment: &ResourceEnvironment,
     definition: &ResourceDefinition,
     resource_arguments: &[CValue],
@@ -1790,11 +1790,11 @@ fn project_represented_resource_observable_facts(
         .any(|name| name == definition.name())
     {
         return Err(format!(
-            "resource observable-facts projection cycle through `{}`",
+            "composite resource observable-facts projection cycle through `{}`",
             definition.name()
         ));
     }
-    let Some(representation) = definition.representation() else {
+    let Some(composite_body) = definition.composite_body() else {
         return Ok(memory);
     };
     active_resources.push(definition.name().to_string());
@@ -1806,9 +1806,9 @@ fn project_represented_resource_observable_facts(
                 definition.name()
             )
         })?;
-    let (memory, represented_resources) = instantiate_resource_representation_resources(
+    let (memory, contained_resources) = instantiate_composite_resource_body_resources(
         definition.name(),
-        representation,
+        composite_body,
         &substitutions,
         parameters,
         arguments,
@@ -1816,11 +1816,11 @@ fn project_represented_resource_observable_facts(
     )?;
     let fact_state = pre_state.clone().with_memory(memory.clone());
 
-    append_represented_resource_observable_facts(
+    append_composite_resource_observable_facts(
         definition,
-        representation,
+        composite_body,
         &substitutions,
-        &represented_resources,
+        &contained_resources,
         parameters,
         arguments,
         pre_state,
@@ -1832,7 +1832,7 @@ fn project_represented_resource_observable_facts(
     )?;
 
     let mut memory = memory;
-    for contained in represented_resources.resources() {
+    for contained in contained_resources.resources() {
         let CResource::Named {
             name,
             arguments: contained_arguments,
@@ -1843,10 +1843,10 @@ fn project_represented_resource_observable_facts(
         let Some(contained_definition) = resource_environment.get(name) else {
             continue;
         };
-        if contained_definition.representation().is_none() {
+        if contained_definition.composite_body().is_none() {
             continue;
         }
-        memory = project_represented_resource_observable_facts(
+        memory = project_composite_resource_observable_facts(
             resource_environment,
             contained_definition,
             contained_arguments,
@@ -1866,11 +1866,11 @@ fn project_represented_resource_observable_facts(
     Ok(memory)
 }
 
-fn append_represented_resource_observable_facts(
+fn append_composite_resource_observable_facts(
     definition: &ResourceDefinition,
-    representation: &ResourceRepresentation,
+    composite_body: &CompositeResourceBody,
     substitutions: &BTreeMap<String, ContractExpression>,
-    represented_resources: &ResourceContext,
+    contained_resources: &ResourceContext,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -1882,15 +1882,15 @@ fn append_represented_resource_observable_facts(
 ) -> Result<(), String> {
     append_resource_context_observable_facts(
         definition.name(),
-        represented_resources,
+        contained_resources,
         parameters,
         arguments,
         propositions,
     )?;
 
-    append_represented_resource_declared_facts(
+    append_composite_resource_declared_facts(
         definition,
-        representation,
+        composite_body,
         substitutions,
         parameters,
         arguments,
@@ -1903,9 +1903,9 @@ fn append_represented_resource_observable_facts(
     )
 }
 
-fn append_represented_resource_declared_facts(
+fn append_composite_resource_declared_facts(
     definition: &ResourceDefinition,
-    representation: &ResourceRepresentation,
+    composite_body: &CompositeResourceBody,
     substitutions: &BTreeMap<String, ContractExpression>,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -1916,7 +1916,7 @@ fn append_represented_resource_declared_facts(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<(), String> {
-    for fact in representation.facts() {
+    for fact in composite_body.facts() {
         let fact = substitute_click_proposition(fact, substitutions).map_err(|message| {
             format!(
                 "could not instantiate resource `{}` fact: {message}",
@@ -1957,7 +1957,7 @@ fn append_resource_context_observable_facts(
     let assumptions = assumptions_from_propositions(propositions);
     let facts = resources.observable_facts(&assumptions).map_err(|error| {
         format!(
-            "resource `{name}` representation has {}",
+            "composite resource `{name}` body has {}",
             describe_resource_context_validity_error(error, parameters, arguments)
         )
     })?;
@@ -1991,17 +1991,17 @@ fn describe_resource_context_validity_error(
     }
 }
 
-fn materialize_resource_representation_memory(
+fn materialize_composite_resource_memory(
     name: &str,
-    representation: &ResourceRepresentation,
+    composite_body: &CompositeResourceBody,
     substitutions: &BTreeMap<String, ContractExpression>,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     memory: CMemory,
 ) -> Result<CMemory, String> {
-    let (memory, _) = instantiate_resource_representation_resources(
+    let (memory, _) = instantiate_composite_resource_body_resources(
         name,
-        representation,
+        composite_body,
         substitutions,
         parameters,
         arguments,
@@ -2010,19 +2010,19 @@ fn materialize_resource_representation_memory(
     Ok(memory)
 }
 
-fn instantiate_resource_representation_resources(
+fn instantiate_composite_resource_body_resources(
     name: &str,
-    representation: &ResourceRepresentation,
+    composite_body: &CompositeResourceBody,
     substitutions: &BTreeMap<String, ContractExpression>,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     mut memory: CMemory,
 ) -> Result<(CMemory, ResourceContext), String> {
     let mut resources = ResourceContext::new();
-    for contained in representation.contains() {
+    for contained in composite_body.contains() {
         let contained =
             instantiate_resource_clause(contained, substitutions).map_err(|message| {
-                format!("could not instantiate resource `{name}` representation: {message}")
+                format!("could not instantiate composite resource `{name}` body: {message}")
             })?;
         let lowered =
             lower_resource_clause(&contained, parameters, arguments, &memory).map_err(|error| {
@@ -2032,8 +2032,8 @@ fn instantiate_resource_representation_resources(
                     error.message()
                 )
             })?;
-        memory = materialize_represented_resource_cells(memory, &contained, &lowered, parameters);
-        // This representation-instantiation path has no fact assumptions yet.
+        memory = materialize_composite_resource_cells(memory, &contained, &lowered, parameters);
+        // This composite-body instantiation path has no fact assumptions yet.
         // Projection/packing paths check composition once assumptions are
         // available.
         resources = resources.unchecked_with_resource(lowered);
@@ -2066,7 +2066,7 @@ fn resource_value_substitutions(
         .collect())
 }
 
-fn unpack_represented_resource(
+fn unpack_composite_resource(
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -2078,16 +2078,16 @@ fn unpack_represented_resource(
     claim_label: &str,
     step_index: usize,
 ) -> Result<CState, ClickError> {
-    let definition = represented_resource_definition(
+    let definition = composite_resource_definition(
         resource_environment,
         resource,
         "unpack",
         claim_label,
         step_index,
     )?;
-    let representation = definition
-        .representation()
-        .expect("represented_resource_definition should require a representation");
+    let composite_body = definition
+        .composite_body()
+        .expect("composite_resource_definition should require a composite body");
     let substitutions =
         resource_argument_substitutions(definition, resource, claim_label, step_index)?;
     let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
@@ -2106,7 +2106,7 @@ fn unpack_represented_resource(
         })?;
     state = state.with_resource_context(resources);
 
-    for contained in representation.contains() {
+    for contained in composite_body.contains() {
         let contained = instantiate_resource_clause(contained, &substitutions).map_err(|message| {
             ClickError::new(format!(
                 "`{claim_label}` proof step {step_index}: could not instantiate `unpack({})`: {message}",
@@ -2114,7 +2114,7 @@ fn unpack_represented_resource(
             ))
         })?;
         let lowered = lower_resource_clause(&contained, parameters, arguments, state.memory())?;
-        let memory = materialize_represented_resource_cells(
+        let memory = materialize_composite_resource_cells(
             state.memory().clone(),
             &contained,
             &lowered,
@@ -2134,7 +2134,7 @@ fn unpack_represented_resource(
         state = state.with_memory(memory).with_resource_context(resources);
     }
 
-    for fact in representation.facts() {
+    for fact in composite_body.facts() {
         let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                 ClickError::new(format!(
                     "`{claim_label}` proof step {step_index}: could not instantiate `unpack({})` fact: {message}",
@@ -2175,7 +2175,7 @@ fn unpack_represented_resource(
     Ok(state)
 }
 
-fn pack_represented_resources_on_outcome(
+fn pack_composite_resources_on_outcome(
     resource_environment: &ResourceEnvironment,
     resource_packs: &[ResourceClause],
     claim_label: &str,
@@ -2191,20 +2191,20 @@ fn pack_represented_resources_on_outcome(
     unfolded_predicates: &[String],
 ) -> Result<CFunctionOutcome, ClickError> {
     for resource in resource_packs {
-        let definition = represented_resource_definition(
+        let definition = composite_resource_definition(
             resource_environment,
             resource,
             "pack",
             claim_label,
             path_index,
         )?;
-        let representation = definition
-            .representation()
-            .expect("represented_resource_definition should require a representation");
+        let composite_body = definition
+            .composite_body()
+            .expect("composite_resource_definition should require a composite body");
         let substitutions =
             resource_argument_substitutions(definition, resource, claim_label, path_index)?;
 
-        for fact in representation.facts() {
+        for fact in composite_body.facts() {
             let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                     ClickError::new(format!(
                         "`{claim_label}` path {path_index}: could not instantiate `pack({})` fact: {message}",
@@ -2244,7 +2244,7 @@ fn pack_represented_resources_on_outcome(
         };
         let mut post_state = state;
         let assumptions = assumptions_from_propositions(available_propositions);
-        for contained in representation.contains() {
+        for contained in composite_body.contains() {
             let contained =
                 instantiate_resource_clause(contained, &substitutions).map_err(|message| {
                     ClickError::new(format!(
@@ -2293,7 +2293,7 @@ fn pack_represented_resources_on_outcome(
     Ok(outcome)
 }
 
-fn represented_resource_definition<'a>(
+fn composite_resource_definition<'a>(
     resource_environment: &'a ResourceEnvironment,
     resource: &ResourceClause,
     action: &str,
@@ -2302,7 +2302,7 @@ fn represented_resource_definition<'a>(
 ) -> Result<&'a ResourceDefinition, ClickError> {
     let ResourceClause::Named { name, .. } = resource else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{action}` expects a named represented resource"
+            "`{claim_label}` proof step {step_index}: `{action}` expects a composite resource"
         )));
     };
     let definition = resource_environment.get(name).ok_or_else(|| {
@@ -2310,9 +2310,9 @@ fn represented_resource_definition<'a>(
             "`{claim_label}` proof step {step_index}: unknown resource `{name}`"
         ))
     })?;
-    if definition.representation().is_none() {
+    if definition.composite_body().is_none() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{action}` expects represented resource `{name}` to have a body"
+            "`{claim_label}` proof step {step_index}: `{action}` expects composite resource `{name}` to have a body"
         )));
     }
     Ok(definition)
@@ -2404,16 +2404,18 @@ fn instantiate_contract_segment(
     })
 }
 
-fn materialize_represented_resource_cells(
+fn materialize_composite_resource_cells(
     mut memory: CMemory,
     resource_clause: &ResourceClause,
     lowered: &CResource,
     parameters: &[syntax::C0Parameter],
 ) -> CMemory {
-    let (segment, range) = match (resource_clause, lowered) {
-        (ResourceClause::Read(segment), CResource::Read(range))
-        | (ResourceClause::Write(segment), CResource::Write(range)) => (segment, range),
-        _ => return memory,
+    let Some((segment, range)) = (match resource_clause {
+        ResourceClause::Read(segment) => lowered.memory_view_range().map(|range| (segment, range)),
+        ResourceClause::Write(segment) => lowered.memory_own_range().map(|range| (segment, range)),
+        ResourceClause::Named { .. } => None,
+    }) else {
+        return memory;
     };
     let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
         (range.start(), range.end())
@@ -2680,7 +2682,7 @@ fn prove_claim_from_steps_execution(
                 "`proof steps` failed for `{claim_label}` path {path_index}: {message}"
             ))
         })?;
-        outcome = pack_represented_resources_on_outcome(
+        outcome = pack_composite_resources_on_outcome(
             resource_environment,
             resource_packs,
             claim_label,

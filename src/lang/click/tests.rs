@@ -443,7 +443,7 @@ fn parses_proof_step_script() {
 }
 
 #[test]
-fn parses_represented_resource_definition() {
+fn parses_composite_resource_definition() {
     let source = r#"
             resource socket_open(fd: int32);
 
@@ -453,11 +453,11 @@ fn parses_represented_resource_definition() {
                 fact flag[0] == 0;
             }
         "#;
-    let file = parse(source).expect("represented resource should parse");
+    let file = parse(source).expect("composite resource should parse");
     let resource = &file.resource_definitions()[1];
-    let representation = resource
-        .representation()
-        .expect("resource should have representation");
+    let composite_body = resource
+        .composite_body()
+        .expect("resource should have composite body");
 
     assert_eq!(resource.name(), "uncalled");
     assert_eq!(
@@ -469,7 +469,7 @@ fn parses_represented_resource_definition() {
         }]
     );
     assert_eq!(
-        representation.contains(),
+        composite_body.contains(),
         &[
             ResourceClause::Named {
                 name: "socket_open".to_string(),
@@ -484,7 +484,7 @@ fn parses_represented_resource_definition() {
             })
         ]
     );
-    assert_eq!(representation.facts().len(), 1);
+    assert_eq!(composite_body.facts().len(), 1);
 }
 
 #[test]
@@ -3012,7 +3012,7 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
         )]),
     );
     let initial_resources =
-        ResourceContext::new().unchecked_with_resource(CResource::Write(CMemoryRange::new(
+        ResourceContext::new().unchecked_with_resource(CResource::own_memory(CMemoryRange::new(
             base.clone(),
             Bitvector32Term::Constant(0),
             Bitvector32Term::Constant(3),

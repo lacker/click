@@ -1,4 +1,4 @@
-# represented resource for a struct-owned buffer
+# composite resource for a struct-owned buffer
 
 This checks the conservative "struct owns buffer" pattern. The abstract
 resource takes both the owner object and the buffer as explicit parameters,

@@ -1,7 +1,7 @@
-# represented resource borrow fact
+# composite resource borrow fact
 
 This checks the intended baseline pattern for learning a fact from a
-represented resource while returning that resource to the caller.
+composite resource while returning that resource to the caller.
 
 ```c filename=inspect_server.c
 int32 inspect_server(int32 fd, int32 state[]) {

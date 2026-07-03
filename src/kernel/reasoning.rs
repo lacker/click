@@ -1396,8 +1396,10 @@ pub(super) fn collect_resource_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match resource {
-        CResource::Read(range) => collect_c_memory_range_bitvector_variables(range, variables),
-        CResource::Write(range) => collect_c_memory_range_bitvector_variables(range, variables),
+        CResource::Own(CResourceSubject::Memory(range))
+        | CResource::View(CResourceSubject::Memory(range)) => {
+            collect_c_memory_range_bitvector_variables(range, variables)
+        }
         CResource::Named { arguments, .. } => {
             for argument in arguments {
                 collect_c_value_bitvector_variables(argument, variables);
@@ -2542,10 +2544,10 @@ pub(super) fn substitute_bitvector_variable_in_resource(
     to: &Bitvector32Term,
 ) -> CResource {
     match resource {
-        CResource::Read(range) => CResource::Read(substitute_bitvector_variable_in_c_memory_range(
-            range, from, to,
-        )),
-        CResource::Write(range) => CResource::Write(
+        CResource::Own(CResourceSubject::Memory(range)) => CResource::own_memory(
+            substitute_bitvector_variable_in_c_memory_range(range, from, to),
+        ),
+        CResource::View(CResourceSubject::Memory(range)) => CResource::view_memory(
             substitute_bitvector_variable_in_c_memory_range(range, from, to),
         ),
         CResource::Named { name, arguments } => CResource::Named {

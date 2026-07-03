@@ -469,12 +469,17 @@ pub struct ResourceContext {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResource {
-    Read(CMemoryRange),
-    Write(CMemoryRange),
+    Own(CResourceSubject),
+    View(CResourceSubject),
     Named {
         name: String,
         arguments: Vec<CValue>,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CResourceSubject {
+    Memory(CMemoryRange),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1899,7 +1904,7 @@ impl ResourceContext {
                 resource.clone(),
             ));
         }
-        if let Some((left, right)) = self.overlapping_write_pair(assumptions) {
+        if let Some((left, right)) = self.overlapping_owned_memory_pair(assumptions) {
             return Some(ResourceContextValidityError::OverlappingWriteResources {
                 left: left.clone(),
                 right: right.clone(),
@@ -1919,28 +1924,28 @@ impl ResourceContext {
         if let Some(error) = self.validity_error(assumptions) {
             return Err(error);
         }
-        Ok(self.memory_write_disjoint_facts())
+        Ok(self.owned_memory_disjoint_facts())
     }
 
-    pub fn has_multiple_write_resources(&self) -> bool {
+    pub fn has_multiple_owned_memory_resources(&self) -> bool {
         self.resources
             .iter()
-            .filter(|resource| matches!(resource, CResource::Write(_)))
+            .filter(|resource| resource.memory_own_range().is_some())
             .take(2)
             .count()
             == 2
     }
 
-    pub fn overlapping_write_pair(
+    pub fn overlapping_owned_memory_pair(
         &self,
         assumptions: &Assumptions,
     ) -> Option<(&CMemoryRange, &CMemoryRange)> {
         for i in 0..self.resources.len() {
-            let CResource::Write(left) = &self.resources[i] else {
+            let Some(left) = self.resources[i].memory_own_range() else {
                 continue;
             };
             for candidate in &self.resources[i + 1..] {
-                let CResource::Write(right) = candidate else {
+                let Some(right) = candidate.memory_own_range() else {
                     continue;
                 };
                 if memory_ranges_proven_overlapping(left, right, assumptions) {
@@ -1951,19 +1956,16 @@ impl ResourceContext {
         None
     }
 
-    fn memory_write_disjoint_facts(&self) -> Vec<Proposition> {
-        let writes = self
+    fn owned_memory_disjoint_facts(&self) -> Vec<Proposition> {
+        let owned = self
             .resources
             .iter()
-            .filter_map(|resource| match resource {
-                CResource::Write(range) => Some(range),
-                CResource::Read(_) | CResource::Named { .. } => None,
-            })
+            .filter_map(CResource::memory_own_range)
             .collect::<Vec<_>>();
         let mut propositions = Vec::new();
-        for i in 0..writes.len() {
-            for right in &writes[i + 1..] {
-                let left = writes[i];
+        for i in 0..owned.len() {
+            for right in &owned[i + 1..] {
+                let left = owned[i];
                 propositions.push(Proposition::CMemoryDisjoint {
                     left_base: left.base.clone(),
                     left_start: left.start.clone(),
@@ -2099,18 +2101,21 @@ fn memory_resource_entails(
     assumptions: &Assumptions,
 ) -> bool {
     match (available, required) {
-        (_, CResource::Read(required)) => {
+        (_, _) if required.memory_view_range().is_some() => {
+            let required = required.memory_view_range().expect("checked above");
             let Some(available) = resource_read_core_range(available) else {
                 return false;
             };
             memory_range_covers(&available, required, assumptions)
         }
-        (CResource::Write(available), CResource::Write(required)) => {
+        (_, _) if required.memory_own_range().is_some() => {
+            let Some(available) = available.memory_own_range() else {
+                return false;
+            };
+            let required = required.memory_own_range().expect("checked above");
             memory_range_covers(available, required, assumptions)
         }
-        (CResource::Read(_), CResource::Write(_))
-        | (CResource::Named { .. }, _)
-        | (_, CResource::Named { .. }) => false,
+        _ => false,
     }
 }
 
@@ -2119,41 +2124,35 @@ fn consume_memory_resource(
     required: &CResource,
     assumptions: &Assumptions,
 ) -> Option<ResourceContext> {
-    match required {
-        CResource::Read(required) => context
+    if let Some(required) = required.memory_view_range() {
+        return context
             .resources
             .iter()
             .any(|candidate| {
                 resource_read_core_range(candidate)
                     .is_some_and(|available| memory_range_covers(&available, required, assumptions))
             })
-            .then(|| context.normalized(assumptions)),
-        CResource::Write(required) => {
-            let index = context
-                .resources
-                .iter()
-                .position(|candidate| match candidate {
-                    CResource::Read(_) => false,
-                    CResource::Write(available) => {
-                        memory_range_covers(available, required, assumptions)
-                    }
-                    CResource::Named { .. } => false,
-                })?;
-            let available = match context.resources.remove(index) {
-                CResource::Write(available) => available,
-                CResource::Read(_) | CResource::Named { .. } => {
-                    unreachable!("write resource lookup ignored non-writes")
-                }
-            };
-            context.resources.extend(
-                split_memory_range(&available, required, assumptions)?
-                    .into_iter()
-                    .map(CResource::Write),
-            );
-            Some(context.normalized(assumptions))
-        }
-        CResource::Named { .. } => unreachable!("named resource sent to memory resource consumer"),
+            .then(|| context.normalized(assumptions));
     }
+    if let Some(required) = required.memory_own_range() {
+        let index = context.resources.iter().position(|candidate| {
+            candidate
+                .memory_own_range()
+                .is_some_and(|available| memory_range_covers(available, required, assumptions))
+        })?;
+        let available = context
+            .resources
+            .remove(index)
+            .into_memory_own_range()
+            .expect("own resource lookup ignored non-own resources");
+        context.resources.extend(
+            split_memory_range(&available, required, assumptions)?
+                .into_iter()
+                .map(CResource::own_memory),
+        );
+        return Some(context.normalized(assumptions));
+    }
+    unreachable!("non-memory resource sent to memory resource consumer")
 }
 
 fn named_resource_entails(available: &CResource, required: &CResource) -> bool {
@@ -2186,7 +2185,10 @@ fn resource_core(resource: &CResource) -> Option<CResource> {
 
 fn memory_resource_core(resource: &CResource) -> Option<CResource> {
     match resource {
-        CResource::Read(range) | CResource::Write(range) => Some(CResource::Read(range.clone())),
+        CResource::Own(CResourceSubject::Memory(range))
+        | CResource::View(CResourceSubject::Memory(range)) => {
+            Some(CResource::view_memory(range.clone()))
+        }
         CResource::Named { .. } => None,
     }
 }
@@ -2197,8 +2199,8 @@ fn named_resource_core(_resource: &CResource) -> Option<CResource> {
 
 fn resource_read_core_range(resource: &CResource) -> Option<CMemoryRange> {
     match resource.core()? {
-        CResource::Read(range) => Some(range),
-        CResource::Write(_) | CResource::Named { .. } => None,
+        CResource::View(CResourceSubject::Memory(range)) => Some(range),
+        CResource::Own(_) | CResource::Named { .. } => None,
     }
 }
 
@@ -2226,15 +2228,14 @@ fn memory_resource_permits_write(
     assumptions: &Assumptions,
 ) -> bool {
     match resource {
-        CResource::Read(_) => false,
-        CResource::Write(range) => assumptions.pointer_access_in_range(
+        CResource::Own(CResourceSubject::Memory(range)) => assumptions.pointer_access_in_range(
             pointer,
             byte_width,
             range.base(),
             range.start(),
             range.end(),
         ),
-        CResource::Named { .. } => false,
+        CResource::View(_) | CResource::Named { .. } => false,
     }
 }
 
@@ -2303,15 +2304,54 @@ fn memory_ranges_proven_overlapping(
 }
 
 impl CResource {
+    pub fn own_memory(range: CMemoryRange) -> Self {
+        Self::Own(CResourceSubject::Memory(range))
+    }
+
+    pub fn view_memory(range: CMemoryRange) -> Self {
+        Self::View(CResourceSubject::Memory(range))
+    }
+
     pub fn family(&self) -> ResourceFamily {
         match self {
-            Self::Read(_) | Self::Write(_) => ResourceFamily::Memory,
+            Self::Own(CResourceSubject::Memory(_)) | Self::View(CResourceSubject::Memory(_)) => {
+                ResourceFamily::Memory
+            }
             Self::Named { .. } => ResourceFamily::Named,
         }
     }
 
     pub fn core(&self) -> Option<Self> {
         resource_core(self)
+    }
+
+    pub fn memory_own_range(&self) -> Option<&CMemoryRange> {
+        match self {
+            Self::Own(CResourceSubject::Memory(range)) => Some(range),
+            Self::View(_) | Self::Named { .. } => None,
+        }
+    }
+
+    pub fn memory_view_range(&self) -> Option<&CMemoryRange> {
+        match self {
+            Self::View(CResourceSubject::Memory(range)) => Some(range),
+            Self::Own(_) | Self::Named { .. } => None,
+        }
+    }
+
+    pub fn memory_range(&self) -> Option<&CMemoryRange> {
+        match self {
+            Self::Own(CResourceSubject::Memory(range))
+            | Self::View(CResourceSubject::Memory(range)) => Some(range),
+            Self::Named { .. } => None,
+        }
+    }
+
+    fn into_memory_own_range(self) -> Option<CMemoryRange> {
+        match self {
+            Self::Own(CResourceSubject::Memory(range)) => Some(range),
+            Self::View(_) | Self::Named { .. } => None,
+        }
     }
 }
 
@@ -2323,16 +2363,15 @@ fn combine_memory_resources(
     match (left, right) {
         _ if memory_resource_entails(left, right, assumptions) => Some(left.clone()),
         _ if memory_resource_entails(right, left, assumptions) => Some(right.clone()),
-        (CResource::Read(left), CResource::Read(right)) => {
-            merge_memory_ranges(left, right, assumptions).map(CResource::Read)
-        }
-        (CResource::Write(left), CResource::Write(right)) => {
-            merge_memory_ranges(left, right, assumptions).map(CResource::Write)
-        }
-        (CResource::Read(_), CResource::Write(_))
-        | (CResource::Write(_), CResource::Read(_))
-        | (CResource::Named { .. }, _)
-        | (_, CResource::Named { .. }) => None,
+        (
+            CResource::View(CResourceSubject::Memory(left)),
+            CResource::View(CResourceSubject::Memory(right)),
+        ) => merge_memory_ranges(left, right, assumptions).map(CResource::view_memory),
+        (
+            CResource::Own(CResourceSubject::Memory(left)),
+            CResource::Own(CResourceSubject::Memory(right)),
+        ) => merge_memory_ranges(left, right, assumptions).map(CResource::own_memory),
+        _ => None,
     }
 }
 

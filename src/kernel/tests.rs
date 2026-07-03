@@ -13,7 +13,7 @@ fn read_resource(
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
 ) -> CResource {
-    CResource::Read(memory_range(base, start, end))
+    CResource::view_memory(memory_range(base, start, end))
 }
 
 fn write_resource(
@@ -21,7 +21,7 @@ fn write_resource(
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
 ) -> CResource {
-    CResource::Write(memory_range(base, start, end))
+    CResource::own_memory(memory_range(base, start, end))
 }
 
 fn read_context(

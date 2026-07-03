@@ -170,7 +170,7 @@ requires a named resource consumes it unless the callee also returns it
 with a matching resource `ensures`. Named resource arguments are type checked,
 and duplicate identical resource tokens in one resource context are rejected.
 
-Named resources can have a representation:
+Composite resources are named resources with a body:
 
 ```click
 resource socket_open(fd: int32);
@@ -187,11 +187,11 @@ not its contained resources. Hidden contained `write(...)` resources also expose
 derived `disjoint(...)` facts for their ranges. In an explicit proof script,
 `observe(uncalled(flag));` non-destructively records fact-view projection while
 keeping permissions hidden. `unpack(uncalled(flag));` consumes the abstract
-token and exposes its represented resources for mutation. Representations can
+token and exposes its contained resources for mutation. Composite bodies can
 bundle built-in memory resources and other named resources. Resource
 facts may include scalar propositions and `disjoint(...)` range facts.
 `pack(uncalled(flag));` proves the fact in the current state, consumes the
-represented resources, and returns the abstract token. The end of the
+contained resources, and returns the abstract token. The end of the
 `by { ... }` block checks the overall claim.
 
 A function block may be resource-only when it consumes a resource:

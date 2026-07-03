@@ -1,7 +1,7 @@
-# represented resource packed nested fact projection
+# composite resource packed nested fact projection
 
-This checks that holding a packed represented resource exposes facts from
-nested represented resources without an explicit `observe(...)` step.
+This checks that holding a packed composite resource exposes facts from
+nested composite resources without an explicit `observe(...)` step.
 
 ```c filename=return_fd.c
 int32 return_fd(int32 fd) {

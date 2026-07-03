@@ -1,6 +1,6 @@
-# represented resource allows pure fact
+# composite resource allows pure fact
 
-This checks that a represented resource may carry scalar resource facts that
+This checks that a composite resource may carry scalar resource facts that
 do not read mutable memory.
 
 ```click

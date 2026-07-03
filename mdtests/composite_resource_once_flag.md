@@ -1,6 +1,6 @@
-# represented resource over memory
+# composite resource over memory
 
-This checks the first represented-resource slice. `uncalled(flag)` wraps
+This checks the first composite-resource slice. `uncalled(flag)` wraps
 `write(flag[0..1])` plus the abstract fact that `flag[0] == 0`; `called(flag)`
 wraps the same write permission plus the fact that `flag[0] == 1`.
 

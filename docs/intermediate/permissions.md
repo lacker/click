@@ -42,6 +42,10 @@ core(write(p[lo..hi])) = read(p[lo..hi])
 core(read(p[lo..hi])) = read(p[lo..hi])
 ```
 
+Internally, the kernel now spells this relationship as
+`core(own(memory(range))) = view(memory(range))`; the Click surface still uses
+`write(...)` and `read(...)`.
+
 That is why a write resource can satisfy read requirements and read guarantees
 without consuming the write resource.
 
@@ -184,7 +188,7 @@ That spec contributes a call summary. Calling `complete(cb)` consumes
 `can_complete(cb)`, so a second call on the same path fails unless some other
 contract returns the resource.
 
-## Represented Resources
+## Composite Resources
 
 An named resource can also wrap concrete resources and facts:
 
@@ -210,16 +214,16 @@ ensures result == 1 by {
 }
 ```
 
-Holding a packed represented resource exposes its recursive fact view, but not
+Holding a packed composite resource exposes its recursive fact view, but not
 its contained resources. `observe(uncalled(flag))` explicitly records fact-view
-projection without consuming the token or exposing represented permissions.
-`unpack(uncalled(flag))` consumes the abstract token and adds the represented
+projection without consuming the token or exposing contained permissions.
+`unpack(uncalled(flag))` consumes the abstract token and adds the contained
 `write(flag[0..1])` resource for mutation. `pack(called(flag))` goes the other
-direction: it proves the representation's fact in the current state, consumes
-the represented resources, and adds the abstract `called(flag)` token. The end
+direction: it proves the composite body's fact in the current state, consumes
+the contained resources, and adds the abstract `called(flag)` token. The end
 of the `by { ... }` block checks the overall claim.
 
-If a fact reads mutable memory, the representation must contain write
+If a fact reads mutable memory, the composite body must contain write
 permission covering that memory. This is what makes the fact stable while
 the resource is packed:
 
@@ -247,7 +251,7 @@ inspection but does not prevent another holder of write permission from
 changing the cell. Pure scalar facts such as `fd >= 0` do not need a contained
 memory resource.
 
-A proof can also borrow a represented resource, learn its fact, and return
+A proof can also borrow a composite resource, learn its fact, and return
 the same abstract token:
 
 ```click
@@ -275,16 +279,16 @@ or return resources.
 
 This first slice supports built-in `read(...)` and `write(...)` clauses plus
 exact-match named resources inside `contains`. Duplicate contained resource
-tokens are rejected, and represented-resource cycles are rejected. Resource
+tokens are rejected, and composite-resource cycles are rejected. Resource
 unpacking is explicit; `auto` does not yet choose unpack/pack steps on its own.
 
-The smallest ownership-shaped pattern is a represented resource that bundles
+The smallest ownership-shaped pattern is a composite resource that bundles
 several concrete permissions. For example, `first_cell_copy_access(dst, src)`
 can contain `write(dst[0..1])` and `read(src[0..1])`, while
 `owned_one_cell(owner, data)` can contain permission for an owner object and an
 explicitly passed buffer pointer. In this conservative shape, the resource's
 parameters name the lower-level memory objects directly. More convenient
-field-dependent representations can derive a contained buffer from
+field-dependent composite resources can derive a contained buffer from
 `owner->data`. The packed resource exposes derived `disjoint(...)` facts from
 its hidden contained writes, while explicit `fact` clauses can carry additional
 shape facts such as length and capacity.
@@ -330,16 +334,16 @@ Implemented today:
 - an internal memory resource family boundary for entailment, consumption,
   access authorization, splitting, and joining,
 - exact-match named resources declared with `resource name(...)`,
-- represented named resources with explicit `unpack(resource)` and
+- composite resources with explicit `unpack(resource)` and
   `pack(resource)` proof steps, including composition over other named
   resources,
-- recursive fact views for packed represented resources, plus
+- recursive fact views for packed composite resources, plus
   `observe(resource)` proof steps that explicitly record fact-view projection
   without exposing contained permissions,
 - `write(...)` implying read authority,
 - visible `write(...)` resources imply `disjoint(...)` facts for their ranges,
   and provably overlapping visible writes are rejected,
-- hidden contained `write(...)` resources in packed represented resources imply
+- hidden contained `write(...)` resources in packed composite resources imply
   `disjoint(...)` facts without exposing the hidden permissions,
 - copyable read transfer,
 - linear write transfer through function summaries,

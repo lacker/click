@@ -1,6 +1,6 @@
-# represented resource symbolic fact coverage
+# composite resource symbolic fact coverage
 
-This checks that a represented resource fact can justify an indexed
+This checks that a composite resource fact can justify an indexed
 memory read using scalar bounds from the fact.
 
 ```click

@@ -1,6 +1,6 @@
-# represented resource rejects duplicate contained token
+# composite resource rejects duplicate contained token
 
-This checks that a represented resource cannot contain the same named
+This checks that a composite resource cannot contain the same named
 resource token twice.
 
 ```c filename=zero.c

@@ -1,6 +1,6 @@
-# represented resource rejects cycles
+# composite resource rejects cycles
 
-This checks that represented resource definitions cannot recursively contain
+This checks that composite resource definitions cannot recursively contain
 each other.
 
 ```c filename=zero.c
@@ -26,5 +26,5 @@ int32 zero(int32 fd) {
 ```
 
 ```expect
-fail: resource representation cycle
+fail: composite resource cycle
 ```

@@ -1,6 +1,6 @@
-# represented resource rejects missing symbolic bound
+# composite resource rejects missing symbolic bound
 
-This checks that a represented resource fact still needs enough scalar
+This checks that a composite resource fact still needs enough scalar
 bounds to prove that each memory read is covered by contained write permission.
 
 ```click

@@ -498,7 +498,7 @@ fn evaluate_function_resource_spec(
                 Ok(segment) => segment,
                 Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
             };
-            Ok(Ok(CResource::Read(CMemoryRange::new(
+            Ok(Ok(CResource::view_memory(CMemoryRange::new(
                 segment.base,
                 segment.start,
                 segment.end,
@@ -509,7 +509,7 @@ fn evaluate_function_resource_spec(
                 Ok(segment) => segment,
                 Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
             };
-            Ok(Ok(CResource::Write(CMemoryRange::new(
+            Ok(Ok(CResource::own_memory(CMemoryRange::new(
                 segment.base,
                 segment.start,
                 segment.end,
@@ -552,8 +552,8 @@ fn evaluate_function_resource_spec(
 
 fn resource_transfer_priority(resource: &CResource) -> u8 {
     match resource {
-        CResource::Read(_) => 0,
-        CResource::Write(_) => 1,
+        CResource::View(CResourceSubject::Memory(_)) => 0,
+        CResource::Own(CResourceSubject::Memory(_)) => 1,
         CResource::Named { .. } => 2,
     }
 }

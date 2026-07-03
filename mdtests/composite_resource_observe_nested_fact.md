@@ -1,6 +1,6 @@
-# represented resource observe nested fact
+# composite resource observe nested fact
 
-This checks that `observe(resource)` exposes facts from represented resources
+This checks that `observe(resource)` exposes facts from composite resources
 contained inside the observed packed resource, without unpacking either token.
 
 ```c filename=return_fd.c

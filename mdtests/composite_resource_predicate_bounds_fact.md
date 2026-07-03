@@ -1,7 +1,7 @@
-# represented resource predicate bounds fact
+# composite resource predicate bounds fact
 
 This checks that scalar bounds hidden behind a predicate can justify a
-represented resource fact memory read.
+composite resource fact memory read.
 
 ```click
 predicate in_bounds(int32 k, int32 n) {

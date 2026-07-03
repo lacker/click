@@ -1,6 +1,6 @@
-# represented resource composes named resources
+# composite resource composes named resources
 
-This checks that a represented resource can bundle another named resource with
+This checks that a composite resource can bundle another named resource with
 memory permission and a fact.
 
 ```c filename=init_server.c

@@ -96,26 +96,26 @@ fn expand_declared_resource_definition(
     mut definition: ResourceDefinition,
     resource_parameters: &BTreeMap<String, Vec<C0Type>>,
 ) -> Result<ResourceDefinition, ClickError> {
-    if let Some(representation) = definition.representation {
-        definition.representation = Some(expand_declared_resource_representation(
-            representation,
+    if let Some(composite_body) = definition.composite_body {
+        definition.composite_body = Some(expand_declared_composite_resource_body(
+            composite_body,
             resource_parameters,
         )?);
     }
     Ok(definition)
 }
 
-fn expand_declared_resource_representation(
-    representation: ResourceRepresentation,
+fn expand_declared_composite_resource_body(
+    composite_body: CompositeResourceBody,
     resource_parameters: &BTreeMap<String, Vec<C0Type>>,
-) -> Result<ResourceRepresentation, ClickError> {
-    Ok(ResourceRepresentation {
-        contains: representation
+) -> Result<CompositeResourceBody, ClickError> {
+    Ok(CompositeResourceBody {
+        contains: composite_body
             .contains
             .into_iter()
             .map(|resource| expand_declared_resource_clause(resource, resource_parameters))
             .collect::<Result<Vec<_>, _>>()?,
-        facts: representation.facts,
+        facts: composite_body.facts,
     })
 }
 
@@ -445,7 +445,7 @@ pub(super) fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickEr
             &click_function_environment,
         )?;
     }
-    reject_resource_representation_cycles(&resource_definitions)?;
+    reject_composite_resource_cycles(&resource_definitions)?;
 
     for definition in &predicate_definitions {
         validate_predicate_calls_in_proposition(
@@ -684,7 +684,7 @@ fn validate_resource_definition(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<(), ClickError> {
-    let Some(representation) = definition.representation() else {
+    let Some(composite_body) = definition.composite_body() else {
         return Ok(());
     };
     let variables = definition
@@ -693,20 +693,20 @@ fn validate_resource_definition(
         .map(|parameter| (parameter.name().to_string(), parameter.c_type()))
         .collect::<BTreeMap<_, _>>();
     reject_duplicate_named_resource_clauses(
-        representation.contains(),
-        &format!("resource `{}` representation", definition.name()),
+        composite_body.contains(),
+        &format!("composite resource `{}` body", definition.name()),
     )?;
-    for resource in representation.contains() {
+    for resource in composite_body.contains() {
         validate_resource_clause(
             resource,
             resources,
             click_functions,
             click_function_types,
             &variables,
-            &format!("resource `{}` representation", definition.name()),
+            &format!("composite resource `{}` body", definition.name()),
         )?;
     }
-    for fact in representation.facts() {
+    for fact in composite_body.facts() {
         if proposition_contains_old_expression(fact) {
             return Err(ClickError::new(format!(
                 "`old(...)` is not available inside resource `{}` fact",
@@ -733,7 +733,7 @@ fn validate_resource_definition(
         )?;
         validate_resource_fact_memory_ownership(
             definition,
-            representation,
+            composite_body,
             fact,
             predicate_definitions,
             click_function_definitions,
@@ -765,7 +765,7 @@ struct ResourceFactReadOwnershipAnalysis {
 
 fn validate_resource_fact_memory_ownership(
     definition: &ResourceDefinition,
-    representation: &ResourceRepresentation,
+    composite_body: &CompositeResourceBody,
     fact: &ClickProposition,
     predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
     click_function_definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
@@ -808,7 +808,7 @@ fn validate_resource_fact_memory_ownership(
     for read in reads {
         let analysis = analyze_resource_fact_read_ownership(
             &read,
-            representation.contains(),
+            composite_body.contains(),
             &assumptions,
             &values,
             &array_refs,
@@ -1500,7 +1500,7 @@ fn resource_fact_read_ownership_error(
         read.expression
     )];
     if analysis.notes.is_empty() {
-        lines.push("note: the representation contains no resources to consider".to_string());
+        lines.push("note: the composite body contains no resources to consider".to_string());
     } else {
         lines.push("note: contained resource coverage considered:".to_string());
         lines.extend(analysis.notes.iter().map(|note| format!("  - {note}")));
@@ -1639,16 +1639,14 @@ fn constant_c_expression_i64(expression: &CExpression) -> Option<i64> {
     }
 }
 
-fn reject_resource_representation_cycles(
-    definitions: &[ResourceDefinition],
-) -> Result<(), ClickError> {
+fn reject_composite_resource_cycles(definitions: &[ResourceDefinition]) -> Result<(), ClickError> {
     let graph = definitions
         .iter()
         .map(|definition| {
             let dependencies = definition
-                .representation()
+                .composite_body()
                 .into_iter()
-                .flat_map(ResourceRepresentation::contains)
+                .flat_map(CompositeResourceBody::contains)
                 .filter_map(|resource| match resource {
                     ResourceClause::Named { name, .. } => Some(name.clone()),
                     ResourceClause::Read(_) | ResourceClause::Write(_) => None,
@@ -1660,12 +1658,12 @@ fn reject_resource_representation_cycles(
     let mut permanent = BTreeSet::new();
     let mut visiting = Vec::new();
     for name in graph.keys() {
-        reject_resource_representation_cycles_from(name, &graph, &mut permanent, &mut visiting)?;
+        reject_composite_resource_cycles_from(name, &graph, &mut permanent, &mut visiting)?;
     }
     Ok(())
 }
 
-fn reject_resource_representation_cycles_from(
+fn reject_composite_resource_cycles_from(
     name: &str,
     graph: &BTreeMap<String, Vec<String>>,
     permanent: &mut BTreeSet<String>,
@@ -1678,14 +1676,14 @@ fn reject_resource_representation_cycles_from(
         let mut cycle = visiting[index..].to_vec();
         cycle.push(name.to_string());
         return Err(ClickError::new(format!(
-            "resource representation cycle: {}",
+            "composite resource cycle: {}",
             cycle.join(" -> ")
         )));
     }
     visiting.push(name.to_string());
     for dependency in graph.get(name).into_iter().flatten() {
         if graph.contains_key(dependency) {
-            reject_resource_representation_cycles_from(dependency, graph, permanent, visiting)?;
+            reject_composite_resource_cycles_from(dependency, graph, permanent, visiting)?;
         }
     }
     visiting.pop();

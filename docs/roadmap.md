@@ -112,7 +112,7 @@ Likely additions:
   covered subrange transfer for function calls. The implementation now has an
   explicit internal resource-family boundary for the memory family plus
   exact-match named resources with declared argument types and duplicate-token
-  rejection. It also has represented resources with explicit proof-step
+  rejection. It also has composite resources with explicit proof-step
   `unpack(resource)` and `pack(resource)` operations for wrappers over built-in
   resources, other named resources, and resource facts. Fractions, persistent
   named resources, implicit unpack/pack search, custom resource-family algebra,
@@ -294,7 +294,7 @@ Good next tasks from the current state:
 1. Choose the first spec/model-state design before adding permission logic,
    allocation, final release, or double-release checks.
 2. Broaden the struct/field memory model beyond compact C0 field lowering:
-   whole-object resources, field-dependent represented resources, field
+   whole-object resources, field-dependent composite resources, field
    frames, and eventually ABI layout details.
 3. Add more fold/range theorems beyond alpha-equivalent folds and the current
    count-shaped split rules, especially when the pilot or sorting/string tests

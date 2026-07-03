@@ -511,7 +511,7 @@ pub(super) fn read_c_lvalue_paths(
                 if is_external_memory_pointer(pointer) && !has_external_read_resource {
                     return vec![CExpressionPath {
                         outcome: CExpressionOutcome::RuntimeError(CRuntimeError::MissingResource {
-                            resource: CResource::Read(CMemoryRange::new(
+                            resource: CResource::view_memory(CMemoryRange::new(
                                 pointer.clone(),
                                 Bitvector32Term::Constant(0),
                                 Bitvector32Term::Constant(1),
@@ -2410,7 +2410,7 @@ pub(super) fn write_c_lvalue_paths(
             if is_external_memory_pointer(&pointer) && !has_external_write_resource {
                 return vec![CStatementExecutionPath {
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
-                        resource: CResource::Write(CMemoryRange::new(
+                        resource: CResource::own_memory(CMemoryRange::new(
                             pointer.clone(),
                             Bitvector32Term::Constant(0),
                             Bitvector32Term::Constant(1),

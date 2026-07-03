@@ -1,6 +1,6 @@
-# represented resource packed fact hides permissions
+# composite resource packed fact hides permissions
 
-This checks that packed represented-resource facts are visible, but contained
+This checks that packed composite-resource facts are visible, but contained
 write permission is still hidden until `unpack(...)`.
 
 ```c filename=write_flag_without_unpack.c

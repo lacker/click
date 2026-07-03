@@ -123,27 +123,34 @@ pub(super) fn describe_resource(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> String {
-    let (name, range) = match resource {
-        CResource::Read(range) => ("read", range),
-        CResource::Write(range) => ("write", range),
+    if let Some(range) = resource.memory_view_range() {
+        return format!(
+            "read({})",
+            describe_memory_range(range, parameters, arguments)
+        );
+    }
+    if let Some(range) = resource.memory_own_range() {
+        return format!(
+            "write({})",
+            describe_memory_range(range, parameters, arguments)
+        );
+    }
+    match resource {
         CResource::Named {
             name,
             arguments: resource_arguments,
         } => {
-            return format!(
+            format!(
                 "{name}({})",
                 resource_arguments
                     .iter()
                     .map(|argument| describe_c_value(argument, parameters, arguments))
                     .collect::<Vec<_>>()
                     .join(", ")
-            );
+            )
         }
-    };
-    format!(
-        "{name}({})",
-        describe_memory_range(range, parameters, arguments)
-    )
+        CResource::Own(_) | CResource::View(_) => unreachable!("memory resources handled above"),
+    }
 }
 
 pub(super) fn describe_memory_range(

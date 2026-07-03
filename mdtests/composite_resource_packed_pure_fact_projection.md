@@ -1,6 +1,6 @@
-# represented resource packed pure fact projection
+# composite resource packed pure fact projection
 
-This checks that holding a packed represented resource exposes its pure facts
+This checks that holding a packed composite resource exposes its pure facts
 without an explicit `unpack(...)` proof step.
 
 ```c filename=return_fd.c

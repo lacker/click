@@ -2877,11 +2877,11 @@ pub(super) fn lower_resource_clause(
     match resource {
         ResourceClause::Read(segment) => {
             let range = lower_resource_segment("read", segment, parameters, arguments, memory)?;
-            Ok(CResource::Read(range))
+            Ok(CResource::view_memory(range))
         }
         ResourceClause::Write(segment) => {
             let range = lower_resource_segment("write", segment, parameters, arguments, memory)?;
-            Ok(CResource::Write(range))
+            Ok(CResource::own_memory(range))
         }
         ResourceClause::Named {
             name,

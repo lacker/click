@@ -1,4 +1,4 @@
-# represented resource rejects resource fact read
+# composite resource rejects resource fact read
 
 This checks that memory reads hidden behind a predicate still need to be backed
 by contained write permission.

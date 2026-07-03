@@ -76,11 +76,11 @@ pub struct ClickFunctionDefinition {
 pub struct ResourceDefinition {
     name: String,
     parameters: Vec<FunctionParameter>,
-    representation: Option<ResourceRepresentation>,
+    composite_body: Option<CompositeResourceBody>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResourceRepresentation {
+pub struct CompositeResourceBody {
     contains: Vec<ResourceClause>,
     facts: Vec<ClickProposition>,
 }
@@ -711,12 +711,12 @@ impl ResourceDefinition {
         &self.parameters
     }
 
-    pub fn representation(&self) -> Option<&ResourceRepresentation> {
-        self.representation.as_ref()
+    pub fn composite_body(&self) -> Option<&CompositeResourceBody> {
+        self.composite_body.as_ref()
     }
 }
 
-impl ResourceRepresentation {
+impl CompositeResourceBody {
     pub fn contains(&self) -> &[ResourceClause] {
         &self.contains
     }

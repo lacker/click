@@ -12,7 +12,7 @@ explicit algebraic model.
 
 ## Current Resource Cases
 
-The kernel currently has three concrete `CResource` cases:
+The Click surface currently has memory clauses and named-resource clauses:
 
 ```text
 read(range)
@@ -20,9 +20,17 @@ write(range)
 named(name, arguments)
 ```
 
-Represented resources are not a separate kernel resource case. A represented
-resource is a named resource with a definition in the Click resource
-environment:
+The kernel resource state now represents memory clauses through a subject plus
+an access mode:
+
+```text
+view(memory(range))  // surface read(range)
+own(memory(range))   // surface write(range)
+named(name, arguments)
+```
+
+Composite resources are not a separate kernel resource case. A composite
+resource is a named resource with a body in the Click resource environment:
 
 ```click
 resource owner_buffer(owner: struct owner*) {
@@ -41,10 +49,12 @@ So the current surface categories are better described as:
 
 - memory read resources,
 - memory write resources,
-- named resources, some of which have represented contents.
+- named resources, some of which are composite resources.
 
-Calling the third category "composite" is directionally right for represented
-resources, but it is not what the kernel stores today.
+Internally, the memory cases are `View(Memory(...))` and `Own(Memory(...))`.
+The kernel stores a packed composite resource as a named token today; the
+composite body is consulted by proof-layer `pack`, `unpack`, and `observe`
+operations.
 
 ## Resource State
 
@@ -98,12 +108,13 @@ valid(write(p[0..1]) * write(p[0..1])) = false
 Click wants:
 
 ```text
-core(read(range))  = read(range)
-core(write(range)) = read(range)
+core(view(memory(range))) = view(memory(range))
+core(own(memory(range)))  = view(memory(range))
 ```
 
-That is why a `write(...)` resource can satisfy a `read(...)` requirement
-without losing the write authority.
+That is why a surface `write(...)` resource, internally
+`own(memory(...))`, can satisfy a surface `read(...)` requirement, internally
+`view(memory(...))`, without losing the write authority.
 
 In the current code, `CResource::core()` returns `Option<CResource>` because a
 single strict token may have no non-empty core. `None` means the empty core for
@@ -156,7 +167,7 @@ or repackaged according to their algebraic rules.
 ## Observable Facts
 
 Click also needs a deterministic way to turn held resources into ordinary proof
-facts. This is the role currently played by represented-resource fact
+facts. This is the role currently played by composite-resource fact
 projection and `observe(resource)`.
 
 The design target is:
@@ -170,11 +181,11 @@ observable from a valid held resource state.
 
 Examples:
 
-- A represented resource exposes its declared `fact` clauses while packed.
-- A valid state containing two write resources exposes that their ranges are
-  disjoint.
-- A write resource exposes its read core, but the read core is still a resource,
-  not an ordinary proposition.
+- A composite resource exposes its declared `fact` clauses while packed.
+- A valid state containing two owned memory resources exposes that their ranges
+  are disjoint.
+- An owned memory resource exposes its viewed memory core, but the viewed core
+  is still a resource, not an ordinary proposition.
 
 This distinction matters. `observe(...)` should be a deterministic proof step
 that adds ordinary observable facts. It should not unpack hidden permissions,
@@ -183,8 +194,8 @@ and it should not mutate the resource state.
 In the current code, `ResourceContext::observable_facts(...)` is the beginning
 of this interface. It derives ordinary facts from the concrete resource state
 after checking resource-state validity. Today it exposes disjointness facts
-from valid compositions of multiple write resources. Represented-resource
-`fact` clauses are grouped into the same represented-resource observable-facts
+from valid compositions of multiple owned memory resources. Composite-resource
+`fact` clauses are grouped into the same composite-resource observable-facts
 projection path. Their lowering still lives in the Click proof layer because it
 depends on resource definitions, substitution, and memory materialization.
 
@@ -192,17 +203,18 @@ depends on resource definitions, substitution, and memory materialization.
 
 The memory family should satisfy these rules:
 
-- `read(range)` permits loads from `range`.
-- `write(range)` permits loads and stores to `range`.
-- `core(read(range)) = read(range)`.
-- `core(write(range)) = read(range)`.
-- `read` resources are duplicable.
-- `write` resources are exclusive.
-- A valid state cannot contain overlapping exclusive writes.
+- `view(memory(range))`, exposed as `read(range)`, permits loads from `range`.
+- `own(memory(range))`, exposed as `write(range)`, permits loads and stores to
+  `range`.
+- `core(view(memory(range))) = view(memory(range))`.
+- `core(own(memory(range))) = view(memory(range))`.
+- viewed memory resources are duplicable.
+- owned memory resources are exclusive.
+- A valid state cannot contain overlapping owned memory ranges.
 - Adjacent or covering memory resources may be normalized when facts prove the
   ranges line up.
-- A store through `write(range)` updates the symbolic memory state. Later reads
-  see the updated value unless another write changes it.
+- A store through owned memory updates the symbolic memory state. Later reads
+  see the updated value unless another owner writes a new value.
 - Repeated reads with no intervening write to the same cell are stable.
 
 Read stability is a memory-model promise, not a permission to mutate. A
@@ -219,7 +231,7 @@ Plain named resources currently behave as strict linear tokens:
 - consuming a named resource removes the token,
 - returning the same named resource adds the token back.
 
-Represented named resources add a definitional layer:
+Composite resources add a definitional layer:
 
 - `unpack(resource)` consumes the packed named token and exposes its contained
   resources.
@@ -228,9 +240,9 @@ Represented named resources add a definitional layer:
 - `observe(resource)` projects observable facts without exposing contained
   resources.
 
-In the algebraic model, a represented resource is not a new primitive kind of
+In the algebraic model, a composite resource is not a new primitive kind of
 resource. It is a named token with laws connecting the packed token to a
-representation made from other resource assertions and facts.
+composite body made from other resource assertions and facts.
 
 ## Refactor Direction
 
@@ -248,14 +260,15 @@ still mostly hardcoded:
   It should stay limited to tests and assumption-free lowering/materialization
   paths that build provisional contexts before validity can be checked.
 - `CResource::core()` is the beginning of an explicit core operation, currently
-  mapping memory `write` to memory `read` and strict named tokens to empty core.
+  mapping `own(memory(range))` to `view(memory(range))` and strict named tokens
+  to empty core.
 - Memory and named resources still use separate entailment, consume, and
   combine functions.
 - `ResourceContext::observable_facts(...)` is the beginning of an explicit
-  observable-facts operation, currently covering write-derived disjointness.
+  observable-facts operation, currently covering owned-memory disjointness.
   Projection paths call it unconditionally so observable-facts projection also
   validates the current resource context.
-- Represented-resource observable-facts projection now combines contained
+- Composite-resource observable-facts projection now combines contained
   resource-context observable facts with declared `fact` clauses, but this is
   still implemented in the Click proof layer rather than as a full
   resource-family observable-facts interface.
@@ -266,7 +279,7 @@ explicit:
 1. Introduce names in code and docs that match the model: resource state,
    compose, valid, core, and observable facts.
 2. Treat the current memory rules as the first resource-family implementation.
-3. Keep represented resources as named resources with representation laws.
+3. Keep composite resources as named resources with composite-body laws.
 4. Move hidden disjointness reasoning toward "facts derived from valid
    composition" instead of special cases tied to a particular projection path.
 5. Avoid adding new resource features until they can be expressed through this

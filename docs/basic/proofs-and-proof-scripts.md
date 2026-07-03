@@ -57,8 +57,8 @@ Common steps include:
 - `unfold(name);`: open a named predicate.
 - `apply(theorem(args));`: use a verified stdlib or current-file theorem as a
   derived fact.
-- `observe(resource);`: expose facts associated with a held represented
-  resource without unpacking its permissions.
+- `observe(resource);`: expose facts associated with a held composite
+  resource without unpacking its contained permissions.
 - `simp();`: simplify the current proof goal.
 - `frame();`: prove an effect claim.
 

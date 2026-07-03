@@ -1,6 +1,6 @@
-# represented resource disjoint fact
+# composite resource disjoint fact
 
-This checks that a represented resource can package a `disjoint(...)` fact and
+This checks that a composite resource can package a `disjoint(...)` fact and
 that unpacking the resource exposes that fact to effect reasoning.
 
 ```c filename=clobber_dst_packaged.c

@@ -1,6 +1,6 @@
-# represented resource packed disjoint fact projection
+# composite resource packed disjoint fact projection
 
-This checks that a packed represented resource can expose a packaged
+This checks that a packed composite resource can expose a packaged
 `disjoint(...)` fact to effect reasoning without exposing any contained
 permissions.
 

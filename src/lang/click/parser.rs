@@ -239,32 +239,30 @@ impl Parser {
             &mut self.current_struct_params,
             parsed_parameters.struct_params,
         );
-        let representation = match self.peek() {
+        let composite_body = match self.peek() {
             Some(Token::Semicolon) => {
                 self.position += 1;
                 None
             }
-            Some(Token::LBrace) => Some(self.parse_resource_representation()?),
+            Some(Token::LBrace) => Some(self.parse_composite_resource_body()?),
             Some(token) => {
                 return Err(self.error(format!(
-                    "expected `;` or resource representation body, got {token:?}"
+                    "expected `;` or composite resource body, got {token:?}"
                 )));
             }
             None => {
-                return Err(
-                    self.error("expected `;` or resource representation body, got end of input")
-                );
+                return Err(self.error("expected `;` or composite resource body, got end of input"));
             }
         };
         self.current_struct_params = previous_struct_params;
         Ok(ResourceDefinition {
             name,
             parameters: parsed_parameters.parameters,
-            representation,
+            composite_body,
         })
     }
 
-    fn parse_resource_representation(&mut self) -> Result<ResourceRepresentation, ClickError> {
+    fn parse_composite_resource_body(&mut self) -> Result<CompositeResourceBody, ClickError> {
         self.expect(Token::LBrace)?;
         let mut contains = Vec::new();
         let mut facts = Vec::new();
@@ -272,7 +270,7 @@ impl Parser {
             match self.peek_ident() {
                 Some("contains") => {
                     self.position += 1;
-                    contains.push(self.parse_resource_representation_clause()?);
+                    contains.push(self.parse_composite_resource_contains_clause()?);
                     self.expect(Token::Semicolon)?;
                 }
                 Some("fact") => {
@@ -293,10 +291,10 @@ impl Parser {
             }
         }
         self.expect(Token::RBrace)?;
-        Ok(ResourceRepresentation { contains, facts })
+        Ok(CompositeResourceBody { contains, facts })
     }
 
-    fn parse_resource_representation_clause(&mut self) -> Result<ResourceClause, ClickError> {
+    fn parse_composite_resource_contains_clause(&mut self) -> Result<ResourceClause, ClickError> {
         if matches!(self.peek_ident(), Some("read" | "write")) {
             return self.parse_resource_clause();
         }

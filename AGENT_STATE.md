@@ -16,24 +16,27 @@ Last updated: 2026-07-03.
 - `scripts/mdbook-serve.sh --port 4000` successfully installed mdBook 0.4.52
   into `target/tools`, built the book, and served it at
   `http://localhost:4000`; the foreground serve process was then stopped.
-- Those checks most recently passed after making packed represented-resource
+- Those checks most recently passed after making packed composite-resource
   fact views recursive, adding visible-write `disjoint(...)` projection, direct
-  hidden-write `disjoint(...)` projection for packed represented resources,
+  hidden-write `disjoint(...)` projection for packed composite resources,
   explicit `observe(resource)` fact projection, rejection of provably
-  overlapping visible writes, improved represented-resource fact diagnostics,
+  overlapping visible writes, improved composite-resource fact diagnostics,
   and the related docs/mdtests.
-- Failed represented-resource fact framing diagnostics now keep the original
+- Failed composite-resource fact framing diagnostics now keep the original
   one-line error and add notes about contained resources considered and scalar
   fact assumptions available.
-- Packed represented resources now project their recursive fact view while the
+- Packed composite resources now project their recursive fact view while the
   abstract resource token is held. Their contained resources/permissions remain
   hidden until an explicit `unpack(...)`.
 - `observe(resource);` is a non-consuming proof step that projects the fact view
-  of a held represented resource, including facts from nested represented
+  of a held composite resource, including facts from nested composite
   resources, without exposing contained permissions.
-- `mdtests/represented_resource_owner_buffer_hidden_disjoint_projection.md`
+- `mdtests/composite_resource_owner_buffer_hidden_disjoint_projection.md`
   records that hidden contained writes imply packed-resource `disjoint(...)`
   facts without exposing hidden permissions.
+- The old pre-composite terminology has been renamed to "composite resource"
+  in code/docs/mdtests. Internally, `ResourceDefinition` now has an optional
+  `CompositeResourceBody`; mdtest filenames use `composite_resource_*`.
 
 ## Current Design Thread
 
@@ -43,9 +46,10 @@ We are in the middle of designing Click's resource logic.
 Iris-inspired resource model. It says Click is not yet implemented as a full
 resource algebra, but should refactor toward explicit resource state `M`,
 `empty`, `compose`, `valid`, `core`, and observable facts. It also records that
-the current kernel resource cases are `read`, `write`, and `named`; represented
-resources are named resources with representation laws, not a separate kernel
-variant.
+the Click surface has `read(...)`, `write(...)`, and named resources, while the
+kernel now stores memory resources as `view(memory(range))` and
+`own(memory(range))`; composite resources are named resources with
+composite-body laws, not a separate kernel variant.
 The first code refactor toward that model added
 `ResourceContext::validity_error(...)` / `ResourceContextValidityError` for
 explicit resource-state validity checks. Checked composition now goes through
@@ -57,16 +61,21 @@ Raw context construction is now explicitly named
 `unchecked_with_resource(s)(...)`; it remains for tests and assumption-free
 lowering/materialization paths that build provisional contexts before
 proposition assumptions are available.
-The next refactor added `CResource::core()`: memory `read` cores to itself,
-memory `write` cores to `read`, and strict named resources currently have empty
-core. Read entailment, read consumption, and memory-read authorization now route
-through that resource-level core operation.
+The next refactor added `CResource::core()`: viewed memory cores to itself,
+owned memory cores to viewed memory, and strict named resources currently have
+empty core. Read entailment, read consumption, and memory-read authorization
+now route through that resource-level core operation.
+The latest resource refactor keeps the Click surface syntax `read(...)` /
+`write(...)`, but changes the internal kernel resource shape to
+`CResource::View(CResourceSubject::Memory(range))` for reads and
+`CResource::Own(CResourceSubject::Memory(range))` for writes. Internally,
+`core(own(memory(range))) = view(memory(range))`.
 The next observable-facts refactor added
 `ResourceContext::observable_facts(...)`, which checks resource-state validity
 and returns ordinary facts derived from the concrete resource context. Today it
-routes write-derived `disjoint(...)` facts through this interface. Proof-layer
+routes owned-memory `disjoint(...)` facts through this interface. Proof-layer
 observable-facts projection now calls this unconditionally, so projection also
-validates the resource context when no facts are produced. Represented resource
+validates the resource context when no facts are produced. Composite-resource
 observable-facts projection groups contained resource-context observable facts
 with declared `fact` clauses; the proof layer still handles
 resource-definition substitution and memory materialization.
@@ -79,7 +88,7 @@ The current settled terminology is:
 - A `visit` is a dynamic execution occurrence of a program point. Visits are
   conceptual for now, not first-class Click expressions.
 - A resource is something the proof/resource context can `hold`.
-- A represented resource may expose `fact` clauses while its abstract token is
+- A composite resource may expose `fact` clauses while its abstract token is
   held packed, and while it is unpacked.
 - Resource facts are not called invariants. Loop `invariant` remains a separate
   concept.
@@ -112,16 +121,16 @@ Click currently has:
 - Basic resource diagnostics for missing or duplicate resources.
 - Named resources.
 - Duplicate identical resource-token rejection.
-- Represented resources with:
+- Composite resources with:
   - `contains ...;`
   - `fact ...;`
   - explicit `observe(resource);`
   - explicit `unpack(resource);`
   - explicit `pack(resource);`
 - Resource facts are projected while the abstract resource token is held packed,
-  including facts from nested represented resources, and are also available
+  including facts from nested composite resources, and are also available
   while the resource is unpacked.
-- `observe(resource);` explicitly projects a held represented resource's fact
+- `observe(resource);` explicitly projects a held composite resource's fact
   view before execution. It is useful when a proof script should record the
   non-destructive fact-projection step.
 - `pack(...)` proves the facts, consumes the contained resources, and returns
@@ -131,14 +140,15 @@ Click currently has:
 - Resource fact validation can use scalar facts from the same fact clause to
   justify symbolic indexed reads, for example `0 <= k and k < n and p[k] == 0`.
 - Resource facts can include `disjoint(...)` range facts. This has standalone
-  mdtest coverage in `mdtests/represented_resource_disjoint_fact.md` as well as
+  mdtest coverage in `mdtests/composite_resource_disjoint_fact.md` as well as
   the owner-buffer pressure test.
 - `read(...)` is the stable read/core view for memory resources:
-  `core(write(range)) = read(range)` and `core(read(range)) = read(range)`.
+  internally, `core(own(memory(range))) = view(memory(range))` and
+  `core(view(memory(range))) = view(memory(range))`.
   The kernel routes read entailment, read consumption, and external-load
   permission checks through `CResource::core()`.
 - Visible `write(...)` resources imply `disjoint(...)` facts for their ranges;
-  direct hidden contained `write(...)` resources do the same while a represented
+  direct hidden contained `write(...)` resources do the same while a composite
   resource is packed; `read(...)` resources do not imply disjointness. Packed
   resource permissions remain hidden.
 - Provably overlapping visible `write(...)` resources are rejected.
@@ -155,7 +165,7 @@ resource keyword form is gone. Deallocation authority was removed from the
 active Click/C0/kernel surface and is parked for a later allocation lifecycle
 layer.
 
-An earlier terminology cleanup changed represented-resource clauses from
+An earlier terminology cleanup changed composite-resource clauses from
 `invariant` to `fact`.
 
 Example current syntax:
@@ -180,12 +190,12 @@ Current support includes:
 - Struct definitions and field access in C parsing/lowering.
 - Pointer-valued struct field loads in symbolic reasoning.
 - Struct field validity/read support in the memory model.
-- Basic represented-resource examples involving structs.
+- Basic composite-resource examples involving structs.
 
 The important pressure-test examples are:
 
-- `mdtests/represented_resource_owner_buffer_field_dependent.md`
-- `mdtests/represented_resource_owner_buffer_hidden_disjoint_projection.md`
+- `mdtests/composite_resource_owner_buffer_field_dependent.md`
+- `mdtests/composite_resource_owner_buffer_hidden_disjoint_projection.md`
 
 These examples exercise the desired ergonomic shape and are currently passing.
 The field-dependent resource can package explicit shape facts, and its hidden
@@ -194,7 +204,7 @@ contained writes now expose derived packed-resource non-aliasing facts.
 ## Known Open Design Issue
 
 The owner-buffer pressure tests now work with both explicit facts and direct
-hidden-write-derived disjointness: a represented resource can contain
+hidden-owned-memory-derived disjointness: a composite resource can contain
 permissions derived from `owner->data` and `owner->len`, and a packed instance
 exposes derived non-aliasing facts for those direct contained writes.
 
@@ -215,7 +225,7 @@ The unresolved part is no longer basic syntax for non-aliasing facts, whether
 packed resources expose facts, or whether visible writes imply disjointness.
 Remaining design questions include:
 
-- How broad should hidden represented-resource footprint projection be for
+- How broad should hidden composite-resource footprint projection be for
   disjointness beyond direct contained writes, for example cross-resource hidden
   footprints or allocation provenance?
 - How much should `read` or `write` imply about stability?
@@ -224,7 +234,8 @@ Remaining design questions include:
 
 This is still the next real design frontier, but the explicit-fact slice,
 recursive fact views, visible-write-derived disjointness, direct
-hidden-write-derived disjointness, and explicit fact observation are implemented.
+hidden-owned-memory-derived disjointness, and explicit fact observation are
+implemented.
 
 ## Useful Next Steps
 
@@ -235,7 +246,7 @@ resources now imply disjointness, and `observe(...)` provides an explicit
 fact-projection certificate step. Good next slices:
 
 1. Decide how far hidden footprint disjointness should go beyond direct
-   contained writes, especially across nested represented-resource footprints.
+   contained writes, especially across nested composite-resource footprints.
 2. Decide what allocation/provenance evidence should prove freshness for future
    allocation resources.
 3. Consider a scoped unpack/pack proof step only if examples show explicit
@@ -316,7 +327,7 @@ Use:
 - `hold a resource`
 - `resource fact`
 - `contained resource`
-- `represented resource`
+- `composite resource`
 - `resource`
 - `code region`
 - `program point`
@@ -325,6 +336,7 @@ Use:
 Avoid:
 
 - Calling resource facts "invariants".
+- Using the old pre-composite resource terminology.
 - Using "own" for all resources unless discussing a genuinely ownership-like
   resource.
 - Treating "proof state" as an object that Click predicates can refer to.
