@@ -34,6 +34,17 @@ The main built-in resource family is memory resources. `read(...)` and
 resource algebra: the context is not just a bag of facts, because each family
 has rules for combining, transferring, and consuming its resources.
 
+In the first-layer model, `read(...)` is the stable read view of memory.
+Algebraically, it is the core of `write(...)`:
+
+```text
+core(write(p[lo..hi])) = read(p[lo..hi])
+core(read(p[lo..hi])) = read(p[lo..hi])
+```
+
+That is why a write resource can satisfy read requirements and read guarantees
+without consuming the write resource.
+
 This resource-family boundary is intentionally more general than memory
 ownership. Click also has exact-match user-defined resources, which can model
 API protocols without forcing those protocols to look like heap cells.
@@ -66,7 +77,9 @@ useful for index reasoning.
 
 ## Read Permission
 
-`read(...)` permits loads. It does not permit stores.
+`read(...)` permits loads. It does not permit stores. While no write to the
+same cell occurs in the current execution, repeated reads of that cell are
+stable: they produce the same symbolic value.
 
 ```click
 int32 peek(int32 p[]) {
@@ -77,13 +90,15 @@ int32 peek(int32 p[]) {
 ```
 
 Read resources are copyable across function calls. If a caller has
-`write(p[0..1])`, it may pass `read(p[0..1])` to a helper and still keep its
-write permission afterward.
+`write(p[0..1])`, it may pass the `read(p[0..1])` core view to a helper and
+still keep its write permission afterward.
 
 ## Write Permission
 
 `write(...)` permits both loads and stores, so `write(...)` can satisfy an
-`ensures read(...)` guarantee.
+`ensures read(...)` guarantee. Stores through a write resource update the
+symbolic memory state; later reads of the same cell see the written value unless
+a later write changes it again.
 
 ```click
 int32 set_one(int32 p[]) {

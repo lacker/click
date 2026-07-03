@@ -101,6 +101,10 @@ Click currently has:
 - Resource facts can include `disjoint(...)` range facts. This has standalone
   mdtest coverage in `mdtests/represented_resource_disjoint_fact.md` as well as
   the owner-buffer pressure test.
+- `read(...)` is the stable read/core view for memory resources:
+  `core(write(range)) = read(range)` and `core(read(range)) = read(range)`.
+  The kernel routes read entailment, read consumption, and external-load
+  permission checks through this explicit read-core helper.
 - Visible `write(...)` resources imply `disjoint(...)` facts for their ranges;
   direct hidden contained `write(...)` resources do the same while a represented
   resource is packed; `read(...)` resources do not imply disjointness. Packed

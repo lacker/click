@@ -2035,9 +2035,13 @@ fn memory_resource_entails(
     assumptions: &Assumptions,
 ) -> bool {
     match (available, required) {
-        (CResource::Read(available), CResource::Read(required))
-        | (CResource::Write(available), CResource::Read(required))
-        | (CResource::Write(available), CResource::Write(required)) => {
+        (_, CResource::Read(required)) => {
+            let Some(available) = memory_resource_read_core(available) else {
+                return false;
+            };
+            memory_range_covers(available, required, assumptions)
+        }
+        (CResource::Write(available), CResource::Write(required)) => {
             memory_range_covers(available, required, assumptions)
         }
         (CResource::Read(_), CResource::Write(_))
@@ -2055,11 +2059,9 @@ fn consume_memory_resource(
         CResource::Read(required) => context
             .resources
             .iter()
-            .any(|candidate| match candidate {
-                CResource::Read(available) | CResource::Write(available) => {
-                    memory_range_covers(available, required, assumptions)
-                }
-                CResource::Named { .. } => false,
+            .any(|candidate| {
+                memory_resource_read_core(candidate)
+                    .is_some_and(|available| memory_range_covers(available, required, assumptions))
             })
             .then(|| context.normalized(assumptions)),
         CResource::Write(required) => {
@@ -2111,22 +2113,28 @@ fn combine_named_resources(_left: &CResource, _right: &CResource) -> Option<CRes
     None
 }
 
+fn memory_resource_read_core(resource: &CResource) -> Option<&CMemoryRange> {
+    match resource {
+        CResource::Read(range) | CResource::Write(range) => Some(range),
+        CResource::Named { .. } => None,
+    }
+}
+
 fn memory_resource_permits_read(
     resource: &CResource,
     pointer: &Pointer,
     byte_width: u32,
     assumptions: &Assumptions,
 ) -> bool {
-    match resource {
-        CResource::Read(range) | CResource::Write(range) => assumptions.pointer_access_in_range(
+    memory_resource_read_core(resource).is_some_and(|range| {
+        assumptions.pointer_access_in_range(
             pointer,
             byte_width,
             range.base(),
             range.start(),
             range.end(),
-        ),
-        CResource::Named { .. } => false,
-    }
+        )
+    })
 }
 
 fn memory_resource_permits_write(

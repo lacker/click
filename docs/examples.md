@@ -146,10 +146,14 @@ Larger example projects live directly under `examples/`. They contain ordinary
   diagnostic.
 - `mdtests/resource_context_read.md`: first `read(...)` resource-context
   example.
+- `mdtests/read_permission_stable_repeated_load.md`: read permission gives a
+  stable repeated-load view when no write intervenes.
 - `mdtests/resource_context_read_rejects_write.md`: read permission does not
   permit stores.
 - `mdtests/resource_context_write_implies_read.md`: write permission permits
   reads and satisfies read guarantees.
+- `mdtests/write_permission_has_read_core.md`: write permission carries the
+  same stable read core view as read permission.
 - `mdtests/resource_context_uint8_read.md`: read permission over `uint8[]`
   byte indexes.
 - `mdtests/resource_context_uint8_write.md`: write permission over `uint8[]`
