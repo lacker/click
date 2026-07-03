@@ -1250,6 +1250,26 @@ pub(super) fn prove_claim_by_steps(
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_propositions);
             }
+            ProofStep::ObserveResource(resource) => {
+                if replay.execution.is_some() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `observe` must run before `symbolic_execute()` or `bounded_execute()`"
+                    )));
+                }
+                state = observe_represented_resource(
+                    resource_environment,
+                    resource,
+                    parsed_function.parameters(),
+                    &arguments,
+                    state,
+                    &mut requirement_propositions,
+                    predicate_environment,
+                    click_function_environment,
+                    claim_label,
+                    step_index,
+                )?;
+                assumptions = assumptions_from_propositions(&requirement_propositions);
+            }
             ProofStep::SymbolicExecute => {
                 set_replay_execution(
                     &mut replay,
@@ -1680,20 +1700,13 @@ fn project_packed_resource_facts(
         let fact_state = state.clone().with_memory(fact_memory);
 
         if represented_resources.has_multiple_write_resources() {
-            let assumptions = assumptions_from_propositions(&propositions);
-            if let Some((left, right)) = represented_resources.overlapping_write_pair(&assumptions)
-            {
-                return Err(format!(
-                    "resource `{name}` representation has overlapping write resources `write({})` and `write({})`",
-                    describe_memory_range(left, parameters, arguments),
-                    describe_memory_range(right, parameters, arguments)
-                ));
-            }
-            for proposition in represented_resources.write_disjoint_propositions() {
-                if !propositions.contains(&proposition) {
-                    propositions.push(proposition);
-                }
-            }
+            append_resource_context_write_disjoint_facts(
+                name,
+                &represented_resources,
+                parameters,
+                arguments,
+                &mut propositions,
+            )?;
         }
 
         for fact in representation.facts() {
@@ -1718,6 +1731,212 @@ fn project_packed_resource_facts(
         }
     }
     Ok(propositions)
+}
+
+fn observe_represented_resource(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: CState,
+    available_propositions: &mut Vec<Proposition>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+    step_index: usize,
+) -> Result<CState, ClickError> {
+    let definition = represented_resource_definition(
+        resource_environment,
+        resource,
+        "observe",
+        claim_label,
+        step_index,
+    )?;
+    let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
+    let assumptions = assumptions_from_propositions(available_propositions);
+    if !state
+        .resources()
+        .satisfies(&abstract_resource, &assumptions)
+    {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `observe({})` is missing resource `{}`\n  available resources: {}",
+            describe_resource_clause(resource),
+            describe_resource(&abstract_resource, parameters, arguments),
+            describe_resources(state.resources().resources(), parameters, arguments)
+        )));
+    }
+    let CResource::Named {
+        arguments: resource_arguments,
+        ..
+    } = abstract_resource
+    else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `observe` expects a named represented resource"
+        )));
+    };
+    let memory = observe_resource_fact_view(
+        resource_environment,
+        definition,
+        &resource_arguments,
+        parameters,
+        arguments,
+        &state,
+        state.memory().clone(),
+        &CValue::Int32(Bitvector32Term::Constant(0)),
+        available_propositions,
+        predicate_environment,
+        click_function_environment,
+        &mut Vec::new(),
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: could not observe `{}`: {message}",
+            describe_resource_clause(resource)
+        ))
+    })?;
+    Ok(state.with_memory(memory))
+}
+
+fn observe_resource_fact_view(
+    resource_environment: &ResourceEnvironment,
+    definition: &ResourceDefinition,
+    resource_arguments: &[CValue],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    memory: CMemory,
+    result: &CValue,
+    available_propositions: &mut Vec<Proposition>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    active_resources: &mut Vec<String>,
+) -> Result<CMemory, String> {
+    if active_resources
+        .iter()
+        .any(|name| name == definition.name())
+    {
+        return Err(format!(
+            "resource fact observation cycle through `{}`",
+            definition.name()
+        ));
+    }
+    let Some(representation) = definition.representation() else {
+        return Ok(memory);
+    };
+    active_resources.push(definition.name().to_string());
+
+    let substitutions =
+        resource_value_substitutions(definition, resource_arguments).map_err(|message| {
+            format!(
+                "could not instantiate resource `{}` facts: {message}",
+                definition.name()
+            )
+        })?;
+    let (memory, represented_resources) = instantiate_resource_representation_resources(
+        definition.name(),
+        representation,
+        &substitutions,
+        parameters,
+        arguments,
+        memory,
+    )?;
+    let fact_state = pre_state.clone().with_memory(memory.clone());
+
+    if represented_resources.has_multiple_write_resources() {
+        append_resource_context_write_disjoint_facts(
+            definition.name(),
+            &represented_resources,
+            parameters,
+            arguments,
+            available_propositions,
+        )?;
+    }
+
+    for fact in representation.facts() {
+        let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
+            format!(
+                "could not instantiate resource `{}` fact: {message}",
+                definition.name()
+            )
+        })?;
+        let lowered = lower_outcome_proposition(
+            parameters,
+            arguments,
+            pre_state,
+            &fact_state,
+            result,
+            available_propositions,
+            &fact,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            format!(
+                "could not lower resource `{}` fact: {message}",
+                definition.name()
+            )
+        })?;
+        if !available_propositions.contains(&lowered) {
+            available_propositions.push(lowered);
+        }
+    }
+
+    let mut memory = memory;
+    for contained in represented_resources.resources() {
+        let CResource::Named {
+            name,
+            arguments: contained_arguments,
+        } = contained
+        else {
+            continue;
+        };
+        let Some(contained_definition) = resource_environment.get(name) else {
+            continue;
+        };
+        if contained_definition.representation().is_none() {
+            continue;
+        }
+        memory = observe_resource_fact_view(
+            resource_environment,
+            contained_definition,
+            contained_arguments,
+            parameters,
+            arguments,
+            pre_state,
+            memory,
+            result,
+            available_propositions,
+            predicate_environment,
+            click_function_environment,
+            active_resources,
+        )?;
+    }
+
+    active_resources.pop();
+    Ok(memory)
+}
+
+fn append_resource_context_write_disjoint_facts(
+    name: &str,
+    resources: &ResourceContext,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    propositions: &mut Vec<Proposition>,
+) -> Result<(), String> {
+    let assumptions = assumptions_from_propositions(propositions);
+    if let Some((left, right)) = resources.overlapping_write_pair(&assumptions) {
+        return Err(format!(
+            "resource `{name}` representation has overlapping write resources `write({})` and `write({})`",
+            describe_memory_range(left, parameters, arguments),
+            describe_memory_range(right, parameters, arguments)
+        ));
+    }
+    for proposition in resources.write_disjoint_propositions() {
+        if !propositions.contains(&proposition) {
+            propositions.push(proposition);
+        }
+    }
+    Ok(())
 }
 
 fn materialize_resource_representation_memory(

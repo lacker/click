@@ -458,6 +458,7 @@ pub enum ProofStep {
     Frame(Option<CodeRegionRef>),
     Unfold(String),
     ApplyTheorem(TheoremApplication),
+    ObserveResource(ResourceClause),
     UnpackResource(ResourceClause),
     PackResource(ResourceClause),
     Witness(ProofWitness),

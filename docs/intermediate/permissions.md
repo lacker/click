@@ -224,11 +224,13 @@ ensures result == 1 by {
 ```
 
 Holding a packed represented resource exposes its facts, but not its contained
-resources. `unpack(uncalled(flag))` consumes the abstract token and adds the
-represented `write(flag[0..1])` resource for mutation. `pack(called(flag))`
-goes the other direction: it proves the representation's fact in the current
-state, consumes the represented resources, and adds the abstract `called(flag)`
-token. The end of the `by { ... }` block checks the overall claim.
+resources. `observe(uncalled(flag))` projects its facts without consuming the
+token or exposing represented permissions. `unpack(uncalled(flag))` consumes
+the abstract token and adds the represented `write(flag[0..1])` resource for
+mutation. `pack(called(flag))` goes the other direction: it proves the
+representation's fact in the current state, consumes the represented resources,
+and adds the abstract `called(flag)` token. The end of the `by { ... }` block
+checks the overall claim.
 
 If a fact reads mutable memory, the representation must contain write
 permission covering that memory. This is what makes the fact stable while
@@ -345,6 +347,9 @@ Implemented today:
 - represented affine named resources with explicit `unpack(resource)` and
   `pack(resource)` proof steps, including composition over other named affine
   resources,
+- `observe(resource)` proof steps that project represented-resource facts,
+  including nested represented-resource facts, without exposing contained
+  permissions,
 - `write(...)` implying read authority,
 - visible `write(...)` resources imply `disjoint(...)` facts for their ranges,
   and provably overlapping visible writes are rejected,

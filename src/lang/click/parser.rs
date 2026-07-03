@@ -1416,6 +1416,12 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 ProofStep::ApplyTheorem(application)
             }
+            "observe" => {
+                self.expect(Token::LParen)?;
+                let resource = self.parse_named_resource_call()?;
+                self.expect(Token::RParen)?;
+                ProofStep::ObserveResource(resource)
+            }
             "unpack" => {
                 self.expect(Token::LParen)?;
                 let resource = self.parse_named_resource_call()?;

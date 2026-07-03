@@ -24,6 +24,8 @@ Larger example projects live directly under `examples/`. They contain ordinary
   earlier theorem.
 - `mdtests/pure_theorem_rejects_execution_step.md`: theorem proofs reject C
   execution proof steps.
+- `mdtests/pure_theorem_rejects_observe_step.md`: theorem proofs reject
+  resource fact-observation proof steps.
 - `mdtests/theorem_apply_in_function_proof.md`: C function proof script applying
   a pure theorem after symbolic execution.
 - `mdtests/theorem_apply_requires_precondition.md`: theorem application fails
@@ -227,6 +229,10 @@ sequence:
   represented resource exposes a packaged `disjoint(...)` fact.
 - `mdtests/represented_resource_packed_fact_hides_permissions.md`: packed facts
   do not expose contained write permission.
+- `mdtests/represented_resource_observe_nested_fact.md`: `observe(resource)`
+  exposes nested represented-resource facts without unpacking.
+- `mdtests/represented_resource_observe_hides_permissions.md`: `observe(...)`
+  does not expose contained write permission.
 - `mdtests/represented_resource_struct_owned_buffer.md`: a conservative
   struct-owned-buffer pattern with explicit owner and buffer parameters.
 - `mdtests/represented_resource_owner_buffer_field_dependent.md`: the desired

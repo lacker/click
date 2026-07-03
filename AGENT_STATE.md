@@ -18,15 +18,19 @@ Last updated: 2026-07-02.
   `http://localhost:4000`; the foreground serve process was then stopped.
 - Those checks most recently passed after adding visible-write `disjoint(...)`
   projection, direct hidden-write `disjoint(...)` projection for packed
-  represented resources, rejection of provably overlapping visible writes,
-  packed represented-resource fact projection, improved represented-resource
-  fact diagnostics, and the related docs/mdtests.
+  represented resources, explicit `observe(resource)` fact projection, rejection
+  of provably overlapping visible writes, packed represented-resource fact
+  projection, improved represented-resource fact diagnostics, and the related
+  docs/mdtests.
 - Failed represented-resource fact framing diagnostics now keep the original
   one-line error and add notes about contained resources considered and scalar
   fact assumptions available.
 - Packed represented resources now project their `fact` clauses while the
   abstract resource token is held. Their contained resources/permissions remain
   hidden until an explicit `unpack(...)`.
+- `observe(resource);` is a non-consuming proof step that projects the fact view
+  of a held represented resource, including facts from nested represented
+  resources, without exposing contained permissions.
 - `mdtests/represented_resource_owner_buffer_hidden_disjoint_projection.md`
   records that hidden contained writes imply packed-resource `disjoint(...)`
   facts without exposing hidden permissions.
@@ -80,10 +84,14 @@ Click currently has:
 - Represented resources with:
   - `contains ...;`
   - `fact ...;`
+  - explicit `observe(resource);`
   - explicit `unpack(resource);`
   - explicit `pack(resource);`
 - Resource facts are projected while the abstract resource token is held packed,
   and are also available while the resource is unpacked.
+- `observe(resource);` explicitly projects a held represented resource's fact
+  view before execution. It is useful when facts are nested through contained
+  represented resources and should be used without unpacking.
 - `pack(...)` proves the facts, consumes the contained resources, and returns
   the abstract resource token.
 - Resource fact validation checks that facts which read mutable memory are backed
@@ -164,26 +172,26 @@ The unresolved part is no longer basic syntax for non-aliasing facts, whether
 packed resources expose facts, or whether visible writes imply disjointness.
 Remaining design questions include:
 
-- How broad should hidden represented-resource footprint projection be beyond
-  direct contained writes, for example nested represented resources or allocation
-  provenance?
+- How broad should hidden represented-resource footprint projection be for
+  disjointness beyond direct contained writes, for example cross-resource hidden
+  footprints or allocation provenance?
 - How much should `read` or `write` imply about stability?
 - What allocation/provenance structure, if any, should justify inferred
   non-aliasing facts?
 
 This is still the next real design frontier, but the explicit-fact slice,
-visible-write-derived disjointness, and direct hidden-write-derived disjointness
-are implemented.
+visible-write-derived disjointness, direct hidden-write-derived disjointness, and
+explicit nested fact observation are implemented.
 
 ## Useful Next Steps
 
 The owner-buffer examples now pass, `read(...)`/`write(...)` now both carry the
-validity needed for covered external memory accesses, and visible plus direct
-hidden contained `write(...)` resources now imply disjointness. Good next
-slices:
+validity needed for covered external memory accesses, visible plus direct hidden
+contained `write(...)` resources now imply disjointness, and `observe(...)`
+provides an explicit fact-projection escape hatch. Good next slices:
 
-1. Decide how far hidden footprint fact projection should go beyond direct
-   contained writes, especially for nested represented resources.
+1. Decide how far hidden footprint disjointness should go beyond direct
+   contained writes, especially across nested represented-resource footprints.
 2. Decide what allocation/provenance evidence should prove freshness for future
    allocation resources.
 3. Consider a scoped unpack/pack proof step only if examples show explicit

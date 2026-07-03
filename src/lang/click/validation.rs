@@ -220,6 +220,9 @@ fn expand_declared_resource_proof_step(
         ProofStep::UnpackResource(resource) => Ok(ProofStep::UnpackResource(
             expand_declared_resource_clause(resource, resource_parameters)?,
         )),
+        ProofStep::ObserveResource(resource) => Ok(ProofStep::ObserveResource(
+            expand_declared_resource_clause(resource, resource_parameters)?,
+        )),
         ProofStep::PackResource(resource) => Ok(ProofStep::PackResource(
             expand_declared_resource_clause(resource, resource_parameters)?,
         )),
@@ -1776,6 +1779,7 @@ fn validate_pure_theorem_proof(theorem_name: &str, proof: &Proof) -> Result<(), 
                     | ProofStep::BoundedExecute
                     | ProofStep::LoopVc(_)
                     | ProofStep::Frame(_)
+                    | ProofStep::ObserveResource(_)
                     | ProofStep::UnpackResource(_)
                     | ProofStep::PackResource(_)
                     | ProofStep::Witness(_)
@@ -1800,6 +1804,7 @@ pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
         ProofStep::Frame(_) => "frame",
         ProofStep::Unfold(_) => "unfold",
         ProofStep::ApplyTheorem(_) => "apply",
+        ProofStep::ObserveResource(_) => "observe",
         ProofStep::UnpackResource(_) => "unpack",
         ProofStep::PackResource(_) => "pack",
         ProofStep::Witness(_) => "witness",

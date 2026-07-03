@@ -185,7 +185,9 @@ affine resource uncalled(flag: int32*) {
 Holding the packed abstract token exposes its resource facts, but not its
 contained resources. Hidden contained `write(...)` resources also expose
 derived `disjoint(...)` facts for their ranges. In an explicit proof script,
-`unpack(uncalled(flag));` consumes the abstract token and exposes its
+`observe(uncalled(flag));` non-destructively projects the resource's fact view,
+including facts from nested represented resources, while keeping permissions
+hidden. `unpack(uncalled(flag));` consumes the abstract token and exposes its
 represented resources for mutation. Representations can bundle built-in memory
 resources and other affine named resources. Resource facts may include scalar
 propositions and `disjoint(...)` range facts. `pack(uncalled(flag));` proves the
