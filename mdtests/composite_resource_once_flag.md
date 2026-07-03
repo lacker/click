@@ -41,7 +41,7 @@ int32 init_once(int32 flag[]) {
 
     ensures uncalled(flag) by {
         symbolic_execute();
-        pack(uncalled(flag));
+        fold(uncalled(flag));
     }
 }
 
@@ -49,15 +49,15 @@ int32 complete_once(int32 flag[]) {
     requires uncalled(flag);
 
     ensures called(flag) by {
-        unpack(uncalled(flag));
+        unfold(uncalled(flag));
         symbolic_execute();
-        pack(called(flag));
+        fold(called(flag));
     }
 
     ensures result == 1 by {
-        unpack(uncalled(flag));
+        unfold(uncalled(flag));
         symbolic_execute();
-        pack(called(flag));
+        fold(called(flag));
         simp();
     }
 }

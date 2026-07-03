@@ -113,9 +113,9 @@ Likely additions:
   explicit internal resource-family boundary for the memory family plus
   exact-match token resources with declared argument types and duplicate-owned-token
   rejection. It also has composite resources with explicit proof-step
-  `unpack(resource)` and `pack(resource)` operations for wrappers over built-in
+  `unfold(resource)` and `fold(resource)` operations for wrappers over built-in
   resources, other declared resources, and resource facts. Fractions, persistent
-  token resources, implicit unpack/pack search, custom resource-family algebra,
+  token resources, implicit unfold/fold search, custom resource-family algebra,
   free/deallocation authority, full heap deallocation semantics, and abstract
   ownership predicates are still future work.
 - First-class spec/model state:
@@ -170,7 +170,7 @@ Likely additions:
   theorem application exists for stdlib and current-file pure proposition
   theorems; next slices should cover better diagnostics, named conclusion
   selection, and eventually separate reusable resource-rule forms if repeated
-  unpack/pack patterns justify them.
+  unfold/fold patterns justify them.
 - Explicit rewrite/calc steps:
   better than hiding all proof search inside `simp`.
 - Predicate/function namespaces that scale with modules.

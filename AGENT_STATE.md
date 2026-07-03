@@ -16,23 +16,25 @@ Last updated: 2026-07-03.
 - `scripts/mdbook-serve.sh --port 4000` successfully installed mdBook 0.4.52
   into `target/tools`, built the book, and served it at
   `http://localhost:4000`; the foreground serve process was then stopped.
-- Those checks most recently passed after making packed composite-resource
-  fact views recursive, adding visible-write `disjoint(...)` projection, direct
-  hidden-write `disjoint(...)` projection for packed composite resources,
-  explicit `observe(resource)` fact projection, rejection of provably
-  overlapping visible writes, improved composite-resource fact diagnostics,
-  and the related docs/mdtests.
+- Those checks most recently passed after standardizing composite-resource
+  proof steps on `unfold(...)`/`fold(...)`, making
+  `observe(resource)` one-step and non-consuming, adding visible-write
+  `disjoint(...)` projection, direct hidden-write `disjoint(...)` projection
+  for folded composite resources, rejection of provably overlapping visible
+  writes, improved composite-resource fact diagnostics, and the related
+  docs/mdtests.
 - Failed composite-resource fact framing diagnostics now keep the original
   one-line error and add notes about contained resources considered and scalar
   fact assumptions available.
-- Packed composite resources now project their recursive fact view while the
+- Folded composite resources now project their immediate fact view while the
   abstract resource token is held. Their contained resources/permissions remain
-  hidden until an explicit `unpack(...)`.
-- `observe(resource);` is a non-consuming proof step that projects the fact view
-  of a held composite resource, including facts from nested composite
-  resources, without exposing contained permissions.
+  hidden until an explicit `unfold(...)`.
+- `observe(resource);` is a non-consuming proof step that projects one view
+  step of a held composite resource. It exposes immediate facts and viewed
+  immediate contained resources without exposing owned permissions; nested
+  composite facts need another explicit `observe(...)`.
 - `mdtests/composite_resource_owner_buffer_hidden_disjoint_projection.md`
-  records that hidden contained writes imply packed-resource `disjoint(...)`
+  records that hidden contained writes imply folded-resource `disjoint(...)`
   facts without exposing hidden permissions.
 - The old pre-composite terminology has been renamed to "composite resource"
   in code/docs/mdtests. Internally, `ResourceDefinition` now has an optional
@@ -54,7 +56,7 @@ The first code refactor toward that model added
 explicit resource-state validity checks. Checked composition now goes through
 `ResourceContext::try_compose_with_resource(s)(...)`, which validates the raw
 combined resource state before normalizing it. Function-call transfer,
-function resource-context evaluation, `unpack(...)`, and `pack(...)` now use
+function resource-context evaluation, `unfold(...)`, and `fold(...)` now use
 checked composition when adding resources.
 Raw context construction is now explicitly named
 `unchecked_with_resource(s)(...)`; it remains for tests and assumption-free
@@ -90,7 +92,7 @@ The current settled terminology is:
   conceptual for now, not first-class Click expressions.
 - A resource is something the proof/resource context can `hold`.
 - A composite resource may expose `fact` clauses while its abstract token is
-  held packed, and while it is unpacked.
+  held folded, and while it is unfolded.
 - `own`/`view` are internal access modes. The new surface verbs are
   `owns`, `views`, `consumes`, and `produces`; old `requires`/`ensures`
   resource clauses are still accepted for compatibility.
@@ -129,15 +131,15 @@ Click currently has:
   - `contains ...;`
   - `fact ...;`
   - explicit `observe(resource);`
-  - explicit `unpack(resource);`
-  - explicit `pack(resource);`
-- Resource facts are projected while the abstract resource token is held packed,
-  including facts from nested composite resources, and are also available
-  while the resource is unpacked.
+  - explicit `unfold(resource);`
+  - explicit `fold(resource);`
+- Resource facts are projected while the abstract resource token is held folded
+  for one composite-resource layer, and are also available
+  while the resource is unfolded.
 - `observe(resource);` explicitly projects a held composite resource's fact
   view before execution. It is useful when a proof script should record the
-  non-destructive fact-projection step.
-- `pack(...)` proves the facts, consumes the contained resources, and returns
+  non-destructive, one-step fact-projection step.
+- `fold(...)` proves the facts, consumes the contained resources, and returns
   the abstract resource token.
 - Resource fact validation checks that facts which read mutable memory are backed
   by contained `write(...)` permission, not merely `read(...)`.
@@ -153,7 +155,7 @@ Click currently has:
   permission checks through `CResource::core()`.
 - Visible `write(...)` resources imply `disjoint(...)` facts for their ranges;
   direct hidden contained `write(...)` resources do the same while a composite
-  resource is packed; `read(...)` resources do not imply disjointness. Packed
+  resource is folded; `read(...)` resources do not imply disjointness. Folded
   resource permissions remain hidden.
 - Provably overlapping visible `write(...)` resources are rejected.
 - Holding a covering `read(...)` or `write(...)` resource discharges external
@@ -174,6 +176,9 @@ resource verbs in function specs. Internally, declared resources are now
 classified as either token resources or composite resources, and both use the
 same `Own`/`View` access mode as memory resources. Duplicate owned token or
 composite resources are rejected; duplicate views can normalize harmlessly.
+The latest proof-step cleanup standardized resource proof steps on
+`unfold`/`fold`; predicate `unfold(name)` remains non-consuming, while resource
+`unfold(name(args))` consumes the owned composite and exposes its body.
 
 An earlier terminology cleanup changed composite-resource clauses from
 `invariant` to `fact`.
@@ -209,13 +214,13 @@ The important pressure-test examples are:
 
 These examples exercise the desired ergonomic shape and are currently passing.
 The field-dependent resource can package explicit shape facts, and its hidden
-contained writes now expose derived packed-resource non-aliasing facts.
+contained writes now expose derived folded-resource non-aliasing facts.
 
 ## Known Open Design Issue
 
 The owner-buffer pressure tests now work with both explicit facts and direct
 hidden-owned-memory-derived disjointness: a composite resource can contain
-permissions derived from `owner->data` and `owner->len`, and a packed instance
+permissions derived from `owner->data` and `owner->len`, and a folded instance
 exposes derived non-aliasing facts for those direct contained writes.
 
 The broader open design issue is how much of this should remain explicit and
@@ -232,7 +237,7 @@ The shape now supported is:
   resources.
 
 The unresolved part is no longer basic syntax for non-aliasing facts, whether
-packed resources expose facts, or whether visible writes imply disjointness.
+folded resources expose facts, or whether visible writes imply disjointness.
 Remaining design questions include:
 
 - How broad should hidden composite-resource footprint projection be for
@@ -243,15 +248,15 @@ Remaining design questions include:
   non-aliasing facts?
 
 This is still the next real design frontier, but the explicit-fact slice,
-recursive fact views, visible-write-derived disjointness, direct
+one-step fact views, visible-write-derived disjointness, direct
 hidden-owned-memory-derived disjointness, and explicit fact observation are
 implemented.
 
 ## Useful Next Steps
 
 The owner-buffer examples now pass, `read(...)`/`write(...)` now both carry the
-validity needed for covered external memory accesses, packed resources expose
-recursive fact views, visible plus direct hidden contained `write(...)`
+validity needed for covered external memory accesses, folded resources expose
+one-step fact views, visible plus direct hidden contained `write(...)`
 resources now imply disjointness, and `observe(...)` provides an explicit
 fact-projection certificate step. Good next slices:
 
@@ -259,8 +264,8 @@ fact-projection certificate step. Good next slices:
    contained writes, especially across nested composite-resource footprints.
 2. Decide what allocation/provenance evidence should prove freshness for future
    allocation resources.
-3. Consider a scoped unpack/pack proof step only if examples show explicit
-   `unpack(...)`/`pack(...)` is creating avoidable proof noise.
+3. Consider a scoped unfold/fold proof step only if examples show explicit
+   `unfold(...)`/`fold(...)` is creating avoidable proof noise.
 4. Keep tightening owner-buffer ergonomics through concrete mdtests before
    adding larger abstractions.
 

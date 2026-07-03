@@ -490,7 +490,7 @@ fn parses_composite_resource_definition() {
 }
 
 #[test]
-fn parses_resource_observe_unpack_and_pack_steps() {
+fn parses_resource_observe_unfold_and_fold_steps() {
     let source = r#"
             resource uncalled(flag: int32*) {
                 owns flag[0..1];
@@ -503,9 +503,9 @@ fn parses_resource_observe_unpack_and_pack_steps() {
 
                 ensures uncalled(flag) by {
                     observe(uncalled(flag));
-                    unpack(uncalled(flag));
+                    unfold(uncalled(flag));
                     symbolic_execute();
-                    pack(uncalled(flag));
+                    fold(uncalled(flag));
                 }
             }
         "#;
@@ -523,7 +523,7 @@ fn parses_resource_observe_unpack_and_pack_steps() {
                     arguments: vec![current_var("flag")],
                     parameter_types: vec![C0Type::Int32Pointer],
                 }),
-                ProofStep::UnpackResource(ResourceClause::Declared {
+                ProofStep::UnfoldResource(ResourceClause::Declared {
                     access: ResourceAccess::Own,
                     kind: ResourceKind::Composite,
                     name: "uncalled".to_string(),
@@ -531,7 +531,7 @@ fn parses_resource_observe_unpack_and_pack_steps() {
                     parameter_types: vec![C0Type::Int32Pointer],
                 }),
                 ProofStep::SymbolicExecute,
-                ProofStep::PackResource(ResourceClause::Declared {
+                ProofStep::FoldResource(ResourceClause::Declared {
                     access: ResourceAccess::Own,
                     kind: ResourceKind::Composite,
                     name: "uncalled".to_string(),
@@ -640,7 +640,7 @@ fn parses_unfold_proof_step() {
         Some(
             [
                 ProofStep::SymbolicExecute,
-                ProofStep::Unfold("sorted".to_string()),
+                ProofStep::UnfoldPredicate("sorted".to_string()),
                 ProofStep::Simp,
             ]
             .as_slice()
@@ -1181,7 +1181,7 @@ fn unfolds_predicate_requirement_to_prove_consequence() {
         Some(
             [
                 ProofStep::SymbolicExecute,
-                ProofStep::Unfold("sorted_pair".to_string()),
+                ProofStep::UnfoldPredicate("sorted_pair".to_string()),
                 ProofStep::Simp,
             ]
             .as_slice()

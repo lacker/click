@@ -1555,9 +1555,16 @@ impl Parser {
             }
             "unfold" => {
                 self.expect(Token::LParen)?;
-                let predicate = self.expect_ident("predicate name")?;
+                let step = if matches!(self.peek(), Some(Token::Ident(_)))
+                    && self.peek_next() == Some(&Token::LParen)
+                {
+                    ProofStep::UnfoldResource(self.parse_declared_resource_call()?)
+                } else {
+                    let predicate = self.expect_ident("predicate name")?;
+                    ProofStep::UnfoldPredicate(predicate)
+                };
                 self.expect(Token::RParen)?;
-                ProofStep::Unfold(predicate)
+                step
             }
             "apply" => {
                 self.expect(Token::LParen)?;
@@ -1571,12 +1578,6 @@ impl Parser {
                     self.parse_declared_resource_call_with_access(ResourceAccess::View)?;
                 self.expect(Token::RParen)?;
                 ProofStep::ObserveResource(resource)
-            }
-            "unpack" => {
-                self.expect(Token::LParen)?;
-                let resource = self.parse_declared_resource_call()?;
-                self.expect(Token::RParen)?;
-                ProofStep::UnpackResource(resource)
             }
             "witness" => {
                 self.expect(Token::LParen)?;
@@ -1598,11 +1599,11 @@ impl Parser {
                 self.expect_empty_step_args(&name)?;
                 ProofStep::Simp
             }
-            "pack" => {
+            "fold" => {
                 self.expect(Token::LParen)?;
                 let resource = self.parse_declared_resource_call()?;
                 self.expect(Token::RParen)?;
-                ProofStep::PackResource(resource)
+                ProofStep::FoldResource(resource)
             }
             _ if is_tactic_name(&name) => {
                 return Err(self.error(format!(

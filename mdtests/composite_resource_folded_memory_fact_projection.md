@@ -1,7 +1,7 @@
-# composite resource packed memory fact projection
+# composite resource folded memory fact projection
 
-This checks that holding a packed composite resource exposes its memory facts
-without unpacking the contained write permission.
+This checks that holding a folded composite resource exposes its memory facts
+without unfolding the contained write permission.
 
 ```c filename=noop_flag.c
 int32 noop_flag(int32* flag) {

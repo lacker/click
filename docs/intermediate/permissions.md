@@ -203,29 +203,30 @@ resource uncalled(flag: int32*) {
 ```
 
 At function boundaries, `uncalled(flag)` is still an abstract resource token.
-Inside an explicit proof script, the token can be unpacked:
+Inside an explicit proof script, the token can be unfolded:
 
 ```click
 ensures result == 1 by {
-    unpack(uncalled(flag));
+    unfold(uncalled(flag));
     symbolic_execute();
-    pack(called(flag));
+    fold(called(flag));
     simp();
 }
 ```
 
-Holding a packed composite resource exposes its recursive fact view, but not
-its contained resources. `observe(uncalled(flag))` explicitly records fact-view
-projection without consuming the token or exposing contained permissions.
-`unpack(uncalled(flag))` consumes the abstract token and adds the contained
-`write(flag[0..1])` resource for mutation. `pack(called(flag))` goes the other
+Holding a folded composite resource exposes its immediate fact view, but not
+its owned contained resources. `observe(uncalled(flag))` explicitly records one
+fact-view projection step without consuming the token or exposing contained
+owned permissions.
+`unfold(uncalled(flag))` consumes the abstract token and adds the contained
+`write(flag[0..1])` resource for mutation. `fold(called(flag))` goes the other
 direction: it proves the composite body's fact in the current state, consumes
 the contained resources, and adds the abstract `called(flag)` token. The end
 of the `by { ... }` block checks the overall claim.
 
 If a fact reads mutable memory, the composite body must contain write
 permission covering that memory. This is what makes the fact stable while
-the resource is packed:
+the resource is folded:
 
 ```click
 resource uncalled(flag: int32*) {
@@ -259,15 +260,15 @@ int32 inspect_server(int32 fd, int32 state[]) {
     requires live_server(fd, state);
 
     ensures live_server(fd, state) by {
-        unpack(live_server(fd, state));
+        unfold(live_server(fd, state));
         symbolic_execute();
-        pack(live_server(fd, state));
+        fold(live_server(fd, state));
     }
 
     ensures state[0] == 1 by {
-        unpack(live_server(fd, state));
+        unfold(live_server(fd, state));
         symbolic_execute();
-        pack(live_server(fd, state));
+        fold(live_server(fd, state));
         simp();
     }
 }
@@ -280,7 +281,7 @@ or return resources.
 This first slice supports built-in `read(...)` and `write(...)` clauses plus
 exact-match token resources inside `contains`. Duplicate contained resource
 tokens are rejected, and composite-resource cycles are rejected. Resource
-unpacking is explicit; `auto` does not yet choose unpack/pack steps on its own.
+unfolding is explicit; `auto` does not yet choose unfold/fold steps on its own.
 
 The smallest ownership-shaped pattern is a composite resource that bundles
 several concrete permissions. For example, `first_cell_copy_access(dst, src)`
@@ -289,7 +290,7 @@ can contain `write(dst[0..1])` and `read(src[0..1])`, while
 explicitly passed buffer pointer. In this conservative shape, the resource's
 parameters name the lower-level memory objects directly. More convenient
 field-dependent composite resources can derive a contained buffer from
-`owner->data`. The packed resource exposes derived `disjoint(...)` facts from
+`owner->data`. The folded resource exposes derived `disjoint(...)` facts from
 its hidden contained writes, while explicit `fact` clauses can carry additional
 shape facts such as length and capacity.
 
@@ -334,16 +335,16 @@ Implemented today:
 - an internal memory resource family boundary for entailment, consumption,
   access authorization, splitting, and joining,
 - exact-match token resources declared with `resource name(...)`,
-- composite resources with explicit `unpack(resource)` and
-  `pack(resource)` proof steps, including composition over other declared
+- composite resources with explicit `unfold(resource)` and
+  `fold(resource)` proof steps, including composition over other declared
   resources,
-- recursive fact views for packed composite resources, plus
+- one-step fact views for folded composite resources, plus
   `observe(resource)` proof steps that explicitly record fact-view projection
   without exposing contained permissions,
 - `write(...)` implying read authority,
 - visible `write(...)` resources imply `disjoint(...)` facts for their ranges,
   and provably overlapping visible writes are rejected,
-- hidden contained `write(...)` resources in packed composite resources imply
+- hidden contained `write(...)` resources in folded composite resources imply
   `disjoint(...)` facts without exposing the hidden permissions,
 - copyable read transfer,
 - linear write transfer through function summaries,
@@ -355,7 +356,7 @@ Not implemented yet:
 - C heap allocation or allocation-sized deallocation semantics,
 - deallocation/free authority in the Click resource surface,
 - custom resource-family algebra,
-- implicit resource unpack/pack search in `auto`,
+- implicit resource unfold/fold search in `auto`,
 - persistent token resources,
 - ownership predicates,
 - explicit resource algebra proof steps,

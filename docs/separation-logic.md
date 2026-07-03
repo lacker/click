@@ -43,11 +43,11 @@ resource owner_buffer(owner: struct owner*) {
 }
 ```
 
-When `owner_buffer(owner)` is packed, the resource context holds an owned
+When `owner_buffer(owner)` is folded, the resource context holds an owned
 composite subject.
-Its contained resources stay hidden until `unpack(owner_buffer(owner))`. Its
+Its contained resources stay hidden until `unfold(owner_buffer(owner))`. Its
 declared facts, and some facts derived from the contained resources, may be
-observed without unpacking.
+observed without unfolding.
 
 So the current surface categories are better described as:
 
@@ -57,7 +57,7 @@ So the current surface categories are better described as:
 - composite resources.
 
 Internally, these are `View(subject)` and `Own(subject)`. The composite body is
-consulted by proof-layer `pack`, `unpack`, and `observe` operations.
+consulted by proof-layer `fold`, `unfold`, and `observe` operations.
 
 ## Resource State
 
@@ -184,15 +184,16 @@ observable from a valid held resource state.
 
 Examples:
 
-- A composite resource exposes its declared `fact` clauses while packed.
+- A composite resource exposes its declared `fact` clauses while folded.
 - A valid state containing two owned memory resources exposes that their ranges
   are disjoint.
 - An owned memory resource exposes its viewed memory core, but the viewed core
   is still a resource, not an ordinary proposition.
 
 This distinction matters. `observe(...)` should be a deterministic proof step
-that adds ordinary observable facts. It should not unpack hidden permissions,
-and it should not mutate the resource state.
+that adds ordinary observable facts and viewed immediate contained resources.
+It should not unfold hidden owned permissions, and it should not consume the
+observed resource.
 
 In the current code, `ResourceContext::observable_facts(...)` is the beginning
 of this interface. It derives ordinary facts from the concrete resource state
@@ -236,9 +237,9 @@ Plain token resources currently behave as strict linear tokens:
 
 Composite resources add a definitional layer:
 
-- `unpack(resource)` consumes the owned composite resource and exposes its contained
+- `unfold(resource)` consumes the owned composite resource and exposes its contained
   resources.
-- `pack(resource)` proves the declared facts, consumes the contained resources,
+- `fold(resource)` proves the declared facts, consumes the contained resources,
   and returns the owned composite resource.
 - `observe(resource)` projects observable facts without exposing contained
   resources.

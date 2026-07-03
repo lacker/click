@@ -1,7 +1,8 @@
-# composite resource packed nested fact projection
+# composite resource folded nested fact needs observe
 
-This checks that holding a packed composite resource exposes facts from
-nested composite resources without an explicit `observe(...)` step.
+This checks that folded composite-resource fact projection is one step. Holding
+`live_fd(fd)` exposes its immediate body, but does not recursively expose the
+fact inside `nonnegative_fd(fd)` without an explicit `observe(...)` step.
 
 ```c filename=return_fd.c
 int32 return_fd(int32 fd) {
@@ -29,5 +30,5 @@ int32 return_fd(int32 fd) {
 ```
 
 ```expect
-pass
+fail: left side evaluated to fd
 ```

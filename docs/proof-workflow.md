@@ -53,9 +53,9 @@ Current proof steps:
   standard library or current file, prove its requirements from the current
   proof context, and add its conclusions as derived facts. This step never
   changes the resource context.
-- `observe(resource);`: project facts associated with a held composite
-  resource, including nested composite-resource facts. This step does not
-  expose the contained permissions.
+- `observe(resource);`: project one view step from a held composite resource.
+  This exposes immediate facts and viewed immediate contained resources without
+  exposing owned contained permissions.
 - `choose(k from requirement name);`: open a named existential precondition,
   introducing proof-local int32 value `k`.
 - `choose(k from requirement N);`: the same operation by zero-based requirement

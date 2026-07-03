@@ -245,7 +245,7 @@ fn verify_theorem_ensure(
             let mut use_simp = false;
             for (step_index, step) in steps.iter().enumerate() {
                 match step {
-                    ProofStep::Unfold(name) => {
+                    ProofStep::UnfoldPredicate(name) => {
                         if predicate_environment.get(name).is_none() {
                             return Err(ClickError::new(format!(
                                 "`{claim_label}` proof step {step_index}: unknown predicate `{name}`"
@@ -750,7 +750,7 @@ pub(super) fn prove_claim_by_auto(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_packed_composite_resource_cells(
+    state = materialize_folded_composite_resource_cells(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
@@ -903,7 +903,7 @@ pub(super) fn prove_claim_by_frame(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_packed_composite_resource_cells(
+    state = materialize_folded_composite_resource_cells(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
@@ -1009,7 +1009,7 @@ pub(super) fn prove_claim_by_simp(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_packed_composite_resource_cells(
+    state = materialize_folded_composite_resource_cells(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
@@ -1157,7 +1157,7 @@ struct ProofStepReplayState {
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
     theorem_applications: Vec<(usize, TheoremApplication)>,
-    resource_packs: Vec<ResourceClause>,
+    resource_folds: Vec<ResourceClause>,
     simp: bool,
 }
 
@@ -1200,7 +1200,7 @@ pub(super) fn prove_claim_by_steps(
         &requirement_propositions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_packed_composite_resource_cells(
+    state = materialize_folded_composite_resource_cells(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
@@ -1230,13 +1230,13 @@ pub(super) fn prove_claim_by_steps(
 
     for (step_index, step) in steps.iter().enumerate() {
         match step {
-            ProofStep::UnpackResource(resource) => {
+            ProofStep::UnfoldResource(resource) => {
                 if replay.execution.is_some() {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `unpack` must run before `symbolic_execute()` or `bounded_execute()`"
+                        "`{claim_label}` proof step {step_index}: `unfold` must run before `symbolic_execute()` or `bounded_execute()`"
                     )));
                 }
-                state = unpack_composite_resource(
+                state = unfold_composite_resource(
                     resource_environment,
                     resource,
                     parsed_function.parameters(),
@@ -1357,7 +1357,7 @@ pub(super) fn prove_claim_by_steps(
                 }
                 replay.frames.insert(region_ref.clone());
             }
-            ProofStep::Unfold(name) => {
+            ProofStep::UnfoldPredicate(name) => {
                 if predicate_environment.get(name).is_none() {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` proof step {step_index}: unknown predicate `{name}`"
@@ -1379,9 +1379,9 @@ pub(super) fn prove_claim_by_steps(
                     .theorem_applications
                     .push((step_index, application.clone()));
             }
-            ProofStep::PackResource(resource) => {
-                require_step_execution(&replay, claim_label, step_index, "pack")?;
-                replay.resource_packs.push(resource.clone());
+            ProofStep::FoldResource(resource) => {
+                require_step_execution(&replay, claim_label, step_index, "fold")?;
+                replay.resource_folds.push(resource.clone());
             }
             ProofStep::Witness(_) => {
                 require_step_execution(&replay, claim_label, step_index, "witness")?;
@@ -1422,7 +1422,7 @@ pub(super) fn prove_claim_by_steps(
         &requirement_propositions,
         &replay.unfolded_predicates,
         &replay.theorem_applications,
-        &replay.resource_packs,
+        &replay.resource_folds,
         replay.simp,
         steps,
     )
@@ -1474,14 +1474,14 @@ fn require_verification_execution(
     Ok(())
 }
 
-fn materialize_packed_composite_resource_cells(
+fn materialize_folded_composite_resource_cells(
     resource_environment: &ResourceEnvironment,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: CState,
     claim_label: &str,
 ) -> Result<CState, ClickError> {
-    let memory = materialize_packed_composite_resource_memory(
+    let memory = materialize_folded_composite_resource_memory(
         resource_environment,
         parameters,
         arguments,
@@ -1491,7 +1491,7 @@ fn materialize_packed_composite_resource_cells(
     Ok(state.with_memory(memory))
 }
 
-fn materialize_packed_composite_resource_memory(
+fn materialize_folded_composite_resource_memory(
     resource_environment: &ResourceEnvironment,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -1545,7 +1545,7 @@ fn project_initial_resource_facts(
         available_propositions,
         &format!("`{claim_label}` setup"),
     )?;
-    project_packed_resource_observable_facts(
+    project_folded_resource_observable_facts(
         resource_environment,
         parameters,
         arguments,
@@ -1581,7 +1581,7 @@ fn project_outcome_resource_facts(
         available_propositions,
         &format!("`{claim_label}` path {path_index}"),
     )?;
-    project_packed_resource_observable_facts(
+    project_folded_resource_observable_facts(
         resource_environment,
         parameters,
         arguments,
@@ -1594,7 +1594,7 @@ fn project_outcome_resource_facts(
     )
     .map_err(|message| {
         ClickError::new(format!(
-            "`{claim_label}` path {path_index}: could not project packed resource facts: {message}"
+            "`{claim_label}` path {path_index}: could not project folded resource facts: {message}"
         ))
     })
 }
@@ -1639,7 +1639,7 @@ fn append_state_resource_context_observable_facts(
     Ok(())
 }
 
-fn project_packed_resource_observable_facts(
+fn project_folded_resource_observable_facts(
     resource_environment: &ResourceEnvironment,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -1709,7 +1709,7 @@ fn observe_composite_resource(
             "`{claim_label}` proof step {step_index}: `observe` expects a composite resource"
         )));
     };
-    let memory = project_composite_resource_observable_facts(
+    let (memory, contained_resources) = project_composite_resource_observable_facts(
         resource_environment,
         definition,
         &resource_arguments,
@@ -1721,7 +1721,6 @@ fn observe_composite_resource(
         available_propositions,
         predicate_environment,
         click_function_environment,
-        &mut Vec::new(),
     )
     .map_err(|message| {
         ClickError::new(format!(
@@ -1729,7 +1728,24 @@ fn observe_composite_resource(
             describe_resource_clause(resource)
         ))
     })?;
-    Ok(state.with_memory(memory))
+    let assumptions = assumptions_from_propositions(available_propositions);
+    let viewed_contained_resources = contained_resources
+        .resources()
+        .iter()
+        .filter_map(CResource::core)
+        .collect::<Vec<_>>();
+    let resources = state
+        .resources()
+        .clone()
+        .try_compose_with_resources(viewed_contained_resources, &assumptions)
+        .map_err(|error| {
+            ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `observe({})` produced {}",
+                describe_resource_clause(resource),
+                describe_resource_context_validity_error(error, parameters, arguments)
+            ))
+        })?;
+    Ok(state.with_memory(memory).with_resource_context(resources))
 }
 
 fn project_held_resource_observable_facts(
@@ -1765,12 +1781,12 @@ fn project_held_resource_observable_facts(
         available_propositions,
         predicate_environment,
         click_function_environment,
-        &mut Vec::new(),
     )
+    .map(|(memory, _)| memory)
 }
 
 fn project_composite_resource_observable_facts(
-    resource_environment: &ResourceEnvironment,
+    _resource_environment: &ResourceEnvironment,
     definition: &ResourceDefinition,
     resource_arguments: &[CValue],
     parameters: &[syntax::C0Parameter],
@@ -1781,21 +1797,10 @@ fn project_composite_resource_observable_facts(
     available_propositions: &mut Vec<Proposition>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    active_resources: &mut Vec<String>,
-) -> Result<CMemory, String> {
-    if active_resources
-        .iter()
-        .any(|name| name == definition.name())
-    {
-        return Err(format!(
-            "composite resource observable-facts projection cycle through `{}`",
-            definition.name()
-        ));
-    }
+) -> Result<(CMemory, ResourceContext), String> {
     let Some(composite_body) = definition.composite_body() else {
-        return Ok(memory);
+        return Ok((memory, ResourceContext::new()));
     };
-    active_resources.push(definition.name().to_string());
 
     let substitutions =
         resource_value_substitutions(definition, resource_arguments).map_err(|message| {
@@ -1828,39 +1833,7 @@ fn project_composite_resource_observable_facts(
         predicate_environment,
         click_function_environment,
     )?;
-
-    let mut memory = memory;
-    for contained in contained_resources.resources() {
-        let (name, contained_arguments) = match contained.subject() {
-            CResourceSubject::Composite { name, arguments } => (name, arguments),
-            CResourceSubject::Memory(_) | CResourceSubject::Token { .. } => {
-                continue;
-            }
-        };
-        let Some(contained_definition) = resource_environment.get(name) else {
-            continue;
-        };
-        if contained_definition.composite_body().is_none() {
-            continue;
-        }
-        memory = project_composite_resource_observable_facts(
-            resource_environment,
-            contained_definition,
-            contained_arguments,
-            parameters,
-            arguments,
-            pre_state,
-            memory,
-            result,
-            available_propositions,
-            predicate_environment,
-            click_function_environment,
-            active_resources,
-        )?;
-    }
-
-    active_resources.pop();
-    Ok(memory)
+    Ok((memory, contained_resources))
 }
 
 fn append_composite_resource_observable_facts(
@@ -2063,7 +2036,7 @@ fn resource_value_substitutions(
         .collect())
 }
 
-fn unpack_composite_resource(
+fn unfold_composite_resource(
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -2078,7 +2051,7 @@ fn unpack_composite_resource(
     let definition = composite_resource_definition(
         resource_environment,
         resource,
-        "unpack",
+        "unfold",
         claim_label,
         step_index,
     )?;
@@ -2095,7 +2068,7 @@ fn unpack_composite_resource(
         .without_resource(&abstract_resource, &assumptions)
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `unpack({})` is missing resource `{}`\n  available resources: {}",
+                "`{claim_label}` proof step {step_index}: `unfold({})` is missing resource `{}`\n  available resources: {}",
                 describe_resource_clause(resource),
                 describe_resource(&abstract_resource, parameters, arguments),
                 describe_resources(state.resources().resources(), parameters, arguments)
@@ -2106,7 +2079,7 @@ fn unpack_composite_resource(
     for contained in composite_body.contains() {
         let contained = instantiate_resource_clause(contained, &substitutions).map_err(|message| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: could not instantiate `unpack({})`: {message}",
+                "`{claim_label}` proof step {step_index}: could not instantiate `unfold({})`: {message}",
                 describe_resource_clause(resource)
             ))
         })?;
@@ -2123,7 +2096,7 @@ fn unpack_composite_resource(
             .try_compose_with_resource(lowered, &assumptions)
             .map_err(|error| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `unpack({})` produced {}",
+                    "`{claim_label}` proof step {step_index}: `unfold({})` produced {}",
                     describe_resource_clause(resource),
                     describe_resource_context_validity_error(error, parameters, arguments)
                 ))
@@ -2134,7 +2107,7 @@ fn unpack_composite_resource(
     for fact in composite_body.facts() {
         let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: could not instantiate `unpack({})` fact: {message}",
+                    "`{claim_label}` proof step {step_index}: could not instantiate `unfold({})` fact: {message}",
                     describe_resource_clause(resource)
                 ))
             })?;
@@ -2151,7 +2124,7 @@ fn unpack_composite_resource(
         )
         .map_err(|message| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: could not lower `unpack({})` fact: {message}",
+                "`{claim_label}` proof step {step_index}: could not lower `unfold({})` fact: {message}",
                 describe_resource_clause(resource)
             ))
         })?;
@@ -2164,7 +2137,7 @@ fn unpack_composite_resource(
         &state,
         available_propositions,
         &format!(
-            "`{claim_label}` proof step {step_index}: `unpack({})`",
+            "`{claim_label}` proof step {step_index}: `unfold({})`",
             describe_resource_clause(resource)
         ),
     )?;
@@ -2172,9 +2145,9 @@ fn unpack_composite_resource(
     Ok(state)
 }
 
-fn pack_composite_resources_on_outcome(
+fn fold_composite_resources_on_outcome(
     resource_environment: &ResourceEnvironment,
-    resource_packs: &[ResourceClause],
+    resource_folds: &[ResourceClause],
     claim_label: &str,
     path_index: usize,
     path_facts: &[PathFact],
@@ -2187,11 +2160,11 @@ fn pack_composite_resources_on_outcome(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
 ) -> Result<CFunctionOutcome, ClickError> {
-    for resource in resource_packs {
+    for resource in resource_folds {
         let definition = composite_resource_definition(
             resource_environment,
             resource,
-            "pack",
+            "fold",
             claim_label,
             path_index,
         )?;
@@ -2204,7 +2177,7 @@ fn pack_composite_resources_on_outcome(
         for fact in composite_body.facts() {
             let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` path {path_index}: could not instantiate `pack({})` fact: {message}",
+                        "`{claim_label}` path {path_index}: could not instantiate `fold({})` fact: {message}",
                         describe_resource_clause(resource)
                     ))
                 })?;
@@ -2224,7 +2197,7 @@ fn pack_composite_resources_on_outcome(
             )
             .map_err(|error| {
                 ClickError::new(format!(
-                    "`{claim_label}` path {path_index}: `pack({})` fact failed: {}",
+                    "`{claim_label}` path {path_index}: `fold({})` fact failed: {}",
                     describe_resource_clause(resource),
                     error.message()
                 ))
@@ -2233,7 +2206,7 @@ fn pack_composite_resources_on_outcome(
 
         let CFunctionOutcome::Return { value, state } = outcome else {
             return Err(ClickError::new(format!(
-                "`{claim_label}` path {path_index}: `pack({})` requires a return outcome, got {}\n  path facts: {}",
+                "`{claim_label}` path {path_index}: `fold({})` requires a return outcome, got {}\n  path facts: {}",
                 describe_resource_clause(resource),
                 describe_function_outcome(&outcome, parameters, arguments),
                 describe_facts(path_facts)
@@ -2245,7 +2218,7 @@ fn pack_composite_resources_on_outcome(
             let contained =
                 instantiate_resource_clause(contained, &substitutions).map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` path {path_index}: could not instantiate `pack({})`: {message}",
+                        "`{claim_label}` path {path_index}: could not instantiate `fold({})`: {message}",
                         describe_resource_clause(resource)
                     ))
                 })?;
@@ -2257,7 +2230,7 @@ fn pack_composite_resources_on_outcome(
                 .without_resource(&lowered, &assumptions)
                 .ok_or_else(|| {
                     ClickError::new(format!(
-                        "`{claim_label}` path {path_index}: `pack({})` is missing contained resource `{}`\n  final resources: {}\n  path facts: {}",
+                        "`{claim_label}` path {path_index}: `fold({})` is missing contained resource `{}`\n  final resources: {}\n  path facts: {}",
                         describe_resource_clause(resource),
                         describe_resource(&lowered, parameters, arguments),
                         describe_resources(post_state.resources().resources(), parameters, arguments),
@@ -2275,7 +2248,7 @@ fn pack_composite_resources_on_outcome(
             .try_compose_with_resource(abstract_resource.clone(), &assumptions)
             .map_err(|error| {
                 ClickError::new(format!(
-                    "`{claim_label}` path {path_index}: `pack({})` produced {}",
+                    "`{claim_label}` path {path_index}: `fold({})` produced {}",
                     describe_resource_clause(resource),
                     describe_resource_context_validity_error(error, parameters, arguments)
                 ))
@@ -2302,7 +2275,7 @@ fn composite_resource_definition<'a>(
             "`{claim_label}` proof step {step_index}: `{action}` expects a composite resource"
         )));
     };
-    if matches!(action, "pack" | "unpack")
+    if matches!(action, "fold" | "unfold")
         && !matches!(
             resource,
             ResourceClause::Declared {
@@ -2659,7 +2632,7 @@ fn prove_claim_from_steps_execution(
     requirement_propositions: &[Proposition],
     unfolded_predicates: &[String],
     theorem_applications: &[(usize, TheoremApplication)],
-    resource_packs: &[ResourceClause],
+    resource_folds: &[ResourceClause],
     use_simp: bool,
     proof_steps: &[ProofStep],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
@@ -2708,9 +2681,9 @@ fn prove_claim_from_steps_execution(
                 "`proof steps` failed for `{claim_label}` path {path_index}: {message}"
             ))
         })?;
-        outcome = pack_composite_resources_on_outcome(
+        outcome = fold_composite_resources_on_outcome(
             resource_environment,
-            resource_packs,
+            resource_folds,
             claim_label,
             path_index,
             path.facts(),

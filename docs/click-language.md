@@ -182,15 +182,15 @@ resource uncalled(flag: int32*) {
 }
 ```
 
-Holding the packed abstract token exposes its recursive resource fact view, but
-not its contained resources. Hidden contained `write(...)` resources also expose
-derived `disjoint(...)` facts for their ranges. In an explicit proof script,
+Holding the folded abstract token exposes its immediate resource fact view, but
+not its owned contained resources. Hidden contained `write(...)` resources also
+expose derived `disjoint(...)` facts for their ranges. In an explicit proof script,
 `observe(uncalled(flag));` non-destructively records fact-view projection while
-keeping permissions hidden. `unpack(uncalled(flag));` consumes the abstract
+keeping permissions hidden. `unfold(uncalled(flag));` consumes the abstract
 token and exposes its contained resources for mutation. Composite bodies can
 bundle built-in memory resources and other declared resources. Resource
 facts may include scalar propositions and `disjoint(...)` range facts.
-`pack(uncalled(flag));` proves the fact in the current state, consumes the
+`fold(uncalled(flag));` proves the fact in the current state, consumes the
 contained resources, and returns the abstract token. The end of the
 `by { ... }` block checks the overall claim.
 

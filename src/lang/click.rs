@@ -464,11 +464,11 @@ pub enum ProofStep {
     BoundedExecute,
     LoopVc(CodeRegionRef),
     Frame(Option<CodeRegionRef>),
-    Unfold(String),
+    UnfoldPredicate(String),
+    UnfoldResource(ResourceClause),
+    FoldResource(ResourceClause),
     ApplyTheorem(TheoremApplication),
     ObserveResource(ResourceClause),
-    UnpackResource(ResourceClause),
-    PackResource(ResourceClause),
     Witness(ProofWitness),
     Choose(ProofChoice),
     Simp,
@@ -937,7 +937,9 @@ impl Proof {
             self,
             Self::Steps(steps)
                 if !steps.is_empty()
-                    && steps.iter().all(|step| matches!(step, ProofStep::Unfold(_)))
+                    && steps
+                        .iter()
+                        .all(|step| matches!(step, ProofStep::UnfoldPredicate(_)))
         )
     }
 
@@ -946,7 +948,7 @@ impl Proof {
             Self::Steps(steps) => steps
                 .iter()
                 .filter_map(|step| match step {
-                    ProofStep::Unfold(name) => Some(name.clone()),
+                    ProofStep::UnfoldPredicate(name) => Some(name.clone()),
                     _ => None,
                 })
                 .collect(),

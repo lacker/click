@@ -202,28 +202,29 @@ sequence:
   token while returning another.
 - `mdtests/callback_resource_pipe_rejects_spent_token.md`: the caller cannot
   reuse the callback token spent by the helper.
-- `mdtests/composite_resource_once_flag.md`: explicit `unpack(resource)` and
-  `pack(resource)` steps verify a resource token backed by memory
+- `mdtests/composite_resource_once_flag.md`: explicit `unfold(resource)` and
+  `fold(resource)` steps verify a resource token backed by memory
   permission plus a fact.
 - `mdtests/composite_resource_composes_token.md`: a composite resource can
   bundle another token resource with memory permission and a fact.
 - `mdtests/composite_resource_two_arrays.md`: a composite resource can
   bundle permissions for multiple arrays.
 - `mdtests/composite_resource_disjoint_fact.md`: a composite resource can
-  package a `disjoint(...)` fact and expose it while unpacked.
-- `mdtests/composite_resource_packed_pure_fact_projection.md`: a packed
+  package a `disjoint(...)` fact and expose it while unfolded.
+- `mdtests/composite_resource_folded_pure_fact_projection.md`: a folded
   composite resource exposes pure facts while held.
-- `mdtests/composite_resource_packed_memory_fact_projection.md`: a packed
+- `mdtests/composite_resource_folded_memory_fact_projection.md`: a folded
   composite resource exposes memory facts while keeping contained permission
   hidden.
-- `mdtests/composite_resource_packed_disjoint_fact_projection.md`: a packed
+- `mdtests/composite_resource_folded_disjoint_fact_projection.md`: a folded
   composite resource exposes a packaged `disjoint(...)` fact.
-- `mdtests/composite_resource_packed_nested_fact_projection.md`: a packed
-  composite resource exposes nested composite-resource facts.
-- `mdtests/composite_resource_packed_fact_hides_permissions.md`: packed facts
+- `mdtests/composite_resource_folded_nested_fact_projection.md`: a folded
+  composite resource does not recursively expose nested facts without
+  observation.
+- `mdtests/composite_resource_folded_fact_hides_permissions.md`: folded facts
   do not expose contained write permission.
 - `mdtests/composite_resource_observe_nested_fact.md`: `observe(resource)`
-  exposes nested composite-resource facts without unpacking.
+  exposes one view layer, so nested facts require repeated observation.
 - `mdtests/composite_resource_observe_hides_permissions.md`: `observe(...)`
   does not expose contained write permission.
 - `mdtests/composite_resource_struct_owned_buffer.md`: a conservative
@@ -232,9 +233,9 @@ sequence:
   field-dependent owner-buffer shape, with the derived buffer permission and
   non-aliasing fact packaged inside the composite resource.
 - `mdtests/composite_resource_owner_buffer_hidden_disjoint_projection.md`:
-  hidden contained writes imply packed-resource `disjoint(...)` facts without
+  hidden contained writes imply folded-resource `disjoint(...)` facts without
   exposing the hidden permissions.
-- `mdtests/composite_resource_rejects_bad_origin.md`: packing a composite
+- `mdtests/composite_resource_rejects_bad_origin.md`: folding a composite
   resource fails when its fact has not been established.
 - `mdtests/composite_resource_rejects_double_call.md`: a composite
   token is still consumed linearly through a call summary.

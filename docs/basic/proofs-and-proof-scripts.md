@@ -58,7 +58,7 @@ Common steps include:
 - `apply(theorem(args));`: use a verified stdlib or current-file theorem as a
   derived fact.
 - `observe(resource);`: expose facts associated with a held composite
-  resource without unpacking its contained permissions.
+  resource without unfolding its contained permissions.
 - `simp();`: simplify the current proof goal.
 - `frame();`: prove an effect claim.
 

@@ -1,6 +1,6 @@
-# owner buffer hidden writes imply packed disjoint
+# owner buffer hidden writes imply folded disjoint
 
-This checks that a packed composite resource exposes derived `disjoint(...)`
+This checks that a folded composite resource exposes derived `disjoint(...)`
 facts from its hidden contained `write(...)` permissions, while keeping the
 permissions themselves hidden.
 

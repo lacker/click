@@ -1,7 +1,7 @@
 # composite resource observe hides permissions
 
-This checks that `observe(resource)` exposes facts only. It does not unpack the
-resource or expose contained write permission.
+This checks that `observe(resource)` exposes the immediate view only. It does
+not unfold the resource or expose contained write permission.
 
 ```c filename=write_flag_observed.c
 int32 write_flag_observed(int32* flag) {

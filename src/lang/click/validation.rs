@@ -238,13 +238,13 @@ fn expand_declared_resource_proof_step(
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<ProofStep, ClickError> {
     match step {
-        ProofStep::UnpackResource(resource) => Ok(ProofStep::UnpackResource(
+        ProofStep::UnfoldResource(resource) => Ok(ProofStep::UnfoldResource(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),
         ProofStep::ObserveResource(resource) => Ok(ProofStep::ObserveResource(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),
-        ProofStep::PackResource(resource) => Ok(ProofStep::PackResource(
+        ProofStep::FoldResource(resource) => Ok(ProofStep::FoldResource(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),
         _ => Ok(step),
@@ -1799,14 +1799,16 @@ fn validate_pure_theorem_proof(theorem_name: &str, proof: &Proof) -> Result<(), 
         Proof::Steps(steps) => {
             for step in steps {
                 match step {
-                    ProofStep::Unfold(_) | ProofStep::ApplyTheorem(_) | ProofStep::Simp => {}
+                    ProofStep::UnfoldPredicate(_)
+                    | ProofStep::ApplyTheorem(_)
+                    | ProofStep::Simp => {}
                     ProofStep::SymbolicExecute
                     | ProofStep::BoundedExecute
                     | ProofStep::LoopVc(_)
                     | ProofStep::Frame(_)
                     | ProofStep::ObserveResource(_)
-                    | ProofStep::UnpackResource(_)
-                    | ProofStep::PackResource(_)
+                    | ProofStep::UnfoldResource(_)
+                    | ProofStep::FoldResource(_)
                     | ProofStep::Witness(_)
                     | ProofStep::Choose(_) => {
                         return Err(ClickError::new(format!(
@@ -1827,11 +1829,10 @@ pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
         ProofStep::BoundedExecute => "bounded_execute",
         ProofStep::LoopVc(_) => "loop_vc",
         ProofStep::Frame(_) => "frame",
-        ProofStep::Unfold(_) => "unfold",
+        ProofStep::UnfoldPredicate(_) | ProofStep::UnfoldResource(_) => "unfold",
+        ProofStep::FoldResource(_) => "fold",
         ProofStep::ApplyTheorem(_) => "apply",
         ProofStep::ObserveResource(_) => "observe",
-        ProofStep::UnpackResource(_) => "unpack",
-        ProofStep::PackResource(_) => "pack",
         ProofStep::Witness(_) => "witness",
         ProofStep::Choose(_) => "choose",
         ProofStep::Simp => "simp",
