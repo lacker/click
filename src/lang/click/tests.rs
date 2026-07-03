@@ -3012,7 +3012,7 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
         )]),
     );
     let initial_resources =
-        ResourceContext::new().with_resource(CResource::Write(CMemoryRange::new(
+        ResourceContext::new().unchecked_with_resource(CResource::Write(CMemoryRange::new(
             base.clone(),
             Bitvector32Term::Constant(0),
             Bitvector32Term::Constant(3),

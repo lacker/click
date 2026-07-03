@@ -438,19 +438,12 @@ fn prepare_function_resource_transfer(
         };
         return_resources = resources;
     }
-    return_resources = return_resources
-        .with_resources_normalized(ensured_resources.resources().iter().cloned(), assumptions);
-    if let Some(resource) = return_resources.duplicate_named_resource() {
-        return Ok(Err(CRuntimeError::DuplicateResource {
-            resource: resource.clone(),
-        }));
-    }
-    if let Some((left, right)) = return_resources.overlapping_write_pair(assumptions) {
-        return Ok(Err(CRuntimeError::OverlappingWriteResources {
-            left: Box::new(left.clone()),
-            right: Box::new(right.clone()),
-        }));
-    }
+    return_resources = match return_resources
+        .try_compose_with_resources(ensured_resources.resources().iter().cloned(), assumptions)
+    {
+        Ok(resources) => resources,
+        Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+    };
 
     Ok(Ok(CFunctionResourceTransfer {
         callee_resources: required_resources,
@@ -471,20 +464,26 @@ fn evaluate_function_resource_context(
             Ok(resource) => resource,
             Err(error) => return Ok(Err(error)),
         };
-        context = context.with_resource(resource);
-        if let Some(resource) = context.duplicate_named_resource() {
-            return Ok(Err(CRuntimeError::DuplicateResource {
-                resource: resource.clone(),
-            }));
-        }
-        if let Some((left, right)) = context.overlapping_write_pair(assumptions) {
-            return Ok(Err(CRuntimeError::OverlappingWriteResources {
-                left: Box::new(left.clone()),
-                right: Box::new(right.clone()),
-            }));
-        }
+        context = match context.try_compose_with_resource(resource, assumptions) {
+            Ok(context) => context,
+            Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+        };
     }
     Ok(Ok(context))
+}
+
+fn resource_context_runtime_error(error: ResourceContextValidityError) -> CRuntimeError {
+    match error {
+        ResourceContextValidityError::DuplicateNamedResource(resource) => {
+            CRuntimeError::DuplicateResource { resource }
+        }
+        ResourceContextValidityError::OverlappingWriteResources { left, right } => {
+            CRuntimeError::OverlappingWriteResources {
+                left: Box::new(left),
+                right: Box::new(right),
+            }
+        }
+    }
 }
 
 fn evaluate_function_resource_spec(

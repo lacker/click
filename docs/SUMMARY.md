@@ -32,6 +32,7 @@
 - [Maintainer Quickstart](quickstart.md)
 - [Feature Playbook](feature-playbook.md)
 - [Proof Landscape](proof-landscape.md)
+- [Separation Logic Internals](separation-logic.md)
 - [Roadmap](roadmap.md)
 - [Kernel Internals](kernel.md)
 

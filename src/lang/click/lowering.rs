@@ -2857,7 +2857,10 @@ pub(super) fn resource_context_from_requirements(
     let mut context = ResourceContext::new();
     for requirement in requires {
         if let Requirement::Resource(resource) = requirement.inner() {
-            context = context.with_resource(lower_resource_clause(
+            // This lowering path has no proposition assumptions yet. It builds
+            // a provisional context; execution paths use checked composition
+            // once assumptions are available.
+            context = context.unchecked_with_resource(lower_resource_clause(
                 resource, parameters, arguments, memory,
             )?);
         }

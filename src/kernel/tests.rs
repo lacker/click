@@ -29,7 +29,7 @@ fn read_context(
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
 ) -> ResourceContext {
-    ResourceContext::new().with_resource(read_resource(base, start, end))
+    ResourceContext::new().unchecked_with_resource(read_resource(base, start, end))
 }
 
 fn write_context(
@@ -37,7 +37,82 @@ fn write_context(
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
 ) -> ResourceContext {
-    ResourceContext::new().with_resource(write_resource(base, start, end))
+    ResourceContext::new().unchecked_with_resource(write_resource(base, start, end))
+}
+
+#[test]
+fn memory_resource_core_is_read_permission() {
+    let base = Pointer {
+        block: "p".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+
+    assert_eq!(
+        read_resource(base.clone(), 0, 1).core(),
+        Some(read_resource(base.clone(), 0, 1))
+    );
+    assert_eq!(
+        write_resource(base.clone(), 0, 1).core(),
+        Some(read_resource(base, 0, 1))
+    );
+    assert_eq!(
+        CResource::Named {
+            name: "token".to_string(),
+            arguments: vec![int32(0)]
+        }
+        .core(),
+        None
+    );
+}
+
+#[test]
+fn resource_context_observes_write_disjointness() {
+    let base = Pointer {
+        block: "p".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let facts = ResourceContext::new()
+        .unchecked_with_resource(write_resource(base.clone(), 0, 1))
+        .unchecked_with_resource(write_resource(base.clone(), 1, 2))
+        .observable_facts(&Assumptions::new())
+        .expect("adjacent writes should be a valid resource context");
+
+    assert_eq!(
+        facts,
+        vec![Proposition::CMemoryDisjoint {
+            left_base: base.clone(),
+            left_start: Bitvector32Term::Constant(0),
+            left_end: Bitvector32Term::Constant(1),
+            right_base: base,
+            right_start: Bitvector32Term::Constant(1),
+            right_end: Bitvector32Term::Constant(2),
+        }]
+    );
+}
+
+#[test]
+fn checked_resource_composition_rejects_invalid_state_before_normalizing() {
+    let base = Pointer {
+        block: "p".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let error = ResourceContext::new()
+        .try_compose_with_resources(
+            [
+                write_resource(base.clone(), 0, 1),
+                write_resource(base.clone(), 0, 1),
+            ],
+            &Assumptions::new(),
+        )
+        .expect_err("duplicate writes must be rejected before normalization");
+
+    assert_eq!(
+        error,
+        ResourceContextValidityError::OverlappingWriteResources {
+            left: memory_range(base.clone(), 0, 1),
+            right: memory_range(base, 0, 1),
+        }
+    );
 }
 
 #[test]

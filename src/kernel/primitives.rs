@@ -477,6 +477,15 @@ pub enum CResource {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceContextValidityError {
+    DuplicateNamedResource(CResource),
+    OverlappingWriteResources {
+        left: CMemoryRange,
+        right: CMemoryRange,
+    },
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum ResourceFamily {
     Memory,
@@ -1836,26 +1845,81 @@ impl ResourceContext {
         Self::default()
     }
 
-    pub fn with_resource(mut self, resource: CResource) -> Self {
+    /// Adds a token without checking validity or normalizing the context.
+    ///
+    /// Prefer `try_compose_with_resource` when proposition assumptions are
+    /// available.
+    pub fn unchecked_with_resource(mut self, resource: CResource) -> Self {
         self.resources.push(resource);
         self
     }
 
-    pub fn with_resources(mut self, resources: impl IntoIterator<Item = CResource>) -> Self {
+    /// Adds tokens without checking validity or normalizing the context.
+    ///
+    /// Prefer `try_compose_with_resources` when proposition assumptions are
+    /// available.
+    pub fn unchecked_with_resources(
+        mut self,
+        resources: impl IntoIterator<Item = CResource>,
+    ) -> Self {
         self.resources.extend(resources);
         self
     }
 
-    pub(super) fn with_resources_normalized(
+    pub fn try_compose_with_resource(
+        self,
+        resource: CResource,
+        assumptions: &Assumptions,
+    ) -> Result<Self, ResourceContextValidityError> {
+        self.try_compose_with_resources(std::iter::once(resource), assumptions)
+    }
+
+    pub fn try_compose_with_resources(
         self,
         resources: impl IntoIterator<Item = CResource>,
         assumptions: &Assumptions,
-    ) -> Self {
-        self.with_resources(resources).normalized(assumptions)
+    ) -> Result<Self, ResourceContextValidityError> {
+        let context = self.unchecked_with_resources(resources);
+        if let Some(error) = context.validity_error(assumptions) {
+            return Err(error);
+        }
+        Ok(context.normalized(assumptions))
     }
 
     pub fn resources(&self) -> &[CResource] {
         &self.resources
+    }
+
+    pub fn validity_error(
+        &self,
+        assumptions: &Assumptions,
+    ) -> Option<ResourceContextValidityError> {
+        if let Some(resource) = self.duplicate_named_resource() {
+            return Some(ResourceContextValidityError::DuplicateNamedResource(
+                resource.clone(),
+            ));
+        }
+        if let Some((left, right)) = self.overlapping_write_pair(assumptions) {
+            return Some(ResourceContextValidityError::OverlappingWriteResources {
+                left: left.clone(),
+                right: right.clone(),
+            });
+        }
+        None
+    }
+
+    pub fn is_valid(&self, assumptions: &Assumptions) -> bool {
+        self.validity_error(assumptions).is_none()
+    }
+
+    pub fn observable_facts(
+        &self,
+        assumptions: &Assumptions,
+    ) -> Result<Vec<Proposition>, ResourceContextValidityError> {
+        if let Some(error) = self.validity_error(assumptions) {
+            return Err(error);
+        }
+        Ok(self.memory_write_disjoint_facts())
     }
 
     pub fn has_multiple_write_resources(&self) -> bool {
@@ -1887,7 +1951,7 @@ impl ResourceContext {
         None
     }
 
-    pub fn write_disjoint_propositions(&self) -> Vec<Proposition> {
+    fn memory_write_disjoint_facts(&self) -> Vec<Proposition> {
         let writes = self
             .resources
             .iter()
@@ -2036,10 +2100,10 @@ fn memory_resource_entails(
 ) -> bool {
     match (available, required) {
         (_, CResource::Read(required)) => {
-            let Some(available) = memory_resource_read_core(available) else {
+            let Some(available) = resource_read_core_range(available) else {
                 return false;
             };
-            memory_range_covers(available, required, assumptions)
+            memory_range_covers(&available, required, assumptions)
         }
         (CResource::Write(available), CResource::Write(required)) => {
             memory_range_covers(available, required, assumptions)
@@ -2060,8 +2124,8 @@ fn consume_memory_resource(
             .resources
             .iter()
             .any(|candidate| {
-                memory_resource_read_core(candidate)
-                    .is_some_and(|available| memory_range_covers(available, required, assumptions))
+                resource_read_core_range(candidate)
+                    .is_some_and(|available| memory_range_covers(&available, required, assumptions))
             })
             .then(|| context.normalized(assumptions)),
         CResource::Write(required) => {
@@ -2113,10 +2177,28 @@ fn combine_named_resources(_left: &CResource, _right: &CResource) -> Option<CRes
     None
 }
 
-fn memory_resource_read_core(resource: &CResource) -> Option<&CMemoryRange> {
+fn resource_core(resource: &CResource) -> Option<CResource> {
+    match resource.family() {
+        ResourceFamily::Memory => memory_resource_core(resource),
+        ResourceFamily::Named => named_resource_core(resource),
+    }
+}
+
+fn memory_resource_core(resource: &CResource) -> Option<CResource> {
     match resource {
-        CResource::Read(range) | CResource::Write(range) => Some(range),
+        CResource::Read(range) | CResource::Write(range) => Some(CResource::Read(range.clone())),
         CResource::Named { .. } => None,
+    }
+}
+
+fn named_resource_core(_resource: &CResource) -> Option<CResource> {
+    None
+}
+
+fn resource_read_core_range(resource: &CResource) -> Option<CMemoryRange> {
+    match resource.core()? {
+        CResource::Read(range) => Some(range),
+        CResource::Write(_) | CResource::Named { .. } => None,
     }
 }
 
@@ -2126,7 +2208,7 @@ fn memory_resource_permits_read(
     byte_width: u32,
     assumptions: &Assumptions,
 ) -> bool {
-    memory_resource_read_core(resource).is_some_and(|range| {
+    resource_read_core_range(resource).is_some_and(|range| {
         assumptions.pointer_access_in_range(
             pointer,
             byte_width,
@@ -2226,6 +2308,10 @@ impl CResource {
             Self::Read(_) | Self::Write(_) => ResourceFamily::Memory,
             Self::Named { .. } => ResourceFamily::Named,
         }
+    }
+
+    pub fn core(&self) -> Option<Self> {
+        resource_core(self)
     }
 }
 

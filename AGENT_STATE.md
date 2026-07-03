@@ -39,6 +39,38 @@ Last updated: 2026-07-03.
 
 We are in the middle of designing Click's resource logic.
 
+`docs/separation-logic.md` is now the internal design target for the
+Iris-inspired resource model. It says Click is not yet implemented as a full
+resource algebra, but should refactor toward explicit resource state `M`,
+`empty`, `compose`, `valid`, `core`, and observable facts. It also records that
+the current kernel resource cases are `read`, `write`, and `named`; represented
+resources are named resources with representation laws, not a separate kernel
+variant.
+The first code refactor toward that model added
+`ResourceContext::validity_error(...)` / `ResourceContextValidityError` for
+explicit resource-state validity checks. Checked composition now goes through
+`ResourceContext::try_compose_with_resource(s)(...)`, which validates the raw
+combined resource state before normalizing it. Function-call transfer,
+function resource-context evaluation, `unpack(...)`, and `pack(...)` now use
+checked composition when adding resources.
+Raw context construction is now explicitly named
+`unchecked_with_resource(s)(...)`; it remains for tests and assumption-free
+lowering/materialization paths that build provisional contexts before
+proposition assumptions are available.
+The next refactor added `CResource::core()`: memory `read` cores to itself,
+memory `write` cores to `read`, and strict named resources currently have empty
+core. Read entailment, read consumption, and memory-read authorization now route
+through that resource-level core operation.
+The next observable-facts refactor added
+`ResourceContext::observable_facts(...)`, which checks resource-state validity
+and returns ordinary facts derived from the concrete resource context. Today it
+routes write-derived `disjoint(...)` facts through this interface. Proof-layer
+observable-facts projection now calls this unconditionally, so projection also
+validates the resource context when no facts are produced. Represented resource
+observable-facts projection groups contained resource-context observable facts
+with declared `fact` clauses; the proof layer still handles
+resource-definition substitution and memory materialization.
+
 The current settled terminology is:
 
 - A `code region` is a syntactic region of C code, such as `loop(0)`.
@@ -104,7 +136,7 @@ Click currently has:
 - `read(...)` is the stable read/core view for memory resources:
   `core(write(range)) = read(range)` and `core(read(range)) = read(range)`.
   The kernel routes read entailment, read consumption, and external-load
-  permission checks through this explicit read-core helper.
+  permission checks through `CResource::core()`.
 - Visible `write(...)` resources imply `disjoint(...)` facts for their ranges;
   direct hidden contained `write(...)` resources do the same while a represented
   resource is packed; `read(...)` resources do not imply disjointness. Packed
