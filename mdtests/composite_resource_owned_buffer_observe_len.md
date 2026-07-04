@@ -1,0 +1,50 @@
+# composite resource owned buffer observe len
+
+This checks that `observe(resource)` is enough to use the immediate viewed
+facts and read permissions of a folded len/cap/data buffer resource without
+unfolding the owned permissions.
+
+```c filename=buffer_len.c
+struct owner {
+    int32 len;
+    int32 cap;
+    int32* data;
+};
+
+int32 buffer_len(struct owner* owner) {
+    return owner->len;
+}
+```
+
+```click
+resource owned_buffer(owner: struct owner*) {
+    contains write(owner->len);
+    contains write(owner->cap);
+    contains write(owner->data);
+    contains write((owner->data)[0..owner->cap]);
+    fact 0 <= owner->len;
+    fact owner->len <= owner->cap;
+    fact disjoint(owner[0..3], (owner->data)[0..owner->cap]);
+}
+
+verifying "buffer_len.c";
+
+int32 buffer_len(struct owner* owner) {
+    requires owned_buffer(owner);
+
+    ensures result <= owner->cap by {
+        observe(owned_buffer(owner));
+        symbolic_execute();
+        simp();
+    }
+
+    ensures owned_buffer(owner) by {
+        observe(owned_buffer(owner));
+        symbolic_execute();
+    }
+}
+```
+
+```expect
+pass
+```

@@ -235,6 +235,12 @@ sequence:
 - `mdtests/composite_resource_owned_buffer_len_cap_data.md`: a len/cap/data
   owned-buffer resource with a stronger "has room" pre-state resource that
   folds back to the ordinary well-formed buffer after push.
+- `mdtests/composite_resource_owned_buffer_observe_len.md`: a len/cap/data
+  owned-buffer getter that uses `observe(...)` to read through the folded
+  resource without unfolding owned permissions.
+- `mdtests/composite_resource_owned_buffer_nested_hidden_disjoint_gap.md`:
+  expected-fail coverage for nested hidden footprints that do not yet summarize
+  `disjoint(...)` facts across composite-resource boundaries.
 - `mdtests/composite_resource_owner_buffer_hidden_disjoint_projection.md`:
   hidden contained writes imply folded-resource `disjoint(...)` facts without
   exposing the hidden permissions.

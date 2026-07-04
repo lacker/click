@@ -207,6 +207,33 @@ from valid compositions of multiple owned memory resources. Composite-resource
 projection path. Their lowering still lives in the Click proof layer because it
 depends on resource definitions, substitution, and memory materialization.
 
+## Disjointness And Separation
+
+`disjoint(range1, range2)` is a memory-specific proposition. It should not be
+treated as the general primitive for separation logic.
+
+The more general idea is valid composition of resource elements:
+
+```text
+valid(compose(own(memory(range1)), own(memory(range2))))
+```
+
+For owned memory elements, that valid composition has a useful observable
+consequence:
+
+```text
+disjoint(range1, range2)
+```
+
+Other resource families may expose different observable facts from valid
+composition, or none at all. Composite resources may expose declared `fact`
+clauses and facts derived from their immediate contained resource elements.
+
+Click does not yet have a general user-visible predicate like
+`separate(element1, element2)`. Keep `disjoint(...)` as the concrete range
+fact, and treat it as one output of the broader resource-element validity and
+observable-facts machinery.
+
 ## Memory Resource Rules
 
 The memory family should satisfy these rules:

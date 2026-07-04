@@ -22,8 +22,10 @@ in `docs/`; do not treat this file as a design doc.
   and `fold`.
 - `observe(resource)` is one-step and non-consuming. It exposes immediate facts
   and viewed immediate contained resources, not owned contained permissions.
-- The latest owner-buffer pressure test is
-  `mdtests/composite_resource_owned_buffer_len_cap_data.md`.
+- The current owner-buffer pressure tests are:
+  - `mdtests/composite_resource_owned_buffer_len_cap_data.md`
+  - `mdtests/composite_resource_owned_buffer_observe_len.md`
+  - `mdtests/composite_resource_owned_buffer_nested_hidden_disjoint_gap.md`
 - The latest verification pass recorded here:
   - `cargo fmt`
   - `cargo test`
@@ -67,16 +69,14 @@ in `docs/`; do not treat this file as a design doc.
 
 ## Useful Next Tasks
 
-- Add a short section to `docs/separation-logic.md` explaining that
-  `disjoint(...)` is a memory-specific projection from valid resource-element
-  composition, while the general separateness abstraction is intentionally not
-  designed yet.
-- Add an expected-fail mdtest for any owner-buffer shape we wish worked without
-  an explicit `fact disjoint(...)`; use it to decide whether the missing
-  evidence should come from allocation provenance, hidden writes, or explicit
-  facts.
+- Decide whether nested hidden footprints should be summarized recursively,
+  via explicit resource-family footprint views, or left as explicit
+  `fact disjoint(...)` obligations. The expected-fail mdtest above is the
+  pressure test.
 - Keep pressure-testing composite resources with realistic examples before
-  adding new syntax.
+  adding scoped unfold/fold syntax or automation.
+- If hidden footprint summaries are added, make them deterministic one-step
+  proof data first; leave `auto` heuristics for a later pass.
 
 ## Useful Commands
 
