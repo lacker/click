@@ -335,7 +335,10 @@ parameters name the lower-level memory objects directly. More convenient
 field-dependent composite resources can derive a contained buffer from
 `owner->data`. The folded resource exposes derived `disjoint(...)` facts from
 its hidden contained writes, while explicit `fact` clauses can carry additional
-shape facts such as length and capacity.
+shape facts such as length and capacity. A push-style buffer resource can use a
+stronger pre-state resource, such as `owned_buffer_with_room(owner)`, with
+facts like `owner->len < owner->cap`; after the mutation, the proof can fold
+back to the ordinary `owned_buffer(owner)` shape.
 
 ## Split And Rejoin
 

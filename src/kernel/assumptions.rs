@@ -530,6 +530,9 @@ impl Assumptions {
                 ) {
                     return Some(result);
                 }
+                if right == signed_int_min_term() || left == signed_int_max_term() {
+                    return Some(false);
+                }
                 if self.subtract_same_const_order_fact(&left, &right, true)
                     || self.has_order_path(&left, &right, true)
                     || self.has_condition_fact(
@@ -570,6 +573,9 @@ impl Assumptions {
                     |left, right| left <= right,
                 ) {
                     return Some(result);
+                }
+                if right == signed_int_max_term() || left == signed_int_min_term() {
+                    return Some(true);
                 }
                 if self.has_order_path(&left, &right, false)
                     || left.add_const_base(1).is_some_and(|base| {
@@ -627,6 +633,9 @@ impl Assumptions {
                 ) {
                     return Some(result);
                 }
+                if right == signed_int_max_term() || left == signed_int_min_term() {
+                    return Some(false);
+                }
                 if self.has_order_path(&right, &left, true)
                     || left.add_const_base(1).is_some_and(|base| {
                         right == Bitvector32Term::Constant(0)
@@ -672,6 +681,9 @@ impl Assumptions {
                     |left, right| left >= right,
                 ) {
                     return Some(result);
+                }
+                if right == signed_int_min_term() || left == signed_int_max_term() {
+                    return Some(true);
                 }
                 if self.has_order_path(&right, &left, false)
                     || left.add_const_base(1).is_some_and(|base| {
@@ -2439,6 +2451,14 @@ impl Assumptions {
         )) == Some(true)
             && self.decide(&ConditionTerm::signed_less_equal(range_end, end.clone())) == Some(true)
     }
+}
+
+fn signed_int_min_term() -> Bitvector32Term {
+    Bitvector32Term::Constant(i32::MIN as u32)
+}
+
+fn signed_int_max_term() -> Bitvector32Term {
+    Bitvector32Term::Constant(i32::MAX as u32)
 }
 
 fn range_intervals_cover_target(target: &CMemoryRange, mut intervals: Vec<(i64, i64)>) -> bool {

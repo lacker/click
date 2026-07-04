@@ -1989,13 +1989,6 @@ fn interval_arithmetic_proves_increment_bounds_and_no_overflow() {
         .assume_condition(
             ConditionTerm::signed_less_than(i_bits.clone(), n_bits.clone()),
             true,
-        )
-        .assume_condition(
-            ConditionTerm::signed_less_equal(
-                n_bits.clone(),
-                Bitvector32Term::Constant(i32::MAX as u32),
-            ),
-            true,
         );
     assert!(assumptions.proves(&Proposition::ConditionIs(
         ConditionTerm::signed_less_than(i_bits.clone(), incremented.clone()),
@@ -2023,6 +2016,37 @@ fn interval_arithmetic_proves_increment_bounds_and_no_overflow() {
     .expect("interval facts should prove i + 1 bounds and no signed overflow");
 
     assert!(matches!(theorem.proposition(), Proposition::Implies(_, _)));
+}
+
+#[test]
+fn signed_order_solver_knows_int32_universal_bounds() {
+    let x = Bitvector32Term::Variable(Variable(71));
+    let int_min = Bitvector32Term::Constant(i32::MIN as u32);
+    let int_max = Bitvector32Term::Constant(i32::MAX as u32);
+    let assumptions = Assumptions::new();
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_less_equal(
+            x.clone(),
+            int_max.clone()
+        )),
+        Some(true)
+    );
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_greater_than(x.clone(), int_max)),
+        Some(false)
+    );
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_greater_equal(
+            x.clone(),
+            int_min.clone()
+        )),
+        Some(true)
+    );
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_less_than(x, int_min)),
+        Some(false)
+    );
 }
 
 #[test]

@@ -1,0 +1,71 @@
+# composite resource owned buffer len cap data
+
+This checks a more realistic owned-buffer shape. The composite resource owns
+the struct fields plus the backing buffer derived from `owner->data` and
+`owner->cap`. A stronger pre-state resource records that there is room to push
+one element; after the mutation, the proof folds back to the ordinary
+well-formed buffer resource.
+
+```c filename=push_one.c
+struct owner {
+    int32 len;
+    int32 cap;
+    int32* data;
+};
+
+int32 push_one(struct owner* owner, int32 value) {
+    int32 index;
+    int32* data;
+
+    index = owner->len;
+    data = owner->data;
+    data[index] = value;
+    owner->len = index + 1;
+    return owner->len;
+}
+```
+
+```click
+resource owned_buffer(owner: struct owner*) {
+    contains write(owner->len);
+    contains write(owner->cap);
+    contains write(owner->data);
+    contains write((owner->data)[0..owner->cap]);
+    fact 0 <= owner->len;
+    fact owner->len <= owner->cap;
+    fact disjoint(owner[0..3], (owner->data)[0..owner->cap]);
+}
+
+resource owned_buffer_with_room(owner: struct owner*) {
+    contains write(owner->len);
+    contains write(owner->cap);
+    contains write(owner->data);
+    contains write((owner->data)[0..owner->cap]);
+    fact 0 <= owner->len;
+    fact owner->len < owner->cap;
+    fact disjoint(owner[0..3], (owner->data)[0..owner->cap]);
+}
+
+verifying "push_one.c";
+
+int32 push_one(struct owner* owner, int32 value) {
+    requires owned_buffer_with_room(owner);
+
+    ensures owned_buffer(owner) by {
+        unfold(owned_buffer_with_room(owner));
+        symbolic_execute();
+        fold(owned_buffer(owner));
+    }
+
+    ensures result <= owner->cap by {
+        unfold(owned_buffer_with_room(owner));
+        symbolic_execute();
+        fold(owned_buffer(owner));
+        simp();
+    }
+}
+```
+
+```expect
+pass
+```

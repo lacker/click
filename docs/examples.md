@@ -232,6 +232,9 @@ sequence:
 - `mdtests/composite_resource_owner_buffer_field_dependent.md`: the desired
   field-dependent owner-buffer shape, with the derived buffer permission and
   non-aliasing fact packaged inside the composite resource.
+- `mdtests/composite_resource_owned_buffer_len_cap_data.md`: a len/cap/data
+  owned-buffer resource with a stronger "has room" pre-state resource that
+  folds back to the ordinary well-formed buffer after push.
 - `mdtests/composite_resource_owner_buffer_hidden_disjoint_projection.md`:
   hidden contained writes imply folded-resource `disjoint(...)` facts without
   exposing the hidden permissions.

@@ -39,6 +39,14 @@ Last updated: 2026-07-03.
 - `mdtests/composite_resource_owner_buffer_hidden_disjoint_projection.md`
   records that hidden contained writes imply folded-resource `disjoint(...)`
   facts without exposing hidden permissions.
+- `mdtests/composite_resource_owned_buffer_len_cap_data.md` records a
+  len/cap/data owned-buffer push shape. It uses a stronger
+  `owned_buffer_with_room(owner)` pre-state resource and folds back to
+  `owned_buffer(owner)` after mutation.
+- The signed-order solver now knows the universal int32 bounds:
+  `INT_MIN <= x`, `x <= INT_MAX`, `!(x < INT_MIN)`, and `!(x > INT_MAX)`.
+  This lets `owner->len < owner->cap` imply enough upper-bound information to
+  prove `owner->len + 1` does not overflow.
 - The old pre-composite terminology has been renamed to "composite resource"
   in code/docs/mdtests. Internally, `ResourceDefinition` now has an optional
   `CompositeResourceBody`; mdtest filenames use `composite_resource_*`.
