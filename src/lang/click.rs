@@ -461,6 +461,7 @@ pub enum Proof {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofStep {
     SymbolicExecute,
+    ExecuteRest,
     BoundedExecute,
     LoopVc(CodeRegionRef),
     Frame(Option<CodeRegionRef>),

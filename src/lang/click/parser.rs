@@ -1533,6 +1533,10 @@ impl Parser {
                 self.expect_empty_step_args(&name)?;
                 ProofStep::SymbolicExecute
             }
+            "execute_rest" => {
+                self.expect_empty_step_args(&name)?;
+                ProofStep::ExecuteRest
+            }
             "bounded_execute" => {
                 self.expect_empty_step_args(&name)?;
                 ProofStep::BoundedExecute

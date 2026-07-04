@@ -627,6 +627,18 @@ fn parses_bounded_execute_proof_step() {
 }
 
 #[test]
+fn parses_execute_rest_proof_step() {
+    let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); simp(); }");
+    let file = parse(&source).expect("execute_rest proof-step script should parse");
+    let ensure = &file.function_blocks()[0].ensures()[0];
+
+    assert_eq!(
+        ensure.proof().steps(),
+        Some([ProofStep::ExecuteRest, ProofStep::Simp].as_slice())
+    );
+}
+
+#[test]
 fn parses_unfold_proof_step() {
     let source = FILL3_CLICK.replace(
         "by auto;",

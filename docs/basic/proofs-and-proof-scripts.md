@@ -43,7 +43,7 @@ When a proof needs more control, write a proof-step script:
 
 ```click
 ensures result == x by {
-    symbolic_execute();
+    execute_rest();
     simp();
 }
 ```
@@ -53,7 +53,9 @@ Proof steps are meant to be stable and replayable. They are less magical than
 
 Common steps include:
 
-- `symbolic_execute();`: execute the C function symbolically.
+- `execute_rest();`: execute symbolically from the current proof frontier to
+  function exit. Today this means the whole C function.
+- `symbolic_execute();`: legacy spelling for `execute_rest();`.
 - `unfold(name);`: open a named predicate.
 - `unfold(resource);`: expose one body layer of an owned composite resource.
 - `fold(resource);`: rebuild one owned composite resource from its body.

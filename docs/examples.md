@@ -14,6 +14,9 @@ Larger example projects live directly under `examples/`. They contain ordinary
 - `mdtests/result_expression.md`: result expression support.
 - `mdtests/default_prover.md`: omitted proof clauses use `auto`.
 - `mdtests/simp_postconditions.md`: deterministic `simp` postconditions.
+- `mdtests/proof_step_execute_rest.md`: explicit `execute_rest()` proof step,
+  the clearer name for whole-function symbolic execution from the current proof
+  frontier.
 
 ## Pure Theorems
 
@@ -238,6 +241,18 @@ sequence:
 - `mdtests/composite_resource_owned_buffer_observe_len.md`: a len/cap/data
   owned-buffer getter that uses `observe(...)` to read through the folded
   resource without unfolding owned permissions.
+- `mdtests/composite_resource_owned_buffer_get.md`: first-cell backing-buffer
+  read through a len/cap/data owned-buffer resource.
+- `mdtests/composite_resource_owned_buffer_observe_indexed_gap.md`:
+  expected-fail coverage for trying that field-dependent indexed backing-array
+  read with only `observe(...)`.
+- `mdtests/composite_resource_owned_buffer_set.md`: first-cell backing-buffer
+  mutation that unfolds and folds the owned composite resource.
+- `mdtests/composite_resource_owned_buffer_clear.md`: field mutation that
+  restores the same owned composite resource after clearing `len`.
+- `mdtests/composite_resource_view_then_mutate_gap.md`: expected-fail coverage
+  for the current lack of scoped execution between a folded view call and a
+  later owned mutation.
 - `mdtests/composite_resource_owned_buffer_nested_hidden_disjoint_gap.md`:
   expected-fail coverage for nested hidden footprints that do not yet summarize
   `disjoint(...)` facts across composite-resource boundaries.

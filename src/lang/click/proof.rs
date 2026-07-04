@@ -1151,14 +1151,43 @@ pub(super) fn prove_claim_by_simp(
 
 #[derive(Default)]
 struct ProofStepReplayState {
-    execution: Option<crate::kernel::SymbolicCExecution>,
-    execution_mode: Option<ProofStepExecutionMode>,
+    frontier: ProofExecutionFrontier,
     loop_vcs: BTreeSet<usize>,
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
     theorem_applications: Vec<(usize, TheoremApplication)>,
     resource_folds: Vec<ResourceClause>,
     simp: bool,
+}
+
+#[derive(Default)]
+enum ProofExecutionFrontier {
+    #[default]
+    FunctionEntry,
+    FunctionExit {
+        execution: crate::kernel::SymbolicCExecution,
+        mode: ProofStepExecutionMode,
+    },
+}
+
+impl ProofStepReplayState {
+    fn is_at_function_exit(&self) -> bool {
+        matches!(self.frontier, ProofExecutionFrontier::FunctionExit { .. })
+    }
+
+    fn execution(&self) -> Option<&crate::kernel::SymbolicCExecution> {
+        match &self.frontier {
+            ProofExecutionFrontier::FunctionEntry => None,
+            ProofExecutionFrontier::FunctionExit { execution, .. } => Some(execution),
+        }
+    }
+
+    fn execution_mode(&self) -> Option<ProofStepExecutionMode> {
+        match self.frontier {
+            ProofExecutionFrontier::FunctionEntry => None,
+            ProofExecutionFrontier::FunctionExit { mode, .. } => Some(mode),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1231,9 +1260,9 @@ pub(super) fn prove_claim_by_steps(
     for (step_index, step) in steps.iter().enumerate() {
         match step {
             ProofStep::UnfoldResource(resource) => {
-                if replay.execution.is_some() {
+                if replay.is_at_function_exit() {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `unfold` must run before `symbolic_execute()` or `bounded_execute()`"
+                        "`{claim_label}` proof step {step_index}: `unfold` must run before execution reaches function exit"
                     )));
                 }
                 state = unfold_composite_resource(
@@ -1251,9 +1280,9 @@ pub(super) fn prove_claim_by_steps(
                 assumptions = assumptions_from_propositions(&requirement_propositions);
             }
             ProofStep::ObserveResource(resource) => {
-                if replay.execution.is_some() {
+                if replay.is_at_function_exit() {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `observe` must run before `symbolic_execute()` or `bounded_execute()`"
+                        "`{claim_label}` proof step {step_index}: `observe` must run before execution reaches function exit"
                     )));
                 }
                 state = observe_composite_resource(
@@ -1270,13 +1299,13 @@ pub(super) fn prove_claim_by_steps(
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_propositions);
             }
-            ProofStep::SymbolicExecute => {
+            ProofStep::SymbolicExecute | ProofStep::ExecuteRest => {
                 set_replay_execution(
                     &mut replay,
                     ProofStepExecutionMode::Verification,
                     claim_label,
                     step_index,
-                    "symbolic_execute",
+                    proof_step_name(step),
                     prove_symbolic_c_function_verification_paths_with_environment(
                         state.clone(),
                         function.clone(),
@@ -1314,7 +1343,7 @@ pub(super) fn prove_claim_by_steps(
                 };
                 validate_loop_code_region(parsed_function, loop_index, claim_label, step_index)?;
                 validate_loop_vc_step(
-                    replay.execution.as_ref().expect("execution should exist"),
+                    replay.execution().expect("execution should exist"),
                     loop_index,
                     claim_label,
                     step_index,
@@ -1340,7 +1369,7 @@ pub(super) fn prove_claim_by_steps(
                 match code_region {
                     None | Some(CodeRegion::Function) => {
                         validate_function_frame_step(
-                            replay.execution.as_ref().expect("execution should exist"),
+                            replay.execution().expect("execution should exist"),
                             claim,
                             claim_label,
                             step_index,
@@ -1396,15 +1425,15 @@ pub(super) fn prove_claim_by_steps(
         }
     }
 
-    let execution = replay.execution.as_ref().ok_or_else(|| {
+    let execution = replay.execution().ok_or_else(|| {
         ClickError::new(format!(
-            "`{claim_label}` proof-step script must run `symbolic_execute()` or `bounded_execute()`"
+            "`{claim_label}` proof-step script must run `execute_rest()`, `symbolic_execute()`, or `bounded_execute()`"
         ))
     })?;
     prove_claim_from_steps_execution(
         execution,
         replay
-            .execution_mode
+            .execution_mode()
             .expect("proof-step execution should have an execution mode"),
         source_path,
         function_block,
@@ -1436,13 +1465,12 @@ fn set_replay_execution(
     step_name: &str,
     execution: crate::kernel::SymbolicCExecution,
 ) -> Result<(), ClickError> {
-    if let Some(existing) = replay.execution_mode {
+    if let Some(existing) = replay.execution_mode() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` cannot run after {existing:?} execution was already started"
+            "`{claim_label}` proof step {step_index}: `{step_name}` cannot run after {existing:?} execution already reached function exit"
         )));
     }
-    replay.execution = Some(execution);
-    replay.execution_mode = Some(mode);
+    replay.frontier = ProofExecutionFrontier::FunctionExit { execution, mode };
     Ok(())
 }
 
@@ -1452,9 +1480,9 @@ fn require_step_execution(
     step_index: usize,
     step_name: &str,
 ) -> Result<(), ClickError> {
-    if replay.execution.is_none() {
+    if !replay.is_at_function_exit() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` requires `symbolic_execute()` first"
+            "`{claim_label}` proof step {step_index}: `{step_name}` requires execution to reach function exit first"
         )));
     }
     Ok(())
@@ -1466,9 +1494,9 @@ fn require_verification_execution(
     step_index: usize,
     step_name: &str,
 ) -> Result<(), ClickError> {
-    if replay.execution_mode != Some(ProofStepExecutionMode::Verification) {
+    if replay.execution_mode() != Some(ProofStepExecutionMode::Verification) {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` requires `symbolic_execute()` rather than `bounded_execute()`"
+            "`{claim_label}` proof step {step_index}: `{step_name}` requires verification execution rather than bounded execution"
         )));
     }
     Ok(())

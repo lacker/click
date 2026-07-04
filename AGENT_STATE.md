@@ -22,9 +22,18 @@ in `docs/`; do not treat this file as a design doc.
   and `fold`.
 - `observe(resource)` is one-step and non-consuming. It exposes immediate facts
   and viewed immediate contained resources, not owned contained permissions.
+- Proof-step replay now has an explicit execution frontier. The supported
+  frontier states are function entry and function exit. `execute_rest()` is the
+  clearer spelling for executing from the current frontier to function exit;
+  `symbolic_execute()` is still accepted as a legacy spelling.
 - The current owner-buffer pressure tests are:
   - `mdtests/composite_resource_owned_buffer_len_cap_data.md`
   - `mdtests/composite_resource_owned_buffer_observe_len.md`
+  - `mdtests/composite_resource_owned_buffer_get.md`
+  - `mdtests/composite_resource_owned_buffer_observe_indexed_gap.md`
+  - `mdtests/composite_resource_owned_buffer_set.md`
+  - `mdtests/composite_resource_owned_buffer_clear.md`
+  - `mdtests/composite_resource_view_then_mutate_gap.md`
   - `mdtests/composite_resource_owned_buffer_nested_hidden_disjoint_gap.md`
 - The latest verification pass recorded here:
   - `cargo fmt`
@@ -58,7 +67,13 @@ in `docs/`; do not treat this file as a design doc.
 
    The `owned_buffer_with_room(owner)` example works, but keep using concrete
    mdtests to test whether explicit `unfold`/`fold` proof steps become too
-   noisy before adding scoped or automated proof steps.
+   noisy before adding scoped or automated proof steps. The current
+   `view_then_mutate_gap` test documents that one whole-function
+   `symbolic_execute()` step cannot express "execute a view-only call while
+   folded, then unfold before a later mutation". The
+   `observe_indexed_gap` test documents that observing a field-dependent
+   backing-array resource is not yet enough for indexed reads through the
+   loaded pointer.
 
 5. **Read/write semantics**
 
@@ -75,6 +90,10 @@ in `docs/`; do not treat this file as a design doc.
   pressure test.
 - Keep pressure-testing composite resources with realistic examples before
   adding scoped unfold/fold syntax or automation.
+- Consider a scoped or step-bounded execution proof form if view-call-then-mutate
+  examples become important enough to support directly.
+- Decide whether `observe` should materialize dependent contained resource views
+  strongly enough to support owner-field-derived backing-array reads.
 - If hidden footprint summaries are added, make them deterministic one-step
   proof data first; leave `auto` heuristics for a later pass.
 

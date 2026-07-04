@@ -171,6 +171,36 @@ resources. The function does not receive a bag of unrelated facts. It receives
 a coherent resource state whose pieces can be transferred, consumed, observed,
 or repackaged according to their algebraic rules.
 
+## Proof Script State
+
+The internal proof-script model should be a state transformer over:
+
+```text
+goal
+pure facts
+symbolic C state
+resource state
+execution frontier
+```
+
+The execution frontier is where symbolic execution is currently paused. The
+current implementation has only two frontier states:
+
+- function entry, before C execution has started,
+- function exit, after `execute_rest()` / `symbolic_execute()` has executed the
+  whole function.
+
+That is why `observe(...)` and `unfold(...)` must currently run before
+execution reaches function exit, while `fold(...)`, `apply(...)`, and `simp()`
+run afterward. This is a transitional shape. The intended direction is for
+future proof steps to advance from one frontier to another, such as from
+function entry to a statement boundary, so resource steps can happen between C
+regions.
+
+`symbolic_execute()` is now best understood as legacy spelling for
+`execute_rest()`: advance the current frontier to function exit. Today the only
+supported starting frontier is function entry.
+
 ## Observable Facts
 
 Click also needs a deterministic way to turn held resources into ordinary proof

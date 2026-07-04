@@ -92,9 +92,9 @@ context. Theorem declarations are checked in source order after the standard
 library, so a theorem proof can apply stdlib theorems and earlier theorem
 declarations. C function proof scripts can apply any verified theorem from the
 standard library or the current file. In C
-function proof scripts, `apply(...)` runs after `symbolic_execute();` or
-`bounded_execute();`, where `result`, post-state expressions, and ordinary
-`old(...)` arguments can be evaluated.
+function proof scripts, `apply(...)` runs after `execute_rest();`,
+`symbolic_execute();`, or `bounded_execute();`, where `result`, post-state
+expressions, and ordinary `old(...)` arguments can be evaluated.
 
 ## Requirements
 
