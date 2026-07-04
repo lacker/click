@@ -149,7 +149,7 @@ fn expand_declared_resource_requirement(
         {
             let info = declared_resource_info(&name, arguments.len(), resource_definitions)?;
             Ok(Requirement::Resource(ResourceClause::Declared {
-                access: ResourceAccess::Own,
+                access: ResourceAccessMode::Own,
                 kind: info.kind,
                 name,
                 arguments,
@@ -173,7 +173,7 @@ fn expand_declared_resource_ensure_clause(
         {
             let info = declared_resource_info(&name, arguments.len(), resource_definitions)?;
             Ensure::Resource(ResourceClause::Declared {
-                access: ResourceAccess::Own,
+                access: ResourceAccessMode::Own,
                 kind: info.kind,
                 name,
                 arguments,
@@ -1848,7 +1848,7 @@ fn reject_duplicate_owned_declared_resource_clauses<'a>(
         if !matches!(
             resource,
             ResourceClause::Declared {
-                access: ResourceAccess::Own,
+                access: ResourceAccessMode::Own,
                 ..
             }
         ) {
@@ -1894,8 +1894,8 @@ pub(super) fn describe_resource_clause(resource: &ResourceClause) -> String {
                     .join(", ")
             );
             match access {
-                ResourceAccess::Own => resource,
-                ResourceAccess::View => format!("view {resource}"),
+                ResourceAccessMode::Own => resource,
+                ResourceAccessMode::View => format!("view {resource}"),
             }
         }
     }

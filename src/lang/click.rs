@@ -11,7 +11,7 @@ use crate::kernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CExpression, CExpressionOutcome, CFunction,
     CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
     CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CResource,
-    CResourceAccess, CResourceSpec, CResourceSubject, CState, CStatement, CType, CValue,
+    CResourceAccessMode, CResourceElement, CResourceSpec, CState, CStatement, CType, CValue,
     ConditionTerm, PathFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition,
     ResourceContext, ResourceContextValidityError, Sort, SpecExpression, SpecMemory,
     SpecProposition, Term, Theorem, Variable, c_function, c_function_specification,
@@ -211,7 +211,7 @@ pub enum ResourceClause {
     Read(ContractSegment),
     Write(ContractSegment),
     Declared {
-        access: ResourceAccess,
+        access: ResourceAccessMode,
         kind: ResourceKind,
         name: String,
         arguments: Vec<ContractExpression>,
@@ -220,7 +220,7 @@ pub enum ResourceClause {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ResourceAccess {
+pub enum ResourceAccessMode {
     Own,
     View,
 }
@@ -1292,10 +1292,10 @@ fn resource_clause_to_resource_spec(
     }
 }
 
-fn resource_access_to_kernel(access: ResourceAccess) -> CResourceAccess {
+fn resource_access_to_kernel(access: ResourceAccessMode) -> CResourceAccessMode {
     match access {
-        ResourceAccess::Own => CResourceAccess::Own,
-        ResourceAccess::View => CResourceAccess::View,
+        ResourceAccessMode::Own => CResourceAccessMode::Own,
+        ResourceAccessMode::View => CResourceAccessMode::View,
     }
 }
 

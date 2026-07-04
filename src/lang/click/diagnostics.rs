@@ -89,11 +89,11 @@ pub(super) fn describe_runtime_error(
         crate::kernel::CRuntimeError::MissingReturn => "missing return".to_string(),
         crate::kernel::CRuntimeError::MissingResource { resource } => format!(
             "missing resource `{}`",
-            describe_resource(resource, parameters, arguments)
+            describe_resource_element(resource, parameters, arguments)
         ),
         crate::kernel::CRuntimeError::DuplicateResource { resource } => format!(
             "duplicate resource `{}`",
-            describe_resource(resource, parameters, arguments)
+            describe_resource_element(resource, parameters, arguments)
         ),
         crate::kernel::CRuntimeError::OverlappingWriteResources { left, right } => format!(
             "overlapping write resources `write({})` and `write({})`",
@@ -103,23 +103,23 @@ pub(super) fn describe_runtime_error(
     }
 }
 
-pub(super) fn describe_resources(
-    resources: &[CResource],
+pub(super) fn describe_resource_elements(
+    elements: &[CResourceElement],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> String {
-    if resources.is_empty() {
+    if elements.is_empty() {
         return "[]".to_string();
     }
-    let entries = resources
+    let entries = elements
         .iter()
-        .map(|resource| describe_resource(resource, parameters, arguments))
+        .map(|resource| describe_resource_element(resource, parameters, arguments))
         .collect::<Vec<_>>();
     format!("[{}]", entries.join(", "))
 }
 
-pub(super) fn describe_resource(
-    resource: &CResource,
+pub(super) fn describe_resource_element(
+    resource: &CResourceElement,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> String {
@@ -136,22 +136,22 @@ pub(super) fn describe_resource(
         );
     }
     match resource {
-        CResource::Own(
-            CResourceSubject::Composite {
+        CResourceElement::Own(
+            CResource::Composite {
                 name,
                 arguments: resource_arguments,
             }
-            | CResourceSubject::Token {
+            | CResource::Token {
                 name,
                 arguments: resource_arguments,
             },
         ) => format_declared_resource(name, resource_arguments, parameters, arguments),
-        CResource::View(
-            CResourceSubject::Composite {
+        CResourceElement::View(
+            CResource::Composite {
                 name,
                 arguments: resource_arguments,
             }
-            | CResourceSubject::Token {
+            | CResource::Token {
                 name,
                 arguments: resource_arguments,
             },
@@ -159,8 +159,8 @@ pub(super) fn describe_resource(
             "view {}",
             format_declared_resource(name, resource_arguments, parameters, arguments)
         ),
-        CResource::Own(CResourceSubject::Memory(_))
-        | CResource::View(CResourceSubject::Memory(_)) => {
+        CResourceElement::Own(CResource::Memory(_))
+        | CResourceElement::View(CResource::Memory(_)) => {
             unreachable!("memory resources handled above")
         }
     }

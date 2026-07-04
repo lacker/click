@@ -52,30 +52,37 @@ Iris-inspired resource model. It says Click is not yet implemented as a full
 resource algebra, but should refactor toward explicit resource state `M`,
 `empty`, `compose`, `valid`, `core`, and observable facts. It also records that
 the Click surface has `read(...)`, `write(...)`, declared token resources, and
-composite resources, while the kernel now stores resources as `view(subject)`
-or `own(subject)` for memory, token, and composite subjects.
+composite resources. Internally, the bare resources are `CResource` values, and
+the resource algebra elements are `CResourceElement::View(resource)` or
+`CResourceElement::Own(resource)`.
 The first code refactor toward that model added
 `ResourceContext::validity_error(...)` / `ResourceContextValidityError` for
 explicit resource-state validity checks. Checked composition now goes through
-`ResourceContext::try_compose_with_resource(s)(...)`, which validates the raw
+`ResourceContext::try_compose_with_element(s)(...)`, which validates the raw
 combined resource state before normalizing it. Function-call transfer,
 function resource-context evaluation, `unfold(...)`, and `fold(...)` now use
 checked composition when adding resources.
 Raw context construction is now explicitly named
-`unchecked_with_resource(s)(...)`; it remains for tests and assumption-free
+`unchecked_with_element(s)(...)`; it remains for tests and assumption-free
 lowering/materialization paths that build provisional contexts before
 proposition assumptions are available.
-The next refactor added `CResource::core()`. The latest version makes this
-generic: `core(own(subject)) = view(subject)` and
-`core(view(subject)) = view(subject)` for memory, token, and composite
-subjects. Read entailment, read consumption, and memory-read authorization now
-route through that resource-level core operation.
+The next refactor added `CResourceElement::core()`. The latest version makes
+this generic: `core(own(resource)) = view(resource)` and
+`core(view(resource)) = view(resource)` for memory, token, and composite
+resources. Read entailment, read consumption, and memory-read authorization now
+route through that resource-element core operation.
 The latest resource refactor keeps the Click surface syntax `read(...)` /
 `write(...)`, but changes the internal kernel resource shape to
-`CResource::View(CResourceSubject::Memory(range))` for reads and
-`CResource::Own(CResourceSubject::Memory(range))` for writes. Declared
-bodyless resources lower to token subjects, and body-backed resources lower to
-composite subjects.
+`CResourceElement::View(CResource::Memory(range))` for reads and
+`CResourceElement::Own(CResource::Memory(range))` for writes. Declared
+bodyless resources lower to token resources, and body-backed resources lower
+to composite resources.
+The latest terminology cleanup makes `CResource` mean the bare resource,
+`CResourceElement` mean an algebra element such as `own(resource)` or
+`view(resource)`, and `CResourceAccessMode` / `ResourceAccessMode` mean the
+`Own`/`View` mode. `ResourceContext` now stores `elements` and exposes
+element-oriented methods such as `try_compose_with_element(s)`,
+`unchecked_with_element(s)`, `satisfies_element`, and `without_element`.
 The next observable-facts refactor added
 `ResourceContext::observable_facts(...)`, which checks resource-state validity
 and returns ordinary facts derived from the concrete resource context. Today it
@@ -155,7 +162,7 @@ Click currently has:
   internally, `core(own(memory(range))) = view(memory(range))` and
   `core(view(memory(range))) = view(memory(range))`.
   The kernel routes read entailment, read consumption, and external-load
-  permission checks through `CResource::core()`.
+  permission checks through `CResourceElement::core()`.
 - Visible `write(...)` resources imply `disjoint(...)` facts for their ranges;
   direct hidden contained `write(...)` resources do the same while a composite
   resource is folded; `read(...)` resources do not imply disjointness. Folded

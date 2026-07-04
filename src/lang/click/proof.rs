@@ -1498,10 +1498,10 @@ fn materialize_folded_composite_resource_memory(
     state: &CState,
 ) -> Result<CMemory, String> {
     let mut memory = state.memory().clone();
-    for resource in state.resources().resources() {
-        let (name, resource_arguments) = match resource.subject() {
-            CResourceSubject::Composite { name, arguments } => (name, arguments),
-            CResourceSubject::Memory(_) | CResourceSubject::Token { .. } => {
+    for resource in state.resources().elements() {
+        let (name, resource_arguments) = match resource.resource() {
+            CResource::Composite { name, arguments } => (name, arguments),
+            CResource::Memory(_) | CResource::Token { .. } => {
                 continue;
             }
         };
@@ -1651,7 +1651,7 @@ fn project_folded_resource_observable_facts(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<Proposition>, String> {
     let mut propositions = available_propositions.to_vec();
-    for resource in state.resources().resources() {
+    for resource in state.resources().elements() {
         project_held_resource_observable_facts(
             resource_environment,
             resource,
@@ -1691,19 +1691,19 @@ fn observe_composite_resource(
     let assumptions = assumptions_from_propositions(available_propositions);
     if !state
         .resources()
-        .satisfies(&abstract_resource, &assumptions)
+        .satisfies_element(&abstract_resource, &assumptions)
     {
         return Err(ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: `observe({})` is missing resource `{}`\n  available resources: {}",
             describe_resource_clause(resource),
-            describe_resource(&abstract_resource, parameters, arguments),
-            describe_resources(state.resources().resources(), parameters, arguments)
+            describe_resource_element(&abstract_resource, parameters, arguments),
+            describe_resource_elements(state.resources().elements(), parameters, arguments)
         )));
     }
-    let CResourceSubject::Composite {
+    let CResource::Composite {
         arguments: resource_arguments,
         ..
-    } = abstract_resource.subject()
+    } = abstract_resource.resource()
     else {
         return Err(ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: `observe` expects a composite resource"
@@ -1730,14 +1730,14 @@ fn observe_composite_resource(
     })?;
     let assumptions = assumptions_from_propositions(available_propositions);
     let viewed_contained_resources = contained_resources
-        .resources()
+        .elements()
         .iter()
-        .filter_map(CResource::core)
+        .filter_map(CResourceElement::core)
         .collect::<Vec<_>>();
     let resources = state
         .resources()
         .clone()
-        .try_compose_with_resources(viewed_contained_resources, &assumptions)
+        .try_compose_with_elements(viewed_contained_resources, &assumptions)
         .map_err(|error| {
             ClickError::new(format!(
                 "`{claim_label}` proof step {step_index}: `observe({})` produced {}",
@@ -1750,7 +1750,7 @@ fn observe_composite_resource(
 
 fn project_held_resource_observable_facts(
     resource_environment: &ResourceEnvironment,
-    resource: &CResource,
+    resource: &CResourceElement,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -1760,9 +1760,9 @@ fn project_held_resource_observable_facts(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<CMemory, String> {
-    let (name, resource_arguments) = match resource.subject() {
-        CResourceSubject::Composite { name, arguments } => (name, arguments),
-        CResourceSubject::Memory(_) | CResourceSubject::Token { .. } => {
+    let (name, resource_arguments) = match resource.resource() {
+        CResource::Composite { name, arguments } => (name, arguments),
+        CResource::Memory(_) | CResource::Token { .. } => {
             return Ok(memory);
         }
     };
@@ -1945,10 +1945,10 @@ fn describe_resource_context_validity_error(
     arguments: &[CExpression],
 ) -> String {
     match error {
-        ResourceContextValidityError::DuplicateOwnedResource(resource) => {
+        ResourceContextValidityError::DuplicateOwnedResourceElement(resource) => {
             format!(
                 "duplicate resource `{}`",
-                describe_resource(&resource, parameters, arguments)
+                describe_resource_element(&resource, parameters, arguments)
             )
         }
         ResourceContextValidityError::OverlappingWriteResources { left, right } => {
@@ -2006,7 +2006,7 @@ fn instantiate_composite_resource_body_resources(
         // This composite-body instantiation path has no fact assumptions yet.
         // Projection/packing paths check composition once assumptions are
         // available.
-        resources = resources.unchecked_with_resource(lowered);
+        resources = resources.unchecked_with_element(lowered);
     }
     Ok((memory, resources))
 }
@@ -2065,13 +2065,13 @@ fn unfold_composite_resource(
     let resources = state
         .resources()
         .clone()
-        .without_resource(&abstract_resource, &assumptions)
+        .without_element(&abstract_resource, &assumptions)
         .ok_or_else(|| {
             ClickError::new(format!(
                 "`{claim_label}` proof step {step_index}: `unfold({})` is missing resource `{}`\n  available resources: {}",
                 describe_resource_clause(resource),
-                describe_resource(&abstract_resource, parameters, arguments),
-                describe_resources(state.resources().resources(), parameters, arguments)
+                describe_resource_element(&abstract_resource, parameters, arguments),
+                describe_resource_elements(state.resources().elements(), parameters, arguments)
             ))
         })?;
     state = state.with_resource_context(resources);
@@ -2093,7 +2093,7 @@ fn unfold_composite_resource(
         let resources = state
             .resources()
             .clone()
-            .try_compose_with_resource(lowered, &assumptions)
+            .try_compose_with_element(lowered, &assumptions)
             .map_err(|error| {
                 ClickError::new(format!(
                     "`{claim_label}` proof step {step_index}: `unfold({})` produced {}",
@@ -2227,13 +2227,13 @@ fn fold_composite_resources_on_outcome(
             let resources = post_state
                 .resources()
                 .clone()
-                .without_resource(&lowered, &assumptions)
+                .without_element(&lowered, &assumptions)
                 .ok_or_else(|| {
                     ClickError::new(format!(
                         "`{claim_label}` path {path_index}: `fold({})` is missing contained resource `{}`\n  final resources: {}\n  path facts: {}",
                         describe_resource_clause(resource),
-                        describe_resource(&lowered, parameters, arguments),
-                        describe_resources(post_state.resources().resources(), parameters, arguments),
+                        describe_resource_element(&lowered, parameters, arguments),
+                        describe_resource_elements(post_state.resources().elements(), parameters, arguments),
                         describe_facts(path_facts)
                     ))
                 })?;
@@ -2245,7 +2245,7 @@ fn fold_composite_resources_on_outcome(
         let resources = post_state
             .resources()
             .clone()
-            .try_compose_with_resource(abstract_resource.clone(), &assumptions)
+            .try_compose_with_element(abstract_resource.clone(), &assumptions)
             .map_err(|error| {
                 ClickError::new(format!(
                     "`{claim_label}` path {path_index}: `fold({})` produced {}",
@@ -2279,7 +2279,7 @@ fn composite_resource_definition<'a>(
         && !matches!(
             resource,
             ResourceClause::Declared {
-                access: ResourceAccess::Own,
+                access: ResourceAccessMode::Own,
                 ..
             }
         )
@@ -2406,7 +2406,7 @@ fn instantiate_contract_segment(
 fn materialize_composite_resource_cells(
     mut memory: CMemory,
     resource_clause: &ResourceClause,
-    lowered: &CResource,
+    lowered: &CResourceElement,
     parameters: &[syntax::C0Parameter],
 ) -> CMemory {
     let Some((segment, range)) = (match resource_clause {

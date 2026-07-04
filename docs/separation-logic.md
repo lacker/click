@@ -5,10 +5,10 @@ the separation-logic shape we want the implementation to move toward. It is not
 new surface syntax.
 
 Click is not currently implemented as a full Iris-style resource algebra. The
-current implementation has a concrete `ResourceContext` containing `CResource`
-tokens, with family-specific code for entailment, consumption, splitting, and
-joining. The intended direction is to make that code line up with a small,
-explicit algebraic model.
+current implementation has a concrete `ResourceContext` containing
+`CResourceElement` values, with family-specific code for entailment,
+consumption, splitting, and joining. The intended direction is to make that
+code line up with a small, explicit algebraic model.
 
 ## Current Resource Cases
 
@@ -20,8 +20,10 @@ write(range)
 name(arguments)
 ```
 
-The kernel resource state represents resources through a subject plus an access
-mode:
+The kernel distinguishes resources from resource elements. A resource is the
+bare thing being described, such as `memory(range)` or
+`composite(name, arguments)`. A resource element is the thing that lives in the
+resource algebra: a resource plus an access mode.
 
 ```text
 view(memory(range))  // surface read(range)
@@ -44,26 +46,27 @@ resource owner_buffer(owner: struct owner*) {
 ```
 
 When `owner_buffer(owner)` is folded, the resource context holds an owned
-composite subject.
-Its contained resources stay hidden until `unfold(owner_buffer(owner))`. Its
-declared facts, and some facts derived from the contained resources, may be
-observed without unfolding.
+composite resource element. Its contained resources stay hidden until
+`unfold(owner_buffer(owner))`. Its declared facts, and some facts derived from
+the contained resources, may be observed without unfolding.
 
-So the current surface categories are better described as:
+So the current surface clauses lower to these resource elements:
 
-- memory read resources,
-- memory write resources,
-- declared token resources,
-- composite resources.
+- `read(range)` lowers to `view(memory(range))`,
+- `write(range)` lowers to `own(memory(range))`,
+- a bodyless declared resource lowers to `own(token(name, arguments))` by
+  default, or `view(token(name, arguments))` when explicitly viewed,
+- a body-backed declared resource lowers to `own(composite(name, arguments))`
+  by default, or `view(composite(name, arguments))` when explicitly viewed.
 
-Internally, these are `View(subject)` and `Own(subject)`. The composite body is
-consulted by proof-layer `fold`, `unfold`, and `observe` operations.
+The access modes are `own` and `view`. The composite body is consulted by
+proof-layer `fold`, `unfold`, and `observe` operations.
 
 ## Resource State
 
-The algebraic carrier is `M`: the type of resource-state elements. A value of
-type `M` is not the whole C memory state. It is the proof-side claim about which
-logical resources are currently held.
+The algebraic carrier is `M`: the type of resource states. A value of type `M`
+is not the whole C memory state. It is the proof-side state formed by composing
+resource elements.
 
 At the Click surface, a contract writes separate resource clauses:
 
@@ -73,15 +76,16 @@ requires read(q[0..1]);
 requires owner_buffer(owner);
 ```
 
-Internally, those clauses should be understood as elements composed into one
-resource state:
+Internally, those clauses should be understood as resource elements composed
+into one resource state:
 
 ```text
 write(p[0..1]) * read(q[0..1]) * owner_buffer(owner)
 ```
 
 The current implementation represents this as a normalized list of concrete
-tokens. The design target is to treat it as an element of `M`.
+resource elements. The design target is to treat the whole list as one element
+of `M`.
 
 ## Algebraic Operations
 
@@ -96,12 +100,12 @@ core    : M -> M
 
 `empty` is the resource state that holds nothing.
 
-`compose(left, right)` combines two resource claims. Conceptually this operation
+`compose(left, right)` combines two resource states. Conceptually this operation
 is total: it can build a combined element even if the result is incoherent.
 
 `valid(m)` says whether a resource state is coherent. For example, two
-exclusive write claims to overlapping memory should compose to an invalid
-state:
+exclusive owned memory elements over overlapping ranges should compose to an
+invalid state:
 
 ```text
 valid(write(p[0..1]) * write(p[0..1])) = false
@@ -119,10 +123,10 @@ That is why a surface `write(...)` resource, internally
 `own(memory(...))`, can satisfy a surface `read(...)` requirement, internally
 `view(memory(...))`, without losing the write authority.
 
-In the current code, `CResource::core()` returns `Option<CResource>` because a
-single strict token may have no non-empty core. `None` means the empty core for
-that token. The full resource-state `core` is the composition of the non-empty
-cores of the held tokens.
+In the current code, `CResourceElement::core()` returns
+`Option<CResourceElement>`, but every current resource element has a non-empty
+viewed core. The full resource-state `core` is the composition of the viewed
+cores of the held resource elements.
 
 ## Total Compose Vs Try Compose
 
@@ -245,28 +249,29 @@ Composite resources add a definitional layer:
   It exposes immediate facts and viewed immediate contained resources, but not
   owned contained permissions.
 
-In the algebraic model, a composite resource is not a new primitive kind of
-assertion. It is a declared resource whose subject has laws connecting the
-owned composite resource to a composite body made from other resource
-assertions and facts. Its core is the viewed composite resource.
+In the algebraic model, a composite resource is not a new primitive resource
+family. It is a declared resource whose elements have laws connecting the
+owned composite element to a composite body made from other resource elements
+and facts. Its core is the viewed composite element.
 
 ## Refactor Direction
 
 The current code already has several pieces of this model, but they are
 still mostly hardcoded:
 
-- `ResourceContext` is a list of concrete tokens rather than an explicit `M`.
+- `ResourceContext` is a list of concrete resource elements rather than an
+  explicit `M`.
 - `ResourceContext::validity_error` is the beginning of an explicit validity
   check, currently covering duplicate token resources and overlapping writes.
-- `ResourceContext::try_compose_with_resource(s)(...)` is the beginning of an
+- `ResourceContext::try_compose_with_element(s)(...)` is the beginning of an
   explicit checked composition operation. It validates the raw combined context
   before normalizing it, so invalid combinations cannot merge away before being
   rejected.
-- Raw list construction is explicitly named `unchecked_with_resource(s)(...)`.
+- Raw list construction is explicitly named `unchecked_with_element(s)(...)`.
   It should stay limited to tests and assumption-free lowering/materialization
   paths that build provisional contexts before validity can be checked.
-- `CResource::core()` is the beginning of an explicit core operation, currently
-  mapping `own(subject)` and `view(subject)` to `view(subject)`.
+- `CResourceElement::core()` is the beginning of an explicit core operation,
+  currently mapping `own(resource)` and `view(resource)` to `view(resource)`.
 - Memory, token, and composite resources still use family-specific entailment,
   consume, and combine functions.
 - `ResourceContext::observable_facts(...)` is the beginning of an explicit

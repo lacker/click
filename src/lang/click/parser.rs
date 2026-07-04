@@ -275,12 +275,12 @@ impl Parser {
                 }
                 Some("owns") => {
                     self.position += 1;
-                    contains.push(self.parse_resource_target(ResourceAccess::Own)?);
+                    contains.push(self.parse_resource_target(ResourceAccessMode::Own)?);
                     self.expect(Token::Semicolon)?;
                 }
                 Some("views") => {
                     self.position += 1;
-                    contains.push(self.parse_resource_target(ResourceAccess::View)?);
+                    contains.push(self.parse_resource_target(ResourceAccessMode::View)?);
                     self.expect(Token::Semicolon)?;
                 }
                 Some("fact") => {
@@ -407,7 +407,7 @@ impl Parser {
                 }
                 Some("owns") => {
                     self.position += 1;
-                    let resource = self.parse_resource_target(ResourceAccess::Own)?;
+                    let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
                     let proof = self.parse_proof_clause_or_default()?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -430,7 +430,7 @@ impl Parser {
                 }
                 Some("views") => {
                     self.position += 1;
-                    let resource = self.parse_resource_target(ResourceAccess::View)?;
+                    let resource = self.parse_resource_target(ResourceAccessMode::View)?;
                     self.expect(Token::Semicolon)?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -442,7 +442,7 @@ impl Parser {
                 }
                 Some("consumes") => {
                     self.position += 1;
-                    let resource = self.parse_resource_target(ResourceAccess::Own)?;
+                    let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
                     self.expect(Token::Semicolon)?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -454,7 +454,7 @@ impl Parser {
                 }
                 Some("produces") => {
                     self.position += 1;
-                    let resource = self.parse_resource_target(ResourceAccess::Own)?;
+                    let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
                     let proof = self.parse_proof_clause_or_default()?;
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(
@@ -555,7 +555,7 @@ impl Parser {
                 }
                 Some("owns") => {
                     self.position += 1;
-                    let resource = self.parse_resource_target(ResourceAccess::Own)?;
+                    let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
                     let proof = self.parse_proof_clause_or_default()?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -578,7 +578,7 @@ impl Parser {
                 }
                 Some("views") => {
                     self.position += 1;
-                    let resource = self.parse_resource_target(ResourceAccess::View)?;
+                    let resource = self.parse_resource_target(ResourceAccessMode::View)?;
                     self.expect(Token::Semicolon)?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -590,7 +590,7 @@ impl Parser {
                 }
                 Some("consumes") => {
                     self.position += 1;
-                    let resource = self.parse_resource_target(ResourceAccess::Own)?;
+                    let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
                     self.expect(Token::Semicolon)?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -602,7 +602,7 @@ impl Parser {
                 }
                 Some("produces") => {
                     self.position += 1;
-                    let resource = self.parse_resource_target(ResourceAccess::Own)?;
+                    let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
                     let proof = self.parse_proof_clause_or_default()?;
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(
@@ -932,7 +932,7 @@ impl Parser {
 
     fn parse_resource_target(
         &mut self,
-        access: ResourceAccess,
+        access: ResourceAccessMode,
     ) -> Result<ResourceClause, ClickError> {
         if matches!(self.peek_ident(), Some("read" | "write"))
             && self.peek_next() == Some(&Token::LParen)
@@ -945,8 +945,8 @@ impl Parser {
         }
         let segment = self.parse_current_contract_segment()?;
         Ok(match access {
-            ResourceAccess::Own => ResourceClause::Write(segment),
-            ResourceAccess::View => ResourceClause::Read(segment),
+            ResourceAccessMode::Own => ResourceClause::Write(segment),
+            ResourceAccessMode::View => ResourceClause::Read(segment),
         })
     }
 
@@ -1575,7 +1575,7 @@ impl Parser {
             "observe" => {
                 self.expect(Token::LParen)?;
                 let resource =
-                    self.parse_declared_resource_call_with_access(ResourceAccess::View)?;
+                    self.parse_declared_resource_call_with_access(ResourceAccessMode::View)?;
                 self.expect(Token::RParen)?;
                 ProofStep::ObserveResource(resource)
             }
@@ -1622,12 +1622,12 @@ impl Parser {
     }
 
     fn parse_declared_resource_call(&mut self) -> Result<ResourceClause, ClickError> {
-        self.parse_declared_resource_call_with_access(ResourceAccess::Own)
+        self.parse_declared_resource_call_with_access(ResourceAccessMode::Own)
     }
 
     fn parse_declared_resource_call_with_access(
         &mut self,
-        access: ResourceAccess,
+        access: ResourceAccessMode,
     ) -> Result<ResourceClause, ClickError> {
         let (name, arguments) = self.parse_call_arguments("resource name")?;
         Ok(ResourceClause::Declared {

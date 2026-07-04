@@ -19,9 +19,11 @@ memory accesses must be covered by the current resource context:
 
 ## Resource Context And Families
 
-Internally, Click treats permissions as resources. A resource is a proof-side
-token carried in the current resource context. A resource family defines the
-rules for a group of related resources:
+Internally, Click treats permissions as resource elements. A resource is the
+bare object being described, such as `memory(p[0..n])`; a resource element is
+that resource with an access mode, such as `view(memory(p[0..n]))` or
+`own(memory(p[0..n]))`. Resource elements are what the current resource context
+holds. A resource family defines the rules for a group of related resources:
 
 - when one resource entails another,
 - whether a resource is copyable or linear,
@@ -29,10 +31,10 @@ rules for a group of related resources:
 - what gets consumed by a function call or statement,
 - what other resources are invalidated by consumption.
 
-The main built-in resource family is memory resources. `read(...)` and
-`write(...)` are memory resources over a range. This is similar in spirit to a
-resource algebra: the context is not just a bag of facts, because each family
-has rules for combining, transferring, and consuming its resources.
+The main built-in resource family is memory. `read(...)` and `write(...)` are
+memory resource elements over a range. This is similar in spirit to a resource
+algebra: the context is not just a bag of facts, because each family has rules
+for combining, transferring, and consuming its elements.
 
 In the first-layer model, `read(...)` is the stable read view of memory.
 Algebraically, it is the core of `write(...)`:

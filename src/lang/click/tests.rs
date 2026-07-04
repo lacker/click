@@ -472,7 +472,7 @@ fn parses_composite_resource_definition() {
         composite_body.contains(),
         &[
             ResourceClause::Declared {
-                access: ResourceAccess::Own,
+                access: ResourceAccessMode::Own,
                 kind: ResourceKind::Token,
                 name: "socket_open".to_string(),
                 arguments: vec![current_int(7)],
@@ -517,14 +517,14 @@ fn parses_resource_observe_unfold_and_fold_steps() {
         Some(
             [
                 ProofStep::ObserveResource(ResourceClause::Declared {
-                    access: ResourceAccess::View,
+                    access: ResourceAccessMode::View,
                     kind: ResourceKind::Composite,
                     name: "uncalled".to_string(),
                     arguments: vec![current_var("flag")],
                     parameter_types: vec![C0Type::Int32Pointer],
                 }),
                 ProofStep::UnfoldResource(ResourceClause::Declared {
-                    access: ResourceAccess::Own,
+                    access: ResourceAccessMode::Own,
                     kind: ResourceKind::Composite,
                     name: "uncalled".to_string(),
                     arguments: vec![current_var("flag")],
@@ -532,7 +532,7 @@ fn parses_resource_observe_unfold_and_fold_steps() {
                 }),
                 ProofStep::SymbolicExecute,
                 ProofStep::FoldResource(ResourceClause::Declared {
-                    access: ResourceAccess::Own,
+                    access: ResourceAccessMode::Own,
                     kind: ResourceKind::Composite,
                     name: "uncalled".to_string(),
                     arguments: vec![current_var("flag")],
@@ -571,14 +571,14 @@ fn parses_resource_verb_function_clauses() {
                 end: CExpression::Value(int32(1)),
             })),
             Requirement::Resource(ResourceClause::Declared {
-                access: ResourceAccess::View,
+                access: ResourceAccessMode::View,
                 kind: ResourceKind::Token,
                 name: "socket_open".to_string(),
                 arguments: vec![current_int(7)],
                 parameter_types: vec![C0Type::Int32],
             }),
             Requirement::Resource(ResourceClause::Declared {
-                access: ResourceAccess::Own,
+                access: ResourceAccessMode::Own,
                 kind: ResourceKind::Token,
                 name: "socket_open".to_string(),
                 arguments: vec![current_int(8)],
@@ -602,7 +602,7 @@ fn parses_resource_verb_function_clauses() {
             EnsureClause {
                 name: None,
                 ensure: Ensure::Resource(ResourceClause::Declared {
-                    access: ResourceAccess::Own,
+                    access: ResourceAccessMode::Own,
                     kind: ResourceKind::Token,
                     name: "socket_open".to_string(),
                     arguments: vec![current_int(9)],
@@ -3091,12 +3091,13 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
             },
         )]),
     );
-    let initial_resources =
-        ResourceContext::new().unchecked_with_resource(CResource::own_memory(CMemoryRange::new(
+    let initial_resources = ResourceContext::new().unchecked_with_element(
+        CResourceElement::own_memory(CMemoryRange::new(
             base.clone(),
             Bitvector32Term::Constant(0),
             Bitvector32Term::Constant(3),
-        )));
+        )),
+    );
     let final_memory = initial_memory
         .clone()
         .with_block("local:i", 4)

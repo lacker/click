@@ -13,8 +13,8 @@ fn read_context(
     start: impl Into<crate::kernel::Bitvector32Term>,
     end: impl Into<crate::kernel::Bitvector32Term>,
 ) -> crate::kernel::ResourceContext {
-    crate::kernel::ResourceContext::new().unchecked_with_resource(
-        crate::kernel::CResource::view_memory(memory_range(base, start, end)),
+    crate::kernel::ResourceContext::new().unchecked_with_element(
+        crate::kernel::CResourceElement::view_memory(memory_range(base, start, end)),
     )
 }
 
@@ -23,8 +23,8 @@ fn write_context(
     start: impl Into<crate::kernel::Bitvector32Term>,
     end: impl Into<crate::kernel::Bitvector32Term>,
 ) -> crate::kernel::ResourceContext {
-    crate::kernel::ResourceContext::new().unchecked_with_resource(
-        crate::kernel::CResource::own_memory(memory_range(base, start, end)),
+    crate::kernel::ResourceContext::new().unchecked_with_element(
+        crate::kernel::CResourceElement::own_memory(memory_range(base, start, end)),
     )
 }
 
@@ -459,9 +459,9 @@ fn c0_syntax_targets_kernel_struct_pointer_field_roundtrip() {
         block: "data".to_string(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let resources = crate::kernel::ResourceContext::new().unchecked_with_resources(vec![
-        crate::kernel::CResource::own_memory(memory_range(owner.clone(), 0, 3)),
-        crate::kernel::CResource::own_memory(memory_range(data.clone(), 0, 1)),
+    let resources = crate::kernel::ResourceContext::new().unchecked_with_elements(vec![
+        crate::kernel::CResourceElement::own_memory(memory_range(owner.clone(), 0, 3)),
+        crate::kernel::CResourceElement::own_memory(memory_range(data.clone(), 0, 1)),
     ]);
     let state = crate::kernel::CState::new()
         .with_memory(

@@ -131,13 +131,16 @@ pub(super) fn prove_ensure_resource(
     };
     let expected = lower_resource_clause(resource, parameters, arguments, pre_state.memory())?;
     let assumptions = assumptions_from_propositions(available_propositions);
-    if post_state.resources().satisfies(&expected, &assumptions) {
+    if post_state
+        .resources()
+        .satisfies_element(&expected, &assumptions)
+    {
         return Ok(());
     }
     Err(ClickError::new(format!(
         "`{claim_label}` failed on path {path_index}: missing resource `{}`\n  final resources: {}\n  path facts: {}",
-        describe_resource(&expected, parameters, arguments),
-        describe_resources(post_state.resources().resources(), parameters, arguments),
+        describe_resource_element(&expected, parameters, arguments),
+        describe_resource_elements(post_state.resources().elements(), parameters, arguments),
         describe_facts(path_facts)
     )))
 }

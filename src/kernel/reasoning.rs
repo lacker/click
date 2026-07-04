@@ -1386,27 +1386,25 @@ pub(super) fn collect_resource_context_bitvector_variables(
     resources: &ResourceContext,
     variables: &mut BTreeSet<Variable>,
 ) {
-    for resource in resources.resources() {
+    for resource in resources.elements() {
         collect_resource_bitvector_variables(resource, variables);
     }
 }
 
 pub(super) fn collect_resource_bitvector_variables(
-    resource: &CResource,
+    resource: &CResourceElement,
     variables: &mut BTreeSet<Variable>,
 ) {
     match resource {
-        CResource::Own(CResourceSubject::Memory(range))
-        | CResource::View(CResourceSubject::Memory(range)) => {
+        CResourceElement::Own(CResource::Memory(range))
+        | CResourceElement::View(CResource::Memory(range)) => {
             collect_c_memory_range_bitvector_variables(range, variables)
         }
-        CResource::Own(
-            CResourceSubject::Composite { arguments, .. }
-            | CResourceSubject::Token { arguments, .. },
+        CResourceElement::Own(
+            CResource::Composite { arguments, .. } | CResource::Token { arguments, .. },
         )
-        | CResource::View(
-            CResourceSubject::Composite { arguments, .. }
-            | CResourceSubject::Token { arguments, .. },
+        | CResourceElement::View(
+            CResource::Composite { arguments, .. } | CResource::Token { arguments, .. },
         ) => {
             for argument in arguments {
                 collect_c_value_bitvector_variables(argument, variables);
@@ -2537,8 +2535,8 @@ pub(super) fn substitute_bitvector_variable_in_resource_context(
     to: &Bitvector32Term,
 ) -> ResourceContext {
     ResourceContext {
-        resources: resources
-            .resources()
+        elements: resources
+            .elements()
             .iter()
             .map(|resource| substitute_bitvector_variable_in_resource(resource, from, to))
             .collect(),
@@ -2546,37 +2544,37 @@ pub(super) fn substitute_bitvector_variable_in_resource_context(
 }
 
 pub(super) fn substitute_bitvector_variable_in_resource(
+    resource: &CResourceElement,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CResourceElement {
+    match resource {
+        CResourceElement::Own(resource) => CResourceElement::Own(
+            substitute_bitvector_variable_in_c_resource(resource, from, to),
+        ),
+        CResourceElement::View(resource) => CResourceElement::View(
+            substitute_bitvector_variable_in_c_resource(resource, from, to),
+        ),
+    }
+}
+
+fn substitute_bitvector_variable_in_c_resource(
     resource: &CResource,
     from: Variable,
     to: &Bitvector32Term,
 ) -> CResource {
     match resource {
-        CResource::Own(subject) => CResource::Own(
-            substitute_bitvector_variable_in_resource_subject(subject, from, to),
-        ),
-        CResource::View(subject) => CResource::View(
-            substitute_bitvector_variable_in_resource_subject(subject, from, to),
-        ),
-    }
-}
-
-fn substitute_bitvector_variable_in_resource_subject(
-    subject: &CResourceSubject,
-    from: Variable,
-    to: &Bitvector32Term,
-) -> CResourceSubject {
-    match subject {
-        CResourceSubject::Memory(range) => CResourceSubject::Memory(
+        CResource::Memory(range) => CResource::Memory(
             substitute_bitvector_variable_in_c_memory_range(range, from, to),
         ),
-        CResourceSubject::Composite { name, arguments } => CResourceSubject::Composite {
+        CResource::Composite { name, arguments } => CResource::Composite {
             name: name.clone(),
             arguments: arguments
                 .iter()
                 .map(|argument| substitute_bitvector_variable_in_c_value(argument, from, to))
                 .collect(),
         },
-        CResourceSubject::Token { name, arguments } => CResourceSubject::Token {
+        CResource::Token { name, arguments } => CResource::Token {
             name: name.clone(),
             arguments: arguments
                 .iter()

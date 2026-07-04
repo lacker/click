@@ -8,20 +8,20 @@ fn memory_range(
     CMemoryRange::new(base, start.into(), end.into())
 }
 
-fn read_resource(
+fn read_element(
     base: Pointer,
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
-) -> CResource {
-    CResource::view_memory(memory_range(base, start, end))
+) -> CResourceElement {
+    CResourceElement::view_memory(memory_range(base, start, end))
 }
 
-fn write_resource(
+fn write_element(
     base: Pointer,
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
-) -> CResource {
-    CResource::own_memory(memory_range(base, start, end))
+) -> CResourceElement {
+    CResourceElement::own_memory(memory_range(base, start, end))
 }
 
 fn read_context(
@@ -29,7 +29,7 @@ fn read_context(
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
 ) -> ResourceContext {
-    ResourceContext::new().unchecked_with_resource(read_resource(base, start, end))
+    ResourceContext::new().unchecked_with_element(read_element(base, start, end))
 }
 
 fn write_context(
@@ -37,27 +37,30 @@ fn write_context(
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
 ) -> ResourceContext {
-    ResourceContext::new().unchecked_with_resource(write_resource(base, start, end))
+    ResourceContext::new().unchecked_with_element(write_element(base, start, end))
 }
 
 #[test]
-fn memory_resource_core_is_read_permission() {
+fn memory_resource_element_core_is_read_permission() {
     let base = Pointer {
         block: "p".to_string(),
         offset: PointerOffsetTerm::Constant(0),
     };
 
     assert_eq!(
-        read_resource(base.clone(), 0, 1).core(),
-        Some(read_resource(base.clone(), 0, 1))
+        read_element(base.clone(), 0, 1).core(),
+        Some(read_element(base.clone(), 0, 1))
     );
     assert_eq!(
-        write_resource(base.clone(), 0, 1).core(),
-        Some(read_resource(base, 0, 1))
+        write_element(base.clone(), 0, 1).core(),
+        Some(read_element(base, 0, 1))
     );
     assert_eq!(
-        CResource::own_token("token".to_string(), vec![int32(0)]).core(),
-        Some(CResource::view_token("token".to_string(), vec![int32(0)]))
+        CResourceElement::own_token("token".to_string(), vec![int32(0)]).core(),
+        Some(CResourceElement::view_token(
+            "token".to_string(),
+            vec![int32(0)]
+        ))
     );
 }
 
@@ -68,8 +71,8 @@ fn resource_context_observes_write_disjointness() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let facts = ResourceContext::new()
-        .unchecked_with_resource(write_resource(base.clone(), 0, 1))
-        .unchecked_with_resource(write_resource(base.clone(), 1, 2))
+        .unchecked_with_element(write_element(base.clone(), 0, 1))
+        .unchecked_with_element(write_element(base.clone(), 1, 2))
         .observable_facts(&Assumptions::new())
         .expect("adjacent writes should be a valid resource context");
 
@@ -93,10 +96,10 @@ fn checked_resource_composition_rejects_invalid_state_before_normalizing() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let error = ResourceContext::new()
-        .try_compose_with_resources(
+        .try_compose_with_elements(
             [
-                write_resource(base.clone(), 0, 1),
-                write_resource(base.clone(), 0, 1),
+                write_element(base.clone(), 0, 1),
+                write_element(base.clone(), 0, 1),
             ],
             &Assumptions::new(),
         )
@@ -313,7 +316,7 @@ fn function_call_does_not_inherit_undeclared_resources() {
             function: caller,
             arguments,
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::MissingResource {
-                resource: write_resource(pointer, 0, 1),
+                resource: write_element(pointer, 0, 1),
             }),
         }
     );
@@ -1667,7 +1670,7 @@ fn store_then_load_threads_native_memory() {
 }
 
 #[test]
-fn read_resource_permits_symbolic_external_load_from_incomplete_memory() {
+fn read_element_permits_symbolic_external_load_from_incomplete_memory() {
     let pointer = Pointer {
         block: "block".to_string(),
         offset: PointerOffsetTerm::Constant(4),
@@ -1811,7 +1814,7 @@ fn pointer_addition_scales_int32_offsets_for_loads() {
 }
 
 #[test]
-fn read_resource_permits_pointer_addition_load_beyond_memory_block() {
+fn read_element_permits_pointer_addition_load_beyond_memory_block() {
     let base = Pointer {
         block: "block".to_string(),
         offset: PointerOffsetTerm::Constant(0),

@@ -2864,7 +2864,7 @@ pub(super) fn resource_context_from_requirements(
             // This lowering path has no proposition assumptions yet. It builds
             // a provisional context; execution paths use checked composition
             // once assumptions are available.
-            context = context.unchecked_with_resource(lower_resource_clause(
+            context = context.unchecked_with_element(lower_resource_clause(
                 resource, parameters, arguments, memory,
             )?);
         }
@@ -2877,15 +2877,15 @@ pub(super) fn lower_resource_clause(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     memory: &CMemory,
-) -> Result<CResource, ClickError> {
+) -> Result<CResourceElement, ClickError> {
     match resource {
         ResourceClause::Read(segment) => {
             let range = lower_resource_segment("read", segment, parameters, arguments, memory)?;
-            Ok(CResource::view_memory(range))
+            Ok(CResourceElement::view_memory(range))
         }
         ResourceClause::Write(segment) => {
             let range = lower_resource_segment("write", segment, parameters, arguments, memory)?;
-            Ok(CResource::own_memory(range))
+            Ok(CResourceElement::own_memory(range))
         }
         ResourceClause::Declared {
             access,
@@ -2928,19 +2928,19 @@ pub(super) fn lower_resource_clause(
                 }
                 values.push(value);
             }
-            let subject = match kind {
-                ResourceKind::Composite => CResourceSubject::Composite {
+            let resource = match kind {
+                ResourceKind::Composite => CResource::Composite {
                     name: name.clone(),
                     arguments: values,
                 },
-                ResourceKind::Token => CResourceSubject::Token {
+                ResourceKind::Token => CResource::Token {
                     name: name.clone(),
                     arguments: values,
                 },
             };
             Ok(match access {
-                ResourceAccess::Own => CResource::Own(subject),
-                ResourceAccess::View => CResource::View(subject),
+                ResourceAccessMode::Own => CResourceElement::Own(resource),
+                ResourceAccessMode::View => CResourceElement::View(resource),
             })
         }
     }
