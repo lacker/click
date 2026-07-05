@@ -1,8 +1,8 @@
 # execute rest proof step
 
 This checks `execute_rest()`, the clearer name for executing from the current
-proof frontier to function exit. At present the only supported frontier is
-function entry, so this is equivalent to `symbolic_execute()`.
+execution point to function exit. From function entry, this is equivalent to
+`symbolic_execute()`.
 
 ```c filename=increment.c
 int32 increment(int32 x) {

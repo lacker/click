@@ -180,26 +180,25 @@ goal
 pure facts
 symbolic C state
 resource state
-execution frontier
+execution point
 ```
 
-The execution frontier is where symbolic execution is currently paused. The
-current implementation has only two frontier states:
+The execution point is where symbolic execution is currently paused. The
+current implementation has these execution-point states:
 
 - function entry, before C execution has started,
+- statement entry for a straight-line `execute_until(statement(N))` pause,
 - function exit, after `execute_rest()` / `symbolic_execute()` has executed the
-  whole function.
+  rest of the function.
 
-That is why `observe(...)` and `unfold(...)` must currently run before
-execution reaches function exit, while `fold(...)`, `apply(...)`, and `simp()`
-run afterward. This is a transitional shape. The intended direction is for
-future proof steps to advance from one frontier to another, such as from
-function entry to a statement boundary, so resource steps can happen between C
-regions.
+That is why `observe(...)` and `unfold(...)` can run before execution reaches
+function exit, while `fold(...)`, `apply(...)`, and `simp()` still run after
+function-exit execution. This is a transitional shape. The intended direction
+is for future proof steps to advance between more execution points and
+control-flow joins, so resource steps can happen between C regions.
 
 `symbolic_execute()` is now best understood as legacy spelling for
-`execute_rest()`: advance the current frontier to function exit. Today the only
-supported starting frontier is function entry.
+`execute_rest()`: advance the current execution point to function exit.
 
 ## Observable Facts
 

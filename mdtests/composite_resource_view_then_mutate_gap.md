@@ -1,9 +1,10 @@
 # composite resource view call then mutate gap
 
-This documents a current proof-shape limitation. A caller can hold an owned
-composite resource and call a helper that only views it, but the current proof
-step model cannot execute the view call while folded and then unfold before a
-later mutation in the same `execute_rest()` step.
+This documents a remaining modular-call limitation. A caller can now pause
+before the mutation, but function-call execution still runs the callee body with
+only the callee's transferred resource summary. A helper that declares only
+`views owned_buffer(owner)` does not yet get the observed contained memory views
+needed to read `owner->len`.
 
 ```c filename=buffer_len.c
 struct owner {
@@ -62,11 +63,14 @@ int32 len_then_clear(struct owner* owner) {
 
     ensures owned_buffer(owner) by {
         observe(owned_buffer(owner));
+        execute_until(statement(2));
+        unfold(owned_buffer(owner));
         execute_rest();
+        fold(owned_buffer(owner));
     }
 }
 ```
 
 ```expect
-fail: missing resource
+fail: MissingResource
 ```

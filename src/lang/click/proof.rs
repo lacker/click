@@ -1151,7 +1151,8 @@ pub(super) fn prove_claim_by_simp(
 
 #[derive(Default)]
 struct ProofStepReplayState {
-    frontier: ProofExecutionFrontier,
+    execution_point: ProofExecutionPoint,
+    execution_start_state: Option<CState>,
     loop_vcs: BTreeSet<usize>,
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
@@ -1161,9 +1162,12 @@ struct ProofStepReplayState {
 }
 
 #[derive(Default)]
-enum ProofExecutionFrontier {
+enum ProofExecutionPoint {
     #[default]
     FunctionEntry,
+    StatementEntry {
+        remaining: CStatement,
+    },
     FunctionExit {
         execution: crate::kernel::SymbolicCExecution,
         mode: ProofStepExecutionMode,
@@ -1172,21 +1176,32 @@ enum ProofExecutionFrontier {
 
 impl ProofStepReplayState {
     fn is_at_function_exit(&self) -> bool {
-        matches!(self.frontier, ProofExecutionFrontier::FunctionExit { .. })
+        matches!(
+            self.execution_point,
+            ProofExecutionPoint::FunctionExit { .. }
+        )
+    }
+
+    fn is_at_function_entry(&self) -> bool {
+        matches!(self.execution_point, ProofExecutionPoint::FunctionEntry)
     }
 
     fn execution(&self) -> Option<&crate::kernel::SymbolicCExecution> {
-        match &self.frontier {
-            ProofExecutionFrontier::FunctionEntry => None,
-            ProofExecutionFrontier::FunctionExit { execution, .. } => Some(execution),
+        match &self.execution_point {
+            ProofExecutionPoint::FunctionEntry | ProofExecutionPoint::StatementEntry { .. } => None,
+            ProofExecutionPoint::FunctionExit { execution, .. } => Some(execution),
         }
     }
 
     fn execution_mode(&self) -> Option<ProofStepExecutionMode> {
-        match self.frontier {
-            ProofExecutionFrontier::FunctionEntry => None,
-            ProofExecutionFrontier::FunctionExit { mode, .. } => Some(mode),
+        match self.execution_point {
+            ProofExecutionPoint::FunctionEntry | ProofExecutionPoint::StatementEntry { .. } => None,
+            ProofExecutionPoint::FunctionExit { mode, .. } => Some(mode),
         }
+    }
+
+    fn execution_start_state<'a>(&'a self, current_state: &'a CState) -> &'a CState {
+        self.execution_start_state.as_ref().unwrap_or(current_state)
     }
 }
 
@@ -1300,28 +1315,54 @@ pub(super) fn prove_claim_by_steps(
                 assumptions = assumptions_from_propositions(&requirement_propositions);
             }
             ProofStep::SymbolicExecute | ProofStep::ExecuteRest => {
-                set_replay_execution(
+                execute_rest_from_execution_point(
                     &mut replay,
-                    ProofStepExecutionMode::Verification,
+                    &mut state,
+                    &requirement_propositions,
+                    &function,
+                    &arguments,
+                    &assumptions,
+                    function_environment,
                     claim_label,
                     step_index,
                     proof_step_name(step),
-                    prove_symbolic_c_function_verification_paths_with_environment(
-                        state.clone(),
-                        function.clone(),
-                        arguments.clone(),
-                        assumptions.clone(),
-                        function_environment.clone(),
-                    ),
                 )?;
             }
+            ProofStep::ExecuteUntil(region_ref) => {
+                let code_region =
+                    resolve_code_region_ref(function_block, region_ref, claim_label, step_index)?;
+                let CodeRegion::Statement(statement_index) = code_region else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `execute_until` expects a statement region"
+                    )));
+                };
+                execute_until_statement(
+                    &mut replay,
+                    &mut state,
+                    &mut requirement_propositions,
+                    &function,
+                    &arguments,
+                    &assumptions,
+                    function_environment,
+                    statement_index,
+                    claim_label,
+                    step_index,
+                )?;
+                assumptions = assumptions_from_propositions(&requirement_propositions);
+            }
             ProofStep::BoundedExecute => {
+                if !replay.is_at_function_entry() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `bounded_execute` is only supported from function entry"
+                    )));
+                }
                 set_replay_execution(
                     &mut replay,
                     ProofStepExecutionMode::Bounded,
                     claim_label,
                     step_index,
                     "bounded_execute",
+                    state.clone(),
                     prove_symbolic_c_function_execution_paths_with_environment(
                         state.clone(),
                         function.clone(),
@@ -1446,7 +1487,7 @@ pub(super) fn prove_claim_by_steps(
         theorem_environment,
         parsed_function.parameters(),
         &function,
-        &state,
+        replay.execution_start_state(&state),
         &arguments,
         &requirement_propositions,
         &replay.unfolded_predicates,
@@ -1457,12 +1498,303 @@ pub(super) fn prove_claim_by_steps(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn execute_rest_from_execution_point(
+    replay: &mut ProofStepReplayState,
+    state: &mut CState,
+    available_propositions: &[Proposition],
+    function: &CFunction,
+    arguments: &[CExpression],
+    assumptions: &Assumptions,
+    function_environment: &CFunctionEnvironment,
+    claim_label: &str,
+    step_index: usize,
+    step_name: &str,
+) -> Result<(), ClickError> {
+    match &replay.execution_point {
+        ProofExecutionPoint::FunctionEntry => {
+            set_replay_execution(
+                replay,
+                ProofStepExecutionMode::Verification,
+                claim_label,
+                step_index,
+                step_name,
+                state.clone(),
+                prove_symbolic_c_function_verification_paths_with_environment(
+                    state.clone(),
+                    function.clone(),
+                    arguments.to_vec(),
+                    assumptions.clone(),
+                    function_environment.clone(),
+                ),
+            )?;
+        }
+        ProofExecutionPoint::StatementEntry { remaining, .. } => {
+            let execution = prove_symbolic_c_execution_paths_with_environment(
+                state.clone(),
+                remaining.clone(),
+                assumptions.clone(),
+                function_environment.clone(),
+            );
+            let Some(execution_start_state) = replay.execution_start_state.clone() else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: `{step_name}` has no execution start state"
+                )));
+            };
+            let completed = complete_segmented_function_execution(
+                execution,
+                &execution_start_state,
+                function,
+                arguments,
+                available_propositions,
+                assumptions,
+                claim_label,
+                step_index,
+                step_name,
+            )?;
+            set_replay_execution(
+                replay,
+                ProofStepExecutionMode::Verification,
+                claim_label,
+                step_index,
+                step_name,
+                execution_start_state,
+                completed,
+            )?;
+        }
+        ProofExecutionPoint::FunctionExit { .. } => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `{step_name}` cannot run after execution already reached function exit"
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_until_statement(
+    replay: &mut ProofStepReplayState,
+    state: &mut CState,
+    available_propositions: &mut Vec<Proposition>,
+    function: &CFunction,
+    arguments: &[CExpression],
+    assumptions: &Assumptions,
+    function_environment: &CFunctionEnvironment,
+    statement_index: usize,
+    claim_label: &str,
+    step_index: usize,
+) -> Result<(), ClickError> {
+    if !replay.is_at_function_entry() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `execute_until` is currently supported only from function entry"
+        )));
+    }
+    let (prefix, remaining) =
+        split_straight_line_statement_prefix(function.body(), statement_index).map_err(
+            |message| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: `execute_until(statement({statement_index}))` failed: {message}"
+                ))
+            },
+        )?;
+    let execution_start_state = state.clone();
+    let mut callee_state = c_function_entry_state(&execution_start_state, function, arguments)
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `execute_until` could not bind function arguments"
+            ))
+        })?;
+
+    if let Some(prefix) = prefix {
+        let execution = prove_symbolic_c_execution_paths_with_environment(
+            callee_state,
+            prefix,
+            assumptions.clone(),
+            function_environment.clone(),
+        );
+        let prefix_path = single_normal_statement_path(
+            &execution,
+            claim_label,
+            step_index,
+            "execute_until",
+            available_propositions,
+        )?;
+        available_propositions.extend(
+            prefix_path
+                .facts()
+                .iter()
+                .map(|fact| fact.proposition().clone()),
+        );
+        let Proposition::CStatementExecutes {
+            outcome: CStatementOutcome::Normal(next_state),
+            ..
+        } = implication_body(prefix_path.theorem().proposition())
+        else {
+            unreachable!("single_normal_statement_path should return a normal statement path");
+        };
+        callee_state = next_state.clone();
+    }
+
+    replay.execution_start_state = Some(execution_start_state);
+    replay.execution_point = ProofExecutionPoint::StatementEntry { remaining };
+    *state = callee_state;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn complete_segmented_function_execution(
+    execution: crate::kernel::SymbolicCExecution,
+    execution_start_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    available_propositions: &[Proposition],
+    assumptions: &Assumptions,
+    claim_label: &str,
+    step_index: usize,
+    step_name: &str,
+) -> Result<crate::kernel::SymbolicCExecution, ClickError> {
+    if let Some(limit) = execution.limit() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` hit execution limit {limit:?}"
+        )));
+    }
+    if execution.paths().is_empty() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` produced no suffix execution paths"
+        )));
+    }
+    let mut completed_paths = Vec::new();
+    for path in execution.paths() {
+        let Proposition::CStatementExecutes { outcome, .. } =
+            implication_body(path.theorem().proposition())
+        else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `{step_name}` saw unexpected suffix theorem"
+            )));
+        };
+        let mut path_propositions = available_propositions.to_vec();
+        path_propositions.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+        let return_assumptions = assumptions_from_propositions(&path_propositions);
+        let (outcome, obligations) = c_function_outcome_from_statement_outcome(
+            execution_start_state,
+            function,
+            outcome.clone(),
+            path.obligations().to_vec(),
+            &return_assumptions,
+        );
+        completed_paths.push((outcome, path.facts().to_vec(), obligations));
+    }
+    Ok(certify_c_function_execution_paths_from_outcomes(
+        execution_start_state.clone(),
+        function.clone(),
+        arguments.to_vec(),
+        assumptions.clone(),
+        completed_paths,
+    ))
+}
+
+fn single_normal_statement_path<'a>(
+    execution: &'a crate::kernel::SymbolicCExecution,
+    claim_label: &str,
+    step_index: usize,
+    step_name: &str,
+    available_propositions: &[Proposition],
+) -> Result<&'a crate::kernel::SymbolicCExecutionPath, ClickError> {
+    if let Some(limit) = execution.limit() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` hit execution limit {limit:?}"
+        )));
+    }
+    if execution.paths().len() != 1 {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` currently requires exactly one straight-line prefix path, got {}",
+            execution.paths().len()
+        )));
+    }
+    let path = &execution.paths()[0];
+    if !path.obligations().is_empty() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` left prefix obligations: {}\n  available requirements: {}\n  path facts: {}",
+            describe_obligations(path.obligations()),
+            describe_propositions(available_propositions),
+            describe_facts(path.facts())
+        )));
+    }
+    match implication_body(path.theorem().proposition()) {
+        Proposition::CStatementExecutes {
+            outcome: CStatementOutcome::Normal(_),
+            ..
+        } => Ok(path),
+        Proposition::CStatementExecutes { outcome, .. } => Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` prefix did not stop at a normal execution point: {outcome:?}"
+        ))),
+        proposition => Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` saw unexpected prefix theorem {proposition:?}"
+        ))),
+    }
+}
+
+fn split_straight_line_statement_prefix(
+    statement: &CStatement,
+    statement_index: usize,
+) -> Result<(Option<CStatement>, CStatement), String> {
+    let mut statements = Vec::new();
+    flatten_top_level_sequence(statement, &mut statements)?;
+    if statement_index >= statements.len() {
+        return Err(format!(
+            "function has no `statement({statement_index})`; it contains {} statement(s)",
+            statements.len()
+        ));
+    }
+    for (index, statement) in statements.iter().take(statement_index).enumerate() {
+        if !is_straight_line_statement(statement) {
+            return Err(format!(
+                "prefix statement({index}) is not a supported straight-line statement"
+            ));
+        }
+    }
+    let prefix = sequence_from_statements(&statements[..statement_index]);
+    let remaining = sequence_from_statements(&statements[statement_index..])
+        .expect("statement_index bounds check should leave a non-empty suffix");
+    Ok((prefix, remaining))
+}
+
+fn flatten_top_level_sequence(
+    statement: &CStatement,
+    statements: &mut Vec<CStatement>,
+) -> Result<(), String> {
+    match statement {
+        CStatement::Seq(first, second) => {
+            flatten_top_level_sequence(first, statements)?;
+            flatten_top_level_sequence(second, statements)
+        }
+        statement => {
+            statements.push(statement.clone());
+            Ok(())
+        }
+    }
+}
+
+fn sequence_from_statements(statements: &[CStatement]) -> Option<CStatement> {
+    let (first, rest) = statements.split_first()?;
+    Some(
+        rest.iter()
+            .cloned()
+            .fold(first.clone(), |acc, statement| c_seq(acc, statement)),
+    )
+}
+
+fn is_straight_line_statement(statement: &CStatement) -> bool {
+    !matches!(statement, CStatement::If { .. } | CStatement::While { .. })
+}
+
 fn set_replay_execution(
     replay: &mut ProofStepReplayState,
     mode: ProofStepExecutionMode,
     claim_label: &str,
     step_index: usize,
     step_name: &str,
+    execution_start_state: CState,
     execution: crate::kernel::SymbolicCExecution,
 ) -> Result<(), ClickError> {
     if let Some(existing) = replay.execution_mode() {
@@ -1470,7 +1802,8 @@ fn set_replay_execution(
             "`{claim_label}` proof step {step_index}: `{step_name}` cannot run after {existing:?} execution already reached function exit"
         )));
     }
-    replay.frontier = ProofExecutionFrontier::FunctionExit { execution, mode };
+    replay.execution_start_state = Some(execution_start_state);
+    replay.execution_point = ProofExecutionPoint::FunctionExit { execution, mode };
     Ok(())
 }
 

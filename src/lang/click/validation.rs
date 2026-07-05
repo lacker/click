@@ -1804,6 +1804,7 @@ fn validate_pure_theorem_proof(theorem_name: &str, proof: &Proof) -> Result<(), 
                     | ProofStep::Simp => {}
                     ProofStep::SymbolicExecute
                     | ProofStep::ExecuteRest
+                    | ProofStep::ExecuteUntil(_)
                     | ProofStep::BoundedExecute
                     | ProofStep::LoopVc(_)
                     | ProofStep::Frame(_)
@@ -1828,6 +1829,7 @@ pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
     match step {
         ProofStep::SymbolicExecute => "symbolic_execute",
         ProofStep::ExecuteRest => "execute_rest",
+        ProofStep::ExecuteUntil(_) => "execute_until",
         ProofStep::BoundedExecute => "bounded_execute",
         ProofStep::LoopVc(_) => "loop_vc",
         ProofStep::Frame(_) => "frame",

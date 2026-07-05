@@ -53,9 +53,11 @@ Proof steps are meant to be stable and replayable. They are less magical than
 
 Common steps include:
 
-- `execute_rest();`: execute symbolically from the current proof frontier to
-  function exit. Today this means the whole C function.
+- `execute_rest();`: execute symbolically from the current execution point to
+  function exit. From function entry, this executes the whole C function.
 - `symbolic_execute();`: legacy spelling for `execute_rest();`.
+- `execute_until(statement(N));`: execute a straight-line prefix up to a
+  statement entry point.
 - `unfold(name);`: open a named predicate.
 - `unfold(resource);`: expose one body layer of an owned composite resource.
 - `fold(resource);`: rebuild one owned composite resource from its body.

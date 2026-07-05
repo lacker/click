@@ -1,0 +1,51 @@
+# composite resource execute until direct mutate
+
+This checks the first execution-point slice. The proof reads through the folded
+buffer view, pauses before the mutation, unfolds the owned buffer to expose the
+field write, executes the rest, and folds the buffer back.
+
+```c filename=len_then_clear_direct.c
+struct owner {
+    int32 len;
+    int32 cap;
+    int32* data;
+};
+
+int32 len_then_clear_direct(struct owner* owner) {
+    int32 old_len;
+    old_len = owner->len;
+    owner->len = 0;
+    return old_len;
+}
+```
+
+```click
+resource owned_buffer(owner: struct owner*) {
+    contains write(owner->len);
+    contains write(owner->cap);
+    contains write(owner->data);
+    contains write((owner->data)[0..owner->cap]);
+    fact 0 <= owner->len;
+    fact owner->len <= owner->cap;
+    fact 0 <= owner->cap;
+    fact disjoint(owner[0..3], (owner->data)[0..owner->cap]);
+}
+
+verifying "len_then_clear_direct.c";
+
+int32 len_then_clear_direct(struct owner* owner) {
+    requires owned_buffer(owner);
+
+    ensures owned_buffer(owner) by {
+        observe(owned_buffer(owner));
+        execute_until(statement(2));
+        unfold(owned_buffer(owner));
+        execute_rest();
+        fold(owned_buffer(owner));
+    }
+}
+```
+
+```expect
+pass
+```

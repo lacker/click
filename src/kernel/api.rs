@@ -247,6 +247,38 @@ pub fn c_function(
     CFunction::new(return_type, name, parameters, body)
 }
 
+pub fn c_function_entry_state(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+) -> Option<CState> {
+    let values = arguments
+        .iter()
+        .map(|argument| match argument {
+            CExpression::Value(value) => Some(value.clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    bind_c_function_arguments(caller_state, function, &values)
+}
+
+pub fn c_function_outcome_from_statement_outcome(
+    caller_state: &CState,
+    function: &CFunction,
+    outcome: CStatementOutcome,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> (CFunctionOutcome, Vec<ProofObligation>) {
+    function_outcome_from_body(
+        caller_state,
+        function,
+        outcome,
+        obligations,
+        assumptions,
+        None,
+    )
+}
+
 pub fn c_function_specification(
     state: CState,
     arguments: Vec<CExpression>,
@@ -734,6 +766,40 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
             SymbolicCExecutionPath {
                 facts,
                 obligations: path.obligations,
+                theorem,
+            }
+        })
+        .collect();
+
+    SymbolicCExecution { paths, limit: None }
+}
+
+pub fn certify_c_function_execution_paths_from_outcomes(
+    state: CState,
+    function: CFunction,
+    arguments: Vec<CExpression>,
+    assumptions: Assumptions,
+    paths: Vec<(CFunctionOutcome, Vec<PathFact>, Vec<ProofObligation>)>,
+) -> SymbolicCExecution {
+    let paths = paths
+        .into_iter()
+        .map(|(outcome, facts, obligations)| {
+            let facts = public_path_facts(&facts);
+            let proposition = Proposition::CFunctionExecutes {
+                state: state.clone(),
+                function: function.clone(),
+                arguments: arguments.clone(),
+                outcome,
+            };
+            let theorem = Theorem::new(wrap_proof_facts(
+                proposition,
+                &assumptions,
+                &facts,
+                &obligations,
+            ));
+            SymbolicCExecutionPath {
+                facts,
+                obligations,
                 theorem,
             }
         })

@@ -1537,6 +1537,12 @@ impl Parser {
                 self.expect_empty_step_args(&name)?;
                 ProofStep::ExecuteRest
             }
+            "execute_until" => {
+                self.expect(Token::LParen)?;
+                let region_ref = self.parse_code_region_ref()?;
+                self.expect(Token::RParen)?;
+                ProofStep::ExecuteUntil(region_ref)
+            }
             "bounded_execute" => {
                 self.expect_empty_step_args(&name)?;
                 ProofStep::BoundedExecute

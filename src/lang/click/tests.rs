@@ -639,6 +639,28 @@ fn parses_execute_rest_proof_step() {
 }
 
 #[test]
+fn parses_execute_until_proof_step() {
+    let source = FILL3_CLICK.replace(
+        "by auto;",
+        "by { execute_until(statement(1)); execute_rest(); simp(); }",
+    );
+    let file = parse(&source).expect("execute_until proof-step script should parse");
+    let ensure = &file.function_blocks()[0].ensures()[0];
+
+    assert_eq!(
+        ensure.proof().steps(),
+        Some(
+            [
+                ProofStep::ExecuteUntil(CodeRegionRef::Statement(1)),
+                ProofStep::ExecuteRest,
+                ProofStep::Simp,
+            ]
+            .as_slice()
+        )
+    );
+}
+
+#[test]
 fn parses_unfold_proof_step() {
     let source = FILL3_CLICK.replace(
         "by auto;",

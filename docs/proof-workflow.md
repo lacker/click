@@ -40,10 +40,14 @@ by {
 
 Current proof steps:
 
-- `execute_rest();`: build symbolic verification paths from the current proof
-  frontier to function exit. Today the only supported frontier is function
-  entry, so this executes the whole C0 function.
+- `execute_rest();`: build symbolic verification paths from the current
+  execution point to function exit. From function entry, this executes the
+  whole C0 function.
 - `symbolic_execute();`: legacy spelling for `execute_rest();`.
+- `execute_until(statement(N));`: execute the current straight-line prefix up
+  to the entry of statement region `N`. This first slice only supports pausing
+  from function entry and requires the prefix to produce exactly one normal
+  path.
 - `bounded_execute();`: use deterministic bounded execution for concrete-loop
   fallback proofs.
 - `loop_vc(loop(N));`: check the generated verification conditions for loop
@@ -77,11 +81,12 @@ The end of a `by { ... }` block checks the overall claim.
 Some successful `auto` proofs record replayable proof-step certificates when the
 current proof-step language can express the argument.
 
-The proof-script implementation tracks an execution frontier. Currently proof
-scripts can only start at function entry and execute to function exit. Future
-region/statement execution steps should advance that frontier without forcing
-the whole function to execute at once, so resource steps such as `observe`,
-`unfold`, and `fold` can happen between code regions.
+The proof-script implementation tracks an execution point. Currently proof
+scripts can start at function entry, pause at a straight-line statement entry
+with `execute_until(statement(N));`, and execute to function exit with
+`execute_rest();`. Future region/statement execution steps should support more
+control-flow shapes, so resource steps such as `observe`, `unfold`, and `fold`
+can happen between code regions.
 
 Existential proof steps are deterministic replay steps, not search tactics. A
 typical existential-introduction proof names a witness:

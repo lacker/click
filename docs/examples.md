@@ -16,7 +16,7 @@ Larger example projects live directly under `examples/`. They contain ordinary
 - `mdtests/simp_postconditions.md`: deterministic `simp` postconditions.
 - `mdtests/proof_step_execute_rest.md`: explicit `execute_rest()` proof step,
   the clearer name for whole-function symbolic execution from the current proof
-  frontier.
+  execution point.
 
 ## Pure Theorems
 
@@ -250,9 +250,12 @@ sequence:
   mutation that unfolds and folds the owned composite resource.
 - `mdtests/composite_resource_owned_buffer_clear.md`: field mutation that
   restores the same owned composite resource after clearing `len`.
+- `mdtests/composite_resource_execute_until_direct_mutate.md`: first passing
+  execution-point proof, pausing before a direct mutation so the composite
+  resource can be unfolded at the mutation point.
 - `mdtests/composite_resource_view_then_mutate_gap.md`: expected-fail coverage
-  for the current lack of scoped execution between a folded view call and a
-  later owned mutation.
+  for the remaining modular-call gap when a callee views a composite resource
+  but needs its observed contained memory views while executing.
 - `mdtests/composite_resource_owned_buffer_nested_hidden_disjoint_gap.md`:
   expected-fail coverage for nested hidden footprints that do not yet summarize
   `disjoint(...)` facts across composite-resource boundaries.
