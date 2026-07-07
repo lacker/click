@@ -1,10 +1,8 @@
-# composite resource view call then mutate gap
+# composite resource view then mutate
 
-This documents a remaining modular-call limitation. A caller can now pause
-before the mutation, but function-call execution still runs the callee body with
-only the callee's transferred resource summary. A helper that declares only
-`views owned_buffer(owner)` does not yet get the observed contained memory views
-needed to read `owner->len`.
+This checks that view-composite resource requirements project their immediate
+contained views at function entry. The caller still observes its owned composite
+before the call, then unfolds before the later mutation.
 
 ```c filename=buffer_len.c
 struct owner {
@@ -52,7 +50,6 @@ int32 buffer_len(struct owner* owner) {
     views owned_buffer(owner);
 
     ensures result <= owner->cap by {
-        observe(owned_buffer(owner));
         execute_rest();
         simp();
     }
@@ -72,5 +69,5 @@ int32 len_then_clear(struct owner* owner) {
 ```
 
 ```expect
-fail: MissingResource
+pass
 ```

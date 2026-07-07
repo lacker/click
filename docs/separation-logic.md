@@ -187,7 +187,8 @@ The execution point is where symbolic execution is currently paused. The
 current implementation has these execution-point states:
 
 - function entry, before C execution has started,
-- statement entry for a straight-line `execute_until(statement(N))` pause,
+- statement entry after `execute_step()` or a straight-line
+  `execute_until(statement(N))` pause,
 - function exit, after `execute_rest()` / `symbolic_execute()` has executed the
   rest of the function.
 
@@ -196,6 +197,15 @@ function exit, while `fold(...)`, `apply(...)`, and `simp()` still run after
 function-exit execution. This is a transitional shape. The intended direction
 is for future proof steps to advance between more execution points and
 control-flow joins, so resource steps can happen between C regions.
+
+`execute_step()` is the primitive execution proof step. It advances by one
+supported straight-line statement and expects needed facts/resources to already
+be available in the proof environment.
+
+Function entry projects `views composite(...)` resources one step
+automatically: the view remains available, and immediate contained resources are
+available through their views. This is entry setup, not a general recursive
+execution heuristic.
 
 `symbolic_execute()` is now best understood as legacy spelling for
 `execute_rest()`: advance the current execution point to function exit.

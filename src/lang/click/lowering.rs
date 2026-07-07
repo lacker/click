@@ -7,6 +7,7 @@ pub(super) fn annotated_function(
     arguments: &[CExpression],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
 ) -> Result<CFunction, ClickError> {
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
@@ -30,7 +31,8 @@ pub(super) fn annotated_function(
         next_quantifier_variable: 3_000_000,
     };
     let body = lowerer.lower_statement(parsed_function.body())?;
-    let (resource_requires, resource_ensures) = function_resource_summary(function_block)?;
+    let (resource_requires, resource_ensures) =
+        function_resource_summary(function_block, resource_environment)?;
     Ok(c_function(
         parsed_function.return_type().to_kernel_type(),
         parsed_function.name().to_string(),

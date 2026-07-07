@@ -253,9 +253,13 @@ sequence:
 - `mdtests/composite_resource_execute_until_direct_mutate.md`: first passing
   execution-point proof, pausing before a direct mutation so the composite
   resource can be unfolded at the mutation point.
-- `mdtests/composite_resource_view_then_mutate_gap.md`: expected-fail coverage
-  for the remaining modular-call gap when a callee views a composite resource
-  but needs its observed contained memory views while executing.
+- `mdtests/composite_resource_execute_step_direct_mutate.md`: statement-level
+  execution-point proof, using `execute_step()` to interleave execution with
+  `observe`, `unfold`, and `fold`.
+- `mdtests/composite_resource_view_then_mutate.md`: caller observes an owned
+  composite before a view-only helper call, then unfolds before a later owned
+  mutation. The callee's `views` composite requirement projects its immediate
+  contained views at entry.
 - `mdtests/composite_resource_owned_buffer_nested_hidden_disjoint_gap.md`:
   expected-fail coverage for nested hidden footprints that do not yet summarize
   `disjoint(...)` facts across composite-resource boundaries.

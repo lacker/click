@@ -40,6 +40,9 @@ by {
 
 Current proof steps:
 
+- `execute_step();`: execute one supported straight-line C statement from the
+  current execution point. The step uses the facts and resources already in the
+  proof environment; project or prove needed facts before running it.
 - `execute_rest();`: build symbolic verification paths from the current
   execution point to function exit. From function entry, this executes the
   whole C0 function.
@@ -82,11 +85,17 @@ Some successful `auto` proofs record replayable proof-step certificates when the
 current proof-step language can express the argument.
 
 The proof-script implementation tracks an execution point. Currently proof
-scripts can start at function entry, pause at a straight-line statement entry
-with `execute_until(statement(N));`, and execute to function exit with
+scripts can start at function entry, advance by one straight-line statement with
+`execute_step();`, pause at a straight-line statement entry with
+`execute_until(statement(N));`, and execute to function exit with
 `execute_rest();`. Future region/statement execution steps should support more
 control-flow shapes, so resource steps such as `observe`, `unfold`, and `fold`
 can happen between code regions.
+
+At function entry, `views composite(...)` resource requirements are projected
+one step automatically, matching `observe(composite(...))` for immediate
+contained views. Owned composite resources still require an explicit
+`observe(...)` when a proof wants to read through the folded resource.
 
 Existential proof steps are deterministic replay steps, not search tactics. A
 typical existential-introduction proof names a witness:

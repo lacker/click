@@ -464,6 +464,7 @@ pub enum Proof {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofStep {
     SymbolicExecute,
+    ExecuteStep,
     ExecuteRest,
     ExecuteUntil(CodeRegionRef),
     BoundedExecute,
@@ -1043,7 +1044,6 @@ pub fn verify_c0_sources(
     let struct_layouts = parse_c_struct_layouts(&c_sources)?;
     let file = parser::parse_with_struct_layouts(click_source, struct_layouts)?;
     let parsed_sources = parse_verified_sources(&file, &c_sources)?;
-    let function_environment = build_function_environment(&parsed_sources, file.function_blocks())?;
     let predicate_definitions = combined_predicate_definitions(&file)?;
     let click_function_definitions = combined_click_function_definitions(&file)?;
     let resource_definitions = combined_resource_definitions(&file)?;
@@ -1051,6 +1051,11 @@ pub fn verify_c0_sources(
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
     let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
     let resource_environment = ResourceEnvironment::new(&resource_definitions);
+    let function_environment = build_function_environment(
+        &parsed_sources,
+        file.function_blocks(),
+        &resource_environment,
+    )?;
     let _verified_theorems = verify_theorem_definitions(
         &theorem_definitions,
         &predicate_environment,
@@ -1206,6 +1211,7 @@ fn parse_verified_sources<'a>(
 fn build_function_environment(
     parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
     function_blocks: &[FunctionBlock],
+    resource_environment: &ResourceEnvironment,
 ) -> Result<CFunctionEnvironment, ClickError> {
     let mut environment = CFunctionEnvironment::new();
     for (_, function) in parsed_sources.values() {
@@ -1215,7 +1221,7 @@ fn build_function_environment(
         {
             Some(function_block) => {
                 let (resource_requires, resource_ensures) =
-                    function_resource_summary(function_block)?;
+                    function_resource_summary(function_block, resource_environment)?;
                 function
                     .to_kernel_function()
                     .with_resource_summary(resource_requires, resource_ensures)
@@ -1229,15 +1235,15 @@ fn build_function_environment(
 
 fn function_resource_summary(
     function_block: &FunctionBlock,
+    resource_environment: &ResourceEnvironment,
 ) -> Result<(Vec<CResourceSpec>, Vec<CResourceSpec>), ClickError> {
-    let requires = function_block
-        .requires()
-        .iter()
-        .filter_map(|requirement| match requirement.inner() {
-            Requirement::Resource(resource) => Some(resource_clause_to_resource_spec(resource)),
-            _ => None,
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut requires = Vec::new();
+    for requirement in function_block.requires() {
+        let Requirement::Resource(resource) = requirement.inner() else {
+            continue;
+        };
+        append_entry_resource_specs(resource, resource_environment, &mut requires)?;
+    }
     let ensures = function_block
         .ensures()
         .iter()
@@ -1247,6 +1253,124 @@ fn function_resource_summary(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok((requires, ensures))
+}
+
+fn append_entry_resource_specs(
+    resource: &ResourceClause,
+    resource_environment: &ResourceEnvironment,
+    specs: &mut Vec<CResourceSpec>,
+) -> Result<(), ClickError> {
+    specs.push(resource_clause_to_resource_spec(resource)?);
+    let ResourceClause::Declared {
+        access: ResourceAccessMode::View,
+        kind: ResourceKind::Composite,
+        name,
+        arguments,
+        ..
+    } = resource
+    else {
+        return Ok(());
+    };
+    let Some(definition) = resource_environment.get(name) else {
+        return Ok(());
+    };
+    let Some(composite_body) = definition.composite_body() else {
+        return Ok(());
+    };
+    let substitutions = resource_argument_contract_substitutions(definition, arguments)?;
+    for contained in composite_body.contains() {
+        let contained = substitute_resource_clause_for_summary(contained, &substitutions)
+            .map_err(ClickError::new)?;
+        specs.push(resource_clause_to_resource_spec(
+            &resource_clause_view_core(&contained),
+        )?);
+    }
+    Ok(())
+}
+
+fn resource_argument_contract_substitutions(
+    definition: &ResourceDefinition,
+    arguments: &[ContractExpression],
+) -> Result<BTreeMap<String, ContractExpression>, ClickError> {
+    if definition.parameters().len() != arguments.len() {
+        return Err(ClickError::new(format!(
+            "resource `{}` expects {} argument(s), got {}",
+            definition.name(),
+            definition.parameters().len(),
+            arguments.len()
+        )));
+    }
+    Ok(definition
+        .parameters()
+        .iter()
+        .zip(arguments)
+        .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
+        .collect())
+}
+
+fn substitute_resource_clause_for_summary(
+    resource: &ResourceClause,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<ResourceClause, String> {
+    match resource {
+        ResourceClause::Read(segment) => Ok(ResourceClause::Read(substitute_contract_segment(
+            segment,
+            substitutions,
+        )?)),
+        ResourceClause::Write(segment) => Ok(ResourceClause::Write(substitute_contract_segment(
+            segment,
+            substitutions,
+        )?)),
+        ResourceClause::Declared {
+            access,
+            kind,
+            name,
+            arguments,
+            parameter_types,
+        } => Ok(ResourceClause::Declared {
+            access: *access,
+            kind: *kind,
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_contract_expression(argument, substitutions))
+                .collect::<Result<Vec<_>, _>>()?,
+            parameter_types: parameter_types.clone(),
+        }),
+    }
+}
+
+fn substitute_contract_segment(
+    segment: &ContractSegment,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<ContractSegment, String> {
+    Ok(ContractSegment {
+        state: segment.state,
+        base: substitute_c_fragment(&segment.base, substitutions)?,
+        start: substitute_c_fragment(&segment.start, substitutions)?,
+        end: substitute_c_fragment(&segment.end, substitutions)?,
+    })
+}
+
+fn resource_clause_view_core(resource: &ResourceClause) -> ResourceClause {
+    match resource {
+        ResourceClause::Read(segment) | ResourceClause::Write(segment) => {
+            ResourceClause::Read(segment.clone())
+        }
+        ResourceClause::Declared {
+            kind,
+            name,
+            arguments,
+            parameter_types,
+            ..
+        } => ResourceClause::Declared {
+            access: ResourceAccessMode::View,
+            kind: *kind,
+            name: name.clone(),
+            arguments: arguments.clone(),
+            parameter_types: parameter_types.clone(),
+        },
+    }
 }
 
 fn resource_clause_to_resource_spec(

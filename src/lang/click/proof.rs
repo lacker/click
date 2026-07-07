@@ -757,6 +757,14 @@ pub(super) fn prove_claim_by_auto(
         state,
         claim_label,
     )?;
+    state = project_initial_view_composite_resources(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        state,
+        &requirement_propositions,
+        claim_label,
+    )?;
     let requirement_propositions = project_initial_resource_facts(
         resource_environment,
         parsed_function.parameters(),
@@ -774,6 +782,7 @@ pub(super) fn prove_claim_by_auto(
         &arguments,
         predicate_environment,
         click_function_environment,
+        resource_environment,
     )?;
     let assumptions = assumptions_from_propositions(&requirement_propositions);
     let vc_execution = prove_symbolic_c_function_verification_paths_with_environment(
@@ -910,6 +919,14 @@ pub(super) fn prove_claim_by_frame(
         state,
         claim_label,
     )?;
+    state = project_initial_view_composite_resources(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        state,
+        &requirement_propositions,
+        claim_label,
+    )?;
     let requirement_propositions = project_initial_resource_facts(
         resource_environment,
         parsed_function.parameters(),
@@ -927,6 +944,7 @@ pub(super) fn prove_claim_by_frame(
         &arguments,
         predicate_environment,
         click_function_environment,
+        resource_environment,
     )?;
     let assumptions = assumptions_from_propositions(&requirement_propositions);
     let execution = prove_symbolic_c_function_verification_paths_with_environment(
@@ -1016,6 +1034,14 @@ pub(super) fn prove_claim_by_simp(
         state,
         claim_label,
     )?;
+    state = project_initial_view_composite_resources(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        state,
+        &requirement_propositions,
+        claim_label,
+    )?;
     let requirement_propositions = project_initial_resource_facts(
         resource_environment,
         parsed_function.parameters(),
@@ -1033,6 +1059,7 @@ pub(super) fn prove_claim_by_simp(
         &arguments,
         predicate_environment,
         click_function_environment,
+        resource_environment,
     )?;
     let proof_steps = certified_proof_steps(
         source_path,
@@ -1251,6 +1278,14 @@ pub(super) fn prove_claim_by_steps(
         state,
         claim_label,
     )?;
+    state = project_initial_view_composite_resources(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        state,
+        &requirement_propositions,
+        claim_label,
+    )?;
     requirement_propositions = project_initial_resource_facts(
         resource_environment,
         parsed_function.parameters(),
@@ -1268,6 +1303,7 @@ pub(super) fn prove_claim_by_steps(
         &arguments,
         predicate_environment,
         click_function_environment,
+        resource_environment,
     )?;
     let mut assumptions = assumptions_from_propositions(&requirement_propositions);
     let mut replay = ProofStepReplayState::default();
@@ -1309,6 +1345,20 @@ pub(super) fn prove_claim_by_steps(
                     &mut requirement_propositions,
                     predicate_environment,
                     click_function_environment,
+                    claim_label,
+                    step_index,
+                )?;
+                assumptions = assumptions_from_propositions(&requirement_propositions);
+            }
+            ProofStep::ExecuteStep => {
+                execute_step_from_execution_point(
+                    &mut replay,
+                    &mut state,
+                    &mut requirement_propositions,
+                    &function,
+                    &arguments,
+                    &assumptions,
+                    function_environment,
                     claim_label,
                     step_index,
                 )?;
@@ -1468,7 +1518,7 @@ pub(super) fn prove_claim_by_steps(
 
     let execution = replay.execution().ok_or_else(|| {
         ClickError::new(format!(
-            "`{claim_label}` proof-step script must run `execute_rest()`, `symbolic_execute()`, or `bounded_execute()`"
+            "`{claim_label}` proof-step script must reach function exit with `execute_step()`, `execute_rest()`, `symbolic_execute()`, or `bounded_execute()`"
         ))
     })?;
     prove_claim_from_steps_execution(
@@ -1496,6 +1546,156 @@ pub(super) fn prove_claim_by_steps(
         replay.simp,
         steps,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_step_from_execution_point(
+    replay: &mut ProofStepReplayState,
+    state: &mut CState,
+    available_propositions: &mut Vec<Proposition>,
+    function: &CFunction,
+    arguments: &[CExpression],
+    assumptions: &Assumptions,
+    function_environment: &CFunctionEnvironment,
+    claim_label: &str,
+    step_index: usize,
+) -> Result<(), ClickError> {
+    let execution_point = &replay.execution_point;
+    let (execution_start_state, current_state, step_statement, remaining) = match execution_point {
+        ProofExecutionPoint::FunctionEntry => {
+            let execution_start_state = state.clone();
+            let current_state = c_function_entry_state(&execution_start_state, function, arguments)
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `execute_step` could not bind function arguments"
+                    ))
+                })?;
+            let (step_statement, remaining) = match split_next_straight_line_statement(
+                function.body(),
+            ) {
+                Ok(split) => split,
+                Err(message) => {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `execute_step` failed: {message}"
+                    )));
+                }
+            };
+            (
+                execution_start_state,
+                current_state,
+                step_statement,
+                remaining,
+            )
+        }
+        ProofExecutionPoint::StatementEntry { remaining } => {
+            let execution_start_state = replay.execution_start_state.clone().ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: `execute_step` has no execution start state"
+                ))
+            })?;
+            let (step_statement, remaining) = match split_next_straight_line_statement(remaining) {
+                Ok(split) => split,
+                Err(message) => {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `execute_step` failed: {message}"
+                    )));
+                }
+            };
+            (
+                execution_start_state,
+                state.clone(),
+                step_statement,
+                remaining,
+            )
+        }
+        ProofExecutionPoint::FunctionExit { .. } => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `execute_step` cannot run after execution already reached function exit"
+            )));
+        }
+    };
+
+    let execution = prove_symbolic_c_execution_paths_with_environment(
+        current_state,
+        step_statement,
+        assumptions.clone(),
+        function_environment.clone(),
+    );
+    let path = single_statement_step_path(
+        &execution,
+        claim_label,
+        step_index,
+        "execute_step",
+        available_propositions,
+    )?;
+    let path_facts = path.facts().to_vec();
+    let outcome = match implication_body(path.theorem().proposition()) {
+        Proposition::CStatementExecutes { outcome, .. } => outcome.clone(),
+        proposition => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `execute_step` saw unexpected step theorem {proposition:?}"
+            )));
+        }
+    };
+
+    match outcome {
+        CStatementOutcome::Normal(next_state) => {
+            let Some(remaining) = remaining else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: `execute_step` reached the end of the function without a return"
+                )));
+            };
+            available_propositions.extend(path_facts.iter().map(|fact| fact.proposition().clone()));
+            replay.execution_start_state = Some(execution_start_state);
+            replay.execution_point = ProofExecutionPoint::StatementEntry { remaining };
+            *state = next_state;
+        }
+        CStatementOutcome::Return { .. } => {
+            let mut path_propositions = available_propositions.clone();
+            path_propositions.extend(path_facts.iter().map(|fact| fact.proposition().clone()));
+            let return_assumptions = assumptions_from_propositions(&path_propositions);
+            let (outcome, obligations) = c_function_outcome_from_statement_outcome(
+                &execution_start_state,
+                function,
+                outcome,
+                path.obligations().to_vec(),
+                &return_assumptions,
+            );
+            let completed = certify_c_function_execution_paths_from_outcomes(
+                execution_start_state.clone(),
+                function.clone(),
+                arguments.to_vec(),
+                assumptions.clone(),
+                vec![(outcome, path_facts, obligations)],
+            );
+            let replay_state = execution_start_state.clone();
+            set_replay_execution(
+                replay,
+                ProofStepExecutionMode::Verification,
+                claim_label,
+                step_index,
+                "execute_step",
+                execution_start_state,
+                completed,
+            )?;
+            *state = replay_state;
+        }
+        CStatementOutcome::UndefinedBehavior(kind) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `execute_step` produced undefined behavior: {kind:?}\n  available requirements: {}\n  path facts: {}",
+                describe_propositions(available_propositions),
+                describe_facts(&path_facts)
+            )));
+        }
+        CStatementOutcome::RuntimeError(error) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `execute_step` produced runtime error: {error:?}\n  available requirements: {}\n  path facts: {}",
+                describe_propositions(available_propositions),
+                describe_facts(&path_facts)
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1552,6 +1752,7 @@ fn execute_rest_from_execution_point(
                 step_index,
                 step_name,
             )?;
+            let replay_state = execution_start_state.clone();
             set_replay_execution(
                 replay,
                 ProofStepExecutionMode::Verification,
@@ -1561,6 +1762,7 @@ fn execute_rest_from_execution_point(
                 execution_start_state,
                 completed,
             )?;
+            *state = replay_state;
         }
         ProofExecutionPoint::FunctionExit { .. } => {
             return Err(ClickError::new(format!(
@@ -1693,6 +1895,36 @@ fn complete_segmented_function_execution(
     ))
 }
 
+fn single_statement_step_path<'a>(
+    execution: &'a crate::kernel::SymbolicCExecution,
+    claim_label: &str,
+    step_index: usize,
+    step_name: &str,
+    available_propositions: &[Proposition],
+) -> Result<&'a crate::kernel::SymbolicCExecutionPath, ClickError> {
+    if let Some(limit) = execution.limit() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` hit execution limit {limit:?}"
+        )));
+    }
+    if execution.paths().len() != 1 {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` currently requires exactly one statement path, got {}",
+            execution.paths().len()
+        )));
+    }
+    let path = &execution.paths()[0];
+    if !path.obligations().is_empty() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` left step obligations: {}\n  available requirements: {}\n  path facts: {}",
+            describe_obligations(path.obligations()),
+            describe_propositions(available_propositions),
+            describe_facts(path.facts())
+        )));
+    }
+    Ok(path)
+}
+
 fn single_normal_statement_path<'a>(
     execution: &'a crate::kernel::SymbolicCExecution,
     claim_label: &str,
@@ -1732,6 +1964,20 @@ fn single_normal_statement_path<'a>(
             "`{claim_label}` proof step {step_index}: `{step_name}` saw unexpected prefix theorem {proposition:?}"
         ))),
     }
+}
+
+fn split_next_straight_line_statement(
+    statement: &CStatement,
+) -> Result<(CStatement, Option<CStatement>), String> {
+    let mut statements = Vec::new();
+    flatten_top_level_sequence(statement, &mut statements)?;
+    let (first, rest) = statements
+        .split_first()
+        .expect("a CStatement should flatten to at least one statement");
+    if !is_straight_line_statement(first) {
+        return Err("next statement is not a supported straight-line statement".to_string());
+    }
+    Ok((first.clone(), sequence_from_statements(rest)))
 }
 
 fn split_straight_line_statement_prefix(
@@ -1886,6 +2132,68 @@ fn materialize_folded_composite_resource_memory(
         )?;
     }
     Ok(memory)
+}
+
+fn project_initial_view_composite_resources(
+    resource_environment: &ResourceEnvironment,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    mut state: CState,
+    available_propositions: &[Proposition],
+    claim_label: &str,
+) -> Result<CState, ClickError> {
+    let assumptions = assumptions_from_propositions(available_propositions);
+    for resource in state.resources().elements().to_vec() {
+        let CResourceElement::View(CResource::Composite {
+            name,
+            arguments: resource_arguments,
+        }) = resource
+        else {
+            continue;
+        };
+        let Some(definition) = resource_environment.get(&name) else {
+            continue;
+        };
+        let Some(composite_body) = definition.composite_body() else {
+            continue;
+        };
+        let substitutions =
+            resource_value_substitutions(definition, &resource_arguments).map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` setup failed: could not project view resource `{name}`: {message}"
+                ))
+            })?;
+        let (memory, contained_resources) = instantiate_composite_resource_body_resources(
+            &name,
+            composite_body,
+            &substitutions,
+            parameters,
+            arguments,
+            state.memory().clone(),
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` setup failed: could not project view resource `{name}`: {message}"
+            ))
+        })?;
+        let viewed_contained_resources = contained_resources
+            .elements()
+            .iter()
+            .filter_map(CResourceElement::core)
+            .collect::<Vec<_>>();
+        let resources = state
+            .resources()
+            .clone()
+            .try_compose_with_elements(viewed_contained_resources, &assumptions)
+            .map_err(|error| {
+                ClickError::new(format!(
+                    "`{claim_label}` setup failed: observing view resource `{name}` produced {}",
+                    describe_resource_context_validity_error(error, parameters, arguments)
+                ))
+            })?;
+        state = state.with_memory(memory).with_resource_context(resources);
+    }
+    Ok(state)
 }
 
 fn project_initial_resource_facts(

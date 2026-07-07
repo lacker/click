@@ -53,6 +53,8 @@ Proof steps are meant to be stable and replayable. They are less magical than
 
 Common steps include:
 
+- `execute_step();`: execute one supported straight-line C statement from the
+  current execution point.
 - `execute_rest();`: execute symbolically from the current execution point to
   function exit. From function entry, this executes the whole C function.
 - `symbolic_execute();`: legacy spelling for `execute_rest();`.
