@@ -1,9 +1,9 @@
 # composite resource owned buffer observe indexed gap
 
-This documents the current gap for dependent contained resources. Observing an
-owned buffer exposes immediate facts and viewed contained resources, but this
-proof path does not yet make the field-dependent backing-array range usable for
-the indexed load.
+This documents the current gap for dependent contained resource facts.
+Observing an owned buffer exposes immediate pure facts and viewed contained
+resource facts, but this proof path does not yet make the field-dependent
+backing-array range usable for the indexed load.
 
 ```c filename=buffer_get.c
 struct owner {

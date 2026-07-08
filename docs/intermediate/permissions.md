@@ -1,7 +1,9 @@
 # Permissions
 
-Permissions describe what external memory a proof may access. They are separate
-from ordinary propositions because some permissions must not be copied freely.
+Permissions describe what external memory a proof may access. In the proof
+context, permissions are resource facts. They sit alongside pure facts such as
+integer bounds, but they obey resource-composition rules because some
+permissions must not be copied freely.
 
 Click currently has two first-layer memory permissions:
 
@@ -10,7 +12,7 @@ requires read(p[0..1]);
 requires write(p[0..1]);
 ```
 
-These clauses create resources in the verifier's resource context. External C
+These clauses create resource facts in the verifier's resource context. External C
 memory accesses must be covered by the current resource context:
 
 - a load requires `read(...)` or `write(...)`,
@@ -19,11 +21,12 @@ memory accesses must be covered by the current resource context:
 
 ## Resource Context And Families
 
-Internally, Click treats permissions as resource elements. A resource is the
-bare object being described, such as `memory(p[0..n])`; a resource element is
-that resource with an access mode, such as `view(memory(p[0..n]))` or
-`own(memory(p[0..n]))`. Resource elements are what the current resource context
-holds. A resource family defines the rules for a group of related resources:
+Internally, Click represents resource facts as `CResourceFact` values. A
+resource is the bare object being described, such as `memory(p[0..n])`; a
+resource fact is that resource with an access mode, such as
+`view(memory(p[0..n]))` or `own(memory(p[0..n]))`. Resource facts are what the
+current resource context holds. A resource family defines the rules for a
+group of related resources:
 
 - when one resource entails another,
 - whether a resource is copyable or linear,
@@ -32,9 +35,9 @@ holds. A resource family defines the rules for a group of related resources:
 - what other resources are invalidated by consumption.
 
 The main built-in resource family is memory. `read(...)` and `write(...)` are
-memory resource elements over a range. This is similar in spirit to a resource
-algebra: the context is not just a bag of facts, because each family has rules
-for combining, transferring, and consuming its elements.
+memory resource facts over a range. This is similar in spirit to a resource
+algebra: the context is not just a bag of pure facts, because each resource
+family has rules for combining, transferring, and consuming its facts.
 
 In the first-layer model, `read(...)` is the stable read view of memory.
 Algebraically, it is the core of `write(...)`:
@@ -193,8 +196,8 @@ contract returns the resource.
 ## Composite Resources
 
 Declarations with a body define composite resources. The body is a one-layer
-definition: it names contained resources and facts that justify the abstract
-resource.
+definition: it names contained resource facts and pure facts that justify the
+abstract resource fact.
 
 ```click
 resource nonnegative_fd(fd: int32) {

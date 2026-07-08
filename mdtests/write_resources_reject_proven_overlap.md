@@ -21,5 +21,5 @@ int32 duplicate_write(int32* p) {
 ```
 
 ```expect
-fail: overlapping write resources
+fail: overlapping write resource facts
 ```

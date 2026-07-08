@@ -21,5 +21,5 @@ int32 write_first_without_resource(int32 p[]) {
 ```
 
 ```expect
-fail: missing resource `write(p[0..1])`
+fail: missing resource fact `write(p[0..1])`
 ```

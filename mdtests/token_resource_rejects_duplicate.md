@@ -23,5 +23,5 @@ int32 use_once(int32 cb) {
 ```
 
 ```expect
-fail: duplicate resource `can_complete(cb)`
+fail: duplicate resource fact `can_complete(cb)`
 ```

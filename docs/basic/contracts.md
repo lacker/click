@@ -63,7 +63,7 @@ for satisfying them.
 Requirements are also where simple C safety facts often live. For example,
 `requires x < 2147483647;` makes `x + 1` safe from signed overflow.
 
-Some requirements provide resources rather than ordinary facts:
+Some requirements provide resource facts rather than pure facts:
 
 ```click
 requires read(p[0..1]);
@@ -72,7 +72,7 @@ requires write(p[0..1]);
 
 These give the verifier permission to check external memory accesses.
 `read(...)` permits loads; `write(...)` permits both loads and stores.
-Resources are carried separately from ordinary propositions. The intermediate
+Resource facts are carried separately from pure facts. The intermediate
 [Permissions](../intermediate/permissions.md) chapter covers transfer through
 function calls and the distinction between validity and authority.
 

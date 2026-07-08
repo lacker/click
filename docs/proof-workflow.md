@@ -59,17 +59,17 @@ Current proof steps:
 - `frame(loop(N));`: prove the effect summary for loop code region `N` and
   expose it for later postcondition reasoning.
 - `unfold(name);`: unfold matching predicate facts and goals.
-- `unfold(resource);`: consume one owned composite resource and expose its
-  immediate body.
+- `unfold(resource);`: consume one owned composite resource fact and expose its
+  immediate body facts.
 - `fold(resource);`: consume one immediate composite body and rebuild the owned
-  composite resource.
+  composite resource fact.
 - `apply(theorem_name(args...));`: instantiate a verified pure theorem from the
   standard library or current file, prove its requirements from the current
   proof context, and add its conclusions as derived facts. This step never
   changes the resource context.
-- `observe(resource);`: project one view step from a held composite resource.
-  This exposes immediate facts and viewed immediate contained resources without
-  exposing owned contained permissions.
+- `observe(resource);`: project one view step from a held composite resource
+  fact. This exposes immediate pure facts and viewed immediate contained
+  resource facts without exposing owned contained permissions.
 - `choose(k from requirement name);`: open a named existential precondition,
   introducing proof-local int32 value `k`.
 - `choose(k from requirement N);`: the same operation by zero-based requirement
@@ -232,15 +232,15 @@ Failure messages usually include:
 
 - guarantee label
 - execution path index
-- available requirements
-- path facts
+- pure facts
+- resource facts, when the failing proof step has a current resource context
 - remaining proof obligations
 - simplified proposition for failed `simp`
 
 Practical approach:
 
 1. Find the failing mdtest and the exact guarantee label.
-2. Read path facts to learn which branch/path failed.
+2. Read pure facts to learn which branch/path failed.
 3. If a predicate is still opaque, add `unfold(predicate_name);`.
 4. If memory preservation is missing, check `valid_range`, `disjoint`,
    `immutable`, `mutable`, and loop effects.

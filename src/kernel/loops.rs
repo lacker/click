@@ -68,7 +68,7 @@ pub(super) fn execute_c_statement_paths_with_prefix(
     statement: &CStatement,
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
-    prefix_facts: &[PathFact],
+    prefix_facts: &[ExecutionPureFact],
     prefix_obligations: &[ProofObligation],
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
@@ -83,7 +83,7 @@ pub(super) fn execute_c_statement_paths_with_prefix(
     )?
     .into_iter()
     .filter_map(|path| {
-        let (facts, obligations) = merge_path_facts_and_obligations(
+        let (facts, obligations) = merge_execution_pure_facts_and_obligations(
             prefix_facts,
             prefix_obligations,
             &path.facts,
@@ -230,7 +230,7 @@ pub(super) fn execute_c_statement_verification_paths_with_prefix(
     statement: &CStatement,
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
-    prefix_facts: &[PathFact],
+    prefix_facts: &[ExecutionPureFact],
     prefix_obligations: &[ProofObligation],
     budget: &mut ExecutionBudget,
     variables: &mut VerificationVariableGenerator,
@@ -247,7 +247,7 @@ pub(super) fn execute_c_statement_verification_paths_with_prefix(
     )?
     .into_iter()
     .filter_map(|path| {
-        let (facts, obligations) = merge_path_facts_and_obligations(
+        let (facts, obligations) = merge_execution_pure_facts_and_obligations(
             prefix_facts,
             prefix_obligations,
             &path.facts,
@@ -411,7 +411,7 @@ pub(super) fn collect_invariant_check_obligations(
                 &effective_assumptions,
                 budget,
             )? {
-                let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                     &facts,
                     &obligations,
                     &path.facts,
@@ -615,7 +615,7 @@ pub(super) fn collect_loop_effect_check_obligations(
     before_state: &CState,
     after_state: &CState,
     effect_checks: &[CLoopEffectCheck],
-    facts: &[PathFact],
+    facts: &[ExecutionPureFact],
     path_obligations: &[ProofObligation],
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
@@ -841,10 +841,10 @@ pub(super) fn assume_invariant_checks(
     loop_entry_state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
     assumptions: &Assumptions,
-    prefix_facts: &[PathFact],
+    prefix_facts: &[ExecutionPureFact],
     prefix_obligations: &[ProofObligation],
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<(Vec<PathFact>, Vec<ProofObligation>)>> {
+) -> ExecutionResult<Vec<(Vec<ExecutionPureFact>, Vec<ProofObligation>)>> {
     let mut contexts = vec![(prefix_facts.to_vec(), prefix_obligations.to_vec())];
     for check in invariant_checks {
         let mut next_contexts = Vec::new();
@@ -858,7 +858,7 @@ pub(super) fn assume_invariant_checks(
                 &effective_assumptions,
                 budget,
             )? {
-                let Some((mut facts, obligations)) = merge_path_facts_and_obligations(
+                let Some((mut facts, obligations)) = merge_execution_pure_facts_and_obligations(
                     &facts,
                     &obligations,
                     &path.facts,
@@ -881,18 +881,18 @@ pub(super) fn assume_condition_truthiness(
     state: &CState,
     condition: &CExpression,
     assumptions: &Assumptions,
-    prefix_facts: &[PathFact],
+    prefix_facts: &[ExecutionPureFact],
     prefix_obligations: &[ProofObligation],
     desired_truthiness: bool,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<(Vec<PathFact>, Vec<ProofObligation>)>> {
+) -> ExecutionResult<Vec<(Vec<ExecutionPureFact>, Vec<ProofObligation>)>> {
     let effective_assumptions =
         assumptions_with_path_context(assumptions, prefix_facts, prefix_obligations);
     let mut contexts = Vec::new();
     for condition_path in
         evaluate_c_expression_paths(state, condition, &effective_assumptions, budget)?
     {
-        let Some((facts, obligations)) = merge_path_facts_and_obligations(
+        let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
             prefix_facts,
             prefix_obligations,
             &condition_path.facts,

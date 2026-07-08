@@ -25,5 +25,5 @@ int32 zero(int32 fd) {
 ```
 
 ```expect
-fail: duplicate resource `socket_open(fd)`
+fail: duplicate resource fact `socket_open(fd)`
 ```

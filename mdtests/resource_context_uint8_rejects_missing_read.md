@@ -21,5 +21,5 @@ uint8 read_uncovered_byte(uint8 p[]) {
 ```
 
 ```expect
-fail: missing resource `read(p[1..2])`
+fail: missing resource fact `read(p[1..2])`
 ```

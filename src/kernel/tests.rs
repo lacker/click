@@ -12,16 +12,16 @@ fn read_element(
     base: Pointer,
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
-) -> CResourceElement {
-    CResourceElement::view_memory(memory_range(base, start, end))
+) -> CResourceFact {
+    CResourceFact::view_memory(memory_range(base, start, end))
 }
 
 fn write_element(
     base: Pointer,
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
-) -> CResourceElement {
-    CResourceElement::own_memory(memory_range(base, start, end))
+) -> CResourceFact {
+    CResourceFact::own_memory(memory_range(base, start, end))
 }
 
 fn read_context(
@@ -29,7 +29,7 @@ fn read_context(
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
 ) -> ResourceContext {
-    ResourceContext::new().unchecked_with_element(read_element(base, start, end))
+    ResourceContext::new().unchecked_with_fact(read_element(base, start, end))
 }
 
 fn write_context(
@@ -37,11 +37,11 @@ fn write_context(
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
 ) -> ResourceContext {
-    ResourceContext::new().unchecked_with_element(write_element(base, start, end))
+    ResourceContext::new().unchecked_with_fact(write_element(base, start, end))
 }
 
 #[test]
-fn memory_resource_element_core_is_read_permission() {
+fn memory_resource_fact_core_is_read_permission() {
     let base = Pointer {
         block: "p".to_string(),
         offset: PointerOffsetTerm::Constant(0),
@@ -56,8 +56,8 @@ fn memory_resource_element_core_is_read_permission() {
         Some(read_element(base, 0, 1))
     );
     assert_eq!(
-        CResourceElement::own_token("token".to_string(), vec![int32(0)]).core(),
-        Some(CResourceElement::view_token(
+        CResourceFact::own_token("token".to_string(), vec![int32(0)]).core(),
+        Some(CResourceFact::view_token(
             "token".to_string(),
             vec![int32(0)]
         ))
@@ -71,8 +71,8 @@ fn resource_context_observes_write_disjointness() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let facts = ResourceContext::new()
-        .unchecked_with_element(write_element(base.clone(), 0, 1))
-        .unchecked_with_element(write_element(base.clone(), 1, 2))
+        .unchecked_with_fact(write_element(base.clone(), 0, 1))
+        .unchecked_with_fact(write_element(base.clone(), 1, 2))
         .observable_facts(&Assumptions::new())
         .expect("adjacent writes should be a valid resource context");
 
@@ -96,7 +96,7 @@ fn checked_resource_composition_rejects_invalid_state_before_normalizing() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let error = ResourceContext::new()
-        .try_compose_with_elements(
+        .try_compose_with_facts(
             [
                 write_element(base.clone(), 0, 1),
                 write_element(base.clone(), 0, 1),
@@ -183,7 +183,7 @@ fn symbolic_max_function_call_reports_branch_facts() {
     assert_eq!(execution.paths().len(), 2);
     assert_eq!(
         execution.paths()[0].facts(),
-        &[PathFact::condition(condition.clone(), true)]
+        &[ExecutionPureFact::condition(condition.clone(), true)]
     );
     assert_eq!(
         execution.paths()[0].obligations(),
@@ -207,7 +207,7 @@ fn symbolic_max_function_call_reports_branch_facts() {
 
     assert_eq!(
         execution.paths()[1].facts(),
-        &[PathFact::condition(condition.clone(), false)]
+        &[ExecutionPureFact::condition(condition.clone(), false)]
     );
     assert_eq!(
         execution.paths()[1].obligations(),
@@ -351,7 +351,7 @@ fn concrete_function_specification_is_native_theorem() {
 }
 
 #[test]
-fn symbolic_function_specification_uses_requirements_as_path_facts() {
+fn symbolic_function_specification_uses_requirements_as_execution_pure_facts() {
     let a = Variable(16);
     let b = Variable(17);
     let a_bits = Bitvector32Term::Variable(a);
@@ -1536,7 +1536,7 @@ fn symbolic_pointer_equality_reports_branch_facts() {
     assert_eq!(execution.paths().len(), 2);
     assert_eq!(
         execution.paths()[0].facts(),
-        &[PathFact::condition(condition.clone(), true)]
+        &[ExecutionPureFact::condition(condition.clone(), true)]
     );
     assert_eq!(
         execution.paths()[0]
@@ -1554,7 +1554,7 @@ fn symbolic_pointer_equality_reports_branch_facts() {
     );
     assert_eq!(
         execution.paths()[1].facts(),
-        &[PathFact::condition(condition, false)]
+        &[ExecutionPureFact::condition(condition, false)]
     );
     assert_eq!(
         execution.paths()[1]
@@ -3085,7 +3085,7 @@ fn symbolic_execution_reports_branch_facts() {
     assert_eq!(execution.paths().len(), 2);
     assert_eq!(
         execution.paths()[0].facts(),
-        &[PathFact::condition(condition.clone(), true)]
+        &[ExecutionPureFact::condition(condition.clone(), true)]
     );
     assert_eq!(
         execution.paths()[0].obligations(),
@@ -3108,7 +3108,7 @@ fn symbolic_execution_reports_branch_facts() {
 
     assert_eq!(
         execution.paths()[1].facts(),
-        &[PathFact::condition(condition.clone(), false)]
+        &[ExecutionPureFact::condition(condition.clone(), false)]
     );
     assert_eq!(
         execution.paths()[1].obligations(),
@@ -3147,7 +3147,7 @@ fn symbolic_execution_reports_overflow_facts() {
     assert_eq!(execution.paths().len(), 2);
     assert_eq!(
         execution.paths()[0].facts(),
-        &[PathFact::condition(overflow.clone(), false)]
+        &[ExecutionPureFact::condition(overflow.clone(), false)]
     );
     assert_eq!(
         execution.paths()[0].obligations(),
@@ -3173,7 +3173,7 @@ fn symbolic_execution_reports_overflow_facts() {
 
     assert_eq!(
         execution.paths()[1].facts(),
-        &[PathFact::condition(overflow.clone(), true)]
+        &[ExecutionPureFact::condition(overflow.clone(), true)]
     );
     assert_eq!(
         execution.paths()[1].obligations(),

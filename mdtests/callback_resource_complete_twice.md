@@ -37,5 +37,5 @@ int32 complete_twice(int32 cb) {
 ```
 
 ```expect
-fail: missing resource `can_complete(cb)`
+fail: missing resource fact `can_complete(cb)`
 ```

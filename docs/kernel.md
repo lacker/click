@@ -22,11 +22,11 @@ Kernel files:
 
 - `primitives.rs`: core terms, C values/state, propositions, path structs, and
   basic data-type impls.
-- `assumptions.rs`: `Assumptions`, proof obligations, path facts, and symbolic
-  execution accessors.
+- `assumptions.rs`: `Assumptions`, proof obligations, execution-derived pure
+  facts (`ExecutionPureFact`), and symbolic execution accessors.
 - `api.rs`: public constructors and theorem-producing entry points.
 - `reasoning.rs`: deterministic proof helpers, finite forall/range reasoning,
-  substitutions, path facts, and obligation plumbing.
+  substitutions, execution-derived pure facts, and obligation plumbing.
 - `spec.rs`: `SpecExpression`/`SpecProposition` lowering and evaluation.
 - `eval.rs`: C expression/statement evaluation and memory operations.
 - `loops.rs`: loop verification, loop effects, loop havoc, and invariant
@@ -59,7 +59,7 @@ In `src/kernel/`:
 - `Proposition`: proof propositions, including `ForAll` and `Exists`, C
   semantic judgments, memory facts, and loop invariant rules.
 - `Assumptions`: known condition/proposition facts plus deterministic reasoning.
-- `ProofObligation`, `PathFact`: obligations and facts produced during symbolic
+- `ProofObligation`, `ExecutionPureFact`: obligations and facts produced during symbolic
   execution.
 - `Theorem`: abstract proven proposition.
 
@@ -74,7 +74,7 @@ already proves them.
 
 The symbolic executor produces execution paths. Each path includes:
 
-- public/private path facts
+- public/private execution-derived pure facts
 - proof obligations
 - outcome theorem
 

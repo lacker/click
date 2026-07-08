@@ -375,10 +375,10 @@ pub enum CRuntimeError {
     },
     MissingReturn,
     MissingResource {
-        resource: CResourceElement,
+        resource: CResourceFact,
     },
     DuplicateResource {
-        resource: CResourceElement,
+        resource: CResourceFact,
     },
     OverlappingWriteResources {
         left: Box<CMemoryRange>,
@@ -464,11 +464,11 @@ pub struct CState {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ResourceContext {
-    pub(super) elements: Vec<CResourceElement>,
+    pub(super) facts: Vec<CResourceFact>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum CResourceElement {
+pub enum CResourceFact {
     Own(CResource),
     View(CResource),
 }
@@ -488,7 +488,7 @@ pub enum CResource {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceContextValidityError {
-    DuplicateOwnedResourceElement(CResourceElement),
+    DuplicateOwnedResourceFact(CResourceFact),
     OverlappingWriteResources {
         left: CMemoryRange,
         right: CMemoryRange,
@@ -650,7 +650,7 @@ pub struct ProofObligation {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct PathFact {
+pub struct ExecutionPureFact {
     pub(super) proposition: Proposition,
     pub(super) public: bool,
 }
@@ -663,7 +663,7 @@ pub struct SymbolicCExecution {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SymbolicCExecutionPath {
-    pub(super) facts: Vec<PathFact>,
+    pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
     pub(super) theorem: Theorem,
 }
@@ -671,28 +671,28 @@ pub struct SymbolicCExecutionPath {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CExpressionPath {
     pub(super) outcome: CExpressionOutcome,
-    pub(super) facts: Vec<PathFact>,
+    pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CLValuePath {
     pub(super) outcome: CLValueOutcome,
-    pub(super) facts: Vec<PathFact>,
+    pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CStatementExecutionPath {
     pub(super) outcome: CStatementOutcome,
-    pub(super) facts: Vec<PathFact>,
+    pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CFunctionPath {
     pub(super) outcome: CFunctionOutcome,
-    pub(super) facts: Vec<PathFact>,
+    pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
 }
 
@@ -700,7 +700,7 @@ pub(super) struct CFunctionPath {
 pub(super) struct CArgumentsPath {
     pub(super) values: Vec<CValue>,
     pub(super) outcome: Option<CFunctionOutcome>,
-    pub(super) facts: Vec<PathFact>,
+    pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
 }
 
@@ -1868,59 +1868,56 @@ impl ResourceContext {
         Self::default()
     }
 
-    /// Adds a resource element without checking validity or normalizing the
+    /// Adds a resource fact without checking validity or normalizing the
     /// context.
     ///
-    /// Prefer `try_compose_with_element` when proposition assumptions are
+    /// Prefer `try_compose_with_fact` when proposition assumptions are
     /// available.
-    pub fn unchecked_with_element(mut self, element: CResourceElement) -> Self {
-        self.elements.push(element);
+    pub fn unchecked_with_fact(mut self, fact: CResourceFact) -> Self {
+        self.facts.push(fact);
         self
     }
 
-    /// Adds resource elements without checking validity or normalizing the
+    /// Adds resource facts without checking validity or normalizing the
     /// context.
     ///
-    /// Prefer `try_compose_with_elements` when proposition assumptions are
+    /// Prefer `try_compose_with_facts` when proposition assumptions are
     /// available.
-    pub fn unchecked_with_elements(
-        mut self,
-        elements: impl IntoIterator<Item = CResourceElement>,
-    ) -> Self {
-        self.elements.extend(elements);
+    pub fn unchecked_with_facts(mut self, facts: impl IntoIterator<Item = CResourceFact>) -> Self {
+        self.facts.extend(facts);
         self
     }
 
-    pub fn try_compose_with_element(
+    pub fn try_compose_with_fact(
         self,
-        element: CResourceElement,
+        fact: CResourceFact,
         assumptions: &Assumptions,
     ) -> Result<Self, ResourceContextValidityError> {
-        self.try_compose_with_elements(std::iter::once(element), assumptions)
+        self.try_compose_with_facts(std::iter::once(fact), assumptions)
     }
 
-    pub fn try_compose_with_elements(
+    pub fn try_compose_with_facts(
         self,
-        elements: impl IntoIterator<Item = CResourceElement>,
+        facts: impl IntoIterator<Item = CResourceFact>,
         assumptions: &Assumptions,
     ) -> Result<Self, ResourceContextValidityError> {
-        let context = self.unchecked_with_elements(elements);
+        let context = self.unchecked_with_facts(facts);
         if let Some(error) = context.validity_error(assumptions) {
             return Err(error);
         }
         Ok(context.normalized(assumptions))
     }
 
-    pub fn elements(&self) -> &[CResourceElement] {
-        &self.elements
+    pub fn facts(&self) -> &[CResourceFact] {
+        &self.facts
     }
 
     pub fn validity_error(
         &self,
         assumptions: &Assumptions,
     ) -> Option<ResourceContextValidityError> {
-        if let Some(resource) = self.duplicate_owned_element() {
-            return Some(ResourceContextValidityError::DuplicateOwnedResourceElement(
+        if let Some(resource) = self.duplicate_owned_fact() {
+            return Some(ResourceContextValidityError::DuplicateOwnedResourceFact(
                 resource.clone(),
             ));
         }
@@ -1948,7 +1945,7 @@ impl ResourceContext {
     }
 
     pub fn has_multiple_owned_memory_resources(&self) -> bool {
-        self.elements
+        self.facts
             .iter()
             .filter(|resource| resource.memory_own_range().is_some())
             .take(2)
@@ -1960,11 +1957,11 @@ impl ResourceContext {
         &self,
         assumptions: &Assumptions,
     ) -> Option<(&CMemoryRange, &CMemoryRange)> {
-        for i in 0..self.elements.len() {
-            let Some(left) = self.elements[i].memory_own_range() else {
+        for i in 0..self.facts.len() {
+            let Some(left) = self.facts[i].memory_own_range() else {
                 continue;
             };
-            for candidate in &self.elements[i + 1..] {
+            for candidate in &self.facts[i + 1..] {
                 let Some(right) = candidate.memory_own_range() else {
                     continue;
                 };
@@ -1978,9 +1975,9 @@ impl ResourceContext {
 
     fn owned_memory_disjoint_facts(&self) -> Vec<Proposition> {
         let owned = self
-            .elements
+            .facts
             .iter()
-            .filter_map(CResourceElement::memory_own_range)
+            .filter_map(CResourceFact::memory_own_range)
             .collect::<Vec<_>>();
         let mut propositions = Vec::new();
         for i in 0..owned.len() {
@@ -1999,29 +1996,29 @@ impl ResourceContext {
         propositions
     }
 
-    pub fn duplicate_owned_element(&self) -> Option<&CResourceElement> {
-        for i in 0..self.elements.len() {
-            if !self.elements[i].is_owned_non_memory() {
+    pub fn duplicate_owned_fact(&self) -> Option<&CResourceFact> {
+        for i in 0..self.facts.len() {
+            if !self.facts[i].is_owned_non_memory() {
                 continue;
             }
-            if self.elements[i + 1..]
+            if self.facts[i + 1..]
                 .iter()
-                .any(|candidate| candidate == &self.elements[i])
+                .any(|candidate| candidate == &self.facts[i])
             {
-                return Some(&self.elements[i]);
+                return Some(&self.facts[i]);
             }
         }
         None
     }
 
-    pub fn satisfies_element(&self, element: &CResourceElement, assumptions: &Assumptions) -> bool {
-        self.elements
+    pub fn satisfies_fact(&self, fact: &CResourceFact, assumptions: &Assumptions) -> bool {
+        self.facts
             .iter()
-            .any(|available| resource_element_entails(available, element, assumptions))
+            .any(|available| resource_fact_entails(available, fact, assumptions))
     }
 
     pub fn is_empty(&self) -> bool {
-        self.elements.is_empty()
+        self.facts.is_empty()
     }
 
     pub(super) fn permits_memory_read(
@@ -2030,9 +2027,9 @@ impl ResourceContext {
         byte_width: u32,
         assumptions: &Assumptions,
     ) -> bool {
-        self.elements
-            .iter()
-            .any(|resource| memory_element_permits_read(resource, pointer, byte_width, assumptions))
+        self.facts.iter().any(|resource| {
+            memory_resource_fact_permits_read(resource, pointer, byte_width, assumptions)
+        })
     }
 
     pub(super) fn permits_memory_write(
@@ -2041,30 +2038,26 @@ impl ResourceContext {
         byte_width: u32,
         assumptions: &Assumptions,
     ) -> bool {
-        self.elements.iter().any(|resource| {
-            memory_element_permits_write(resource, pointer, byte_width, assumptions)
+        self.facts.iter().any(|resource| {
+            memory_resource_fact_permits_write(resource, pointer, byte_width, assumptions)
         })
     }
 
-    pub fn without_element(
-        self,
-        element: &CResourceElement,
-        assumptions: &Assumptions,
-    ) -> Option<Self> {
-        consume_element(self, element, assumptions)
+    pub fn without_fact(self, fact: &CResourceFact, assumptions: &Assumptions) -> Option<Self> {
+        consume_fact(self, fact, assumptions)
     }
 
     pub(super) fn normalized(mut self, assumptions: &Assumptions) -> Self {
         let mut i = 0;
-        while i < self.elements.len() {
+        while i < self.facts.len() {
             let mut changed = false;
             let mut j = i + 1;
-            while j < self.elements.len() {
+            while j < self.facts.len() {
                 if let Some(merged) =
-                    combine_elements(&self.elements[i], &self.elements[j], assumptions)
+                    combine_resource_facts(&self.facts[i], &self.facts[j], assumptions)
                 {
-                    self.elements[i] = merged;
-                    self.elements.remove(j);
+                    self.facts[i] = merged;
+                    self.facts.remove(j);
                     changed = true;
                     break;
                 }
@@ -2080,60 +2073,60 @@ impl ResourceContext {
     }
 }
 
-fn resource_element_entails(
-    available: &CResourceElement,
-    required: &CResourceElement,
+fn resource_fact_entails(
+    available: &CResourceFact,
+    required: &CResourceFact,
     assumptions: &Assumptions,
 ) -> bool {
     if available.family() != required.family() {
         return false;
     }
     match available.family() {
-        ResourceFamily::Memory => memory_element_entails(available, required, assumptions),
+        ResourceFamily::Memory => memory_resource_fact_entails(available, required, assumptions),
         ResourceFamily::Composite | ResourceFamily::Token => {
-            non_memory_element_entails(available, required)
+            non_memory_resource_fact_entails(available, required)
         }
     }
 }
 
-fn consume_element(
+fn consume_fact(
     context: ResourceContext,
-    required: &CResourceElement,
+    required: &CResourceFact,
     assumptions: &Assumptions,
 ) -> Option<ResourceContext> {
     match required.family() {
-        ResourceFamily::Memory => consume_memory_element(context, required, assumptions),
+        ResourceFamily::Memory => consume_memory_resource_fact(context, required, assumptions),
         ResourceFamily::Composite | ResourceFamily::Token => {
-            consume_non_memory_element(context, required, assumptions)
+            consume_non_memory_resource_fact(context, required, assumptions)
         }
     }
 }
 
-fn combine_elements(
-    left: &CResourceElement,
-    right: &CResourceElement,
+fn combine_resource_facts(
+    left: &CResourceFact,
+    right: &CResourceFact,
     assumptions: &Assumptions,
-) -> Option<CResourceElement> {
+) -> Option<CResourceFact> {
     if left.family() != right.family() {
         return None;
     }
     match left.family() {
-        ResourceFamily::Memory => combine_memory_elements(left, right, assumptions),
+        ResourceFamily::Memory => combine_memory_resource_facts(left, right, assumptions),
         ResourceFamily::Composite | ResourceFamily::Token => {
-            combine_non_memory_elements(left, right)
+            combine_non_memory_resource_facts(left, right)
         }
     }
 }
 
-fn memory_element_entails(
-    available: &CResourceElement,
-    required: &CResourceElement,
+fn memory_resource_fact_entails(
+    available: &CResourceFact,
+    required: &CResourceFact,
     assumptions: &Assumptions,
 ) -> bool {
     match (available, required) {
         (_, _) if required.memory_view_range().is_some() => {
             let required = required.memory_view_range().expect("checked above");
-            let Some(available) = resource_element_read_core_range(available) else {
+            let Some(available) = resource_fact_read_core_range(available) else {
                 return false;
             };
             memory_range_covers(&available, required, assumptions)
@@ -2149,116 +2142,114 @@ fn memory_element_entails(
     }
 }
 
-fn consume_memory_element(
+fn consume_memory_resource_fact(
     mut context: ResourceContext,
-    required: &CResourceElement,
+    required: &CResourceFact,
     assumptions: &Assumptions,
 ) -> Option<ResourceContext> {
     if let Some(required) = required.memory_view_range() {
         return context
-            .elements
+            .facts
             .iter()
             .any(|candidate| {
-                resource_element_read_core_range(candidate)
+                resource_fact_read_core_range(candidate)
                     .is_some_and(|available| memory_range_covers(&available, required, assumptions))
             })
             .then(|| context.normalized(assumptions));
     }
     if let Some(required) = required.memory_own_range() {
-        let index = context.elements.iter().position(|candidate| {
+        let index = context.facts.iter().position(|candidate| {
             candidate
                 .memory_own_range()
                 .is_some_and(|available| memory_range_covers(available, required, assumptions))
         })?;
         let available = context
-            .elements
+            .facts
             .remove(index)
             .into_memory_own_range()
             .expect("own resource lookup ignored non-own resources");
-        context.elements.extend(
+        context.facts.extend(
             split_memory_range(&available, required, assumptions)?
                 .into_iter()
-                .map(CResourceElement::own_memory),
+                .map(CResourceFact::own_memory),
         );
         return Some(context.normalized(assumptions));
     }
     unreachable!("non-memory resource sent to memory resource consumer")
 }
 
-fn non_memory_element_entails(available: &CResourceElement, required: &CResourceElement) -> bool {
+fn non_memory_resource_fact_entails(available: &CResourceFact, required: &CResourceFact) -> bool {
     match (available, required) {
-        (CResourceElement::Own(available), CResourceElement::Own(required)) => {
-            available == required
-        }
+        (CResourceFact::Own(available), CResourceFact::Own(required)) => available == required,
         (
-            CResourceElement::Own(available) | CResourceElement::View(available),
-            CResourceElement::View(required),
+            CResourceFact::Own(available) | CResourceFact::View(available),
+            CResourceFact::View(required),
         ) => available == required,
         _ => false,
     }
 }
 
-fn consume_non_memory_element(
+fn consume_non_memory_resource_fact(
     mut context: ResourceContext,
-    required: &CResourceElement,
+    required: &CResourceFact,
     assumptions: &Assumptions,
 ) -> Option<ResourceContext> {
-    if matches!(required, CResourceElement::View(_)) {
+    if matches!(required, CResourceFact::View(_)) {
         return context
-            .elements
+            .facts
             .iter()
-            .any(|candidate| non_memory_element_entails(candidate, required))
+            .any(|candidate| non_memory_resource_fact_entails(candidate, required))
             .then(|| context.normalized(assumptions));
     }
     let index = context
-        .elements
+        .facts
         .iter()
         .position(|candidate| candidate == required)?;
-    context.elements.remove(index);
+    context.facts.remove(index);
     Some(context.normalized(assumptions))
 }
 
-fn combine_non_memory_elements(
-    left: &CResourceElement,
-    right: &CResourceElement,
-) -> Option<CResourceElement> {
+fn combine_non_memory_resource_facts(
+    left: &CResourceFact,
+    right: &CResourceFact,
+) -> Option<CResourceFact> {
     match (left, right) {
-        (CResourceElement::Own(left), CResourceElement::View(right))
-        | (CResourceElement::View(right), CResourceElement::Own(left))
+        (CResourceFact::Own(left), CResourceFact::View(right))
+        | (CResourceFact::View(right), CResourceFact::Own(left))
             if left == right =>
         {
-            Some(CResourceElement::Own(left.clone()))
+            Some(CResourceFact::Own(left.clone()))
         }
-        (CResourceElement::View(left), CResourceElement::View(right)) if left == right => {
-            Some(CResourceElement::View(left.clone()))
+        (CResourceFact::View(left), CResourceFact::View(right)) if left == right => {
+            Some(CResourceFact::View(left.clone()))
         }
         _ => None,
     }
 }
 
-fn resource_element_core(resource: &CResourceElement) -> Option<CResourceElement> {
+fn resource_fact_core(resource: &CResourceFact) -> Option<CResourceFact> {
     match resource {
-        CResourceElement::Own(resource) | CResourceElement::View(resource) => {
-            Some(CResourceElement::View(resource.clone()))
+        CResourceFact::Own(resource) | CResourceFact::View(resource) => {
+            Some(CResourceFact::View(resource.clone()))
         }
     }
 }
 
-fn resource_element_read_core_range(resource: &CResourceElement) -> Option<CMemoryRange> {
+fn resource_fact_read_core_range(resource: &CResourceFact) -> Option<CMemoryRange> {
     match resource.core()? {
-        CResourceElement::View(CResource::Memory(range)) => Some(range),
-        CResourceElement::View(CResource::Composite { .. } | CResource::Token { .. })
-        | CResourceElement::Own(_) => None,
+        CResourceFact::View(CResource::Memory(range)) => Some(range),
+        CResourceFact::View(CResource::Composite { .. } | CResource::Token { .. })
+        | CResourceFact::Own(_) => None,
     }
 }
 
-fn memory_element_permits_read(
-    resource: &CResourceElement,
+fn memory_resource_fact_permits_read(
+    resource: &CResourceFact,
     pointer: &Pointer,
     byte_width: u32,
     assumptions: &Assumptions,
 ) -> bool {
-    resource_element_read_core_range(resource).is_some_and(|range| {
+    resource_fact_read_core_range(resource).is_some_and(|range| {
         assumptions.pointer_access_in_range(
             pointer,
             byte_width,
@@ -2269,22 +2260,22 @@ fn memory_element_permits_read(
     })
 }
 
-fn memory_element_permits_write(
-    resource: &CResourceElement,
+fn memory_resource_fact_permits_write(
+    resource: &CResourceFact,
     pointer: &Pointer,
     byte_width: u32,
     assumptions: &Assumptions,
 ) -> bool {
     match resource {
-        CResourceElement::Own(CResource::Memory(range)) => assumptions.pointer_access_in_range(
+        CResourceFact::Own(CResource::Memory(range)) => assumptions.pointer_access_in_range(
             pointer,
             byte_width,
             range.base(),
             range.start(),
             range.end(),
         ),
-        CResourceElement::Own(CResource::Composite { .. } | CResource::Token { .. })
-        | CResourceElement::View(_) => false,
+        CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. })
+        | CResourceFact::View(_) => false,
     }
 }
 
@@ -2352,7 +2343,7 @@ fn memory_ranges_proven_overlapping(
         )) == Some(true)
 }
 
-impl CResourceElement {
+impl CResourceFact {
     pub fn own_memory(range: CMemoryRange) -> Self {
         Self::Own(CResource::Memory(range))
     }
@@ -2407,7 +2398,7 @@ impl CResourceElement {
     }
 
     pub fn core(&self) -> Option<Self> {
-        resource_element_core(self)
+        resource_fact_core(self)
     }
 
     pub fn memory_own_range(&self) -> Option<&CMemoryRange> {
@@ -2448,22 +2439,22 @@ impl CResourceElement {
     }
 }
 
-fn combine_memory_elements(
-    left: &CResourceElement,
-    right: &CResourceElement,
+fn combine_memory_resource_facts(
+    left: &CResourceFact,
+    right: &CResourceFact,
     assumptions: &Assumptions,
-) -> Option<CResourceElement> {
+) -> Option<CResourceFact> {
     match (left, right) {
-        _ if memory_element_entails(left, right, assumptions) => Some(left.clone()),
-        _ if memory_element_entails(right, left, assumptions) => Some(right.clone()),
+        _ if memory_resource_fact_entails(left, right, assumptions) => Some(left.clone()),
+        _ if memory_resource_fact_entails(right, left, assumptions) => Some(right.clone()),
         (
-            CResourceElement::View(CResource::Memory(left)),
-            CResourceElement::View(CResource::Memory(right)),
-        ) => merge_memory_ranges(left, right, assumptions).map(CResourceElement::view_memory),
+            CResourceFact::View(CResource::Memory(left)),
+            CResourceFact::View(CResource::Memory(right)),
+        ) => merge_memory_ranges(left, right, assumptions).map(CResourceFact::view_memory),
         (
-            CResourceElement::Own(CResource::Memory(left)),
-            CResourceElement::Own(CResource::Memory(right)),
-        ) => merge_memory_ranges(left, right, assumptions).map(CResourceElement::own_memory),
+            CResourceFact::Own(CResource::Memory(left)),
+            CResourceFact::Own(CResource::Memory(right)),
+        ) => merge_memory_ranges(left, right, assumptions).map(CResourceFact::own_memory),
         _ => None,
     }
 }

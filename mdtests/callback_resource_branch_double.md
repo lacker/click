@@ -2,7 +2,7 @@
 
 This checks a path-sensitive double-completion bug. The second `complete(cb)`
 is only invalid on the path where the branch already consumed
-`can_complete(cb)`, and Click reports the missing resource.
+`can_complete(cb)`, and Click reports the missing resource fact.
 
 ```c filename=complete.c
 int32 complete(int32 cb) {
@@ -41,5 +41,5 @@ int32 complete_maybe_twice(int32 cb, int32 failed) {
 ```
 
 ```expect
-fail: missing resource `can_complete(cb)`
+fail: missing resource fact `can_complete(cb)`
 ```

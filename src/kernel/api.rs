@@ -505,7 +505,7 @@ pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
     let paths = paths
         .into_iter()
         .map(|path| {
-            let facts = public_path_facts(&path.facts);
+            let facts = public_execution_pure_facts(&path.facts);
             let proposition = Proposition::CStatementExecutes {
                 state: state.clone(),
                 statement: statement.clone(),
@@ -680,7 +680,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
     let paths = paths
         .into_iter()
         .map(|path| {
-            let facts = public_path_facts(&path.facts);
+            let facts = public_execution_pure_facts(&path.facts);
             let proposition = Proposition::CFunctionExecutes {
                 state: state.clone(),
                 function: function.clone(),
@@ -750,7 +750,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
     let paths = paths
         .into_iter()
         .map(|path| {
-            let facts = public_path_facts(&path.facts);
+            let facts = public_execution_pure_facts(&path.facts);
             let proposition = Proposition::CFunctionExecutes {
                 state: state.clone(),
                 function: function.clone(),
@@ -779,12 +779,16 @@ pub fn certify_c_function_execution_paths_from_outcomes(
     function: CFunction,
     arguments: Vec<CExpression>,
     assumptions: Assumptions,
-    paths: Vec<(CFunctionOutcome, Vec<PathFact>, Vec<ProofObligation>)>,
+    paths: Vec<(
+        CFunctionOutcome,
+        Vec<ExecutionPureFact>,
+        Vec<ProofObligation>,
+    )>,
 ) -> SymbolicCExecution {
     let paths = paths
         .into_iter()
         .map(|(outcome, facts, obligations)| {
-            let facts = public_path_facts(&facts);
+            let facts = public_execution_pure_facts(&facts);
             let proposition = Proposition::CFunctionExecutes {
                 state: state.clone(),
                 function: function.clone(),
@@ -812,7 +816,7 @@ pub fn prove_c_function_satisfies_specification_from_symbolic_path(
     function: CFunction,
     specification: CFunctionSpecification,
     assumptions: Assumptions,
-    facts: &[PathFact],
+    facts: &[ExecutionPureFact],
     obligations: &[ProofObligation],
 ) -> Theorem {
     let requires = specification.requires().to_vec();
@@ -864,7 +868,7 @@ pub fn prove_c_function_satisfies_specification_with_environment(
     let mut paths = paths.into_iter();
     let path = paths.next()?;
     if paths.next().is_some()
-        || path.facts.iter().any(PathFact::is_public)
+        || path.facts.iter().any(ExecutionPureFact::is_public)
         || !path.obligations.is_empty()
         || &path.outcome != specification.outcome()
     {

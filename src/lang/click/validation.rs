@@ -1862,7 +1862,7 @@ fn reject_duplicate_owned_declared_resource_clauses<'a>(
         }
         if seen.iter().any(|candidate| *candidate == resource) {
             return Err(ClickError::new(format!(
-                "duplicate resource `{}` in {context}",
+                "duplicate resource fact `{}` in {context}",
                 describe_resource_clause(resource)
             )));
         }

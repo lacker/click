@@ -33,7 +33,7 @@ Character literals such as `'x'`, `'\n'`, and `'\0'` are `uint8` values.
 Inside C fragments and pure Click expressions over C values, `uint8` rvalues
 promote to `int32` for arithmetic, ordered comparisons, shifts, and bitwise
 operators. Assigning or returning an `int32` into `uint8` is checked narrowing:
-the current requirements/path facts must prove `0 <= value <= 255`.
+the current pure facts must prove `0 <= value <= 255`.
 
 Each `ensures` clause is a separate guarantee. A guarantee may be labeled with
 `label:`. Omitting a proof clause uses the default prover, currently `auto`.
@@ -182,17 +182,18 @@ resource uncalled(flag: int32*) {
 }
 ```
 
-Holding the folded abstract token exposes its immediate resource fact view, but
-not its owned contained resources. Hidden contained `write(...)` resources also
-expose derived `disjoint(...)` facts for their ranges. In an explicit proof script,
-`observe(uncalled(flag));` non-destructively records fact-view projection while
-keeping permissions hidden. `unfold(uncalled(flag));` consumes the abstract
-token and exposes its contained resources for mutation. Composite bodies can
-bundle built-in memory resources and other declared resources. Resource
-facts may include scalar propositions and `disjoint(...)` range facts.
-`fold(uncalled(flag));` proves the fact in the current state, consumes the
-contained resources, and returns the abstract token. The end of the
-`by { ... }` block checks the overall claim.
+Holding the folded abstract token exposes its immediate pure facts and viewed
+resource facts, but not its owned contained permissions. Hidden contained
+`write(...)` resource facts also expose derived pure facts such as
+`disjoint(...)` for their ranges. In an explicit proof script,
+`observe(uncalled(flag));` non-destructively records this projection while
+keeping owned permissions hidden. `unfold(uncalled(flag));` consumes the
+abstract token resource fact and exposes its contained resource facts for
+mutation. Composite bodies can bundle built-in memory resources and other
+declared resources. Declared `fact` clauses are pure facts.
+`fold(uncalled(flag));` proves the pure facts in the current state, consumes
+the contained resource facts, and returns the abstract token resource fact. The
+end of the `by { ... }` block checks the overall claim.
 
 A function block may be resource-only when it consumes a resource:
 

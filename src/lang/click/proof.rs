@@ -383,16 +383,16 @@ fn prove_pure_theorem_goal(
             SimpProposition::True => return Ok(()),
             simplified => {
                 return Err(ClickError::new(format!(
-                    "`{proof_name}` failed for `{claim_label}`: simplified proposition was not true: {simplified:?}\n  goal: {goal:?}\n  available requirements: {}",
-                    describe_propositions(&available)
+                    "`{proof_name}` failed for `{claim_label}`: simplified proposition was not true: {simplified:?}\n  goal: {goal:?}\n  pure facts: {}",
+                    describe_pure_facts(&available)
                 )));
             }
         }
     }
 
     Err(ClickError::new(format!(
-        "`{proof_name}` failed for `{claim_label}`: proposition was not provable\n  goal: {goal:?}\n  available requirements: {}",
-        describe_propositions(&available)
+        "`{proof_name}` failed for `{claim_label}`: proposition was not provable\n  goal: {goal:?}\n  pure facts: {}",
+        describe_pure_facts(&available)
     )))
 }
 
@@ -551,9 +551,9 @@ fn instantiate_theorem_application(
                 path_index,
                 step_index,
                 format!(
-                    "could not prove requirement for theorem `{}`: {lowered:?}\n  available requirements: {}",
+                    "could not prove requirement for theorem `{}`: {lowered:?}\n  pure facts: {}",
                     theorem.name(),
-                    describe_propositions(available)
+                    describe_pure_facts(available)
                 ),
             ));
         }
@@ -736,18 +736,18 @@ pub(super) fn prove_claim_by_auto(
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let (mut state, arguments, requirement_propositions) = initial_call(
+    let (mut state, arguments, requirement_pure_facts) = initial_call(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
         predicate_environment,
         click_function_environment,
     )?;
-    let requirement_propositions = requirements_with_structural_unfolds(
+    let requirement_pure_facts = requirements_with_structural_unfolds(
         predicate_environment,
         click_function_environment,
         function_block,
-        &requirement_propositions,
+        &requirement_pure_facts,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
     state = materialize_folded_composite_resource_cells(
@@ -762,15 +762,15 @@ pub(super) fn prove_claim_by_auto(
         parsed_function.parameters(),
         &arguments,
         state,
-        &requirement_propositions,
+        &requirement_pure_facts,
         claim_label,
     )?;
-    let requirement_propositions = project_initial_resource_facts(
+    let requirement_pure_facts = project_initial_resource_facts(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
         &state,
-        &requirement_propositions,
+        &requirement_pure_facts,
         predicate_environment,
         click_function_environment,
         claim_label,
@@ -784,7 +784,7 @@ pub(super) fn prove_claim_by_auto(
         click_function_environment,
         resource_environment,
     )?;
-    let assumptions = assumptions_from_propositions(&requirement_propositions);
+    let assumptions = assumptions_from_propositions(&requirement_pure_facts);
     let vc_execution = prove_symbolic_c_function_verification_paths_with_environment(
         state.clone(),
         function.clone(),
@@ -793,7 +793,7 @@ pub(super) fn prove_claim_by_auto(
         function_environment.clone(),
     );
     if let Some(error) =
-        execution_obligation_error(&vc_execution, claim_label, &requirement_propositions)
+        execution_obligation_error(&vc_execution, claim_label, &requirement_pure_facts)
     {
         return Err(error);
     }
@@ -808,7 +808,7 @@ pub(super) fn prove_claim_by_auto(
         &function,
         &state,
         &arguments,
-        &requirement_propositions,
+        &requirement_pure_facts,
         predicate_environment,
         click_function_environment,
         resource_environment,
@@ -839,7 +839,7 @@ pub(super) fn prove_claim_by_auto(
         function_environment.clone(),
     );
     if let Some(error) =
-        execution_obligation_error(&execution, claim_label, &requirement_propositions)
+        execution_obligation_error(&execution, claim_label, &requirement_pure_facts)
     {
         if let Some(loop_verification_error) = loop_verification_error {
             return Err(loop_verification_error);
@@ -859,7 +859,7 @@ pub(super) fn prove_claim_by_auto(
         &function,
         &state,
         &arguments,
-        &requirement_propositions,
+        &requirement_pure_facts,
         predicate_environment,
         click_function_environment,
         resource_environment,
@@ -898,18 +898,18 @@ pub(super) fn prove_claim_by_frame(
         )));
     }
 
-    let (mut state, arguments, requirement_propositions) = initial_call(
+    let (mut state, arguments, requirement_pure_facts) = initial_call(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
         predicate_environment,
         click_function_environment,
     )?;
-    let requirement_propositions = requirements_with_structural_unfolds(
+    let requirement_pure_facts = requirements_with_structural_unfolds(
         predicate_environment,
         click_function_environment,
         function_block,
-        &requirement_propositions,
+        &requirement_pure_facts,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
     state = materialize_folded_composite_resource_cells(
@@ -924,15 +924,15 @@ pub(super) fn prove_claim_by_frame(
         parsed_function.parameters(),
         &arguments,
         state,
-        &requirement_propositions,
+        &requirement_pure_facts,
         claim_label,
     )?;
-    let requirement_propositions = project_initial_resource_facts(
+    let requirement_pure_facts = project_initial_resource_facts(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
         &state,
-        &requirement_propositions,
+        &requirement_pure_facts,
         predicate_environment,
         click_function_environment,
         claim_label,
@@ -946,7 +946,7 @@ pub(super) fn prove_claim_by_frame(
         click_function_environment,
         resource_environment,
     )?;
-    let assumptions = assumptions_from_propositions(&requirement_propositions);
+    let assumptions = assumptions_from_propositions(&requirement_pure_facts);
     let execution = prove_symbolic_c_function_verification_paths_with_environment(
         state.clone(),
         function.clone(),
@@ -958,7 +958,7 @@ pub(super) fn prove_claim_by_frame(
         "frame",
         &execution,
         claim_label,
-        &requirement_propositions,
+        &requirement_pure_facts,
     ) {
         return Err(error);
     }
@@ -974,7 +974,7 @@ pub(super) fn prove_claim_by_frame(
         &function,
         &state,
         &arguments,
-        &requirement_propositions,
+        &requirement_pure_facts,
         predicate_environment,
         click_function_environment,
         resource_environment,
@@ -1013,18 +1013,18 @@ pub(super) fn prove_claim_by_simp(
         )));
     }
 
-    let (mut state, arguments, requirement_propositions) = initial_call(
+    let (mut state, arguments, requirement_pure_facts) = initial_call(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
         predicate_environment,
         click_function_environment,
     )?;
-    let requirement_propositions = requirements_with_structural_unfolds(
+    let requirement_pure_facts = requirements_with_structural_unfolds(
         predicate_environment,
         click_function_environment,
         function_block,
-        &requirement_propositions,
+        &requirement_pure_facts,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
     state = materialize_folded_composite_resource_cells(
@@ -1039,15 +1039,15 @@ pub(super) fn prove_claim_by_simp(
         parsed_function.parameters(),
         &arguments,
         state,
-        &requirement_propositions,
+        &requirement_pure_facts,
         claim_label,
     )?;
-    let requirement_propositions = project_initial_resource_facts(
+    let requirement_pure_facts = project_initial_resource_facts(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
         &state,
-        &requirement_propositions,
+        &requirement_pure_facts,
         predicate_environment,
         click_function_environment,
         claim_label,
@@ -1074,7 +1074,7 @@ pub(super) fn prove_claim_by_simp(
         theorem_environment,
         vec![vec![ProofStep::SymbolicExecute, ProofStep::Simp]],
     );
-    let assumptions = assumptions_from_propositions(&requirement_propositions);
+    let assumptions = assumptions_from_propositions(&requirement_pure_facts);
     let execution = prove_symbolic_c_function_execution_paths_with_environment(
         state.clone(),
         function.clone(),
@@ -1097,10 +1097,10 @@ pub(super) fn prove_claim_by_simp(
     for (path_index, path) in execution.paths().iter().enumerate() {
         if !path.obligations().is_empty() {
             return Err(ClickError::new(format!(
-                "`simp` failed for `{claim_label}` path {path_index}: execution left obligations: {}\n  available requirements: {}\n  path facts: {}",
+                "`simp` failed for `{claim_label}` path {path_index}: execution left obligations: {}\n  pure facts: {}\n  execution pure facts: {}",
                 describe_obligations(path.obligations()),
-                describe_propositions(&requirement_propositions),
-                describe_facts(path.facts())
+                describe_pure_facts(&requirement_pure_facts),
+                describe_execution_pure_facts(path.facts())
             )));
         }
 
@@ -1108,14 +1108,14 @@ pub(super) fn prove_claim_by_simp(
             Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
             proposition => {
                 return Err(ClickError::new(format!(
-                    "`simp` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  available requirements: {}\n  path facts: {}",
-                    describe_propositions(&requirement_propositions),
-                    describe_facts(path.facts())
+                    "`simp` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  pure facts: {}\n  execution pure facts: {}",
+                    describe_pure_facts(&requirement_pure_facts),
+                    describe_execution_pure_facts(path.facts())
                 )));
             }
         };
 
-        let mut path_requirements = requirement_propositions.to_vec();
+        let mut path_requirements = requirement_pure_facts.to_vec();
         path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
         path_requirements = project_outcome_resource_facts(
             resource_environment,
@@ -1157,8 +1157,8 @@ pub(super) fn prove_claim_by_simp(
         )
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`simp` failed for `{claim_label}` path {path_index}: execution did not satisfy the packaged specification\n  path facts: {}",
-                describe_facts(path.facts())
+                "`simp` failed for `{claim_label}` path {path_index}: execution did not satisfy the packaged specification\n  execution pure facts: {}",
+                describe_execution_pure_facts(path.facts())
             ))
         })?;
 
@@ -1257,18 +1257,18 @@ pub(super) fn prove_claim_by_steps(
         )));
     }
 
-    let (mut state, arguments, mut requirement_propositions) = initial_call(
+    let (mut state, arguments, mut requirement_pure_facts) = initial_call(
         function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
         predicate_environment,
         click_function_environment,
     )?;
-    requirement_propositions = requirements_with_structural_unfolds(
+    requirement_pure_facts = requirements_with_structural_unfolds(
         predicate_environment,
         click_function_environment,
         function_block,
-        &requirement_propositions,
+        &requirement_pure_facts,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
     state = materialize_folded_composite_resource_cells(
@@ -1283,15 +1283,15 @@ pub(super) fn prove_claim_by_steps(
         parsed_function.parameters(),
         &arguments,
         state,
-        &requirement_propositions,
+        &requirement_pure_facts,
         claim_label,
     )?;
-    requirement_propositions = project_initial_resource_facts(
+    requirement_pure_facts = project_initial_resource_facts(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
         &state,
-        &requirement_propositions,
+        &requirement_pure_facts,
         predicate_environment,
         click_function_environment,
         claim_label,
@@ -1305,7 +1305,7 @@ pub(super) fn prove_claim_by_steps(
         click_function_environment,
         resource_environment,
     )?;
-    let mut assumptions = assumptions_from_propositions(&requirement_propositions);
+    let mut assumptions = assumptions_from_propositions(&requirement_pure_facts);
     let mut replay = ProofStepReplayState::default();
 
     for (step_index, step) in steps.iter().enumerate() {
@@ -1322,13 +1322,13 @@ pub(super) fn prove_claim_by_steps(
                     parsed_function.parameters(),
                     &arguments,
                     state,
-                    &mut requirement_propositions,
+                    &mut requirement_pure_facts,
                     predicate_environment,
                     click_function_environment,
                     claim_label,
                     step_index,
                 )?;
-                assumptions = assumptions_from_propositions(&requirement_propositions);
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofStep::ObserveResource(resource) => {
                 if replay.is_at_function_exit() {
@@ -1342,33 +1342,34 @@ pub(super) fn prove_claim_by_steps(
                     parsed_function.parameters(),
                     &arguments,
                     state,
-                    &mut requirement_propositions,
+                    &mut requirement_pure_facts,
                     predicate_environment,
                     click_function_environment,
                     claim_label,
                     step_index,
                 )?;
-                assumptions = assumptions_from_propositions(&requirement_propositions);
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofStep::ExecuteStep => {
                 execute_step_from_execution_point(
                     &mut replay,
                     &mut state,
-                    &mut requirement_propositions,
+                    &mut requirement_pure_facts,
                     &function,
+                    parsed_function.parameters(),
                     &arguments,
                     &assumptions,
                     function_environment,
                     claim_label,
                     step_index,
                 )?;
-                assumptions = assumptions_from_propositions(&requirement_propositions);
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofStep::SymbolicExecute | ProofStep::ExecuteRest => {
                 execute_rest_from_execution_point(
                     &mut replay,
                     &mut state,
-                    &requirement_propositions,
+                    &requirement_pure_facts,
                     &function,
                     &arguments,
                     &assumptions,
@@ -1389,8 +1390,9 @@ pub(super) fn prove_claim_by_steps(
                 execute_until_statement(
                     &mut replay,
                     &mut state,
-                    &mut requirement_propositions,
+                    &mut requirement_pure_facts,
                     &function,
+                    parsed_function.parameters(),
                     &arguments,
                     &assumptions,
                     function_environment,
@@ -1398,7 +1400,7 @@ pub(super) fn prove_claim_by_steps(
                     claim_label,
                     step_index,
                 )?;
-                assumptions = assumptions_from_propositions(&requirement_propositions);
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofStep::BoundedExecute => {
                 if !replay.is_at_function_entry() {
@@ -1467,7 +1469,7 @@ pub(super) fn prove_claim_by_steps(
                             parsed_function.parameters(),
                             &arguments,
                             &state,
-                            &requirement_propositions,
+                            &requirement_pure_facts,
                         )?;
                     }
                     Some(CodeRegion::Loop(_)) => {
@@ -1539,7 +1541,7 @@ pub(super) fn prove_claim_by_steps(
         &function,
         replay.execution_start_state(&state),
         &arguments,
-        &requirement_propositions,
+        &requirement_pure_facts,
         &replay.unfolded_predicates,
         &replay.theorem_applications,
         &replay.resource_folds,
@@ -1552,8 +1554,9 @@ pub(super) fn prove_claim_by_steps(
 fn execute_step_from_execution_point(
     replay: &mut ProofStepReplayState,
     state: &mut CState,
-    available_propositions: &mut Vec<Proposition>,
+    available_pure_facts: &mut Vec<Proposition>,
     function: &CFunction,
+    parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     assumptions: &Assumptions,
     function_environment: &CFunctionEnvironment,
@@ -1615,6 +1618,7 @@ fn execute_step_from_execution_point(
         }
     };
 
+    let current_resources = current_state.resources().facts().to_vec();
     let execution = prove_symbolic_c_execution_paths_with_environment(
         current_state,
         step_statement,
@@ -1626,9 +1630,12 @@ fn execute_step_from_execution_point(
         claim_label,
         step_index,
         "execute_step",
-        available_propositions,
+        available_pure_facts,
+        &current_resources,
+        parameters,
+        arguments,
     )?;
-    let path_facts = path.facts().to_vec();
+    let execution_pure_facts = path.facts().to_vec();
     let outcome = match implication_body(path.theorem().proposition()) {
         Proposition::CStatementExecutes { outcome, .. } => outcome.clone(),
         proposition => {
@@ -1645,15 +1652,23 @@ fn execute_step_from_execution_point(
                     "`{claim_label}` proof step {step_index}: `execute_step` reached the end of the function without a return"
                 )));
             };
-            available_propositions.extend(path_facts.iter().map(|fact| fact.proposition().clone()));
+            available_pure_facts.extend(
+                execution_pure_facts
+                    .iter()
+                    .map(|fact| fact.proposition().clone()),
+            );
             replay.execution_start_state = Some(execution_start_state);
             replay.execution_point = ProofExecutionPoint::StatementEntry { remaining };
             *state = next_state;
         }
         CStatementOutcome::Return { .. } => {
-            let mut path_propositions = available_propositions.clone();
-            path_propositions.extend(path_facts.iter().map(|fact| fact.proposition().clone()));
-            let return_assumptions = assumptions_from_propositions(&path_propositions);
+            let mut path_pure_facts = available_pure_facts.clone();
+            path_pure_facts.extend(
+                execution_pure_facts
+                    .iter()
+                    .map(|fact| fact.proposition().clone()),
+            );
+            let return_assumptions = assumptions_from_propositions(&path_pure_facts);
             let (outcome, obligations) = c_function_outcome_from_statement_outcome(
                 &execution_start_state,
                 function,
@@ -1666,7 +1681,7 @@ fn execute_step_from_execution_point(
                 function.clone(),
                 arguments.to_vec(),
                 assumptions.clone(),
-                vec![(outcome, path_facts, obligations)],
+                vec![(outcome, execution_pure_facts, obligations)],
             );
             let replay_state = execution_start_state.clone();
             set_replay_execution(
@@ -1682,16 +1697,26 @@ fn execute_step_from_execution_point(
         }
         CStatementOutcome::UndefinedBehavior(kind) => {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `execute_step` produced undefined behavior: {kind:?}\n  available requirements: {}\n  path facts: {}",
-                describe_propositions(available_propositions),
-                describe_facts(&path_facts)
+                "`{claim_label}` proof step {step_index}: `execute_step` produced undefined behavior: {kind:?}\n{}",
+                describe_proof_context(
+                    available_pure_facts,
+                    &current_resources,
+                    parameters,
+                    arguments,
+                    &execution_pure_facts
+                )
             )));
         }
         CStatementOutcome::RuntimeError(error) => {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `execute_step` produced runtime error: {error:?}\n  available requirements: {}\n  path facts: {}",
-                describe_propositions(available_propositions),
-                describe_facts(&path_facts)
+                "`{claim_label}` proof step {step_index}: `execute_step` produced runtime error: {error:?}\n{}",
+                describe_proof_context(
+                    available_pure_facts,
+                    &current_resources,
+                    parameters,
+                    arguments,
+                    &execution_pure_facts
+                )
             )));
         }
     }
@@ -1702,7 +1727,7 @@ fn execute_step_from_execution_point(
 fn execute_rest_from_execution_point(
     replay: &mut ProofStepReplayState,
     state: &mut CState,
-    available_propositions: &[Proposition],
+    available_pure_facts: &[Proposition],
     function: &CFunction,
     arguments: &[CExpression],
     assumptions: &Assumptions,
@@ -1746,7 +1771,7 @@ fn execute_rest_from_execution_point(
                 &execution_start_state,
                 function,
                 arguments,
-                available_propositions,
+                available_pure_facts,
                 assumptions,
                 claim_label,
                 step_index,
@@ -1777,8 +1802,9 @@ fn execute_rest_from_execution_point(
 fn execute_until_statement(
     replay: &mut ProofStepReplayState,
     state: &mut CState,
-    available_propositions: &mut Vec<Proposition>,
+    available_pure_facts: &mut Vec<Proposition>,
     function: &CFunction,
+    parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     assumptions: &Assumptions,
     function_environment: &CFunctionEnvironment,
@@ -1808,6 +1834,7 @@ fn execute_until_statement(
         })?;
 
     if let Some(prefix) = prefix {
+        let current_resources = callee_state.resources().facts().to_vec();
         let execution = prove_symbolic_c_execution_paths_with_environment(
             callee_state,
             prefix,
@@ -1819,9 +1846,12 @@ fn execute_until_statement(
             claim_label,
             step_index,
             "execute_until",
-            available_propositions,
+            available_pure_facts,
+            &current_resources,
+            parameters,
+            arguments,
         )?;
-        available_propositions.extend(
+        available_pure_facts.extend(
             prefix_path
                 .facts()
                 .iter()
@@ -1849,7 +1879,7 @@ fn complete_segmented_function_execution(
     execution_start_state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
-    available_propositions: &[Proposition],
+    available_pure_facts: &[Proposition],
     assumptions: &Assumptions,
     claim_label: &str,
     step_index: usize,
@@ -1874,9 +1904,9 @@ fn complete_segmented_function_execution(
                 "`{claim_label}` proof step {step_index}: `{step_name}` saw unexpected suffix theorem"
             )));
         };
-        let mut path_propositions = available_propositions.to_vec();
-        path_propositions.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-        let return_assumptions = assumptions_from_propositions(&path_propositions);
+        let mut path_pure_facts = available_pure_facts.to_vec();
+        path_pure_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+        let return_assumptions = assumptions_from_propositions(&path_pure_facts);
         let (outcome, obligations) = c_function_outcome_from_statement_outcome(
             execution_start_state,
             function,
@@ -1900,7 +1930,10 @@ fn single_statement_step_path<'a>(
     claim_label: &str,
     step_index: usize,
     step_name: &str,
-    available_propositions: &[Proposition],
+    available_pure_facts: &[Proposition],
+    resources: &[CResourceFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
 ) -> Result<&'a crate::kernel::SymbolicCExecutionPath, ClickError> {
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
@@ -1916,10 +1949,15 @@ fn single_statement_step_path<'a>(
     let path = &execution.paths()[0];
     if !path.obligations().is_empty() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` left step obligations: {}\n  available requirements: {}\n  path facts: {}",
+            "`{claim_label}` proof step {step_index}: `{step_name}` left step obligations: {}\n{}",
             describe_obligations(path.obligations()),
-            describe_propositions(available_propositions),
-            describe_facts(path.facts())
+            describe_proof_context(
+                available_pure_facts,
+                resources,
+                parameters,
+                arguments,
+                path.facts()
+            )
         )));
     }
     Ok(path)
@@ -1930,7 +1968,10 @@ fn single_normal_statement_path<'a>(
     claim_label: &str,
     step_index: usize,
     step_name: &str,
-    available_propositions: &[Proposition],
+    available_pure_facts: &[Proposition],
+    resources: &[CResourceFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
 ) -> Result<&'a crate::kernel::SymbolicCExecutionPath, ClickError> {
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
@@ -1946,10 +1987,15 @@ fn single_normal_statement_path<'a>(
     let path = &execution.paths()[0];
     if !path.obligations().is_empty() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` left prefix obligations: {}\n  available requirements: {}\n  path facts: {}",
+            "`{claim_label}` proof step {step_index}: `{step_name}` left prefix obligations: {}\n{}",
             describe_obligations(path.obligations()),
-            describe_propositions(available_propositions),
-            describe_facts(path.facts())
+            describe_proof_context(
+                available_pure_facts,
+                resources,
+                parameters,
+                arguments,
+                path.facts()
+            )
         )));
     }
     match implication_body(path.theorem().proposition()) {
@@ -2105,7 +2151,7 @@ fn materialize_folded_composite_resource_memory(
     state: &CState,
 ) -> Result<CMemory, String> {
     let mut memory = state.memory().clone();
-    for resource in state.resources().elements() {
+    for resource in state.resources().facts() {
         let (name, resource_arguments) = match resource.resource() {
             CResource::Composite { name, arguments } => (name, arguments),
             CResource::Memory(_) | CResource::Token { .. } => {
@@ -2139,12 +2185,12 @@ fn project_initial_view_composite_resources(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     mut state: CState,
-    available_propositions: &[Proposition],
+    available_pure_facts: &[Proposition],
     claim_label: &str,
 ) -> Result<CState, ClickError> {
-    let assumptions = assumptions_from_propositions(available_propositions);
-    for resource in state.resources().elements().to_vec() {
-        let CResourceElement::View(CResource::Composite {
+    let assumptions = assumptions_from_propositions(available_pure_facts);
+    for resource in state.resources().facts().to_vec() {
+        let CResourceFact::View(CResource::Composite {
             name,
             arguments: resource_arguments,
         }) = resource
@@ -2177,14 +2223,14 @@ fn project_initial_view_composite_resources(
             ))
         })?;
         let viewed_contained_resources = contained_resources
-            .elements()
+            .facts()
             .iter()
-            .filter_map(CResourceElement::core)
+            .filter_map(CResourceFact::core)
             .collect::<Vec<_>>();
         let resources = state
             .resources()
             .clone()
-            .try_compose_with_elements(viewed_contained_resources, &assumptions)
+            .try_compose_with_facts(viewed_contained_resources, &assumptions)
             .map_err(|error| {
                 ClickError::new(format!(
                     "`{claim_label}` setup failed: observing view resource `{name}` produced {}",
@@ -2201,17 +2247,17 @@ fn project_initial_resource_facts(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
-    available_propositions: &[Proposition],
+    available_pure_facts: &[Proposition],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
 ) -> Result<Vec<Proposition>, ClickError> {
     let result = CValue::Int32(Bitvector32Term::Constant(0));
-    let projected_propositions = project_resource_context_observable_facts(
+    let projected_pure_facts = project_resource_context_observable_facts(
         parameters,
         arguments,
         state.resources(),
-        available_propositions,
+        available_pure_facts,
         &format!("`{claim_label}` setup"),
     )?;
     project_folded_resource_observable_facts(
@@ -2221,7 +2267,7 @@ fn project_initial_resource_facts(
         state,
         state,
         &result,
-        &projected_propositions,
+        &projected_pure_facts,
         predicate_environment,
         click_function_environment,
     )
@@ -2234,20 +2280,20 @@ fn project_outcome_resource_facts(
     arguments: &[CExpression],
     pre_state: &CState,
     outcome: &CFunctionOutcome,
-    available_propositions: &[Proposition],
+    available_pure_facts: &[Proposition],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
     path_index: usize,
 ) -> Result<Vec<Proposition>, ClickError> {
     let CFunctionOutcome::Return { value, state } = outcome else {
-        return Ok(available_propositions.to_vec());
+        return Ok(available_pure_facts.to_vec());
     };
-    let projected_propositions = project_resource_context_observable_facts(
+    let projected_pure_facts = project_resource_context_observable_facts(
         parameters,
         arguments,
         state.resources(),
-        available_propositions,
+        available_pure_facts,
         &format!("`{claim_label}` path {path_index}"),
     )?;
     project_folded_resource_observable_facts(
@@ -2257,7 +2303,7 @@ fn project_outcome_resource_facts(
         pre_state,
         state,
         value,
-        &projected_propositions,
+        &projected_pure_facts,
         predicate_environment,
         click_function_environment,
     )
@@ -2272,11 +2318,11 @@ fn project_resource_context_observable_facts(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     resources: &ResourceContext,
-    available_propositions: &[Proposition],
+    available_pure_facts: &[Proposition],
     context: &str,
 ) -> Result<Vec<Proposition>, ClickError> {
-    let assumptions = assumptions_from_propositions(available_propositions);
-    let mut propositions = available_propositions.to_vec();
+    let assumptions = assumptions_from_propositions(available_pure_facts);
+    let mut propositions = available_pure_facts.to_vec();
     let facts = resources.observable_facts(&assumptions).map_err(|error| {
         ClickError::new(format!(
             "{context}: {}",
@@ -2295,14 +2341,14 @@ fn append_state_resource_context_observable_facts(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
-    available_propositions: &mut Vec<Proposition>,
+    available_pure_facts: &mut Vec<Proposition>,
     context: &str,
 ) -> Result<(), ClickError> {
-    *available_propositions = project_resource_context_observable_facts(
+    *available_pure_facts = project_resource_context_observable_facts(
         parameters,
         arguments,
         state.resources(),
-        available_propositions,
+        available_pure_facts,
         context,
     )?;
     Ok(())
@@ -2315,12 +2361,12 @@ fn project_folded_resource_observable_facts(
     pre_state: &CState,
     state: &CState,
     result: &CValue,
-    available_propositions: &[Proposition],
+    available_pure_facts: &[Proposition],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<Proposition>, String> {
-    let mut propositions = available_propositions.to_vec();
-    for resource in state.resources().elements() {
+    let mut propositions = available_pure_facts.to_vec();
+    for resource in state.resources().facts() {
         project_held_resource_observable_facts(
             resource_environment,
             resource,
@@ -2343,7 +2389,7 @@ fn observe_composite_resource(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: CState,
-    available_propositions: &mut Vec<Proposition>,
+    available_pure_facts: &mut Vec<Proposition>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
@@ -2357,16 +2403,16 @@ fn observe_composite_resource(
         step_index,
     )?;
     let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
-    let assumptions = assumptions_from_propositions(available_propositions);
+    let assumptions = assumptions_from_propositions(available_pure_facts);
     if !state
         .resources()
-        .satisfies_element(&abstract_resource, &assumptions)
+        .satisfies_fact(&abstract_resource, &assumptions)
     {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `observe({})` is missing resource `{}`\n  available resources: {}",
+            "`{claim_label}` proof step {step_index}: `observe({})` is missing resource fact `{}`\n  available resource facts: {}",
             describe_resource_clause(resource),
-            describe_resource_element(&abstract_resource, parameters, arguments),
-            describe_resource_elements(state.resources().elements(), parameters, arguments)
+            describe_resource_fact(&abstract_resource, parameters, arguments),
+            describe_resource_facts(state.resources().facts(), parameters, arguments)
         )));
     }
     let CResource::Composite {
@@ -2387,7 +2433,7 @@ fn observe_composite_resource(
         &state,
         state.memory().clone(),
         &CValue::Int32(Bitvector32Term::Constant(0)),
-        available_propositions,
+        available_pure_facts,
         predicate_environment,
         click_function_environment,
     )
@@ -2397,16 +2443,16 @@ fn observe_composite_resource(
             describe_resource_clause(resource)
         ))
     })?;
-    let assumptions = assumptions_from_propositions(available_propositions);
+    let assumptions = assumptions_from_propositions(available_pure_facts);
     let viewed_contained_resources = contained_resources
-        .elements()
+        .facts()
         .iter()
-        .filter_map(CResourceElement::core)
+        .filter_map(CResourceFact::core)
         .collect::<Vec<_>>();
     let resources = state
         .resources()
         .clone()
-        .try_compose_with_elements(viewed_contained_resources, &assumptions)
+        .try_compose_with_facts(viewed_contained_resources, &assumptions)
         .map_err(|error| {
             ClickError::new(format!(
                 "`{claim_label}` proof step {step_index}: `observe({})` produced {}",
@@ -2419,13 +2465,13 @@ fn observe_composite_resource(
 
 fn project_held_resource_observable_facts(
     resource_environment: &ResourceEnvironment,
-    resource: &CResourceElement,
+    resource: &CResourceFact,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
     memory: CMemory,
     result: &CValue,
-    available_propositions: &mut Vec<Proposition>,
+    available_pure_facts: &mut Vec<Proposition>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<CMemory, String> {
@@ -2447,7 +2493,7 @@ fn project_held_resource_observable_facts(
         pre_state,
         memory,
         result,
-        available_propositions,
+        available_pure_facts,
         predicate_environment,
         click_function_environment,
     )
@@ -2463,7 +2509,7 @@ fn project_composite_resource_observable_facts(
     pre_state: &CState,
     memory: CMemory,
     result: &CValue,
-    available_propositions: &mut Vec<Proposition>,
+    available_pure_facts: &mut Vec<Proposition>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<(CMemory, ResourceContext), String> {
@@ -2498,7 +2544,7 @@ fn project_composite_resource_observable_facts(
         pre_state,
         &fact_state,
         result,
-        available_propositions,
+        available_pure_facts,
         predicate_environment,
         click_function_environment,
     )?;
@@ -2614,15 +2660,15 @@ fn describe_resource_context_validity_error(
     arguments: &[CExpression],
 ) -> String {
     match error {
-        ResourceContextValidityError::DuplicateOwnedResourceElement(resource) => {
+        ResourceContextValidityError::DuplicateOwnedResourceFact(resource) => {
             format!(
-                "duplicate resource `{}`",
-                describe_resource_element(&resource, parameters, arguments)
+                "duplicate resource fact `{}`",
+                describe_resource_fact(&resource, parameters, arguments)
             )
         }
         ResourceContextValidityError::OverlappingWriteResources { left, right } => {
             format!(
-                "overlapping write resources `write({})` and `write({})`",
+                "overlapping write resource facts `write({})` and `write({})`",
                 describe_memory_range(&left, parameters, arguments),
                 describe_memory_range(&right, parameters, arguments)
             )
@@ -2675,7 +2721,7 @@ fn instantiate_composite_resource_body_resources(
         // This composite-body instantiation path has no fact assumptions yet.
         // Projection/packing paths check composition once assumptions are
         // available.
-        resources = resources.unchecked_with_element(lowered);
+        resources = resources.unchecked_with_fact(lowered);
     }
     Ok((memory, resources))
 }
@@ -2711,7 +2757,7 @@ fn unfold_composite_resource(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     mut state: CState,
-    available_propositions: &mut Vec<Proposition>,
+    available_pure_facts: &mut Vec<Proposition>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
@@ -2730,17 +2776,17 @@ fn unfold_composite_resource(
     let substitutions =
         resource_argument_substitutions(definition, resource, claim_label, step_index)?;
     let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
-    let assumptions = assumptions_from_propositions(available_propositions);
+    let assumptions = assumptions_from_propositions(available_pure_facts);
     let resources = state
         .resources()
         .clone()
-        .without_element(&abstract_resource, &assumptions)
+        .without_fact(&abstract_resource, &assumptions)
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `unfold({})` is missing resource `{}`\n  available resources: {}",
+                "`{claim_label}` proof step {step_index}: `unfold({})` is missing resource fact `{}`\n  available resource facts: {}",
                 describe_resource_clause(resource),
-                describe_resource_element(&abstract_resource, parameters, arguments),
-                describe_resource_elements(state.resources().elements(), parameters, arguments)
+                describe_resource_fact(&abstract_resource, parameters, arguments),
+                describe_resource_facts(state.resources().facts(), parameters, arguments)
             ))
         })?;
     state = state.with_resource_context(resources);
@@ -2762,7 +2808,7 @@ fn unfold_composite_resource(
         let resources = state
             .resources()
             .clone()
-            .try_compose_with_element(lowered, &assumptions)
+            .try_compose_with_fact(lowered, &assumptions)
             .map_err(|error| {
                 ClickError::new(format!(
                     "`{claim_label}` proof step {step_index}: `unfold({})` produced {}",
@@ -2786,7 +2832,7 @@ fn unfold_composite_resource(
             &state,
             &state,
             &CValue::Int32(Bitvector32Term::Constant(0)),
-            available_propositions,
+            available_pure_facts,
             &fact,
             predicate_environment,
             click_function_environment,
@@ -2797,14 +2843,14 @@ fn unfold_composite_resource(
                 describe_resource_clause(resource)
             ))
         })?;
-        available_propositions.push(lowered_fact);
+        available_pure_facts.push(lowered_fact);
     }
 
     append_state_resource_context_observable_facts(
         parameters,
         arguments,
         &state,
-        available_propositions,
+        available_pure_facts,
         &format!(
             "`{claim_label}` proof step {step_index}: `unfold({})`",
             describe_resource_clause(resource)
@@ -2819,8 +2865,8 @@ fn fold_composite_resources_on_outcome(
     resource_folds: &[ResourceClause],
     claim_label: &str,
     path_index: usize,
-    path_facts: &[PathFact],
-    available_propositions: &[Proposition],
+    execution_pure_facts: &[ExecutionPureFact],
+    available_pure_facts: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -2853,8 +2899,8 @@ fn fold_composite_resources_on_outcome(
             prove_ensure_proposition_by_simp(
                 claim_label,
                 path_index,
-                path_facts,
-                available_propositions,
+                execution_pure_facts,
+                available_pure_facts,
                 &fact,
                 parameters,
                 arguments,
@@ -2875,14 +2921,14 @@ fn fold_composite_resources_on_outcome(
 
         let CFunctionOutcome::Return { value, state } = outcome else {
             return Err(ClickError::new(format!(
-                "`{claim_label}` path {path_index}: `fold({})` requires a return outcome, got {}\n  path facts: {}",
+                "`{claim_label}` path {path_index}: `fold({})` requires a return outcome, got {}\n  execution pure facts: {}",
                 describe_resource_clause(resource),
                 describe_function_outcome(&outcome, parameters, arguments),
-                describe_facts(path_facts)
+                describe_execution_pure_facts(execution_pure_facts)
             )));
         };
         let mut post_state = state;
-        let assumptions = assumptions_from_propositions(available_propositions);
+        let assumptions = assumptions_from_propositions(available_pure_facts);
         for contained in composite_body.contains() {
             let contained =
                 instantiate_resource_clause(contained, &substitutions).map_err(|message| {
@@ -2896,14 +2942,14 @@ fn fold_composite_resources_on_outcome(
             let resources = post_state
                 .resources()
                 .clone()
-                .without_element(&lowered, &assumptions)
+                .without_fact(&lowered, &assumptions)
                 .ok_or_else(|| {
                     ClickError::new(format!(
-                        "`{claim_label}` path {path_index}: `fold({})` is missing contained resource `{}`\n  final resources: {}\n  path facts: {}",
+                        "`{claim_label}` path {path_index}: `fold({})` is missing contained resource fact `{}`\n  final resource facts: {}\n  execution pure facts: {}",
                         describe_resource_clause(resource),
-                        describe_resource_element(&lowered, parameters, arguments),
-                        describe_resource_elements(post_state.resources().elements(), parameters, arguments),
-                        describe_facts(path_facts)
+                        describe_resource_fact(&lowered, parameters, arguments),
+                        describe_resource_facts(post_state.resources().facts(), parameters, arguments),
+                        describe_execution_pure_facts(execution_pure_facts)
                     ))
                 })?;
             post_state = post_state.with_resource_context(resources);
@@ -2914,7 +2960,7 @@ fn fold_composite_resources_on_outcome(
         let resources = post_state
             .resources()
             .clone()
-            .try_compose_with_element(abstract_resource.clone(), &assumptions)
+            .try_compose_with_fact(abstract_resource.clone(), &assumptions)
             .map_err(|error| {
                 ClickError::new(format!(
                     "`{claim_label}` path {path_index}: `fold({})` produced {}",
@@ -3075,7 +3121,7 @@ fn instantiate_contract_segment(
 fn materialize_composite_resource_cells(
     mut memory: CMemory,
     resource_clause: &ResourceClause,
-    lowered: &CResourceElement,
+    lowered: &CResourceFact,
     parameters: &[syntax::C0Parameter],
 ) -> CMemory {
     let Some((segment, range)) = (match resource_clause {
@@ -3232,7 +3278,7 @@ fn validate_function_frame_step(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
-    requirement_propositions: &[Proposition],
+    requirement_pure_facts: &[Proposition],
 ) -> Result<(), ClickError> {
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
@@ -3256,12 +3302,12 @@ fn validate_function_frame_step(
             Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
             proposition => {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `frame()` saw unexpected theorem body {proposition:?}\n  path facts: {}",
-                    describe_facts(path.facts())
+                    "`{claim_label}` proof step {step_index}: `frame()` saw unexpected theorem body {proposition:?}\n  execution pure facts: {}",
+                    describe_execution_pure_facts(path.facts())
                 )));
             }
         };
-        let mut path_requirements = requirement_propositions.to_vec();
+        let mut path_requirements = requirement_pure_facts.to_vec();
         path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
         check_function_claim(
             claim_label,
@@ -3298,7 +3344,7 @@ fn prove_claim_from_steps_execution(
     function: &CFunction,
     state: &CState,
     arguments: &[CExpression],
-    requirement_propositions: &[Proposition],
+    requirement_pure_facts: &[Proposition],
     unfolded_predicates: &[String],
     theorem_applications: &[(usize, TheoremApplication)],
     resource_folds: &[ResourceClause],
@@ -3320,24 +3366,24 @@ fn prove_claim_from_steps_execution(
     for (path_index, path) in execution.paths().iter().enumerate() {
         if !path.obligations().is_empty() {
             return Err(ClickError::new(format!(
-                "`proof steps` failed for `{claim_label}` path {path_index}: remaining proof obligations: {}\n  available requirements: {}\n  path facts: {}",
+                "`proof steps` failed for `{claim_label}` path {path_index}: remaining proof obligations: {}\n  pure facts: {}\n  execution pure facts: {}",
                 describe_obligations(path.obligations()),
-                describe_propositions(requirement_propositions),
-                describe_facts(path.facts())
+                describe_pure_facts(requirement_pure_facts),
+                describe_execution_pure_facts(path.facts())
             )));
         }
         let mut outcome = match implication_body(path.theorem().proposition()) {
             Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
             proposition => {
                 return Err(ClickError::new(format!(
-                    "`proof steps` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  available requirements: {}\n  path facts: {}",
-                    describe_propositions(requirement_propositions),
-                    describe_facts(path.facts())
+                    "`proof steps` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  pure facts: {}\n  execution pure facts: {}",
+                    describe_pure_facts(requirement_pure_facts),
+                    describe_execution_pure_facts(path.facts())
                 )));
             }
         };
 
-        let mut path_requirements = requirement_propositions.to_vec();
+        let mut path_requirements = requirement_pure_facts.to_vec();
         path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
         path_requirements = unfold_available_predicate_facts(
             predicate_environment,
@@ -3384,9 +3430,9 @@ fn prove_claim_from_steps_execution(
             } = &outcome
             else {
                 return Err(ClickError::new(format!(
-                    "`proof steps` failed for `{claim_label}` path {path_index}: theorem application requires a return outcome, got {}\n  path facts: {}",
+                    "`proof steps` failed for `{claim_label}` path {path_index}: theorem application requires a return outcome, got {}\n  execution pure facts: {}",
                     describe_function_outcome(&outcome, parameters, arguments),
-                    describe_facts(path.facts())
+                    describe_execution_pure_facts(path.facts())
                 )));
             };
             let values = parameter_values(parameters, arguments).map_err(|error| {
@@ -3495,9 +3541,9 @@ fn prove_claim_from_steps_execution(
                 )
                 .ok_or_else(|| {
                     ClickError::new(format!(
-                        "`proof steps` failed for `{claim_label}` path {path_index}: bounded execution did not satisfy the packaged specification\n  available requirements: {}\n  path facts: {}",
-                        describe_propositions(&specification.requires()),
-                        describe_facts(path.facts())
+                        "`proof steps` failed for `{claim_label}` path {path_index}: bounded execution did not satisfy the packaged specification\n  pure facts: {}\n  execution pure facts: {}",
+                        describe_pure_facts(&specification.requires()),
+                        describe_execution_pure_facts(path.facts())
                     ))
                 })?
             }
@@ -3558,14 +3604,14 @@ fn requirements_with_structural_unfolds(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     function_block: &FunctionBlock,
-    requirement_propositions: &[Proposition],
+    requirement_pure_facts: &[Proposition],
 ) -> Result<Vec<Proposition>, String> {
     let unfolded_predicates = structural_unfold_step_names(function_block);
     unfold_available_predicate_facts(
         predicate_environment,
         click_function_environment,
         &unfolded_predicates,
-        requirement_propositions,
+        requirement_pure_facts,
     )
 }
 
@@ -3694,16 +3740,16 @@ fn loop_effect_summary_regions(function_block: &FunctionBlock) -> BTreeSet<usize
 fn execution_obligation_error(
     execution: &crate::kernel::SymbolicCExecution,
     ensure_label: &str,
-    requirement_propositions: &[Proposition],
+    requirement_pure_facts: &[Proposition],
 ) -> Option<ClickError> {
-    execution_obligation_error_for_tactic("auto", execution, ensure_label, requirement_propositions)
+    execution_obligation_error_for_tactic("auto", execution, ensure_label, requirement_pure_facts)
 }
 
 fn execution_obligation_error_for_tactic(
     tactic_name: &str,
     execution: &crate::kernel::SymbolicCExecution,
     ensure_label: &str,
-    requirement_propositions: &[Proposition],
+    requirement_pure_facts: &[Proposition],
 ) -> Option<ClickError> {
     if let Some(limit) = execution.limit() {
         return Some(ClickError::new(format!(
@@ -3719,10 +3765,10 @@ fn execution_obligation_error_for_tactic(
     for (path_index, path) in execution.paths().iter().enumerate() {
         if !path.obligations().is_empty() {
             return Some(ClickError::new(format!(
-                "`{tactic_name}` failed for `{ensure_label}` path {path_index}: remaining proof obligations: {}\n  available requirements: {}\n  path facts: {}",
+                "`{tactic_name}` failed for `{ensure_label}` path {path_index}: remaining proof obligations: {}\n  pure facts: {}\n  execution pure facts: {}",
                 describe_obligations(path.obligations()),
-                describe_propositions(&requirement_propositions),
-                describe_facts(path.facts())
+                describe_pure_facts(&requirement_pure_facts),
+                describe_execution_pure_facts(path.facts())
             )));
         }
     }
@@ -3741,7 +3787,7 @@ fn prove_claim_from_execution(
     function: &CFunction,
     state: &CState,
     arguments: &[CExpression],
-    requirement_propositions: &[Proposition],
+    requirement_pure_facts: &[Proposition],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
@@ -3765,14 +3811,14 @@ fn prove_claim_from_execution(
             Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
             proposition => {
                 return Err(ClickError::new(format!(
-                    "`{tactic_name}` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  available requirements: {}\n  path facts: {}",
-                    describe_propositions(&requirement_propositions),
-                    describe_facts(path.facts())
+                    "`{tactic_name}` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  pure facts: {}\n  execution pure facts: {}",
+                    describe_pure_facts(&requirement_pure_facts),
+                    describe_execution_pure_facts(path.facts())
                 )));
             }
         };
 
-        let mut path_requirements = requirement_propositions.to_vec();
+        let mut path_requirements = requirement_pure_facts.to_vec();
         path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
         path_requirements = project_outcome_resource_facts(
             resource_environment,
@@ -3800,7 +3846,7 @@ fn prove_claim_from_execution(
             click_function_environment,
             &[],
         )?;
-        let path_requirements_description = describe_propositions(&path_requirements);
+        let path_requirements_description = describe_pure_facts(&path_requirements);
         let specification = c_function_specification(
             state.clone(),
             arguments.to_vec(),
@@ -3826,9 +3872,9 @@ fn prove_claim_from_execution(
                 )
                 .ok_or_else(|| {
                     ClickError::new(format!(
-                        "`auto` failed for `{claim_label}` path {path_index}: execution did not satisfy the packaged specification\n  available requirements: {}\n  path facts: {}",
+                        "`auto` failed for `{claim_label}` path {path_index}: execution did not satisfy the packaged specification\n  pure facts: {}\n  execution pure facts: {}",
                         path_requirements_description,
-                        describe_facts(path.facts())
+                        describe_execution_pure_facts(path.facts())
                     ))
                 })?
             }

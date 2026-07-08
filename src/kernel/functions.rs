@@ -59,7 +59,7 @@ pub(super) fn execute_c_function_paths(
             environment,
             budget,
         )? {
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &arguments_path.facts,
                 &arguments_path.obligations,
                 &body_path.facts,
@@ -146,7 +146,7 @@ pub(super) fn execute_c_function_verification_paths(
             budget,
             variables,
         )? {
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &arguments_path.facts,
                 &arguments_path.obligations,
                 &body_path.facts,
@@ -252,7 +252,7 @@ pub(super) fn execute_c_function_call_paths(
             environment,
             budget,
         )? {
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &arguments_path.facts,
                 &arguments_path.obligations,
                 &body_path.facts,
@@ -333,7 +333,7 @@ pub(super) fn evaluate_c_arguments_paths(
             for argument_path in
                 evaluate_c_expression_paths(state, argument, &argument_assumptions, budget)?
             {
-                let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                     &path.facts,
                     &path.obligations,
                     &argument_path.facts,
@@ -426,12 +426,12 @@ fn prepare_function_resource_transfer(
         Err(error) => return Ok(Err(error)),
     };
 
-    let mut required_resource_list = required_resources.elements().to_vec();
-    required_resource_list.sort_by_key(resource_element_transfer_priority);
+    let mut required_resource_list = required_resources.facts().to_vec();
+    required_resource_list.sort_by_key(resource_fact_transfer_priority);
 
     let mut return_resources = caller_state.resources().clone();
     for resource in &required_resource_list {
-        let Some(resources) = return_resources.without_element(resource, assumptions) else {
+        let Some(resources) = return_resources.without_fact(resource, assumptions) else {
             return Ok(Err(CRuntimeError::MissingResource {
                 resource: resource.clone(),
             }));
@@ -439,7 +439,7 @@ fn prepare_function_resource_transfer(
         return_resources = resources;
     }
     return_resources = match return_resources
-        .try_compose_with_elements(ensured_resources.elements().iter().cloned(), assumptions)
+        .try_compose_with_facts(ensured_resources.facts().iter().cloned(), assumptions)
     {
         Ok(resources) => resources,
         Err(error) => return Ok(Err(resource_context_runtime_error(error))),
@@ -464,7 +464,7 @@ fn evaluate_function_resource_context(
             Ok(resource) => resource,
             Err(error) => return Ok(Err(error)),
         };
-        context = match context.try_compose_with_element(resource, assumptions) {
+        context = match context.try_compose_with_fact(resource, assumptions) {
             Ok(context) => context,
             Err(error) => return Ok(Err(resource_context_runtime_error(error))),
         };
@@ -474,7 +474,7 @@ fn evaluate_function_resource_context(
 
 fn resource_context_runtime_error(error: ResourceContextValidityError) -> CRuntimeError {
     match error {
-        ResourceContextValidityError::DuplicateOwnedResourceElement(resource) => {
+        ResourceContextValidityError::DuplicateOwnedResourceFact(resource) => {
             CRuntimeError::DuplicateResource { resource }
         }
         ResourceContextValidityError::OverlappingWriteResources { left, right } => {
@@ -491,14 +491,14 @@ fn evaluate_function_resource_spec(
     resource: &CResourceSpec,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Result<CResourceElement, CRuntimeError>> {
+) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
     match resource {
         CResourceSpec::Read(segment) => {
             let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
                 Ok(segment) => segment,
                 Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
             };
-            Ok(Ok(CResourceElement::view_memory(CMemoryRange::new(
+            Ok(Ok(CResourceFact::view_memory(CMemoryRange::new(
                 segment.base,
                 segment.start,
                 segment.end,
@@ -509,7 +509,7 @@ fn evaluate_function_resource_spec(
                 Ok(segment) => segment,
                 Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
             };
-            Ok(Ok(CResourceElement::own_memory(CMemoryRange::new(
+            Ok(Ok(CResourceFact::own_memory(CMemoryRange::new(
                 segment.base,
                 segment.start,
                 segment.end,
@@ -557,7 +557,7 @@ fn evaluate_function_declared_resource_spec(
     parameter_types: &[CType],
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Result<CResourceElement, CRuntimeError>> {
+) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
     if arguments.len() != parameter_types.len() {
         return Ok(Err(CRuntimeError::TypeMismatch));
     }
@@ -590,16 +590,16 @@ fn evaluate_function_declared_resource_spec(
         ResourceFamily::Memory => return Ok(Err(CRuntimeError::TypeMismatch)),
     };
     Ok(Ok(match access {
-        CResourceAccessMode::Own => CResourceElement::Own(resource),
-        CResourceAccessMode::View => CResourceElement::View(resource),
+        CResourceAccessMode::Own => CResourceFact::Own(resource),
+        CResourceAccessMode::View => CResourceFact::View(resource),
     }))
 }
 
-fn resource_element_transfer_priority(resource: &CResourceElement) -> u8 {
+fn resource_fact_transfer_priority(resource: &CResourceFact) -> u8 {
     match resource {
-        CResourceElement::View(_) => 0,
-        CResourceElement::Own(CResource::Memory(_)) => 1,
-        CResourceElement::Own(CResource::Composite { .. } | CResource::Token { .. }) => 2,
+        CResourceFact::View(_) => 0,
+        CResourceFact::Own(CResource::Memory(_)) => 1,
+        CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. }) => 2,
     }
 }
 

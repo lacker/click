@@ -2866,7 +2866,7 @@ pub(super) fn resource_context_from_requirements(
             // This lowering path has no proposition assumptions yet. It builds
             // a provisional context; execution paths use checked composition
             // once assumptions are available.
-            context = context.unchecked_with_element(lower_resource_clause(
+            context = context.unchecked_with_fact(lower_resource_clause(
                 resource, parameters, arguments, memory,
             )?);
         }
@@ -2879,15 +2879,15 @@ pub(super) fn lower_resource_clause(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     memory: &CMemory,
-) -> Result<CResourceElement, ClickError> {
+) -> Result<CResourceFact, ClickError> {
     match resource {
         ResourceClause::Read(segment) => {
             let range = lower_resource_segment("read", segment, parameters, arguments, memory)?;
-            Ok(CResourceElement::view_memory(range))
+            Ok(CResourceFact::view_memory(range))
         }
         ResourceClause::Write(segment) => {
             let range = lower_resource_segment("write", segment, parameters, arguments, memory)?;
-            Ok(CResourceElement::own_memory(range))
+            Ok(CResourceFact::own_memory(range))
         }
         ResourceClause::Declared {
             access,
@@ -2941,8 +2941,8 @@ pub(super) fn lower_resource_clause(
                 },
             };
             Ok(match access {
-                ResourceAccessMode::Own => CResourceElement::Own(resource),
-                ResourceAccessMode::View => CResourceElement::View(resource),
+                ResourceAccessMode::Own => CResourceFact::Own(resource),
+                ResourceAccessMode::View => CResourceFact::View(resource),
             })
         }
     }

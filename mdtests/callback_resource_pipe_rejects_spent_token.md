@@ -54,5 +54,5 @@ int32 pipe_callback_bad(int32 primary, int32 secondary) {
 ```
 
 ```expect
-fail: missing resource `can_complete(primary)`
+fail: missing resource fact `can_complete(primary)`
 ```

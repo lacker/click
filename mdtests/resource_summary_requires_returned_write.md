@@ -38,5 +38,5 @@ int32 consume_write(int32 p[]) {
 ```
 
 ```expect
-fail: missing resource
+fail: missing resource fact
 ```

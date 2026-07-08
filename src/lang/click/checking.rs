@@ -5,8 +5,8 @@ use super::*;
 pub(super) fn check_function_claim(
     claim_label: &str,
     path_index: usize,
-    path_facts: &[crate::kernel::PathFact],
-    available_propositions: &[Proposition],
+    execution_pure_facts: &[crate::kernel::ExecutionPureFact],
+    available_pure_facts: &[Proposition],
     claim: &FunctionClaimRef<'_>,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -21,8 +21,8 @@ pub(super) fn check_function_claim(
             Ensure::Proposition(proposition) => prove_ensure_proposition(
                 claim_label,
                 path_index,
-                path_facts,
-                available_propositions,
+                execution_pure_facts,
+                available_pure_facts,
                 proposition,
                 parameters,
                 arguments,
@@ -35,8 +35,8 @@ pub(super) fn check_function_claim(
             Ensure::Resource(resource) => prove_ensure_resource(
                 claim_label,
                 path_index,
-                path_facts,
-                available_propositions,
+                execution_pure_facts,
+                available_pure_facts,
                 resource,
                 parameters,
                 arguments,
@@ -47,8 +47,8 @@ pub(super) fn check_function_claim(
         FunctionClaimRef::Effect(_, effect_clause) => prove_effect_clause(
             claim_label,
             path_index,
-            path_facts,
-            available_propositions,
+            execution_pure_facts,
+            available_pure_facts,
             effect_clause.effect(),
             parameters,
             arguments,
@@ -63,8 +63,8 @@ pub(super) fn check_function_claim(
 pub(super) fn check_function_claim_by_simp(
     claim_label: &str,
     path_index: usize,
-    path_facts: &[crate::kernel::PathFact],
-    available_propositions: &[Proposition],
+    execution_pure_facts: &[crate::kernel::ExecutionPureFact],
+    available_pure_facts: &[Proposition],
     claim: &FunctionClaimRef<'_>,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -79,8 +79,8 @@ pub(super) fn check_function_claim_by_simp(
             Ensure::Proposition(proposition) => prove_ensure_proposition_by_simp(
                 claim_label,
                 path_index,
-                path_facts,
-                available_propositions,
+                execution_pure_facts,
+                available_pure_facts,
                 proposition,
                 parameters,
                 arguments,
@@ -93,8 +93,8 @@ pub(super) fn check_function_claim_by_simp(
             Ensure::Resource(resource) => prove_ensure_resource(
                 claim_label,
                 path_index,
-                path_facts,
-                available_propositions,
+                execution_pure_facts,
+                available_pure_facts,
                 resource,
                 parameters,
                 arguments,
@@ -111,8 +111,8 @@ pub(super) fn check_function_claim_by_simp(
 pub(super) fn prove_ensure_resource(
     claim_label: &str,
     path_index: usize,
-    path_facts: &[crate::kernel::PathFact],
-    available_propositions: &[Proposition],
+    execution_pure_facts: &[crate::kernel::ExecutionPureFact],
+    available_pure_facts: &[Proposition],
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -124,32 +124,32 @@ pub(super) fn prove_ensure_resource(
     } = outcome
     else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` failed on path {path_index}: {}\n  path facts: {}",
+            "`{claim_label}` failed on path {path_index}: {}\n  execution pure facts: {}",
             describe_function_outcome(outcome, parameters, arguments),
-            describe_facts(path_facts)
+            describe_execution_pure_facts(execution_pure_facts)
         )));
     };
     let expected = lower_resource_clause(resource, parameters, arguments, pre_state.memory())?;
-    let assumptions = assumptions_from_propositions(available_propositions);
+    let assumptions = assumptions_from_propositions(available_pure_facts);
     if post_state
         .resources()
-        .satisfies_element(&expected, &assumptions)
+        .satisfies_fact(&expected, &assumptions)
     {
         return Ok(());
     }
     Err(ClickError::new(format!(
-        "`{claim_label}` failed on path {path_index}: missing resource `{}`\n  final resources: {}\n  path facts: {}",
-        describe_resource_element(&expected, parameters, arguments),
-        describe_resource_elements(post_state.resources().elements(), parameters, arguments),
-        describe_facts(path_facts)
+        "`{claim_label}` failed on path {path_index}: missing resource fact `{}`\n  final resource facts: {}\n  execution pure facts: {}",
+        describe_resource_fact(&expected, parameters, arguments),
+        describe_resource_facts(post_state.resources().facts(), parameters, arguments),
+        describe_execution_pure_facts(execution_pure_facts)
     )))
 }
 
 pub(super) fn check_function_claim_with_existence_steps(
     claim_label: &str,
     path_index: usize,
-    path_facts: &[crate::kernel::PathFact],
-    available_propositions: &mut Vec<Proposition>,
+    execution_pure_facts: &[crate::kernel::ExecutionPureFact],
+    available_pure_facts: &mut Vec<Proposition>,
     claim: &FunctionClaimRef<'_>,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -178,9 +178,9 @@ pub(super) fn check_function_claim_with_existence_steps(
     } = outcome
     else {
         return Err(ClickError::new(format!(
-            "`witness`/`choose` failed for `{claim_label}` path {path_index}: {}\n  path facts: {}",
+            "`witness`/`choose` failed for `{claim_label}` path {path_index}: {}\n  execution pure facts: {}",
             describe_function_outcome(outcome, parameters, arguments),
-            describe_facts(path_facts)
+            describe_execution_pure_facts(execution_pure_facts)
         )));
     };
 
@@ -191,7 +191,7 @@ pub(super) fn check_function_claim_with_existence_steps(
         ))
     })?;
     let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
-    let mut assumptions = assumptions_from_propositions(available_propositions);
+    let mut assumptions = assumptions_from_propositions(available_pure_facts);
     let mut next_lowering_variable = 2_000_000;
     let mut active_functions = BTreeSet::new();
     let mut goal = lower_outcome_proposition_with_environment(
@@ -222,7 +222,7 @@ pub(super) fn check_function_claim_with_existence_steps(
                     claim_label,
                     path_index,
                     step_index,
-                    available_propositions,
+                    available_pure_facts,
                     &mut values,
                     original_requirements,
                     &mut next_choice_variable,
@@ -230,11 +230,11 @@ pub(super) fn check_function_claim_with_existence_steps(
                     click_function_environment,
                     unfolded_predicates,
                 )?;
-                *available_propositions = unfold_available_predicate_facts(
+                *available_pure_facts = unfold_available_predicate_facts(
                     predicate_environment,
                     click_function_environment,
                     unfolded_predicates,
-                    available_propositions,
+                    available_pure_facts,
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
@@ -243,7 +243,7 @@ pub(super) fn check_function_claim_with_existence_steps(
                 })?;
             }
             ProofStep::Witness(witness) => {
-                assumptions = assumptions_from_propositions(available_propositions);
+                assumptions = assumptions_from_propositions(available_pure_facts);
                 goal = unfold_predicates_in_proposition(
                     predicate_environment,
                     click_function_environment,
@@ -283,7 +283,7 @@ pub(super) fn check_function_claim_with_existence_steps(
         }
     }
 
-    assumptions = assumptions_from_propositions(available_propositions);
+    assumptions = assumptions_from_propositions(available_pure_facts);
     goal = unfold_predicates_in_proposition(
         predicate_environment,
         click_function_environment,
@@ -301,16 +301,16 @@ pub(super) fn check_function_claim_with_existence_steps(
         match simp_proposition(&goal, &assumptions) {
             SimpProposition::True => Ok(()),
             simplified => Err(ClickError::new(format!(
-                "`witness`/`choose` failed for `{claim_label}` path {path_index}: simplified proposition was not true: {simplified:?}\n  instantiated goal: {goal:?}\n  path facts: {}",
-                describe_facts(path_facts)
+                "`witness`/`choose` failed for `{claim_label}` path {path_index}: simplified proposition was not true: {simplified:?}\n  instantiated goal: {goal:?}\n  execution pure facts: {}",
+                describe_execution_pure_facts(execution_pure_facts)
             ))),
         }
     } else if assumptions.proves(&goal) {
         Ok(())
     } else {
         Err(ClickError::new(format!(
-            "`witness`/`choose` failed for `{claim_label}` path {path_index}: instantiated goal was not provable: {goal:?}\n  path facts: {}",
-            describe_facts(path_facts)
+            "`witness`/`choose` failed for `{claim_label}` path {path_index}: instantiated goal was not provable: {goal:?}\n  execution pure facts: {}",
+            describe_execution_pure_facts(execution_pure_facts)
         )))
     }
 }
@@ -320,7 +320,7 @@ pub(super) fn apply_choose_step(
     claim_label: &str,
     path_index: usize,
     step_index: usize,
-    available_propositions: &mut Vec<Proposition>,
+    available_pure_facts: &mut Vec<Proposition>,
     values: &mut BTreeMap<String, CValue>,
     original_requirements: &[Requirement],
     next_choice_variable: &mut u64,
@@ -354,7 +354,7 @@ pub(super) fn apply_choose_step(
                 ))
             })?,
     };
-    let mut source = available_propositions
+    let mut source = available_pure_facts
         .get(source_index)
         .cloned()
         .ok_or_else(|| {
@@ -363,7 +363,7 @@ pub(super) fn apply_choose_step(
             ))
         })?;
     if !matches!(source, Proposition::Exists { .. }) && !unfolded_predicates.is_empty() {
-        let assumptions = assumptions_from_propositions(available_propositions);
+        let assumptions = assumptions_from_propositions(available_pure_facts);
         source = unfold_predicates_in_proposition(
             predicate_environment,
             click_function_environment,
@@ -395,7 +395,7 @@ pub(super) fn apply_choose_step(
     let chosen = Bitvector32Term::Variable(Variable(*next_choice_variable));
     *next_choice_variable += 1;
     values.insert(choice.name.clone(), CValue::Int32(chosen.clone()));
-    available_propositions.push(substitute_int32_variable_in_proposition(&body, var, chosen));
+    available_pure_facts.push(substitute_int32_variable_in_proposition(&body, var, chosen));
     Ok(())
 }
 
@@ -482,8 +482,8 @@ pub(super) fn apply_witness_step(
 pub(super) fn prove_ensure_proposition_by_simp(
     ensure_label: &str,
     path_index: usize,
-    path_facts: &[crate::kernel::PathFact],
-    available_propositions: &[Proposition],
+    execution_pure_facts: &[crate::kernel::ExecutionPureFact],
+    available_pure_facts: &[Proposition],
     proposition: &ClickProposition,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -495,9 +495,9 @@ pub(super) fn prove_ensure_proposition_by_simp(
 ) -> Result<(), ClickError> {
     let CFunctionOutcome::Return { value, state } = outcome else {
         return Err(ClickError::new(format!(
-            "`simp` failed for `{ensure_label}` path {path_index}: {}\n  path facts: {}",
+            "`simp` failed for `{ensure_label}` path {path_index}: {}\n  execution pure facts: {}",
             describe_function_outcome(outcome, parameters, arguments),
-            describe_facts(path_facts)
+            describe_execution_pure_facts(execution_pure_facts)
         )));
     };
     let mut proposition = lower_outcome_proposition(
@@ -506,7 +506,7 @@ pub(super) fn prove_ensure_proposition_by_simp(
         pre_state,
         state,
         value,
-        available_propositions,
+        available_pure_facts,
         proposition,
         predicate_environment,
         click_function_environment,
@@ -516,7 +516,7 @@ pub(super) fn prove_ensure_proposition_by_simp(
             "`simp` failed for `{ensure_label}` path {path_index}: could not lower proposition: {message}"
         ))
     })?;
-    let assumptions = assumptions_from_propositions(available_propositions);
+    let assumptions = assumptions_from_propositions(available_pure_facts);
     proposition = unfold_predicates_in_proposition(
         predicate_environment,
         click_function_environment,
@@ -532,8 +532,8 @@ pub(super) fn prove_ensure_proposition_by_simp(
     match simp_proposition(&proposition, &assumptions) {
         SimpProposition::True => Ok(()),
         simplified => Err(ClickError::new(format!(
-            "`simp` failed for `{ensure_label}` path {path_index}: simplified proposition was not true: {simplified:?}\n  original proposition: {proposition:?}\n  path facts: {}",
-            describe_facts(path_facts)
+            "`simp` failed for `{ensure_label}` path {path_index}: simplified proposition was not true: {simplified:?}\n  original proposition: {proposition:?}\n  execution pure facts: {}",
+            describe_execution_pure_facts(execution_pure_facts)
         ))),
     }
 }
@@ -542,15 +542,15 @@ pub(super) fn unfold_available_predicate_facts(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
-    available_propositions: &[Proposition],
+    available_pure_facts: &[Proposition],
 ) -> Result<Vec<Proposition>, String> {
     if unfolded_predicates.is_empty() {
-        return Ok(available_propositions.to_vec());
+        return Ok(available_pure_facts.to_vec());
     }
 
-    let assumptions = assumptions_from_propositions(available_propositions);
-    let mut propositions = available_propositions.to_vec();
-    for proposition in available_propositions {
+    let assumptions = assumptions_from_propositions(available_pure_facts);
+    let mut propositions = available_pure_facts.to_vec();
+    for proposition in available_pure_facts {
         let unfolded = unfold_predicates_in_proposition(
             predicate_environment,
             click_function_environment,
@@ -2246,8 +2246,8 @@ pub(super) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32Term {
 pub(super) fn prove_effect_clause(
     claim_label: &str,
     path_index: usize,
-    path_facts: &[crate::kernel::PathFact],
-    available_propositions: &[Proposition],
+    execution_pure_facts: &[crate::kernel::ExecutionPureFact],
+    available_pure_facts: &[Proposition],
     effect: &Effect,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -2256,16 +2256,16 @@ pub(super) fn prove_effect_clause(
 ) -> Result<(), ClickError> {
     let CFunctionOutcome::Return { value: _, state } = outcome else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` failed on path {path_index}: {}\n  path facts: {}",
+            "`{claim_label}` failed on path {path_index}: {}\n  execution pure facts: {}",
             describe_function_outcome(outcome, parameters, arguments),
-            describe_facts(path_facts)
+            describe_execution_pure_facts(execution_pure_facts)
         )));
     };
     prove_mutation_footprint(
         claim_label,
         path_index,
-        path_facts,
-        available_propositions,
+        execution_pure_facts,
+        available_pure_facts,
         parameters,
         arguments,
         pre_state,
@@ -2277,8 +2277,8 @@ pub(super) fn prove_effect_clause(
 pub(super) fn prove_ensure_proposition(
     ensure_label: &str,
     path_index: usize,
-    path_facts: &[crate::kernel::PathFact],
-    available_propositions: &[Proposition],
+    execution_pure_facts: &[crate::kernel::ExecutionPureFact],
+    available_pure_facts: &[Proposition],
     proposition: &ClickProposition,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -2307,7 +2307,7 @@ pub(super) fn prove_ensure_proposition(
                         pre_state,
                         state,
                         value,
-                        available_propositions,
+                        available_pure_facts,
                         left,
                         predicate_environment,
                         click_function_environment,
@@ -2323,7 +2323,7 @@ pub(super) fn prove_ensure_proposition(
                         pre_state,
                         state,
                         value,
-                        available_propositions,
+                        available_pure_facts,
                         right,
                         predicate_environment,
                         click_function_environment,
@@ -2337,22 +2337,22 @@ pub(super) fn prove_ensure_proposition(
                         &left_value,
                         *operator,
                         &right_value,
-                        available_propositions,
+                        available_pure_facts,
                     )
                     .ok_or_else(|| {
                         ClickError::new(format!(
-                            "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: left side evaluated to {}, right side evaluated to {}\n  path facts: {}",
+                            "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: left side evaluated to {}, right side evaluated to {}\n  execution pure facts: {}",
                             describe_c_value(&left_value, parameters, arguments),
                             describe_c_value(&right_value, parameters, arguments),
-                            describe_facts(path_facts)
+                            describe_execution_pure_facts(execution_pure_facts)
                         ))
                     })?;
                 }
                 other => {
                     return Err(ClickError::new(format!(
-                        "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: {}\n  path facts: {}",
+                        "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: {}\n  execution pure facts: {}",
                         describe_function_outcome(other, parameters, arguments),
-                        describe_facts(path_facts)
+                        describe_execution_pure_facts(execution_pure_facts)
                     )));
                 }
             }
@@ -2361,8 +2361,8 @@ pub(super) fn prove_ensure_proposition(
             prove_ensure_proposition(
                 ensure_label,
                 path_index,
-                path_facts,
-                available_propositions,
+                execution_pure_facts,
+                available_pure_facts,
                 left,
                 parameters,
                 arguments,
@@ -2375,8 +2375,8 @@ pub(super) fn prove_ensure_proposition(
             prove_ensure_proposition(
                 ensure_label,
                 path_index,
-                path_facts,
-                available_propositions,
+                execution_pure_facts,
+                available_pure_facts,
                 right,
                 parameters,
                 arguments,
@@ -2391,9 +2391,9 @@ pub(super) fn prove_ensure_proposition(
             let surface_proposition = describe_click_proposition(proposition);
             let CFunctionOutcome::Return { value, state } = outcome else {
                 return Err(ClickError::new(format!(
-                    "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: {}\n  path facts: {}",
+                    "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: {}\n  execution pure facts: {}",
                     describe_function_outcome(outcome, parameters, arguments),
-                    describe_facts(path_facts)
+                    describe_execution_pure_facts(execution_pure_facts)
                 )));
             };
             let mut proposition = lower_outcome_proposition(
@@ -2402,7 +2402,7 @@ pub(super) fn prove_ensure_proposition(
                 pre_state,
                 state,
                 value,
-                available_propositions,
+                available_pure_facts,
                 proposition,
                 predicate_environment,
                 click_function_environment,
@@ -2412,7 +2412,7 @@ pub(super) fn prove_ensure_proposition(
                     "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: could not lower proposition: {message}"
                 ))
             })?;
-            let assumptions = assumptions_from_propositions(available_propositions);
+            let assumptions = assumptions_from_propositions(available_pure_facts);
             proposition = unfold_predicates_in_proposition(
                 predicate_environment,
                 click_function_environment,
@@ -2427,8 +2427,8 @@ pub(super) fn prove_ensure_proposition(
             })?;
             if !assumptions.proves(&proposition) {
                 return Err(ClickError::new(format!(
-                    "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: proposition was not provable\n  path facts: {}",
-                    describe_facts(path_facts)
+                    "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: proposition was not provable\n  execution pure facts: {}",
+                    describe_execution_pure_facts(execution_pure_facts)
                 )));
             }
         }
@@ -2439,8 +2439,8 @@ pub(super) fn prove_ensure_proposition(
 pub(super) fn prove_mutation_footprint(
     claim_label: &str,
     path_index: usize,
-    path_facts: &[crate::kernel::PathFact],
-    available_propositions: &[Proposition],
+    execution_pure_facts: &[crate::kernel::ExecutionPureFact],
+    available_pure_facts: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -2461,7 +2461,7 @@ pub(super) fn prove_mutation_footprint(
                     parameters,
                     arguments,
                     pre_state,
-                    available_propositions,
+                    available_pure_facts,
                     segment,
                 )
                 .map_err(|message| {
@@ -2473,7 +2473,7 @@ pub(super) fn prove_mutation_footprint(
             })
             .collect::<Result<Vec<_>, _>>()?,
     };
-    let assumptions = assumptions_from_propositions(available_propositions);
+    let assumptions = assumptions_from_propositions(available_pure_facts);
     let mut writes = post_state
         .memory()
         .differing_cell_pointers(pre_state.memory())
@@ -2481,7 +2481,7 @@ pub(super) fn prove_mutation_footprint(
         .filter(is_effect_relevant_pointer)
         .collect::<BTreeSet<_>>();
     writes.extend(
-        path_facts
+        execution_pure_facts
             .iter()
             .filter_map(|fact| match fact.proposition() {
                 Proposition::CMemoryMutatesOnly { pointers, .. } => Some(pointers.as_slice()),
@@ -2498,16 +2498,16 @@ pub(super) fn prove_mutation_footprint(
             .any(|segment| segment_contains_pointer(segment, pointer, &assumptions))
         {
             return Err(ClickError::new(format!(
-                "`{claim_label}` failed on path {path_index}: write to `{}` is outside the mutable footprint\n  mutable segments: {}\n  evaluated segments: {}\n  path facts: {}",
+                "`{claim_label}` failed on path {path_index}: write to `{}` is outside the mutable footprint\n  mutable segments: {}\n  evaluated segments: {}\n  execution pure facts: {}",
                 describe_pointer(pointer, parameters, arguments),
                 describe_contract_segments(&segments),
                 describe_evaluated_segments(&segments),
-                describe_facts(path_facts)
+                describe_execution_pure_facts(execution_pure_facts)
             )));
         }
     }
 
-    let effect_summary_ranges = path_facts
+    let effect_summary_ranges = execution_pure_facts
         .iter()
         .filter_map(|fact| match fact.proposition() {
             Proposition::CMemoryEffectSummary { mutable_ranges, .. } => {
@@ -2524,11 +2524,11 @@ pub(super) fn prove_mutation_footprint(
             .any(|segment| segment_contains_range(segment, range, &assumptions))
         {
             return Err(ClickError::new(format!(
-                "`{claim_label}` failed on path {path_index}: effect summary range `{}` is outside the mutable footprint\n  mutable segments: {}\n  evaluated segments: {}\n  path facts: {}",
+                "`{claim_label}` failed on path {path_index}: effect summary range `{}` is outside the mutable footprint\n  mutable segments: {}\n  evaluated segments: {}\n  execution pure facts: {}",
                 describe_memory_range(range, parameters, arguments),
                 describe_contract_segments(&segments),
                 describe_evaluated_segments(&segments),
-                describe_facts(path_facts)
+                describe_execution_pure_facts(execution_pure_facts)
             )));
         }
     }
@@ -2552,7 +2552,7 @@ pub(super) fn evaluate_effect_segment(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     entry_state: &CState,
-    available_propositions: &[Proposition],
+    available_pure_facts: &[Proposition],
     segment: &ContractSegment,
 ) -> Result<EvaluatedContractSegment, String> {
     if segment.state != ContractSegmentState::Current {
@@ -2563,7 +2563,7 @@ pub(super) fn evaluate_effect_segment(
     }
     let parameter_values =
         parameter_values(parameters, arguments).map_err(|error| error.message)?;
-    let assumptions = assumptions_from_propositions(available_propositions);
+    let assumptions = assumptions_from_propositions(available_pure_facts);
     let base = evaluate_c_contract_expression(
         &parameter_values,
         entry_state,
@@ -2763,10 +2763,10 @@ pub(super) fn prove_value_comparison(
     actual: &CValue,
     operator: ComparisonOperator,
     expected: &CValue,
-    available_propositions: &[Proposition],
+    available_pure_facts: &[Proposition],
 ) -> Option<()> {
     let proposition = comparison_proposition(actual.clone(), operator, expected.clone()).ok()?;
-    let assumptions = available_propositions
+    let assumptions = available_pure_facts
         .iter()
         .cloned()
         .fold(Assumptions::new(), Assumptions::assume_proposition);
@@ -2794,7 +2794,7 @@ pub(super) fn evaluate_contract_expression(
     pre_state: &CState,
     post_state: &CState,
     result: &CValue,
-    available_propositions: &[Proposition],
+    available_pure_facts: &[Proposition],
     expression: &ContractExpression,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -2802,7 +2802,7 @@ pub(super) fn evaluate_contract_expression(
     let parameter_values =
         parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let array_refs = array_refs_for_parameters(parameters, &parameter_values, post_state.memory());
-    let assumptions = assumptions_from_propositions(available_propositions);
+    let assumptions = assumptions_from_propositions(available_pure_facts);
     let mut active_functions = BTreeSet::new();
     evaluate_contract_expression_with_environment(
         &parameter_values,
@@ -2824,14 +2824,14 @@ pub(super) fn lower_outcome_proposition(
     pre_state: &CState,
     post_state: &CState,
     result: &CValue,
-    available_propositions: &[Proposition],
+    available_pure_facts: &[Proposition],
     proposition: &ClickProposition,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
     let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
-    let assumptions = assumptions_from_propositions(available_propositions);
+    let assumptions = assumptions_from_propositions(available_pure_facts);
     let mut next_variable = 2_000_000;
     let mut active_functions = BTreeSet::new();
     lower_outcome_proposition_with_environment(

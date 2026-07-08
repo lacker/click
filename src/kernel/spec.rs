@@ -3,14 +3,14 @@ use super::prelude::*;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct SpecPropositionPath {
     pub(super) proposition: Proposition,
-    pub(super) facts: Vec<PathFact>,
+    pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct SpecExpressionPath {
     pub(super) value: CValue,
-    pub(super) facts: Vec<PathFact>,
+    pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
 }
 
@@ -56,7 +56,7 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
                     &right_assumptions,
                     budget,
                 )? {
-                    if let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                    if let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                         &left_path.facts,
                         &left_path.obligations,
                         &right_path.facts,
@@ -132,7 +132,7 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
                             })
                         })
                         .collect::<Vec<_>>();
-                    if let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                    if let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                         &left_path.facts,
                         &left_path.obligations,
                         &right_path.facts,
@@ -269,7 +269,7 @@ pub(super) fn lower_spec_binary_proposition_at_state(
             &right_assumptions,
             budget,
         )? {
-            if let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            if let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &left_path.facts,
                 &left_path.obligations,
                 &right_path.facts,
@@ -313,7 +313,7 @@ pub(super) fn lower_spec_comparison_proposition_at_state(
             &right_assumptions,
             budget,
         )? {
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &left_path.facts,
                 &left_path.obligations,
                 &right_path.facts,
@@ -369,7 +369,7 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
                 &prefix_path.obligations,
             );
             for argument_path in &argument_paths {
-                let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                     &prefix_path.facts,
                     &prefix_path.obligations,
                     &argument_path.facts,
@@ -604,7 +604,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                     &body_assumptions,
                     budget,
                 )? {
-                    if let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                    if let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                         &value_path.facts,
                         &value_path.obligations,
                         &body_path.facts,
@@ -727,7 +727,7 @@ pub(super) fn evaluate_spec_pointer_offset_paths(
             let CValue::Int32(elements) = element_path.value else {
                 continue;
             };
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &pointer_path.facts,
                 &pointer_path.obligations,
                 &element_path.facts,
@@ -782,7 +782,7 @@ pub(super) fn evaluate_spec_add_paths(
             &right_assumptions,
             budget,
         )? {
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &left_path.facts,
                 &left_path.obligations,
                 &right_path.facts,
@@ -819,7 +819,7 @@ pub(super) fn evaluate_spec_int32_binary_paths(
     apply: impl Fn(
         Bitvector32Term,
         Bitvector32Term,
-        Vec<PathFact>,
+        Vec<ExecutionPureFact>,
         Vec<ProofObligation>,
     ) -> Vec<CExpressionPath>,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
@@ -845,7 +845,7 @@ pub(super) fn evaluate_spec_int32_binary_paths(
             &right_assumptions,
             budget,
         )? {
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &left_facts,
                 &left_path.obligations,
                 &right_path.facts,
@@ -964,7 +964,7 @@ pub(super) fn evaluate_spec_if_paths(
                 let mut branch_paths = Vec::new();
                 for then_path in then_paths {
                     for else_path in &else_paths {
-                        let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                        let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                             &then_path.facts,
                             &then_path.obligations,
                             &else_path.facts,
@@ -992,7 +992,7 @@ pub(super) fn evaluate_spec_if_paths(
         };
 
         for branch_path in branch_paths {
-            if let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            if let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &condition_path.facts,
                 &condition_path.obligations,
                 &branch_path.facts,
@@ -1045,7 +1045,7 @@ pub(super) fn evaluate_spec_range_fold_paths(
             let CValue::Int32(end) = end_path.value else {
                 continue;
             };
-            let Some((bound_facts, bound_obligations)) = merge_path_facts_and_obligations(
+            let Some((bound_facts, bound_obligations)) = merge_execution_pure_facts_and_obligations(
                 &start_path.facts,
                 &start_path.obligations,
                 &end_path.facts,
@@ -1063,7 +1063,7 @@ pub(super) fn evaluate_spec_range_fold_paths(
                 &bound_assumptions,
                 budget,
             )? {
-                let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                     &bound_facts,
                     &bound_obligations,
                     &initial_path.facts,
@@ -1104,7 +1104,7 @@ pub(super) fn evaluate_spec_range_fold_body_path(
     accumulator: &str,
     item: &str,
     body: &SpecExpression,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
@@ -1134,13 +1134,15 @@ pub(super) fn evaluate_spec_range_fold_body_path(
                 if !body_paths.is_empty() {
                     return Ok(None);
                 }
-                let Some((next_facts, next_obligations)) = merge_path_facts_and_obligations(
-                    &facts,
-                    &obligations,
-                    &body_path.facts,
-                    &body_path.obligations,
-                    assumptions,
-                ) else {
+                let Some((next_facts, next_obligations)) =
+                    merge_execution_pure_facts_and_obligations(
+                        &facts,
+                        &obligations,
+                        &body_path.facts,
+                        &body_path.obligations,
+                        assumptions,
+                    )
+                else {
                     return Ok(None);
                 };
                 value = body_path.value;
@@ -1180,7 +1182,7 @@ pub(super) fn evaluate_spec_range_fold_body_path(
             if !body_paths.is_empty() {
                 return Ok(None);
             }
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &facts,
                 &obligations,
                 &body_path.facts,

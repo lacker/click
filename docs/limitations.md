@@ -36,7 +36,7 @@ results are undefined behavior.
 
 `uint8` rvalues promote to `int32` for arithmetic, ordered comparisons, shifts,
 and bitwise operators. Assigning or returning an `int32` into `uint8` is a
-checked narrowing conversion: the current requirements/path facts must prove
+checked narrowing conversion: the current pure facts must prove
 `0 <= value <= 255`.
 
 The prelude has initial byte-slice and C-string predicates over `uint8[]`, but
@@ -146,5 +146,7 @@ or invent arithmetic theorems.
 
 ## Diagnostics Are Developer-Oriented
 
-Failure messages expose internal propositions, path facts, and memory terms.
-They are useful for agents but not yet polished for end users.
+Failure messages increasingly expose a proof context split into pure facts and
+resource facts, but some lower-level errors still expose internal propositions
+and memory terms. They are useful for agents but not yet polished for end
+users.

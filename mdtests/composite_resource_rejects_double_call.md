@@ -40,5 +40,5 @@ int32 call_twice(int32 flag[]) {
 ```
 
 ```expect
-fail: missing resource `uncalled(flag)`
+fail: missing resource fact `uncalled(flag)`
 ```

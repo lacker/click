@@ -1386,24 +1386,24 @@ pub(super) fn collect_resource_context_bitvector_variables(
     resources: &ResourceContext,
     variables: &mut BTreeSet<Variable>,
 ) {
-    for resource in resources.elements() {
+    for resource in resources.facts() {
         collect_resource_bitvector_variables(resource, variables);
     }
 }
 
 pub(super) fn collect_resource_bitvector_variables(
-    resource: &CResourceElement,
+    resource: &CResourceFact,
     variables: &mut BTreeSet<Variable>,
 ) {
     match resource {
-        CResourceElement::Own(CResource::Memory(range))
-        | CResourceElement::View(CResource::Memory(range)) => {
+        CResourceFact::Own(CResource::Memory(range))
+        | CResourceFact::View(CResource::Memory(range)) => {
             collect_c_memory_range_bitvector_variables(range, variables)
         }
-        CResourceElement::Own(
+        CResourceFact::Own(
             CResource::Composite { arguments, .. } | CResource::Token { arguments, .. },
         )
-        | CResourceElement::View(
+        | CResourceFact::View(
             CResource::Composite { arguments, .. } | CResource::Token { arguments, .. },
         ) => {
             for argument in arguments {
@@ -2535,8 +2535,8 @@ pub(super) fn substitute_bitvector_variable_in_resource_context(
     to: &Bitvector32Term,
 ) -> ResourceContext {
     ResourceContext {
-        elements: resources
-            .elements()
+        facts: resources
+            .facts()
             .iter()
             .map(|resource| substitute_bitvector_variable_in_resource(resource, from, to))
             .collect(),
@@ -2544,15 +2544,15 @@ pub(super) fn substitute_bitvector_variable_in_resource_context(
 }
 
 pub(super) fn substitute_bitvector_variable_in_resource(
-    resource: &CResourceElement,
+    resource: &CResourceFact,
     from: Variable,
     to: &Bitvector32Term,
-) -> CResourceElement {
+) -> CResourceFact {
     match resource {
-        CResourceElement::Own(resource) => CResourceElement::Own(
+        CResourceFact::Own(resource) => CResourceFact::Own(
             substitute_bitvector_variable_in_c_resource(resource, from, to),
         ),
-        CResourceElement::View(resource) => CResourceElement::View(
+        CResourceFact::View(resource) => CResourceFact::View(
             substitute_bitvector_variable_in_c_resource(resource, from, to),
         ),
     }
@@ -2937,7 +2937,7 @@ pub(super) fn forall_int32(var: Variable, body: Proposition) -> Proposition {
 pub(super) fn wrap_proof_facts(
     proposition: Proposition,
     assumptions: &Assumptions,
-    facts: &[PathFact],
+    facts: &[ExecutionPureFact],
     obligations: &[ProofObligation],
 ) -> Proposition {
     let proposition = obligations
@@ -2978,7 +2978,7 @@ pub(super) fn wrap_proof_facts(
 
 pub(super) fn wrap_path_context(
     proposition: Proposition,
-    facts: &[PathFact],
+    facts: &[ExecutionPureFact],
     obligations: &[ProofObligation],
 ) -> Proposition {
     let proposition = obligations
@@ -2994,7 +2994,7 @@ pub(super) fn wrap_path_context(
     })
 }
 
-pub(super) fn public_path_facts(facts: &[PathFact]) -> Vec<PathFact> {
+pub(super) fn public_execution_pure_facts(facts: &[ExecutionPureFact]) -> Vec<ExecutionPureFact> {
     facts
         .iter()
         .filter(|fact| fact.is_public())
@@ -3205,7 +3205,7 @@ pub(super) fn signed_const_add(term: &Bitvector32Term, addend: u32) -> Option<Bi
 }
 
 pub(super) fn add_path_fact(
-    facts: &mut Vec<PathFact>,
+    facts: &mut Vec<ExecutionPureFact>,
     assumptions: &Assumptions,
     proposition: Proposition,
 ) -> Option<()> {
@@ -3213,7 +3213,7 @@ pub(super) fn add_path_fact(
 }
 
 pub(super) fn add_internal_path_fact(
-    facts: &mut Vec<PathFact>,
+    facts: &mut Vec<ExecutionPureFact>,
     assumptions: &Assumptions,
     proposition: Proposition,
 ) -> Option<()> {
@@ -3221,7 +3221,7 @@ pub(super) fn add_internal_path_fact(
 }
 
 pub(super) fn add_path_fact_with_visibility(
-    facts: &mut Vec<PathFact>,
+    facts: &mut Vec<ExecutionPureFact>,
     assumptions: &Assumptions,
     proposition: Proposition,
     public: bool,
@@ -3242,15 +3242,15 @@ pub(super) fn add_path_fact_with_visibility(
     }
 
     facts.push(if public {
-        PathFact::new(proposition)
+        ExecutionPureFact::new(proposition)
     } else {
-        PathFact::internal(proposition)
+        ExecutionPureFact::internal(proposition)
     });
     Some(())
 }
 
 pub(super) fn add_condition_path_fact(
-    facts: &mut Vec<PathFact>,
+    facts: &mut Vec<ExecutionPureFact>,
     assumptions: &Assumptions,
     condition: ConditionTerm,
     value: bool,
@@ -3259,7 +3259,7 @@ pub(super) fn add_condition_path_fact(
 }
 
 pub(super) fn add_internal_condition_path_fact(
-    facts: &mut Vec<PathFact>,
+    facts: &mut Vec<ExecutionPureFact>,
     assumptions: &Assumptions,
     condition: ConditionTerm,
     value: bool,
@@ -3268,7 +3268,7 @@ pub(super) fn add_internal_condition_path_fact(
 }
 
 fn add_condition_path_fact_with_visibility(
-    facts: &mut Vec<PathFact>,
+    facts: &mut Vec<ExecutionPureFact>,
     assumptions: &Assumptions,
     condition: ConditionTerm,
     value: bool,
@@ -3295,15 +3295,15 @@ fn add_condition_path_fact_with_visibility(
 
     let proposition = Proposition::ConditionIs(condition, value);
     facts.push(if public {
-        PathFact::new(proposition)
+        ExecutionPureFact::new(proposition)
     } else {
-        PathFact::internal(proposition)
+        ExecutionPureFact::internal(proposition)
     });
     Some(())
 }
 
-pub(super) fn add_pointer_offset_equality_path_facts(
-    facts: &mut Vec<PathFact>,
+pub(super) fn add_pointer_offset_equality_execution_pure_facts(
+    facts: &mut Vec<ExecutionPureFact>,
     assumptions: &Assumptions,
     left: PointerOffsetTerm,
     right: PointerOffsetTerm,
@@ -3405,7 +3405,7 @@ pub(super) fn append_required_proof_obligations_under_path_context(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &Assumptions,
     new_obligations: &[ProofObligation],
-    facts: &[PathFact],
+    facts: &[ExecutionPureFact],
     context_obligations: &[ProofObligation],
 ) {
     for obligation in new_obligations {
@@ -3479,10 +3479,10 @@ pub(super) fn merge_obligations(
 }
 
 pub(super) fn merge_facts(
-    left: &[PathFact],
-    right: &[PathFact],
+    left: &[ExecutionPureFact],
+    right: &[ExecutionPureFact],
     assumptions: &Assumptions,
-) -> Option<Vec<PathFact>> {
+) -> Option<Vec<ExecutionPureFact>> {
     let mut facts = left.to_vec();
     for fact in right {
         add_path_fact_with_visibility(
@@ -3495,13 +3495,13 @@ pub(super) fn merge_facts(
     Some(facts)
 }
 
-pub(super) fn merge_path_facts_and_obligations(
-    left_facts: &[PathFact],
+pub(super) fn merge_execution_pure_facts_and_obligations(
+    left_facts: &[ExecutionPureFact],
     left_obligations: &[ProofObligation],
-    right_facts: &[PathFact],
+    right_facts: &[ExecutionPureFact],
     right_obligations: &[ProofObligation],
     assumptions: &Assumptions,
-) -> Option<(Vec<PathFact>, Vec<ProofObligation>)> {
+) -> Option<(Vec<ExecutionPureFact>, Vec<ProofObligation>)> {
     let facts = merge_facts(left_facts, right_facts, assumptions)?;
     let obligations = merge_obligations(left_obligations, right_obligations, assumptions)?;
     Some((facts, obligations))
@@ -3509,7 +3509,7 @@ pub(super) fn merge_path_facts_and_obligations(
 
 pub(super) fn decide_with_facts(
     assumptions: &Assumptions,
-    facts: &[PathFact],
+    facts: &[ExecutionPureFact],
     condition: &ConditionTerm,
 ) -> Option<bool> {
     assumptions
@@ -3536,7 +3536,7 @@ pub(super) fn decide_with_facts(
 
 pub(super) fn assumptions_with_path_context(
     assumptions: &Assumptions,
-    facts: &[PathFact],
+    facts: &[ExecutionPureFact],
     obligations: &[ProofObligation],
 ) -> Assumptions {
     let mut assumptions = assumptions.clone();

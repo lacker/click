@@ -51,8 +51,8 @@ Click already has a few spec-only mechanisms:
 - `let ... where` introduces immutable witnesses in proposition clauses.
 - `choose` introduces proof-local names from existential requirements.
 - `witness` supplies proof-local values for existential goals.
-- `read(p[lo..hi])` and `write(p[lo..hi])` introduce first resource-context
-  permissions for external memory accesses.
+- `read(p[lo..hi])` and `write(p[lo..hi])` introduce first resource facts for
+  external memory accesses.
 
 These are useful, but they are not the same as first-class mutable spec state.
 
@@ -68,11 +68,11 @@ Spec state should feel like ordinary Click facts. A user should be able to
 state, carry, unfold, and prove model facts without switching to a completely
 different mental model.
 
-This matters for permission logic. A permission may say that the current proof
-state has read or write authority over some memory. Unlike ordinary
-propositions, some permissions must not be copied freely. Click's first
-`read(...)` and `write(...)` slices therefore live in a resource context rather
-than as classical predicate facts.
+This matters for permission logic. A resource fact may say that the current
+proof state has read or write authority over some memory. Unlike pure facts,
+some resource facts must not be copied freely. Click's first `read(...)` and
+`write(...)` slices therefore live in a resource context rather than as
+classical predicate facts.
 
 ## Relationship To Permission Logic
 
@@ -82,8 +82,8 @@ central memory problem without committing to arbitrary global model state.
 
 The intended layering is:
 
-1. a small resource context for memory permissions,
-2. broader permission facts over memory locations, ranges, capabilities, and IO,
+1. a small resource context for memory resource facts,
+2. broader resource facts over memory locations, ranges, capabilities, and IO,
 3. first-class model variables if examples need arbitrary spec state,
 4. ownership predicates defined in libraries,
 5. refcount and allocation examples that pressure-test those abstractions.

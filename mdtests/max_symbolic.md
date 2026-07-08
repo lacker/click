@@ -1,7 +1,7 @@
 # symbolic max verifies on both branches
 
 This checks that `auto` verifies an `ensures` clause across every symbolic
-branch, using path facts from the `if`.
+branch, using execution-derived pure facts from the `if`.
 
 ```c filename=max.c
 int32 max(int32 a, int32 b) {
@@ -25,4 +25,3 @@ int32 max(int32 a, int32 b) {
 ```expect
 pass
 ```
-

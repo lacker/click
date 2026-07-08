@@ -3144,13 +3144,12 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
             },
         )]),
     );
-    let initial_resources = ResourceContext::new().unchecked_with_element(
-        CResourceElement::own_memory(CMemoryRange::new(
+    let initial_resources =
+        ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
             base.clone(),
             Bitvector32Term::Constant(0),
             Bitvector32Term::Constant(3),
-        )),
-    );
+        )));
     let final_memory = initial_memory
         .clone()
         .with_block("local:i", 4)

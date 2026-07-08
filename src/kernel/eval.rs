@@ -15,8 +15,8 @@ pub(super) fn evaluate_c_expression(
     Some(path.outcome)
 }
 
-pub(super) fn add_uint8_range_path_facts(
-    facts: &mut Vec<PathFact>,
+pub(super) fn add_uint8_range_execution_pure_facts(
+    facts: &mut Vec<ExecutionPureFact>,
     assumptions: &Assumptions,
     value: &Bitvector32Term,
 ) -> Option<()> {
@@ -36,13 +36,13 @@ pub(super) fn add_uint8_range_path_facts(
 
 pub(super) fn promote_c_int32_path_value(
     value: CValue,
-    facts: &mut Vec<PathFact>,
+    facts: &mut Vec<ExecutionPureFact>,
     assumptions: &Assumptions,
 ) -> Option<Bitvector32Term> {
     match value {
         CValue::Int32(value) => Some(value),
         CValue::UInt8(value) => {
-            add_uint8_range_path_facts(facts, assumptions, &value)?;
+            add_uint8_range_execution_pure_facts(facts, assumptions, &value)?;
             Some(value)
         }
         CValue::Pointer(_) => None,
@@ -89,7 +89,7 @@ pub(super) fn coerce_c_value_to_type(
 }
 
 fn c_type_mismatch_expression_path(
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
 ) -> CExpressionPath {
     CExpressionPath {
@@ -479,7 +479,7 @@ pub(super) fn read_c_lvalue_expression_paths(
 pub(super) fn read_c_lvalue_paths(
     state: &CState,
     outcome: CLValueOutcome,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -511,7 +511,7 @@ pub(super) fn read_c_lvalue_paths(
                 if is_external_memory_pointer(pointer) && !has_external_read_resource {
                     return vec![CExpressionPath {
                         outcome: CExpressionOutcome::RuntimeError(CRuntimeError::MissingResource {
-                            resource: CResourceElement::view_memory(CMemoryRange::new(
+                            resource: CResourceFact::view_memory(CMemoryRange::new(
                                 pointer.clone(),
                                 Bitvector32Term::Constant(0),
                                 Bitvector32Term::Constant(1),
@@ -619,7 +619,7 @@ pub(super) fn c_expression_pointer_step_width(
 
 pub(super) fn condition_as_c_int32_paths(
     condition: ConditionTerm,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -661,7 +661,7 @@ pub(super) fn condition_as_c_int32_paths(
 
 pub(super) fn condition_as_c_int32_not_paths(
     condition: ConditionTerm,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -704,13 +704,13 @@ pub(super) fn condition_as_c_int32_not_paths(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CTruthinessPath {
     pub(super) is_true: bool,
-    pub(super) facts: Vec<PathFact>,
+    pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
 }
 
 pub(super) fn c_truthiness_paths(
     value: CValue,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CTruthinessPath> {
@@ -769,7 +769,7 @@ pub(super) fn c_truthiness_paths(
 
 pub(super) fn c_truthiness_as_c_int32_paths(
     value: CValue,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -787,7 +787,7 @@ pub(super) fn evaluate_c_memory_load_paths(
     memory: &CMemory,
     pointer: Pointer,
     value_type: CType,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     mut obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
     has_external_read_resource: bool,
@@ -822,7 +822,7 @@ pub(super) fn evaluate_c_memory_load_paths(
         let mut paths = Vec::new();
 
         let mut equal_facts = facts.clone();
-        if add_pointer_offset_equality_path_facts(
+        if add_pointer_offset_equality_execution_pure_facts(
             &mut equal_facts,
             assumptions,
             pointer.offset.clone(),
@@ -848,7 +848,7 @@ pub(super) fn evaluate_c_memory_load_paths(
         }
 
         let mut distinct_facts = facts;
-        if add_pointer_offset_equality_path_facts(
+        if add_pointer_offset_equality_execution_pure_facts(
             &mut distinct_facts,
             assumptions,
             pointer.offset.clone(),
@@ -985,7 +985,7 @@ pub(super) fn evaluate_c_add_paths(
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
         for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &left_facts,
                 &left_obligations,
                 &right_path.facts,
@@ -1036,7 +1036,7 @@ pub(super) fn apply_c_add(
     right: CValue,
     left_step_width: Option<u32>,
     right_step_width: Option<u32>,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -1089,7 +1089,7 @@ pub(super) fn apply_c_add(
 pub(super) fn apply_c_int32_add(
     left: Bitvector32Term,
     right: Bitvector32Term,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -1135,7 +1135,7 @@ pub(super) fn apply_c_int32_add(
 pub(super) fn apply_c_int32_subtract(
     left: Bitvector32Term,
     right: Bitvector32Term,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -1183,7 +1183,7 @@ pub(super) fn apply_c_int32_subtract(
 pub(super) fn apply_c_int32_multiply(
     left: Bitvector32Term,
     right: Bitvector32Term,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -1231,7 +1231,7 @@ pub(super) fn apply_c_int32_multiply(
 pub(super) fn apply_c_int32_divide(
     left: Bitvector32Term,
     right: Bitvector32Term,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -1248,7 +1248,7 @@ pub(super) fn apply_c_int32_divide(
 pub(super) fn apply_c_int32_remainder(
     left: Bitvector32Term,
     right: Bitvector32Term,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -1265,7 +1265,7 @@ pub(super) fn apply_c_int32_remainder(
 fn apply_c_int32_division_like(
     left: Bitvector32Term,
     right: Bitvector32Term,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
     result: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
@@ -1325,7 +1325,7 @@ fn apply_c_int32_division_like(
 fn apply_c_int32_division_nonzero(
     left: Bitvector32Term,
     right: Bitvector32Term,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
     result: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
@@ -1372,7 +1372,7 @@ fn apply_c_int32_division_nonzero(
 pub(super) fn apply_c_int32_shift_left(
     left: Bitvector32Term,
     right: Bitvector32Term,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -1389,7 +1389,7 @@ pub(super) fn apply_c_int32_shift_left(
 pub(super) fn apply_c_int32_shift_right(
     left: Bitvector32Term,
     right: Bitvector32Term,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -1414,13 +1414,13 @@ pub(super) fn apply_c_int32_shift_right(
 fn apply_c_int32_with_valid_shift_count(
     left: Bitvector32Term,
     right: Bitvector32Term,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
     apply_valid_count: fn(
         Bitvector32Term,
         Bitvector32Term,
-        Vec<PathFact>,
+        Vec<ExecutionPureFact>,
         Vec<ProofObligation>,
         &Assumptions,
     ) -> Vec<CExpressionPath>,
@@ -1480,13 +1480,13 @@ fn apply_c_int32_with_valid_shift_count(
 fn apply_c_int32_with_nonnegative_shift_count(
     left: Bitvector32Term,
     right: Bitvector32Term,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
     apply_valid_count: fn(
         Bitvector32Term,
         Bitvector32Term,
-        Vec<PathFact>,
+        Vec<ExecutionPureFact>,
         Vec<ProofObligation>,
         &Assumptions,
     ) -> Vec<CExpressionPath>,
@@ -1529,7 +1529,7 @@ fn apply_c_int32_with_nonnegative_shift_count(
 fn apply_c_int32_shift_left_valid_count(
     left: Bitvector32Term,
     right: Bitvector32Term,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -1580,7 +1580,7 @@ fn apply_c_int32_shift_left_valid_count(
 fn apply_c_int32_shift_left_nonnegative(
     left: Bitvector32Term,
     right: Bitvector32Term,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -1663,7 +1663,7 @@ pub(super) fn evaluate_c_equal_paths(
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
         for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &left_facts,
                 &left_obligations,
                 &right_path.facts,
@@ -1706,7 +1706,7 @@ pub(super) fn evaluate_c_equal_paths(
 pub(super) fn apply_c_equal(
     left: CValue,
     right: CValue,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -1788,7 +1788,7 @@ pub(super) fn evaluate_c_not_equal_paths(
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
         for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &left_facts,
                 &left_obligations,
                 &right_path.facts,
@@ -1831,7 +1831,7 @@ pub(super) fn evaluate_c_not_equal_paths(
 pub(super) fn apply_c_not_equal(
     left: CValue,
     right: CValue,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
@@ -1952,7 +1952,7 @@ pub(super) fn evaluate_c_logical_and_paths(
                     for right_path in
                         evaluate_c_expression_paths(state, right, &right_assumptions, budget)?
                     {
-                        let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                        let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                             &left_truthiness.facts,
                             &left_truthiness.obligations,
                             &right_path.facts,
@@ -2043,7 +2043,7 @@ pub(super) fn evaluate_c_logical_or_paths(
                     for right_path in
                         evaluate_c_expression_paths(state, right, &right_assumptions, budget)?
                     {
-                        let Some((facts, obligations)) = merge_path_facts_and_obligations(
+                        let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                             &left_truthiness.facts,
                             &left_truthiness.obligations,
                             &right_path.facts,
@@ -2127,7 +2127,7 @@ pub(super) fn evaluate_c_int32_binary_paths(
     apply: impl Fn(
         Bitvector32Term,
         Bitvector32Term,
-        Vec<PathFact>,
+        Vec<ExecutionPureFact>,
         Vec<ProofObligation>,
     ) -> Vec<CExpressionPath>,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
@@ -2173,7 +2173,7 @@ pub(super) fn evaluate_c_int32_binary_paths(
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
         for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &left_facts,
                 &left_obligations,
                 &right_path.facts,
@@ -2216,7 +2216,7 @@ pub(super) fn evaluate_c_int32_binary_paths(
 pub(super) fn apply_c_int32_total_binary(
     left: Bitvector32Term,
     right: Bitvector32Term,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     apply: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
 ) -> Vec<CExpressionPath> {
@@ -2327,7 +2327,7 @@ pub(super) fn execute_c_lvalue_assignment_paths(
         let value_assumptions =
             assumptions_with_path_context(assumptions, &target_facts, &target_obligations);
         for value_path in evaluate_c_expression_paths(state, value, &value_assumptions, budget)? {
-            let Some((facts, obligations)) = merge_path_facts_and_obligations(
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &target_facts,
                 &target_obligations,
                 &value_path.facts,
@@ -2369,7 +2369,7 @@ pub(super) fn write_c_lvalue_paths(
     state: &CState,
     lvalue: CLValue,
     value: CValue,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CStatementExecutionPath> {
@@ -2410,7 +2410,7 @@ pub(super) fn write_c_lvalue_paths(
             if is_external_memory_pointer(&pointer) && !has_external_write_resource {
                 return vec![CStatementExecutionPath {
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
-                        resource: CResourceElement::own_memory(CMemoryRange::new(
+                        resource: CResourceFact::own_memory(CMemoryRange::new(
                             pointer.clone(),
                             Bitvector32Term::Constant(0),
                             Bitvector32Term::Constant(1),
@@ -2743,13 +2743,15 @@ pub(super) fn execute_c_while_paths(
 
     for condition_path in evaluate_c_expression_paths(state, condition, &loop_assumptions, budget)?
     {
-        let Some((condition_facts, condition_obligations)) = merge_path_facts_and_obligations(
-            &[],
-            &base_obligations,
-            &condition_path.facts,
-            &condition_path.obligations,
-            assumptions,
-        ) else {
+        let Some((condition_facts, condition_obligations)) =
+            merge_execution_pure_facts_and_obligations(
+                &[],
+                &base_obligations,
+                &condition_path.facts,
+                &condition_path.obligations,
+                assumptions,
+            )
+        else {
             continue;
         };
 
@@ -2805,7 +2807,7 @@ pub(super) fn execute_c_while_body_paths(
     body: &CStatement,
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
-    facts: Vec<PathFact>,
+    facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
@@ -2813,7 +2815,7 @@ pub(super) fn execute_c_while_body_paths(
     let mut paths = Vec::new();
     for body_path in execute_c_statement_paths(state, body, &body_assumptions, environment, budget)?
     {
-        let Some((facts, obligations)) = merge_path_facts_and_obligations(
+        let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
             &facts,
             &obligations,
             &body_path.facts,
@@ -2836,14 +2838,14 @@ pub(super) fn execute_c_while_body_paths(
                     environment,
                     budget,
                 )? {
-                    let (facts, obligations) = merge_path_facts_and_obligations(
+                    let (facts, obligations) = merge_execution_pure_facts_and_obligations(
                         &facts,
                         &obligations,
                         &path.facts,
                         &path.obligations,
                         assumptions,
                     )
-                    .expect("merged loop path facts should remain consistent");
+                    .expect("merged loop execution pure facts should remain consistent");
                     paths.push(CStatementExecutionPath {
                         outcome: path.outcome,
                         facts,

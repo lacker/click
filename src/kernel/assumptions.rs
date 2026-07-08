@@ -2562,7 +2562,7 @@ impl ProofObligation {
     }
 }
 
-impl PathFact {
+impl ExecutionPureFact {
     pub fn new(proposition: Proposition) -> Self {
         Self {
             proposition,
@@ -2601,7 +2601,7 @@ impl SymbolicCExecution {
 }
 
 impl SymbolicCExecutionPath {
-    pub fn facts(&self) -> &[PathFact] {
+    pub fn facts(&self) -> &[ExecutionPureFact] {
         &self.facts
     }
 

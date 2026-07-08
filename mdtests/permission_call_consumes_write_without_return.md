@@ -37,5 +37,5 @@ int32 needs_write_back(int32 p[]) {
 ```
 
 ```expect
-fail: missing resource
+fail: missing resource fact
 ```
