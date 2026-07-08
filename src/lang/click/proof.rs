@@ -2577,6 +2577,7 @@ fn append_composite_resource_observable_facts(
         definition,
         composite_body,
         substitutions,
+        contained_resources,
         parameters,
         arguments,
         pre_state,
@@ -2592,6 +2593,7 @@ fn append_composite_resource_declared_facts(
     definition: &ResourceDefinition,
     composite_body: &CompositeResourceBody,
     substitutions: &BTreeMap<String, ContractExpression>,
+    contained_resources: &ResourceContext,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -2621,8 +2623,11 @@ fn append_composite_resource_declared_facts(
         )
         .map_err(|message| {
             format!(
-                "could not lower resource `{}` fact: {message}",
-                definition.name()
+                "could not lower resource `{}` pure fact `{}`: {message}\n  pure facts: {}\n  resource facts: {}",
+                definition.name(),
+                describe_click_proposition(&fact),
+                describe_pure_facts(propositions),
+                describe_resource_facts(contained_resources.facts(), parameters, arguments)
             )
         })?;
         if !propositions.contains(&lowered) {
@@ -2839,8 +2844,16 @@ fn unfold_composite_resource(
         )
         .map_err(|message| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: could not lower `unfold({})` fact: {message}",
-                describe_resource_clause(resource)
+                "`{claim_label}` proof step {step_index}: could not lower `unfold({})` pure fact `{}`: {message}\n{}",
+                describe_resource_clause(resource),
+                describe_click_proposition(&fact),
+                describe_proof_context(
+                    available_pure_facts,
+                    state.resources().facts(),
+                    parameters,
+                    arguments,
+                    &[]
+                )
             ))
         })?;
         available_pure_facts.push(lowered_fact);

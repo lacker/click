@@ -513,7 +513,14 @@ pub(super) fn prove_ensure_proposition_by_simp(
     )
     .map_err(|message| {
         ClickError::new(format!(
-            "`simp` failed for `{ensure_label}` path {path_index}: could not lower proposition: {message}"
+            "`simp` failed for `{ensure_label}` path {path_index}: could not lower proposition: {message}\n{}",
+            describe_proof_context(
+                available_pure_facts,
+                state.resources().facts(),
+                parameters,
+                arguments,
+                execution_pure_facts
+            )
         ))
     })?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
@@ -2314,7 +2321,14 @@ pub(super) fn prove_ensure_proposition(
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
-                            "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: could not evaluate left side: {message}"
+                            "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: could not evaluate left side: {message}\n{}",
+                            describe_proof_context(
+                                available_pure_facts,
+                                state.resources().facts(),
+                                parameters,
+                                arguments,
+                                execution_pure_facts
+                            )
                         ))
                     })?;
                     let right_value = evaluate_contract_expression(
@@ -2330,7 +2344,14 @@ pub(super) fn prove_ensure_proposition(
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
-                            "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: could not evaluate right side: {message}"
+                            "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: could not evaluate right side: {message}\n{}",
+                            describe_proof_context(
+                                available_pure_facts,
+                                state.resources().facts(),
+                                parameters,
+                                arguments,
+                                execution_pure_facts
+                            )
                         ))
                     })?;
                     prove_value_comparison(
@@ -2409,7 +2430,14 @@ pub(super) fn prove_ensure_proposition(
             )
             .map_err(|message| {
                 ClickError::new(format!(
-                    "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: could not lower proposition: {message}"
+                    "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: could not lower proposition: {message}\n{}",
+                    describe_proof_context(
+                        available_pure_facts,
+                        state.resources().facts(),
+                        parameters,
+                        arguments,
+                        execution_pure_facts
+                    )
                 ))
             })?;
             let assumptions = assumptions_from_propositions(available_pure_facts);
@@ -4799,15 +4827,19 @@ pub(super) fn evaluate_contract_memory_load_from_memory(
         crate::kernel::CExpressionOutcome::Value(value) => Err(format!(
             "load from {pointer:?} produced {value:?}, not {value_type:?}"
         )),
-        _ if assumptions.proves(&Proposition::CMemoryCanLoad {
-            memory: memory.clone(),
-            pointer: pointer.clone(),
-            byte_width: value_type.byte_width(),
-        }) =>
-        {
-            symbolic_contract_memory_load(memory, pointer, value_type)
+        outcome => {
+            let required = Proposition::CMemoryCanLoad {
+                memory: memory.clone(),
+                pointer: pointer.clone(),
+                byte_width: value_type.byte_width(),
+            };
+            if assumptions.proves(&required) {
+                return symbolic_contract_memory_load(memory, pointer, value_type);
+            }
+            Err(format!(
+                "missing pure fact required to evaluate memory read: {required:?}\n  load from {pointer:?} as {value_type:?} produced {outcome:?}"
+            ))
         }
-        outcome => Err(format!("load from {pointer:?} produced {outcome:?}")),
     }
 }
 
@@ -4844,7 +4876,11 @@ fn symbolic_pointer_contract_memory_load(
     let pointee_byte_width = match value_type {
         CType::Int32Pointer => 4,
         CType::UInt8Pointer => 1,
-        _ => return Err(format!("cannot symbolically load {value_type:?}")),
+        _ => {
+            return Err(format!(
+                "cannot symbolically load {value_type:?} as pointer"
+            ));
+        }
     };
     Ok(CValue::Pointer(Pointer {
         block: pointer.block,
