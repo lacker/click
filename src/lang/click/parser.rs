@@ -1331,6 +1331,11 @@ impl Parser {
             return Ok(ClickProposition::Disjoint { left, right });
         }
 
+        if self.peek_ident() == Some("loadable") && self.peek_next() == Some(&Token::LParen) {
+            let segment = self.parse_loadable_segment()?;
+            return Ok(ClickProposition::Loadable { segment });
+        }
+
         if matches!(self.peek(), Some(Token::Ident(_)))
             && self.peek_ident() != Some("old")
             && self.peek_ident() != Some("at")
@@ -1745,6 +1750,14 @@ impl Parser {
         }
 
         self.parse_current_contract_segment()
+    }
+
+    fn parse_loadable_segment(&mut self) -> Result<ContractSegment, ClickError> {
+        self.expect_ident_spelling("loadable")?;
+        self.expect(Token::LParen)?;
+        let segment = self.parse_current_contract_segment()?;
+        self.expect(Token::RParen)?;
+        Ok(segment)
     }
 
     fn parse_current_contract_segment(&mut self) -> Result<ContractSegment, ClickError> {

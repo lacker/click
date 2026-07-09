@@ -26,6 +26,14 @@ int32 first(int32 p[]) {
 access permission, or when the proof needs a larger range than any single
 access resource provides.
 
+`loadable(segment)` is the proposition form of the same memory-validity fact.
+It is useful inside predicate-like positions, especially composite resource
+`fact` clauses:
+
+```click
+fact loadable(data[0..cap]);
+```
+
 ## Ranges
 
 `valid_range` uses half-open ranges:

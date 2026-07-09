@@ -1,6 +1,6 @@
 # Agent State
 
-Last updated: 2026-07-07.
+Last updated: 2026-07-08.
 
 This is a short handoff note for open work only. Canonical documentation lives
 in `docs/`; do not treat this file as a design doc.
@@ -23,6 +23,10 @@ in `docs/`; do not treat this file as a design doc.
 - `observe(resource)` is one-step and non-consuming. It exposes immediate pure
   facts and viewed immediate contained resource facts, not owned contained
   permissions.
+- `loadable(segment)` is now a Click proposition that lowers to the kernel
+  range-validity fact (`CMemoryValidRange`). Use it in composite `fact` clauses
+  when a resource should expose memory-load validity without exposing extra
+  resource facts.
 - Proof-step replay now has an explicit execution point. The supported points
   are function entry, straight-line statement entry via `execute_step()` or
   `execute_until(statement(N))`, and function exit via `execute_step()` or
@@ -42,6 +46,7 @@ in `docs/`; do not treat this file as a design doc.
 - The latest verification pass recorded here:
   - `cargo fmt`
   - `cargo test`
+  - `cargo fmt -- --check`
   - `target/tools/bin/mdbook build`
   - `git diff --check`
 
@@ -78,7 +83,8 @@ in `docs/`; do not treat this file as a design doc.
    `views composite(...)` resources. The
    `observe_indexed_gap` test documents that observing a field-dependent
    backing-array resource is not yet enough for indexed reads through the
-   loaded pointer.
+   loaded pointer. `mdtests/composite_resource_loadable_fact.md` is the smaller
+   passing case for direct-pointer `fact loadable(...)` projection.
 
 5. **Read/write semantics**
 
@@ -97,8 +103,10 @@ in `docs/`; do not treat this file as a design doc.
   adding scoped unfold/fold syntax or automation.
 - Extend `execute_step()` beyond the current straight-line statement slice when
   branch, loop, or modular-call stepping becomes important.
-- Decide whether `observe` should materialize dependent contained resource views
-  strongly enough to support owner-field-derived backing-array reads.
+- Decide whether `observe` should materialize or relate dependent contained
+  resource views strongly enough to support owner-field-derived backing-array
+  reads. The direct-pointer `loadable` path works; the owner-field-derived
+  backing array still needs state/path alignment.
 - If hidden footprint summaries are added, make them deterministic one-step
   proof data first; leave `auto` heuristics for a later pass.
 

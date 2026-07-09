@@ -58,6 +58,11 @@ Symbolic memory access usually needs:
 permission, or when it needs a larger structural range than the immediate
 permission covers.
 
+Use `loadable(p[lo..hi])` for the same kind of range-validity fact when Click
+expects a proposition, for example in a composite resource `fact`. `loadable`
+does not grant read or write authority; it only supplies the pure fact needed
+to justify loads from that range when the index bounds are known.
+
 ## Old Memory
 
 `old(expression)` evaluates in the function-entry state:

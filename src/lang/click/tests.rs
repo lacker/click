@@ -227,6 +227,35 @@ fn parses_valid_range_pointer_base_segment() {
 }
 
 #[test]
+fn parses_loadable_segment_proposition() {
+    let source = r#"
+            verifying "read.c";
+
+            int32 read(int32* p, int32 n) {
+                requires loadable((p + 1)[0..n]);
+                ensures result == 0 by auto;
+            }
+        "#;
+    let file = parse(source).expect("loadable proposition should parse");
+    let function = &file.function_blocks()[0];
+
+    assert_eq!(
+        function.requires(),
+        &[Requirement::Proposition(ClickProposition::Loadable {
+            segment: ContractSegment {
+                state: ContractSegmentState::Current,
+                base: CExpression::Add(
+                    Box::new(CExpression::Variable("p".to_string())),
+                    Box::new(CExpression::Value(int32(1))),
+                ),
+                start: CExpression::Value(int32(0)),
+                end: CExpression::Variable("n".to_string()),
+            },
+        })]
+    );
+}
+
+#[test]
 fn parses_disjoint_requirement() {
     let source = r#"
             verifying "copy.c";
@@ -2133,6 +2162,32 @@ fn verifies_symbolic_segment_valid_range() {
 
     assert_eq!(verified.len(), 1);
     assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
+}
+
+#[test]
+fn verifies_loadable_segment_proposition_for_indexed_read() {
+    let c_source = r#"
+            int32 read_index(int32 p[], int32 index, int32 n) {
+                return p[index];
+            }
+        "#;
+    let click_source = r#"
+            verifying "read_index.c";
+
+            int32 read_index(int32 p[], int32 index, int32 n) {
+                requires 0 <= index;
+                requires index < n;
+                requires loadable(p[0..n]);
+                requires read(p[0..n]);
+
+                ensures returns_loaded_value: result == p[index] by auto;
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("read_index.c", c_source)])
+        .expect("loadable segment should prove indexed read validity");
+
+    assert_eq!(verified.len(), 1);
 }
 
 #[test]

@@ -84,6 +84,10 @@ valid. Use `valid_range(...)` separately when you need to prove memory exists
 without granting read or write authority, or when a larger structural bound is
 useful for index reasoning.
 
+When the same validity fact must appear as a proposition, use
+`loadable(segment)`. This is common in composite resource definitions, where
+`fact` clauses are pure propositions rather than structural requirements.
+
 ## Read Permission
 
 `read(...)` permits loads. It does not permit stores. While no write to the

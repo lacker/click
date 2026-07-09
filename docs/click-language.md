@@ -107,6 +107,7 @@ requires input_nonnegative: n >= 0;
 requires valid_range(p, 12);
 requires valid_range(p[0..n]);
 requires valid_range((p + 1)[0..1]);
+requires loadable(p[0..n]);
 requires disjoint(dst[0..n], src[0..n]);
 requires read(p[0..1]);
 requires write(p[0..1]);
@@ -121,6 +122,10 @@ right[start..end])` use half-open `int32` element ranges. The byte count is
 derived from the base pointer's element type: four bytes for `int32[]`, one
 byte for `uint8[]`. This `..` syntax is Click contract syntax, not C
 fragment syntax.
+
+`loadable(base[start..end])` is the proposition form of memory-load validity
+for a segment. Use it when the fact needs to appear where Click expects a
+proposition, such as a composite resource `fact`.
 
 `requires` can also use Click propositions, but direct memory reads in
 requirements are intentionally limited. If a precondition needs memory reads,

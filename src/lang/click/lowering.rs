@@ -203,6 +203,9 @@ impl AnnotationLowerer<'_> {
             ClickProposition::Disjoint { .. } => {
                 Err("`disjoint(...)` is not supported in spec-state clauses".to_string())
             }
+            ClickProposition::Loadable { .. } => {
+                Err("`loadable(...)` is not supported in spec-state clauses".to_string())
+            }
             ClickProposition::And(left, right) => Ok(SpecProposition::And(
                 Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
                 Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
@@ -1137,6 +1140,9 @@ pub(super) fn unfold_click_predicates_in_proposition_with_active(
             left: left.clone(),
             right: right.clone(),
         }),
+        ClickProposition::Loadable { segment } => Ok(ClickProposition::Loadable {
+            segment: segment.clone(),
+        }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
             Box::new(unfold_click_predicates_in_proposition_with_active(
                 predicate_environment,
@@ -1287,6 +1293,9 @@ pub(super) fn substitute_click_proposition(
         ClickProposition::Disjoint { left, right } => Ok(ClickProposition::Disjoint {
             left: substitute_contract_segment(left, substitutions)?,
             right: substitute_contract_segment(right, substitutions)?,
+        }),
+        ClickProposition::Loadable { segment } => Ok(ClickProposition::Loadable {
+            segment: substitute_contract_segment(segment, substitutions)?,
         }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
             Box::new(substitute_click_proposition(left, substitutions)?),
@@ -1673,6 +1682,9 @@ pub(super) fn apply_contract_let_expressions_to_proposition(
             left: apply_contract_lets_to_segment(left, bindings)?,
             right: apply_contract_lets_to_segment(right, bindings)?,
         }),
+        ClickProposition::Loadable { segment } => Ok(ClickProposition::Loadable {
+            segment: apply_contract_lets_to_segment(segment, bindings)?,
+        }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
             Box::new(apply_contract_let_expressions_to_proposition(
                 *left, bindings,
@@ -1930,6 +1942,9 @@ pub(super) fn collect_click_proposition_referenced_names(
         ClickProposition::Disjoint { left, right } => {
             names.extend(contract_segment_referenced_names(left));
             names.extend(contract_segment_referenced_names(right));
+        }
+        ClickProposition::Loadable { segment } => {
+            names.extend(contract_segment_referenced_names(segment));
         }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
@@ -2419,6 +2434,7 @@ pub(super) fn click_proposition_to_c_expression(
         | ClickProposition::RangeAll { .. }
         | ClickProposition::RangeAny { .. }
         | ClickProposition::Disjoint { .. }
+        | ClickProposition::Loadable { .. }
         | ClickProposition::PredicateCall { .. } => None,
     }
 }
@@ -3246,6 +3262,29 @@ pub(super) fn disjoint_requirement_prop(
     })
 }
 
+pub(super) fn loadable_segment_prop(
+    memory: &CMemory,
+    segment: EvaluatedContractSegment,
+    element_width: u32,
+) -> Result<Proposition, ClickError> {
+    if let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
+        (&segment.start, &segment.end)
+    {
+        if end < start {
+            return Err(ClickError::new(format!(
+                "`loadable` segment has an end before its start: {start}..{end}"
+            )));
+        }
+    }
+    let element_count = bitvector32_subtract(segment.end.clone(), segment.start.clone());
+    let bytes = bitvector32_multiply(element_count, Bitvector32Term::Constant(element_width));
+    Ok(Proposition::CMemoryValidRange {
+        memory: memory.clone(),
+        base: offset_pointer_by_elements(segment.base, segment.start, element_width),
+        bytes,
+    })
+}
+
 pub(super) fn contract_segment_element_width(
     parameters: &[syntax::C0Parameter],
     segment: &ContractSegment,
@@ -3269,6 +3308,37 @@ pub(super) fn contract_expression_element_width(
         CExpression::Add(left, right) => contract_expression_element_width(parameters, left)
             .or_else(|| contract_expression_element_width(parameters, right)),
         CExpression::Subtract(left, _) => contract_expression_element_width(parameters, left),
+        CExpression::TypedLoad { value_type, .. } => match value_type {
+            CType::Int32Pointer => Some(4),
+            CType::UInt8Pointer => Some(1),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+pub(super) fn contract_segment_element_width_from_array_refs(
+    array_refs: &ClickArrayRefs,
+    segment: &ContractSegment,
+) -> Option<u32> {
+    contract_expression_element_width_from_array_refs(array_refs, &segment.base)
+}
+
+pub(super) fn contract_expression_element_width_from_array_refs(
+    array_refs: &ClickArrayRefs,
+    expression: &CExpression,
+) -> Option<u32> {
+    match expression {
+        CExpression::Variable(name) => array_refs
+            .get(name)
+            .map(|array_ref| array_ref.element_type.byte_width()),
+        CExpression::Add(left, right) => {
+            contract_expression_element_width_from_array_refs(array_refs, left)
+                .or_else(|| contract_expression_element_width_from_array_refs(array_refs, right))
+        }
+        CExpression::Subtract(left, _) => {
+            contract_expression_element_width_from_array_refs(array_refs, left)
+        }
         CExpression::TypedLoad { value_type, .. } => match value_type {
             CType::Int32Pointer => Some(4),
             CType::UInt8Pointer => Some(1),
@@ -3449,6 +3519,15 @@ impl KernelPropositionLowerer {
                     right_start: right.start,
                     right_end: right.end,
                 })
+            }
+            ClickProposition::Loadable { segment } => {
+                let segment = self.lower_requirement_segment(segment)?;
+                let element_width = contract_segment_element_width_from_array_refs(
+                    &self.array_refs,
+                    &segment.source,
+                )
+                .unwrap_or(4);
+                loadable_segment_prop(&self.memory, segment, element_width)
             }
             ClickProposition::And(left, right) => Ok(Proposition::And(
                 Box::new(self.lower_requirement_proposition(left)?),

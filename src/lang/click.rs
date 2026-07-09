@@ -251,6 +251,9 @@ pub enum ClickProposition {
         left: ContractSegment,
         right: ContractSegment,
     },
+    Loadable {
+        segment: ContractSegment,
+    },
     And(Box<ClickProposition>, Box<ClickProposition>),
     Or(Box<ClickProposition>, Box<ClickProposition>),
     Not(Box<ClickProposition>),

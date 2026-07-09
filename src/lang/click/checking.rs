@@ -951,6 +951,22 @@ pub(super) fn lower_predicate_body_proposition_with_environment(
                 right_end: right.end,
             })
         }
+        ClickProposition::Loadable { segment } => {
+            let segment = evaluate_predicate_contract_segment(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                segment,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let element_width =
+                contract_segment_element_width_from_array_refs(array_refs, &segment.source)
+                    .unwrap_or(4);
+            loadable_segment_prop(memory, segment, element_width).map_err(|error| error.message)
+        }
         ClickProposition::And(left, right) => Ok(Proposition::And(
             Box::new(lower_predicate_body_proposition_with_environment(
                 values,
@@ -2955,6 +2971,25 @@ pub(super) fn lower_outcome_proposition_with_environment(
                 right_start: right.start,
                 right_end: right.end,
             })
+        }
+        ClickProposition::Loadable { segment } => {
+            let segment = evaluate_contract_segment_with_environment(
+                values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                segment,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let element_width =
+                contract_segment_element_width_from_array_refs(array_refs, &segment.source)
+                    .unwrap_or(4);
+            loadable_segment_prop(post_state.memory(), segment, element_width)
+                .map_err(|error| error.message)
         }
         ClickProposition::And(left, right) => Ok(Proposition::And(
             Box::new(lower_outcome_proposition_with_environment(
