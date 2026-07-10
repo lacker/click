@@ -49,5 +49,5 @@ int32 buffer_get(struct owner* owner, int32 index) {
 ```
 
 ```expect
-fail: missing pure fact required to evaluate memory read: CMemoryLoadable
+fail: missing pure fact: loadable
 ```

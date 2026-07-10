@@ -8,6 +8,37 @@ pub(super) fn describe_pure_facts(pure_facts: &[Proposition]) -> String {
     format!("{pure_facts:?}")
 }
 
+pub(super) fn describe_context_pure_facts(
+    pure_facts: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    if pure_facts.is_empty() {
+        return "[]".to_string();
+    }
+
+    let entries = pure_facts
+        .iter()
+        .map(|fact| describe_pure_fact(fact, parameters, arguments))
+        .collect::<Vec<_>>();
+    format!("[{}]", entries.join(", "))
+}
+
+pub(super) fn describe_pure_fact(
+    fact: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    match fact {
+        Proposition::CMemoryLoadable { base, bytes, .. } => format!(
+            "loadable(base={}, bytes={})",
+            describe_pointer(base, parameters, arguments),
+            describe_bitvector_with_context(bytes, parameters, arguments)
+        ),
+        _ => format!("{fact:?}"),
+    }
+}
+
 pub(super) fn describe_execution_pure_facts(facts: &[ExecutionPureFact]) -> String {
     if facts.is_empty() {
         return "[]".to_string();
@@ -18,6 +49,68 @@ pub(super) fn describe_execution_pure_facts(facts: &[ExecutionPureFact]) -> Stri
         .map(|fact| format!("{:?}", fact.proposition()))
         .collect::<Vec<_>>();
     format!("[{}]", entries.join(", "))
+}
+
+pub(super) fn describe_available_facts(
+    pure_facts: &[Proposition],
+    resource_facts: &[CResourceFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    execution_pure_facts: &[ExecutionPureFact],
+) -> String {
+    let mut all_pure_facts = pure_facts.to_vec();
+    all_pure_facts.extend(
+        execution_pure_facts
+            .iter()
+            .map(|fact| fact.proposition().clone()),
+    );
+    format!(
+        "available pure facts: {}\n  available resource facts: {}",
+        describe_context_pure_facts(&all_pure_facts, parameters, arguments),
+        describe_resource_facts(resource_facts, parameters, arguments)
+    )
+}
+
+pub(super) fn describe_missing_pure_fact(
+    required: &Proposition,
+    pure_facts: &[Proposition],
+    resource_facts: &[CResourceFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    execution_pure_facts: &[ExecutionPureFact],
+) -> String {
+    format!(
+        "missing pure fact: {}\n  {}",
+        describe_pure_fact(required, parameters, arguments),
+        describe_available_facts(
+            pure_facts,
+            resource_facts,
+            parameters,
+            arguments,
+            execution_pure_facts
+        )
+    )
+}
+
+pub(super) fn describe_missing_resource_fact(
+    required: &CResourceFact,
+    pure_facts: &[Proposition],
+    resource_facts: &[CResourceFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    execution_pure_facts: &[ExecutionPureFact],
+) -> String {
+    format!(
+        "missing resource fact `{}`\n  {}",
+        describe_resource_fact(required, parameters, arguments),
+        describe_available_facts(
+            pure_facts,
+            resource_facts,
+            parameters,
+            arguments,
+            execution_pure_facts
+        )
+    )
 }
 
 pub(super) fn describe_proof_context(
@@ -35,7 +128,7 @@ pub(super) fn describe_proof_context(
     );
     format!(
         "proof context:\n  pure facts: {}\n  resource facts: {}",
-        describe_pure_facts(&all_pure_facts),
+        describe_context_pure_facts(&all_pure_facts, parameters, arguments),
         describe_resource_facts(resource_facts, parameters, arguments)
     )
 }
@@ -53,6 +146,43 @@ pub(super) fn describe_obligations(obligations: &[ProofObligation]) -> String {
         })
         .collect::<Vec<_>>();
     format!("[{}]", entries.join(", "))
+}
+
+pub(super) fn describe_missing_proof_obligations(
+    obligations: &[ProofObligation],
+    pure_facts: &[Proposition],
+    resource_facts: &[CResourceFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    execution_pure_facts: &[ExecutionPureFact],
+) -> String {
+    let required = obligations
+        .iter()
+        .map(|obligation| match obligation.context() {
+            Some(context) => format!(
+                "{context}: {}",
+                describe_pure_fact(obligation.proposition(), parameters, arguments)
+            ),
+            None => describe_pure_fact(obligation.proposition(), parameters, arguments),
+        })
+        .collect::<Vec<_>>();
+
+    let label = if required.len() == 1 {
+        "missing pure fact"
+    } else {
+        "missing pure facts"
+    };
+    format!(
+        "{label}: [{}]\n  {}",
+        required.join(", "),
+        describe_available_facts(
+            pure_facts,
+            resource_facts,
+            parameters,
+            arguments,
+            execution_pure_facts
+        )
+    )
 }
 
 pub(super) fn describe_function_outcome(

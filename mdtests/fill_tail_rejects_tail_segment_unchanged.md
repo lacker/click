@@ -32,5 +32,5 @@ int32 fill_tail_rejects_tail_segment_unchanged(int32 p[], int32 n) {
 ```
 
 ```expect
-fail: proposition was not provable
+fail: missing pure fact
 ```

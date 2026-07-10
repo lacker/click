@@ -24,5 +24,5 @@ int32 forall_array_segment_rejects_overwritten_cell(int32 p[]) {
 ```
 
 ```expect
-fail: proposition was not provable
+fail: missing pure fact
 ```

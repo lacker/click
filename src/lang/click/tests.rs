@@ -1811,7 +1811,9 @@ fn quantified_old_memory_rejects_overwritten_cell() {
         .expect_err("overwritten segment should not match old memory");
 
     assert!(
-        error.message().contains("proposition was not provable"),
+        error.message().contains("missing pure fact")
+            && error.message().contains("available pure facts")
+            && error.message().contains("available resource facts"),
         "{}",
         error.message()
     );

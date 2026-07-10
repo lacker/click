@@ -383,16 +383,16 @@ fn prove_pure_theorem_goal(
             SimpProposition::True => return Ok(()),
             simplified => {
                 return Err(ClickError::new(format!(
-                    "`{proof_name}` failed for `{claim_label}`: simplified proposition was not true: {simplified:?}\n  goal: {goal:?}\n  pure facts: {}",
-                    describe_pure_facts(&available)
+                    "`{proof_name}` failed for `{claim_label}`: simplified proposition was not true: {simplified:?}\n  {}",
+                    describe_missing_pure_fact(&goal, &available, &[], &[], &[], &[])
                 )));
             }
         }
     }
 
     Err(ClickError::new(format!(
-        "`{proof_name}` failed for `{claim_label}`: proposition was not provable\n  goal: {goal:?}\n  pure facts: {}",
-        describe_pure_facts(&available)
+        "`{proof_name}` failed for `{claim_label}`: {}",
+        describe_missing_pure_fact(&goal, &available, &[], &[], &[], &[])
     )))
 }
 
@@ -551,9 +551,9 @@ fn instantiate_theorem_application(
                 path_index,
                 step_index,
                 format!(
-                    "could not prove requirement for theorem `{}`: {lowered:?}\n  pure facts: {}",
+                    "could not prove requirement for theorem `{}`: {}",
                     theorem.name(),
-                    describe_pure_facts(available)
+                    describe_missing_pure_fact(&lowered, available, &[], &[], &[], &[])
                 ),
             ));
         }
@@ -792,9 +792,14 @@ pub(super) fn prove_claim_by_auto(
         assumptions.clone(),
         function_environment.clone(),
     );
-    if let Some(error) =
-        execution_obligation_error(&vc_execution, claim_label, &requirement_pure_facts)
-    {
+    if let Some(error) = execution_obligation_error(
+        &vc_execution,
+        claim_label,
+        &requirement_pure_facts,
+        state.resources().facts(),
+        parsed_function.parameters(),
+        &arguments,
+    ) {
         return Err(error);
     }
     let loop_verification_error = match prove_claim_from_execution(
@@ -838,9 +843,14 @@ pub(super) fn prove_claim_by_auto(
         assumptions,
         function_environment.clone(),
     );
-    if let Some(error) =
-        execution_obligation_error(&execution, claim_label, &requirement_pure_facts)
-    {
+    if let Some(error) = execution_obligation_error(
+        &execution,
+        claim_label,
+        &requirement_pure_facts,
+        state.resources().facts(),
+        parsed_function.parameters(),
+        &arguments,
+    ) {
         if let Some(loop_verification_error) = loop_verification_error {
             return Err(loop_verification_error);
         }
@@ -959,6 +969,9 @@ pub(super) fn prove_claim_by_frame(
         &execution,
         claim_label,
         &requirement_pure_facts,
+        state.resources().facts(),
+        parsed_function.parameters(),
+        &arguments,
     ) {
         return Err(error);
     }
@@ -1097,10 +1110,15 @@ pub(super) fn prove_claim_by_simp(
     for (path_index, path) in execution.paths().iter().enumerate() {
         if !path.obligations().is_empty() {
             return Err(ClickError::new(format!(
-                "`simp` failed for `{claim_label}` path {path_index}: execution left obligations: {}\n  pure facts: {}\n  execution pure facts: {}",
-                describe_obligations(path.obligations()),
-                describe_pure_facts(&requirement_pure_facts),
-                describe_execution_pure_facts(path.facts())
+                "`simp` failed for `{claim_label}` path {path_index}: {}",
+                describe_missing_proof_obligations(
+                    path.obligations(),
+                    &requirement_pure_facts,
+                    state.resources().facts(),
+                    parsed_function.parameters(),
+                    &arguments,
+                    path.facts()
+                )
             )));
         }
 
@@ -1949,9 +1967,9 @@ fn single_statement_step_path<'a>(
     let path = &execution.paths()[0];
     if !path.obligations().is_empty() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` left step obligations: {}\n{}",
-            describe_obligations(path.obligations()),
-            describe_proof_context(
+            "`{claim_label}` proof step {step_index}: `{step_name}` failed: {}",
+            describe_missing_proof_obligations(
+                path.obligations(),
                 available_pure_facts,
                 resources,
                 parameters,
@@ -1987,9 +2005,9 @@ fn single_normal_statement_path<'a>(
     let path = &execution.paths()[0];
     if !path.obligations().is_empty() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` left prefix obligations: {}\n{}",
-            describe_obligations(path.obligations()),
-            describe_proof_context(
+            "`{claim_label}` proof step {step_index}: `{step_name}` failed: {}",
+            describe_missing_proof_obligations(
+                path.obligations(),
                 available_pure_facts,
                 resources,
                 parameters,
@@ -2409,10 +2427,16 @@ fn observe_composite_resource(
         .satisfies_fact(&abstract_resource, &assumptions)
     {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `observe({})` is missing resource fact `{}`\n  available resource facts: {}",
+            "`{claim_label}` proof step {step_index}: `observe({})` failed: {}",
             describe_resource_clause(resource),
-            describe_resource_fact(&abstract_resource, parameters, arguments),
-            describe_resource_facts(state.resources().facts(), parameters, arguments)
+            describe_missing_resource_fact(
+                &abstract_resource,
+                available_pure_facts,
+                state.resources().facts(),
+                parameters,
+                arguments,
+                &[]
+            )
         )));
     }
     let CResource::Composite {
@@ -2717,9 +2741,10 @@ fn instantiate_composite_resource_body_resources(
         let lowered =
             lower_resource_clause(&contained, parameters, arguments, &memory).map_err(|error| {
                 format!(
-                    "could not lower resource `{name}` contained `{}`: {}",
+                    "could not lower resource `{name}` contained `{}`: {}\n  {}",
                     describe_resource_clause(&contained),
-                    error.message()
+                    error.message(),
+                    describe_available_facts(&[], resources.facts(), parameters, arguments, &[])
                 )
             })?;
         memory = materialize_composite_resource_cells(memory, &contained, &lowered, parameters);
@@ -2788,10 +2813,16 @@ fn unfold_composite_resource(
         .without_fact(&abstract_resource, &assumptions)
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `unfold({})` is missing resource fact `{}`\n  available resource facts: {}",
+                "`{claim_label}` proof step {step_index}: `unfold({})` failed: {}",
                 describe_resource_clause(resource),
-                describe_resource_fact(&abstract_resource, parameters, arguments),
-                describe_resource_facts(state.resources().facts(), parameters, arguments)
+                describe_missing_resource_fact(
+                    &abstract_resource,
+                    available_pure_facts,
+                    state.resources().facts(),
+                    parameters,
+                    arguments,
+                    &[]
+                )
             ))
         })?;
     state = state.with_resource_context(resources);
@@ -2958,11 +2989,16 @@ fn fold_composite_resources_on_outcome(
                 .without_fact(&lowered, &assumptions)
                 .ok_or_else(|| {
                     ClickError::new(format!(
-                        "`{claim_label}` path {path_index}: `fold({})` is missing contained resource fact `{}`\n  final resource facts: {}\n  execution pure facts: {}",
+                        "`{claim_label}` path {path_index}: `fold({})` failed: {}",
                         describe_resource_clause(resource),
-                        describe_resource_fact(&lowered, parameters, arguments),
-                        describe_resource_facts(post_state.resources().facts(), parameters, arguments),
-                        describe_execution_pure_facts(execution_pure_facts)
+                        describe_missing_resource_fact(
+                            &lowered,
+                            available_pure_facts,
+                            post_state.resources().facts(),
+                            parameters,
+                            arguments,
+                            execution_pure_facts
+                        )
                     ))
                 })?;
             post_state = post_state.with_resource_context(resources);
@@ -3307,8 +3343,15 @@ fn validate_function_frame_step(
     for (path_index, path) in execution.paths().iter().enumerate() {
         if !path.obligations().is_empty() {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `frame()` left obligations on path {path_index}: {}",
-                describe_obligations(path.obligations())
+                "`{claim_label}` proof step {step_index}: `frame()` failed on path {path_index}: {}",
+                describe_missing_proof_obligations(
+                    path.obligations(),
+                    requirement_pure_facts,
+                    state.resources().facts(),
+                    parameters,
+                    arguments,
+                    path.facts()
+                )
             )));
         }
         let outcome = match implication_body(path.theorem().proposition()) {
@@ -3379,10 +3422,15 @@ fn prove_claim_from_steps_execution(
     for (path_index, path) in execution.paths().iter().enumerate() {
         if !path.obligations().is_empty() {
             return Err(ClickError::new(format!(
-                "`proof steps` failed for `{claim_label}` path {path_index}: remaining proof obligations: {}\n  pure facts: {}\n  execution pure facts: {}",
-                describe_obligations(path.obligations()),
-                describe_pure_facts(requirement_pure_facts),
-                describe_execution_pure_facts(path.facts())
+                "`proof steps` failed for `{claim_label}` path {path_index}: {}",
+                describe_missing_proof_obligations(
+                    path.obligations(),
+                    requirement_pure_facts,
+                    state.resources().facts(),
+                    parameters,
+                    arguments,
+                    path.facts()
+                )
             )));
         }
         let mut outcome = match implication_body(path.theorem().proposition()) {
@@ -3754,8 +3802,19 @@ fn execution_obligation_error(
     execution: &crate::kernel::SymbolicCExecution,
     ensure_label: &str,
     requirement_pure_facts: &[Proposition],
+    resource_facts: &[CResourceFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
 ) -> Option<ClickError> {
-    execution_obligation_error_for_tactic("auto", execution, ensure_label, requirement_pure_facts)
+    execution_obligation_error_for_tactic(
+        "auto",
+        execution,
+        ensure_label,
+        requirement_pure_facts,
+        resource_facts,
+        parameters,
+        arguments,
+    )
 }
 
 fn execution_obligation_error_for_tactic(
@@ -3763,6 +3822,9 @@ fn execution_obligation_error_for_tactic(
     execution: &crate::kernel::SymbolicCExecution,
     ensure_label: &str,
     requirement_pure_facts: &[Proposition],
+    resource_facts: &[CResourceFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
 ) -> Option<ClickError> {
     if let Some(limit) = execution.limit() {
         return Some(ClickError::new(format!(
@@ -3778,10 +3840,15 @@ fn execution_obligation_error_for_tactic(
     for (path_index, path) in execution.paths().iter().enumerate() {
         if !path.obligations().is_empty() {
             return Some(ClickError::new(format!(
-                "`{tactic_name}` failed for `{ensure_label}` path {path_index}: remaining proof obligations: {}\n  pure facts: {}\n  execution pure facts: {}",
-                describe_obligations(path.obligations()),
-                describe_pure_facts(&requirement_pure_facts),
-                describe_execution_pure_facts(path.facts())
+                "`{tactic_name}` failed for `{ensure_label}` path {path_index}: {}",
+                describe_missing_proof_obligations(
+                    path.obligations(),
+                    requirement_pure_facts,
+                    resource_facts,
+                    parameters,
+                    arguments,
+                    path.facts()
+                )
             )));
         }
     }

@@ -50,6 +50,16 @@ impl Assumptions {
         self
     }
 
+    pub fn pure_facts(&self) -> Vec<Proposition> {
+        let mut facts = self
+            .condition_facts
+            .iter()
+            .map(|(condition, value)| Proposition::ConditionIs(condition.clone(), *value))
+            .collect::<Vec<_>>();
+        facts.extend(self.prop_facts.iter().cloned());
+        facts
+    }
+
     pub(super) fn decide(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
             ConditionTerm::Constant(value) => Some(*value),

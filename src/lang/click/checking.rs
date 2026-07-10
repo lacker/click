@@ -124,9 +124,15 @@ pub(super) fn prove_ensure_resource(
     } = outcome
     else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` failed on path {path_index}: {}\n  execution pure facts: {}",
+            "`{claim_label}` failed on path {path_index}: {}\n{}",
             describe_function_outcome(outcome, parameters, arguments),
-            describe_execution_pure_facts(execution_pure_facts)
+            describe_proof_context(
+                available_pure_facts,
+                pre_state.resources().facts(),
+                parameters,
+                arguments,
+                execution_pure_facts
+            )
         )));
     };
     let expected = lower_resource_clause(resource, parameters, arguments, pre_state.memory())?;
@@ -138,10 +144,15 @@ pub(super) fn prove_ensure_resource(
         return Ok(());
     }
     Err(ClickError::new(format!(
-        "`{claim_label}` failed on path {path_index}: missing resource fact `{}`\n  final resource facts: {}\n  execution pure facts: {}",
-        describe_resource_fact(&expected, parameters, arguments),
-        describe_resource_facts(post_state.resources().facts(), parameters, arguments),
-        describe_execution_pure_facts(execution_pure_facts)
+        "`{claim_label}` failed on path {path_index}: {}",
+        describe_missing_resource_fact(
+            &expected,
+            available_pure_facts,
+            post_state.resources().facts(),
+            parameters,
+            arguments,
+            execution_pure_facts
+        )
     )))
 }
 
@@ -178,9 +189,15 @@ pub(super) fn check_function_claim_with_existence_steps(
     } = outcome
     else {
         return Err(ClickError::new(format!(
-            "`witness`/`choose` failed for `{claim_label}` path {path_index}: {}\n  execution pure facts: {}",
+            "`witness`/`choose` failed for `{claim_label}` path {path_index}: {}\n{}",
             describe_function_outcome(outcome, parameters, arguments),
-            describe_execution_pure_facts(execution_pure_facts)
+            describe_proof_context(
+                available_pure_facts,
+                pre_state.resources().facts(),
+                parameters,
+                arguments,
+                execution_pure_facts
+            )
         )));
     };
 
@@ -301,16 +318,30 @@ pub(super) fn check_function_claim_with_existence_steps(
         match simp_proposition(&goal, &assumptions) {
             SimpProposition::True => Ok(()),
             simplified => Err(ClickError::new(format!(
-                "`witness`/`choose` failed for `{claim_label}` path {path_index}: simplified proposition was not true: {simplified:?}\n  instantiated goal: {goal:?}\n  execution pure facts: {}",
-                describe_execution_pure_facts(execution_pure_facts)
+                "`witness`/`choose` failed for `{claim_label}` path {path_index}: simplified proposition was not true: {simplified:?}\n  {}",
+                describe_missing_pure_fact(
+                    &goal,
+                    available_pure_facts,
+                    post_state.resources().facts(),
+                    parameters,
+                    arguments,
+                    execution_pure_facts
+                )
             ))),
         }
     } else if assumptions.proves(&goal) {
         Ok(())
     } else {
         Err(ClickError::new(format!(
-            "`witness`/`choose` failed for `{claim_label}` path {path_index}: instantiated goal was not provable: {goal:?}\n  execution pure facts: {}",
-            describe_execution_pure_facts(execution_pure_facts)
+            "`witness`/`choose` failed for `{claim_label}` path {path_index}: {}",
+            describe_missing_pure_fact(
+                &goal,
+                available_pure_facts,
+                post_state.resources().facts(),
+                parameters,
+                arguments,
+                execution_pure_facts
+            )
         )))
     }
 }
@@ -495,9 +526,15 @@ pub(super) fn prove_ensure_proposition_by_simp(
 ) -> Result<(), ClickError> {
     let CFunctionOutcome::Return { value, state } = outcome else {
         return Err(ClickError::new(format!(
-            "`simp` failed for `{ensure_label}` path {path_index}: {}\n  execution pure facts: {}",
+            "`simp` failed for `{ensure_label}` path {path_index}: {}\n{}",
             describe_function_outcome(outcome, parameters, arguments),
-            describe_execution_pure_facts(execution_pure_facts)
+            describe_proof_context(
+                available_pure_facts,
+                pre_state.resources().facts(),
+                parameters,
+                arguments,
+                execution_pure_facts
+            )
         )));
     };
     let mut proposition = lower_outcome_proposition(
@@ -539,8 +576,15 @@ pub(super) fn prove_ensure_proposition_by_simp(
     match simp_proposition(&proposition, &assumptions) {
         SimpProposition::True => Ok(()),
         simplified => Err(ClickError::new(format!(
-            "`simp` failed for `{ensure_label}` path {path_index}: simplified proposition was not true: {simplified:?}\n  original proposition: {proposition:?}\n  execution pure facts: {}",
-            describe_execution_pure_facts(execution_pure_facts)
+            "`simp` failed for `{ensure_label}` path {path_index}: simplified proposition was not true: {simplified:?}\n  {}",
+            describe_missing_pure_fact(
+                &proposition,
+                available_pure_facts,
+                state.resources().facts(),
+                parameters,
+                arguments,
+                execution_pure_facts
+            )
         ))),
     }
 }
@@ -2278,9 +2322,15 @@ pub(super) fn prove_effect_clause(
 ) -> Result<(), ClickError> {
     let CFunctionOutcome::Return { value: _, state } = outcome else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` failed on path {path_index}: {}\n  execution pure facts: {}",
+            "`{claim_label}` failed on path {path_index}: {}\n{}",
             describe_function_outcome(outcome, parameters, arguments),
-            describe_execution_pure_facts(execution_pure_facts)
+            describe_proof_context(
+                available_pure_facts,
+                pre_state.resources().facts(),
+                parameters,
+                arguments,
+                execution_pure_facts
+            )
         )));
     };
     prove_mutation_footprint(
@@ -2369,26 +2419,52 @@ pub(super) fn prove_ensure_proposition(
                             )
                         ))
                     })?;
-                    prove_value_comparison(
-                        &left_value,
-                        *operator,
-                        &right_value,
-                        available_pure_facts,
-                    )
-                    .ok_or_else(|| {
-                        ClickError::new(format!(
-                            "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: left side evaluated to {}, right side evaluated to {}\n  execution pure facts: {}",
-                            describe_c_value(&left_value, parameters, arguments),
-                            describe_c_value(&right_value, parameters, arguments),
-                            describe_execution_pure_facts(execution_pure_facts)
-                        ))
-                    })?;
+                    prove_value_comparison(&left_value, *operator, &right_value, available_pure_facts)
+                        .ok_or_else(|| {
+                            let required = comparison_proposition(
+                                left_value.clone(),
+                                *operator,
+                                right_value.clone(),
+                            );
+                            match required {
+                                Ok(required) => ClickError::new(format!(
+                                    "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: left side evaluated to {}, right side evaluated to {}\n  {}",
+                                    describe_c_value(&left_value, parameters, arguments),
+                                    describe_c_value(&right_value, parameters, arguments),
+                                    describe_missing_pure_fact(
+                                        &required,
+                                        available_pure_facts,
+                                        state.resources().facts(),
+                                        parameters,
+                                        arguments,
+                                        execution_pure_facts
+                                    )
+                                )),
+                                Err(message) => ClickError::new(format!(
+                                    "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: could not form comparison proof obligation: {}\n{}",
+                                    message.message(),
+                                    describe_proof_context(
+                                        available_pure_facts,
+                                        state.resources().facts(),
+                                        parameters,
+                                        arguments,
+                                        execution_pure_facts
+                                    )
+                                )),
+                            }
+                        })?;
                 }
                 other => {
                     return Err(ClickError::new(format!(
-                        "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: {}\n  execution pure facts: {}",
+                        "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: {}\n{}",
                         describe_function_outcome(other, parameters, arguments),
-                        describe_execution_pure_facts(execution_pure_facts)
+                        describe_proof_context(
+                            available_pure_facts,
+                            pre_state.resources().facts(),
+                            parameters,
+                            arguments,
+                            execution_pure_facts
+                        )
                     )));
                 }
             }
@@ -2427,9 +2503,15 @@ pub(super) fn prove_ensure_proposition(
             let surface_proposition = describe_click_proposition(proposition);
             let CFunctionOutcome::Return { value, state } = outcome else {
                 return Err(ClickError::new(format!(
-                    "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: {}\n  execution pure facts: {}",
+                    "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: {}\n{}",
                     describe_function_outcome(outcome, parameters, arguments),
-                    describe_execution_pure_facts(execution_pure_facts)
+                    describe_proof_context(
+                        available_pure_facts,
+                        pre_state.resources().facts(),
+                        parameters,
+                        arguments,
+                        execution_pure_facts
+                    )
                 )));
             };
             let mut proposition = lower_outcome_proposition(
@@ -2470,8 +2552,15 @@ pub(super) fn prove_ensure_proposition(
             })?;
             if !assumptions.proves(&proposition) {
                 return Err(ClickError::new(format!(
-                    "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: proposition was not provable\n  execution pure facts: {}",
-                    describe_execution_pure_facts(execution_pure_facts)
+                    "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: {}",
+                    describe_missing_pure_fact(
+                        &proposition,
+                        available_pure_facts,
+                        state.resources().facts(),
+                        parameters,
+                        arguments,
+                        execution_pure_facts
+                    )
                 )));
             }
         }
@@ -4870,8 +4959,10 @@ pub(super) fn evaluate_contract_memory_load_from_memory(
             if assumptions.proves(&required) {
                 return symbolic_contract_memory_load(memory, pointer, value_type);
             }
+            let pure_facts = assumptions.pure_facts();
             Err(format!(
-                "missing pure fact required to evaluate memory read: {required:?}\n  load from {pointer:?} as {value_type:?} produced {outcome:?}"
+                "{}\n  load from {pointer:?} as {value_type:?} produced {outcome:?}",
+                describe_missing_pure_fact(&required, &pure_facts, &[], &[], &[], &[])
             ))
         }
     }

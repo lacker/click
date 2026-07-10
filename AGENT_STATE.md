@@ -1,6 +1,6 @@
 # Agent State
 
-Last updated: 2026-07-08.
+Last updated: 2026-07-10.
 
 This is a short handoff note for open work only. Canonical documentation lives
 in `docs/`; do not treat this file as a design doc.
@@ -27,6 +27,9 @@ in `docs/`; do not treat this file as a design doc.
   loadability fact (`CMemoryLoadable`). Use it in composite `fact` clauses
   when a resource should expose memory loadability without exposing extra
   resource facts.
+- Missing-fact diagnostics now name the required pure/resource fact and print
+  the available pure facts and resource facts. Execution obligations are also
+  reported as missing pure facts with the same context format.
 - Proof-step replay now has an explicit execution point. The supported points
   are function entry, straight-line statement entry via `execute_step()` or
   `execute_until(statement(N))`, and function exit via `execute_step()` or
@@ -45,6 +48,7 @@ in `docs/`; do not treat this file as a design doc.
   - `mdtests/composite_resource_owned_buffer_nested_hidden_disjoint_gap.md`
 - The latest verification pass recorded here:
   - `cargo fmt`
+  - `cargo check`
   - `cargo test`
   - `cargo fmt -- --check`
   - `target/tools/bin/mdbook build`
@@ -86,7 +90,15 @@ in `docs/`; do not treat this file as a design doc.
    loaded pointer. `mdtests/composite_resource_loadable_fact.md` is the smaller
    passing case for direct-pointer `fact loadable(...)` projection.
 
-5. **Read/write semantics**
+5. **Resource-to-loadability projection**
+
+   Holding `read(memory(...))` or `write(memory(...))` should deterministically
+   imply the matching `loadable(...)` pure fact. This should be an always-on
+   primitive projection, not heuristic search. The remaining design detail is
+   where to project it, because the kernel `CMemoryLoadable` proposition carries
+   a memory snapshot and byte count while resource facts describe ranges.
+
+6. **Read/write semantics**
 
    `read(...)` is the core/view of `write(...)` for memory. `write(...)` is
    still required to stabilize resource facts that read mutable memory. The
@@ -103,10 +115,9 @@ in `docs/`; do not treat this file as a design doc.
   adding scoped unfold/fold syntax or automation.
 - Extend `execute_step()` beyond the current straight-line statement slice when
   branch, loop, or modular-call stepping becomes important.
-- Decide whether `observe` should materialize or relate dependent contained
-  resource views strongly enough to support owner-field-derived backing-array
-  reads. The direct-pointer `loadable` path works; the owner-field-derived
-  backing array still needs state/path alignment.
+- Add deterministic projection from memory resource facts to `loadable(...)`
+  facts, then use `mdtests/composite_resource_owned_buffer_observe_indexed_gap.md`
+  as the pressure test for the dependent owner-field-derived backing array.
 - If hidden footprint summaries are added, make them deterministic one-step
   proof data first; leave `auto` heuristics for a later pass.
 
