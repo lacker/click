@@ -1985,9 +1985,8 @@ pub(super) fn simp_proposition(
         | Proposition::CFunctionExecutes { .. }
         | Proposition::CFunctionSatisfiesSpecification { .. }
         | Proposition::CMemoryLoads { .. }
-        | Proposition::CMemoryCanLoad { .. }
+        | Proposition::CMemoryLoadable { .. }
         | Proposition::CMemoryCanStore { .. }
-        | Proposition::CMemoryValidRange { .. }
         | Proposition::CMemoryDisjoint { .. }
         | Proposition::CMemoryMutatesOnly { .. }
         | Proposition::CMemoryEffectSummary { .. }
@@ -4863,10 +4862,10 @@ pub(super) fn evaluate_contract_memory_load_from_memory(
             "load from {pointer:?} produced {value:?}, not {value_type:?}"
         )),
         outcome => {
-            let required = Proposition::CMemoryCanLoad {
+            let required = Proposition::CMemoryLoadable {
                 memory: memory.clone(),
-                pointer: pointer.clone(),
-                byte_width: value_type.byte_width(),
+                base: pointer.clone(),
+                bytes: Bitvector32Term::Constant(value_type.byte_width()),
             };
             if assumptions.proves(&required) {
                 return symbolic_contract_memory_load(memory, pointer, value_type);

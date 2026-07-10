@@ -16,8 +16,8 @@ int32 clobber_dst(int32* dst, int32* src) {
 verifying "pointer_params_may_alias_without_disjoint.c";
 
 int32 clobber_dst(int32* dst, int32* src) {
-    requires valid_range(dst[0..1]);
-    requires valid_range(src[0..1]);
+    requires loadable(dst[0..1]);
+    requires loadable(src[0..1]);
     requires write(dst[0..1]);
     requires read(src[0..1]);
 

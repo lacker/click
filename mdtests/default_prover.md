@@ -14,7 +14,7 @@ int32 default_prover(int32* p) {
 verifying "default_prover.c";
 
 int32 default_prover(int32* p) {
-    requires valid_range(p[0..1]);
+    requires loadable(p[0..1]);
     requires write(p[0..1]);
     mutable p[0..1];
     ensures returns_written: result == 1;

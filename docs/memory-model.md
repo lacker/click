@@ -31,34 +31,34 @@ requires disjoint(dst[0..n], src[0..n]);
 This is intentionally C-like. C functions can be called with aliased pointers
 unless their contract rules that out.
 
-## Valid Ranges
+## Loadable Ranges
 
-Use `valid_range` to prove memory safety:
+Use `loadable` to prove memory safety:
 
 ```click
-requires valid_range(p, 12);
-requires valid_range(p[0..3]);
-requires valid_range(p[0..n]);
-requires valid_range((p + 1)[0..n - 1]);
+requires loadable(p, 12);
+requires loadable(p[0..3]);
+requires loadable(p[0..n]);
+requires loadable((p + 1)[0..n - 1]);
 ```
 
 Segment forms are half-open `int32` element ranges. For `int32 p[]`,
-`valid_range(p[0..n])` means cells `p[0]` through `p[n - 1]` are available for
+`loadable(p[0..n])` means cells `p[0]` through `p[n - 1]` are available for
 four-byte `int32` access. For `uint8 p[]`, the same spelling covers `n`
 one-byte elements.
 
 Symbolic memory access usually needs:
 
-- a covering `read(...)` or `write(...)` resource, or a separate valid range
+- a covering `read(...)` or `write(...)` resource, or a separate loadable range
 - lower and upper index bounds
 - loop invariants if the bounds are established by a loop
 
-`read(...)` and `write(...)` imply validity for the covered range. A separate
-`valid_range(...)` clause is useful when a proof needs validity without access
+`read(...)` and `write(...)` imply loadability for the covered range. A separate
+`loadable(...)` clause is useful when a proof needs loadability without access
 permission, or when it needs a larger structural range than the immediate
 permission covers.
 
-Use `loadable(p[lo..hi])` for the same kind of range-validity fact when Click
+Use `loadable(p[lo..hi])` for the same kind of loadability fact when Click
 expects a proposition, for example in a composite resource `fact`. `loadable`
 does not grant read or write authority; it only supplies the pure fact needed
 to justify loads from that range when the index bounds are known.

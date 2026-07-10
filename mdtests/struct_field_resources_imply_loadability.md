@@ -1,8 +1,8 @@
-# struct field resources imply validity
+# struct field resources imply loadability
 
 This checks the intended field-resource shape. A field `read(...)` or
-`write(...)` resource is enough to make that field valid for symbolic
-execution, so the contract does not need separate `valid_field(...)` clauses.
+`write(...)` resource is enough to make that field loadable for symbolic
+execution, so the contract does not need separate `loadable(...)` clauses.
 
 ```c filename=set_second.c
 struct pair {

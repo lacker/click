@@ -17,7 +17,7 @@ verifying "file.c";
 
 int32 function_name(int32 p[], int32 n) {
     requires n >= 0;
-    requires valid_range(p[0..n]);
+    requires loadable(p[0..n]);
     ensures label: result == n by auto;
 }
 ```
@@ -104,9 +104,9 @@ Supported structural requirements:
 
 ```click
 requires input_nonnegative: n >= 0;
-requires valid_range(p, 12);
-requires valid_range(p[0..n]);
-requires valid_range((p + 1)[0..1]);
+requires loadable(p, 12);
+requires loadable(p[0..n]);
+requires loadable((p + 1)[0..1]);
 requires loadable(p[0..n]);
 requires disjoint(dst[0..n], src[0..n]);
 requires read(p[0..1]);
@@ -117,13 +117,13 @@ Requirement labels use the same `label:` spelling as `ensures` labels. Labels
 are optional, but they are the preferred way for proof-step scripts to refer to a
 specific precondition, for example `choose(k from requirement has_k);`.
 
-`valid_range(base[start..end])` and `disjoint(left[start..end],
+`loadable(base[start..end])` and `disjoint(left[start..end],
 right[start..end])` use half-open `int32` element ranges. The byte count is
 derived from the base pointer's element type: four bytes for `int32[]`, one
 byte for `uint8[]`. This `..` syntax is Click contract syntax, not C
 fragment syntax.
 
-`loadable(base[start..end])` is the proposition form of memory-load validity
+`loadable(base[start..end])` is the proposition form of memory loadability
 for a segment. Use it when the fact needs to appear where Click expects a
 proposition, such as a composite resource `fact`.
 
@@ -247,15 +247,15 @@ A call can pass a covered subrange, such as passing `write(p[0..1])` from a
 caller that has `write(p[0..2])`; Click keeps the residue and rejoins adjacent
 returned ranges. The same applies to symbolic ranges when the current facts
 prove the subrange is covered. `read(...)` and `write(...)` also make the
-covered range valid for symbolic execution, so ordinary external reads and
-writes do not need a separate `valid_range(...)` requirement for the same
+covered range loadable for symbolic execution, so ordinary external reads and
+writes do not need a separate `loadable(...)` requirement for the same
 range.
 
 This is intentionally not the full permission system. There are no fractions,
 ownership predicates, explicit resource algebra proof steps, C heap allocation,
-or allocation-sized deallocation semantics yet. `valid_range`, `mutable`, and
-`immutable` remain separate concepts from permission: validity proves an access is in
-bounds, while resources authorize the access.
+or allocation-sized deallocation semantics yet. `loadable`, `mutable`, and
+`immutable` remain separate concepts from permission: loadability proves an
+access is in bounds, while resources authorize the access.
 
 ## Propositions
 
@@ -282,7 +282,7 @@ Range proposition helpers:
 bounded existential proposition when its bounds are symbolic; concrete `.any`
 ranges still unroll to a finite disjunction. While lowering the range body, the
 elaborator assumes the item is inside the range, so bodies such as `p[k] == x`
-can use `valid_range(p[lo..hi])` for memory safety.
+can use `loadable(p[lo..hi])` for memory safety.
 
 Prefer these range combinators for guarded memory reads. A plain proposition
 such as `exists (int32 k) { lo <= k and k < hi and p[k] == x }` does not
@@ -396,7 +396,7 @@ ensures result == k by {
 proposition and body }`. Contract-level `let ... where` applies that shape to
 each later proposition clause. The type annotation is required. The current
 implementation supports this in proposition clauses; it is intentionally
-rejected in `valid_range`, `mutable`, and other memory-segment expressions
+rejected in `loadable`, `mutable`, and other memory-segment expressions
 until Click has a contract-wide witness environment.
 
 In pure Click function parameters, `int32 p[]` and `int32* p` are treated as
@@ -420,7 +420,7 @@ C0 accepts a small multi-field struct slice with `int32` and pointer-valued
 fields. The C side can lower `obj->field` loads and stores at compact field
 offsets. Click contracts can use field places in resources:
 `read(obj->field)` and `write(obj->field)`. The access resource also makes the
-field valid for symbolic execution. Explicit ranges such as
+field loadable for symbolic execution. Explicit ranges such as
 `write(owner[0..3])` are still available for broader footprints. A pointer
 field occupies two int32 cells in that range spelling.
 

@@ -48,7 +48,7 @@ new proof workflow concepts too early.
 | --- | --- | --- | --- | --- |
 | Scalar execution | symbolic evaluators, SMT-backed automation | C-fragment/statement execution | `auto`, `symbolic_execute()` | `mdtests/scalar.md`, `mdtests/argument_result.md`, `mdtests/max_symbolic.md` |
 | C undefined behavior | CBMC, Frama-C/WP, UBSan-style checks | undefined behavior-aware C execution | `auto`, `symbolic_execute()` diagnostics | `mdtests/overflow.md`, `mdtests/increment_requires_no_overflow.md`, `mdtests/increment_without_requires.md`, `mdtests/c_division_by_zero.md`, `mdtests/c_division_overflow.md`, `mdtests/c_shift_large_count.md`, `mdtests/c_shift_left_overflow.md` |
-| Pointer range safety | C verifiers, separation logic | memory-validity and range axioms | `auto`, `symbolic_execute()` | `mdtests/pointer_range.md`, `mdtests/pointer_range_missing_requires.md`, `mdtests/fill_n_symbolic_pointer_loop.md` |
+| Pointer loadability | C verifiers, separation logic | loadability and range axioms | `auto`, `symbolic_execute()` | `mdtests/pointer_range.md`, `mdtests/pointer_range_missing_requires.md`, `mdtests/fill_n_symbolic_pointer_loop.md` |
 | Memory postconditions | ACSL/Dafny/F* function contracts | final-state memory evaluation | `auto`, `simp()` | `mdtests/fill3_memory_postconditions.md`, `mdtests/fill3_bad_memory_postcondition.md`, `mdtests/copy3_array_demo.md` |
 | Bounded loops | bounded model checking, symbolic execution | budgeted loop execution | `auto`, `bounded_execute()` | `mdtests/bounded_loop.md`, `mdtests/fill3.md`, `mdtests/fill3_array_loop.md` |
 | Function calls | modular verification, inlining, call summaries | function environment and specification satisfaction | `auto`, `symbolic_execute()` | `mdtests/function_call.md` |

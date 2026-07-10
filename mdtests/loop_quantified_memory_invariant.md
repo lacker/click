@@ -19,7 +19,7 @@ verifying "loop_quantified_memory_invariant.c";
 
 int32 loop_quantified_memory_invariant(int32 p[], int32 n) {
     requires n >= 0 and n <= 2147483647;
-    requires valid_range(p, n * 4);
+    requires loadable(p, n * 4);
     for loop(0) {
         invariant i >= 0 and i <= n by auto;
         invariant forall (int32 k) {

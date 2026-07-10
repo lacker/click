@@ -851,8 +851,7 @@ impl Parser {
             None
         };
         let requirement = match (self.peek_ident(), self.peek_next()) {
-            (Some("valid_range"), Some(Token::LParen)) => self.parse_valid_range_requirement()?,
-            (Some("valid_field"), Some(Token::LParen)) => self.parse_valid_field_requirement()?,
+            (Some("loadable"), Some(Token::LParen)) => self.parse_loadable_requirement()?,
             (Some("disjoint"), Some(Token::LParen)) => self.parse_disjoint_requirement()?,
             (Some("read") | Some("write"), Some(Token::LParen)) => {
                 Requirement::Resource(self.parse_resource_clause()?)
@@ -876,8 +875,13 @@ impl Parser {
         })
     }
 
-    fn parse_valid_range_requirement(&mut self) -> Result<Requirement, ClickError> {
-        self.expect_ident_spelling("valid_range")?;
+    fn parse_loadable_requirement(&mut self) -> Result<Requirement, ClickError> {
+        match self.peek_ident() {
+            Some("loadable") => {
+                self.position += 1;
+            }
+            _ => return Err(self.error("expected `loadable` requirement")),
+        }
         self.expect(Token::LParen)?;
         let requirement = if matches!(self.peek(), Some(Token::Ident(_)))
             && self.peek_next() == Some(&Token::Comma)
@@ -885,20 +889,13 @@ impl Parser {
             let name = self.expect_ident("range base name")?;
             self.expect(Token::Comma)?;
             let bytes = self.parse_range_bytes()?;
-            Requirement::ValidRange { name, bytes }
+            Requirement::LoadableBytes { name, bytes }
         } else {
             let segment = self.parse_current_contract_segment()?;
-            Requirement::ValidRangeSegment { segment }
+            Requirement::LoadableSegment { segment }
         };
         self.expect(Token::RParen)?;
         Ok(requirement)
-    }
-
-    fn parse_valid_field_requirement(&mut self) -> Result<Requirement, ClickError> {
-        self.expect_ident_spelling("valid_field")?;
-        let segment = self.parse_current_field_segment()?;
-
-        Ok(Requirement::ValidRangeSegment { segment })
     }
 
     fn parse_disjoint_requirement(&mut self) -> Result<Requirement, ClickError> {
@@ -992,10 +989,10 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 Ok(expression)
             }
-            Some(token) => Err(self.error(format!(
-                "expected valid_range byte expression, got {token:?}"
-            ))),
-            None => Err(self.error("expected valid_range byte expression, got end of input")),
+            Some(token) => {
+                Err(self.error(format!("expected loadable byte expression, got {token:?}")))
+            }
+            None => Err(self.error("expected loadable byte expression, got end of input")),
         }
     }
 

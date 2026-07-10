@@ -135,7 +135,7 @@ string values:
   before `len`, and a terminator at `len`.
 - `cstr(bytes)` says some exact spec length exists. This matches a plain
   `char*`/`uint8*` API shape, but byte-level consequences still need enough
-  memory-validity facts when unfolded.
+  memory-loadability facts when unfolded.
 - `cstr_bounded(bytes, max)` says a terminator exists somewhere before `max`.
   This matches bounded scanning APIs.
 

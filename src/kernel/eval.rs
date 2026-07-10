@@ -871,7 +871,7 @@ pub(super) fn evaluate_c_memory_load_paths(
         return paths;
     }
 
-    if memory.can_load_concretely(&pointer, value_type.byte_width()) {
+    if memory.is_loadable_concretely(&pointer, value_type.byte_width()) {
         let Some(value) = symbolic_load_value(&memory, &pointer, value_type) else {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -887,10 +887,10 @@ pub(super) fn evaluate_c_memory_load_paths(
     }
 
     if !has_external_read_resource {
-        let proposition = Proposition::CMemoryCanLoad {
+        let proposition = Proposition::CMemoryLoadable {
             memory: memory.clone(),
-            pointer: pointer.clone(),
-            byte_width: value_type.byte_width(),
+            base: pointer.clone(),
+            bytes: Bitvector32Term::Constant(value_type.byte_width()),
         };
         if add_proof_obligation(&mut obligations, assumptions, proposition).is_none() {
             return Vec::new();

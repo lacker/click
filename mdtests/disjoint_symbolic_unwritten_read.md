@@ -21,7 +21,7 @@ int32 write_i_read_j(int32 p[], int32 i, int32 j, int32 n) {
     requires i < n;
     requires j >= 0;
     requires j < n;
-    requires valid_range(p[0..n]);
+    requires loadable(p[0..n]);
     requires write(p[i..i + 1]);
     requires read(p[j..j + 1]);
     requires disjoint(p[i..i + 1], p[j..j + 1]);

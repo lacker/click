@@ -58,12 +58,12 @@ This resource-family boundary is intentionally more general than memory
 ownership. Click also has exact-match user-defined resources, which can model
 API protocols without forcing those protocols to look like heap cells.
 
-## Validity And Authority
+## Loadability And Authority
 
-`valid_range(...)` and permissions still answer different questions, but access
-permissions include the validity needed for the covered access.
+`loadable(...)` and permissions still answer different questions, but access
+permissions include the loadability needed for the covered access.
 
-`valid_range(p[0..n])` says the range is a valid memory range. It is about
+`loadable(p[0..n])` says the range is loadable. It is about
 memory safety and bounds.
 
 `read(p[0..n])` or `write(p[0..n])` says the current code has authority to
@@ -80,11 +80,11 @@ int32 first(int32 p[]) {
 ```
 
 Similarly, `write(...)` grants authority to store and makes the covered range
-valid. Use `valid_range(...)` separately when you need to prove memory exists
+loadable. Use `loadable(...)` separately when you need to prove memory exists
 without granting read or write authority, or when a larger structural bound is
 useful for index reasoning.
 
-When the same validity fact must appear as a proposition, use
+When the same loadability fact must appear as a proposition, use
 `loadable(segment)`. This is common in composite resource definitions, where
 `fact` clauses are pure propositions rather than structural requirements.
 

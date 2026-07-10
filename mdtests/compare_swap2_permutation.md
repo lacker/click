@@ -21,7 +21,7 @@ int32 compare_swap2_permutation(int32 p[2]) {
 verifying "compare_swap2_permutation.c";
 
 int32 compare_swap2_permutation(int32 p[2]) {
-    requires valid_range(p[0..2]);
+    requires loadable(p[0..2]);
     requires write(p[0..2]);
     ensures pair_permutation: permutation(p, old(p), 0, 2) by {
         symbolic_execute();

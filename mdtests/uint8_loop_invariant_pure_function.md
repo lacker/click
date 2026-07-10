@@ -25,7 +25,7 @@ function first_byte(uint8 p[]) -> uint8 {
 
 uint8 fill_byte_tail(uint8 p[], int32 n) {
     requires n >= 1 and n <= 2147483647;
-    requires valid_range(p[0..n]);
+    requires loadable(p[0..n]);
     requires write(p[0..n]);
     for loop(0) {
         invariant i >= 1 and i <= n by auto;

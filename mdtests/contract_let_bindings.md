@@ -34,7 +34,7 @@ int32 read_first(int32 p[]) {
     let len: int32 = 1;
     let first = len - 1;
 
-    requires valid_range(p[0..len]);
+    requires loadable(p[0..len]);
     requires read(p[0..len]);
     ensures result_value: result == p[first] by auto;
 }

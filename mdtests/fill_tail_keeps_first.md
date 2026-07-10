@@ -21,7 +21,7 @@ verifying "fill_tail_keeps_first.c";
 
 int32 fill_tail_keeps_first(int32 p[], int32 n) {
     requires n >= 1 and n <= 2147483647;
-    requires valid_range(p, n * 4);
+    requires loadable(p, n * 4);
     requires write(p[0..n]);
     for loop(0) {
         invariant i >= 1 and i <= n by auto;

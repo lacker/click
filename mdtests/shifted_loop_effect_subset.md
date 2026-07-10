@@ -23,7 +23,7 @@ verifying "shifted_loop_effect_subset.c";
 int32 shifted_loop_effect_subset(int32 p[], int32 n) {
     requires n >= 1;
     requires n <= 2147483647;
-    requires valid_range(p[0..n]);
+    requires loadable(p[0..n]);
     requires write(p[0..n]);
     for loop(0) {
         invariant i >= 1;

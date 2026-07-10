@@ -74,7 +74,7 @@ These give the verifier permission to check external memory accesses.
 `read(...)` permits loads; `write(...)` permits both loads and stores.
 Resource facts are carried separately from pure facts. The intermediate
 [Permissions](../intermediate/permissions.md) chapter covers transfer through
-function calls and the distinction between validity and authority.
+function calls and the distinction between loadability and authority.
 
 Requirements can be labeled:
 
@@ -116,7 +116,7 @@ mutable dst[0..n] by frame;
 ```
 
 These say which parts of memory are preserved or may be written. They are
-introduced later, after pointer validity and aliasing.
+introduced later, after pointer loadability and aliasing.
 
 ## Proof Clauses
 

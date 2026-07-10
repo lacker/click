@@ -20,8 +20,8 @@ resource separated_first_cells(dst: int32*, src: int32*) {
 verifying "clobber_dst_packaged.c";
 
 int32 clobber_dst_packaged(int32* dst, int32* src) {
-    requires valid_range(dst[0..1]);
-    requires valid_range(src[0..1]);
+    requires loadable(dst[0..1]);
+    requires loadable(src[0..1]);
     requires separated_first_cells(dst, src);
 
     ensures separated_first_cells(dst, src) by {

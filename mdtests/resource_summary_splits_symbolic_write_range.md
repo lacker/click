@@ -26,7 +26,7 @@ verifying "write_at_symbolic.c";
 int32 write_at(int32 p[], int32 i) {
     requires i >= 0;
     requires i < 2147483647;
-    requires valid_range(p[i..i + 1]);
+    requires loadable(p[i..i + 1]);
     requires write(p[i..i + 1]);
 
     ensures write(p[i..i + 1]) by auto;
@@ -36,7 +36,7 @@ int32 write_at_symbolic(int32 p[], int32 i, int32 n) {
     requires i >= 0;
     requires i < n;
     requires n <= 2147483647;
-    requires valid_range(p[0..n]);
+    requires loadable(p[0..n]);
     requires write(p[0..n]);
 
     ensures write(p[0..n]) by auto;

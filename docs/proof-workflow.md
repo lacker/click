@@ -242,7 +242,7 @@ Practical approach:
 1. Find the failing mdtest and the exact guarantee label.
 2. Read pure facts to learn which branch/path failed.
 3. If a predicate is still opaque, add `unfold(predicate_name);`.
-4. If memory preservation is missing, check `valid_range`, `disjoint`,
+4. If memory preservation is missing, check `loadable`, `disjoint`,
    `immutable`, `mutable`, and loop effects.
 5. If arithmetic overflow appears, add numeric requirements or invariants.
 6. If the proof needs a general new pattern, add a focused mdtest and then a

@@ -43,7 +43,7 @@ predicate has_zero(int32 p[], int32 n) {
 }
 
 int32 find_zero(int32 p[], int32 n) {
-    requires valid_range(p[0..n]);
+    requires loadable(p[0..n]);
     requires present: has_zero(p, n);
     ...
 }

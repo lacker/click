@@ -24,8 +24,8 @@ in `docs/`; do not treat this file as a design doc.
   facts and viewed immediate contained resource facts, not owned contained
   permissions.
 - `loadable(segment)` is now a Click proposition that lowers to the kernel
-  range-validity fact (`CMemoryValidRange`). Use it in composite `fact` clauses
-  when a resource should expose memory-load validity without exposing extra
+  loadability fact (`CMemoryLoadable`). Use it in composite `fact` clauses
+  when a resource should expose memory loadability without exposing extra
   resource facts.
 - Proof-step replay now has an explicit execution point. The supported points
   are function entry, straight-line statement entry via `execute_step()` or

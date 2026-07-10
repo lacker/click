@@ -123,7 +123,7 @@ Likely additions:
   arbitrary model variables beyond resources.
 - Heap allocation and deallocation in the C semantics.
 - Allocation predicates:
-  valid object, valid byte range, initialized range, nullness, and
+  allocated object, loadable byte range, initialized range, nullness, and
   borrowed/shared/owned access built on the permission layer.
 - Free/lifetime obligations:
   no use-after-free, no double-free, and no leaks for functions whose contracts
@@ -302,8 +302,8 @@ Good next tasks from the current state:
 4. Extend the first C-string predicate layer toward a full string model. Open
    questions include first-class Click string values, libc function summaries,
    offset-based string slices, and whether/how higher-level predicates can
-   package structural memory validity instead of requiring separate
-   `valid_range` facts.
+   package structural memory loadability instead of requiring separate
+   `loadable` facts.
 5. Extend the integer-promotion/conversion slice beyond the current `uint8`
    rvalue promotion and checked `int32`-to-`uint8` narrowing rules. The open
    design question is how much of C's usual arithmetic conversions Click should

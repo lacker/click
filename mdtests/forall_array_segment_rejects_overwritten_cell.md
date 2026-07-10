@@ -15,7 +15,7 @@ int32 forall_array_segment_rejects_overwritten_cell(int32 p[]) {
 verifying "forall_array_segment_rejects_overwritten_cell.c";
 
 int32 forall_array_segment_rejects_overwritten_cell(int32 p[]) {
-    requires valid_range(p, 4);
+    requires loadable(p, 4);
     requires write(p[0..1]);
     ensures segment_unchanged: forall (int32 k) {
         0 <= k and k < 1 implies p[k] == old(p[k])

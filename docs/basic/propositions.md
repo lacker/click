@@ -69,7 +69,7 @@ The range `0..n` is half-open: it includes `0` and excludes `n`.
 
 These forms are useful because Click can lower the body under the fact that
 `k` is in the range. That matters for memory safety: a read such as `p[k]` is
-safe only when Click knows `k` is within a valid range.
+safe only when Click knows `k` is within a loadable range.
 
 ## Old Values
 

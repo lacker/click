@@ -15,8 +15,8 @@ int32 byte_slice_range_predicates(uint8 p[], int32 n) {
 verifying "byte_slice_range_predicates.c";
 
 int32 byte_slice_range_predicates(uint8 p[], int32 n) {
-    requires valid_range(p[0..n]);
-    requires valid_range(p[0..3]);
+    requires loadable(p[0..n]);
+    requires loadable(p[0..3]);
     requires has_x: bytes_contains(p, 0, n, 'x');
     requires no_y_in_prefix: bytes_all_not_eq(p, 0, 3, 'y');
 

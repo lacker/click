@@ -17,7 +17,7 @@ const FILL3_CLICK: &str = r#"
         verifying "fill3.c";
 
         int32 fill3(int32* p) {
-            requires valid_range(p, 12);
+            requires loadable(p, 12);
             requires write(p[0..3]);
             ensures returns_second: result == 2 by auto;
         }
@@ -75,7 +75,7 @@ fn parses_checked_signature_and_contract_clauses() {
     assert_eq!(
         function.requires(),
         &[
-            Requirement::ValidRange {
+            Requirement::LoadableBytes {
                 name: "p".to_string(),
                 bytes: RangeBytes::Constant(12)
             },
@@ -147,21 +147,21 @@ fn verifies_pure_theorem_definition() {
 }
 
 #[test]
-fn parses_symbolic_valid_range_bytes() {
+fn parses_symbolic_loadable_bytes() {
     let source = r#"
             verifying "fill.c";
 
             int32 fill(int32* p, int32 n) {
-                requires valid_range(p, n * 4);
+                requires loadable(p, n * 4);
                 ensures result == n by auto;
             }
         "#;
-    let file = parse(source).expect("symbolic valid_range should parse");
+    let file = parse(source).expect("symbolic loadable should parse");
     let function = &file.function_blocks()[0];
 
     assert_eq!(
         function.requires(),
-        &[Requirement::ValidRange {
+        &[Requirement::LoadableBytes {
             name: "p".to_string(),
             bytes: RangeBytes::Multiply(
                 Box::new(RangeBytes::Parameter("n".to_string())),
@@ -172,21 +172,21 @@ fn parses_symbolic_valid_range_bytes() {
 }
 
 #[test]
-fn parses_valid_range_segment_syntax() {
+fn parses_loadable_segment_syntax() {
     let source = r#"
             verifying "fill.c";
 
             int32 fill(int32* p, int32 n) {
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 ensures result == n by auto;
             }
         "#;
-    let file = parse(source).expect("segment valid_range should parse");
+    let file = parse(source).expect("segment loadable should parse");
     let function = &file.function_blocks()[0];
 
     assert_eq!(
         function.requires(),
-        &[Requirement::ValidRangeSegment {
+        &[Requirement::LoadableSegment {
             segment: ContractSegment {
                 state: ContractSegmentState::Current,
                 base: CExpression::Variable("p".to_string()),
@@ -198,21 +198,21 @@ fn parses_valid_range_segment_syntax() {
 }
 
 #[test]
-fn parses_valid_range_pointer_base_segment() {
+fn parses_loadable_pointer_base_segment() {
     let source = r#"
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires valid_range((p + 1)[0..1]);
+                requires loadable((p + 1)[0..1]);
                 ensures result == 9 by auto;
             }
         "#;
-    let file = parse(source).expect("pointer-base valid_range should parse");
+    let file = parse(source).expect("pointer-base loadable should parse");
     let function = &file.function_blocks()[0];
 
     assert_eq!(
         function.requires(),
-        &[Requirement::ValidRangeSegment {
+        &[Requirement::LoadableSegment {
             segment: ContractSegment {
                 state: ContractSegmentState::Current,
                 base: CExpression::Add(
@@ -231,8 +231,13 @@ fn parses_loadable_segment_proposition() {
     let source = r#"
             verifying "read.c";
 
+            predicate shifted_loadable(int32* p, int32 n) {
+                loadable((p + 1)[0..n])
+            }
+
             int32 read(int32* p, int32 n) {
                 requires loadable((p + 1)[0..n]);
+                requires shifted_loadable(p, n);
                 ensures result == 0 by auto;
             }
         "#;
@@ -241,18 +246,31 @@ fn parses_loadable_segment_proposition() {
 
     assert_eq!(
         function.requires(),
-        &[Requirement::Proposition(ClickProposition::Loadable {
-            segment: ContractSegment {
-                state: ContractSegmentState::Current,
-                base: CExpression::Add(
-                    Box::new(CExpression::Variable("p".to_string())),
-                    Box::new(CExpression::Value(int32(1))),
-                ),
-                start: CExpression::Value(int32(0)),
-                end: CExpression::Variable("n".to_string()),
+        &[
+            Requirement::LoadableSegment {
+                segment: ContractSegment {
+                    state: ContractSegmentState::Current,
+                    base: CExpression::Add(
+                        Box::new(CExpression::Variable("p".to_string())),
+                        Box::new(CExpression::Value(int32(1))),
+                    ),
+                    start: CExpression::Value(int32(0)),
+                    end: CExpression::Variable("n".to_string()),
+                },
             },
-        })]
+            Requirement::Proposition(ClickProposition::PredicateCall {
+                name: "shifted_loadable".to_string(),
+                arguments: vec![
+                    ContractExpression::CFragment(CExpression::Variable("p".to_string())),
+                    ContractExpression::CFragment(CExpression::Variable("n".to_string())),
+                ],
+            }),
+        ]
     );
+    assert!(matches!(
+        file.predicate_definitions()[0].body(),
+        ClickProposition::Loadable { .. }
+    ));
 }
 
 #[test]
@@ -275,7 +293,7 @@ fn parses_disjoint_requirement() {
 }
 
 #[test]
-fn rejects_reversed_constant_valid_range_segment() {
+fn rejects_reversed_constant_loadable_segment() {
     let c_source = r#"
             int32 read_second(int32* p) {
                 return p[1];
@@ -285,7 +303,7 @@ fn rejects_reversed_constant_valid_range_segment() {
             verifying "read_second.c";
 
             int32 read_second(int32* p) {
-                requires valid_range(p[3..1]);
+                requires loadable(p[3..1]);
                 ensures reads: result == p[1] by auto;
             }
         "#;
@@ -296,7 +314,7 @@ fn rejects_reversed_constant_valid_range_segment() {
     assert!(
         error
             .message()
-            .contains("`valid_range` segment has an end before its start"),
+            .contains("`loadable` segment has an end before its start"),
         "{}",
         error.message()
     );
@@ -324,7 +342,7 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
             verifying "json_object_ref_count.c";
 
             int32 json_object_get_ref_count(struct json_object* obj) {
-                requires valid_field(obj->ref_count);
+                requires loadable(obj->ref_count);
                 ensures returns_ref_count: result == obj->ref_count by auto;
                 immutable by frame;
             }
@@ -343,7 +361,7 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
     );
     assert_eq!(
         function.requires(),
-        &[Requirement::ValidRangeSegment {
+        &[Requirement::LoadableSegment {
             segment: ContractSegment {
                 state: ContractSegmentState::Current,
                 base: CExpression::Variable("obj".to_string()),
@@ -367,7 +385,7 @@ fn parses_pilot_struct_field_mutable_effect() {
             verifying "json_object_set_ref_count.c";
 
             int32 json_object_set_ref_count(struct json_object* obj, int32 count) {
-                requires valid_field(obj->ref_count);
+                requires loadable(obj->ref_count);
                 mutable_field(obj->ref_count) by frame;
                 ensures returns_count: result == count by auto;
             }
@@ -839,7 +857,7 @@ fn parses_frame_tactic() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires valid_range(p, 8);
+                requires loadable(p, 8);
                 mutable p[1..2] by frame;
                 ensures returns_written: result == 9 by auto;
             }
@@ -1244,7 +1262,7 @@ fn unfolds_predicate_requirement_to_prove_consequence() {
             }
 
             int32 keep_pair(int32* p) {
-                requires valid_range(p, 8);
+                requires loadable(p, 8);
                 requires sorted_pair(p);
                 ensures consequence: p[0] <= p[1] by {
                     symbolic_execute();
@@ -1294,7 +1312,7 @@ fn unfolds_predicate_goal_to_prove_compare_swap_sorted() {
             }
 
             int32 compare_swap2(int32* p) {
-                requires valid_range(p, 8);
+                requires loadable(p, 8);
                 requires write(p[0..2]);
                 ensures sorted: sorted_pair(p) by {
                     symbolic_execute();
@@ -1330,7 +1348,7 @@ fn unfolds_general_sorted_predicate() {
 
             int32 keep_sorted(int32* p, int32 n) {
                 requires n >= 0;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires sorted(p, n);
                 ensures still_sorted: sorted(p, n) by {
                     symbolic_execute();
@@ -1453,7 +1471,7 @@ fn verifies_mutable_effect_with_bounded_frame_steps() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires valid_range(p, 8);
+                requires loadable(p, 8);
                 requires write(p[1..2]);
                 mutable p[1..2] by {
                     bounded_execute();
@@ -1518,7 +1536,7 @@ fn auto_certificate_replays_for_bounded_execution() {
             verifying "fill3_array_loop.c";
 
             int32 fill3_array_loop(int32 p[3]) {
-                requires valid_range(p, 12);
+                requires loadable(p, 12);
                 requires write(p[0..3]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -1543,7 +1561,7 @@ fn auto_certificate_replays_for_bounded_execution() {
             verifying "fill3_array_loop.c";
 
             int32 fill3_array_loop(int32 p[3]) {
-                requires valid_range(p, 12);
+                requires loadable(p, 12);
                 requires write(p[0..3]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -1689,7 +1707,7 @@ fn verifies_old_memory_postcondition_for_unmodified_cell() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires valid_range(p, 8);
+                requires loadable(p, 8);
                 requires write(p[1..2]);
                 ensures writes_second: p[1] == 9 by auto;
                 ensures keeps_first: p[0] == old(p[0]) by auto;
@@ -1722,7 +1740,7 @@ fn verifies_quantified_old_memory_postcondition() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires valid_range(p, 8);
+                requires loadable(p, 8);
                 requires write(p[1..2]);
                 ensures keeps_first_cell: forall (int32 k) {
                     0 <= k and k < 1 implies p[k] == old(p[k])
@@ -1754,7 +1772,7 @@ fn disjoint_requirement_proves_symbolic_unwritten_read() {
                 requires i < n;
                 requires j >= 0;
                 requires j < n;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[i..i + 1]);
                 requires read(p[j..j + 1]);
                 requires disjoint(p[i..i + 1], p[j..j + 1]);
@@ -1781,7 +1799,7 @@ fn quantified_old_memory_rejects_overwritten_cell() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires valid_range(p, 8);
+                requires loadable(p, 8);
                 requires write(p[1..2]);
                 ensures keeps_second_cell: forall (int32 k) {
                     1 <= k and k < 2 implies p[k] == old(p[k])
@@ -1811,7 +1829,7 @@ fn verifies_mutable_segment_effect() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires valid_range(p, 8);
+                requires loadable(p, 8);
                 requires write(p[1..2]);
                 mutable p[1..2] by frame;
                 mutable p[0..2] by frame;
@@ -1832,7 +1850,7 @@ fn verifies_mutable_segment_effect() {
 }
 
 #[test]
-fn verifies_shifted_valid_range_and_mutable_segment() {
+fn verifies_shifted_loadable_and_mutable_segment() {
     let c_source = r#"
             int32 write_second(int32* p) {
                 p[1] = 9;
@@ -1843,7 +1861,7 @@ fn verifies_shifted_valid_range_and_mutable_segment() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires valid_range((p + 1)[0..1]);
+                requires loadable((p + 1)[0..1]);
                 requires write((p + 1)[0..1]);
                 mutable (p + 1)[0..1] by frame;
                 ensures returns_written: result == 9 by auto;
@@ -1851,7 +1869,7 @@ fn verifies_shifted_valid_range_and_mutable_segment() {
         "#;
 
     let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
-        .expect("shifted valid_range should prove access and frame");
+        .expect("shifted loadable should prove access and frame");
 
     assert_eq!(verified.len(), 2);
     assert_eq!(verified[0].proof_kind(), ProofKind::Frame);
@@ -1897,7 +1915,7 @@ fn mutable_segment_rejects_write_outside_segment() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires valid_range(p, 8);
+                requires loadable(p, 8);
                 requires write(p[1..2]);
                 mutable p[0..1] by auto;
                 ensures returns_written: result == 9 by auto;
@@ -1941,7 +1959,7 @@ fn immutable_rejects_external_memory_write() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires valid_range(p, 8);
+                requires loadable(p, 8);
                 requires write(p[1..2]);
                 immutable by auto;
                 ensures returns_written: result == 9 by auto;
@@ -2001,7 +2019,7 @@ fn old_memory_postcondition_fails_for_overwritten_cell() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires valid_range(p, 8);
+                requires loadable(p, 8);
                 requires write(p[1..2]);
                 ensures keeps_second: p[1] == old(p[1]) by auto;
             }
@@ -2073,7 +2091,7 @@ fn verifies_old_memory_loop_invariant() {
 
             int32 fill_tail(int32 p[], int32 n) {
                 requires n >= 1 and n <= 2147483647;
-                requires valid_range(p, n * 4);
+                requires loadable(p, n * 4);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 1 and i <= n by auto;
@@ -2107,7 +2125,7 @@ fn verifies_old_memory_loop_invariant_with_segment_bounds() {
 
             int32 fill_tail(int32 p[], int32 n) {
                 requires n >= 1 and n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 1 and i <= n by auto;
@@ -2129,7 +2147,7 @@ fn verifies_old_memory_loop_invariant_with_segment_bounds() {
 }
 
 #[test]
-fn verifies_symbolic_segment_valid_range() {
+fn verifies_symbolic_segment_loadable() {
     let c_source = r#"
             int32 fill_n(int32 p[], int32 n) {
                 int32 i;
@@ -2147,7 +2165,7 @@ fn verifies_symbolic_segment_valid_range() {
             int32 fill_n(int32 p[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -2158,7 +2176,7 @@ fn verifies_symbolic_segment_valid_range() {
         "#;
 
     let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
-        .expect("segment valid_range should verify symbolic pointer loop");
+        .expect("segment loadable should verify symbolic pointer loop");
 
     assert_eq!(verified.len(), 1);
     assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
@@ -2185,7 +2203,7 @@ fn verifies_loadable_segment_proposition_for_indexed_read() {
         "#;
 
     let verified = verify_c0_sources(click_source, &[("read_index.c", c_source)])
-        .expect("loadable segment should prove indexed read validity");
+        .expect("loadable segment should prove indexed read loadability");
 
     assert_eq!(verified.len(), 1);
 }
@@ -2209,7 +2227,7 @@ fn verifies_symbolic_loop_mutable_segment() {
             int32 fill_n(int32 p[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -2246,7 +2264,7 @@ fn verifies_loop_level_mutable_segment() {
             int32 fill_n(int32 p[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -2283,7 +2301,7 @@ fn verifies_loop_level_iteration_relative_mutable_segment() {
             int32 fill_n(int32 p[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -2322,7 +2340,7 @@ fn loop_whole_mutable_rejects_loop_modified_local_in_segment() {
             int32 fill_n(int32 p[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -2364,7 +2382,7 @@ fn verifies_loop_level_growing_prefix_mutable_segment() {
             int32 fill_n(int32 p[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -2403,7 +2421,7 @@ fn verifies_loop_level_shifted_suffix_mutable_segment() {
             int32 fill_tail(int32 p[], int32 n) {
                 requires n >= 1;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 1 by auto;
@@ -2441,8 +2459,8 @@ fn verifies_loop_level_multi_segment_mutable_footprint() {
             int32 fill_two(int32 p[], int32 q[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
-                requires valid_range(q[0..n]);
+                requires loadable(p[0..n]);
+                requires loadable(q[0..n]);
                 requires write(p[0..n]);
                 requires write(q[0..n]);
                 for loop(0) {
@@ -2482,7 +2500,7 @@ fn loop_level_mutable_segment_rejects_write_outside_segment() {
             int32 fill_n(int32 p[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -2542,7 +2560,7 @@ fn loop_level_immutable_rejects_external_memory_write() {
             int32 fill_n(int32 p[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -2618,7 +2636,7 @@ fn function_immutable_allows_nonwriting_loop_with_mutable_bound() {
             int32 count_pointer_bound(int32 p[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -2656,7 +2674,7 @@ fn function_mutable_uses_loop_effect_summary() {
             int32 fill_n(int32 p[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -2695,7 +2713,7 @@ fn function_mutable_rejects_loop_effect_outside_function_bound() {
             int32 fill_n(int32 p[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -2741,7 +2759,7 @@ fn function_mutable_accepts_shifted_loop_effect_subset() {
             int32 fill_tail(int32 p[], int32 n) {
                 requires n >= 1;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 1 by auto;
@@ -2780,7 +2798,7 @@ fn function_immutable_rejects_writing_loop_effect_summary() {
             int32 fill_n(int32 p[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(p[0..n]);
+                requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
                     invariant i >= 0 by auto;
@@ -2865,7 +2883,7 @@ fn structural_invariant_allows_unfold_only_steps() {
             }
 
             int32 loop_sorted_range_invariant(int32 p[3]) {
-                requires valid_range(p[0..3]);
+                requires loadable(p[0..3]);
                 requires sorted(p, 3);
                 for loop(0) {
                     invariant i >= 0 and i <= 3 by auto;
@@ -2911,8 +2929,8 @@ fn verifies_symbolic_copy_segment_invariant() {
             int32 copy_n(int32 dst[], int32 src[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(dst[0..n]);
-                requires valid_range(src[0..n]);
+                requires loadable(dst[0..n]);
+                requires loadable(src[0..n]);
                 requires write(dst[0..n]);
                 requires read(src[0..n]);
                 requires disjoint(dst[0..n], src[0..n]);
@@ -2965,8 +2983,8 @@ fn auto_certificate_replays_for_loop_frame_claim() {
             int32 copy_n(int32 dst[], int32 src[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(dst[0..n]);
-                requires valid_range(src[0..n]);
+                requires loadable(dst[0..n]);
+                requires loadable(src[0..n]);
                 requires write(dst[0..n]);
                 requires read(src[0..n]);
                 requires disjoint(dst[0..n], src[0..n]);
@@ -3014,8 +3032,8 @@ fn auto_certificate_replays_for_loop_frame_claim() {
             int32 copy_n(int32 dst[], int32 src[], int32 n) {
                 requires n >= 0;
                 requires n <= 2147483647;
-                requires valid_range(dst[0..n]);
-                requires valid_range(src[0..n]);
+                requires loadable(dst[0..n]);
+                requires loadable(src[0..n]);
                 requires write(dst[0..n]);
                 requires read(src[0..n]);
                 requires disjoint(dst[0..n], src[0..n]);
@@ -3188,7 +3206,7 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
         block: "local:i".to_string(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let initial_memory = memory_with_symbolic_valid_range_cells(
+    let initial_memory = memory_with_symbolic_loadable_cells(
         CMemory::new(),
         &std::collections::BTreeMap::from([(
             "p".to_string(),

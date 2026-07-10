@@ -14,7 +14,7 @@ int32 write_second_bad_old(int32* p) {
 verifying "write_second_bad_old.c";
 
 int32 write_second_bad_old(int32* p) {
-    requires valid_range(p, 8);
+    requires loadable(p, 8);
     requires write(p[1..2]);
     ensures keeps_second: p[1] == old(p[1]) by auto;
 }

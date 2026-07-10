@@ -1,6 +1,6 @@
 # pointer range segment syntax
 
-This checks that Click-side C-reference syntax can spell a valid range as a
+This checks that Click-side C-reference syntax can spell a loadable range as a
 half-open element segment.
 
 ```c filename=pointer_range_segment_syntax.c
@@ -21,7 +21,7 @@ verifying "pointer_range_segment_syntax.c";
 int32 fill_n_with_segment_range(int32 p[], int32 n) {
     requires n >= 0;
     requires n <= 2147483647;
-    requires valid_range(p[0..n]);
+    requires loadable(p[0..n]);
     requires write(p[0..n]);
     for loop(0) {
         invariant i >= 0 by auto;

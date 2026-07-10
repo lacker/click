@@ -572,17 +572,12 @@ pub enum Proposition {
         pointer: Pointer,
         outcome: CExpressionOutcome,
     },
-    CMemoryCanLoad {
-        memory: CMemory,
-        pointer: Pointer,
-        byte_width: u32,
-    },
     CMemoryCanStore {
         memory: CMemory,
         pointer: Pointer,
         byte_width: u32,
     },
-    CMemoryValidRange {
+    CMemoryLoadable {
         memory: CMemory,
         base: Pointer,
         bytes: Bitvector32Term,
@@ -1773,7 +1768,7 @@ impl CMemory {
         self.blocks.contains_key(block)
     }
 
-    pub(super) fn can_load_concretely(&self, pointer: &Pointer, byte_width: u32) -> bool {
+    pub(super) fn is_loadable_concretely(&self, pointer: &Pointer, byte_width: u32) -> bool {
         self.cells.contains_key(pointer) || self.access_in_bounds(pointer, byte_width)
     }
 

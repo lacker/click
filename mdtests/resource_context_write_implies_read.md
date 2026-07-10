@@ -13,7 +13,7 @@ int32 read_with_write(int32 p[]) {
 verifying "read_with_write.c";
 
 int32 read_with_write(int32 p[]) {
-    requires valid_range(p[0..1]);
+    requires loadable(p[0..1]);
     requires write(p[0..1]);
 
     ensures read(p[0..1]) by auto;

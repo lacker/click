@@ -24,14 +24,14 @@ verifying "borrow_first.c";
 verifying "borrow_then_write.c";
 
 int32 borrow_first(int32 p[]) {
-    requires valid_range(p[0..1]);
+    requires loadable(p[0..1]);
     requires read(p[0..1]);
 
     ensures read(p[0..1]) by auto;
 }
 
 int32 borrow_then_write(int32 p[]) {
-    requires valid_range(p[0..1]);
+    requires loadable(p[0..1]);
     requires write(p[0..1]);
 
     ensures returns_written: result == 1 by auto;

@@ -748,10 +748,10 @@ fn while_invariant_is_proof_obligation() {
         block: "block".to_string(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let invariant = Proposition::CMemoryCanLoad {
+    let invariant = Proposition::CMemoryLoadable {
         memory: CMemory::new(),
-        pointer,
-        byte_width: 4,
+        base: pointer,
+        bytes: Bitvector32Term::Constant(4),
     };
     let state = CState::new().with_local("x", int32(0));
     let statement = c_while(
@@ -792,10 +792,10 @@ fn builtin_obligation_solver_proves_trivial_props() {
         ConditionTerm::Constant(true),
         true
     )));
-    assert!(assumptions.proves(&Proposition::CMemoryCanLoad {
+    assert!(assumptions.proves(&Proposition::CMemoryLoadable {
         memory: memory.clone(),
-        pointer: pointer.clone(),
-        byte_width: 4,
+        base: pointer.clone(),
+        bytes: Bitvector32Term::Constant(4),
     }));
     assert!(assumptions.proves(&Proposition::CMemoryCanStore {
         memory,
@@ -916,10 +916,10 @@ fn known_memory_block_bounds_prove_symbolic_element_access() {
     let memory = CMemory::new().with_block("local:a", 12);
     let pointer = CMemory::local_pointer("a").offset_by_int32_elements(index_bits);
 
-    assert!(assumptions.proves(&Proposition::CMemoryCanLoad {
+    assert!(assumptions.proves(&Proposition::CMemoryLoadable {
         memory: memory.clone(),
-        pointer: pointer.clone(),
-        byte_width: 4,
+        base: pointer.clone(),
+        bytes: Bitvector32Term::Constant(4),
     }));
     assert!(assumptions.proves(&Proposition::CMemoryCanStore {
         memory,
@@ -948,12 +948,12 @@ fn assumptions_prove_forall_int32_array_range_body() {
             true,
         )),
     );
-    let can_load_index = Proposition::CMemoryCanLoad {
+    let loadable_index = Proposition::CMemoryLoadable {
         memory: memory.clone(),
-        pointer: indexed_pointer,
-        byte_width: 4,
+        base: indexed_pointer,
+        bytes: Bitvector32Term::Constant(4),
     };
-    let assumptions = Assumptions::new().assume_proposition(Proposition::CMemoryValidRange {
+    let assumptions = Assumptions::new().assume_proposition(Proposition::CMemoryLoadable {
         memory,
         base,
         bytes: Bitvector32Term::Constant(12),
@@ -961,7 +961,7 @@ fn assumptions_prove_forall_int32_array_range_body() {
 
     assert!(assumptions.proves(&forall_int32(
         index,
-        Proposition::Implies(Box::new(in_segment), Box::new(can_load_index)),
+        Proposition::Implies(Box::new(in_segment), Box::new(loadable_index)),
     )));
 }
 
@@ -1088,10 +1088,10 @@ fn builtin_obligation_solver_discharges_concrete_invariant() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let memory = CMemory::new().with_block("block", 4);
-    let invariant = Proposition::CMemoryCanLoad {
+    let invariant = Proposition::CMemoryLoadable {
         memory: memory.clone(),
-        pointer,
-        byte_width: 4,
+        base: pointer,
+        bytes: Bitvector32Term::Constant(4),
     };
     let state = CState::new().with_local("x", int32(0)).with_memory(memory);
     let statement = c_while(
@@ -1927,7 +1927,7 @@ fn fixed_bound_store_loop_touches_only_valid_pointer_range() {
 }
 
 #[test]
-fn symbolic_valid_range_discharges_pointer_access_obligation() {
+fn symbolic_loadable_discharges_pointer_access_obligation() {
     let i = Variable(67);
     let n = Variable(68);
     let i_bits = Bitvector32Term::Variable(i);
@@ -1944,7 +1944,7 @@ fn symbolic_valid_range_discharges_pointer_access_obligation() {
         .with_resource_context(write_context(base.clone(), 0, n_bits.clone()));
     let statement = c_store(c_add(c_variable("p"), c_variable("i")), c_int32_literal(7));
     let assumptions = Assumptions::new()
-        .assume_proposition(Proposition::CMemoryValidRange {
+        .assume_proposition(Proposition::CMemoryLoadable {
             memory: memory.clone(),
             base: base.clone(),
             bytes: Bitvector32Term::Multiply(

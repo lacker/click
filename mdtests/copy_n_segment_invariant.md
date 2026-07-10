@@ -24,8 +24,8 @@ verifying "copy_n_segment_invariant.c";
 int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
     requires n >= 0;
     requires n <= 2147483647;
-    requires valid_range(dst[0..n]);
-    requires valid_range(src[0..n]);
+    requires loadable(dst[0..n]);
+    requires loadable(src[0..n]);
     requires write(dst[0..n]);
     requires read(src[0..n]);
     requires disjoint(dst[0..n], src[0..n]);

@@ -10,7 +10,7 @@ This book is organized by reader need:
   contracts, propositions, and proof scripts. Read this first if you want to
   understand simple Click code.
 - **Intermediate Click** explains the concepts needed for larger verification:
-  C fragments, undefined behavior, memory validity, permissions, aliasing,
+  C fragments, undefined behavior, memory loadability, permissions, aliasing,
   frames, loops, predicates, pure Click functions, spec state, and example
   projects.
 - **Advanced Click** is for people changing Click itself: testing, feature
@@ -71,7 +71,7 @@ local server.
 Use `rg` to find examples before inventing syntax:
 
 ```sh
-rg -n "unfold\\(|mutable|valid_range|permutation|\\.fold|forall|exists" mdtests docs src
+rg -n "unfold\\(|mutable|loadable|permutation|\\.fold|forall|exists" mdtests docs src
 ```
 
 ## Editing Rule Of Thumb

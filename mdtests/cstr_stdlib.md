@@ -24,8 +24,8 @@ verifying "cstr_stdlib.c";
 verifying "plain_cstr.c";
 
 int32 cstr_stdlib(uint8 p[], int32 len, int32 max) {
-    requires valid_range(p[0..len + 1]);
-    requires valid_range(p[0..max]);
+    requires loadable(p[0..len + 1]);
+    requires loadable(p[0..max]);
     requires exact: cstr_len(p, len);
     requires bounded: cstr_bounded(p, max);
 

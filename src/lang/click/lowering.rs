@@ -1393,11 +1393,11 @@ pub(super) fn apply_contract_lets_to_requirement(
             label,
             requirement: Box::new(apply_contract_lets_to_requirement(*requirement, bindings)?),
         }),
-        Requirement::ValidRange { name, bytes } => Ok(Requirement::ValidRange {
+        Requirement::LoadableBytes { name, bytes } => Ok(Requirement::LoadableBytes {
             name,
             bytes: apply_contract_lets_to_range_bytes(bytes, bindings)?,
         }),
-        Requirement::ValidRangeSegment { segment } => Ok(Requirement::ValidRangeSegment {
+        Requirement::LoadableSegment { segment } => Ok(Requirement::LoadableSegment {
             segment: apply_contract_lets_to_segment(segment, bindings)?,
         }),
         Requirement::Disjoint { left, right } => Ok(Requirement::Disjoint {
@@ -1555,7 +1555,7 @@ pub(super) fn apply_contract_lets_to_range_bytes(
     reject_contract_where_let_references(
         &range_bytes_referenced_names(&bytes),
         bindings,
-        "valid_range byte expressions",
+        "loadable byte expressions",
     )?;
     let bytes = match bytes {
         RangeBytes::Constant(_) => Ok(bytes),
@@ -1566,11 +1566,11 @@ pub(super) fn apply_contract_lets_to_range_bytes(
             };
             let c_fragment = contract_expression_as_c_fragment(value).ok_or_else(|| {
                 format!(
-                    "contract `let` `{name}` cannot be used in a valid_range byte expression because it is not a C fragment"
+                    "contract `let` `{name}` cannot be used in a loadable byte expression because it is not a C fragment"
                 )
             })?;
             range_bytes_from_c_expression(&c_fragment).ok_or_else(|| {
-                format!("contract `let` `{name}` cannot be used in a valid_range byte expression")
+                format!("contract `let` `{name}` cannot be used in a loadable byte expression")
             })
         }
         RangeBytes::Add(left, right) => Ok(RangeBytes::Add(
@@ -1589,7 +1589,7 @@ pub(super) fn apply_contract_lets_to_range_bytes(
     reject_contract_where_let_references(
         &range_bytes_referenced_names(&bytes),
         bindings,
-        "valid_range byte expressions",
+        "loadable byte expressions",
     )?;
     Ok(bytes)
 }
@@ -2689,33 +2689,31 @@ pub(super) fn initial_call(
         }
     }
 
-    let mut valid_ranges = BTreeMap::new();
+    let mut loadable_ranges = BTreeMap::new();
     for requirement in requires {
-        if let Some((name, bytes)) =
-            concrete_valid_range_block(requirement, parameters, &arguments)?
-        {
-            valid_ranges.insert(name, bytes);
+        if let Some((name, bytes)) = concrete_loadable_block(requirement, parameters, &arguments)? {
+            loadable_ranges.insert(name, bytes);
         }
         if let Requirement::Resource(resource) = requirement.inner() {
             if let Some((name, bytes)) =
                 concrete_access_resource_block(resource, parameters, &arguments)?
             {
-                valid_ranges.insert(name, bytes);
+                loadable_ranges.insert(name, bytes);
             }
         }
     }
 
-    for name in requires.iter().filter_map(requirement_valid_range_name) {
+    for name in requires.iter().filter_map(requirement_loadable_name) {
         if !parameters.iter().any(|parameter| parameter.name() == name) {
             return Err(ClickError::new(format!(
-                "`valid_range` names `{name}`, but `{}` has no such parameter",
+                "`loadable` names `{name}`, but `{}` has no such parameter",
                 function_name
             )));
         }
     }
 
     let mut memory = CMemory::new();
-    memory = memory_with_symbolic_valid_range_cells(memory, &valid_ranges);
+    memory = memory_with_symbolic_loadable_cells(memory, &loadable_ranges);
     memory = materialize_symbolic_access_resource_cells(memory, requires, parameters, &arguments)?;
     let resources = resource_context_from_requirements(requires, parameters, &arguments, &memory)?;
     let requirement_propositions = requirement_propositions(
@@ -2735,12 +2733,12 @@ pub(super) fn initial_call(
     ))
 }
 
-pub(super) fn memory_with_symbolic_valid_range_cells(
+pub(super) fn memory_with_symbolic_loadable_cells(
     mut memory: CMemory,
-    valid_ranges: &BTreeMap<String, ConcreteMemoryRangeSeed>,
+    loadable_ranges: &BTreeMap<String, ConcreteMemoryRangeSeed>,
 ) -> CMemory {
     let base_memory = memory.clone();
-    for range in valid_ranges.values() {
+    for range in loadable_ranges.values() {
         let mut offset: u32 = 0;
         match range.element_width {
             1 => {
@@ -2848,8 +2846,8 @@ pub(super) fn requirement_propositions(
     let mut propositions = Vec::new();
     for requirement in requires {
         let proposition = match requirement.inner() {
-            Requirement::ValidRange { .. } | Requirement::ValidRangeSegment { .. } => {
-                valid_range_requirement_prop(requirement, parameters, arguments, memory)?
+            Requirement::LoadableBytes { .. } | Requirement::LoadableSegment { .. } => {
+                loadable_requirement_prop(requirement, parameters, arguments, memory)?
             }
             Requirement::Disjoint { left, right } => {
                 disjoint_requirement_prop(parameters, arguments, memory, left, right)?
@@ -3054,38 +3052,38 @@ pub(super) fn lower_resource_segment(
     Ok(CMemoryRange::new(segment.base, segment.start, segment.end))
 }
 
-pub(super) fn valid_range_requirement_prop(
+pub(super) fn loadable_requirement_prop(
     requirement: &Requirement,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     memory: &CMemory,
 ) -> Result<Proposition, ClickError> {
-    let (base, bytes) = valid_range_base_and_bytes(requirement, parameters, arguments)?;
-    Ok(Proposition::CMemoryValidRange {
+    let (base, bytes) = loadable_base_and_bytes(requirement, parameters, arguments)?;
+    Ok(Proposition::CMemoryLoadable {
         memory: memory.clone(),
         base,
         bytes,
     })
 }
 
-pub(super) fn requirement_valid_range_name(requirement: &Requirement) -> Option<&str> {
+pub(super) fn requirement_loadable_name(requirement: &Requirement) -> Option<&str> {
     match requirement.inner() {
-        Requirement::ValidRange { name, .. } => Some(name),
+        Requirement::LoadableBytes { name, .. } => Some(name),
         Requirement::Labeled { .. }
-        | Requirement::ValidRangeSegment { .. }
+        | Requirement::LoadableSegment { .. }
         | Requirement::Disjoint { .. }
         | Requirement::Resource(_)
         | Requirement::Proposition(_) => None,
     }
 }
 
-pub(super) fn concrete_valid_range_block(
+pub(super) fn concrete_loadable_block(
     requirement: &Requirement,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> Result<Option<(String, ConcreteMemoryRangeSeed)>, ClickError> {
     match requirement.inner() {
-        Requirement::ValidRange { name, bytes } => {
+        Requirement::LoadableBytes { name, bytes } => {
             let Some(bytes) = range_bytes_constant(bytes) else {
                 return Ok(None);
             };
@@ -3108,7 +3106,7 @@ pub(super) fn concrete_valid_range_block(
                 },
             )))
         }
-        Requirement::ValidRangeSegment { segment } => {
+        Requirement::LoadableSegment { segment } => {
             let state = CState::new();
             let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment)
             else {
@@ -3125,7 +3123,7 @@ pub(super) fn concrete_valid_range_block(
             let element_width = contract_segment_element_width(parameters, &segment.source);
             let bytes = end
                 .checked_mul(element_width)
-                .ok_or_else(|| ClickError::new("`valid_range` segment overflows byte count"))?;
+                .ok_or_else(|| ClickError::new("`loadable` segment overflows byte count"))?;
             Ok(Some((
                 format!("{:?}", segment.source),
                 ConcreteMemoryRangeSeed {
@@ -3180,7 +3178,7 @@ pub(super) fn concrete_access_resource_block(
     )))
 }
 
-pub(super) fn valid_range_base_and_bytes(
+pub(super) fn loadable_base_and_bytes(
     requirement: &Requirement,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -3188,35 +3186,35 @@ pub(super) fn valid_range_base_and_bytes(
     let parameter_values = parameter_values(parameters, arguments)?;
 
     match requirement.inner() {
-        Requirement::ValidRange { name, bytes } => {
+        Requirement::LoadableBytes { name, bytes } => {
             let Some((_, argument)) = parameters
                 .iter()
                 .zip(arguments)
                 .find(|(parameter, _)| parameter.name() == name)
             else {
                 return Err(ClickError::new(format!(
-                    "`valid_range` names `{name}`, but no such parameter exists"
+                    "`loadable` names `{name}`, but no such parameter exists"
                 )));
             };
             let CExpression::Value(CValue::Pointer(base)) = argument else {
                 return Err(ClickError::new(format!(
-                    "`valid_range` names `{name}`, but it is not a pointer parameter"
+                    "`loadable` names `{name}`, but it is not a pointer parameter"
                 )));
             };
             Ok((base.clone(), lower_range_bytes(bytes, &parameter_values)?))
         }
-        Requirement::ValidRangeSegment { segment } => {
+        Requirement::LoadableSegment { segment } => {
             let state = CState::new();
             let segment = evaluate_requirement_segment(parameters, arguments, &state, segment)
                 .map_err(|message| {
-                    ClickError::new(format!("could not lower `valid_range` segment: {message}"))
+                    ClickError::new(format!("could not lower `loadable` segment: {message}"))
                 })?;
             if let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
                 (&segment.start, &segment.end)
             {
                 if end < start {
                     return Err(ClickError::new(format!(
-                        "`valid_range` segment has an end before its start: {start}..{end}"
+                        "`loadable` segment has an end before its start: {start}..{end}"
                     )));
                 }
             }
@@ -3232,7 +3230,7 @@ pub(super) fn valid_range_base_and_bytes(
         Requirement::Labeled { .. }
         | Requirement::Proposition(_)
         | Requirement::Resource(_)
-        | Requirement::Disjoint { .. } => Err(ClickError::new("expected valid_range requirement")),
+        | Requirement::Disjoint { .. } => Err(ClickError::new("expected loadable requirement")),
     }
 }
 
@@ -3278,7 +3276,7 @@ pub(super) fn loadable_segment_prop(
     }
     let element_count = bitvector32_subtract(segment.end.clone(), segment.start.clone());
     let bytes = bitvector32_multiply(element_count, Bitvector32Term::Constant(element_width));
-    Ok(Proposition::CMemoryValidRange {
+    Ok(Proposition::CMemoryLoadable {
         memory: memory.clone(),
         base: offset_pointer_by_elements(segment.base, segment.start, element_width),
         bytes,
@@ -3381,10 +3379,10 @@ pub(super) fn lower_range_bytes(
         RangeBytes::Parameter(name) => match parameter_values.get(name) {
             Some(CValue::Int32(bits)) => Ok(bits.clone()),
             Some(_) => Err(ClickError::new(format!(
-                "`valid_range` byte expression references pointer parameter `{name}`"
+                "`loadable` byte expression references pointer parameter `{name}`"
             ))),
             None => Err(ClickError::new(format!(
-                "`valid_range` byte expression references unknown parameter `{name}`"
+                "`loadable` byte expression references unknown parameter `{name}`"
             ))),
         },
         RangeBytes::Add(left, right) => Ok(bitvector32_add(

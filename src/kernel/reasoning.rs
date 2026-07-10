@@ -293,9 +293,8 @@ pub(super) fn collect_implication_antecedent_order_facts(
         | Proposition::CFunctionExecutes { .. }
         | Proposition::CFunctionSatisfiesSpecification { .. }
         | Proposition::CMemoryLoads { .. }
-        | Proposition::CMemoryCanLoad { .. }
+        | Proposition::CMemoryLoadable { .. }
         | Proposition::CMemoryCanStore { .. }
-        | Proposition::CMemoryValidRange { .. }
         | Proposition::CMemoryDisjoint { .. }
         | Proposition::CMemoryMutatesOnly { .. }
         | Proposition::CMemoryEffectSummary { .. }
@@ -984,16 +983,13 @@ pub(super) fn collect_proposition_bitvector_variables(
             collect_pointer_bitvector_variables(pointer, variables);
             collect_c_expression_outcome_bitvector_variables(outcome, variables);
         }
-        Proposition::CMemoryCanLoad {
-            memory, pointer, ..
-        }
-        | Proposition::CMemoryCanStore {
+        Proposition::CMemoryCanStore {
             memory, pointer, ..
         } => {
             collect_memory_bitvector_variables(memory, variables);
             collect_pointer_bitvector_variables(pointer, variables);
         }
-        Proposition::CMemoryValidRange {
+        Proposition::CMemoryLoadable {
             memory,
             base,
             bytes,
@@ -1688,15 +1684,6 @@ pub(super) fn substitute_bitvector_variable_in_proposition(
             pointer: substitute_bitvector_variable_in_pointer(pointer, from, to),
             outcome: substitute_bitvector_variable_in_c_expression_outcome(outcome, from, to),
         },
-        Proposition::CMemoryCanLoad {
-            memory,
-            pointer,
-            byte_width,
-        } => Proposition::CMemoryCanLoad {
-            memory: substitute_bitvector_variable_in_memory(memory, from, to),
-            pointer: substitute_bitvector_variable_in_pointer(pointer, from, to),
-            byte_width: *byte_width,
-        },
         Proposition::CMemoryCanStore {
             memory,
             pointer,
@@ -1706,11 +1693,11 @@ pub(super) fn substitute_bitvector_variable_in_proposition(
             pointer: substitute_bitvector_variable_in_pointer(pointer, from, to),
             byte_width: *byte_width,
         },
-        Proposition::CMemoryValidRange {
+        Proposition::CMemoryLoadable {
             memory,
             base,
             bytes,
-        } => Proposition::CMemoryValidRange {
+        } => Proposition::CMemoryLoadable {
             memory: substitute_bitvector_variable_in_memory(memory, from, to),
             base: substitute_bitvector_variable_in_pointer(base, from, to),
             bytes: substitute_bitvector_variable(bytes, from, to),
@@ -3014,7 +3001,7 @@ pub(super) fn solve_builtin_prop(proposition: &Proposition) -> bool {
             }
             _ => false,
         },
-        Proposition::CMemoryValidRange {
+        Proposition::CMemoryLoadable {
             memory,
             base,
             bytes,
@@ -3036,11 +3023,6 @@ pub(super) fn solve_builtin_prop(proposition: &Proposition) -> bool {
             right_start,
             right_end,
         ),
-        Proposition::CMemoryCanLoad {
-            memory,
-            pointer,
-            byte_width,
-        } => memory.can_load_concretely(pointer, *byte_width),
         Proposition::CMemoryCanStore {
             memory,
             pointer,

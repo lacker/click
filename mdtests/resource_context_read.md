@@ -1,7 +1,7 @@
 # read resources
 
 This checks the first `read(...)` permission slice. `read(...)` permits
-external loads and makes the covered memory valid, but it does not grant write
+external loads and makes the covered memory loadable, but it does not grant write
 permission.
 
 ```c filename=read_first.c

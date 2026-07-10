@@ -22,7 +22,7 @@ The current support is intentionally narrow:
 - one `int32` field in the json-c-shaped struct
 - pointer-to-struct parameters
 - `->` field loads and stores for that first field
-- `valid_field(obj->ref_count)` as the field-validity precondition
+- `loadable(obj->ref_count)` as the field-loadability precondition
 - `read(obj[0..1])` or `write(obj[0..1])` as the access permission
 - `mutable_field(obj->ref_count)` for field writes
 

@@ -1371,7 +1371,7 @@ impl Assumptions {
         }
 
         memory
-            .can_load_concretely(pointer, 4)
+            .is_loadable_concretely(pointer, 4)
             .then(|| memory.symbolic_int32_load(pointer))
     }
 
@@ -1516,11 +1516,11 @@ impl Assumptions {
                 body,
                 ..
             } => self.proves_finite_forall(proposition) || self.proves(body),
-            Proposition::CMemoryCanLoad {
+            Proposition::CMemoryLoadable {
                 memory,
-                pointer,
-                byte_width,
-            } => self.proves_memory_access(memory, pointer, *byte_width),
+                base,
+                bytes,
+            } => self.proves_memory_loadable(memory, base, bytes),
             Proposition::CMemoryCanStore {
                 memory,
                 pointer,
@@ -2143,26 +2143,72 @@ impl Assumptions {
         pointer: &Pointer,
         byte_width: u32,
     ) -> bool {
-        if memory.access_in_bounds(pointer, byte_width) {
+        self.proves_memory_loadable(memory, pointer, &Bitvector32Term::Constant(byte_width))
+    }
+
+    pub(super) fn proves_memory_loadable(
+        &self,
+        memory: &CMemory,
+        base: &Pointer,
+        bytes: &Bitvector32Term,
+    ) -> bool {
+        if bytes
+            .as_const()
+            .is_some_and(|bytes| memory.access_in_bounds(base, bytes))
+        {
             return true;
         }
-        if self.proves_access_from_memory_block(memory, pointer, byte_width) {
-            return true;
+        if let Some(byte_width) = bytes.as_const() {
+            if self.proves_access_from_memory_block(memory, base, byte_width) {
+                return true;
+            }
         }
 
         self.prop_facts.iter().any(|proposition| {
-            let Proposition::CMemoryValidRange {
+            let Proposition::CMemoryLoadable {
                 memory: range_memory,
-                base,
-                bytes,
+                base: range_base,
+                bytes: range_bytes,
             } = proposition
             else {
                 return false;
             };
 
-            memory_range_still_available(range_memory, memory, base)
-                && self.proves_access_from_valid_range(base, bytes, pointer, byte_width)
+            memory_range_still_available(range_memory, memory, range_base)
+                && self.proves_loadable_region_from_range(range_base, range_bytes, base, bytes)
         })
+    }
+
+    pub(super) fn proves_loadable_region_from_range(
+        &self,
+        range_base: &Pointer,
+        range_bytes: &Bitvector32Term,
+        base: &Pointer,
+        bytes: &Bitvector32Term,
+    ) -> bool {
+        if range_base == base && range_bytes == bytes {
+            return true;
+        }
+
+        if let Some(byte_width) = bytes.as_const() {
+            if self.proves_loadable_cell_from_region(range_base, range_bytes, base, byte_width) {
+                return true;
+            }
+        }
+
+        if let Some(byte_offset) = pointer_byte_offset_from_base(base, range_base) {
+            let access_end = Bitvector32Term::add(byte_offset.clone(), bytes.clone());
+            return self.decide(&ConditionTerm::signed_greater_equal(
+                byte_offset,
+                Bitvector32Term::Constant(0),
+            )) == Some(true)
+                && self.decide(&ConditionTerm::signed_less_equal(
+                    access_end,
+                    range_bytes.clone(),
+                )) == Some(true);
+        }
+
+        false
     }
 
     pub(super) fn proves_access_from_memory_block(
@@ -2178,7 +2224,7 @@ impl Assumptions {
             block: pointer.block.clone(),
             offset: PointerOffsetTerm::Constant(0),
         };
-        self.proves_access_from_valid_range(
+        self.proves_loadable_cell_from_region(
             &base,
             &Bitvector32Term::Constant(block.size()),
             pointer,
@@ -2186,7 +2232,7 @@ impl Assumptions {
         )
     }
 
-    pub(super) fn proves_access_from_valid_range(
+    pub(super) fn proves_loadable_cell_from_region(
         &self,
         base: &Pointer,
         bytes: &Bitvector32Term,
@@ -2521,15 +2567,15 @@ impl ProofObligation {
         Self::new(Proposition::ConditionIs(condition, value))
     }
 
-    pub fn memory_can_load(memory: CMemory, pointer: Pointer) -> Self {
-        Self::memory_can_load_bytes(memory, pointer, 4)
+    pub fn memory_loadable(memory: CMemory, pointer: Pointer) -> Self {
+        Self::memory_loadable_bytes(memory, pointer, 4)
     }
 
-    pub fn memory_can_load_bytes(memory: CMemory, pointer: Pointer, byte_width: u32) -> Self {
-        Self::new(Proposition::CMemoryCanLoad {
+    pub fn memory_loadable_bytes(memory: CMemory, pointer: Pointer, byte_width: u32) -> Self {
+        Self::new(Proposition::CMemoryLoadable {
             memory,
-            pointer,
-            byte_width,
+            base: pointer,
+            bytes: Bitvector32Term::Constant(byte_width),
         })
     }
 

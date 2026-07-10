@@ -23,7 +23,7 @@ predicate sorted(int32 p[], int32 n) {
 
 int32 sorted_predicate(int32 p[], int32 n) {
     requires n >= 0;
-    requires valid_range(p[0..n]);
+    requires loadable(p[0..n]);
     requires sorted(p, n);
     ensures still_sorted: sorted(p, n) by {
         symbolic_execute();

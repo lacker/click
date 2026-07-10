@@ -3,7 +3,7 @@
 This documents the current gap for dependent contained resource facts.
 Observing an owned buffer exposes immediate pure facts and viewed contained
 resource facts, but this proof path does not yet make the field-dependent
-backing-array range usable as the pure `CMemoryCanLoad` fact needed for the
+backing-array range usable as the pure `CMemoryLoadable` fact needed for the
 indexed load.
 
 ```c filename=buffer_get.c
@@ -49,5 +49,5 @@ int32 buffer_get(struct owner* owner, int32 index) {
 ```
 
 ```expect
-fail: missing pure fact required to evaluate memory read: CMemoryCanLoad
+fail: missing pure fact required to evaluate memory read: CMemoryLoadable
 ```

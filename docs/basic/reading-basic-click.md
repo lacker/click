@@ -31,7 +31,7 @@ Read every `requires` clause:
 
 ```click
 requires n >= 0;
-requires valid_range(p[0..n]);
+requires loadable(p[0..n]);
 ```
 
 These are the assumptions for the proof. If the contract seems too strong, the
@@ -87,5 +87,5 @@ Ask:
 6. Is the proof automated, simplified, framed, or scripted?
 
 That is enough to understand simple Click code. Intermediate Click adds memory
-validity, aliasing, loops, predicates, pure functions, and eventually spec or
+loadability, aliasing, loops, predicates, pure functions, and eventually spec or
 model state.

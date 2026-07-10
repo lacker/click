@@ -61,8 +61,8 @@ Larger example projects live directly under `examples/`. They contain ordinary
 
 ## Memory Safety And Postconditions
 
-- `mdtests/pointer_range.md`: basic pointer valid range.
-- `mdtests/pointer_range_missing_requires.md`: missing valid range fails.
+- `mdtests/pointer_range.md`: basic pointer loadability.
+- `mdtests/pointer_range_missing_requires.md`: missing loadable range fails.
 - `mdtests/pointer_range_segment_syntax.md`: segment syntax.
 - `mdtests/fill3_memory_postconditions.md`: post-state memory facts.
 - `mdtests/fill3_bad_memory_postcondition.md`: failing memory postcondition.
@@ -72,7 +72,7 @@ Larger example projects live directly under `examples/`. They contain ordinary
 
 ## Aliasing And Disjointness
 
-- `mdtests/copy3_array_demo.md`: `valid_range`, `disjoint`, and old source
+- `mdtests/copy3_array_demo.md`: `loadable`, `disjoint`, and old source
   values.
 - `mdtests/pointer_params_may_alias_without_disjoint.md`: aliasing is allowed by
   default.
@@ -91,9 +91,9 @@ Larger example projects live directly under `examples/`. They contain ordinary
 ## Structs
 
 - `mdtests/struct_multifield_explicit_permissions.md`: compact multi-field
-  struct loads/stores with explicit validity and write ranges.
-- `mdtests/struct_field_resources_imply_validity.md`: preferred field-resource
-  shape where `read(p->field)` and `write(p->field)` imply field validity.
+  struct loads/stores with explicit loadability and write ranges.
+- `mdtests/struct_field_resources_imply_loadability.md`: preferred field-resource
+  shape where `read(p->field)` and `write(p->field)` imply field loadability.
 - `mdtests/struct_pointer_field_explicit_permissions.md`: pointer-valued
   struct field load followed by a write through the loaded pointer, again using
   explicit ranges rather than ownership sugar.
@@ -104,7 +104,7 @@ Larger example projects live directly under `examples/`. They contain ordinary
 
 - `mdtests/uint8_literals.md`: `uint8` returns and ASCII character literals.
 - `mdtests/uint8_buffer_read.md`: `uint8[]` parameter indexing with
-  byte-sized `valid_range`.
+  byte-sized `loadable`.
 - `mdtests/uint8_local_array.md`: local byte arrays and byte stores/loads.
 - `mdtests/uint8_narrowing.md`: checked `int32`-to-`uint8` narrowing with
   range requirements.

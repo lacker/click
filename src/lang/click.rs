@@ -131,11 +131,11 @@ pub enum Requirement {
         label: String,
         requirement: Box<Requirement>,
     },
-    ValidRange {
+    LoadableBytes {
         name: String,
         bytes: RangeBytes,
     },
-    ValidRangeSegment {
+    LoadableSegment {
         segment: ContractSegment,
     },
     Disjoint {

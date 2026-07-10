@@ -1,6 +1,6 @@
-# Memory Validity
+# Memory Loadability
 
-Pointer proofs start with validity. Before Click can prove what a memory access
+Pointer proofs start with loadability. Before Click can prove what a memory access
 returns, it must know that the access is in bounds. For external memory, Click
 also needs permission to access the range; see [Permissions](permissions.md).
 
@@ -21,12 +21,12 @@ int32 first(int32 p[]) {
 }
 ```
 
-`read(...)` and `write(...)` imply validity for the range they cover. Use
-`valid_range(...)` when you need memory-validity information without granting
+`read(...)` and `write(...)` imply loadability for the range they cover. Use
+`loadable(...)` when you need memory-loadability information without granting
 access permission, or when the proof needs a larger range than any single
 access resource provides.
 
-`loadable(segment)` is the proposition form of the same memory-validity fact.
+`loadable(segment)` is the proposition form of the same memory-loadability fact.
 It is useful inside predicate-like positions, especially composite resource
 `fact` clauses:
 
@@ -36,10 +36,10 @@ fact loadable(data[0..cap]);
 
 ## Ranges
 
-`valid_range` uses half-open ranges:
+`loadable` uses half-open ranges:
 
 ```click
-requires valid_range(p[0..n]);
+requires loadable(p[0..n]);
 ```
 
 This covers indices `0` through `n - 1`. For `int32 p[]`, each element is a
@@ -48,18 +48,18 @@ four-byte access. For `uint8 p[]`, each element is a one-byte access.
 You can also write shifted ranges:
 
 ```click
-requires valid_range((p + 1)[0..n - 1]);
+requires loadable((p + 1)[0..n - 1]);
 ```
 
 ## Index Bounds
 
-A valid range is not enough by itself if the index is symbolic. Click also needs
+A loadable range is not enough by itself if the index is symbolic. Click also needs
 to know the index is inside the range:
 
 ```click
 requires 0 <= k;
 requires k < n;
-requires valid_range(p[0..n]);
+requires loadable(p[0..n]);
 requires read(p[0..n]);
 ensures result == p[k] by auto;
 ```
@@ -76,7 +76,7 @@ ensures p[0] == old(p[0]) by auto;
 
 This is how postconditions talk about preservation or change. The expression
 inside `old(...)` still needs to be meaningful in the entry state, so memory
-validity and permission requirements still matter.
+loadability and permission requirements still matter.
 
 ## Field Resources
 
@@ -87,7 +87,7 @@ requires read(obj->ref_count);
 requires write(obj->data);
 ```
 
-Those resources imply validity for the covered fields. Explicit ranges remain
+Those resources imply loadability for the covered fields. Explicit ranges remain
 useful when a proof needs a broader footprint than one field:
 
 ```click

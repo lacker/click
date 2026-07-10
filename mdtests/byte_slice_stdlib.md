@@ -38,14 +38,14 @@ verifying "count_byte3.c";
 verifying "byte_slice_facts.c";
 
 int32 count_byte3(uint8 p[], uint8 x) {
-    requires valid_range(p[0..3]);
+    requires loadable(p[0..3]);
     requires read(p[0..3]);
     ensures stdlib_byte_count_value: result == byte_count(p, 0, 3, x) by auto;
 }
 
 int32 byte_slice_facts(uint8 p[], uint8 q[]) {
-    requires valid_range(p[0..3]);
-    requires valid_range(q[0..2]);
+    requires loadable(p[0..3]);
+    requires loadable(q[0..2]);
     requires shifted_equal: bytes_equal(p, 1, q, 0, 2);
     requires all_q_are_a: bytes_all_eq(q, 0, 2, 'a');
 

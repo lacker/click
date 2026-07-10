@@ -25,7 +25,7 @@ predicate sorted_pair(int32 p[2]) {
 }
 
 int32 compare_swap2_sorted_predicate(int32 p[2]) {
-    requires valid_range(p[0..2]);
+    requires loadable(p[0..2]);
     requires write(p[0..2]);
     ensures sorted: sorted_pair(p) by {
         symbolic_execute();

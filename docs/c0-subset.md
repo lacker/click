@@ -73,7 +73,7 @@ requires x > -2147483648;
 
 Out-of-bounds memory accesses become proof obligations or undefined behavior
 depending on the symbolic execution path. Prove access safety with
-`read(...)`, `write(...)`, `valid_range(...)`, index bounds, and loop
+`read(...)`, `write(...)`, `loadable(...)`, index bounds, and loop
 invariants.
 
 ## Local Arrays
@@ -122,11 +122,11 @@ arrays of structs, and general field-address expressions are still unsupported.
 
 Click contracts can use field places in resource clauses, such as
 `read(owner->len)` and `write(owner->data)`. These lower through the same
-compact field offsets, and the access resource makes the field valid for
+compact field offsets, and the access resource makes the field loadable for
 symbolic execution. Explicit ranges such as `write(owner[0..3])` are still
-available when a contract needs to describe a broader footprint. The
-`valid_field(p->field)` and `mutable_field(p->field)` helpers remain as
-compatibility conveniences for field-sized validity and effects.
+available when a contract needs to describe a broader footprint. Field places
+also work in `loadable(p->field)`, and `mutable_field(p->field)` remains
+available as a field-sized effect helper.
 
 ## Loops
 

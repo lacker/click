@@ -97,7 +97,7 @@ support for libraries to define the ownership concepts they need.
 Do not assume:
 
 - that ownership is currently a built-in Click feature,
-- that `valid_range` means ownership,
+- that `loadable` means ownership,
 - that `mutable` means permission to free,
 - or that refcounting can be proved cleanly before the spec-state layer exists.
 

@@ -230,7 +230,7 @@ resource facts are observable from a valid held resource state.
 Examples:
 
 - A composite resource exposes its declared pure `fact` clauses while folded.
-- A declared `fact loadable(data[0..cap])` exposes a pure memory-validity fact
+- A declared `fact loadable(data[0..cap])` exposes a pure memory-loadability fact
   for the segment without exposing the contained resource fact that justified it.
 - A valid state containing two owned memory resources exposes that their ranges
   are disjoint.

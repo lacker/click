@@ -60,7 +60,7 @@ needs a safety fact:
 - arithmetic needs numeric bounds,
 - division needs nonzero divisors,
 - shifts need valid counts and representable results,
-- memory access needs valid ranges and index bounds.
+- memory access needs loadable ranges and index bounds.
 
 The right fix is usually a requirement, a loop invariant, or a narrower
 contract. Do not hide the obligation in the postcondition; Click needs the fact

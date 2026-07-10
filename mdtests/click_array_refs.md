@@ -36,13 +36,13 @@ predicate same_first(int32 a[], int32 b[]) {
 }
 
 int32 old_count_after_write(int32 p[1], int32 x) {
-    requires valid_range(p[0..1]);
+    requires loadable(p[0..1]);
     requires write(p[0..1]);
     ensures result_was_old_value: count(old(p), 0, 1, result) == 1 by auto;
 }
 
 int32 keep_first_change_second(int32 p[2], int32 x) {
-    requires valid_range(p[0..2]);
+    requires loadable(p[0..2]);
     requires write(p[1..2]);
     ensures first_cell_preserved: same_first(p, old(p)) by {
         symbolic_execute();
@@ -52,8 +52,8 @@ int32 keep_first_change_second(int32 p[2], int32 x) {
 }
 
 int32 identity_two_arrays(int32 p[1], int32 q[1]) {
-    requires valid_range(p[0..1]);
-    requires valid_range(q[0..1]);
+    requires loadable(p[0..1]);
+    requires loadable(q[0..1]);
     requires same_first(p, q);
     ensures exact_opaque_fact: same_first(p, q) by auto;
     ensures unfolded_requirement: p[0] == q[0] by {
