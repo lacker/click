@@ -244,8 +244,7 @@ sequence:
 - `mdtests/composite_resource_owned_buffer_get.md`: first-cell backing-buffer
   read through a len/cap/data owned-buffer resource.
 - `mdtests/composite_resource_owned_buffer_observe_indexed_gap.md`:
-  expected-fail coverage for trying that field-dependent indexed backing-array
-  read with only `observe(...)`.
+  field-dependent indexed backing-array read with only `observe(...)`.
 - `mdtests/composite_resource_owned_buffer_set.md`: first-cell backing-buffer
   mutation that unfolds and folds the owned composite resource.
 - `mdtests/composite_resource_owned_buffer_clear.md`: field mutation that

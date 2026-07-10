@@ -2637,13 +2637,11 @@ pub(super) struct ConcreteMemoryRangeSeed {
     pub(super) element_width: u32,
 }
 
-pub(super) fn initial_call(
+pub(super) fn initial_call_state(
     function_name: &str,
     requires: &[Requirement],
     parameters: &[syntax::C0Parameter],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-) -> Result<(CState, Vec<CExpression>, Vec<Proposition>), ClickError> {
+) -> Result<(CState, Vec<CExpression>), ClickError> {
     let mut arguments = Vec::new();
 
     for (index, parameter) in parameters.iter().enumerate() {
@@ -2716,20 +2714,11 @@ pub(super) fn initial_call(
     memory = memory_with_symbolic_loadable_cells(memory, &loadable_ranges);
     memory = materialize_symbolic_access_resource_cells(memory, requires, parameters, &arguments)?;
     let resources = resource_context_from_requirements(requires, parameters, &arguments, &memory)?;
-    let requirement_propositions = requirement_propositions(
-        requires,
-        parameters,
-        &arguments,
-        &memory,
-        predicate_environment,
-        click_function_environment,
-    )?;
     Ok((
         CState::new()
             .with_memory(memory)
             .with_resource_context(resources),
         arguments,
-        requirement_propositions,
     ))
 }
 
@@ -2860,7 +2849,14 @@ pub(super) fn requirement_propositions(
                 predicate_environment,
                 click_function_environment,
             )?,
-            Requirement::Resource(_) => continue,
+            Requirement::Resource(resource) => {
+                let Some(proposition) =
+                    resource_clause_loadable_prop(resource, parameters, arguments, memory)?
+                else {
+                    continue;
+                };
+                proposition
+            }
             Requirement::Labeled { .. } => unreachable!("requirement.inner() removes labels"),
         };
         propositions.push(proposition);
@@ -3064,6 +3060,55 @@ pub(super) fn loadable_requirement_prop(
         base,
         bytes,
     })
+}
+
+pub(super) fn resource_clause_loadable_prop(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    memory: &CMemory,
+) -> Result<Option<Proposition>, ClickError> {
+    let (segment, range) = match resource {
+        ResourceClause::Read(segment) => {
+            let lowered = lower_resource_clause(resource, parameters, arguments, memory)?;
+            let range = lowered
+                .memory_view_range()
+                .expect("read resource should lower to view memory");
+            (segment, range.clone())
+        }
+        ResourceClause::Write(segment) => {
+            let lowered = lower_resource_clause(resource, parameters, arguments, memory)?;
+            let range = lowered
+                .memory_own_range()
+                .expect("write resource should lower to owned memory");
+            (segment, range.clone())
+        }
+        ResourceClause::Declared { .. } => return Ok(None),
+    };
+    let element_width = contract_segment_element_width(parameters, segment);
+    Ok(Some(memory_range_loadable_prop(
+        memory,
+        &range,
+        element_width,
+    )))
+}
+
+pub(super) fn memory_range_loadable_prop(
+    memory: &CMemory,
+    range: &CMemoryRange,
+    element_width: u32,
+) -> Proposition {
+    let element_count = bitvector32_subtract(range.end().clone(), range.start().clone());
+    let bytes = bitvector32_multiply(element_count, Bitvector32Term::Constant(element_width));
+    Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: offset_pointer_by_elements(
+            range.base().clone(),
+            range.start().clone(),
+            element_width,
+        ),
+        bytes,
+    }
 }
 
 pub(super) fn requirement_loadable_name(requirement: &Requirement) -> Option<&str> {

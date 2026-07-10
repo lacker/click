@@ -27,6 +27,13 @@ in `docs/`; do not treat this file as a design doc.
   loadability fact (`CMemoryLoadable`). Use it in composite `fact` clauses
   when a resource should expose memory loadability without exposing extra
   resource facts.
+- Direct memory resource facts deterministically project loadability facts:
+  `read(range)` and `write(range)` imply `loadable(range)`. Composite
+  `observe(...)`/folded projection exposes this for immediate contained memory
+  resources without recursive search.
+- Initial proof setup now materializes folded composite resource cells before
+  lowering proposition requirements, so requirements like `index < owner->len`
+  can use facts backed by a composite resource required by the same function.
 - Missing-fact diagnostics now name the required pure/resource fact and print
   the available pure facts and resource facts. Execution obligations are also
   reported as missing pure facts with the same context format.
@@ -84,21 +91,13 @@ in `docs/`; do not treat this file as a design doc.
    `execute_until_direct_mutate` and `execute_step_direct_mutate` tests
    demonstrate the first straight-line execution-point slices. The
    `view_then_mutate` test covers automatic one-step entry projection for
-   `views composite(...)` resources. The
-   `observe_indexed_gap` test documents that observing a field-dependent
-   backing-array resource is not yet enough for indexed reads through the
-   loaded pointer. `mdtests/composite_resource_loadable_fact.md` is the smaller
-   passing case for direct-pointer `fact loadable(...)` projection.
+   `views composite(...)` resources. The `observe_indexed_gap` test now passes
+   and covers observing a field-dependent backing-array resource enough for
+   indexed reads through the loaded pointer. `mdtests/composite_resource_loadable_fact.md`
+   is the smaller passing case for direct-pointer `fact loadable(...)`
+   projection.
 
-5. **Resource-to-loadability projection**
-
-   Holding `read(memory(...))` or `write(memory(...))` should deterministically
-   imply the matching `loadable(...)` pure fact. This should be an always-on
-   primitive projection, not heuristic search. The remaining design detail is
-   where to project it, because the kernel `CMemoryLoadable` proposition carries
-   a memory snapshot and byte count while resource facts describe ranges.
-
-6. **Read/write semantics**
+5. **Read/write semantics**
 
    `read(...)` is the core/view of `write(...)` for memory. `write(...)` is
    still required to stabilize resource facts that read mutable memory. The
@@ -115,9 +114,6 @@ in `docs/`; do not treat this file as a design doc.
   adding scoped unfold/fold syntax or automation.
 - Extend `execute_step()` beyond the current straight-line statement slice when
   branch, loop, or modular-call stepping becomes important.
-- Add deterministic projection from memory resource facts to `loadable(...)`
-  facts, then use `mdtests/composite_resource_owned_buffer_observe_indexed_gap.md`
-  as the pressure test for the dependent owner-field-derived backing array.
 - If hidden footprint summaries are added, make them deterministic one-step
   proof data first; leave `auto` heuristics for a later pass.
 

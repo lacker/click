@@ -724,6 +724,62 @@ pub(super) fn function_claims(function_block: &FunctionBlock) -> Vec<FunctionCla
         .collect()
 }
 
+fn initial_claim_context(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    resource_environment: &ResourceEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+) -> Result<(CState, Vec<CExpression>, Vec<Proposition>), ClickError> {
+    let (mut state, arguments) = initial_call_state(
+        function_block.signature.name(),
+        function_block.requires(),
+        parsed_function.parameters(),
+    )?;
+    state = materialize_folded_composite_resource_cells(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        state,
+        claim_label,
+    )?;
+    let mut requirement_pure_facts = requirement_propositions(
+        function_block.requires(),
+        parsed_function.parameters(),
+        &arguments,
+        state.memory(),
+        predicate_environment,
+        click_function_environment,
+    )?;
+    requirement_pure_facts = requirements_with_structural_unfolds(
+        predicate_environment,
+        click_function_environment,
+        function_block,
+        &requirement_pure_facts,
+    )
+    .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
+    state = project_initial_view_composite_resources(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        state,
+        &requirement_pure_facts,
+        claim_label,
+    )?;
+    requirement_pure_facts = project_initial_resource_facts(
+        resource_environment,
+        parsed_function.parameters(),
+        &arguments,
+        &state,
+        &requirement_pure_facts,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+    )?;
+    Ok((state, arguments, requirement_pure_facts))
+}
+
 pub(super) fn prove_claim_by_auto(
     source_path: &str,
     function_block: &FunctionBlock,
@@ -736,41 +792,10 @@ pub(super) fn prove_claim_by_auto(
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let (mut state, arguments, requirement_pure_facts) = initial_call(
-        function_block.signature.name(),
-        function_block.requires(),
-        parsed_function.parameters(),
-        predicate_environment,
-        click_function_environment,
-    )?;
-    let requirement_pure_facts = requirements_with_structural_unfolds(
-        predicate_environment,
-        click_function_environment,
+    let (state, arguments, requirement_pure_facts) = initial_claim_context(
         function_block,
-        &requirement_pure_facts,
-    )
-    .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_folded_composite_resource_cells(
+        parsed_function,
         resource_environment,
-        parsed_function.parameters(),
-        &arguments,
-        state,
-        claim_label,
-    )?;
-    state = project_initial_view_composite_resources(
-        resource_environment,
-        parsed_function.parameters(),
-        &arguments,
-        state,
-        &requirement_pure_facts,
-        claim_label,
-    )?;
-    let requirement_pure_facts = project_initial_resource_facts(
-        resource_environment,
-        parsed_function.parameters(),
-        &arguments,
-        &state,
-        &requirement_pure_facts,
         predicate_environment,
         click_function_environment,
         claim_label,
@@ -908,41 +933,10 @@ pub(super) fn prove_claim_by_frame(
         )));
     }
 
-    let (mut state, arguments, requirement_pure_facts) = initial_call(
-        function_block.signature.name(),
-        function_block.requires(),
-        parsed_function.parameters(),
-        predicate_environment,
-        click_function_environment,
-    )?;
-    let requirement_pure_facts = requirements_with_structural_unfolds(
-        predicate_environment,
-        click_function_environment,
+    let (state, arguments, requirement_pure_facts) = initial_claim_context(
         function_block,
-        &requirement_pure_facts,
-    )
-    .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_folded_composite_resource_cells(
+        parsed_function,
         resource_environment,
-        parsed_function.parameters(),
-        &arguments,
-        state,
-        claim_label,
-    )?;
-    state = project_initial_view_composite_resources(
-        resource_environment,
-        parsed_function.parameters(),
-        &arguments,
-        state,
-        &requirement_pure_facts,
-        claim_label,
-    )?;
-    let requirement_pure_facts = project_initial_resource_facts(
-        resource_environment,
-        parsed_function.parameters(),
-        &arguments,
-        &state,
-        &requirement_pure_facts,
         predicate_environment,
         click_function_environment,
         claim_label,
@@ -1026,41 +1020,10 @@ pub(super) fn prove_claim_by_simp(
         )));
     }
 
-    let (mut state, arguments, requirement_pure_facts) = initial_call(
-        function_block.signature.name(),
-        function_block.requires(),
-        parsed_function.parameters(),
-        predicate_environment,
-        click_function_environment,
-    )?;
-    let requirement_pure_facts = requirements_with_structural_unfolds(
-        predicate_environment,
-        click_function_environment,
+    let (state, arguments, requirement_pure_facts) = initial_claim_context(
         function_block,
-        &requirement_pure_facts,
-    )
-    .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_folded_composite_resource_cells(
+        parsed_function,
         resource_environment,
-        parsed_function.parameters(),
-        &arguments,
-        state,
-        claim_label,
-    )?;
-    state = project_initial_view_composite_resources(
-        resource_environment,
-        parsed_function.parameters(),
-        &arguments,
-        state,
-        &requirement_pure_facts,
-        claim_label,
-    )?;
-    let requirement_pure_facts = project_initial_resource_facts(
-        resource_environment,
-        parsed_function.parameters(),
-        &arguments,
-        &state,
-        &requirement_pure_facts,
         predicate_environment,
         click_function_environment,
         claim_label,
@@ -1275,41 +1238,10 @@ pub(super) fn prove_claim_by_steps(
         )));
     }
 
-    let (mut state, arguments, mut requirement_pure_facts) = initial_call(
-        function_block.signature.name(),
-        function_block.requires(),
-        parsed_function.parameters(),
-        predicate_environment,
-        click_function_environment,
-    )?;
-    requirement_pure_facts = requirements_with_structural_unfolds(
-        predicate_environment,
-        click_function_environment,
+    let (mut state, arguments, mut requirement_pure_facts) = initial_claim_context(
         function_block,
-        &requirement_pure_facts,
-    )
-    .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = materialize_folded_composite_resource_cells(
+        parsed_function,
         resource_environment,
-        parsed_function.parameters(),
-        &arguments,
-        state,
-        claim_label,
-    )?;
-    state = project_initial_view_composite_resources(
-        resource_environment,
-        parsed_function.parameters(),
-        &arguments,
-        state,
-        &requirement_pure_facts,
-        claim_label,
-    )?;
-    requirement_pure_facts = project_initial_resource_facts(
-        resource_environment,
-        parsed_function.parameters(),
-        &arguments,
-        &state,
-        &requirement_pure_facts,
         predicate_environment,
         click_function_environment,
         claim_label,
@@ -2597,6 +2529,16 @@ fn append_composite_resource_observable_facts(
         propositions,
     )?;
 
+    append_composite_resource_loadable_facts(
+        definition,
+        composite_body,
+        substitutions,
+        parameters,
+        arguments,
+        fact_state.memory(),
+        propositions,
+    )?;
+
     append_composite_resource_declared_facts(
         definition,
         composite_body,
@@ -2611,6 +2553,58 @@ fn append_composite_resource_observable_facts(
         predicate_environment,
         click_function_environment,
     )
+}
+
+fn append_composite_resource_loadable_facts(
+    definition: &ResourceDefinition,
+    composite_body: &CompositeResourceBody,
+    substitutions: &BTreeMap<String, ContractExpression>,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    memory: &CMemory,
+    propositions: &mut Vec<Proposition>,
+) -> Result<(), String> {
+    for contained in composite_body.contains() {
+        let contained = instantiate_resource_clause(contained, substitutions).map_err(|message| {
+            format!(
+                "could not instantiate resource `{}` contained resource for loadability: {message}",
+                definition.name()
+            )
+        })?;
+        append_resource_clause_loadable_fact(
+            &contained,
+            parameters,
+            arguments,
+            memory,
+            propositions,
+        )
+        .map_err(|error| {
+            format!(
+                "could not project resource `{}` contained `{}` loadability: {}",
+                definition.name(),
+                describe_resource_clause(&contained),
+                error.message()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn append_resource_clause_loadable_fact(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    memory: &CMemory,
+    propositions: &mut Vec<Proposition>,
+) -> Result<(), ClickError> {
+    let Some(proposition) = resource_clause_loadable_prop(resource, parameters, arguments, memory)?
+    else {
+        return Ok(());
+    };
+    if !propositions.contains(&proposition) {
+        propositions.push(proposition);
+    }
+    Ok(())
 }
 
 fn append_composite_resource_declared_facts(
@@ -2853,6 +2847,20 @@ fn unfold_composite_resource(
                 ))
             })?;
         state = state.with_memory(memory).with_resource_context(resources);
+        append_resource_clause_loadable_fact(
+            &contained,
+            parameters,
+            arguments,
+            state.memory(),
+            available_pure_facts,
+        )
+        .map_err(|error| {
+            ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: could not project `unfold({})` loadability: {}",
+                describe_resource_clause(resource),
+                error.message()
+            ))
+        })?;
     }
 
     for fact in composite_body.facts() {
