@@ -243,7 +243,7 @@ sequence:
   resource without unfolding owned permissions.
 - `mdtests/composite_resource_owned_buffer_get.md`: first-cell backing-buffer
   read through a len/cap/data owned-buffer resource.
-- `mdtests/composite_resource_owned_buffer_observe_indexed_gap.md`:
+- `mdtests/composite_resource_owned_buffer_observe_indexed.md`:
   field-dependent indexed backing-array read with only `observe(...)`.
 - `mdtests/composite_resource_owned_buffer_set.md`: first-cell backing-buffer
   mutation that unfolds and folds the owned composite resource.

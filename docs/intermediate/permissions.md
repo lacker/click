@@ -234,7 +234,9 @@ int32 return_fd(int32 fd) {
 
 The first `observe` exposes a viewed `nonnegative_fd(fd)` resource. The second
 `observe` exposes that resource's immediate fact, `fd >= 0`. Neither step
-consumes `live_fd(fd)`, and neither step unfolds owned permissions.
+consumes `live_fd(fd)`, and neither step unfolds owned permissions. This
+one-step behavior is intentional: large composite resources should not be
+recursively expanded by default proof automation.
 
 When code needs the contained owned resources, use `unfold(resource)`. When
 the proof has rebuilt the body, use `fold(resource)`:
@@ -295,6 +297,10 @@ Together, the three resource proof steps are deliberately local:
   immediate body.
 - `fold(resource);` consumes one immediate body and produces the owned
   composite resource.
+
+These steps are bounded by design. A proof that needs facts inside a nested
+composite resource should name the path with repeated `observe(...)` steps
+instead of relying on `auto` to search through every possible nested body.
 
 If a fact reads mutable memory, the composite body must contain write
 permission covering that memory. This is what makes the fact stable while

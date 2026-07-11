@@ -1,6 +1,6 @@
 # Agent State
 
-Last updated: 2026-07-10.
+Last updated: 2026-07-11.
 
 This is a short handoff note for open work only. Canonical documentation lives
 in `docs/`; do not treat this file as a design doc.
@@ -49,7 +49,7 @@ in `docs/`; do not treat this file as a design doc.
   - `mdtests/composite_resource_owned_buffer_len_cap_data.md`
   - `mdtests/composite_resource_owned_buffer_observe_len.md`
   - `mdtests/composite_resource_owned_buffer_get.md`
-  - `mdtests/composite_resource_owned_buffer_observe_indexed_gap.md`
+  - `mdtests/composite_resource_owned_buffer_observe_indexed.md`
   - `mdtests/composite_resource_owned_buffer_set.md`
   - `mdtests/composite_resource_owned_buffer_clear.md`
   - `mdtests/composite_resource_execute_until_direct_mutate.md`
@@ -101,7 +101,7 @@ in `docs/`; do not treat this file as a design doc.
    `execute_until_direct_mutate` and `execute_step_direct_mutate` tests
    demonstrate the first straight-line execution-point slices. The
    `view_then_mutate` test covers automatic one-step entry projection for
-   `views composite(...)` resources. The `observe_indexed_gap` test now passes
+   `views composite(...)` resources. The `observe_indexed` test passes
    and covers observing a field-dependent backing-array resource enough for
    indexed reads through the loaded pointer. `mdtests/composite_resource_loadable_fact.md`
    is the smaller passing case for direct-pointer `fact loadable(...)`
@@ -116,10 +116,12 @@ in `docs/`; do not treat this file as a design doc.
 
 ## Useful Next Tasks
 
-- Decide whether nested hidden footprints should be summarized recursively,
-  via explicit resource-family footprint views, left as explicit observation
-  chains, or handled by bounded automation. The expected-fail mdtest above and
-  the passing `observe_nested_separate_contains` test are the pressure tests.
+- Decide whether nested hidden footprints should be summarized by explicit
+  resource-family footprint views, left as explicit observation chains, or
+  handled by a bounded proof step. Avoid recursive default `auto` expansion
+  because large composite resources could make that expensive or unpredictable.
+  The expected-fail mdtest above and the passing
+  `observe_nested_separate_contains` test are the pressure tests.
 - Keep pressure-testing composite resources with realistic examples before
   adding scoped unfold/fold syntax or automation.
 - Extend `execute_step()` beyond the current straight-line statement slice when

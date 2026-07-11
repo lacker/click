@@ -240,7 +240,9 @@ Examples:
 This distinction matters. `observe(...)` should be a deterministic proof step
 that adds observable pure facts and viewed immediate contained resource facts.
 It should not unfold hidden owned permissions, and it should not consume the
-observed resource fact.
+observed resource fact. It should also stay one-step: recursive expansion of
+large composite resources belongs behind an explicit bounded proof step or
+future summary mechanism, not in default `auto` behavior.
 
 In the current code, `ResourceContext::observable_facts(...)` is the beginning
 of the pure-fact side of this interface. It derives pure facts from the
